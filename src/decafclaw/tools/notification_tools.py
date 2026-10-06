@@ -26,33 +26,38 @@ _VALID_PRIORITIES = {"low", "normal", "high"}
 
 
 async def tool_send_notification(
-    ctx, title: str, body: str = "",
-    category: str = "agent", priority: str = "normal",
+    ctx,
+    title: str,
+    body: str = "",
+    category: str = "agent",
+    priority: str = "normal",
     link: str | None = None,
 ) -> ToolResult:
     """Emit a notification to the inbox; fan out to configured channels."""
     log.info(
         "[tool:send_notification] category=%s priority=%s title=%r",
-        category, priority, title,
+        category,
+        priority,
+        title,
     )
 
     if not title or not title.strip():
         return ToolResult(text="[error: title is required]")
     if priority not in _VALID_PRIORITIES:
-        return ToolResult(
-            text=(f"[error: invalid priority {priority!r} — must be "
-                  f"one of {sorted(_VALID_PRIORITIES)}]")
-        )
+        return ToolResult(text=(f"[error: invalid priority {priority!r} — must be one of {sorted(_VALID_PRIORITIES)}]"))
 
     record = await notify(
-        ctx.config, ctx.event_bus,
-        category=category, title=title, body=body,
-        priority=priority, link=link,
+        ctx.config,
+        ctx.event_bus,
+        category=category,
+        title=title,
+        body=body,
+        priority=priority,
+        link=link,
         conv_id=ctx.conv_id or None,
     )
     return ToolResult(
-        text=f"Notification sent (id={record.id}, category={category}, "
-             f"priority={priority}).",
+        text=f"Notification sent (id={record.id}, category={category}, priority={priority}).",
     )
 
 

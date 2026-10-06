@@ -27,6 +27,7 @@ def _has_vertex_credentials():
     """Check if Vertex AI credentials are available."""
     try:
         import google.auth
+
         creds, project = google.auth.default(
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
@@ -39,6 +40,7 @@ def _vertex_project():
     """Get the GCP project from ADC."""
     try:
         import google.auth
+
         _, project = google.auth.default(
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
@@ -54,6 +56,7 @@ has_openai = bool(os.getenv("OPENAI_API_KEY"))
 @pytest.fixture
 def vertex_provider():
     from decafclaw.llm.providers.vertex import VertexProvider
+
     return VertexProvider(
         project=_vertex_project(),
         region=os.getenv("VERTEX_REGION", "us-central1"),
@@ -63,12 +66,14 @@ def vertex_provider():
 @pytest.fixture
 def openai_provider():
     from decafclaw.llm.providers.openai import OpenAIProvider
+
     return OpenAIProvider(api_key=os.getenv("OPENAI_API_KEY", ""))
 
 
 @pytest.fixture
 def openai_compat_provider():
     from decafclaw.llm.providers.openai_compat import OpenAICompatProvider
+
     url = os.getenv("OPENAI_COMPAT_URL", os.getenv("LITELLM_URL", ""))
     api_key = os.getenv("OPENAI_COMPAT_API_KEY", os.getenv("LITELLM_API_KEY", ""))
     if not url:
@@ -123,20 +128,22 @@ class TestVertexProvider:
     @pytest.mark.asyncio
     async def test_tool_call(self, vertex_provider):
         """Model can call a tool and return structured arguments."""
-        tools = [{
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "description": "Get the current weather for a city",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "city": {"type": "string", "description": "City name"},
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get the current weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "city": {"type": "string", "description": "City name"},
+                        },
+                        "required": ["city"],
                     },
-                    "required": ["city"],
                 },
-            },
-        }]
+            }
+        ]
         result = await vertex_provider.complete(
             self.MODEL,
             [{"role": "user", "content": "What's the weather in Paris?"}],
@@ -153,20 +160,22 @@ class TestVertexProvider:
     @pytest.mark.asyncio
     async def test_tool_call_streaming(self, vertex_provider):
         """Streaming tool calls emit start/end events."""
-        tools = [{
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "description": "Get the current weather for a city",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "city": {"type": "string", "description": "City name"},
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get the current weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "city": {"type": "string", "description": "City name"},
+                        },
+                        "required": ["city"],
                     },
-                    "required": ["city"],
                 },
-            },
-        }]
+            }
+        ]
         chunks = []
 
         async def on_chunk(chunk_type, data):
@@ -217,20 +226,22 @@ class TestVertexProvider:
     @pytest.mark.asyncio
     async def test_tool_response_roundtrip(self, vertex_provider):
         """Full tool call → tool response → final answer roundtrip."""
-        tools = [{
-            "type": "function",
-            "function": {
-                "name": "lookup",
-                "description": "Look up a fact",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "description": "Look up a fact",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                        },
+                        "required": ["query"],
                     },
-                    "required": ["query"],
                 },
-            },
-        }]
+            }
+        ]
 
         # First turn: model should call the tool
         r1 = await vertex_provider.complete(
@@ -268,27 +279,32 @@ class TestVertexProvider:
     async def test_parallel_tool_calls_roundtrip(self, vertex_provider):
         """Multiple parallel tool calls + responses in a single turn."""
         tools = [
-            {"type": "function", "function": {
-                "name": "get_weather",
-                "description": "Get weather for a city",
-                "parameters": {"type": "object",
-                               "properties": {"city": {"type": "string"}},
-                               "required": ["city"]},
-            }},
-            {"type": "function", "function": {
-                "name": "get_time",
-                "description": "Get current time in a timezone",
-                "parameters": {"type": "object",
-                               "properties": {"timezone": {"type": "string"}},
-                               "required": ["timezone"]},
-            }},
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather for a city",
+                    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_time",
+                    "description": "Get current time in a timezone",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"timezone": {"type": "string"}},
+                        "required": ["timezone"],
+                    },
+                },
+            },
         ]
 
         # Ask something that should trigger parallel calls
         r1 = await vertex_provider.complete(
             self.MODEL,
-            [{"role": "user",
-              "content": "What's the weather in Paris and the time in Tokyo? Use both tools."}],
+            [{"role": "user", "content": "What's the weather in Paris and the time in Tokyo? Use both tools."}],
             tools=tools,
             streaming=False,
         )
@@ -298,18 +314,19 @@ class TestVertexProvider:
         # Send both tool responses back
         tool_msgs = []
         for tc in r1["tool_calls"]:
-            tool_msgs.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "name": tc["function"]["name"],
-                "content": json.dumps({"result": f"mock data for {tc['function']['name']}"}),
-            })
+            tool_msgs.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "name": tc["function"]["name"],
+                    "content": json.dumps({"result": f"mock data for {tc['function']['name']}"}),
+                }
+            )
 
         r2 = await vertex_provider.complete(
             self.MODEL,
             [
-                {"role": "user",
-                 "content": "What's the weather in Paris and the time in Tokyo? Use both tools."},
+                {"role": "user", "content": "What's the weather in Paris and the time in Tokyo? Use both tools."},
                 {"role": "assistant", "content": None, "tool_calls": r1["tool_calls"]},
                 *tool_msgs,
             ],
@@ -362,20 +379,22 @@ class TestOpenAIProvider:
     @pytest.mark.asyncio
     async def test_tool_call(self, openai_provider):
         """Tool call with structured arguments."""
-        tools = [{
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "description": "Get the current weather for a city",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "city": {"type": "string"},
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get the current weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "city": {"type": "string"},
+                        },
+                        "required": ["city"],
                     },
-                    "required": ["city"],
                 },
-            },
-        }]
+            }
+        ]
         result = await openai_provider.complete(
             self.MODEL,
             [{"role": "user", "content": "What's the weather in London?"}],

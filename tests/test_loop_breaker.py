@@ -104,7 +104,7 @@ def test_summarize_args_does_not_collapse_whitespace_inside_values():
 def test_summarize_args_truncates_long_values():
     long_args = {"body": "x" * 5000}
     out = summarize_args(long_args)
-    assert len(out) <= 401          # _MAX_ARG_CHARS + the ellipsis
+    assert len(out) <= 401  # _MAX_ARG_CHARS + the ellipsis
     assert out.endswith("…")
 
 
@@ -239,9 +239,7 @@ def test_compliance_after_a_multi_call_batch_does_not_trip_again():
     # The agent obeys completely: brand-new, non-repeating, non-erroring calls.
     for i in range(3):
         lb.record([CallSignature(f"new{i}", fingerprint(f"new{i}", {"n": i}), False)])
-        assert lb.verdict() is LoopVerdict.NONE, (
-            "a compliant round escalated off a co-offender's stale count"
-        )
+        assert lb.verdict() is LoopVerdict.NONE, "a compliant round escalated off a co-offender's stale count"
 
 
 def test_compliant_but_erroring_round_after_a_nudge_does_not_escalate():
@@ -262,12 +260,10 @@ def test_compliant_but_erroring_round_after_a_nudge_does_not_escalate():
     assert verdict is LoopVerdict.NUDGE
     # The agent obeys: distinct read-only calls — which happen to error.
     for i in range(3):
-        lb.record([CallSignature(
-            f"read{i}", fingerprint("read", {"p": f"log{i}"}), True,
-            "{}", "[error: no such file]")])
-        assert lb.verdict() is LoopVerdict.NONE, (
-            "the ladder punished the diagnostic read it asked for"
+        lb.record(
+            [CallSignature(f"read{i}", fingerprint("read", {"p": f"log{i}"}), True, "{}", "[error: no such file]")]
         )
+        assert lb.verdict() is LoopVerdict.NONE, "the ladder punished the diagnostic read it asked for"
 
 
 def test_a_genuine_new_error_surge_after_a_nudge_still_escalates():

@@ -29,7 +29,8 @@ class TestReorderToolResults:
         messages = [
             {"role": "user", "content": "go"},
             {
-                "role": "assistant", "content": None,
+                "role": "assistant",
+                "content": None,
                 "tool_calls": [
                     {"id": "call_a", "type": "function", "function": {"name": "foo", "arguments": "{}"}},
                     {"id": "call_b", "type": "function", "function": {"name": "bar", "arguments": "{}"}},
@@ -53,15 +54,17 @@ class TestReorderToolResults:
             {"role": "user", "content": "do both"},
             # Assistant A issues call_A
             {
-                "role": "assistant", "content": "Installing...",
-                "tool_calls": [{"id": "call_A", "type": "function",
-                                "function": {"name": "shell", "arguments": "{}"}}],
+                "role": "assistant",
+                "content": "Installing...",
+                "tool_calls": [{"id": "call_A", "type": "function", "function": {"name": "shell", "arguments": "{}"}}],
             },
             # Assistant B issues call_B (e.g. from reflection/compaction race)
             {
-                "role": "assistant", "content": "Saving...",
-                "tool_calls": [{"id": "call_B", "type": "function",
-                                "function": {"name": "vault_write", "arguments": "{}"}}],
+                "role": "assistant",
+                "content": "Saving...",
+                "tool_calls": [
+                    {"id": "call_B", "type": "function", "function": {"name": "vault_write", "arguments": "{}"}}
+                ],
             },
             # Results in wrong order: B's result first, then A's
             {"role": "tool", "tool_call_id": "call_B", "content": "page saved"},
@@ -71,8 +74,7 @@ class TestReorderToolResults:
 
         # call_A's result should follow assistant A
         roles_and_ids = [
-            (m.get("role"), m.get("tool_call_id", ""), [tc.get("id") for tc in m.get("tool_calls", [])])
-            for m in result
+            (m.get("role"), m.get("tool_call_id", ""), [tc.get("id") for tc in m.get("tool_calls", [])]) for m in result
         ]
         # Find positions
         asst_a_idx = next(i for i, (r, _, tcs) in enumerate(roles_and_ids) if tcs == ["call_A"])
@@ -114,12 +116,10 @@ def _compose(ctx, config, user_message, history):
     config.compaction.max_tokens = 1000000
     with (
         patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-        patch("decafclaw.context_composer.retrieve_memory_context",
-              new_callable=AsyncMock, return_value=[]),
+        patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
     ):
         composer = ContextComposer()
-        return composer.compose(ctx, user_message, history,
-                                mode=ComposerMode.INTERACTIVE)
+        return composer.compose(ctx, user_message, history, mode=ComposerMode.INTERACTIVE)
 
 
 @pytest.mark.asyncio
@@ -141,14 +141,16 @@ async def test_compose_reorders_displaced_tool_results(ctx, config):
     history = [
         {"role": "user", "content": "do it"},
         {
-            "role": "assistant", "content": None,
-            "tool_calls": [{"id": "call_A", "type": "function",
-                            "function": {"name": "shell", "arguments": "{}"}}],
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "call_A", "type": "function", "function": {"name": "shell", "arguments": "{}"}}],
         },
         {
-            "role": "assistant", "content": "saving",
-            "tool_calls": [{"id": "call_B", "type": "function",
-                            "function": {"name": "vault_write", "arguments": "{}"}}],
+            "role": "assistant",
+            "content": "saving",
+            "tool_calls": [
+                {"id": "call_B", "type": "function", "function": {"name": "vault_write", "arguments": "{}"}}
+            ],
         },
         {"role": "tool", "tool_call_id": "call_B", "content": "saved"},
         {"role": "tool", "tool_call_id": "call_A", "content": "installed"},

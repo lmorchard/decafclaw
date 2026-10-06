@@ -129,12 +129,22 @@ def test_list_scheduled_activity_window_filter(ctx):
     in_window = now - timedelta(hours=2)
     out_of_window = now - timedelta(hours=48)
 
-    _write_sched_conv(ws, "dream", in_window, [
-        {"role": "assistant", "content": "Dream complete. Noted 3 patterns."},
-    ])
-    _write_sched_conv(ws, "garden", out_of_window, [
-        {"role": "assistant", "content": "Gardened vault."},
-    ])
+    _write_sched_conv(
+        ws,
+        "dream",
+        in_window,
+        [
+            {"role": "assistant", "content": "Dream complete. Noted 3 patterns."},
+        ],
+    )
+    _write_sched_conv(
+        ws,
+        "garden",
+        out_of_window,
+        [
+            {"role": "assistant", "content": "Gardened vault."},
+        ],
+    )
 
     result = _collect_scheduled_activity(ctx, hours=24)
 
@@ -152,8 +162,7 @@ def test_list_scheduled_activity_dir_layout(ctx):
     conv_dir = ws / "conversations" / conv_id
     conv_dir.mkdir(parents=True, exist_ok=True)
     with (conv_dir / "archive.jsonl").open("w") as fh:
-        fh.write(json.dumps(
-            {"role": "assistant", "content": "Dir-layout dream done."}) + "\n")
+        fh.write(json.dumps({"role": "assistant", "content": "Dir-layout dream done."}) + "\n")
 
     result = _collect_scheduled_activity(ctx, hours=24)
 
@@ -167,17 +176,33 @@ def test_list_scheduled_activity_extracts_vault_pages(ctx):
     ws = ctx.config.workspace_path
     now = datetime.now(timezone.utc)
 
-    _write_sched_conv(ws, "dream", now - timedelta(hours=1), [
-        {"role": "assistant", "content": "Writing pages.", "tool_calls": [
-            {"id": "c1", "type": "function",
-             "function": {"name": "vault_write",
-                          "arguments": json.dumps({"page": "Insight A", "content": "..."})}},
-            {"id": "c2", "type": "function",
-             "function": {"name": "vault_journal_append",
-                          "arguments": json.dumps({"content": "note"})}},
-        ]},
-        {"role": "assistant", "content": "Done."},
-    ])
+    _write_sched_conv(
+        ws,
+        "dream",
+        now - timedelta(hours=1),
+        [
+            {
+                "role": "assistant",
+                "content": "Writing pages.",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {
+                            "name": "vault_write",
+                            "arguments": json.dumps({"page": "Insight A", "content": "..."}),
+                        },
+                    },
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {"name": "vault_journal_append", "arguments": json.dumps({"content": "note"})},
+                    },
+                ],
+            },
+            {"role": "assistant", "content": "Done."},
+        ],
+    )
 
     result = _collect_scheduled_activity(ctx, hours=24)
     assert result[0]["vault_pages_touched"] == ["Insight A"]
@@ -187,10 +212,10 @@ def test_list_scheduled_activity_extracts_vault_pages(ctx):
 def test_list_scheduled_activity_excludes_self(ctx):
     ws = ctx.config.workspace_path
     now = datetime.now(timezone.utc)
-    _write_sched_conv(ws, "newsletter", now - timedelta(hours=3),
-                      [{"role": "assistant", "content": "prior newsletter"}])
-    _write_sched_conv(ws, "dream", now - timedelta(hours=2),
-                      [{"role": "assistant", "content": "dreamed"}])
+    _write_sched_conv(
+        ws, "newsletter", now - timedelta(hours=3), [{"role": "assistant", "content": "prior newsletter"}]
+    )
+    _write_sched_conv(ws, "dream", now - timedelta(hours=2), [{"role": "assistant", "content": "dreamed"}])
 
     result = _collect_scheduled_activity(ctx, hours=24)
     skills = {r["skill_name"] for r in result}
@@ -202,12 +227,22 @@ def test_list_scheduled_activity_excludes_self(ctx):
 async def test_list_scheduled_activity_returns_tool_result(ctx):
     ws = ctx.config.workspace_path
     now = datetime.now(timezone.utc)
-    _write_sched_conv(ws, "dream", now - timedelta(hours=1), [
-        {"role": "assistant", "content": "Dream done."},
-    ])
-    _write_sched_conv(ws, "garden", now - timedelta(hours=2), [
-        {"role": "assistant", "content": "Garden done."},
-    ])
+    _write_sched_conv(
+        ws,
+        "dream",
+        now - timedelta(hours=1),
+        [
+            {"role": "assistant", "content": "Dream done."},
+        ],
+    )
+    _write_sched_conv(
+        ws,
+        "garden",
+        now - timedelta(hours=2),
+        [
+            {"role": "assistant", "content": "Garden done."},
+        ],
+    )
 
     result = await newsletter_list_scheduled_activity(ctx, hours=24)
 
@@ -221,13 +256,25 @@ def test_list_scheduled_activity_final_with_tool_calls(ctx):
     """An assistant record with BOTH content and tool_calls still contributes
     to final_message — this is the shape real archives take most of the time."""
     now = datetime.now(timezone.utc)
-    _write_sched_conv(ctx.config.workspace_path, "garden", now - timedelta(hours=1), [
-        {"role": "assistant", "content": "Starting garden sweep."},
-        {"role": "assistant", "content": "Pruning old pages.",
-         "tool_calls": [{"id": "c1", "type": "function",
-                         "function": {"name": "vault_write",
-                                      "arguments": json.dumps({"page": "P"})}}]},
-    ])
+    _write_sched_conv(
+        ctx.config.workspace_path,
+        "garden",
+        now - timedelta(hours=1),
+        [
+            {"role": "assistant", "content": "Starting garden sweep."},
+            {
+                "role": "assistant",
+                "content": "Pruning old pages.",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "vault_write", "arguments": json.dumps({"page": "P"})},
+                    }
+                ],
+            },
+        ],
+    )
     activity = _collect_scheduled_activity(ctx, hours=24)
     assert activity[0]["final_message"] == "Pruning old pages."
 
@@ -266,6 +313,7 @@ def test_list_vault_changes_excludes_newsletter_folder(ctx, tmp_path):
     """The tool's own output folder should not show up as 'vault changes'
     to avoid self-reference in subsequent newsletters."""
     from decafclaw.skills.newsletter import tools as m
+
     vault = tmp_path / "vault"
     (vault / "agent" / "journal" / "newsletters").mkdir(parents=True)
     ctx.config.vault.vault_path = str(vault)
@@ -325,10 +373,13 @@ async def test_publish_interactive_force_delivery_runs_full_path(ctx, tmp_path):
     ctx.task_mode = ""  # interactive
 
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(email_enabled=False, vault_page_enabled=False)
 
     result = await newsletter_publish(
-        ctx, markdown="# smoke\n\nbody", subject_hint="test",
+        ctx,
+        markdown="# smoke\n\nbody",
+        subject_hint="test",
         force_delivery=True,
     )
     assert isinstance(result, ToolResult)
@@ -353,6 +404,7 @@ async def test_publish_scheduled_writes_archive_and_advances_state(ctx, tmp_path
 
     # No email, no vault target — just verify archive + last_run
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(email_enabled=False, vault_page_enabled=False)
 
     result = await newsletter_publish(ctx, markdown="# hi\n\nnews", subject_hint="today")
@@ -376,6 +428,7 @@ async def test_publish_scheduled_empty_stub(ctx, tmp_path):
     ctx.task_mode = "scheduled"
 
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(email_enabled=False, vault_page_enabled=False)
 
     result = await newsletter_publish(ctx, markdown="", has_content=False)
@@ -395,6 +448,7 @@ async def test_publish_scheduled_empty_stub(ctx, tmp_path):
 async def test_publish_scheduled_archive_suffix_on_conflict(ctx, tmp_path):
     ctx.task_mode = "scheduled"
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(email_enabled=False, vault_page_enabled=False)
 
     await newsletter_publish(ctx, markdown="a")
@@ -418,6 +472,7 @@ async def test_publish_scheduled_email_delivery(ctx, tmp_path, monkeypatch):
     ctx.task_mode = "scheduled"
 
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(
         email_enabled=True,
         email_recipients=["les@example.com", "alt@example.com"],
@@ -448,8 +503,11 @@ async def test_publish_scheduled_email_skipped_when_empty(ctx, tmp_path, monkeyp
     ctx.task_mode = "scheduled"
 
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(
-        email_enabled=True, email_recipients=["x@y.z"], vault_page_enabled=False,
+        email_enabled=True,
+        email_recipients=["x@y.z"],
+        vault_page_enabled=False,
     )
     calls = []
 
@@ -476,6 +534,7 @@ async def test_publish_scheduled_vault_page_delivery(ctx, tmp_path):
     ctx.task_mode = "scheduled"
 
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(
         email_enabled=False,
         vault_page_enabled=True,
@@ -498,6 +557,7 @@ async def test_publish_scheduled_vault_page_conflict_suffix(ctx, tmp_path):
     ctx.config.vault.vault_path = str(vault)
     ctx.task_mode = "scheduled"
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(
         email_enabled=False,
         vault_page_enabled=True,
@@ -507,8 +567,7 @@ async def test_publish_scheduled_vault_page_conflict_suffix(ctx, tmp_path):
     await newsletter_publish(ctx, markdown="b")
 
     vault_root = Path(ctx.config.vault_root)
-    vault_files = sorted(p.name for p in
-                         (vault_root / "agent" / "journal" / "newsletters").glob("*.md"))
+    vault_files = sorted(p.name for p in (vault_root / "agent" / "journal" / "newsletters").glob("*.md"))
     assert len(vault_files) == 2
     assert any("-1.md" in n for n in vault_files)
 
@@ -526,6 +585,7 @@ async def test_publish_target_failure_isolation(ctx, tmp_path, monkeypatch):
     ctx.task_mode = "scheduled"
 
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(
         email_enabled=True,
         email_recipients=["x@y.z"],
@@ -570,19 +630,33 @@ async def test_end_to_end_scheduled_publish(ctx, tmp_path, monkeypatch):
     # Seed: one scheduled-task conversation and one recent vault page
     now = datetime.now(timezone.utc)
     workspace = Path(ctx.config.workspace_path)
-    _write_sched_conv(workspace, "dream", now - timedelta(hours=2), [
-        {"role": "assistant", "content": "Writing pages.",
-         "tool_calls": [{"id": "c1", "type": "function",
-                         "function": {"name": "vault_write",
-                                      "arguments": json.dumps({"page": "Pattern A"})}}]},
-        {"role": "assistant", "content": "Dreamed. 2 patterns surfaced."},
-    ])
+    _write_sched_conv(
+        workspace,
+        "dream",
+        now - timedelta(hours=2),
+        [
+            {
+                "role": "assistant",
+                "content": "Writing pages.",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "vault_write", "arguments": json.dumps({"page": "Pattern A"})},
+                    }
+                ],
+            },
+            {"role": "assistant", "content": "Dreamed. 2 patterns surfaced."},
+        ],
+    )
     (vault / "agent").mkdir(parents=True, exist_ok=True)
     (vault / "agent" / "Pattern A.md").write_text("body")
 
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(
-        email_enabled=True, email_recipients=["u@x.y"],
+        email_enabled=True,
+        email_recipients=["u@x.y"],
         vault_page_enabled=True,
     )
     sent = []
@@ -628,24 +702,46 @@ def test_extract_activity_deduplicates_vault_pages(ctx):
     """If the same page is written twice in one run, vault_pages_touched
     should contain it only once (insertion order preserved)."""
     now = datetime.now(timezone.utc)
-    _write_sched_conv(ctx.config.workspace_path, "dream", now - timedelta(hours=1), [
-        {"role": "assistant", "content": "Writing.", "tool_calls": [
-            {"id": "c1", "type": "function",
-             "function": {"name": "vault_write",
-                          "arguments": json.dumps({"page": "Page X", "content": "v1"})}},
-            {"id": "c2", "type": "function",
-             "function": {"name": "vault_write",
-                          "arguments": json.dumps({"page": "Page X", "content": "v2"})}},
-            {"id": "c3", "type": "function",
-             "function": {"name": "vault_write",
-                          "arguments": json.dumps({"page": "Page Y", "content": "y"})}},
-        ]},
-    ])
+    _write_sched_conv(
+        ctx.config.workspace_path,
+        "dream",
+        now - timedelta(hours=1),
+        [
+            {
+                "role": "assistant",
+                "content": "Writing.",
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {
+                            "name": "vault_write",
+                            "arguments": json.dumps({"page": "Page X", "content": "v1"}),
+                        },
+                    },
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {
+                            "name": "vault_write",
+                            "arguments": json.dumps({"page": "Page X", "content": "v2"}),
+                        },
+                    },
+                    {
+                        "id": "c3",
+                        "type": "function",
+                        "function": {
+                            "name": "vault_write",
+                            "arguments": json.dumps({"page": "Page Y", "content": "y"}),
+                        },
+                    },
+                ],
+            },
+        ],
+    )
     result = _collect_scheduled_activity(ctx, hours=24)
     touched = result[0]["vault_pages_touched"]
-    assert touched == ["Page X", "Page Y"], (
-        f"Expected deduped list preserving order, got {touched!r}"
-    )
+    assert touched == ["Page X", "Page Y"], f"Expected deduped list preserving order, got {touched!r}"
     assert len(touched) == 2
 
 
@@ -675,28 +771,33 @@ def test_extract_activity_skips_status_tokens(ctx):
     """If the last assistant content is a status token like HEARTBEAT_OK,
     final_message should fall back to the previous narrative content."""
     now = datetime.now(timezone.utc)
-    _write_sched_conv(ctx.config.workspace_path, "mastodon-ingest",
-                      now - timedelta(hours=1), [
-        {"role": "assistant",
-         "content": "I fetched 5 posts and ingested them into the vault."},
-        {"role": "tool", "content": "tool result"},
-        {"role": "assistant", "content": "HEARTBEAT_OK"},
-    ])
+    _write_sched_conv(
+        ctx.config.workspace_path,
+        "mastodon-ingest",
+        now - timedelta(hours=1),
+        [
+            {"role": "assistant", "content": "I fetched 5 posts and ingested them into the vault."},
+            {"role": "tool", "content": "tool result"},
+            {"role": "assistant", "content": "HEARTBEAT_OK"},
+        ],
+    )
     result = _collect_scheduled_activity(ctx, hours=24)
     assert len(result) == 1
-    assert result[0]["final_message"] == (
-        "I fetched 5 posts and ingested them into the vault."
-    )
+    assert result[0]["final_message"] == ("I fetched 5 posts and ingested them into the vault.")
 
 
 def test_extract_activity_only_status_token_yields_empty_final(ctx):
     """If the ONLY assistant text in a run is a status token, final_message
     should be empty — not the status token."""
     now = datetime.now(timezone.utc)
-    _write_sched_conv(ctx.config.workspace_path, "dream",
-                      now - timedelta(hours=1), [
-        {"role": "assistant", "content": "HEARTBEAT_OK"},
-    ])
+    _write_sched_conv(
+        ctx.config.workspace_path,
+        "dream",
+        now - timedelta(hours=1),
+        [
+            {"role": "assistant", "content": "HEARTBEAT_OK"},
+        ],
+    )
     result = _collect_scheduled_activity(ctx, hours=24)
     assert len(result) == 1
     assert result[0]["final_message"] == ""
@@ -706,8 +807,10 @@ def test_extract_activity_only_status_token_yields_empty_final(ctx):
 # Window argument: `!newsletter 7d` etc. — compact time-range spec
 # ---------------------------------------------------------------------------
 
+
 def test_parse_window_basic_units():
     from decafclaw.skills.newsletter.tools import _parse_window
+
     assert _parse_window("24h") == 24
     assert _parse_window("1h") == 1
     assert _parse_window("7d") == 7 * 24
@@ -718,6 +821,7 @@ def test_parse_window_basic_units():
 
 def test_parse_window_tolerates_case_and_whitespace():
     from decafclaw.skills.newsletter.tools import _parse_window
+
     assert _parse_window(" 7D ") == 7 * 24
     assert _parse_window("48H") == 48
 
@@ -726,6 +830,7 @@ def test_parse_window_rejects_malformed():
     import pytest
 
     from decafclaw.skills.newsletter.tools import _parse_window
+
     for bad in ["", "7", "7days", "abc", "-5d", "0d", "7m"]:
         with pytest.raises(ValueError):
             _parse_window(bad)
@@ -737,10 +842,14 @@ async def test_list_scheduled_activity_window_arg(ctx):
     tool summary reflects the window string."""
     now = datetime.now(timezone.utc)
     # Activity 3 days ago — outside 24h window, inside 7d
-    _write_sched_conv(ctx.config.workspace_path, "dream",
-                      now - timedelta(days=3), [
-        {"role": "assistant", "content": "Dream three days back."},
-    ])
+    _write_sched_conv(
+        ctx.config.workspace_path,
+        "dream",
+        now - timedelta(days=3),
+        [
+            {"role": "assistant", "content": "Dream three days back."},
+        ],
+    )
     # Default 24h: should miss
     default_result = await newsletter_list_scheduled_activity(ctx)
     assert len(default_result.data["activity"]) == 0
@@ -756,13 +865,15 @@ async def test_list_scheduled_activity_window_arg(ctx):
 async def test_list_scheduled_activity_window_precedence_over_hours(ctx):
     """`window` takes precedence when both are supplied."""
     now = datetime.now(timezone.utc)
-    _write_sched_conv(ctx.config.workspace_path, "dream",
-                      now - timedelta(days=3), [
-        {"role": "assistant", "content": "old."},
-    ])
-    result = await newsletter_list_scheduled_activity(
-        ctx, hours=1, window="7d"
+    _write_sched_conv(
+        ctx.config.workspace_path,
+        "dream",
+        now - timedelta(days=3),
+        [
+            {"role": "assistant", "content": "old."},
+        ],
     )
+    result = await newsletter_list_scheduled_activity(ctx, hours=1, window="7d")
     # window=7d wins over hours=1 → should include the 3-day-old record
     assert len(result.data["activity"]) == 1
     assert result.data["hours"] == 7 * 24
@@ -779,6 +890,7 @@ async def test_list_scheduled_activity_invalid_window_returns_error(ctx):
 async def test_list_vault_changes_window_arg(ctx, tmp_path):
     """Same window semantics apply to the vault-changes tool."""
     import os
+
     vault = tmp_path / "vault"
     vault.mkdir()
     ctx.config.vault.vault_path = str(vault)
@@ -825,9 +937,7 @@ async def test_publish_vault_folder_traversal_blocked(ctx, tmp_path):
             f"vault_folder={bad_folder!r} should have been blocked"
         )
         # No files should be written outside the vault root
-        assert not escape_target.exists(), (
-            f"vault_folder={bad_folder!r} escaped the vault root"
-        )
+        assert not escape_target.exists(), f"vault_folder={bad_folder!r} escaped the vault root"
 
 
 @pytest.mark.asyncio
@@ -839,6 +949,7 @@ async def test_publish_vault_folder_absolute_blocked(ctx, tmp_path):
     ctx.task_mode = "scheduled"
 
     from decafclaw.skills.newsletter import tools as m
+
     m._skill_config = SkillConfig(
         email_enabled=False,
         vault_page_enabled=True,

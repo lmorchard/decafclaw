@@ -4,6 +4,7 @@ Per-item run of stage1 → stage2 → … → stageN. No barrier between stages.
 Each item gets its own sub-handle keyed (outer_seq, item_idx); all stages
 for that item share the sub-handle's cursor sequentially.
 """
+
 import asyncio
 
 import pytest
@@ -32,8 +33,7 @@ async def test_pipeline_live_path_basic(ctx):
     assert entry is not None
     assert entry.kind == "pipeline"
     assert entry.result == [3, 5, 7]
-    expected_fp = fingerprint(
-        "pipeline", {"items": [1, 2, 3], "stage_count": 2})
+    expected_fp = fingerprint("pipeline", {"items": [1, 2, 3], "stage_count": 2})
     assert entry.args_fingerprint == expected_fp
 
 
@@ -49,12 +49,10 @@ async def test_pipeline_live_path_with_journaled_calls(ctx):
     h = WorkflowHandle(ctx, j, llm_caller=fake_llm)
 
     async def stage_one(prev, item, idx, sub):
-        return await sub.llm_call(
-            prompt=f"s1-{item}", schema={"type": "object"})
+        return await sub.llm_call(prompt=f"s1-{item}", schema={"type": "object"})
 
     async def stage_two(prev, item, idx, sub):
-        return await sub.llm_call(
-            prompt=f"s2-{item}", schema={"type": "object"})
+        return await sub.llm_call(prompt=f"s2-{item}", schema={"type": "object"})
 
     out = await h.pipeline(["A", "B"], stage_one, stage_two)
     assert out == [{"answer": "s2-A"}, {"answer": "s2-B"}]
@@ -116,12 +114,10 @@ async def test_pipeline_mid_resume_partial_progress(ctx):
     h = WorkflowHandle(ctx, j, llm_caller=fake_llm)
 
     async def stage_one(prev, item, idx, sub):
-        return await sub.llm_call(
-            prompt=f"s1-{item}", schema={"type": "object"})
+        return await sub.llm_call(prompt=f"s1-{item}", schema={"type": "object"})
 
     async def stage_two(prev, item, idx, sub):
-        return await sub.llm_call(
-            prompt=f"s2-{item}", schema={"type": "object"})
+        return await sub.llm_call(prompt=f"s2-{item}", schema={"type": "object"})
 
     out = await h.pipeline(["A", "B"], stage_one, stage_two)
 
@@ -262,8 +258,7 @@ async def test_pipeline_zero_items(ctx):
     assert entry is not None
     assert entry.kind == "pipeline"
     assert entry.result == []
-    expected_fp = fingerprint(
-        "pipeline", {"items": [], "stage_count": 1})
+    expected_fp = fingerprint("pipeline", {"items": [], "stage_count": 1})
     assert entry.args_fingerprint == expected_fp
 
 
@@ -280,8 +275,7 @@ async def test_pipeline_zero_stages(ctx):
     assert entry is not None
     assert entry.kind == "pipeline"
     assert entry.result == [1, 2]
-    expected_fp = fingerprint(
-        "pipeline", {"items": [1, 2], "stage_count": 0})
+    expected_fp = fingerprint("pipeline", {"items": [1, 2], "stage_count": 0})
     assert entry.args_fingerprint == expected_fp
 
 
@@ -323,6 +317,7 @@ async def test_pipeline_fingerprint_includes_items(ctx):
     j.append((0,), "pipeline", fp_a, [1, 2])
 
     from decafclaw.workflow.errors import WorkflowNonDeterministic
+
     with pytest.raises(WorkflowNonDeterministic):
         await h.pipeline([1, 3], stage)
 

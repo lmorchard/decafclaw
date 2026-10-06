@@ -51,10 +51,7 @@ def blog_ideas_week(ctx, offset_weeks: int = 0) -> ToolResult:
     # UTC, not local — the schedule fires on a UTC cron base; see module docstring.
     info = compute_week(datetime.now(timezone.utc), offset_weeks)
     return ToolResult(
-        text=(
-            f"{info['week']} (week of {info['monday']}, "
-            f"day {info['days_so_far']}/7) -> {info['page_path']}"
-        ),
+        text=(f"{info['week']} (week of {info['monday']}, day {info['days_so_far']}/7) -> {info['page_path']}"),
         data=info,
     )
 

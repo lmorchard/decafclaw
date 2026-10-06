@@ -26,6 +26,7 @@ class EndTurnConfirm:
     after the user responds. Use for state transitions that should happen
     before the model sees the result (e.g., advancing project state).
     """
+
     message: str = ""
     approve_label: str = "Approve"
     deny_label: str = "Deny"
@@ -44,9 +45,10 @@ class WidgetRequest:
     submits. ``response_message`` is reserved for future use (e.g., a
     "waiting" placeholder shown to the user during the pause).
     """
-    widget_type: str                           # registered widget name
-    data: dict                                 # conforms to widget.data_schema
-    target: str = "inline"                     # "inline" | "canvas" (Phase 3)
+
+    widget_type: str  # registered widget name
+    data: dict  # conforms to widget.data_schema
+    target: str = "inline"  # "inline" | "canvas" (Phase 3)
     on_response: Callable[[dict], str] | None = None
     response_message: str | None = None
 
@@ -61,6 +63,7 @@ class WidgetInputPause:
     pause path (request_confirmation with action_type=WIDGET_RESPONSE).
     Parallel to ``EndTurnConfirm`` — only one per batch wins.
     """
+
     tool_call_id: str
     widget_payload: dict  # {widget_type, target, data}
 
@@ -93,8 +96,8 @@ class ToolResult:
 class MediaSaveResult:
     """Result from saving a media item via a MediaHandler."""
 
-    workspace_ref: str | None = None   # workspace:// path for text injection
-    file_id: str | None = None         # platform file ID (Mattermost)
+    workspace_ref: str | None = None  # workspace:// path for text injection
+    file_id: str | None = None  # platform file ID (Mattermost)
     saved_filename: str | None = None  # actual filename after dedup
 
 
@@ -109,8 +112,7 @@ class MediaHandler:
     # Web and Terminal set False (refs render in-place).
     strips_workspace_refs: bool = True
 
-    async def save_media(self, conv_id: str, filename: str,
-                         data: bytes, content_type: str) -> MediaSaveResult:
+    async def save_media(self, conv_id: str, filename: str, data: bytes, content_type: str) -> MediaSaveResult:
         """Save media and return a result describing where it went.
 
         Subclasses implement channel-specific behavior:
@@ -119,19 +121,19 @@ class MediaHandler:
         """
         raise NotImplementedError
 
-    async def upload_file(self, channel_id: str, filename: str,
-                          data: bytes, content_type: str) -> str:
+    async def upload_file(self, channel_id: str, filename: str, data: bytes, content_type: str) -> str:
         """Upload raw bytes, return an opaque file reference."""
         raise NotImplementedError
 
-    async def send_with_media(self, channel_id: str, message: str,
-                              media_refs: list[str], root_id: str | None = None) -> str:
+    async def send_with_media(
+        self, channel_id: str, message: str, media_refs: list[str], root_id: str | None = None
+    ) -> str:
         """Send a message with attached media references."""
         raise NotImplementedError
 
-    def format_attachment_card(self, title: str, text: str,
-                               image_url: str | None = None,
-                               thumb_url: str | None = None) -> dict:
+    def format_attachment_card(
+        self, title: str, text: str, image_url: str | None = None, thumb_url: str | None = None
+    ) -> dict:
         """Build a rich attachment card structure."""
         card = {"title": title, "text": text}
         if image_url:
@@ -164,12 +166,14 @@ def extract_workspace_media(text: str, workspace_path: Path) -> tuple[str, list[
         try:
             data = full_path.read_bytes()
             content_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-            media.append({
-                "type": "file",
-                "filename": full_path.name,
-                "data": data,
-                "content_type": content_type,
-            })
+            media.append(
+                {
+                    "type": "file",
+                    "filename": full_path.name,
+                    "data": data,
+                    "content_type": content_type,
+                }
+            )
             return ""  # strip the ref (file will be attached)
         except OSError as e:
             log.warning(f"Cannot read workspace image {path}: {e}")
@@ -197,8 +201,8 @@ class LocalFileMediaHandler(MediaHandler):
         import asyncio
 
         from .attachments import save_attachment
-        result = await asyncio.to_thread(
-            save_attachment, self.config, conv_id, filename, data, content_type)
+
+        result = await asyncio.to_thread(save_attachment, self.config, conv_id, filename, data, content_type)
         return MediaSaveResult(
             workspace_ref="workspace://" + result["path"],
             saved_filename=result["filename"],
@@ -229,13 +233,13 @@ class MattermostMediaHandler(MediaHandler):
 
     async def save_media(self, conv_id, filename, data, content_type):
         """Upload media to Mattermost, return file_id."""
-        file_id = await self.upload_file(
-            self._channel_id, filename, data, content_type)
+        file_id = await self.upload_file(self._channel_id, filename, data, content_type)
         return MediaSaveResult(file_id=file_id)
 
     async def upload_file(self, channel_id, filename, data, content_type):
         """Upload a file to Mattermost, return the file_id."""
         import io
+
         resp = await self._http.post(
             f"/files?channel_id={channel_id}",
             files={"files": (filename, io.BytesIO(data), content_type)},
@@ -246,16 +250,18 @@ class MattermostMediaHandler(MediaHandler):
             raise RuntimeError("Mattermost file upload returned no file_infos")
         return file_infos[0]["id"]
 
-    async def send_with_media(self, channel_id, message, media_refs,
-                              root_id=None) -> str:
+    async def send_with_media(self, channel_id, message, media_refs, root_id=None) -> str:
         """Send a message with file_ids attached. Handles overflow (>10 files)."""
         if not media_refs:
             # No media — plain send
-            resp = await self._http.post("/posts", json={
-                "channel_id": channel_id,
-                "message": message,
-                **({"root_id": root_id} if root_id else {}),
-            })
+            resp = await self._http.post(
+                "/posts",
+                json={
+                    "channel_id": channel_id,
+                    "message": message,
+                    **({"root_id": root_id} if root_id else {}),
+                },
+            )
             resp.raise_for_status()
             return resp.json().get("id")
 
@@ -278,19 +284,21 @@ class MattermostMediaHandler(MediaHandler):
         while remaining:
             batch = remaining[:MAX_FILES_PER_POST]
             remaining = remaining[MAX_FILES_PER_POST:]
-            resp = await self._http.post("/posts", json={
-                "channel_id": channel_id,
-                "message": "",
-                "file_ids": batch,
-                "root_id": thread_root,
-            })
+            resp = await self._http.post(
+                "/posts",
+                json={
+                    "channel_id": channel_id,
+                    "message": "",
+                    "file_ids": batch,
+                    "root_id": thread_root,
+                },
+            )
             resp.raise_for_status()
 
         return first_post_id
 
 
-async def upload_and_collect(handler: MediaHandler, channel_id: str,
-                             media_items: list[dict]) -> list[str]:
+async def upload_and_collect(handler: MediaHandler, channel_id: str, media_items: list[dict]) -> list[str]:
     """Upload file media items via handler, return list of file_ids.
 
     URL-type items are skipped (handled differently by the caller).

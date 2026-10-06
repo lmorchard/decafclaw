@@ -220,13 +220,16 @@ class TestSplitFrontmatter:
         assert raw == "title: T"
         assert body == "---\nAn hr, not a delimiter.\n"
 
-    @pytest.mark.parametrize("text", [
-        "---\ntitle: Test\n---\n# Hello\nBody.",
-        "# No frontmatter here.\n",
-        "---\n\n---\nEmpty block.",
-        "---\nbroken: : yaml\n---\n",
-        "---\ntitle: T\n---\n---\nhr body\n",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "---\ntitle: Test\n---\n# Hello\nBody.",
+            "# No frontmatter here.\n",
+            "---\n\n---\nEmpty block.",
+            "---\nbroken: : yaml\n---\n",
+            "---\ntitle: T\n---\n---\nhr body\n",
+        ],
+    )
     def test_round_trip_is_byte_identical(self, text):
         assert join_frontmatter(*split_frontmatter(text)) == text
 
@@ -277,7 +280,9 @@ class TestMergeFrontmatter:
 
     def test_overwrite_false_keeps_existing_value(self):
         merged = merge_frontmatter(
-            {"summary": "old"}, {"summary": "new"}, overwrite=False,
+            {"summary": "old"},
+            {"summary": "new"},
+            overwrite=False,
         )
         assert merged == {"summary": "old"}
 
@@ -285,7 +290,9 @@ class TestMergeFrontmatter:
     def test_overwrite_false_fills_absent_or_empty(self, empty):
         """None / "" / [] all count as unset, so they get filled."""
         merged = merge_frontmatter(
-            {"summary": empty}, {"summary": "new"}, overwrite=False,
+            {"summary": empty},
+            {"summary": "new"},
+            overwrite=False,
         )
         assert merged == {"summary": "new"}
 
@@ -296,7 +303,9 @@ class TestMergeFrontmatter:
     def test_overwrite_false_does_not_fill_falsy_but_set_values(self):
         """0.0 and False are real values, not "empty" — they must survive."""
         merged = merge_frontmatter(
-            {"importance": 0.0}, {"importance": 0.9}, overwrite=False,
+            {"importance": 0.0},
+            {"importance": 0.9},
+            overwrite=False,
         )
         assert merged == {"importance": 0.0}
 
@@ -337,7 +346,9 @@ class TestMergeFrontmatter:
 
     def test_unknown_fields_pass_through_uncoerced(self):
         merged = merge_frontmatter(
-            {}, {"aliases": ["a", 1]}, overwrite=True,
+            {},
+            {"aliases": ["a", 1]},
+            overwrite=True,
         )
         assert merged == {"aliases": ["a", 1]}
 
@@ -371,8 +382,7 @@ class TestToJsonSafe:
     """
 
     def test_plain_scalars_pass_through_unchanged(self):
-        value = {"title": "W26", "importance": 0.7, "n": 3,
-                 "flag": True, "empty": None}
+        value = {"title": "W26", "importance": 0.7, "n": 3, "flag": True, "empty": None}
         assert to_json_safe(value) == value
 
     def test_date_becomes_iso_string(self):
@@ -385,8 +395,7 @@ class TestToJsonSafe:
         assert to_json_safe(meta)["when"].startswith("2026-06-22T14:30:00")
 
     def test_nested_dates_in_lists_and_dicts(self):
-        value = {"outer": {"date": datetime.date(2026, 6, 22)},
-                 "seen": [datetime.date(2026, 1, 1), "x"]}
+        value = {"outer": {"date": datetime.date(2026, 6, 22)}, "seen": [datetime.date(2026, 1, 1), "x"]}
         assert to_json_safe(value) == {
             "outer": {"date": "2026-06-22"},
             "seen": ["2026-01-01", "x"],
@@ -411,9 +420,7 @@ class TestToJsonSafe:
 
     def test_result_actually_serializes(self):
         """The whole point: the output survives a real json.dumps."""
-        meta, _ = parse_frontmatter(
-            "---\ndate: 2026-06-22\ntags: [blog]\nimportance: 0.5\n---\nB\n"
-        )
+        meta, _ = parse_frontmatter("---\ndate: 2026-06-22\ntags: [blog]\nimportance: 0.5\n---\nB\n")
         with pytest.raises(TypeError):
             json.dumps(meta)
         assert json.loads(json.dumps(to_json_safe(meta)))["date"] == "2026-06-22"

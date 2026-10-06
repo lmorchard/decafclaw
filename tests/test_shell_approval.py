@@ -47,19 +47,22 @@ def test_match_multiple_patterns():
 # into "anything sharing this prefix". See #649.
 
 
-@pytest.mark.parametrize("suffix", [
-    "; rm -rf ~",
-    " && rm -rf ~",
-    " || rm -rf ~",
-    " | sh",
-    " `whoami`",
-    " $(cat /etc/passwd)",
-    "\nrm -rf ~",
-    # Bare `&` backgrounds the first command and runs the second — chaining
-    # without any of the more obvious tokens.
-    " & rm -rf ~",
-    "& rm -rf ~",
-])
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "; rm -rf ~",
+        " && rm -rf ~",
+        " || rm -rf ~",
+        " | sh",
+        " `whoami`",
+        " $(cat /etc/passwd)",
+        "\nrm -rf ~",
+        # Bare `&` backgrounds the first command and runs the second — chaining
+        # without any of the more obvious tokens.
+        " & rm -rf ~",
+        "& rm -rf ~",
+    ],
+)
 def test_wildcard_pattern_rejects_chained_command(suffix):
     """A wildcard pattern must not match a command carrying chain tokens."""
     command = f"python scripts/foo.py --arg val{suffix}"
@@ -73,9 +76,7 @@ def test_wildcard_pattern_rejects_chaining_for_bare_glob():
 
 def test_wildcard_pattern_still_matches_clean_command():
     """Guard must not regress ordinary wildcard matching."""
-    assert _command_matches_pattern(
-        "python scripts/foo.py --arg val", ["python scripts/foo.py *"]
-    ) is True
+    assert _command_matches_pattern("python scripts/foo.py --arg val", ["python scripts/foo.py *"]) is True
 
 
 def test_exact_pattern_allows_metacharacters():
@@ -89,9 +90,7 @@ def test_exact_pattern_allows_metacharacters():
 
 def test_exact_pattern_does_not_match_extended_command():
     """A literal pattern still only matches itself, not a longer command."""
-    assert _command_matches_pattern(
-        "git log | head -20; rm -rf ~", ["git log | head -20"]
-    ) is False
+    assert _command_matches_pattern("git log | head -20; rm -rf ~", ["git log | head -20"]) is False
 
 
 # -- persisted allowlist honors the guard end-to-end --
@@ -180,7 +179,6 @@ def test_save_pattern_no_duplicates(config):
 # -- aux LLM tests --
 
 
-
 @pytest.mark.asyncio
 async def test_allowlist_bypasses_aux_llm(ctx):
     # Enable aux approval
@@ -201,6 +199,7 @@ async def test_allowlist_bypasses_aux_llm(ctx):
         assert result == "output"
         # Aux LLM should NOT have been called because allowlist approved it instantly
         mock_aux_llm.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_aux_llm_auto_approve(ctx):
@@ -228,6 +227,7 @@ async def test_aux_llm_auto_approve(ctx):
         mock_aux_llm.assert_not_called()
         mock_call.assert_not_called()
 
+
 @pytest.mark.asyncio
 async def test_aux_llm_deny_or_error_falls_through(ctx):
     ctx.config.shell.aux_approval_enabled = True
@@ -249,7 +249,7 @@ async def test_aux_llm_deny_or_error_falls_through(ctx):
         mock_call.assert_awaited_once()
 
     # Case 2: Aux LLM errors out (malformed JSON)
-    mock_call = AsyncMock(return_value={"content": 'INVALID JSON'})
+    mock_call = AsyncMock(return_value={"content": "INVALID JSON"})
     mock_aux_llm = MagicMock(return_value=mock_call)
     ctx.aux_llm = mock_aux_llm
 

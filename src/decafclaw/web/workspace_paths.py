@@ -28,14 +28,40 @@ READONLY_PATTERNS = (
     ".schedule_last_run/*",
 )
 
-TEXT_EXTENSIONS = frozenset({
-    ".md", ".py", ".json", ".yaml", ".yml", ".sh",
-    ".js", ".ts", ".css", ".html", ".txt",
-    ".toml", ".ini", ".cfg", ".conf", ".log", ".csv", ".sql",
-})
-IMAGE_EXTENSIONS = frozenset({
-    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico",
-})
+TEXT_EXTENSIONS = frozenset(
+    {
+        ".md",
+        ".py",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".sh",
+        ".js",
+        ".ts",
+        ".css",
+        ".html",
+        ".txt",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".log",
+        ".csv",
+        ".sql",
+    }
+)
+IMAGE_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".webp",
+        ".bmp",
+        ".ico",
+    }
+)
 
 
 def resolve_safe(root: Path, rel: str) -> Path | None:

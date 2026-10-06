@@ -35,7 +35,9 @@ def tool_notes_append(ctx: "Context", text: str) -> ToolResult:
     conv_id = _resolve_conv_id(ctx)
     try:
         note = notes_core.append_note(
-            ctx.config, conv_id, text,
+            ctx.config,
+            conv_id,
+            text,
             max_chars=ctx.config.notes.max_entry_chars,
             max_total_entries=ctx.config.notes.max_total_entries,
         )
@@ -43,8 +45,8 @@ def tool_notes_append(ctx: "Context", text: str) -> ToolResult:
         return ToolResult(text=f"[error: {exc}]")
     return ToolResult(
         text=f"Saved note ({len(note.text)} chars). Recent notes are "
-             f"auto-loaded into context on interactive turns; you can "
-             f"also read them back via `notes_read`.",
+        f"auto-loaded into context on interactive turns; you can "
+        f"also read them back via `notes_read`.",
         data={
             "timestamp": note.timestamp,
             "chars": len(note.text),
@@ -70,10 +72,7 @@ def tool_notes_read(ctx: "Context", limit: int = 20) -> ToolResult:
         text=rendered,
         data={
             "count": len(items),
-            "notes": [
-                {"timestamp": n.timestamp, "text": n.text}
-                for n in items
-            ],
+            "notes": [{"timestamp": n.timestamp, "text": n.text} for n in items],
         },
     )
 
@@ -108,10 +107,7 @@ NOTES_TOOL_DEFINITIONS = [
                 "properties": {
                     "text": {
                         "type": "string",
-                        "description": (
-                            "Single-line note (newlines are collapsed). "
-                            "Truncated silently if very long."
-                        ),
+                        "description": ("Single-line note (newlines are collapsed). Truncated silently if very long."),
                     },
                 },
                 "required": ["text"],

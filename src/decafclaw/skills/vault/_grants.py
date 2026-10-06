@@ -74,8 +74,7 @@ def read_grants(config, conv_id: str) -> set[str]:
                     result.add(norm)
         return result
     except (json.JSONDecodeError, OSError):
-        log.warning("Failed to read vault grants for %s; treating as empty",
-                    conv_id, exc_info=True)
+        log.warning("Failed to read vault grants for %s; treating as empty", conv_id, exc_info=True)
         return set()
 
 

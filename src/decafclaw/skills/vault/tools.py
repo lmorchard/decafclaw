@@ -47,6 +47,7 @@ log = logging.getLogger(__name__)
 # Path helpers
 # ---------------------------------------------------------------------------
 
+
 def _vault_root(config) -> Path:
     return config.vault_root
 
@@ -95,6 +96,7 @@ def resolve_page(config, page: str, from_page: str | None = None) -> Path | None
     matches.sort(key=lambda p: str(p))
     if from_page:
         from_dir = (vault / from_page).parent
+
         def _distance(p: Path) -> int:
             """Count path components between from_dir and p's parent."""
             try:
@@ -106,6 +108,7 @@ def resolve_page(config, page: str, from_page: str | None = None) -> Path | None
                     return len(rel.parts)
                 except ValueError:
                     return 999
+
         matches.sort(key=_distance)
 
     return matches[0]
@@ -249,16 +252,17 @@ async def _run_gate_or_confirm(
         return ToolResult(text=non_interactive_error)
     if any(o == GateOutcome.NEEDS_CONFIRMATION for o in outcomes):
         approval = await request_confirmation(
-            ctx, tool_name=tool_name, command=command, message=preview,
+            ctx,
+            tool_name=tool_name,
+            command=command,
+            message=preview,
         )
         if not approval.get("approved"):
             return ToolResult(text=denied_error)
     return None
 
 
-def _format_vault_write_preview(
-    config, path: Path, content: str, exists: bool
-) -> str:
+def _format_vault_write_preview(config, path: Path, content: str, exists: bool) -> str:
     """Confirmation preview for vault_write. Mirrors email's preview helper."""
     try:
         rel = str(path.resolve().relative_to(config.vault_root.resolve()))
@@ -267,13 +271,15 @@ def _format_vault_write_preview(
     state = "(overwrites existing page)" if exists else "(new page)"
     size_kb = len(content.encode("utf-8")) / 1024
     preview = content[:200] + ("..." if len(content) > 200 else "")
-    return "\n".join([
-        f"Vault write to: {rel}",
-        state,
-        f"Content: {size_kb:.1f} KB",
-        "---",
-        preview,
-    ])
+    return "\n".join(
+        [
+            f"Vault write to: {rel}",
+            state,
+            f"Content: {size_kb:.1f} KB",
+            "---",
+            preview,
+        ]
+    )
 
 
 def _format_vault_delete_preview(config, path: Path) -> str:
@@ -282,14 +288,13 @@ def _format_vault_delete_preview(config, path: Path) -> str:
         rel = str(path.resolve().relative_to(config.vault_root.resolve()))
     except ValueError:
         rel = path.name
-    return (
-        f"Vault delete: {rel}\n"
-        f"(cannot be undone — page and embeddings will be removed)"
-    )
+    return f"Vault delete: {rel}\n(cannot be undone — page and embeddings will be removed)"
 
 
 def _format_vault_update_frontmatter_preview(
-    config, path: Path, fields: dict,
+    config,
+    path: Path,
+    fields: dict,
 ) -> str:
     """Confirmation preview for vault_update_frontmatter."""
     try:
@@ -301,11 +306,13 @@ def _format_vault_update_frontmatter_preview(
 
 def _format_vault_rename_preview(config, old_path: Path, new_path: Path) -> str:
     """Confirmation preview for vault_rename. Shows both paths."""
+
     def _rel(p: Path) -> str:
         try:
             return str(p.resolve().relative_to(config.vault_root.resolve()))
         except ValueError:
             return p.name
+
     return f"Vault rename: {_rel(old_path)} → {_rel(new_path)}"
 
 
@@ -339,6 +346,7 @@ def _source_type_for_path(config, path: Path) -> str:
 # Tools
 # ---------------------------------------------------------------------------
 
+
 async def tool_vault_read(ctx: "Context", page: str) -> str | ToolResult:
     """Read a vault page by name or path."""
     log.info(f"[tool:vault_read] page={page}")
@@ -346,9 +354,7 @@ async def tool_vault_read(ctx: "Context", page: str) -> str | ToolResult:
     if path is None:
         suggestions = suggest_pages(ctx.config, page)
         if suggestions:
-            return ToolResult(
-                text=f"[error: vault page '{page}' not found. Did you mean: {', '.join(suggestions)}?]"
-            )
+            return ToolResult(text=f"[error: vault page '{page}' not found. Did you mean: {', '.join(suggestions)}?]")
         return ToolResult(text=f"[error: vault page '{page}' not found]")
     content = path.read_text()
     # Structured metadata for programmatic callers (code_execution sandbox).
@@ -356,6 +362,7 @@ async def tool_vault_read(ctx: "Context", page: str) -> str | ToolResult:
     # double the tool-result token cost. Frontmatter is small and useful for
     # filtering / sorting in scripts.
     from decafclaw.frontmatter import parse_frontmatter, to_json_safe
+
     frontmatter, body = parse_frontmatter(content)
     return ToolResult(
         text=content,
@@ -378,8 +385,7 @@ async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | Too
     log.info(f"[tool:vault_write] page={page}")
     path = _safe_write_path(ctx.config, page)
     if path is None:
-        return ToolResult(
-            text=f"[error: invalid page name '{page}' — must be within vault directory]")
+        return ToolResult(text=f"[error: invalid page name '{page}' — must be within vault directory]")
     if not content or not content.strip():
         return ToolResult(text=f"[error: refusing to write empty vault page '{page}']")
 
@@ -389,9 +395,7 @@ async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | Too
         [outcome],
         tool_name="vault_write",
         command=f"vault_write to '{page}'",
-        preview=_format_vault_write_preview(
-            ctx.config, path, content, path.exists()
-        ),
+        preview=_format_vault_write_preview(ctx.config, path, content, path.exists()),
         non_interactive_error=(
             f"[error: vault_write to '{page}' outside agent folder "
             f"requires interactive confirmation; not available from this context]"
@@ -410,6 +414,7 @@ async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | Too
     try:
         from decafclaw.embeddings import delete_entries, index_entry
         from decafclaw.frontmatter import build_composite_text, parse_frontmatter
+
         rel_path = str(path.resolve().relative_to(ctx.config.vault_root.resolve()))
         delete_entries(ctx.config, rel_path, source_type=source_type)
         metadata, body = parse_frontmatter(content)
@@ -419,7 +424,8 @@ async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | Too
         log.warning(f"Failed to index vault page '{page}': {e}")
 
     await publish_vault_changed(
-        ctx.event_bus, ctx.config,
+        ctx.event_bus,
+        ctx.config,
         kind=KIND_UPDATE if existed else KIND_CREATE,
         path=path,
     )
@@ -439,8 +445,7 @@ async def tool_vault_delete(ctx: "Context", page: str) -> ToolResult:
     log.info(f"[tool:vault_delete] page={page}")
     path = _safe_write_path(ctx.config, page)
     if path is None:
-        return ToolResult(
-            text=f"[error: invalid page name '{page}' — must be within vault directory]")
+        return ToolResult(text=f"[error: invalid page name '{page}' — must be within vault directory]")
     if not path.exists():
         return ToolResult(text=f"[error: vault page '{page}' not found]")
 
@@ -478,12 +483,16 @@ async def tool_vault_delete(ctx: "Context", page: str) -> ToolResult:
     # Remove from embedding index
     try:
         from decafclaw.embeddings import delete_entries
+
         delete_entries(ctx.config, rel_path, source_type=source_type)
     except Exception as e:
         log.warning(f"Failed to remove embeddings for '{page}': {e}")
 
     await publish_vault_changed(
-        ctx.event_bus, ctx.config, kind=KIND_DELETE, path=path,
+        ctx.event_bus,
+        ctx.config,
+        kind=KIND_DELETE,
+        path=path,
     )
     return ToolResult(text=f"Vault page '{page}' deleted.")
 
@@ -495,12 +504,10 @@ async def tool_vault_rename(ctx: "Context", page: str, rename_to: str) -> ToolRe
     log.info(f"[tool:vault_rename] {page} -> {rename_to}")
     old_path = _safe_write_path(ctx.config, page)
     if old_path is None:
-        return ToolResult(
-            text=f"[error: invalid page name '{page}' — must be within vault directory]")
+        return ToolResult(text=f"[error: invalid page name '{page}' — must be within vault directory]")
     new_path = _safe_write_path(ctx.config, rename_to)
     if new_path is None:
-        return ToolResult(
-            text=f"[error: invalid target '{rename_to}' — must be within vault directory]")
+        return ToolResult(text=f"[error: invalid target '{rename_to}' — must be within vault directory]")
     if not old_path.exists():
         return ToolResult(text=f"[error: vault page '{page}' not found]")
     if new_path.exists():
@@ -547,6 +554,7 @@ async def tool_vault_rename(ctx: "Context", page: str, rename_to: str) -> ToolRe
     try:
         from decafclaw.embeddings import delete_entries, index_entry
         from decafclaw.frontmatter import build_composite_text, parse_frontmatter
+
         delete_entries(ctx.config, old_rel, source_type=old_source_type)
         new_rel = str(new_path.resolve().relative_to(vault_resolved))
         new_source_type = _source_type_for_path(ctx.config, new_path)
@@ -558,7 +566,10 @@ async def tool_vault_rename(ctx: "Context", page: str, rename_to: str) -> ToolRe
         log.warning(f"Failed to re-index after rename '{page}' -> '{rename_to}': {e}")
 
     await publish_vault_changed(
-        ctx.event_bus, ctx.config, kind=KIND_RENAME, path=new_path,
+        ctx.event_bus,
+        ctx.config,
+        kind=KIND_RENAME,
+        path=new_path,
     )
     return ToolResult(text=f"Vault page '{page}' renamed to '{rename_to}'.")
 
@@ -600,24 +611,17 @@ async def tool_vault_grant_folder(ctx: "Context", folder: str, reason: str) -> T
     try:
         agent = _agent_dir(ctx.config).resolve()
         if candidate.is_relative_to(agent):
-            return ToolResult(
-                text=f"[error: '{folder}' is inside the agent folder; no grant needed]"
-            )
+            return ToolResult(text=f"[error: '{folder}' is inside the agent folder; no grant needed]")
     except (ValueError, OSError):
         pass
 
     # Validate context BEFORE prompting, so we never ask for a doomed grant.
     if ctx.request_confirmation is None:
         return ToolResult(
-            text=(
-                "[error: vault_grant_folder requires interactive confirmation; "
-                "not available from this context]"
-            )
+            text=("[error: vault_grant_folder requires interactive confirmation; not available from this context]")
         )
     if not ctx.conv_id:
-        return ToolResult(
-            text="[error: vault_grant_folder requires a conversation context]"
-        )
+        return ToolResult(text="[error: vault_grant_folder requires a conversation context]")
 
     rel = str(candidate.relative_to(vault)).replace("\\", "/")
     if not rel.endswith("/"):
@@ -637,9 +641,7 @@ async def tool_vault_grant_folder(ctx: "Context", folder: str, reason: str) -> T
         return ToolResult(text=f"[error: folder grant for '{rel}' was denied by user]")
 
     if not add_grant(ctx.config, ctx.conv_id, rel):
-        return ToolResult(
-            text=f"[error: failed to persist folder grant for '{rel}']"
-        )
+        return ToolResult(text=f"[error: failed to persist folder grant for '{rel}']")
     return ToolResult(text=f"Folder '{rel}' trusted for this conversation.")
 
 
@@ -657,9 +659,7 @@ async def tool_vault_journal_append(ctx: "Context", tags: list[str], content: st
     # (Obsidian-style #tags don't allow spaces), so it's skipped there and
     # only surfaces via the bullet.
     stripped_tags = [t.lstrip("#").strip() for t in tags]
-    inline_tags = [
-        t for t in stripped_tags if t and not any(ch.isspace() for ch in t)
-    ]
+    inline_tags = [t for t in stripped_tags if t and not any(ch.isspace() for ch in t)]
     inline_tag_line = " ".join(f"#{t}" for t in inline_tags)
 
     entry = f"\n## {now:%Y-%m-%d %H:%M}\n\n"
@@ -681,8 +681,8 @@ async def tool_vault_journal_append(ctx: "Context", tags: list[str], content: st
     # Index for semantic search
     try:
         from decafclaw.embeddings import index_entry
-        rel_path = str(filepath.resolve().relative_to(
-            ctx.config.vault_root.resolve()))
+
+        rel_path = str(filepath.resolve().relative_to(ctx.config.vault_root.resolve()))
         # Format the full entry for embedding (self-contained with date/metadata)
         entry_text = f"## {now:%Y-%m-%d %H:%M}\n\n"
         if channel_name or channel_id:
@@ -693,13 +693,15 @@ async def tool_vault_journal_append(ctx: "Context", tags: list[str], content: st
         if inline_tag_line:
             entry_text += f"{inline_tag_line}\n"
         entry_text += f"\n{content}"
-        await index_entry(ctx.config, rel_path, entry_text,
-                          source_type="journal")
+        await index_entry(ctx.config, rel_path, entry_text, source_type="journal")
     except Exception as e:
         log.warning(f"Failed to index journal entry: {e}")
 
     await publish_vault_changed(
-        ctx.event_bus, ctx.config, kind=KIND_JOURNAL, path=filepath,
+        ctx.event_bus,
+        ctx.config,
+        kind=KIND_JOURNAL,
+        path=filepath,
     )
     log.info(f"Saved journal entry tagged [{tag_str}]")
     vault_root = ctx.config.vault_root.resolve()
@@ -714,10 +716,15 @@ async def tool_vault_journal_append(ctx: "Context", tags: list[str], content: st
     )
 
 
-async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = "",
-                            days: int = 0, folder: str = "",
-                            tags: list[str] | None = None,
-                            any_tag: bool = False) -> str | ToolResult:
+async def tool_vault_search(
+    ctx: "Context",
+    query: str = "",
+    source_type: str = "",
+    days: int = 0,
+    folder: str = "",
+    tags: list[str] | None = None,
+    any_tag: bool = False,
+) -> str | ToolResult:
     """Search the vault using semantic or substring matching, optionally
     filtered by tag.
 
@@ -741,14 +748,15 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
     search results (#673).
     """
     req_tags = {normalize_tag(t) for t in tags} if tags else set()
-    log.info(f"[tool:vault_search] query={query!r} source_type={source_type} "
-             f"days={days} folder={folder} tags={sorted(req_tags)} "
-             f"any_tag={any_tag}")
+    log.info(
+        f"[tool:vault_search] query={query!r} source_type={source_type} "
+        f"days={days} folder={folder} tags={sorted(req_tags)} "
+        f"any_tag={any_tag}"
+    )
 
     vault = _vault_root(ctx.config)
     if not vault.is_dir():
-        return ToolResult(text="Vault directory does not exist.",
-                          display_short_text="no vault")
+        return ToolResult(text="Vault directory does not exist.", display_short_text="no vault")
 
     if folder:
         safe = _safe_folder(ctx.config, folder)
@@ -765,13 +773,14 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
     # every markdown file, so a truthiness test here would let `query=" "`
     # return the whole vault — the exact defect this guard exists to stop, one
     # character away from the refused call.
-    if (not query.strip() and not req_tags and not folder
-            and not source_type and days <= 0):
+    if not query.strip() and not req_tags and not folder and not source_type and days <= 0:
         return ToolResult(
-            text=("[error: vault_search needs at least one of `query`, `tags`, "
-                  "`folder`, `source_type` or `days`. A call with none of them is not a "
-                  "search — it would return every page in the vault. Use "
-                  "`vault_list` to enumerate pages, or retry with a query.]"),
+            text=(
+                "[error: vault_search needs at least one of `query`, `tags`, "
+                "`folder`, `source_type` or `days`. A call with none of them is not a "
+                "search — it would return every page in the vault. Use "
+                "`vault_list` to enumerate pages, or retry with a query.]"
+            ),
             display_short_text="no search criteria",
         )
 
@@ -780,52 +789,44 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
     # rather than falling through to a substring scan of the whole vault that
     # is then tag-filtered to the same answer, more expensively.
     if not query.strip() and req_tags:
-        return _tag_filter_search(ctx.config, req_tags, any_tag,
-                                  source_type=source_type, folder=folder,
-                                  days=days)
-
+        return _tag_filter_search(ctx.config, req_tags, any_tag, source_type=source_type, folder=folder, days=days)
 
     # Try semantic search first
     if ctx.config.embedding.search_strategy == "semantic":
         try:
             from decafclaw.embeddings import search_similar
+
             st = source_type if source_type else None
-            results = await search_similar(ctx.config, query, top_k=10,
-                                           source_type=st)
+            results = await search_similar(ctx.config, query, top_k=10, source_type=st)
 
             # Apply days filter
             if days > 0:
                 from datetime import timedelta
+
                 cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
                 filtered = []
                 for r in results:
                     fp = vault / r.get("file_path", "")
                     if fp.exists():
-                        mtime = datetime.fromtimestamp(
-                            fp.stat().st_mtime, tz=timezone.utc)
+                        mtime = datetime.fromtimestamp(fp.stat().st_mtime, tz=timezone.utc)
                         if mtime >= cutoff:
                             filtered.append(r)
                 results = filtered
 
             # Apply folder filter
             if folder:
-                results = [r for r in results
-                           if r.get("file_path", "").startswith(folder)]
+                results = [r for r in results if r.get("file_path", "").startswith(folder)]
 
             # Apply tag filter (post-search: drop non-matching results)
             if req_tags:
-                results = [r for r in results
-                           if _semantic_result_matches_tags(
-                               ctx.config, r, req_tags, any_tag)]
+                results = [r for r in results if _semantic_result_matches_tags(ctx.config, r, req_tags, any_tag)]
 
             if results:
                 lines = [f"Found {len(results)} result(s):\n"]
                 for i, r in enumerate(results):
                     sim = f"{r['similarity']:.2f}"
                     src = r.get("source_type", "?")
-                    lines.append(
-                        f"--- Result {i+1} [{src}] (relevance: {sim}) ---\n"
-                        f"{r['entry_text']}")
+                    lines.append(f"--- Result {i + 1} [{src}] (relevance: {sim}) ---\n{r['entry_text']}")
                 text = "\n\n".join(lines)
                 widget = _semantic_results_widget(query, results)
                 # Structured shape for programmatic callers. Mirrors the
@@ -848,20 +849,20 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
                         "query": query,
                         "mode": "semantic",
                         "results": data_results,
-                    })
+                    },
+                )
             # Fall through to substring
             log.info("Semantic search returned no results, falling back to substring")
         except Exception as e:
             log.error(f"Semantic search failed, falling back to substring: {e}")
 
     # Substring search across vault
-    return _substring_search(ctx.config, query, days=days, folder=folder,
-                             req_tags=req_tags, any_tag=any_tag,
-                             source_type=source_type)
+    return _substring_search(
+        ctx.config, query, days=days, folder=folder, req_tags=req_tags, any_tag=any_tag, source_type=source_type
+    )
 
 
-def _semantic_result_matches_tags(config, result: dict, req_tags: set[str],
-                                  any_tag: bool) -> bool:
+def _semantic_result_matches_tags(config, result: dict, req_tags: set[str], any_tag: bool) -> bool:
     """Fail-open per-result tag check for a semantic search result row.
 
     Reads the result's source file directly (results carry composite
@@ -885,9 +886,9 @@ def _semantic_result_matches_tags(config, result: dict, req_tags: set[str],
     return req_tags <= file_tags
 
 
-def _tag_filter_search(config, req_tags: set[str], any_tag: bool,
-                       source_type: str = "", folder: str = "",
-                       days: int = 0) -> ToolResult:
+def _tag_filter_search(
+    config, req_tags: set[str], any_tag: bool, source_type: str = "", folder: str = "", days: int = 0
+) -> ToolResult:
     """Pure tag filter (empty query): list vault pages matching the tag
     filter, formatted like the existing no-query substring search output.
     """
@@ -923,8 +924,7 @@ def _tag_filter_search(config, req_tags: set[str], any_tag: bool,
         return ToolResult(
             text=f"No pages found matching tags {tag_list}.",
             display_short_text="tags — no results",
-            data={"query": "", "mode": "tags", "tags": tag_list,
-                 "any_tag": any_tag, "results": []},
+            data={"query": "", "mode": "tags", "tags": tag_list, "any_tag": any_tag, "results": []},
         )
 
     text = f"Found {len(lines)} result(s):\n\n" + "\n".join(lines)
@@ -933,27 +933,31 @@ def _tag_filter_search(config, req_tags: set[str], any_tag: bool,
         text=text,
         display_short_text=f"tags {tag_list} — {len(lines)} result(s)",
         widget=widget,
-        data={"query": "", "mode": "tags", "tags": tag_list,
-             "any_tag": any_tag, "results": rows},
+        data={"query": "", "mode": "tags", "tags": tag_list, "any_tag": any_tag, "results": rows},
     )
 
 
-def _substring_search(config, query: str, days: int = 0, folder: str = "",
-                      req_tags: set[str] | None = None,
-                      any_tag: bool = False,
-                      source_type: str = "") -> str | ToolResult:
+def _substring_search(
+    config,
+    query: str,
+    days: int = 0,
+    folder: str = "",
+    req_tags: set[str] | None = None,
+    any_tag: bool = False,
+    source_type: str = "",
+) -> str | ToolResult:
     """Substring search across vault markdown files."""
     vault = _vault_root(config)
     search_root = vault / folder if folder else vault
 
     if not search_root.is_dir():
-        return ToolResult(text=f"No pages found in '{folder}'.",
-                          display_short_text=f"'{query}' — no results")
+        return ToolResult(text=f"No pages found in '{folder}'.", display_short_text=f"'{query}' — no results")
 
     query_lower = query.lower() if query else ""
     cutoff = None
     if days > 0:
         from datetime import timedelta
+
         cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
 
     # Structured rows parallel to the markdown lines, for the data_table
@@ -973,9 +977,7 @@ def _substring_search(config, query: str, days: int = 0, folder: str = "",
 
         if not query_lower:
             # No query — list recent files.
-            mtime_str = datetime.fromtimestamp(
-                path.stat().st_mtime, tz=timezone.utc
-            ).strftime("%Y-%m-%d %H:%M")
+            mtime_str = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
             lines.append(f"- {page} (modified: {mtime_str})")
             rows.append({"page": page, "modified": mtime_str})
             continue
@@ -985,13 +987,11 @@ def _substring_search(config, query: str, days: int = 0, folder: str = "",
         if query_lower in name.lower() or query_lower in text.lower():
             if req_tags:
                 try:
-                    file_tags = extract_tags(
-                        text, _source_type_for_path(config, path))
+                    file_tags = extract_tags(text, _source_type_for_path(config, path))
                 except Exception as exc:
                     log.debug(f"vault_search: failed reading/tagging {path} for tag filter: {exc}")
                     continue
-                matches = (bool(file_tags & req_tags) if any_tag
-                          else req_tags <= file_tags)
+                matches = bool(file_tags & req_tags) if any_tag else req_tags <= file_tags
                 if not matches:
                     continue
             excerpt = ""
@@ -1020,20 +1020,21 @@ def _substring_search(config, query: str, days: int = 0, folder: str = "",
     )
 
 
-def _semantic_results_widget(query: str,
-                             results: list[dict]) -> WidgetRequest:
+def _semantic_results_widget(query: str, results: list[dict]) -> WidgetRequest:
     """Build a data_table WidgetRequest for semantic vault_search results."""
     rows = []
     for r in results:
         snippet = (r.get("entry_text") or "").strip()
         if len(snippet) > 160:
             snippet = snippet[:160].rstrip() + "…"
-        rows.append({
-            "page": r.get("file_path", "").removesuffix(".md"),
-            "similarity": round(float(r.get("similarity", 0.0)), 3),
-            "source": r.get("source_type", "?"),
-            "snippet": snippet,
-        })
+        rows.append(
+            {
+                "page": r.get("file_path", "").removesuffix(".md"),
+                "similarity": round(float(r.get("similarity", 0.0)), 3),
+                "source": r.get("source_type", "?"),
+                "snippet": snippet,
+            }
+        )
     caption = f'vault_search: "{query}" — {len(results)} result(s)'
     return WidgetRequest(
         widget_type="data_table",
@@ -1050,8 +1051,7 @@ def _semantic_results_widget(query: str,
     )
 
 
-def _substring_results_widget(query: str,
-                              rows: list[dict]) -> WidgetRequest:
+def _substring_results_widget(query: str, rows: list[dict]) -> WidgetRequest:
     """Build a data_table WidgetRequest for substring vault_search results.
 
     Column set depends on whether a query was provided: without a query,
@@ -1095,8 +1095,7 @@ async def tool_vault_list(ctx: "Context", folder: str = "", pattern: str = "") -
 
     for path in sorted(search_root.rglob(glob_pattern)):
         rel = path.relative_to(vault)
-        mtime = datetime.fromtimestamp(
-            path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
         display = str(rel.with_suffix(""))
         pages.append(f"- {display} (modified: {mtime})")
 
@@ -1111,8 +1110,7 @@ async def tool_vault_list(ctx: "Context", folder: str = "", pattern: str = "") -
     return f"{len(pages)} page(s):\n\n" + "\n".join(pages)
 
 
-def collect_recent_pages(config, cutoff_ts: float, folder: str = "",
-                         source_type: str = "") -> list[dict]:
+def collect_recent_pages(config, cutoff_ts: float, folder: str = "", source_type: str = "") -> list[dict]:
     """Vault ``.md`` pages modified at/after ``cutoff_ts`` (epoch seconds).
 
     Returns ``[{path, mtime (float), source_type, size}]`` (unsorted; callers
@@ -1143,30 +1141,36 @@ def collect_recent_pages(config, cutoff_ts: float, folder: str = "",
         # Use the resolved pair consistently: when vault_root is a symlink and
         # `folder` is given, search_root (and thus `path`) is resolved while
         # `vault` is not, so `path.relative_to(vault)` would raise ValueError.
-        out.append({
-            "path": resolved.relative_to(vault_resolved).as_posix(),
-            "mtime": stat.st_mtime,
-            "source_type": st,
-            "size": stat.st_size,
-        })
+        out.append(
+            {
+                "path": resolved.relative_to(vault_resolved).as_posix(),
+                "mtime": stat.st_mtime,
+                "source_type": st,
+                "size": stat.st_size,
+            }
+        )
     return out
 
 
 # Entry header written by ``vault_journal_append``: ``## YYYY-MM-DD HH:MM``.
 # The date pattern makes false positives from body markdown negligible.
-_JOURNAL_ENTRY_HEADER = re.compile(
-    r"^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*$", re.MULTILINE)
+_JOURNAL_ENTRY_HEADER = re.compile(r"^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*$", re.MULTILINE)
 
 
 @dataclass
 class RecentJournalEntry:
     """One parsed journal entry: its header timestamp + full text block."""
+
     timestamp: datetime  # naive local, matching how entries are written
-    text: str            # header + metadata bullets + body, whitespace-stripped
+    text: str  # header + metadata bullets + body, whitespace-stripped
 
 
 def read_recent_journal_entries(
-    config, *, now: datetime, max_hours: int, max_entries: int,
+    config,
+    *,
+    now: datetime,
+    max_hours: int,
+    max_entries: int,
 ) -> list[RecentJournalEntry]:
     """Most-recent journal entries written within ``max_hours`` of ``now``.
 
@@ -1205,7 +1209,7 @@ def read_recent_journal_entries(
             if ts < cutoff:
                 continue
             block_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-            block = text[m.start():block_end].strip()
+            block = text[m.start() : block_end].strip()
             entries.append(RecentJournalEntry(timestamp=ts, text=block))
 
     entries.sort(key=lambda e: e.timestamp)
@@ -1213,22 +1217,18 @@ def read_recent_journal_entries(
 
 
 def format_recent_journal_for_context(
-    entries: list[RecentJournalEntry], max_hours: int,
+    entries: list[RecentJournalEntry],
+    max_hours: int,
 ) -> str:
     """Render recent journal entries as a single context block."""
-    header = (
-        f"Recent journal entries (written in the last {max_hours}h, "
-        "most recent last):"
-    )
+    header = f"Recent journal entries (written in the last {max_hours}h, most recent last):"
     body = "\n\n".join(e.text for e in entries)
     return f"{header}\n\n{body}"
 
 
-async def tool_vault_recent(ctx: "Context", days: int = 7, folder: str = "",
-                            source_type: str = "") -> str | ToolResult:
+async def tool_vault_recent(ctx: "Context", days: int = 7, folder: str = "", source_type: str = "") -> str | ToolResult:
     """List vault pages modified within the last `days`, newest first."""
-    log.info(f"[tool:vault_recent] days={days} folder={folder} "
-             f"source_type={source_type}")
+    log.info(f"[tool:vault_recent] days={days} folder={folder} source_type={source_type}")
     if days <= 0:
         return ToolResult(text="[error: days must be a positive integer]")
     safe = _safe_folder(ctx.config, folder)
@@ -1239,8 +1239,7 @@ async def tool_vault_recent(ctx: "Context", days: int = 7, folder: str = "",
             return ToolResult(text=f"[error: folder '{folder}' does not exist]")
         return "Vault directory does not exist."
     cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=days)).timestamp()
-    rows = collect_recent_pages(ctx.config, cutoff, folder=folder,
-                                source_type=source_type)
+    rows = collect_recent_pages(ctx.config, cutoff, folder=folder, source_type=source_type)
     rows.sort(key=lambda r: r["mtime"], reverse=True)
 
     scope = f" in '{folder}'" if folder else ""
@@ -1255,13 +1254,9 @@ async def tool_vault_recent(ctx: "Context", days: int = 7, folder: str = "",
         return datetime.fromtimestamp(ts, tz=timezone.utc)
 
     lines = [
-        f"- {r['path']} ({r['source_type']}, "
-        f"modified: {_fmt(r['mtime']).strftime('%Y-%m-%d %H:%M')})"
-        for r in shown
+        f"- {r['path']} ({r['source_type']}, modified: {_fmt(r['mtime']).strftime('%Y-%m-%d %H:%M')})" for r in shown
     ]
-    header = (
-        f"{len(rows)} page(s) modified in the last {days} day(s){scope}{st_note}"
-    )
+    header = f"{len(rows)} page(s) modified in the last {days} day(s){scope}{st_note}"
     if len(rows) > limit:
         header += f" (showing {limit} most recent)"
     return ToolResult(
@@ -1327,8 +1322,7 @@ async def tool_vault_backlinks(ctx: "Context", page: str) -> str:
 
     # Persisted index tells us WHICH pages link here; re-read just those
     # pages (not the whole vault) to pull a one-line quote for context.
-    full_lower_map, stem_lower_map = _build_page_lookup(
-        sorted(vault.rglob("*.md")), vault)
+    full_lower_map, stem_lower_map = _build_page_lookup(sorted(vault.rglob("*.md")), vault)
 
     results = []
     for linker_rel in linkers:
@@ -1339,13 +1333,10 @@ async def tool_vault_backlinks(ctx: "Context", page: str) -> str:
             continue
         context_line = ""
         for match in _WIKI_LINK_RE.finditer(text):
-            if _resolve_link_target(
-                match.group(1), full_lower_map, stem_lower_map
-            ) == target_rel:
-                line_no = text[:match.start()].count("\n")
+            if _resolve_link_target(match.group(1), full_lower_map, stem_lower_map) == target_rel:
+                line_no = text[: match.start()].count("\n")
                 lines = text.splitlines()
-                context_line = (lines[line_no].strip()[:200]
-                                if line_no < len(lines) else "")
+                context_line = lines[line_no].strip()[:200] if line_no < len(lines) else ""
                 break
         rel_display = Path(linker_rel).with_suffix("")
         results.append(f"- **{rel_display}**: {context_line}")
@@ -1353,9 +1344,7 @@ async def tool_vault_backlinks(ctx: "Context", page: str) -> str:
     return f"{len(results)} page(s) link to '{page}':\n\n" + "\n".join(results)
 
 
-async def tool_vault_show_sections(
-    ctx, page: str, section: str | None = None
-) -> ToolResult:
+async def tool_vault_show_sections(ctx, page: str, section: str | None = None) -> ToolResult:
     """Show a vault page's section outline or a specific section with line numbers."""
     log.info(f"[tool:vault_show_sections] page={page!r} section={section!r}")
     path = resolve_page(ctx.config, page)
@@ -1377,9 +1366,7 @@ async def tool_vault_show_sections(
         return ToolResult(text=f"[error: {describe_section_miss(doc, section)}]")
     start = sec.heading_line
     end = sec.content_end  # exclusive
-    numbered = [
-        f"{i + 1}: {doc.lines[i].rstrip('\n')}" for i in range(start, end)
-    ]
+    numbered = [f"{i + 1}: {doc.lines[i].rstrip('\n')}" for i in range(start, end)]
     return ToolResult(text="\n".join(numbered))
 
 
@@ -1388,6 +1375,7 @@ async def _reindex_page(ctx: "Context", path: Path) -> None:
     try:
         from decafclaw.embeddings import delete_entries, index_entry
         from decafclaw.frontmatter import build_composite_text, parse_frontmatter
+
         rel = str(path.resolve().relative_to(ctx.config.vault_root.resolve()))
         source_type = _source_type_for_path(ctx.config, path)
         content = path.read_text(encoding="utf-8")
@@ -1400,7 +1388,10 @@ async def _reindex_page(ctx: "Context", path: Path) -> None:
 
 
 async def tool_vault_update_frontmatter(
-    ctx, page: str, fields: dict, overwrite: bool = False,
+    ctx,
+    page: str,
+    fields: dict,
+    overwrite: bool = False,
 ) -> ToolResult:
     """Merge frontmatter fields into a vault page (thin wrapper over
     `merge_frontmatter`).
@@ -1428,9 +1419,7 @@ async def tool_vault_update_frontmatter(
                 f"folder requires interactive confirmation; not available "
                 f"from this context]"
             ),
-            denied_error=(
-                f"[error: vault_update_frontmatter on '{page}' was denied by user]"
-            ),
+            denied_error=(f"[error: vault_update_frontmatter on '{page}' was denied by user]"),
         )
         if gate_result is not None:
             return gate_result
@@ -1455,7 +1444,10 @@ async def tool_vault_update_frontmatter(
     path.write_text(serialize_frontmatter(merged, body), encoding="utf-8")
     await _reindex_page(ctx, path)
     await publish_vault_changed(
-        ctx.event_bus, ctx.config, kind=KIND_UPDATE, path=path,
+        ctx.event_bus,
+        ctx.config,
+        kind=KIND_UPDATE,
+        path=path,
     )
 
     return ToolResult(
@@ -1477,17 +1469,12 @@ async def tool_vault_section(
     parent: str | None = None,
 ) -> ToolResult:
     """Section operations on a vault page: add, remove, rename, or move."""
-    log.info(
-        f"[tool:vault_section] page={page!r} action={action!r} "
-        f"section={section!r} title={title!r}"
-    )
+    log.info(f"[tool:vault_section] page={page!r} action={action!r} section={section!r} title={title!r}")
     path = resolve_page(ctx.config, page)
     if path is None or not path.exists():
         return ToolResult(text=f"[error: page not found: {page}]")
     if not _is_in_agent_dir(ctx.config, path):
-        return ToolResult(
-            text=f"[error: cannot modify page outside agent folder: {page}]"
-        )
+        return ToolResult(text=f"[error: cannot modify page outside agent folder: {page}]")
     doc = Document.from_text(path.read_text(encoding="utf-8"))
 
     if action == "add":
@@ -1497,13 +1484,20 @@ async def tool_vault_section(
         if level is not None and (not isinstance(level, int) or level < 1 or level > 6):
             return ToolResult(text=f"[error: level must be between 1 and 6, got {level}]")
         if doc.add_section(
-            title, level=level, content=content or "",
-            after=after, before=before, parent=parent,
+            title,
+            level=level,
+            content=content or "",
+            after=after,
+            before=before,
+            parent=parent,
         ):
             path.write_text(doc.to_text(), encoding="utf-8")
             await _reindex_page(ctx, path)
             await publish_vault_changed(
-                ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
+                ctx.event_bus,
+                ctx.config,
+                kind=KIND_SECTION,
+                path=path,
             )
             return ToolResult(text=f"Added section: {title}")
         target = after or before or parent or ""
@@ -1517,7 +1511,10 @@ async def tool_vault_section(
             path.write_text(doc.to_text(), encoding="utf-8")
             await _reindex_page(ctx, path)
             await publish_vault_changed(
-                ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
+                ctx.event_bus,
+                ctx.config,
+                kind=KIND_SECTION,
+                path=path,
             )
             return ToolResult(text=f"Removed section: {section}")
         return ToolResult(text=f"[error: {describe_section_miss(doc, section)}]")
@@ -1529,7 +1526,10 @@ async def tool_vault_section(
             path.write_text(doc.to_text(), encoding="utf-8")
             await _reindex_page(ctx, path)
             await publish_vault_changed(
-                ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
+                ctx.event_bus,
+                ctx.config,
+                kind=KIND_SECTION,
+                path=path,
             )
             return ToolResult(text=f"Renamed section: {section} → {title}")
         return ToolResult(text=f"[error: {describe_section_miss(doc, section)}]")
@@ -1541,15 +1541,16 @@ async def tool_vault_section(
             path.write_text(doc.to_text(), encoding="utf-8")
             await _reindex_page(ctx, path)
             await publish_vault_changed(
-                ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
+                ctx.event_bus,
+                ctx.config,
+                kind=KIND_SECTION,
+                path=path,
             )
             return ToolResult(text=f"Moved section: {section}")
         return ToolResult(text="[error: section or target not found]")
 
     else:
-        return ToolResult(
-            text=f"[error: unknown action: {action}. Use add/remove/rename/move]"
-        )
+        return ToolResult(text=f"[error: unknown action: {action}. Use add/remove/rename/move]")
 
 
 async def tool_vault_move_lines(
@@ -1570,23 +1571,19 @@ async def tool_vault_move_lines(
     if from_path is None or not from_path.exists():
         return ToolResult(text=f"[error: source page not found: {from_page}]")
     if not _is_in_agent_dir(ctx.config, from_path):
-        return ToolResult(
-            text=f"[error: cannot modify page outside agent folder: {from_page}]"
-        )
+        return ToolResult(text=f"[error: cannot modify page outside agent folder: {from_page}]")
     # Target must be writable
     to_path = resolve_page(ctx.config, to_page)
     if to_path is None or not to_path.exists():
         return ToolResult(text=f"[error: target page not found: {to_page}]")
     if not _is_in_agent_dir(ctx.config, to_path):
-        return ToolResult(
-            text=f"[error: cannot write to page outside agent folder: {to_page}]"
-        )
+        return ToolResult(text=f"[error: cannot write to page outside agent folder: {to_page}]")
     # Guard: same-file moves silently drop data (second write wins, undoing first)
     if from_path.resolve() == to_path.resolve():
         return ToolResult(
             text="[error: from_page and to_page must be different pages "
-                 "(same-file moves not supported). For intra-page moves, "
-                 "use vault_section with action='move']"
+            "(same-file moves not supported). For intra-page moves, "
+            "use vault_section with action='move']"
         )
     # Parse line numbers
     try:
@@ -1626,10 +1623,16 @@ async def tool_vault_move_lines(
     # Publish a vault_changed event for each affected page so the UI can
     # refresh both source and target views.
     await publish_vault_changed(
-        ctx.event_bus, ctx.config, kind=KIND_MOVE, path=to_path,
+        ctx.event_bus,
+        ctx.config,
+        kind=KIND_MOVE,
+        path=to_path,
     )
     await publish_vault_changed(
-        ctx.event_bus, ctx.config, kind=KIND_MOVE, path=from_path,
+        ctx.event_bus,
+        ctx.config,
+        kind=KIND_MOVE,
+        path=from_path,
     )
 
     return ToolResult(
@@ -1687,10 +1690,7 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "page": {
                         "type": "string",
-                        "description": (
-                            "Page name or path (e.g. 'Les Orchard', "
-                            "'agent/pages/DecafClaw')"
-                        ),
+                        "description": ("Page name or path (e.g. 'Les Orchard', 'agent/pages/DecafClaw')"),
                     },
                 },
                 "required": ["page"],
@@ -1751,10 +1751,7 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "page": {
                         "type": "string",
-                        "description": (
-                            "Page path relative to vault root "
-                            "(e.g. 'agent/pages/Stale Draft')."
-                        ),
+                        "description": ("Page path relative to vault root (e.g. 'agent/pages/Stale Draft')."),
                     },
                 },
                 "required": ["page"],
@@ -1779,10 +1776,7 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "page": {
                         "type": "string",
-                        "description": (
-                            "Current page path relative to vault root "
-                            "(e.g. 'agent/pages/old-name')."
-                        ),
+                        "description": ("Current page path relative to vault root (e.g. 'agent/pages/old-name')."),
                     },
                     "rename_to": {
                         "type": "string",
@@ -1815,10 +1809,7 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "folder": {
                         "type": "string",
-                        "description": (
-                            "Vault-relative folder path "
-                            "(e.g. 'creative/in-progress/fungal-world')."
-                        ),
+                        "description": ("Vault-relative folder path (e.g. 'creative/in-progress/fungal-world')."),
                     },
                     "reason": {
                         "type": "string",
@@ -1909,17 +1900,11 @@ TOOL_DEFINITIONS = [
                     },
                     "days": {
                         "type": "integer",
-                        "description": (
-                            "Limit to files modified in the last N days. "
-                            "Useful for recent context."
-                        ),
+                        "description": ("Limit to files modified in the last N days. Useful for recent context."),
                     },
                     "folder": {
                         "type": "string",
-                        "description": (
-                            "Limit search to a vault subfolder "
-                            "(e.g. 'agent/journal' or 'agent/pages')"
-                        ),
+                        "description": ("Limit search to a vault subfolder (e.g. 'agent/journal' or 'agent/pages')"),
                     },
                     "tags": {
                         "type": "array",
@@ -1955,8 +1940,7 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "vault_list",
             "description": (
-                "List vault pages with last-modified dates. "
-                "Optionally filter by folder and/or name pattern."
+                "List vault pages with last-modified dates. Optionally filter by folder and/or name pattern."
             ),
             "parameters": {
                 "type": "object",
@@ -1964,15 +1948,13 @@ TOOL_DEFINITIONS = [
                     "folder": {
                         "type": "string",
                         "description": (
-                            "Subfolder to list (e.g. 'agent/pages', "
-                            "'agent/journal/2026'). Empty = entire vault."
+                            "Subfolder to list (e.g. 'agent/pages', 'agent/journal/2026'). Empty = entire vault."
                         ),
                     },
                     "pattern": {
                         "type": "string",
                         "description": (
-                            "Optional filter pattern "
-                            "(e.g. 'project' to match pages with 'project' in the name)"
+                            "Optional filter pattern (e.g. 'project' to match pages with 'project' in the name)"
                         ),
                     },
                 },
@@ -2000,16 +1982,12 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "days": {
                         "type": "integer",
-                        "description": (
-                            "Look back this many days (by modified time). "
-                            "Defaults to 7."
-                        ),
+                        "description": ("Look back this many days (by modified time). Defaults to 7."),
                     },
                     "folder": {
                         "type": "string",
                         "description": (
-                            "Optional subfolder to scope to (e.g. 'agent/pages', "
-                            "'journals'). Empty = entire vault."
+                            "Optional subfolder to scope to (e.g. 'agent/pages', 'journals'). Empty = entire vault."
                         ),
                     },
                     "source_type": {
@@ -2081,8 +2059,7 @@ TOOL_DEFINITIONS = [
                     "page": {
                         "type": "string",
                         "description": (
-                            "Page path relative to vault root or bare name "
-                            "(e.g. 'agent/pages/note', 'My Page')."
+                            "Page path relative to vault root or bare name (e.g. 'agent/pages/note', 'My Page')."
                         ),
                     },
                     "section": {
@@ -2113,17 +2090,11 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "from_page": {
                         "type": "string",
-                        "description": (
-                            "Source page path relative to vault root "
-                            "(e.g. 'agent/pages/yesterday')."
-                        ),
+                        "description": ("Source page path relative to vault root (e.g. 'agent/pages/yesterday')."),
                     },
                     "to_page": {
                         "type": "string",
-                        "description": (
-                            "Target page path relative to vault root "
-                            "(e.g. 'agent/pages/today')."
-                        ),
+                        "description": ("Target page path relative to vault root (e.g. 'agent/pages/today')."),
                     },
                     "lines": {
                         "type": "string",
@@ -2168,8 +2139,7 @@ TOOL_DEFINITIONS = [
                     "page": {
                         "type": "string",
                         "description": (
-                            "Page path relative to vault root or bare name "
-                            "(e.g. 'agent/pages/note', 'My Page')."
+                            "Page path relative to vault root or bare name (e.g. 'agent/pages/note', 'My Page')."
                         ),
                     },
                     "action": {
@@ -2180,16 +2150,12 @@ TOOL_DEFINITIONS = [
                     "section": {
                         "type": "string",
                         "description": (
-                            "Section path to operate on. " + SECTION_PATH_HELP + " "
-                            "Required for remove, rename, move."
+                            "Section path to operate on. " + SECTION_PATH_HELP + " Required for remove, rename, move."
                         ),
                     },
                     "title": {
                         "type": "string",
-                        "description": (
-                            "Title for the section. Required for add; "
-                            "used as the new title for rename."
-                        ),
+                        "description": ("Title for the section. Required for add; used as the new title for rename."),
                     },
                     "level": {
                         "type": "integer",
@@ -2216,22 +2182,19 @@ TOOL_DEFINITIONS = [
                     "after": {
                         "type": "string",
                         "description": (
-                            "Section path to insert/move after. " + SECTION_PATH_HELP + " "
-                            "Used by add and move."
+                            "Section path to insert/move after. " + SECTION_PATH_HELP + " Used by add and move."
                         ),
                     },
                     "before": {
                         "type": "string",
                         "description": (
-                            "Section path to insert/move before. " + SECTION_PATH_HELP + " "
-                            "Used by add and move."
+                            "Section path to insert/move before. " + SECTION_PATH_HELP + " Used by add and move."
                         ),
                     },
                     "parent": {
                         "type": "string",
                         "description": (
-                            "Section path to nest the new section under. " + SECTION_PATH_HELP + " "
-                            "Only used by add."
+                            "Section path to nest the new section under. " + SECTION_PATH_HELP + " Only used by add."
                         ),
                     },
                 },
@@ -2255,8 +2218,7 @@ TOOL_DEFINITIONS = [
                     "page": {
                         "type": "string",
                         "description": (
-                            "Page path relative to vault root or bare name "
-                            "(e.g. 'agent/pages/note', 'My Page')."
+                            "Page path relative to vault root or bare name (e.g. 'agent/pages/note', 'My Page')."
                         ),
                     },
                     "fields": {

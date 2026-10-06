@@ -54,7 +54,10 @@ async def test_on_llm_start_no_placeholder_sends_new():
     await display.on_llm_start(iteration=2)
 
     client.send.assert_awaited_once_with(
-        "ch1", THINKING_INDICATOR, root_id="root1", attachments=None,
+        "ch1",
+        THINKING_INDICATOR,
+        root_id="root1",
+        attachments=None,
     )
     assert display._current_post_id == "post-id-1"
     assert display._current_type == "thinking"
@@ -69,7 +72,10 @@ async def test_on_text_complete_sends_text():
     await display.on_text_complete("Hello world")
 
     client.send.assert_awaited_once_with(
-        "ch1", "Hello world", root_id="root1", attachments=None,
+        "ch1",
+        "Hello world",
+        root_id="root1",
+        attachments=None,
     )
     assert display._text_buffer == "Hello world"
     assert display._text_has_content is True
@@ -97,7 +103,9 @@ async def test_on_tool_start_sends_tool_message():
     await display.on_tool_start("web_search", {"query": "test"}, tool_call_id="tc1")
 
     client.send.assert_awaited_once_with(
-        "ch1", "\U0001f527 web_search...", root_id="root1",
+        "ch1",
+        "\U0001f527 web_search...",
+        root_id="root1",
         attachments=None,
     )
     assert "tc1" in display._tool_posts
@@ -114,7 +122,8 @@ async def test_on_tool_start_reuses_thinking_placeholder():
 
     # Should edit the placeholder, not send a new message
     client.edit_message.assert_awaited_with(
-        "placeholder-id", "\U0001f527 web_search...",
+        "placeholder-id",
+        "\U0001f527 web_search...",
     )
     assert display._tool_posts["tc1"] == "placeholder-id"
     client.send.assert_not_called()
@@ -130,12 +139,16 @@ async def test_on_tool_end_edits_tool_message():
     client.edit_message.reset_mock()
 
     await display.on_tool_end(
-        "web_search", "result text", display_text=None, media=[],
+        "web_search",
+        "result text",
+        display_text=None,
+        media=[],
         tool_call_id="tc1",
     )
 
     client.edit_message.assert_awaited_once_with(
-        "post-id-1", "\U0001f527 web_search \u2714\ufe0f",
+        "post-id-1",
+        "\U0001f527 web_search \u2714\ufe0f",
         props={"attachments": []},
     )
     assert "tc1" not in display._tool_posts
@@ -151,12 +164,17 @@ async def test_on_tool_end_uses_display_text():
     client.edit_message.reset_mock()
 
     await display.on_tool_end(
-        "web_search", "raw result", display_text="Custom display", media=[],
+        "web_search",
+        "raw result",
+        display_text="Custom display",
+        media=[],
         tool_call_id="tc1",
     )
 
     client.edit_message.assert_awaited_once_with(
-        "post-id-1", "Custom display", props={"attachments": []},
+        "post-id-1",
+        "Custom display",
+        props={"attachments": []},
     )
 
 

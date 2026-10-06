@@ -29,9 +29,7 @@ class TestToolRegistration:
         don't get deferred behind tool_search."""
         for d in TOOL_DEFINITIONS:
             if d["function"]["name"] in ("notes_append", "notes_read"):
-                assert d.get("priority") == "critical", (
-                    f"{d['function']['name']} should be critical priority"
-                )
+                assert d.get("priority") == "critical", f"{d['function']['name']} should be critical priority"
 
 
 # -- tool_notes_append ---------------------------------------------------------
@@ -67,6 +65,7 @@ class TestNotesAppend:
         """conv_id fallback chain matches `_compose_notes` so writes
         and reads always target the same file."""
         from decafclaw.notes import notes_path
+
         ctx.conv_id = ""
         ctx.channel_id = "channel-123"
         tool_notes_append(ctx, "via channel")

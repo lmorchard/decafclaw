@@ -8,6 +8,7 @@ from decafclaw.tools import execute_tool
 @pytest.mark.asyncio
 async def test_execute_tool_with_extra_tools(ctx):
     """Skill-provided tools on ctx.tools.extra are callable via execute_tool."""
+
     def mock_tool(ctx, query: str) -> str:
         return f"mock result: {query}"
 
@@ -51,7 +52,8 @@ async def test_execute_tool_unknown_skill_tool_names_owning_skill(ctx, tmp_path)
 
 @pytest.mark.asyncio
 async def test_execute_tool_unknown_workspace_skill_tool_unapproved(
-    ctx, tmp_path,
+    ctx,
+    tmp_path,
 ):
     """An unapproved workspace-tier skill's tool produces a 'request user
     approval' error."""
@@ -98,7 +100,8 @@ async def test_execute_tool_unknown_denied_skill_tool(ctx, tmp_path):
 
 @pytest.mark.asyncio
 async def test_execute_tool_skill_tool_not_auto_fetched_from_deferred_pool(
-    ctx, tmp_path,
+    ctx,
+    tmp_path,
 ):
     """Skill tools in the deferred pool are NOT auto-fetched. The agent
     must go through activate_skill so the skill body lands in context."""
@@ -220,6 +223,7 @@ async def test_execute_tool_mcp_routes_to_registry(ctx, monkeypatch):
 async def test_execute_tool_mcp_no_registry(ctx, monkeypatch):
     """MCP tool with no registry returns error."""
     from decafclaw import mcp_client
+
     monkeypatch.setattr(mcp_client, "_registry", None)
     result = await execute_tool(ctx, "mcp__test__my_tool", {})
     assert "[error: MCP tool" in result.text
@@ -244,6 +248,7 @@ async def test_execute_tool_mcp_tool_not_found(ctx, monkeypatch):
 async def test_execute_tool_returns_tool_result(ctx):
     """execute_tool always returns a ToolResult."""
     from decafclaw.media import ToolResult
+
     result = await execute_tool(ctx, "current_time", {})
     assert isinstance(result, ToolResult)
     assert result.media == []
@@ -252,6 +257,7 @@ async def test_execute_tool_returns_tool_result(ctx):
 def test_context_stats(ctx):
     """context_stats returns a formatted stats report."""
     from decafclaw.tools.core import tool_context_stats
+
     # Set up minimal context state
     ctx.messages = [
         {"role": "system", "content": "You are a test agent."},
@@ -274,6 +280,7 @@ def test_context_stats(ctx):
 def test_context_stats_with_none_messages(ctx):
     """context_stats works when ctx.messages is None (before first iteration)."""
     from decafclaw.tools.core import tool_context_stats
+
     ctx.messages = None
     result = tool_context_stats(ctx)
     assert "Context Stats" in result
@@ -282,6 +289,7 @@ def test_context_stats_with_none_messages(ctx):
 def test_context_stats_in_forked_ctx(ctx):
     """context_stats works in a fork_for_tool_call ctx (messages inherited)."""
     from decafclaw.tools.core import tool_context_stats
+
     ctx.messages = [
         {"role": "system", "content": "You are a test agent."},
         {"role": "user", "content": "Hello"},
@@ -304,8 +312,10 @@ def test_context_stats_in_forked_ctx(ctx):
 @pytest.mark.asyncio
 async def test_internal_typeerror_omits_param_hint(ctx):
     """A TypeError from the tool body must not be framed as a bad-argument error."""
+
     def exploding_tool(ctx):
         from decafclaw.media import ToolResult
+
         return ToolResult(tool_code="nope")  # invalid kwarg — the real 2026-07-25 bug
 
     ctx.tools.extra = {"exploding": exploding_tool}
@@ -319,6 +329,7 @@ async def test_internal_typeerror_omits_param_hint(ctx):
 @pytest.mark.asyncio
 async def test_bad_arguments_still_gets_param_hint(ctx):
     """A genuine wrong-keyword call keeps the self-correction hint."""
+
     def typed_tool(ctx, query: str) -> str:
         return f"got {query}"
 
@@ -342,6 +353,7 @@ async def test_missing_required_argument_gets_param_hint(ctx):
 @pytest.mark.asyncio
 async def test_internal_typeerror_names_owning_skill(ctx):
     """When the tool belongs to a skill, say so — that's where the file lives."""
+
     def exploding_tool(ctx):
         return "x" + 1  # TypeError in the body
 
@@ -355,6 +367,7 @@ async def test_internal_typeerror_names_owning_skill(ctx):
 @pytest.mark.asyncio
 async def test_async_internal_typeerror_omits_param_hint(ctx):
     """Async tools take a different call path; same attribution rule applies."""
+
     async def exploding_tool(ctx):
         return "x" + 1
 

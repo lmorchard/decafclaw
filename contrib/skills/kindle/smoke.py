@@ -27,9 +27,7 @@ from decafclaw.config import load_config
 
 # Load tools.py from the colocated path via importlib (same as production loader).
 _THIS_DIR = Path(__file__).parent
-_tools_spec = importlib.util.spec_from_file_location(
-    "decafclaw_contrib_kindle_tools_smoke", _THIS_DIR / "tools.py"
-)
+_tools_spec = importlib.util.spec_from_file_location("decafclaw_contrib_kindle_tools_smoke", _THIS_DIR / "tools.py")
 assert _tools_spec is not None and _tools_spec.loader is not None
 _tools = importlib.util.module_from_spec(_tools_spec)
 sys.modules["decafclaw_contrib_kindle_tools_smoke"] = _tools
@@ -129,6 +127,7 @@ async def step_enabled_gate(config) -> None:
     class FakeCtx:
         config = None
         task_mode = "scheduled"
+
     fake = FakeCtx()
     fake.config = config
 

@@ -62,14 +62,15 @@ async def _run_memory_sweep(ctx: "Context", old_messages: list[dict]) -> None:
 
         # Build an isolated child context with vault tools only
         from dataclasses import replace
+
         child_config = replace(
             config,
-            agent=replace(config.agent,
-                          max_tool_iterations=config.agent.child_max_tool_iterations),
+            agent=replace(config.agent, max_tool_iterations=config.agent.child_max_tool_iterations),
             system_prompt=sweep_prompt,
         )
         child_ctx = Context.for_task(
-            child_config, ctx.event_bus,
+            child_config,
+            ctx.event_bus,
             user_id="memory-sweep",
             conv_id=conv_id,
             active_model=config.auxiliary_model or ctx.active_model or config.default_model,
@@ -90,6 +91,7 @@ async def _run_memory_sweep(ctx: "Context", old_messages: list[dict]) -> None:
         log.info(f"Memory sweep completed for {conv_id}: {len(result.text)} chars response")
     except Exception as e:
         log.warning(f"Memory sweep failed for {conv_id}: {e}")
+
 
 DEFAULT_COMPACTION_PROMPT = """\
 Summarize the following conversation, preserving:
@@ -183,9 +185,7 @@ def _build_compaction_user_input(mode, old_slice_block: str = "") -> str:
         sections.append(slice_section)
 
     if mode.incremental:
-        newly_old_flat = flatten_messages(
-            [msg for turn in mode.newly_old_turns for msg in turn]
-        )
+        newly_old_flat = flatten_messages([msg for turn in mode.newly_old_turns for msg in turn])
         sections.append(wrap_xml("previous_summary", mode.prev_summary))
         sections.append(wrap_xml("new_messages", newly_old_flat))
     else:
@@ -207,7 +207,7 @@ def _extract_previous_summary(config, conv_id: str) -> tuple[str | None, str | N
     first = compacted[0]
     content = first.get("content", "")
     if first.get("role") == "user" and content.startswith(SUMMARY_PREFIX):
-        summary_text = content[len(SUMMARY_PREFIX):]
+        summary_text = content[len(SUMMARY_PREFIX) :]
         last_ts = compacted[-1].get("timestamp", "")
         return summary_text, last_ts
     return None, None
@@ -243,7 +243,7 @@ PROTECTED_TOOL_NAMES = {"activate_skill"}
 def _turn_has_protected_tool(turn: list[dict]) -> bool:
     """Check if a turn contains a tool call whose result should not be summarized."""
     for msg in turn:
-        for tc in (msg.get("tool_calls") or []):
+        for tc in msg.get("tool_calls") or []:
             if tc.get("function", {}).get("name") in PROTECTED_TOOL_NAMES:
                 return True
     return False
@@ -287,8 +287,7 @@ async def _single_summarize(ctx: "Context", config, flattened_text: str, prompt:
     return response.get("content", "")
 
 
-async def _chunked_summarize(ctx: "Context", config, turns: list[list[dict]],
-                              prompt: str, budget: int) -> str:
+async def _chunked_summarize(ctx: "Context", config, turns: list[list[dict]], prompt: str, budget: int) -> str:
     """Summarize turns in chunks that fit the compaction LLM's context window."""
     chunks = []
     current_chunk = []
@@ -331,9 +330,7 @@ async def _chunked_summarize(ctx: "Context", config, turns: list[list[dict]],
     return combined
 
 
-def _partition_turns(
-    turns: list[list[dict]], config
-) -> tuple[list[list[dict]], list[list[dict]], list[list[dict]]]:
+def _partition_turns(turns: list[list[dict]], config) -> tuple[list[list[dict]], list[list[dict]], list[list[dict]]]:
     """Partition turns into old, protected, and recent groups.
 
     Old turns will be summarized. Protected turns contain tool calls
@@ -352,18 +349,14 @@ def _partition_turns(
             old_turns.append(turn)
     recent_turns = turns[-preserve:]
     if protected_turns:
-        log.info(
-            f"Protecting {len(protected_turns)} skill activation turn(s) "
-            f"from compaction"
-        )
+        log.info(f"Protecting {len(protected_turns)} skill activation turn(s) from compaction")
     return old_turns, protected_turns, recent_turns
 
 
 class _CompactionMode:
     """Result of determining whether compaction is incremental or full."""
 
-    __slots__ = ("incremental", "prev_summary", "newly_old_turns",
-                 "old_messages", "old_turns")
+    __slots__ = ("incremental", "prev_summary", "newly_old_turns", "old_messages", "old_turns")
 
     def __init__(
         self,
@@ -425,10 +418,7 @@ def _determine_compaction_mode(
         if compacted:
             non_summary = compacted[1:]
             compacted_turns = _split_into_turns(non_summary)
-            protected_msg_count = sum(
-                len(turn) for turn in compacted_turns
-                if _turn_has_protected_tool(turn)
-            )
+            protected_msg_count = sum(len(turn) for turn in compacted_turns if _turn_has_protected_tool(turn))
             prev_recent_count = len(compacted) - 1 - protected_msg_count
         else:
             prev_recent_count = 0
@@ -559,6 +549,7 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     estimated = 0
 
     import time as _time
+
     before_messages = len(history)
     compact_start_time = _time.monotonic()
 
@@ -567,11 +558,7 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     # captured. After summarization, the LLM's emitted slice replaces
     # this in the merge step.
     old_slice = load_slice(config, conv_id) if config.compaction.decisions_enabled else None
-    old_slice_block = (
-        format_slice(old_slice)
-        if old_slice and not old_slice.is_empty()
-        else ""
-    )
+    old_slice_block = format_slice(old_slice) if old_slice and not old_slice.is_empty() else ""
 
     try:
         await ctx.publish("compaction_start")
@@ -582,22 +569,22 @@ async def compact_history(ctx: "Context", history: list) -> bool:
             estimated = estimate_tokens(combined_input)
             log.info(f"Incremental summarization: ~{estimated} est. tokens")
             summary = await _single_summarize(
-                ctx, config, combined_input,
-                _with_decisions_addendum(INCREMENTAL_COMPACTION_PROMPT, config))
+                ctx, config, combined_input, _with_decisions_addendum(INCREMENTAL_COMPACTION_PROMPT, config)
+            )
         else:
             prompt = _with_decisions_addendum(_load_compaction_prompt(config), config)
             flattened_input = _build_compaction_user_input(mode, old_slice_block)
             estimated = estimate_tokens(flattened_input)
             if estimated > budget:
-                log.info(f"Flattened text ({estimated} est. tokens) exceeds "
-                         f"budget ({budget}), using chunked compaction")
+                log.info(
+                    f"Flattened text ({estimated} est. tokens) exceeds budget ({budget}), using chunked compaction"
+                )
                 # Chunked path flattens per-chunk inside _chunked_summarize
                 # and does not wrap in <messages_to_compact> — a rare
                 # fallback for oversized inputs. The <decision_slice>
                 # guidance still lives in the system prompt via the
                 # addendum.
-                summary = await _chunked_summarize(
-                    ctx, config, mode.old_turns, prompt, budget)
+                summary = await _chunked_summarize(ctx, config, mode.old_turns, prompt, budget)
             else:
                 summary = await _single_summarize(ctx, config, flattened_input, prompt)
 
@@ -624,12 +611,12 @@ async def compact_history(ctx: "Context", history: list) -> bool:
                 # summary message doesn't carry redundant JSON.
                 clean_summary = strip_json_block(summary)
             else:
-                log.debug(
-                    "Compaction response had no parseable slice; prose-only fallback")
+                log.debug("Compaction response had no parseable slice; prose-only fallback")
 
         # Rebuild history with summary + protected + recent
-        _rebuild_history(history, clean_summary, protected_messages, recent_messages,
-                         config, conv_id, slice_prefix=slice_prefix)
+        _rebuild_history(
+            history, clean_summary, protected_messages, recent_messages, config, conv_id, slice_prefix=slice_prefix
+        )
         return True
 
     except Exception as e:
@@ -638,8 +625,10 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     finally:
         elapsed = _time.monotonic() - compact_start_time
         after_messages = len(history)
-        await ctx.publish("compaction_end",
-                          before_messages=before_messages,
-                          after_messages=after_messages,
-                          elapsed_sec=round(elapsed, 1),
-                          estimated_tokens_before=estimated)
+        await ctx.publish(
+            "compaction_end",
+            before_messages=before_messages,
+            after_messages=after_messages,
+            elapsed_sec=round(elapsed, 1),
+            estimated_tokens_before=estimated,
+        )

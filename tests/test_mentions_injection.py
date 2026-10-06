@@ -142,7 +142,7 @@ async def test_compose_mentions_references_dedup(ctx, config, tmp_path):
         {
             "role": "workspace_references",
             "content": "[Referenced workspace file: small.txt]\n\nHello World",
-            "workspace_file": "small.txt"
+            "workspace_file": "small.txt",
         }
     ]
 

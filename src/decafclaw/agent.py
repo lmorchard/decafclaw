@@ -71,24 +71,47 @@ log = logging.getLogger(__name__)
 # Track background tasks to prevent GC and surface exceptions
 
 
-
 def _is_context_length_exceeded(exc: Exception) -> bool:
     from .llm.types import ContextLengthExceededError
+
     if isinstance(exc, ContextLengthExceededError):
         return True
 
     import httpx
+
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         try:
             body = exc.response.text.lower()
         except Exception:
             body = ""
-        if status in (400, 413) and any(k in body for k in ["context_length_exceeded", "maximum context length", "too many tokens", "exceeds the limit", "token limit exceeded", "string_too_long", "request payload size exceeds the limit"]):
+        if status in (400, 413) and any(
+            k in body
+            for k in [
+                "context_length_exceeded",
+                "maximum context length",
+                "too many tokens",
+                "exceeds the limit",
+                "token limit exceeded",
+                "string_too_long",
+                "request payload size exceeds the limit",
+            ]
+        ):
             return True
 
     err_str = str(exc).lower()
-    if ("400" in err_str or "413" in err_str) and any(k in err_str for k in ["context_length_exceeded", "maximum context length", "too many tokens", "exceeds the limit", "token limit exceeded", "string_too_long", "request payload size exceeds the limit"]):
+    if ("400" in err_str or "413" in err_str) and any(
+        k in err_str
+        for k in [
+            "context_length_exceeded",
+            "maximum context length",
+            "too many tokens",
+            "exceeds the limit",
+            "token limit exceeded",
+            "string_too_long",
+            "request payload size exceeds the limit",
+        ]
+    ):
         return True
 
     return False
@@ -115,15 +138,11 @@ def _archive(ctx: "Context", msg) -> None:
     # landed in the archive — tool_call-only assistant rows don't count
     # as "delivered text" for cancel bookkeeping, and we don't want a
     # failed write to make the manager think the partial is durable.
-    if (wrote
-            and msg.get("role") == "assistant"
-            and msg.get("content")
-            and ctx.manager is not None):
+    if wrote and msg.get("role") == "assistant" and msg.get("content") and ctx.manager is not None:
         try:
             ctx.manager.note_partial_assistant_archived(_conv_id(ctx))
         except Exception as exc:
             log.debug("note_partial_assistant_archived failed: %s", exc)
-
 
 
 async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None:
@@ -142,7 +161,8 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None
         if delta.cleared_count:
             log.info(
                 "Tool-result clear: %d message(s), %d bytes reclaimed",
-                delta.cleared_count, delta.cleared_bytes,
+                delta.cleared_count,
+                delta.cleared_bytes,
             )
     except Exception:
         # Cleanup is fail-open. Use log.exception so the traceback
@@ -150,11 +170,9 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None
         # signal we'd need to fix recurring failures.
         log.exception("Tool-result clearing failed")
 
-    log.info(f"Compaction check: prompt_tokens={prompt_tokens}, "
-             f"threshold={config.compaction.max_tokens}")
+    log.info(f"Compaction check: prompt_tokens={prompt_tokens}, threshold={config.compaction.max_tokens}")
     if prompt_tokens and prompt_tokens > config.compaction.max_tokens:
-        log.info(f"Token budget exceeded ({prompt_tokens} > {config.compaction.max_tokens}), "
-                 f"triggering compaction")
+        log.info(f"Token budget exceeded ({prompt_tokens} > {config.compaction.max_tokens}), triggering compaction")
         try:
             await compact_history(ctx, history)
             # After compaction, summarized content replaces originals —
@@ -178,10 +196,7 @@ def _extract_call_signatures(tool_calls, messages) -> list[CallSignature]:
     redirect can name the actual failing call rather than giving generic
     advice (#707).
     """
-    results_by_id = {
-        m.get("tool_call_id"): (m.get("content") or "")
-        for m in messages if m.get("role") == "tool"
-    }
+    results_by_id = {m.get("tool_call_id"): (m.get("content") or "") for m in messages if m.get("role") == "tool"}
     out = []
     for tc in tool_calls:
         fn = tc.get("function", {})
@@ -193,13 +208,15 @@ def _extract_call_signatures(tool_calls, messages) -> list[CallSignature]:
             args = raw_args
         content = results_by_id.get(tc.get("id"), "")
         is_error = content.lstrip().startswith("[error")
-        out.append(CallSignature(
-            tool_name=name,
-            fingerprint=fingerprint(name, args),
-            is_error=is_error,
-            args_text=summarize_args(args),
-            error_text=summarize_error(content) if is_error else "",
-        ))
+        out.append(
+            CallSignature(
+                tool_name=name,
+                fingerprint=fingerprint(name, args),
+                is_error=is_error,
+                args_text=summarize_args(args),
+                error_text=summarize_error(content) if is_error else "",
+            )
+        )
     return out
 
 
@@ -253,6 +270,7 @@ class ReflectionOutcome:
     `reflection_retries` and `last_reflection` are mutated on the call
     sites' state directly — they don't appear in this return type.
     """
+
     text: str | None
     should_retry: bool
 
@@ -272,8 +290,7 @@ def _should_reflect(ctx: "Context", config, content: str, reflection_retries: in
     return True
 
 
-async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause
-                                     ) -> str | None:
+async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause) -> str | None:
     """Pause the agent turn on an input widget and resume with the
     user's answer formatted as a synthetic user-message string.
 
@@ -294,8 +311,8 @@ async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause
     request_confirmation = ctx.request_confirmation
     if request_confirmation is None:
         log.warning(
-            "WidgetInputPause received but ctx has no request_confirmation "
-            "— cannot pause, ending turn gracefully")
+            "WidgetInputPause received but ctx has no request_confirmation — cannot pause, ending turn gracefully"
+        )
         # Drop the registered callback so it can't leak across turns.
         pending_callbacks.pop(signal.tool_call_id, None)
         return None
@@ -347,9 +364,7 @@ async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause
                     try:
                         await manager.cancel_pending_confirmation(conv_id)
                     except Exception as exc:
-                        log.debug(
-                            "Failed to clear pending widget confirmation "
-                            "on cancel for %s: %s", conv_id, exc)
+                        log.debug("Failed to clear pending widget confirmation on cancel for %s: %s", conv_id, exc)
         else:
             response = await confirm_task
     finally:
@@ -365,9 +380,7 @@ async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause
         try:
             return callback(response.data)
         except Exception as exc:
-            log.warning(
-                "widget on_response callback raised for %s: %s",
-                signal.tool_call_id, exc)
+            log.warning("widget on_response callback raised for %s: %s", signal.tool_call_id, exc)
             return default_inject_message(response.data)
     return default_inject_message(response.data)
 
@@ -381,6 +394,7 @@ async def _handle_end_turn_confirm(ctx: "Context", action: EndTurnConfirm) -> bo
     tools/confirmation.py.
     """
     from .tools.confirmation import request_confirmation
+
     result = await request_confirmation(
         ctx,
         tool_name="end_turn_confirm",
@@ -393,10 +407,9 @@ async def _handle_end_turn_confirm(ctx: "Context", action: EndTurnConfirm) -> bo
     return result.get("approved", False)
 
 
-async def _call_llm_with_events(ctx: "Context", config, messages, tools,
-                                model_name=None,
-                                llm_url=None, llm_model=None,
-                                llm_api_key=None) -> dict:
+async def _call_llm_with_events(
+    ctx: "Context", config, messages, tools, model_name=None, llm_url=None, llm_model=None, llm_api_key=None
+) -> dict:
     """Call the LLM with event publishing for progress tracking.
 
     Accepts model_name (new path) or llm_url/llm_model/llm_api_key (legacy).
@@ -415,23 +428,21 @@ async def _call_llm_with_events(ctx: "Context", config, messages, tools,
     await ctx.publish("llm_start", iteration=iteration)
     start_time = time.monotonic()
     from .config import resolve_streaming
+
     if resolve_streaming(config, ctx.active_model):
         from .llm import call_llm_streaming
+
         on_chunk = ctx.on_stream_chunk
         cancel_event = ctx.cancelled
         response = await call_llm_streaming(
-            config, messages, tools=tools, on_chunk=on_chunk,
-            cancel_event=cancel_event, **llm_kwargs
+            config, messages, tools=tools, on_chunk=on_chunk, cancel_event=cancel_event, **llm_kwargs
         )
     else:
         cancel_event = ctx.cancelled
         if cancel_event:
-            llm_task = asyncio.create_task(
-                call_llm(config, messages, tools=tools, **llm_kwargs))
+            llm_task = asyncio.create_task(call_llm(config, messages, tools=tools, **llm_kwargs))
             cancel_task = asyncio.create_task(cancel_event.wait())
-            done, _ = await asyncio.wait(
-                [llm_task, cancel_task], return_when=asyncio.FIRST_COMPLETED
-            )
+            done, _ = await asyncio.wait([llm_task, cancel_task], return_when=asyncio.FIRST_COMPLETED)
             cancel_task.cancel()
             if llm_task not in done:
                 llm_task.cancel()
@@ -451,11 +462,14 @@ async def _call_llm_with_events(ctx: "Context", config, messages, tools,
         else:
             response = await call_llm(config, messages, tools=tools, **llm_kwargs)
     duration_ms = (time.monotonic() - start_time) * 1000
-    await ctx.publish("llm_end", iteration=iteration,
-                      content=response.get("content"),
-                      has_tool_calls=bool(response.get("tool_calls")),
-                      duration_ms=duration_ms,
-                      model=model_name or ctx.active_model or config.default_model)
+    await ctx.publish(
+        "llm_end",
+        iteration=iteration,
+        content=response.get("content"),
+        has_tool_calls=bool(response.get("tool_calls")),
+        duration_ms=duration_ms,
+        model=model_name or ctx.active_model or config.default_model,
+    )
     return response
 
 
@@ -499,6 +513,7 @@ async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
     # Restore active model from archive (scan reverse for last valid model message).
     if not ctx.active_model and conv_id:
         from .archive import read_archive
+
         for msg in reversed(read_archive(config, conv_id)):
             if msg.get("role") == "model":
                 name = msg.get("content", "")
@@ -531,9 +546,10 @@ def _resolve_model_override(ctx: "Context", config) -> dict[str, str]:
         known = ", ".join(sorted(config.model_configs)) or "(none configured)"
         fallback = config.default_model or config.llm.model
         log.warning(
-            "Unknown model %r requested — falling back to %s. "
-            "Configured model_configs: %s",
-            ctx.active_model, fallback, known,
+            "Unknown model %r requested — falling back to %s. Configured model_configs: %s",
+            ctx.active_model,
+            fallback,
+            known,
         )
 
     if config.default_model:
@@ -563,6 +579,7 @@ class _Continue(IterationOutcome):
 @dataclass(frozen=True)
 class _Final(IterationOutcome):
     """Turn is done; return this ToolResult."""
+
     result: "ToolResult"
 
 
@@ -579,6 +596,7 @@ class TurnRunner:
 
     Single-use: do not call run() twice on the same instance.
     """
+
     ctx: Any
     config: Any
     history: list
@@ -672,8 +690,11 @@ class TurnRunner:
 
         self.composer = ContextComposer(state=self.ctx.composer)
         self.composed = await self.composer.compose(
-            self.ctx, self.user_message, self.history,
-            mode=composer_mode, attachments=self.attachments,
+            self.ctx,
+            self.user_message,
+            self.history,
+            mode=composer_mode,
+            attachments=self.attachments,
         )
         self.messages = self.composed.messages
         self.ctx.messages = self.messages
@@ -694,9 +715,7 @@ class TurnRunner:
             else:
                 _archive(self.ctx, msg)
 
-        if (len(self.messages) > 1
-                and self.messages[1].get("role") == "system"
-                and self.composed.deferred_tools):
+        if len(self.messages) > 1 and self.messages[1].get("role") == "system" and self.composed.deferred_tools:
             self.deferred_msg = self.messages[1]
         else:
             self.deferred_msg = None
@@ -740,13 +759,18 @@ class TurnRunner:
                 res = hook(self.ctx, self.messages, all_tools)
                 if inspect.iscoroutine(res):
                     res.close()
-                    log.warning("BEFORE_LLM_CALL interceptor %s returned a coroutine. Async hooks are not supported.", hook)
+                    log.warning(
+                        "BEFORE_LLM_CALL interceptor %s returned a coroutine. Async hooks are not supported.", hook
+                    )
             except Exception as exc:
                 log.exception("BEFORE_LLM_CALL interceptor failed: %s", exc)
 
         try:
             response = await _call_llm_with_events(
-                self.ctx, self.config, self.messages, all_tools,
+                self.ctx,
+                self.config,
+                self.messages,
+                all_tools,
                 **self.model_override,
             )
         except Exception as exc:
@@ -754,7 +778,14 @@ class TurnRunner:
                 log.warning("Context length exceeded during LLM call, forcing compaction.")
                 # Dynamically lower the compaction threshold
                 from .compaction import compact_history
-                self.config.compaction.max_tokens = max(1000, int((self.prompt_tokens or (self.composed.total_tokens_estimated if self.composed else 0) or 10000) * 0.8))
+
+                self.config.compaction.max_tokens = max(
+                    1000,
+                    int(
+                        (self.prompt_tokens or (self.composed.total_tokens_estimated if self.composed else 0) or 10000)
+                        * 0.8
+                    ),
+                )
 
                 await compact_history(self.ctx, self.history)
                 # After compaction, summarized content replaces originals
@@ -777,12 +808,12 @@ class TurnRunner:
             self.ctx.tokens.total_cached_prompt += cached_tokens
             self.ctx.tokens.last_cached_prompt = cached_tokens
             self.prompt_tokens = prompt_tokens
-            log.debug("Turn token usage: prompt=%s, cached=%s, completion=%s",
-                      prompt_tokens, cached_tokens, completion_tokens)
+            log.debug(
+                "Turn token usage: prompt=%s, cached=%s, completion=%s", prompt_tokens, cached_tokens, completion_tokens
+            )
             # composer is set by _compose() before the loop; guard is for the type checker
             if self.composer is not None:
-                self.composer.record_actuals(prompt_tokens, completion_tokens,
-                                             cached_tokens)
+                self.composer.record_actuals(prompt_tokens, completion_tokens, cached_tokens)
 
         tool_calls = response.get("tool_calls")
         if tool_calls:
@@ -791,7 +822,9 @@ class TurnRunner:
         return await self._handle_no_tool_calls(response)
 
     async def _handle_tool_calls(
-        self, response: dict, tool_calls: list,
+        self,
+        response: dict,
+        tool_calls: list,
     ) -> IterationOutcome:
         """Append assistant tool-call message, execute tools, dispatch
         on end-turn signals (widget pause, EndTurnConfirm, end_turn=True).
@@ -824,7 +857,8 @@ class TurnRunner:
         if finish_reason == "length" or finish_reason in ("error", "interrupted"):
             log.warning(
                 "LLM response finish_reason is %r; rejecting %d tool call(s)",
-                finish_reason, len(tool_calls),
+                finish_reason,
+                len(tool_calls),
             )
             if finish_reason == "length":
                 error_text = (
@@ -851,7 +885,10 @@ class TurnRunner:
             return _Continue()
 
         cancelled, end_turn_signal = await execute_tool_calls(
-            self.ctx, tool_calls, self.history, self.messages,
+            self.ctx,
+            tool_calls,
+            self.history,
+            self.messages,
         )
         if cancelled:
             return _Final(result=cancelled)
@@ -863,7 +900,8 @@ class TurnRunner:
 
         if isinstance(end_turn_signal, WidgetInputPause):
             inject_content = await _handle_widget_input_pause(
-                self.ctx, end_turn_signal,
+                self.ctx,
+                end_turn_signal,
             )
             if inject_content is None:
                 end_turn_signal = True
@@ -881,7 +919,10 @@ class TurnRunner:
         if isinstance(end_turn_signal, EndTurnConfirm):
             log.info("EndTurnConfirm — making presentation LLM call before confirmation")
             present_response = await _call_llm_with_events(
-                self.ctx, self.config, self.messages, [],
+                self.ctx,
+                self.config,
+                self.messages,
+                [],
                 **self.model_override,
             )
             present_content = present_response.get("content") or ""
@@ -919,7 +960,10 @@ class TurnRunner:
         if end_turn_signal:
             log.info("Tool signalled end_turn — making final no-tools LLM call")
             final_response = await _call_llm_with_events(
-                self.ctx, self.config, self.messages, [],
+                self.ctx,
+                self.config,
+                self.messages,
+                [],
                 **self.model_override,
             )
             content = final_response.get("content") or ""
@@ -959,8 +1003,7 @@ class TurnRunner:
                 # LLM role that gets resurrected), permanently polluting context
                 # on all later turns.
                 off = self.loop_breaker.offense()
-                failure = (f" The failure each time: {off.error_text}."
-                           if off.error_text else "")
+                failure = f" The failure each time: {off.error_text}." if off.error_text else ""
                 nudge = {
                     "role": "user",
                     "content": (
@@ -976,8 +1019,7 @@ class TurnRunner:
                     ),
                 }
                 self.messages.append(nudge)
-                await self.ctx.publish("loop_breaker", action="nudge",
-                                       reason=off.reason, signal=off.signal)
+                await self.ctx.publish("loop_breaker", action="nudge", reason=off.reason, signal=off.signal)
             elif verdict is LoopVerdict.REDIRECT:
                 # Second trip: the nudge was ignored and the agent re-offended.
                 # Same ephemerality and attribution rules as the nudge above —
@@ -996,8 +1038,7 @@ class TurnRunner:
                 if off.args_text:
                     specifics += f" The arguments every time: {off.args_text}."
                 if off.tool_name:
-                    specifics += (f" Do NOT call {off.tool_name} with those "
-                                  "arguments again this turn.")
+                    specifics += f" Do NOT call {off.tool_name} with those arguments again this turn."
                 redirect = {
                     "role": "user",
                     "content": (
@@ -1015,13 +1056,10 @@ class TurnRunner:
                     ),
                 }
                 self.messages.append(redirect)
-                await self.ctx.publish("loop_breaker", action="redirect",
-                                       reason=off.reason, signal=off.signal)
+                await self.ctx.publish("loop_breaker", action="redirect", reason=off.reason, signal=off.signal)
             elif verdict is LoopVerdict.STOP:
                 off = self.loop_breaker.offense()
-                await self.ctx.publish("loop_breaker", action="stop",
-                                       reason=off.reason,
-                                       signal=off.signal)
+                await self.ctx.publish("loop_breaker", action="stop", reason=off.reason, signal=off.signal)
                 return _Final(result=await self._finalize_loop_break())
 
         return _Continue()
@@ -1035,8 +1073,7 @@ class TurnRunner:
         # empty body, don't archive an empty assistant message — the
         # cancel propagates to the manager which writes the canonical
         # marker (plus any partial accumulated server-side). Issue #491.
-        if (not content and self.ctx.cancelled
-                and self.ctx.cancelled.is_set()):
+        if not content and self.ctx.cancelled and self.ctx.cancelled.is_set():
             _note_cancel_observed(self.ctx)
             return _Final(result=ToolResult(text=""))
         if not content:
@@ -1049,9 +1086,14 @@ class TurnRunner:
                 return _Continue()
             log.warning("LLM returned empty content with no tool calls (after retry)")
 
-        log.debug("Reflection check: enabled=%s, retries=%d/%d, skip=%s, has_content=%s",
-                   self.config.reflection.enabled, self.reflection_retries,
-                   self.config.reflection.max_retries, self.ctx.skip_reflection, bool(content))
+        log.debug(
+            "Reflection check: enabled=%s, retries=%d/%d, skip=%s, has_content=%s",
+            self.config.reflection.enabled,
+            self.reflection_retries,
+            self.config.reflection.max_retries,
+            self.ctx.skip_reflection,
+            bool(content),
+        )
         outcome = await self._handle_reflection(content)
         if outcome.should_retry:
             return _Continue()
@@ -1065,17 +1107,11 @@ class TurnRunner:
         if self.last_reflection is not None:
             visibility = self.config.reflection.visibility
             r = self.last_reflection
-            should_archive = (
-                visibility == "debug"
-                or (visibility == "visible" and not r.passed)
-            )
+            should_archive = visibility == "debug" or (visibility == "visible" and not r.passed)
             if should_archive:
-                detail = r.raw_response or r.critique or (
-                    "Response passed evaluation" if r.passed else "No details")
-                label = ("reflection: PASS" if r.passed
-                         else f"reflection: retry {self.reflection_retries}")
-                _archive(self.ctx, {"role": "reflection", "tool": label,
-                                    "content": detail})
+                detail = r.raw_response or r.critique or ("Response passed evaluation" if r.passed else "No details")
+                label = "reflection: PASS" if r.passed else f"reflection: retry {self.reflection_retries}"
+                _archive(self.ctx, {"role": "reflection", "tool": label, "content": detail})
 
         await self._emit_reflection_metrics(content)
         await _maybe_compact(self.ctx, self.config, self.history, self.prompt_tokens)
@@ -1120,7 +1156,10 @@ class TurnRunner:
         """Thin orchestrator. Mutates self.reflection_retries and
         self.last_reflection; returns ReflectionOutcome."""
         if not _should_reflect(
-            self.ctx, self.config, content, self.reflection_retries,
+            self.ctx,
+            self.config,
+            content,
+            self.reflection_retries,
         ):
             return self._reflection_skip(content)
         result = await self._reflection_evaluate(content)
@@ -1157,32 +1196,33 @@ class TurnRunner:
         )
 
         tool_summary = build_tool_summary(
-            self.history, self.turn_start_index,
+            self.history,
+            self.turn_start_index,
             max_result_len=self.config.reflection.max_tool_result_len,
         )
         prior_turn_summary = build_prior_turn_summary(
-            self.history, self.turn_start_index - 1,
+            self.history,
+            self.turn_start_index - 1,
             max_turns=3,
             max_result_len=200,
         )
         judge_user_message = self.user_message
         if self.attachments:
-            att_desc = ", ".join(
-                f"{a.get('filename', '?')} ({a.get('mime_type', '?')})"
-                for a in self.attachments
-            )
+            att_desc = ", ".join(f"{a.get('filename', '?')} ({a.get('mime_type', '?')})" for a in self.attachments)
             judge_user_message += f"\n\n[User attached files: {att_desc}]"
-        judge_agent_response = "\n\n".join(
-            part for part in [*self.accumulated_text_parts, content]
-            if part and part.strip()
-        ) or content
+        judge_agent_response = (
+            "\n\n".join(part for part in [*self.accumulated_text_parts, content] if part and part.strip()) or content
+        )
         # Telemetry (#409): capture the first response the judge sees and
         # accumulate judge token cost across rounds.
         if self.reflection_first_response is None:
             self.reflection_first_response = content
 
         result = await evaluate_response(
-            self.config, judge_user_message, judge_agent_response, tool_summary,
+            self.config,
+            judge_user_message,
+            judge_agent_response,
+            tool_summary,
             prior_turn_summary=prior_turn_summary,
             retrieved_context=self.retrieved_context_text,
         )
@@ -1191,28 +1231,37 @@ class TurnRunner:
         if result.critique:
             self.reflection_last_critique = result.critique
 
-        log.info("Reflection result: passed=%s, critique=%s, error=%s",
-                 result.passed, result.critique[:200] if result.critique else "",
-                 result.error[:100] if result.error else "")
-        await self.ctx.publish("reflection_result",
+        log.info(
+            "Reflection result: passed=%s, critique=%s, error=%s",
+            result.passed,
+            result.critique[:200] if result.critique else "",
+            result.error[:100] if result.error else "",
+        )
+        await self.ctx.publish(
+            "reflection_result",
             passed=result.passed,
             critique=result.critique,
             raw_response=result.raw_response,
             retry_number=self.reflection_retries + 1,
-            error=result.error)
+            error=result.error,
+        )
         return result
 
     def _reflection_apply_verdict(
-        self, content: str, result: "ReflectionResult",
+        self,
+        content: str,
+        result: "ReflectionResult",
     ) -> ReflectionOutcome:
         """Apply the judge's verdict. On fail-with-real-critique,
         append failed_msg + critique_msg, archive, bump retries.
         Fail-open errors treated as PASS."""
         if not result.passed and not result.error:
-            log.info("Reflection failed (retry %d/%d): %s",
-                     self.reflection_retries + 1,
-                     self.config.reflection.max_retries,
-                     result.critique[:200])
+            log.info(
+                "Reflection failed (retry %d/%d): %s",
+                self.reflection_retries + 1,
+                self.config.reflection.max_retries,
+                result.critique[:200],
+            )
             failed_msg = {"role": "assistant", "content": content}
             self.history.append(failed_msg)
             self.messages.append(failed_msg)
@@ -1270,7 +1319,10 @@ class TurnRunner:
         self.messages.append(grace_note)
         try:
             response = await _call_llm_with_events(
-                self.ctx, self.config, self.messages, [],
+                self.ctx,
+                self.config,
+                self.messages,
+                [],
                 **self.model_override,
             )
         except Exception as exc:
@@ -1290,7 +1342,10 @@ class TurnRunner:
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(
-            self.ctx, self.config, self.history, self.prompt_tokens,
+            self.ctx,
+            self.config,
+            self.history,
+            self.prompt_tokens,
         )
         return self._extract_workspace_media(content)
 
@@ -1312,8 +1367,7 @@ class TurnRunner:
         failed, and what would unblock it. This is the message the user reads
         when they come back, so it is a handoff rather than a bare notice."""
         off = self.loop_breaker.offense()
-        parts = [f"\n\n[loop-breaker] Stopped after repeated failures: "
-                 f"you {off.reason} without progress."]
+        parts = [f"\n\n[loop-breaker] Stopped after repeated failures: you {off.reason} without progress."]
         if off.error_text:
             parts.append(f" The error each time: {off.error_text}")
         parts.append(
@@ -1400,7 +1454,10 @@ class TurnRunner:
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(
-            self.ctx, self.config, self.history, self.prompt_tokens,
+            self.ctx,
+            self.config,
+            self.history,
+            self.prompt_tokens,
         )
         return ToolResult(text=delivered, termination_reason=termination_reason)
 
@@ -1412,10 +1469,11 @@ class TurnRunner:
         otherwise just text.
         """
         handler = self.ctx.media_handler
-        should_extract = (handler is None or handler.strips_workspace_refs)
+        should_extract = handler is None or handler.strips_workspace_refs
         if should_extract:
             cleaned_text, workspace_media = extract_workspace_media(
-                content or "", self.config.workspace_path,
+                content or "",
+                self.config.workspace_path,
             )
             if workspace_media:
                 return ToolResult(text=cleaned_text, media=workspace_media)
@@ -1432,6 +1490,7 @@ class TurnRunner:
         if self.composed is not None and self.composer is not None and conv_id:
             try:
                 from .context_composer import write_context_sidecar
+
                 diagnostics = self.composer.build_diagnostics(self.config, self.composed)
                 write_context_sidecar(self.config, conv_id, diagnostics)
             except Exception as exc:
@@ -1449,17 +1508,19 @@ class TurnRunner:
                 log.debug("skill state persistence failed for %s: %s", conv_id, exc)
 
 
-async def run_agent_turn(ctx: "Context", user_message: str, history: list,
-                         archive_text: str = "",
-                         attachments: list[dict] | None = None) -> "ToolResult":
+async def run_agent_turn(
+    ctx: "Context", user_message: str, history: list, archive_text: str = "", attachments: list[dict] | None = None
+) -> "ToolResult":
     """Process a single user message through the agent loop.
 
     Public entry point. Constructs a TurnRunner and runs it.
     """
     runner = TurnRunner(
-        ctx=ctx, config=ctx.config, history=history,
-        user_message=user_message, archive_text=archive_text,
+        ctx=ctx,
+        config=ctx.config,
+        history=history,
+        user_message=user_message,
+        archive_text=archive_text,
         attachments=attachments,
     )
     return await runner.run()
-

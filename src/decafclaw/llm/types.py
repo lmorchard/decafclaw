@@ -27,6 +27,7 @@ StreamCallback = Callable[[str, Any], Any]
 
 class ContextLengthExceededError(Exception):
     """Raised when the LLM provider rejects the request due to token limits."""
+
     pass
 
 

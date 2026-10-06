@@ -11,10 +11,7 @@ from pathlib import Path
 
 from decafclaw.skills import validate_skill_md
 
-SKILL = (
-    Path(__file__).resolve().parents[1]
-    / "contrib" / "skills" / "blog-develop" / "SKILL.md"
-)
+SKILL = Path(__file__).resolve().parents[1] / "contrib" / "skills" / "blog-develop" / "SKILL.md"
 
 
 def test_blog_develop_frontmatter_contract():
@@ -37,8 +34,8 @@ def test_blog_develop_body_documents_contract():
     body = validate_skill_md(SKILL).body.lower()
     # The reliability-critical rules must stay in the prose.
     assert "delegate_task" in body
-    assert "cannot write" in body            # children can't write the vault
-    assert "blog/drafts" in body             # output location
-    assert "one question" in body            # interview discipline
+    assert "cannot write" in body  # children can't write the vault
+    assert "blog/drafts" in body  # output location
+    assert "one question" in body  # interview discipline
     for phase in ("scout", "interview", "research", "draft"):
         assert phase in body

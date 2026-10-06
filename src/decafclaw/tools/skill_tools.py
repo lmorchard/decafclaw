@@ -62,13 +62,9 @@ def check_tools_contract(module) -> list[str]:
         else:
             for key, value in tools.items():
                 if not isinstance(key, str):
-                    problems.append(
-                        f"TOOLS keys must be str tool names, got {type(key).__name__}"
-                    )
+                    problems.append(f"TOOLS keys must be str tool names, got {type(key).__name__}")
                 elif not callable(value):
-                    problems.append(
-                        f"TOOLS[{key!r}] must be callable, got {type(value).__name__}"
-                    )
+                    problems.append(f"TOOLS[{key!r}] must be callable, got {type(value).__name__}")
 
     tool_defs = getattr(module, "TOOL_DEFINITIONS", None)
     if tool_defs is not None:
@@ -81,17 +77,11 @@ def check_tools_contract(module) -> list[str]:
         else:
             for i, td in enumerate(tool_defs):
                 if not isinstance(td, dict):
-                    problems.append(
-                        f"TOOL_DEFINITIONS[{i}] must be a dict, got "
-                        f"{type(td).__name__}"
-                    )
+                    problems.append(f"TOOL_DEFINITIONS[{i}] must be a dict, got {type(td).__name__}")
                     continue
                 fn = td.get("function")
-                if not isinstance(fn, dict) or not isinstance(fn.get("name"), str) \
-                        or not fn["name"]:
-                    problems.append(
-                        f"TOOL_DEFINITIONS[{i}] needs a non-empty function.name string"
-                    )
+                if not isinstance(fn, dict) or not isinstance(fn.get("name"), str) or not fn["name"]:
+                    problems.append(f"TOOL_DEFINITIONS[{i}] needs a non-empty function.name string")
 
     return problems
 
@@ -144,9 +134,7 @@ def _is_tool_namespace_receiver(func: ast.expr) -> bool:
     """
     value = func.value if isinstance(func, ast.Attribute | ast.Subscript) else None
     if isinstance(value, ast.Attribute):  # ctx.tools.X
-        return (value.attr == "tools"
-                and isinstance(value.value, ast.Name)
-                and value.value.id in _CTX_RECEIVERS)
+        return value.attr == "tools" and isinstance(value.value, ast.Name) and value.value.id in _CTX_RECEIVERS
     return isinstance(value, ast.Name) and value.id in _CTX_RECEIVERS
 
 
@@ -218,8 +206,7 @@ def _phantom_tool_calls(source: str, tool_names: set[str]) -> list[str]:
             # underscored names are distinctive enough to flag anywhere.
             # Without this the check fires on the bundled background and
             # claude_code skills, both of which call `.wait()` legitimately.
-            if called in tool_names and (
-                    "_" in called or _is_tool_namespace_receiver(node.func)):
+            if called in tool_names and ("_" in called or _is_tool_namespace_receiver(node.func)):
                 problems.append(
                     f"tries to call the decaf tool `{called}` — a skill tool "
                     f"cannot call another tool, and `ctx` is the runtime "
@@ -334,10 +321,13 @@ def _lint_tools_py(skill_dir: Path, tool_names: set[str]) -> list[CheckResult]:
     if not tools_py.exists():
         stray = skill_dir / "main.py"
         if stray.exists():
-            checks.append(CheckResult(
-                "tools_filename", False,
-                "found main.py — native tools must live in 'tools.py'; rename it",
-            ))
+            checks.append(
+                CheckResult(
+                    "tools_filename",
+                    False,
+                    "found main.py — native tools must live in 'tools.py'; rename it",
+                )
+            )
         return checks
 
     checks.append(CheckResult("tools_filename", True, "tools.py present"))
@@ -348,33 +338,45 @@ def _lint_tools_py(skill_dir: Path, tool_names: set[str]) -> list[CheckResult]:
         source = tools_py.read_text()
     except OSError as exc:
         source = ""
-        checks.append(CheckResult(
-            "tools_readable", False, f"cannot read tools.py: {exc}",
-        ))
+        checks.append(
+            CheckResult(
+                "tools_readable",
+                False,
+                f"cannot read tools.py: {exc}",
+            )
+        )
     if source:
         phantom = _phantom_tool_calls(source, tool_names)
         if phantom:
-            checks.append(CheckResult(
-                "no_phantom_tool_calls", False, "; ".join(phantom),
-            ))
+            checks.append(
+                CheckResult(
+                    "no_phantom_tool_calls",
+                    False,
+                    "; ".join(phantom),
+                )
+            )
         else:
-            checks.append(CheckResult(
-                "no_phantom_tool_calls", True,
-                "no attempts to call decaf tools from inside a tool",
-            ))
+            checks.append(
+                CheckResult(
+                    "no_phantom_tool_calls",
+                    True,
+                    "no attempts to call decaf tools from inside a tool",
+                )
+            )
 
     try:
         # Same source-compiled import the loader uses — a validator that
         # checked stale bytecode could report a SyntaxError the author has
         # already fixed, or pass source the loader will reject.
-        module = _import_tools_module(
-            f"decafclaw_skill_validate_{skill_dir.name}", tools_py
-        )
+        module = _import_tools_module(f"decafclaw_skill_validate_{skill_dir.name}", tools_py)
     except Exception as exc:
-        checks.append(CheckResult(
-            "tools_import", False,
-            f"tools.py failed to import: {type(exc).__name__}: {exc}",
-        ))
+        checks.append(
+            CheckResult(
+                "tools_import",
+                False,
+                f"tools.py failed to import: {type(exc).__name__}: {exc}",
+            )
+        )
         return checks
 
     checks.append(CheckResult("tools_import", True, "tools.py imports cleanly"))
@@ -384,35 +386,48 @@ def _lint_tools_py(skill_dir: Path, tool_names: set[str]) -> list[CheckResult]:
     if get_tools is not None:
         try:
             params = list(inspect.signature(get_tools).parameters.values())
-            accepts_ctx = any(
-                p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.VAR_POSITIONAL)
-                for p in params
-            )
+            accepts_ctx = any(p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.VAR_POSITIONAL) for p in params)
         except (TypeError, ValueError) as exc:
-            checks.append(CheckResult(
-                "get_tools_signature", False,
-                f"could not inspect get_tools signature: {exc}",
-            ))
+            checks.append(
+                CheckResult(
+                    "get_tools_signature",
+                    False,
+                    f"could not inspect get_tools signature: {exc}",
+                )
+            )
             return checks
         if accepts_ctx:
-            checks.append(CheckResult(
-                "get_tools_signature", True, "get_tools(ctx) accepts a ctx parameter",
-            ))
+            checks.append(
+                CheckResult(
+                    "get_tools_signature",
+                    True,
+                    "get_tools(ctx) accepts a ctx parameter",
+                )
+            )
         else:
-            checks.append(CheckResult(
-                "get_tools_signature", False,
-                "get_tools must accept ctx as its first parameter: "
-                "def get_tools(ctx) -> (dict, list)",
-            ))
+            checks.append(
+                CheckResult(
+                    "get_tools_signature",
+                    False,
+                    "get_tools must accept ctx as its first parameter: def get_tools(ctx) -> (dict, list)",
+                )
+            )
     elif has_static:
-        checks.append(CheckResult(
-            "tools_exports", True, "exports TOOLS / TOOL_DEFINITIONS",
-        ))
+        checks.append(
+            CheckResult(
+                "tools_exports",
+                True,
+                "exports TOOLS / TOOL_DEFINITIONS",
+            )
+        )
     else:
-        checks.append(CheckResult(
-            "tools_exports", False,
-            "tools.py exports neither get_tools(ctx) nor TOOLS / TOOL_DEFINITIONS",
-        ))
+        checks.append(
+            CheckResult(
+                "tools_exports",
+                False,
+                "tools.py exports neither get_tools(ctx) nor TOOLS / TOOL_DEFINITIONS",
+            )
+        )
 
     # Shape, not just presence: exports of the wrong type import cleanly
     # and pass every check above, then fail at activation with an opaque
@@ -421,14 +436,21 @@ def _lint_tools_py(skill_dir: Path, tool_names: set[str]) -> list[CheckResult]:
     if has_static:
         problems = check_tools_contract(module)
         if problems:
-            checks.append(CheckResult(
-                "tools_shape", False, "; ".join(problems),
-            ))
+            checks.append(
+                CheckResult(
+                    "tools_shape",
+                    False,
+                    "; ".join(problems),
+                )
+            )
         else:
-            checks.append(CheckResult(
-                "tools_shape", True,
-                "TOOLS / TOOL_DEFINITIONS match the native-tool contract",
-            ))
+            checks.append(
+                CheckResult(
+                    "tools_shape",
+                    True,
+                    "TOOLS / TOOL_DEFINITIONS match the native-tool contract",
+                )
+            )
     return checks
 
 
@@ -465,8 +487,7 @@ def _name_advisories(meta: dict | None, skill_dir: Path) -> list[str]:
     return advisories
 
 
-def _render_validation(path: str, checks: list[CheckResult],
-                       advisories: list[str] | None = None) -> ToolResult:
+def _render_validation(path: str, checks: list[CheckResult], advisories: list[str] | None = None) -> ToolResult:
     """Render a checklist of CheckResults as a ToolResult (text + data).
 
     `ok` reflects the checks only. Advisories are things that will load but
@@ -484,19 +505,13 @@ def _render_validation(path: str, checks: list[CheckResult],
         lines.extend(f"  ! {a}" for a in advisories)
     if not ok:
         lines.append("")
-        lines.append(
-            "Fix the unchecked items, then run skill_validate again "
-            "(or refresh_skills to load it)."
-        )
+        lines.append("Fix the unchecked items, then run skill_validate again (or refresh_skills to load it).")
     return ToolResult(
         text="\n".join(lines),
         data={
             "path": path,
             "ok": ok,
-            "checks": [
-                {"name": c.name, "passed": c.passed, "message": c.message}
-                for c in checks
-            ],
+            "checks": [{"name": c.name, "passed": c.passed, "message": c.message} for c in checks],
             "advisories": advisories,
         },
     )
@@ -509,9 +524,7 @@ def _load_native_tools(skill_info) -> tuple[dict, list, object]:
     via getattr(module, "get_tools", None) by the caller.
     """
     tools_path = skill_info.location / "tools.py"
-    module = _import_tools_module(
-        f"decafclaw_skill_{skill_info.name}", tools_path
-    )
+    module = _import_tools_module(f"decafclaw_skill_{skill_info.name}", tools_path)
 
     # Reject wrong-shaped exports here rather than letting them surface
     # downstream as `cannot convert dictionary update sequence element #0`
@@ -621,10 +634,7 @@ def _core_tool_names() -> set[str]:
     """
     from . import TOOL_DEFINITIONS  # noqa: PLC0415 — breaks an import cycle
 
-    return {
-        td.get("function", {}).get("name", "")
-        for td in TOOL_DEFINITIONS
-    }
+    return {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
 
 
 def _find_skill(discovered, name: str):
@@ -657,7 +667,9 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
         return ToolResult(text=f"[error: skill '{name}' not found. Check Available Skills in your instructions.]")
 
     if skill_info.disable_model_invocation:
-        return ToolResult(text=f"[error: skill '{name}' cannot be invoked by the model (disabled by skill configuration)]")
+        return ToolResult(
+            text=f"[error: skill '{name}' cannot be invoked by the model (disabled by skill configuration)]"
+        )
 
     # Already active. For a text-only skill there is nothing to do, but for a
     # native skill this is the author's edit-and-reload path: re-import
@@ -695,9 +707,11 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
 
     current_hash = _compute_skill_hash(skill_info)
 
-    if (not is_trusted_tier
-            and not (perm_status == "always" and perm_hash == current_hash)
-            and not skill_info.auto_approve):
+    if (
+        not is_trusted_tier
+        and not (perm_status == "always" and perm_hash == current_hash)
+        and not skill_info.auto_approve
+    ):
         # Need confirmation (workspace tier only at this point)
         if ctx.is_unattended:
             # Nobody can answer a prompt on this turn, so it would block for the
@@ -706,9 +720,9 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
             log.warning(
                 f"[tool:activate_skill] denied on unattended turn "
                 f"(task_mode={ctx.task_mode!r}): workspace-tier skill "
-                f"'{name}' has no standing grant or its code was modified")
-            return ToolResult(
-                text=f"[error: activation of skill '{name}' was denied by user]")
+                f"'{name}' has no standing grant or its code was modified"
+            )
+            return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
         approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:
             return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
@@ -743,12 +757,9 @@ def _retract_skill_tools(ctx: "Context", name: str) -> None:
     for tool_name in stale:
         ctx.tools.extra.pop(tool_name, None)
     ctx.tools.extra_definitions[:] = [
-        td for td in ctx.tools.extra_definitions
-        if td.get("function", {}).get("name") not in stale
+        td for td in ctx.tools.extra_definitions if td.get("function", {}).get("name") not in stale
     ]
-    ctx.config.always_loaded_skill_tools = (
-        ctx.config.always_loaded_skill_tools - stale
-    )
+    ctx.config.always_loaded_skill_tools = ctx.config.always_loaded_skill_tools - stale
 
     # Later activation wins, so walk providers in reverse activation order and
     # let the first match claim each name. Exactly one definition per name —
@@ -765,15 +776,12 @@ def _retract_skill_tools(ctx: "Context", name: str) -> None:
             unclaimed.discard(tool_name)
             log.debug(
                 "Rebound %r to skill %r after %r stopped providing it",
-                tool_name, other, name,
+                tool_name,
+                other,
+                name,
             )
-        recovered = {
-            td.get("function", {}).get("name") for td in tool_defs
-        } & (set(stale) - unclaimed)
-        ctx.tools.extra_definitions.extend(
-            td for td in tool_defs
-            if td.get("function", {}).get("name") in recovered
-        )
+        recovered = {td.get("function", {}).get("name") for td in tool_defs} & (set(stale) - unclaimed)
+        ctx.tools.extra_definitions.extend(td for td in tool_defs if td.get("function", {}).get("name") in recovered)
 
 
 def _register_skill_tools(ctx: "Context", name: str, tools: dict, tool_defs: list) -> None:
@@ -793,9 +801,7 @@ def _register_skill_tools(ctx: "Context", name: str, tools: dict, tool_defs: lis
     # the next reload duplicates — which providers reject outright (Vertex:
     # `400 Duplicate function declaration found`) at the provider call, before
     # any tool runs (#684).
-    declared = {
-        td.get("function", {}).get("name") for td in tool_defs
-    } - {None, ""}
+    declared = {td.get("function", {}).get("name") for td in tool_defs} - {None, ""}
     ctx.tools.skill_tool_names[name] = set(tools.keys()) | declared
     # Re-inserted so insertion order stays activation order — the reload of an
     # existing skill makes it the most recent provider again.
@@ -841,24 +847,25 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
             if skill_info.trust_tier == "workspace":
                 log.warning(
                     "Refusing to activate skill %r — phantom tool call: %s",
-                    name, detail,
+                    name,
+                    detail,
                 )
-                still_active = (
-                    " The previously loaded tools are still active."
-                    if reloading else ""
+                still_active = " The previously loaded tools are still active." if reloading else ""
+                return ToolResult(
+                    text=(
+                        f"[error: skill '{name}' cannot be activated: {detail}."
+                        f"{still_active} Fix tools.py and activate the skill "
+                        f"again.]"
+                    )
                 )
-                return ToolResult(text=(
-                    f"[error: skill '{name}' cannot be activated: {detail}."
-                    f"{still_active} Fix tools.py and activate the skill "
-                    f"again.]"
-                ))
             log.warning(
                 "Skill %r (%s tier) has a phantom tool call: %s",
-                name, skill_info.trust_tier, detail,
+                name,
+                skill_info.trust_tier,
+                detail,
             )
             result_parts.append(
-                f"\n\nWarning: this skill's tools.py {detail}. It loaded, but "
-                f"that call will raise when the tool runs."
+                f"\n\nWarning: this skill's tools.py {detail}. It loaded, but that call will raise when the tool runs."
             )
 
         try:
@@ -935,9 +942,7 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
                 )
                 log.info(f"Reloaded native skill '{name}' with tools: {tool_names}")
             else:
-                result_parts.append(
-                    f"\n\nThe following tools are now available: {', '.join(tool_names)}"
-                )
+                result_parts.append(f"\n\nThe following tools are now available: {', '.join(tool_names)}")
                 log.info(f"Activated native skill '{name}' with tools: {tool_names}")
 
             # Shadowing a core tool name is legal — execute_tool checks
@@ -959,15 +964,14 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
                 )
                 log.warning(
                     "Skill %r tool %r shadows a core tool of the same name.",
-                    name, shadowed,
+                    name,
+                    shadowed,
                 )
 
             # Cache tool names for always-loaded skills so tool_registry
             # can exempt them from deferral
             if skill_info.always_loaded:
-                ctx.config.always_loaded_skill_tools = (
-                    ctx.config.always_loaded_skill_tools | set(tool_names)
-                )
+                ctx.config.always_loaded_skill_tools = ctx.config.always_loaded_skill_tools | set(tool_names)
 
         except Exception as e:
             log.error(f"Failed to load skill '{name}' tools: {e}")
@@ -979,11 +983,13 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
                 # Nothing was retracted (the retract happens only after a
                 # successful import), so say so explicitly rather than leave
                 # the caller guessing whether the skill is now half-loaded.
-                return ToolResult(text=(
-                    f"[error: failed to reload skill '{name}': {detail}. "
-                    f"The previously loaded tools are still active — fix "
-                    f"tools.py and activate the skill again.]"
-                ))
+                return ToolResult(
+                    text=(
+                        f"[error: failed to reload skill '{name}': {detail}. "
+                        f"The previously loaded tools are still active — fix "
+                        f"tools.py and activate the skill again.]"
+                    )
+                )
             return ToolResult(text=f"[error: failed to load skill '{name}': {detail}]")
     else:
         log.info(f"Activated shell-based skill '{name}'")
@@ -1004,7 +1010,8 @@ async def _request_skill_confirmation(ctx: "Context", skill_name: str) -> tuple[
     Returns (approved, always) tuple.
     """
     result = await request_confirmation(
-        ctx, tool_name="activate_skill",
+        ctx,
+        tool_name="activate_skill",
         command=f"Activate skill: {skill_name}",
         message=f"Activate skill: **{skill_name}**",
         skill_name=skill_name,
@@ -1022,9 +1029,7 @@ def tool_skill_validate(ctx: "Context", path: str) -> ToolResult:
 
     skill_dir = target.parent if target.name == "SKILL.md" else target
     if not skill_dir.is_dir():
-        return ToolResult(
-            text=f"[error: '{path}' is not a directory in the workspace]"
-        )
+        return ToolResult(text=f"[error: '{path}' is not a directory in the workspace]")
 
     checks: list[CheckResult] = []
 
@@ -1033,24 +1038,34 @@ def tool_skill_validate(ctx: "Context", path: str) -> ToolResult:
     # PASS here while refresh_skills silently found nothing gives the author
     # two tools that contradict each other and no way to reconcile them.
     if is_discoverable_skill_dir(ctx.config, skill_dir):
-        checks.append(CheckResult(
-            "discoverable", True, "location is scanned by skill discovery",
-        ))
+        checks.append(
+            CheckResult(
+                "discoverable",
+                True,
+                "location is scanned by skill discovery",
+            )
+        )
     else:
-        checks.append(CheckResult(
-            "discoverable", False,
-            f"nothing scans '{path}' — a workspace skill must be an immediate "
-            f"child of the workspace 'skills/' directory. Move it to "
-            f"'skills/{skill_dir.name}' (workspace_write paths are already "
-            f"workspace-relative, so do NOT prefix them with 'workspace/').",
-        ))
+        checks.append(
+            CheckResult(
+                "discoverable",
+                False,
+                f"nothing scans '{path}' — a workspace skill must be an immediate "
+                f"child of the workspace 'skills/' directory. Move it to "
+                f"'skills/{skill_dir.name}' (workspace_write paths are already "
+                f"workspace-relative, so do NOT prefix them with 'workspace/').",
+            )
+        )
 
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
-        checks.append(CheckResult(
-            "skill_md_present", False,
-            "no SKILL.md here — a skill needs skills/<name>/SKILL.md",
-        ))
+        checks.append(
+            CheckResult(
+                "skill_md_present",
+                False,
+                "no SKILL.md here — a skill needs skills/<name>/SKILL.md",
+            )
+        )
         return _render_validation(path, checks)
     checks.append(CheckResult("skill_md_present", True, "SKILL.md present"))
 
@@ -1060,9 +1075,7 @@ def tool_skill_validate(ctx: "Context", path: str) -> ToolResult:
     # tools.py checks run regardless of frontmatter validity (filesystem-based).
     checks.extend(_lint_tools_py(skill_dir, _known_tool_names(ctx.config)))
 
-    return _render_validation(
-        path, checks, _name_advisories(validation.meta, skill_dir)
-    )
+    return _render_validation(path, checks, _name_advisories(validation.meta, skill_dir))
 
 
 def rediscover_skills(config) -> list:
@@ -1082,9 +1095,7 @@ def rediscover_skills(config) -> list:
 
     rejections: list = []
     if not config.system_prompt or "<skill_catalog>" in config.system_prompt:
-        config.system_prompt, config.discovered_skills = load_system_prompt(
-            config, rejections=rejections
-        )
+        config.system_prompt, config.discovered_skills = load_system_prompt(config, rejections=rejections)
     else:
         config.discovered_skills = discover_skills(config, rejections=rejections)
     config.skill_tool_owners = build_skill_tool_owners(config.discovered_skills)
@@ -1123,8 +1134,7 @@ def tool_refresh_skills(ctx: "Context") -> str | ToolResult:
 
     if rejections:
         text += "\nRejected (found but not loaded):\n" + "\n".join(
-            f"  - {_rejection_display_path(config, r.path)} — {r.reason}"
-            for r in rejections
+            f"  - {_rejection_display_path(config, r.path)} — {r.reason}" for r in rejections
         )
 
     # A skill in an unscanned directory produces no rejection — discovery
@@ -1132,9 +1142,7 @@ def tool_refresh_skills(ctx: "Context") -> str | ToolResult:
     misplaced = find_misplaced_skills(config)
     if misplaced:
         text += "\nPossibly misplaced (found but not scanned):\n" + "\n".join(
-            f"  - {found} — nothing scans this path; did you mean "
-            f"'{suggested}'?"
-            for found, suggested in misplaced
+            f"  - {found} — nothing scans this path; did you mean '{suggested}'?" for found, suggested in misplaced
         )
     return text
 
@@ -1207,8 +1215,7 @@ SKILL_TOOL_DEFINITIONS = [
                     "path": {
                         "type": "string",
                         "description": (
-                            "Workspace-relative path to the skill directory "
-                            "(or its SKILL.md), e.g. 'skills/my-skill'."
+                            "Workspace-relative path to the skill directory (or its SKILL.md), e.g. 'skills/my-skill'."
                         ),
                     },
                 },

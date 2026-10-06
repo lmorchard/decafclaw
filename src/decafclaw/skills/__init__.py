@@ -141,26 +141,37 @@ def validate_skill_md(path: Path) -> SkillValidation:
 
     meta, body = _split_frontmatter(text)
     if meta is None:
-        checks.append(CheckResult(
-            "frontmatter", False,
-            "no valid YAML frontmatter — needs a '---' delimited block of "
-            "parseable YAML at the top (check the opening/closing '---' "
-            "delimiters and the YAML syntax between them)",
-        ))
+        checks.append(
+            CheckResult(
+                "frontmatter",
+                False,
+                "no valid YAML frontmatter — needs a '---' delimited block of "
+                "parseable YAML at the top (check the opening/closing '---' "
+                "delimiters and the YAML syntax between them)",
+            )
+        )
         return SkillValidation(path=path, checks=checks, body=text)
     checks.append(CheckResult("frontmatter", True, "valid YAML frontmatter"))
 
     if not meta.get("name"):
-        checks.append(CheckResult(
-            "name", False, "missing required 'name' field in frontmatter",
-        ))
+        checks.append(
+            CheckResult(
+                "name",
+                False,
+                "missing required 'name' field in frontmatter",
+            )
+        )
         return SkillValidation(path=path, checks=checks, meta=meta, body=body)
     checks.append(CheckResult("name", True, f"name: {meta['name']}"))
 
     if not meta.get("description"):
-        checks.append(CheckResult(
-            "description", False, "missing required 'description' field in frontmatter",
-        ))
+        checks.append(
+            CheckResult(
+                "description",
+                False,
+                "missing required 'description' field in frontmatter",
+            )
+        )
         return SkillValidation(path=path, checks=checks, meta=meta, body=body)
     checks.append(CheckResult("description", True, "description present"))
 
@@ -273,7 +284,7 @@ def _frontmatter_span(text: str) -> tuple[str, str] | None:
     end = stripped.find("\n---", 3)
     if end == -1:
         return None
-    return stripped[3:end].strip(), stripped[end + 4:]
+    return stripped[3:end].strip(), stripped[end + 4 :]
 
 
 def _extract_frontmatter_text(text: str) -> str:
@@ -466,8 +477,7 @@ def find_misplaced_skills(config) -> list[tuple[str, str]]:
     def _children_with_skill_md(base: Path) -> list[Path]:
         if not base.is_dir():
             return []
-        return [d for d in sorted(base.iterdir())
-                if d.is_dir() and (d / "SKILL.md").exists()]
+        return [d for d in sorted(base.iterdir()) if d.is_dir() and (d / "SKILL.md").exists()]
 
     for d in _children_with_skill_md(ws / "workspace" / "skills"):
         found.append((f"workspace/skills/{d.name}/SKILL.md", f"skills/{d.name}"))
@@ -478,9 +488,12 @@ def find_misplaced_skills(config) -> list[tuple[str, str]]:
             if not group.is_dir() or (group / "SKILL.md").exists():
                 continue  # a real skill, not a container
             for d in _children_with_skill_md(group):
-                found.append((
-                    f"skills/{group.name}/{d.name}/SKILL.md", f"skills/{d.name}",
-                ))
+                found.append(
+                    (
+                        f"skills/{group.name}/{d.name}/SKILL.md",
+                        f"skills/{d.name}",
+                    )
+                )
 
     return found
 
@@ -539,14 +552,16 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
                 log.warning(
                     "Ignoring 'auto-approve: true' on workspace skill "
                     "'%s' at %s — workspace skills cannot auto-approve.",
-                    info.name, skill_dir,
+                    info.name,
+                    skill_dir,
                 )
                 info.auto_approve = False
             if info.always_loaded and tier == "workspace":
                 log.warning(
                     "Ignoring 'always-loaded: true' on workspace skill "
                     "'%s' at %s — workspace skills cannot always-load.",
-                    info.name, skill_dir,
+                    info.name,
+                    skill_dir,
                 )
                 info.always_loaded = False
 
@@ -558,7 +573,8 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
                     log.warning(
                         "Ignoring config.skills_always_loaded entry for "
                         "workspace skill '%s' — workspace skills cannot "
-                        "always-load.", info.name,
+                        "always-load.",
+                        info.name,
                     )
                 else:
                     info.always_loaded = True
@@ -569,6 +585,7 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
             if info.has_native_tools and grants_capability(info):
                 try:
                     from ..tools.skill_tools import _load_native_tools
+
                     _, _, module = _load_native_tools(info)
                     skill_config_cls = getattr(module, "SkillConfig", None)
                 except Exception as exc:
@@ -582,6 +599,7 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
                 if skill_config_cls is not None:
                     try:
                         from dataclasses import fields as dc_fields
+
                         raw = config.skills.get(info.name, {})
                         prefix = f"SKILLS_{info.name.upper().replace('-', '_')}"
                         for f in dc_fields(skill_config_cls):
@@ -603,9 +621,7 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
 
             # Name collision: first-found wins
             if info.name in seen_names:
-                log.debug(
-                    f"Skill '{info.name}' at {skill_dir} shadowed by {seen_names[info.name]}"
-                )
+                log.debug(f"Skill '{info.name}' at {skill_dir} shadowed by {seen_names[info.name]}")
                 continue
 
             seen_names[info.name] = skill_dir
@@ -643,17 +659,17 @@ def build_skill_tool_owners(skills: list[SkillInfo]) -> dict[str, str]:
         if not skill.has_native_tools:
             continue
         if not grants_capability(skill):
-            log.debug("Not indexing tools for %s-tier skill %r",
-                      skill.trust_tier, skill.name)
+            log.debug("Not indexing tools for %s-tier skill %r", skill.trust_tier, skill.name)
             continue
         try:
             from ..tools.skill_tools import _load_native_tools
+
             _, tool_defs, _ = _load_native_tools(skill)
         except Exception as exc:
             log.warning(
-                "build_skill_tool_owners: failed to import tools.py for "
-                "skill '%s': %s",
-                skill.name, exc,
+                "build_skill_tool_owners: failed to import tools.py for skill '%s': %s",
+                skill.name,
+                exc,
             )
             continue
         for td in tool_defs:
@@ -680,25 +696,29 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
     lines = []
 
     if always_loaded:
-        lines.extend([
-            "## Active Skills",
-            "",
-            "The following skills are always active — their tools are available now.",
-            "",
-        ])
+        lines.extend(
+            [
+                "## Active Skills",
+                "",
+                "The following skills are always active — their tools are available now.",
+                "",
+            ]
+        )
         for skill in always_loaded:
             lines.append(f"- **{skill.name}**: {skill.description}")
         lines.append("")
 
     if on_demand:
-        lines.extend([
-            "## Available Skills",
-            "",
-            "The following skills exist but are not yet loaded. Call "
-            "activate_skill(name) to load a skill's body and tools — "
-            "the tools are not visible until the skill is activated.",
-            "",
-        ])
+        lines.extend(
+            [
+                "## Available Skills",
+                "",
+                "The following skills exist but are not yet loaded. Call "
+                "activate_skill(name) to load a skill's body and tools — "
+                "the tools are not visible until the skill is activated.",
+                "",
+            ]
+        )
         for skill in on_demand:
             lines.append(f"- **{skill.name}**: {skill.description}")
 
@@ -725,12 +745,12 @@ async def activate_always_loaded(ctx: "Context") -> None:
             await activate_skill_internal(ctx, skill_info)
             log.debug("Auto-activated always-loaded skill %r", skill_info.name)
         except Exception as exc:  # noqa: BLE001 — fail-soft per spec
-            log.error("Failed to auto-activate skill %r: %s",
-                      skill_info.name, exc)
+            log.error("Failed to auto-activate skill %r: %s", skill_info.name, exc)
 
 
 async def activate_skills_for_workflow(
-    ctx, names: Sequence[str],
+    ctx,
+    names: Sequence[str],
 ) -> None:
     """Activate each named skill against `ctx`. Fail-loud:
     - Unknown name -> WorkflowSkillActivationFailed.
@@ -749,22 +769,20 @@ async def activate_skills_for_workflow(
             continue
         skill_info = by_name.get(name)
         if skill_info is None:
-            raise WorkflowSkillActivationFailed(
-                f"requires_skills entry {name!r} is not a discovered skill")
+            raise WorkflowSkillActivationFailed(f"requires_skills entry {name!r} is not a discovered skill")
         try:
             result = await activate_skill_internal(ctx, skill_info)
         except Exception as exc:
-            raise WorkflowSkillActivationFailed(
-                f"Skill {name!r} failed to activate: {exc}") from exc
+            raise WorkflowSkillActivationFailed(f"Skill {name!r} failed to activate: {exc}") from exc
         # activate_skill_internal swallows tool-load failures and returns
         # a ToolResult — see tools/skill_tools.py:228-230. Detect that
         # silent path by checking ctx.skills.activated, which the
         # successful branch populates on line 234.
         if name not in ctx.skills.activated:
             from ..media import ToolResult  # noqa: PLC0415 — symmetric with sibling imports
+
             detail = result.text if isinstance(result, ToolResult) else str(result)
-            raise WorkflowSkillActivationFailed(
-                f"Skill {name!r} failed to activate: {detail}")
+            raise WorkflowSkillActivationFailed(f"Skill {name!r} failed to activate: {detail}")
         log.debug("Workflow-activated skill %r", name)
 
 

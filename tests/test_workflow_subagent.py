@@ -4,6 +4,7 @@ These tests mock `run_child_turn` rather than dispatching a real child
 agent loop — that's integration territory and is covered by the Phase 8
 live smoke. Here we exercise the journaling and fingerprint behavior.
 """
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -78,13 +79,16 @@ async def test_subagent_replay_path(ctx):
     """A pre-populated subagent entry is returned verbatim; the live
     `run_child_turn` MUST NOT be called during replay."""
     j = Journal(workflow_name="t")
-    fp = fingerprint("subagent", {
-        "prompt": "ask",
-        "schema": None,
-        "allowed_tools": None,
-        "allow_vault_retrieval": False,
-        "allow_vault_read": False,
-    })
+    fp = fingerprint(
+        "subagent",
+        {
+            "prompt": "ask",
+            "schema": None,
+            "allowed_tools": None,
+            "allow_vault_retrieval": False,
+            "allow_vault_read": False,
+        },
+    )
     j.append((0,), "subagent", fp, "cached answer")
 
     h = WorkflowHandle(ctx, j)

@@ -98,17 +98,18 @@ async def generate_fields_for_page(config, path: Path) -> dict:
         "keywords, tags, and an importance score — from a page's content."
     )
     base_user = f"Page content:\n\n{body}"
-    tools = [{
-        "type": "function",
-        "function": {
-            "name": _TOOL_NAME,
-            "description": (
-                "Submit frontmatter metadata for this page. "
-                "You MUST call this — do not respond with prose."
-            ),
-            "parameters": _SCHEMA,
-        },
-    }]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": _TOOL_NAME,
+                "description": (
+                    "Submit frontmatter metadata for this page. You MUST call this — do not respond with prose."
+                ),
+                "parameters": _SCHEMA,
+            },
+        }
+    ]
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": base_user},
@@ -116,7 +117,10 @@ async def generate_fields_for_page(config, path: Path) -> dict:
     last_error: str | None = None
     for attempt in range(2):
         response = await call_llm(
-            config, messages, tools=tools, model_name=config.default_model,
+            config,
+            messages,
+            tools=tools,
+            model_name=config.default_model,
         )
         tool_calls = response.get("tool_calls") or []
         if tool_calls:
@@ -127,19 +131,23 @@ async def generate_fields_for_page(config, path: Path) -> dict:
                 last_error = f"invalid JSON in tool args: {e}; raw={args_raw[:200]!r}"
         else:
             last_error = (
-                f"model emitted text instead of calling {_TOOL_NAME!r}: "
-                f"{(response.get('content') or '')[:200]!r}"
+                f"model emitted text instead of calling {_TOOL_NAME!r}: {(response.get('content') or '')[:200]!r}"
             )
         log.debug(
             "generate_fields_for_page(%s) attempt %d failed: %s",
-            path, attempt, last_error,
+            path,
+            attempt,
+            last_error,
         )
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": (
-                base_user + f"\n\nIMPORTANT: You MUST call the tool "
-                f"`{_TOOL_NAME}` now. Do not narrate. Emit only the call."
-            )},
+            {
+                "role": "user",
+                "content": (
+                    base_user + f"\n\nIMPORTANT: You MUST call the tool "
+                    f"`{_TOOL_NAME}` now. Do not narrate. Emit only the call."
+                ),
+            },
         ]
     raise RuntimeError(f"structured frontmatter call failed for {path}: {last_error}")
 
@@ -171,10 +179,7 @@ async def run_backfill(config, *, dry_run: bool = False, limit: int | None = Non
         log.info("Generating frontmatter for %s", rel)
         fields = await generate_fields_for_page(config, path)
         merged = merge_frontmatter(metadata, fields, overwrite=False)
-        changed = {
-            field: merged[field] for field in FRONTMATTER_FIELDS
-            if merged.get(field) != metadata.get(field)
-        }
+        changed = {field: merged[field] for field in FRONTMATTER_FIELDS if merged.get(field) != metadata.get(field)}
         processed += 1
 
         if dry_run:
@@ -203,7 +208,8 @@ def main() -> None:
         )
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help=(
             "Show planned changes without writing. Still makes a real LLM "
             "call per page (same token spend as a normal run) — only the "
@@ -211,7 +217,9 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--limit", type=int, default=None,
+        "--limit",
+        type=int,
+        default=None,
         help="Generate frontmatter for at most N pages this run",
     )
     args = parser.parse_args()
@@ -227,10 +235,7 @@ def main() -> None:
     filled = sum(1 for r in results if r["action"] == "filled")
     planned = sum(1 for r in results if r["action"] == "planned")
     skipped = sum(1 for r in results if r["action"] == "skipped")
-    print(
-        f"{len(results)} page(s) examined: "
-        f"{filled} filled, {planned} planned, {skipped} skipped"
-    )
+    print(f"{len(results)} page(s) examined: {filled} filled, {planned} planned, {skipped} skipped")
     if not args.dry_run and filled:
         print("Run `make reindex` to refresh composite embeddings.")
 

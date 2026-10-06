@@ -11,9 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import PurePosixPath
 
-CANONICAL_AXES: frozenset[str] = frozenset(
-    {"retrieval", "routing", "answer_quality", "workflow_discipline"}
-)
+CANONICAL_AXES: frozenset[str] = frozenset({"retrieval", "routing", "answer_quality", "workflow_discipline"})
 
 # Read-shaped tool calls whose named arg identifies the file/page read.
 READ_TOOL_ARGS: dict[str, str] = {"vault_read": "page", "workspace_read": "path"}
@@ -37,15 +35,10 @@ def parse_axes(case: dict) -> list[str]:
     elif isinstance(raw, (list, tuple)):
         axes = list(raw)
     else:
-        raise ValueError(
-            f"tests: must be a string or list of strings, got {type(raw).__name__}"
-        )
+        raise ValueError(f"tests: must be a string or list of strings, got {type(raw).__name__}")
     for axis in axes:
         if not isinstance(axis, str) or axis not in CANONICAL_AXES:
-            raise ValueError(
-                f"unknown axis {axis!r} in tests: — must be one of "
-                f"{sorted(CANONICAL_AXES)}"
-            )
+            raise ValueError(f"unknown axis {axis!r} in tests: — must be one of {sorted(CANONICAL_AXES)}")
     return axes
 
 
@@ -75,9 +68,7 @@ def aggregate_by_axis(test_results: list[dict], cases: list[dict]) -> dict:
         axes = parse_axes(case) or ["untagged"]
         passed = result.get("status") == "pass"
         for axis in axes:
-            b = buckets.setdefault(
-                axis, {"total": 0, "passed": 0, "failed": 0, "pass_rate": 0.0}
-            )
+            b = buckets.setdefault(axis, {"total": 0, "passed": 0, "failed": 0, "pass_rate": 0.0})
             b["total"] += 1
             b["passed"] += 1 if passed else 0
             b["failed"] += 0 if passed else 1
@@ -141,8 +132,7 @@ def build_turn_diagnostics(
     """
     sidecar = sidecar or {}
     sources = sidecar.get("sources") or []
-    tokens_by_section = {s.get("source", ""): s.get("tokens_estimated", 0)
-                         for s in sources}
+    tokens_by_section = {s.get("source", ""): s.get("tokens_estimated", 0) for s in sources}
     tools_src = next((s for s in sources if s.get("source") == "tools"), None)
 
     candidates = [

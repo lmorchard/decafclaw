@@ -23,8 +23,7 @@ class ConfirmTokenRegistry:
     def __init__(self):
         self._tokens: dict[str, dict] = {}
 
-    def create(self, context_id: str, tool_name: str,
-               original_message: str, server_secret: str = "", **extra) -> str:
+    def create(self, context_id: str, tool_name: str, original_message: str, server_secret: str = "", **extra) -> str:
         """Generate a token for a pending confirmation. Returns the token."""
         nonce = secrets.token_urlsafe(24)
         if server_secret:
@@ -56,11 +55,17 @@ def get_token_registry() -> ConfirmTokenRegistry:
     return _token_registry
 
 
-def build_confirm_buttons(config, tool_name: str, command: str,
-                          suggested_pattern: str, context_id: str,
-                          original_message: str, tool_call_id: str = "",
-                          conv_id: str = "",
-                          confirmation_id: str = "") -> list[dict]:
+def build_confirm_buttons(
+    config,
+    tool_name: str,
+    command: str,
+    suggested_pattern: str,
+    context_id: str,
+    original_message: str,
+    tool_call_id: str = "",
+    conv_id: str = "",
+    confirmation_id: str = "",
+) -> list[dict]:
     """Build Mattermost attachment with interactive action buttons.
 
     Returns the attachments list to include in a post's props.
@@ -154,10 +159,12 @@ def build_confirm_buttons(config, tool_name: str, command: str,
             },
         ]
 
-    return [{
-        "text": "",
-        "actions": actions,
-    }]
+    return [
+        {
+            "text": "",
+            "actions": actions,
+        }
+    ]
 
 
 def build_stop_button(config, conv_id: str) -> list[dict]:
@@ -177,17 +184,19 @@ def build_stop_button(config, conv_id: str) -> list[dict]:
     )
     base_url = f"{config.http_callback_base}/actions/cancel"
 
-    return [{
-        "text": "",
-        "actions": [
-            {
-                "id": "stop",
-                "name": "Stop",
-                "style": "danger",
-                "integration": {
-                    "url": f"{base_url}?token={token}",
-                    "context": {"conv_id": conv_id},
+    return [
+        {
+            "text": "",
+            "actions": [
+                {
+                    "id": "stop",
+                    "name": "Stop",
+                    "style": "danger",
+                    "integration": {
+                        "url": f"{base_url}?token={token}",
+                        "context": {"conv_id": conv_id},
+                    },
                 },
-            },
-        ],
-    }]
+            ],
+        }
+    ]

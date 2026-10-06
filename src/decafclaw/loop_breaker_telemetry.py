@@ -49,6 +49,7 @@ def append_record(config, record: dict) -> None:
 
 def make_loop_breaker_subscriber(config) -> Callable[[dict], Awaitable[None]]:
     """EventBus subscriber: records each ``loop_breaker`` event. Fail-open."""
+
     async def handle(event: dict) -> None:
         if not config.telemetry.loop_breaker_enabled:
             return
@@ -129,6 +130,7 @@ def build_stats_report(config) -> str:
 
 def main() -> None:
     from .config import load_config
+
     config = load_config()
     print(build_stats_report(config))
 

@@ -13,6 +13,7 @@ from decafclaw.skills.background.tools import BackgroundJobManager
 # so BaseSubprocessTransport.__del__ doesn't fire after the event loop closes.
 # ---------------------------------------------------------------------------
 
+
 def test_close_transport_closes_open_transport():
     closed = []
 
@@ -20,8 +21,7 @@ def test_close_transport_closes_open_transport():
         def close(self):
             closed.append(True)
 
-    job = SimpleNamespace(process=SimpleNamespace(_transport=FakeTransport()),
-                          job_id="j1")
+    job = SimpleNamespace(process=SimpleNamespace(_transport=FakeTransport()), job_id="j1")
     tools._close_transport(job)
     assert closed == [True]
 
@@ -37,8 +37,7 @@ def test_close_transport_fail_open_when_close_raises():
         def close(self):
             raise RuntimeError("boom")
 
-    job = SimpleNamespace(process=SimpleNamespace(_transport=BoomTransport()),
-                          job_id="j3")
+    job = SimpleNamespace(process=SimpleNamespace(_transport=BoomTransport()), job_id="j3")
     tools._close_transport(job)  # swallowed, must not raise
 
 
@@ -47,6 +46,7 @@ async def test_transport_closed_even_when_finalize_raises(monkeypatch, tmp_path)
     """The transport must be closed deterministically even if _finalize_job
     raises (or the reader is cancelled mid-finalize) — else the #605 leak
     regresses. Guards the try/finally in _run_reader's cleanup."""
+
     async def boom(job):
         raise RuntimeError("finalize boom")
 
@@ -69,9 +69,11 @@ async def test_transport_closed_even_when_finalize_raises(monkeypatch, tmp_path)
     # No cleanup_all() here: the process already exited and the spy closed the
     # transport, and cleanup_all would re-invoke the patched (raising) finalize.
 
+
 # ---------------------------------------------------------------------------
 # Helpers used by tool-layer tests
 # ---------------------------------------------------------------------------
+
 
 async def _yes_approval(*a, **k):
     return {"approved": True}
@@ -177,7 +179,9 @@ async def test_cleanup_expired(tmp_path):
     """Expired jobs are killed during cleanup."""
     manager = BackgroundJobManager()
     job = await manager.start(
-        "sleep 60", cwd=str(tmp_path), max_lifetime=0.1,
+        "sleep 60",
+        cwd=str(tmp_path),
+        max_lifetime=0.1,
     )
 
     # Backdate started_at so the lifetime check trips immediately — no
@@ -304,8 +308,13 @@ def test_build_background_event_record_clamps_4kb():
     # 100 lines of 200 chars each = ~20KB
     big = deque(["x" * 200 for _ in range(100)], maxlen=500)
     rec = build_background_event_record(
-        job_id="j1", command="echo", status="completed", exit_code=0,
-        stdout_buffer=big, stderr_buffer=deque(), elapsed_ms=0,
+        job_id="j1",
+        command="echo",
+        status="completed",
+        exit_code=0,
+        stdout_buffer=big,
+        stderr_buffer=deque(),
+        elapsed_ms=0,
         completion_tail_lines=500,
     )
     assert len(rec["stdout_tail"].encode("utf-8")) <= 4096
@@ -318,8 +327,13 @@ def test_build_background_event_record_zero_tail_lines():
 
     buf = deque(["some output"], maxlen=500)
     rec = build_background_event_record(
-        job_id="j1", command="echo", status="completed", exit_code=0,
-        stdout_buffer=buf, stderr_buffer=deque(), elapsed_ms=0,
+        job_id="j1",
+        command="echo",
+        status="completed",
+        exit_code=0,
+        stdout_buffer=buf,
+        stderr_buffer=deque(),
+        elapsed_ms=0,
         completion_tail_lines=0,
     )
     assert rec["stdout_tail"] == ""
@@ -337,8 +351,13 @@ def test_build_background_event_record_clamps_completion_tail_lines_max():
 
     buf = deque([f"line-{i}" for i in range(100)], maxlen=500)
     rec = build_background_event_record(
-        job_id="j1", command="echo", status="completed", exit_code=0,
-        stdout_buffer=buf, stderr_buffer=deque(), elapsed_ms=0,
+        job_id="j1",
+        command="echo",
+        status="completed",
+        exit_code=0,
+        stdout_buffer=buf,
+        stderr_buffer=deque(),
+        elapsed_ms=0,
         completion_tail_lines=999_999,
     )
     assert rec["completion_tail_lines"] == _OUTPUT_BUFFER_SIZE
@@ -348,22 +367,19 @@ def test_build_background_event_record_clamps_completion_tail_lines_max():
 # Task 6.1: completion_tail_lines plumbing tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_completion_tail_lines_plumbs_to_job(ctx, monkeypatch):
     """completion_tail_lines passed to the tool propagates into BackgroundJob."""
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        "decafclaw.tools.shell_tools.check_shell_approval", _yes_approval
-    )
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
 
     from decafclaw.skills.background.tools import (
         _get_job_manager,
         tool_shell_background_start,
     )
 
-    result = await tool_shell_background_start(
-        ctx, command="true", completion_tail_lines=123
-    )
+    result = await tool_shell_background_start(ctx, command="true", completion_tail_lines=123)
     mgr = _get_job_manager(ctx)
     job_id = result.data["job_id"]
     job = mgr.get(job_id)
@@ -377,9 +393,7 @@ async def test_completion_tail_lines_plumbs_to_job(ctx, monkeypatch):
 async def test_completion_tail_lines_clamps_out_of_range(ctx, monkeypatch):
     """Values outside [0, _OUTPUT_BUFFER_SIZE] are clamped at the tool layer."""
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        "decafclaw.tools.shell_tools.check_shell_approval", _yes_approval
-    )
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
 
     from decafclaw.skills.background.tools import (
         _OUTPUT_BUFFER_SIZE,
@@ -388,18 +402,14 @@ async def test_completion_tail_lines_clamps_out_of_range(ctx, monkeypatch):
     )
 
     # Over-large value → clamped to _OUTPUT_BUFFER_SIZE
-    result = await tool_shell_background_start(
-        ctx, command="true", completion_tail_lines=9999
-    )
+    result = await tool_shell_background_start(ctx, command="true", completion_tail_lines=9999)
     mgr = _get_job_manager(ctx)
     job = mgr.get(result.data["job_id"])
     assert job is not None
     assert job.completion_tail_lines == _OUTPUT_BUFFER_SIZE
 
     # Negative value → clamped to 0
-    result = await tool_shell_background_start(
-        ctx, command="true", completion_tail_lines=-5
-    )
+    result = await tool_shell_background_start(ctx, command="true", completion_tail_lines=-5)
     job = mgr.get(result.data["job_id"])
     assert job is not None
     assert job.completion_tail_lines == 0
@@ -411,13 +421,12 @@ async def test_completion_tail_lines_clamps_out_of_range(ctx, monkeypatch):
 # Task 6.2: _finalize_job — archive write and idempotency
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_job_exit_appends_background_event(ctx, monkeypatch):
     """When a job exits cleanly, a background_event record is written to the archive."""
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        "decafclaw.tools.shell_tools.check_shell_approval", _yes_approval
-    )
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
 
     from decafclaw.archive import restore_history
     from decafclaw.skills.background.tools import (
@@ -446,9 +455,7 @@ async def test_job_exit_appends_background_event(ctx, monkeypatch):
 async def test_finalize_job_is_idempotent(ctx, monkeypatch):
     """Stopping a job whose reader already finalized does not double-fire notifications."""
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(
-        "decafclaw.tools.shell_tools.check_shell_approval", _yes_approval
-    )
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
 
     import decafclaw.notifications as notifications_module
 
@@ -487,6 +494,7 @@ async def test_finalize_job_is_idempotent(ctx, monkeypatch):
 # Task 6.4: _enqueue_wake — real ConversationManager.enqueue_turn dispatch
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_job_exit_enqueues_wake_turn(ctx, monkeypatch):
     """After a background job exits, a WAKE turn is enqueued on the
@@ -510,9 +518,7 @@ async def test_job_exit_enqueues_wake_turn(ctx, monkeypatch):
         return fut
 
     monkeypatch.setattr(ctx.manager, "enqueue_turn", fake_enqueue)
-    monkeypatch.setattr(
-        "decafclaw.tools.shell_tools.check_shell_approval", _yes_approval
-    )
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
 
     from decafclaw.skills.background.tools import (
         _get_job_manager,
@@ -545,9 +551,7 @@ async def test_job_exit_skips_wake_when_no_manager(ctx, monkeypatch):
     ctx.manager = None
     ctx.conv_id = "c1"
 
-    monkeypatch.setattr(
-        "decafclaw.tools.shell_tools.check_shell_approval", _yes_approval
-    )
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
 
     from decafclaw.archive import restore_history
     from decafclaw.skills.background.tools import (
@@ -574,6 +578,7 @@ async def test_job_exit_skips_wake_when_no_manager(ctx, monkeypatch):
 # Item 1: _run_reader exception path still finalizes
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_run_reader_error_path_still_finalizes(ctx, monkeypatch):
     """If the stream-reader hits a generic Exception, _finalize_job still runs
@@ -582,17 +587,13 @@ async def test_run_reader_error_path_still_finalizes(ctx, monkeypatch):
     ctx.conv_id = "c-err-1"
     ctx.manager = None
 
-    monkeypatch.setattr(
-        "decafclaw.tools.shell_tools.check_shell_approval", _yes_approval
-    )
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
 
     # Patch _read_stream to raise a non-Cancelled exception.
     async def boom(*a, **k):
         raise RuntimeError("simulated stream error")
 
-    monkeypatch.setattr(
-        "decafclaw.skills.background.tools._read_stream", boom
-    )
+    monkeypatch.setattr("decafclaw.skills.background.tools._read_stream", boom)
 
     from decafclaw.archive import restore_history
     from decafclaw.skills.background.tools import (
@@ -623,6 +624,7 @@ async def test_run_reader_error_path_still_finalizes(ctx, monkeypatch):
 # Item 2: completion_tail_lines defaults from config
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_completion_tail_lines_defaults_from_config(ctx, monkeypatch):
     """When completion_tail_lines is not passed, the value from
@@ -630,9 +632,7 @@ async def test_completion_tail_lines_defaults_from_config(ctx, monkeypatch):
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
     ctx.config.background.default_completion_tail_lines = 123
 
-    monkeypatch.setattr(
-        "decafclaw.tools.shell_tools.check_shell_approval", _yes_approval
-    )
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
 
     from decafclaw.skills.background.tools import (
         _get_job_manager,

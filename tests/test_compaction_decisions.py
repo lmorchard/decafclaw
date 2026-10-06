@@ -53,17 +53,19 @@ class TestDecisionSlice:
 
     def test_from_dict_robust_to_garbage(self):
         # Missing keys, wrong types, partial entries — all silently ignored.
-        s = DecisionSlice.from_dict({
-            "decisions": [{"text": "ok", "created_at": "2026-01-01T00:00:00Z"}],
-            "open_questions": "should-be-list",  # wrong type
-            "artifacts": [
-                {"text": "ok"},  # missing created_at
-                "not-a-dict",
-                {"text": 5, "created_at": "x"},  # wrong text type
-                {"text": "good", "created_at": "2026-01-02T00:00:00Z"},
-            ],
-            "stray_key": "ignored",
-        })
+        s = DecisionSlice.from_dict(
+            {
+                "decisions": [{"text": "ok", "created_at": "2026-01-01T00:00:00Z"}],
+                "open_questions": "should-be-list",  # wrong type
+                "artifacts": [
+                    {"text": "ok"},  # missing created_at
+                    "not-a-dict",
+                    {"text": 5, "created_at": "x"},  # wrong text type
+                    {"text": "good", "created_at": "2026-01-02T00:00:00Z"},
+                ],
+                "stray_key": "ignored",
+            }
+        )
         assert [e.text for e in s.decisions] == ["ok"]
         assert s.open_questions == []  # wrong type → empty
         assert [e.text for e in s.artifacts] == ["good"]
@@ -218,7 +220,7 @@ class TestParseSliceFromResponse:
 
 class TestStripJsonBlock:
     def test_removes_fenced_block(self):
-        text = "Prose here.\n\n```json\n{\"x\": 1}\n```\n\nMore prose."
+        text = 'Prose here.\n\n```json\n{"x": 1}\n```\n\nMore prose.'
         assert strip_json_block(text) == "Prose here.\n\n\n\nMore prose.".strip()
 
     def test_no_block_unchanged(self):
@@ -274,10 +276,12 @@ class TestMergeSlice:
     def test_cap_fifo_drops_oldest(self):
         """Cap = 2; merged set has 3 entries; oldest (by created_at)
         is dropped."""
-        old = DecisionSlice(decisions=[
-            _entry("aged", "2026-01-01T00:00:00Z"),
-            _entry("middle", "2026-03-01T00:00:00Z"),
-        ])
+        old = DecisionSlice(
+            decisions=[
+                _entry("aged", "2026-01-01T00:00:00Z"),
+                _entry("middle", "2026-03-01T00:00:00Z"),
+            ]
+        )
         merged = merge_slice(
             old,
             {"decisions": ["aged", "middle", "fresh"], "open_questions": [], "artifacts": []},
@@ -296,8 +300,7 @@ class TestMergeSlice:
         old = DecisionSlice()
         merged = merge_slice(
             old,
-            {"decisions": [f"d{i}" for i in range(50)],
-             "open_questions": [], "artifacts": []},
+            {"decisions": [f"d{i}" for i in range(50)], "open_questions": [], "artifacts": []},
             max_per_category=0,
             now="2026-05-01T00:00:00Z",
         )
@@ -313,7 +316,7 @@ class TestMergeSlice:
             {
                 "decisions": ["d1", "d2"],
                 "open_questions": [],  # drop q1
-                "artifacts": ["a1"],   # introduce
+                "artifacts": ["a1"],  # introduce
             },
             max_per_category=10,
             now="2026-05-01T00:00:00Z",

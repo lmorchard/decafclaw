@@ -58,34 +58,28 @@ class WidgetResponseHandler:
     handler's job here is strictly recovery when no loop is running.
     """
 
-    async def on_approve(self, ctx: Any, request: ConfirmationRequest,
-                         response: ConfirmationResponse) -> dict:
+    async def on_approve(self, ctx: Any, request: ConfirmationRequest, response: ConfirmationResponse) -> dict:
         return await self._inject(ctx, request, response)
 
-    async def on_deny(self, ctx: Any, request: ConfirmationRequest,
-                      response: ConfirmationResponse) -> dict:
+    async def on_deny(self, ctx: Any, request: ConfirmationRequest, response: ConfirmationResponse) -> dict:
         # Widget submits are always "approved" in the confirmation sense
         # — there's no deny path. If we see a denial, something odd
         # happened (timeout maybe). Still inject a best-effort message
         # so the conversation stays coherent.
         log.warning(
-            "WIDGET_RESPONSE denied for tool_call_id=%s — unusual; "
-            "injecting a terse placeholder",
+            "WIDGET_RESPONSE denied for tool_call_id=%s — unusual; injecting a terse placeholder",
             request.tool_call_id,
         )
         return await self._inject(ctx, request, response)
 
-    async def _inject(self, ctx: Any, request: ConfirmationRequest,
-                      response: ConfirmationResponse) -> dict:
+    async def _inject(self, ctx: Any, request: ConfirmationRequest, response: ConfirmationResponse) -> dict:
         # Consume callback if present; recovery path won't have one.
         callback = pending_callbacks.pop(request.tool_call_id, None)
         if callback is not None:
             try:
                 content = callback(response.data)
             except Exception as exc:
-                log.warning(
-                    "widget on_response callback raised for %s: %s",
-                    request.tool_call_id, exc)
+                log.warning("widget on_response callback raised for %s: %s", request.tool_call_id, exc)
                 content = default_inject_message(response.data)
         else:
             content = default_inject_message(response.data)
@@ -93,15 +87,19 @@ class WidgetResponseHandler:
         # Write the synthetic user message so a subsequent turn sees it.
         if ctx is not None and ctx.conv_id:
             from .archive import append_message
-            append_message(ctx.config, ctx.conv_id, {
-                "role": "user",
-                "source": "widget_response",
-                "content": content,
-            })
+
+            append_message(
+                ctx.config,
+                ctx.conv_id,
+                {
+                    "role": "user",
+                    "source": "widget_response",
+                    "content": content,
+                },
+            )
         return {"inject_message": content, "continue_loop": False}
 
 
 def register_widget_handler(registry: ConfirmationRegistry) -> None:
     """Register the default WIDGET_RESPONSE handler on a registry."""
-    registry.register(ConfirmationAction.WIDGET_RESPONSE,
-                      WidgetResponseHandler())
+    registry.register(ConfirmationAction.WIDGET_RESPONSE, WidgetResponseHandler())

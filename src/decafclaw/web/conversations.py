@@ -18,14 +18,11 @@ log = logging.getLogger(__name__)
 # Patterns for inferring conversation type and title from conv_id
 _SYSTEM_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     # schedule-{name}-{YYYYMMDD-HHMMSS}
-    (re.compile(r"^schedule-(.+)-(\d{8}-\d{6})$"), "schedule",
-     "Schedule: {name} [{ts}]"),
+    (re.compile(r"^schedule-(.+)-(\d{8}-\d{6})$"), "schedule", "Schedule: {name} [{ts}]"),
     # heartbeat-{YYYYMMDD-HHMMSS}-{index}
-    (re.compile(r"^heartbeat-(\d{8}-\d{6})-(\d+)$"), "heartbeat",
-     "Heartbeat [{ts}] #{idx}"),
+    (re.compile(r"^heartbeat-(\d{8}-\d{6})-(\d+)$"), "heartbeat", "Heartbeat [{ts}] #{idx}"),
     # web-{user}--child-{hex} (delegated subtask)
-    (re.compile(r"^(.+)--child-([0-9a-f]+)$"), "delegated",
-     "Subtask {child_id}"),
+    (re.compile(r"^(.+)--child-([0-9a-f]+)$"), "delegated", "Subtask {child_id}"),
 ]
 
 
@@ -60,8 +57,7 @@ def _classify_conv_id(conv_id: str) -> tuple[str, str]:
     return "unknown", conv_id
 
 
-def list_system_conversations(config, username: str = "",
-                              limit: int = 100) -> list[dict]:
+def list_system_conversations(config, username: str = "", limit: int = 100) -> list[dict]:
     """Discover system conversations from the archive directory.
 
     Returns dicts with conv_id, title, conv_type, updated_at, sorted
@@ -80,19 +76,20 @@ def list_system_conversations(config, username: str = "",
                 continue
         conv_type, title = _classify_conv_id(conv_id)
         mtime = path.stat().st_mtime
-        results.append({
-            "conv_id": conv_id,
-            "title": title,
-            "conv_type": conv_type,
-            "updated_at": datetime.fromtimestamp(mtime).isoformat(),
-        })
+        results.append(
+            {
+                "conv_id": conv_id,
+                "title": title,
+                "conv_type": conv_type,
+                "updated_at": datetime.fromtimestamp(mtime).isoformat(),
+            }
+        )
 
     results.sort(key=lambda c: c["updated_at"], reverse=True)
     return results[:limit]
 
 
-def can_read_conversation(config, index: "ConversationIndex", conv_id: str,
-                          username: str) -> bool:
+def can_read_conversation(config, index: "ConversationIndex", conv_id: str, username: str) -> bool:
     """Whether ``username`` may read the conversation ``conv_id``.
 
     Web conversations (those tracked in ``web_conversations.json``) are
@@ -104,6 +101,7 @@ def can_read_conversation(config, index: "ConversationIndex", conv_id: str,
     ``list_system_conversations``.
     """
     from ..archive import archive_path
+
     conv = index.get(conv_id)
     if conv and conv.user_id == username:
         return True
@@ -117,6 +115,7 @@ def can_read_conversation(config, index: "ConversationIndex", conv_id: str,
 @dataclass
 class ConversationMeta:
     """Metadata for a web UI conversation."""
+
     conv_id: str
     user_id: str
     title: str
@@ -167,8 +166,7 @@ class ConversationIndex:
         convs = [
             ConversationMeta(**{k: v for k, v in d.items() if k in ConversationMeta.__dataclass_fields__})
             for d in data
-            if d.get("user_id") == user_id
-            and (include_archived or not d.get("archived", False))
+            if d.get("user_id") == user_id and (include_archived or not d.get("archived", False))
         ]
         convs.sort(key=lambda c: c.updated_at, reverse=True)
         return convs
@@ -251,22 +249,19 @@ class ConversationIndex:
                 self._save(data)
                 return
 
-    def load_history(self, conv_id: str, limit: int = 50,
-                     before: str = "") -> tuple[list[dict], bool]:
+    def load_history(self, conv_id: str, limit: int = 50, before: str = "") -> tuple[list[dict], bool]:
         """Load paginated message history from the archive.
 
         Returns (messages, has_more). Messages are sorted oldest-first.
         If `before` is a timestamp, only return messages before that point.
         """
         from ..archive import read_archive
+
         all_messages = read_archive(self.config, conv_id)
 
         # Filter by timestamp if provided
         if before:
-            all_messages = [
-                m for m in all_messages
-                if m.get("timestamp", "") < before
-            ]
+            all_messages = [m for m in all_messages if m.get("timestamp", "") < before]
 
         # Take the last `limit` messages
         has_more = len(all_messages) > limit

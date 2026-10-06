@@ -33,8 +33,7 @@ def migrate_sidecars(conversations_dir: Path, *, dry_run: bool) -> int:
     for entry in sorted(conversations_dir.iterdir()):
         if not entry.is_file():
             continue
-        match = next(((suf, fn) for suf, fn in SIDECAR_FILENAMES
-                      if entry.name.endswith(suf)), None)
+        match = next(((suf, fn) for suf, fn in SIDECAR_FILENAMES if entry.name.endswith(suf)), None)
         if match is None:
             continue
         suffix, filename = match
@@ -54,21 +53,17 @@ def migrate_sidecars(conversations_dir: Path, *, dry_run: bool) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Migrate flat conversation sidecars into per-conversation dirs")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show what would be done without making changes")
+    parser = argparse.ArgumentParser(description="Migrate flat conversation sidecars into per-conversation dirs")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
     config = load_config()
     conversations_dir = config.workspace_path / "conversations"
     print(f"Conversations dir: {conversations_dir}")
     print(f"Dry run: {args.dry_run}")
     if not args.dry_run:
-        print("WARNING: this moves files in place. Back up "
-              "workspace/conversations/ (or run --dry-run) first.")
+        print("WARNING: this moves files in place. Back up workspace/conversations/ (or run --dry-run) first.")
     print()
     count = migrate_sidecars(conversations_dir, dry_run=args.dry_run)
     if args.dry_run:

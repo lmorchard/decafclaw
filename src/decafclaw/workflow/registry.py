@@ -3,6 +3,7 @@
 A workflow is its own first-class concept — NOT a skill. It borrows only
 the command-invocation plumbing. Orchestrators register at import time.
 """
+
 import dataclasses
 from typing import Any, Awaitable, Callable
 
@@ -32,7 +33,8 @@ def workflow(
         raise TypeError(
             f"@workflow({name!r}): requires_skills must be a sequence of "
             f"skill names, not a single string. Did you mean "
-            f"requires_skills=({requires_skills!r},) ?")
+            f"requires_skills=({requires_skills!r},) ?"
+        )
 
     def deco(fn):
         if name in REGISTRY:
@@ -44,6 +46,7 @@ def workflow(
             requires_skills=tuple(requires_skills),
         )
         return fn
+
     return deco
 
 

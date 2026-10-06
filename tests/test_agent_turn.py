@@ -36,6 +36,7 @@ def test_conv_id_falls_back_to_unknown(config):
     """Context with neither conv_id nor channel_id returns 'unknown'."""
     from decafclaw.context import Context
     from decafclaw.events import EventBus
+
     bare_ctx = Context(config=config, event_bus=EventBus())
     assert _conv_id(bare_ctx) == "unknown"
 
@@ -43,6 +44,7 @@ def test_conv_id_falls_back_to_unknown(config):
 def test_archive_skipped_when_flag_set(ctx, config):
     """_archive should not write when ctx.skip_archive is True."""
     from decafclaw.archive import read_archive
+
     ctx.conv_id = "test-skip-archive"
     msg = {"role": "user", "content": "should not persist"}
 
@@ -83,6 +85,7 @@ async def test_check_cancelled_returns_result_when_cancelled(ctx, config):
     assert history[0]["role"] == "assistant"
     # No archive write for the in-memory cancel marker.
     from decafclaw.archive import read_archive
+
     archived = read_archive(config, ctx.conv_id or ctx.channel_id)
     assert archived == []
 
@@ -203,7 +206,6 @@ async def test_execute_tool_calls_concurrent(ctx):
     history = []
     messages = []
 
-
     with patch("decafclaw.tool_execution.execute_tool", side_effect=_concurrent_tool):
         cancelled, _ = await execute_tool_calls(ctx, tool_calls, history, messages)
 
@@ -228,13 +230,9 @@ async def test_execute_tool_calls_semaphore_limits(ctx):
         current_concurrency -= 1
         return ToolResult(text="done")
 
-    tool_calls = [
-        {"id": f"tc{i}", "function": {"name": "slow_tool", "arguments": "{}"}}
-        for i in range(3)
-    ]
+    tool_calls = [{"id": f"tc{i}", "function": {"name": "slow_tool", "arguments": "{}"}} for i in range(3)]
     history = []
     messages = []
-
 
     with patch("decafclaw.tool_execution.execute_tool", side_effect=_tracked_tool):
         await execute_tool_calls(ctx, tool_calls, history, messages)
@@ -253,13 +251,9 @@ async def test_execute_tool_calls_one_fails_others_succeed(ctx):
             raise RuntimeError("boom")
         return ToolResult(text=f"ok-{ctx_arg.tools.current_call_id}")
 
-    tool_calls = [
-        {"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}}
-        for i in range(3)
-    ]
+    tool_calls = [{"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}} for i in range(3)]
     history = []
     messages = []
-
 
     with patch("decafclaw.tool_execution.execute_tool", side_effect=_maybe_fail):
         cancelled, _ = await execute_tool_calls(ctx, tool_calls, history, messages)
@@ -275,16 +269,13 @@ async def test_execute_tool_calls_one_fails_others_succeed(ctx):
 @pytest.mark.asyncio
 async def test_execute_tool_calls_preserves_order(ctx):
     """Results are returned in call order, not completion order."""
+
     async def _variable_speed(ctx_arg, name, args):
         return ToolResult(text=f"result-{ctx_arg.tools.current_call_id}")
 
-    tool_calls = [
-        {"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}}
-        for i in range(3)
-    ]
+    tool_calls = [{"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}} for i in range(3)]
     history = []
     messages = []
-
 
     with patch("decafclaw.tool_execution.execute_tool", side_effect=_variable_speed):
         await execute_tool_calls(ctx, tool_calls, history, messages)
@@ -304,9 +295,7 @@ async def test_execute_tool_calls_end_turn_signal(ctx):
     async def _end_turn_tool(ctx_arg, name, args):
         return ToolResult(text="spec written", end_turn=True)
 
-    tool_calls = [
-        {"id": "tc0", "function": {"name": "tool", "arguments": "{}"}}
-    ]
+    tool_calls = [{"id": "tc0", "function": {"name": "tool", "arguments": "{}"}}]
     history = []
     messages = []
 
@@ -328,10 +317,7 @@ async def test_execute_tool_calls_end_turn_in_parallel_batch(ctx):
             return ToolResult(text="end here", end_turn=True)
         return ToolResult(text=f"normal-{call_id}")
 
-    tool_calls = [
-        {"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}}
-        for i in range(3)
-    ]
+    tool_calls = [{"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}} for i in range(3)]
     history = []
     messages = []
 
@@ -354,9 +340,7 @@ async def test_execute_tool_calls_no_end_turn_for_bare_strings(ctx):
     async def _string_tool(ctx_arg, name, args):
         return "just a string"
 
-    tool_calls = [
-        {"id": "tc0", "function": {"name": "tool", "arguments": "{}"}}
-    ]
+    tool_calls = [{"id": "tc0", "function": {"name": "tool", "arguments": "{}"}}]
     history = []
     messages = []
 
@@ -375,9 +359,7 @@ async def test_execute_tool_calls_end_turn_confirm(ctx):
     async def _confirm_tool(ctx_arg, name, args):
         return ToolResult(text="spec ready", end_turn=action)
 
-    tool_calls = [
-        {"id": "tc0", "function": {"name": "tool", "arguments": "{}"}}
-    ]
+    tool_calls = [{"id": "tc0", "function": {"name": "tool", "arguments": "{}"}}]
     history = []
     messages = []
 
@@ -536,13 +518,15 @@ async def test_run_agent_turn_with_tool_call(ctx):
 
     tool_call_response = _mock_llm_response(
         content=None,
-        tool_calls=[{
-            "id": "tc1",
-            "function": {
-                "name": "memory_recent",
-                "arguments": json.dumps({"n": 1}),
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "memory_recent",
+                    "arguments": json.dumps({"n": 1}),
+                },
+            }
+        ],
     )
     final_response = _mock_llm_response("Here are your memories.")
 
@@ -583,13 +567,15 @@ async def test_run_agent_turn_max_iterations_grace_turn(ctx):
 
     tool_call_response = _mock_llm_response(
         content=None,
-        tool_calls=[{
-            "id": "tc1",
-            "function": {
-                "name": "memory_recent",
-                "arguments": "{}",
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "memory_recent",
+                    "arguments": "{}",
+                },
+            }
+        ],
     )
     grace_response = _mock_llm_response(
         content="I ran out of iterations. Here's where I am.",
@@ -621,13 +607,15 @@ async def test_run_agent_turn_grace_turn_bumps_current_iteration(ctx):
 
     tool_call_response = _mock_llm_response(
         content=None,
-        tool_calls=[{
-            "id": "tc1",
-            "function": {
-                "name": "memory_recent",
-                "arguments": "{}",
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "memory_recent",
+                    "arguments": "{}",
+                },
+            }
+        ],
     )
     grace_response = _mock_llm_response(content="Wrapping up.")
 
@@ -711,13 +699,15 @@ async def test_run_agent_turn_grace_turn_fallback_on_empty_content(ctx):
 
     tool_call_response = _mock_llm_response(
         content="Working on it...",
-        tool_calls=[{
-            "id": "tc1",
-            "function": {
-                "name": "memory_recent",
-                "arguments": "{}",
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "memory_recent",
+                    "arguments": "{}",
+                },
+            }
+        ],
     )
     empty_grace_response = _mock_llm_response(content="")
 
@@ -750,13 +740,15 @@ async def test_run_agent_turn_grace_turn_fallback_on_exception(ctx):
 
     tool_call_response = _mock_llm_response(
         content="Let me check that for you.",
-        tool_calls=[{
-            "id": "tc1",
-            "function": {
-                "name": "memory_recent",
-                "arguments": "{}",
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "memory_recent",
+                    "arguments": "{}",
+                },
+            }
+        ],
     )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -796,9 +788,7 @@ async def test_run_agent_turn_tracks_token_usage(ctx):
     ctx.config.system_prompt = "You are a test bot."
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = _mock_llm_response(
-            "hi", usage={"prompt_tokens": 200, "completion_tokens": 50}
-        )
+        mock_llm.return_value = _mock_llm_response("hi", usage={"prompt_tokens": 200, "completion_tokens": 50})
         history = []
         await run_agent_turn(ctx, "hi", history)
 
@@ -814,8 +804,7 @@ async def test_run_agent_turn_tracks_cached_prompt_tokens(ctx):
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
         mock_llm.return_value = _mock_llm_response(
-            "hi", usage={"prompt_tokens": 200, "completion_tokens": 50,
-                         "cached_tokens": 160}
+            "hi", usage={"prompt_tokens": 200, "completion_tokens": 50, "cached_tokens": 160}
         )
         history = []
         await run_agent_turn(ctx, "hi", history)
@@ -837,6 +826,7 @@ async def test_run_agent_turn_archives_messages(ctx):
 
     # Check archive file was written
     from decafclaw.archive import read_archive
+
     archived = read_archive(ctx.config, "test-conv")
     assert len(archived) == 2
     assert archived[0]["role"] == "user"
@@ -853,8 +843,10 @@ async def test_reflection_pass_delivers_normally(ctx):
     ctx.config.system_prompt = "test"
     ctx.config.reflection = ReflectionConfig(enabled=True)
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval,
+    ):
         mock_llm.return_value = _mock_llm_response("Good answer")
         mock_eval.return_value = ReflectionResult(passed=True)
 
@@ -891,10 +883,10 @@ async def test_reflection_fail_retries(ctx):
             return ReflectionResult(passed=False, critique="You missed the point")
         return ReflectionResult(passed=True)
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock,
-               side_effect=mock_llm_side_effect), \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock,
-               side_effect=mock_eval_side_effect):
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock, side_effect=mock_llm_side_effect),
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock, side_effect=mock_eval_side_effect),
+    ):
         history = []
         result = await run_agent_turn(ctx, "question", history)
 
@@ -913,12 +905,13 @@ async def test_reflection_max_retries_delivers_last(ctx):
     ctx.config.system_prompt = "test"
     ctx.config.reflection = ReflectionConfig(enabled=True, max_retries=1)
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval,
+    ):
         mock_llm.return_value = _mock_llm_response("Mediocre answer")
         # Always fails
-        mock_eval.return_value = ReflectionResult(
-            passed=False, critique="Still not great")
+        mock_eval.return_value = ReflectionResult(passed=False, critique="Still not great")
 
         history = []
         result = await run_agent_turn(ctx, "question", history)
@@ -937,8 +930,10 @@ async def test_reflection_disabled_skips(ctx):
     ctx.config.system_prompt = "test"
     ctx.config.reflection = ReflectionConfig(enabled=False)
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval,
+    ):
         mock_llm.return_value = _mock_llm_response("response")
         history = []
         await run_agent_turn(ctx, "hi", history)
@@ -954,8 +949,10 @@ async def test_reflection_child_skips(ctx):
     ctx.config.reflection = ReflectionConfig(enabled=True)
     ctx.skip_reflection = True
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval,
+    ):
         mock_llm.return_value = _mock_llm_response("child response")
         history = []
         await run_agent_turn(ctx, "task", history)
@@ -970,11 +967,12 @@ async def test_reflection_error_delivers_response(ctx):
     ctx.config.system_prompt = "test"
     ctx.config.reflection = ReflectionConfig(enabled=True)
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval,
+    ):
         mock_llm.return_value = _mock_llm_response("response")
-        mock_eval.return_value = ReflectionResult(
-            passed=True, error="connection timeout")
+        mock_eval.return_value = ReflectionResult(passed=True, error="connection timeout")
 
         history = []
         result = await run_agent_turn(ctx, "hi", history)
@@ -1002,18 +1000,22 @@ async def test_reflection_sees_text_emitted_alongside_tool_calls(ctx):
 
     report_plus_tool = _mock_llm_response(
         content=report_text,
-        tool_calls=[{
-            "id": "tc1",
-            "function": {
-                "name": "memory_recent",
-                "arguments": json.dumps({"n": 1}),
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "memory_recent",
+                    "arguments": json.dumps({"n": 1}),
+                },
+            }
+        ],
     )
     trailer_only = _mock_llm_response(trailer_text)
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval,
+    ):
         mock_llm.side_effect = [report_plus_tool, trailer_only]
         mock_eval.return_value = ReflectionResult(passed=True)
 
@@ -1025,8 +1027,7 @@ async def test_reflection_sees_text_emitted_alongside_tool_calls(ctx):
     # (see agent.py _handle_reflection: evaluate_response(config, judge_user_message, final_text, ...))
     agent_response_arg = mock_eval.call_args.args[2]
     assert report_text in agent_response_arg, (
-        "Reflection judge should see text emitted alongside tool calls, "
-        f"but agent_response was: {agent_response_arg!r}"
+        f"Reflection judge should see text emitted alongside tool calls, but agent_response was: {agent_response_arg!r}"
     )
     assert trailer_text in agent_response_arg
 
@@ -1054,11 +1055,12 @@ async def test_reflection_turn_emitted_passed_first(ctx):
     ctx.config.reflection = ReflectionConfig(enabled=True)
     events = _collect_reflection_turns(ctx)
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval,
+    ):
         mock_llm.return_value = _mock_llm_response("Good answer")
-        mock_eval.return_value = ReflectionResult(
-            passed=True, prompt_tokens=150, completion_tokens=8)
+        mock_eval.return_value = ReflectionResult(passed=True, prompt_tokens=150, completion_tokens=8)
         await run_agent_turn(ctx, "question", [])
 
     assert len(events) == 1
@@ -1092,13 +1094,15 @@ async def test_reflection_turn_emitted_passed_after_retry(ctx):
         nonlocal eval_calls
         eval_calls += 1
         if eval_calls == 1:
-            return ReflectionResult(passed=False, critique="You missed the point",
-                                    prompt_tokens=200, completion_tokens=15)
+            return ReflectionResult(
+                passed=False, critique="You missed the point", prompt_tokens=200, completion_tokens=15
+            )
         return ReflectionResult(passed=True, prompt_tokens=210, completion_tokens=5)
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock, side_effect=llm_side), \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock,
-               side_effect=eval_side):
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock, side_effect=llm_side),
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock, side_effect=eval_side),
+    ):
         await run_agent_turn(ctx, "question", [])
 
     assert len(events) == 1
@@ -1120,11 +1124,12 @@ async def test_reflection_turn_emitted_loop_exhausted(ctx):
     ctx.config.reflection = ReflectionConfig(enabled=True, max_retries=1)
     events = _collect_reflection_turns(ctx)
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval,
+    ):
         mock_llm.return_value = _mock_llm_response("Mediocre answer")
-        mock_eval.return_value = ReflectionResult(
-            passed=False, critique="Still not great", prompt_tokens=180)
+        mock_eval.return_value = ReflectionResult(passed=False, critique="Still not great", prompt_tokens=180)
         await run_agent_turn(ctx, "question", [])
 
     assert len(events) == 1
@@ -1180,15 +1185,17 @@ def test_run_agent_turn_public_surface_unchanged():
     contract callers depend on (conversation_manager.py, eval/runner,
     etc.)."""
     import inspect
+
     sig = inspect.signature(run_agent_turn)
     params = sig.parameters
 
     assert list(params.keys()) == [
-        "ctx", "user_message", "history", "archive_text", "attachments",
+        "ctx",
+        "user_message",
+        "history",
+        "archive_text",
+        "attachments",
     ], "Positional/keyword arg order changed"
-    assert params["archive_text"].default == "", \
-        "archive_text default changed"
-    assert params["attachments"].default is None, \
-        "attachments default changed"
-    assert inspect.iscoroutinefunction(run_agent_turn), \
-        "run_agent_turn must remain async"
+    assert params["archive_text"].default == "", "archive_text default changed"
+    assert params["attachments"].default is None, "attachments default changed"
+    assert inspect.iscoroutinefunction(run_agent_turn), "run_agent_turn must remain async"

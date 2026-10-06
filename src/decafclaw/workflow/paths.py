@@ -4,6 +4,7 @@ The workflow journal lives in the per-conversation directory
 ``conversations/{conv_id}/workflow.json`` (see ``conversation_paths``
 for the shared directory + sanitization logic).
 """
+
 from pathlib import Path
 
 from decafclaw.conversation_paths import conversation_dir

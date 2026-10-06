@@ -17,7 +17,7 @@ def config(tmp_path):
 
 def test_canvas_sidecar_path_basic(config):
     path = canvas._canvas_sidecar_path(config, "abc123")
-    expected = (config.workspace_path / "conversations" / "abc123" / "canvas.json")
+    expected = config.workspace_path / "conversations" / "abc123" / "canvas.json"
     assert path == expected.resolve()
 
 
@@ -54,12 +54,14 @@ def test_write_then_read_round_trip(config):
         "schema_version": 1,
         "active_tab": "canvas_1",
         "next_tab_id": 2,
-        "tabs": [{
-            "id": "canvas_1",
-            "label": "Hello",
-            "widget_type": "markdown_document",
-            "data": {"content": "# Hi"},
-        }],
+        "tabs": [
+            {
+                "id": "canvas_1",
+                "label": "Hello",
+                "widget_type": "markdown_document",
+                "data": {"content": "# Hi"},
+            }
+        ],
     }
     canvas.write_canvas_state(config, "conv1", state)
     assert canvas.read_canvas_state(config, "conv1") == state
@@ -98,10 +100,12 @@ class _FakeRegistry:
 
 @pytest.fixture
 def md_doc_registry(monkeypatch):
-    reg = _FakeRegistry({
-        "markdown_document": SimpleNamespace(modes=["inline", "canvas"], required=["content"]),
-        "data_table": SimpleNamespace(modes=["inline"], required=[]),
-    })
+    reg = _FakeRegistry(
+        {
+            "markdown_document": SimpleNamespace(modes=["inline", "canvas"], required=["content"]),
+            "data_table": SimpleNamespace(modes=["inline"], required=[]),
+        }
+    )
     monkeypatch.setattr(canvas, "get_widget_registry", lambda: reg)
     return reg
 
@@ -125,8 +129,7 @@ async def test_clear_canvas_when_empty(config, md_doc_registry, emit_recorder):
 
 
 async def test_clear_canvas_with_tab(config, md_doc_registry, emit_recorder):
-    await canvas.new_tab(config, "c", "markdown_document",
-                         {"content": "v1"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "v1"}, emit=emit_recorder)
     emit_recorder.events.clear()
     result = await canvas.clear_canvas(config, "c", emit=emit_recorder)
     assert result.ok
@@ -138,23 +141,18 @@ async def test_clear_canvas_with_tab(config, md_doc_registry, emit_recorder):
     assert event["tab"] is None
 
 
-async def test_clear_canvas_preserves_next_tab_id(config, md_doc_registry,
-                                                   emit_recorder):
+async def test_clear_canvas_preserves_next_tab_id(config, md_doc_registry, emit_recorder):
     """Clear must not reset next_tab_id — closed ids never get rebound."""
-    await canvas.new_tab(config, "c", "markdown_document",
-                         {"content": "a"}, emit=emit_recorder)
-    await canvas.new_tab(config, "c", "markdown_document",
-                         {"content": "b"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "a"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "b"}, emit=emit_recorder)
     state = canvas.read_canvas_state(config, "c")
     assert state["next_tab_id"] == 3
 
     await canvas.clear_canvas(config, "c", emit=emit_recorder)
     state = canvas.read_canvas_state(config, "c")
-    assert state["next_tab_id"] == 3, \
-        "clear must preserve next_tab_id so a new tab gets a fresh id"
+    assert state["next_tab_id"] == 3, "clear must preserve next_tab_id so a new tab gets a fresh id"
 
-    result = await canvas.new_tab(config, "c", "markdown_document",
-                                   {"content": "c"}, emit=emit_recorder)
+    result = await canvas.new_tab(config, "c", "markdown_document", {"content": "c"}, emit=emit_recorder)
     assert result.tab_id == "canvas_3"
 
 
@@ -162,14 +160,18 @@ def test_read_phase3_sidecar_synthesizes_next_tab_id(config):
     """A Phase 3 sidecar (no next_tab_id field) gets one synthesized on read."""
     path = canvas._canvas_sidecar_path(config, "phase3conv")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
-        "schema_version": 1,
-        "active_tab": "canvas_2",
-        "tabs": [
-            {"id": "canvas_1", "label": "L1", "widget_type": "markdown_document", "data": {"content": "a"}},
-            {"id": "canvas_2", "label": "L2", "widget_type": "markdown_document", "data": {"content": "b"}},
-        ],
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "active_tab": "canvas_2",
+                "tabs": [
+                    {"id": "canvas_1", "label": "L1", "widget_type": "markdown_document", "data": {"content": "a"}},
+                    {"id": "canvas_2", "label": "L2", "widget_type": "markdown_document", "data": {"content": "b"}},
+                ],
+            }
+        )
+    )
     state = canvas.read_canvas_state(config, "phase3conv")
     assert state["next_tab_id"] == 3
 
@@ -206,11 +208,16 @@ def test_read_phase3_sidecar_with_no_tabs(config):
 # Phase 4 tab-aware state ops
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_new_tab_creates_and_activates(config, md_doc_registry, emit_recorder):
     result = await canvas.new_tab(
-        config, "c", "markdown_document",
-        {"content": "# Doc"}, label="Doc", emit=emit_recorder,
+        config,
+        "c",
+        "markdown_document",
+        {"content": "# Doc"},
+        label="Doc",
+        emit=emit_recorder,
     )
     assert result.ok
     assert result.tab_id == "canvas_1"
@@ -231,22 +238,23 @@ async def test_new_tab_creates_and_activates(config, md_doc_registry, emit_recor
 @pytest.mark.asyncio
 async def test_new_tab_increments_counter_across_close(config, md_doc_registry, emit_recorder):
     """Closing a tab does NOT decrement next_tab_id; ids never reused."""
-    r1 = await canvas.new_tab(config, "c", "markdown_document",
-                              {"content": "a"}, emit=emit_recorder)
-    r2 = await canvas.new_tab(config, "c", "markdown_document",
-                              {"content": "b"}, emit=emit_recorder)
+    r1 = await canvas.new_tab(config, "c", "markdown_document", {"content": "a"}, emit=emit_recorder)
+    r2 = await canvas.new_tab(config, "c", "markdown_document", {"content": "b"}, emit=emit_recorder)
     assert r1.tab_id == "canvas_1"
     assert r2.tab_id == "canvas_2"
     await canvas.close_tab(config, "c", "canvas_2", emit=emit_recorder)
-    r3 = await canvas.new_tab(config, "c", "markdown_document",
-                              {"content": "c"}, emit=emit_recorder)
+    r3 = await canvas.new_tab(config, "c", "markdown_document", {"content": "c"}, emit=emit_recorder)
     assert r3.tab_id == "canvas_3"  # NOT canvas_2 again
 
 
 @pytest.mark.asyncio
 async def test_new_tab_unknown_widget(config, md_doc_registry, emit_recorder):
     result = await canvas.new_tab(
-        config, "c", "no_such", {"content": "x"}, emit=emit_recorder,
+        config,
+        "c",
+        "no_such",
+        {"content": "x"},
+        emit=emit_recorder,
     )
     assert not result.ok
     assert "not registered" in result.error
@@ -256,7 +264,11 @@ async def test_new_tab_unknown_widget(config, md_doc_registry, emit_recorder):
 @pytest.mark.asyncio
 async def test_new_tab_invalid_data(config, md_doc_registry, emit_recorder):
     result = await canvas.new_tab(
-        config, "c", "markdown_document", {"wrong": 1}, emit=emit_recorder,
+        config,
+        "c",
+        "markdown_document",
+        {"wrong": 1},
+        emit=emit_recorder,
     )
     assert not result.ok
     assert "schema validation failed" in result.error
@@ -264,11 +276,14 @@ async def test_new_tab_invalid_data(config, md_doc_registry, emit_recorder):
 
 @pytest.mark.asyncio
 async def test_update_tab_by_id(config, md_doc_registry, emit_recorder):
-    r1 = await canvas.new_tab(config, "c", "markdown_document",
-                              {"content": "v1"}, label="L", emit=emit_recorder)
+    r1 = await canvas.new_tab(config, "c", "markdown_document", {"content": "v1"}, label="L", emit=emit_recorder)
     emit_recorder.events.clear()
     result = await canvas.update_tab(
-        config, "c", r1.tab_id, {"content": "v2"}, emit=emit_recorder,
+        config,
+        "c",
+        r1.tab_id,
+        {"content": "v2"},
+        emit=emit_recorder,
     )
     assert result.ok
     state = canvas.read_canvas_state(config, "c")
@@ -282,10 +297,13 @@ async def test_update_tab_by_id(config, md_doc_registry, emit_recorder):
 
 @pytest.mark.asyncio
 async def test_update_tab_unknown_id(config, md_doc_registry, emit_recorder):
-    await canvas.new_tab(config, "c", "markdown_document",
-                         {"content": "x"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "x"}, emit=emit_recorder)
     result = await canvas.update_tab(
-        config, "c", "canvas_99", {"content": "y"}, emit=emit_recorder,
+        config,
+        "c",
+        "canvas_99",
+        {"content": "y"},
+        emit=emit_recorder,
     )
     assert not result.ok
     assert "not found" in result.error
@@ -293,10 +311,13 @@ async def test_update_tab_unknown_id(config, md_doc_registry, emit_recorder):
 
 @pytest.mark.asyncio
 async def test_update_tab_invalid_data(config, md_doc_registry, emit_recorder):
-    r1 = await canvas.new_tab(config, "c", "markdown_document",
-                              {"content": "x"}, emit=emit_recorder)
+    r1 = await canvas.new_tab(config, "c", "markdown_document", {"content": "x"}, emit=emit_recorder)
     result = await canvas.update_tab(
-        config, "c", r1.tab_id, {"wrong": 1}, emit=emit_recorder,
+        config,
+        "c",
+        r1.tab_id,
+        {"wrong": 1},
+        emit=emit_recorder,
     )
     assert not result.ok
     assert "schema validation failed" in result.error
@@ -305,6 +326,7 @@ async def test_update_tab_invalid_data(config, md_doc_registry, emit_recorder):
 # ---------------------------------------------------------------------------
 # Per-widget normalization (e.g. iframe_sandbox CSP wrapping)
 # ---------------------------------------------------------------------------
+
 
 class _NormalizingFakeRegistry(_FakeRegistry):
     """Fake registry that runs a normalize hook by widget name."""
@@ -323,21 +345,24 @@ async def test_new_tab_runs_normalize(config, monkeypatch, emit_recorder):
     """new_tab should invoke registry.normalize after validate, so widgets
     like iframe_sandbox get their server-controlled fields injected before
     state is persisted or events are emitted."""
+
     def normalize_iframe(data):
         return {**data, "html": f"WRAPPED:{data.get('body', '')}"}
 
     reg = _NormalizingFakeRegistry(
         descriptors={
-            "iframe_sandbox": SimpleNamespace(modes=["inline", "canvas"],
-                                              required=["body"]),
+            "iframe_sandbox": SimpleNamespace(modes=["inline", "canvas"], required=["body"]),
         },
         normalizers={"iframe_sandbox": normalize_iframe},
     )
     monkeypatch.setattr(canvas, "get_widget_registry", lambda: reg)
 
     result = await canvas.new_tab(
-        config, "c", "iframe_sandbox",
-        {"body": "<p>hi</p>"}, emit=emit_recorder,
+        config,
+        "c",
+        "iframe_sandbox",
+        {"body": "<p>hi</p>"},
+        emit=emit_recorder,
     )
     assert result.ok
     state = canvas.read_canvas_state(config, "c")
@@ -354,23 +379,24 @@ async def test_new_tab_runs_normalize(config, monkeypatch, emit_recorder):
 async def test_update_tab_runs_normalize(config, monkeypatch, emit_recorder):
     """update_tab must re-run normalize so a stale html field can't survive
     a round-trip."""
+
     def normalize_iframe(data):
         return {**data, "html": f"WRAPPED:{data.get('body', '')}"}
 
     reg = _NormalizingFakeRegistry(
         descriptors={
-            "iframe_sandbox": SimpleNamespace(modes=["inline", "canvas"],
-                                              required=["body"]),
+            "iframe_sandbox": SimpleNamespace(modes=["inline", "canvas"], required=["body"]),
         },
         normalizers={"iframe_sandbox": normalize_iframe},
     )
     monkeypatch.setattr(canvas, "get_widget_registry", lambda: reg)
 
-    r = await canvas.new_tab(config, "c", "iframe_sandbox",
-                             {"body": "v1"}, emit=emit_recorder)
+    r = await canvas.new_tab(config, "c", "iframe_sandbox", {"body": "v1"}, emit=emit_recorder)
     emit_recorder.events.clear()
     result = await canvas.update_tab(
-        config, "c", r.tab_id,
+        config,
+        "c",
+        r.tab_id,
         # Agent passes a stale html alongside fresh body — normalize should overwrite it.
         {"body": "v2", "html": "STALE"},
         emit=emit_recorder,
@@ -468,18 +494,20 @@ async def test_close_tab_kills_terminal_pty(config, emit_recorder):
         "active_tab": "canvas_1",
         "next_tab_id": 3,
         "tabs": [
-            {"id": "canvas_1", "label": "Terminal", "widget_type": "terminal",
-             "data": {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"}},
-            {"id": "canvas_2", "label": "Table", "widget_type": "data_table",
-             "data": {}},
+            {
+                "id": "canvas_1",
+                "label": "Terminal",
+                "widget_type": "terminal",
+                "data": {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"},
+            },
+            {"id": "canvas_2", "label": "Table", "widget_type": "data_table", "data": {}},
         ],
     }
     canvas.write_canvas_state(config, "c", state)
     session = object()
     reg = _FakeTerminalRegistry({("c", "canvas_1"): session})
 
-    result = await canvas.close_tab(config, "c", "canvas_1", emit=emit_recorder,
-                                    registry=reg)
+    result = await canvas.close_tab(config, "c", "canvas_1", emit=emit_recorder, registry=reg)
     assert result.ok
     assert reg.killed == [session]
 
@@ -491,17 +519,19 @@ async def test_close_tab_non_terminal_does_not_kill(config, emit_recorder):
         "active_tab": "canvas_2",
         "next_tab_id": 3,
         "tabs": [
-            {"id": "canvas_1", "label": "Terminal", "widget_type": "terminal",
-             "data": {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"}},
-            {"id": "canvas_2", "label": "Table", "widget_type": "data_table",
-             "data": {}},
+            {
+                "id": "canvas_1",
+                "label": "Terminal",
+                "widget_type": "terminal",
+                "data": {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"},
+            },
+            {"id": "canvas_2", "label": "Table", "widget_type": "data_table", "data": {}},
         ],
     }
     canvas.write_canvas_state(config, "c", state)
     reg = _FakeTerminalRegistry({("c", "canvas_1"): object()})
 
-    result = await canvas.close_tab(config, "c", "canvas_2", emit=emit_recorder,
-                                    registry=reg)
+    result = await canvas.close_tab(config, "c", "canvas_2", emit=emit_recorder, registry=reg)
     assert result.ok
     assert reg.killed == []
 
@@ -530,8 +560,7 @@ async def test_set_active_tab_unknown_id(config, md_doc_registry, emit_recorder)
 
 @pytest.mark.asyncio
 async def test_get_tab_by_id(config, md_doc_registry, emit_recorder):
-    await canvas.new_tab(config, "c", "markdown_document",
-                        {"content": "x"}, label="L", emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "x"}, label="L", emit=emit_recorder)
     tab = canvas.get_tab(config, "c", "canvas_1")
     assert tab is not None
     assert tab["label"] == "L"
@@ -541,6 +570,7 @@ async def test_get_tab_by_id(config, md_doc_registry, emit_recorder):
 # ---------------------------------------------------------------------------
 # C1 — the agent cannot create a widget marked un-createable
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_new_tab_rejects_agent_uncreateable_widget(config, emit_recorder, tmp_path):
@@ -562,10 +592,13 @@ async def test_new_tab_rejects_agent_uncreateable_widget(config, emit_recorder, 
         return registry
 
     import unittest.mock
+
     with unittest.mock.patch.object(canvas, "get_widget_registry", get_reg):
         # Attempt to create a terminal tab
         result = await canvas.new_tab(
-            config, "c", "terminal",
+            config,
+            "c",
+            "terminal",
             {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"},
             emit=emit_recorder,
         )
@@ -574,8 +607,9 @@ async def test_new_tab_rejects_agent_uncreateable_widget(config, emit_recorder, 
         assert not result.ok, "new_tab should reject agent_createable: false widgets"
 
         # Error message must mention the rejection reason (agent_createable)
-        assert "agent_createable" in result.error or "agent" in result.error.lower(), \
+        assert "agent_createable" in result.error or "agent" in result.error.lower(), (
             f"rejection reason unclear: {result.error}"
+        )
 
         # No tab should have been created
         state = canvas.read_canvas_state(config, "c")
@@ -586,6 +620,7 @@ async def test_new_tab_rejects_agent_uncreateable_widget(config, emit_recorder, 
 # C3 — clearing the canvas kills terminal PTYs
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_clear_canvas_kills_terminal_ptys(config, emit_recorder):
     """C3: clear_canvas SHALL accept a registry and kill terminal sessions."""
@@ -595,8 +630,12 @@ async def test_clear_canvas_kills_terminal_ptys(config, emit_recorder):
         "active_tab": "canvas_1",
         "next_tab_id": 2,
         "tabs": [
-            {"id": "canvas_1", "label": "Term", "widget_type": "terminal",
-             "data": {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"}},
+            {
+                "id": "canvas_1",
+                "label": "Term",
+                "widget_type": "terminal",
+                "data": {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"},
+            },
         ],
     }
     canvas.write_canvas_state(config, "c", state)

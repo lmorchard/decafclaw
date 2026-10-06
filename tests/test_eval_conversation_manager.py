@@ -73,8 +73,7 @@ async def test_nested_child_conv_ids_also_get_subscribed():
     for conv_id in ("child-1", "child-2", "grandchild-1"):
         state = manager._get_or_create(conv_id)
         assert len(state.subscribers) == 1, (
-            f"expected auto-confirm subscriber on {conv_id}, "
-            f"got {len(state.subscribers)}"
+            f"expected auto-confirm subscriber on {conv_id}, got {len(state.subscribers)}"
         )
 
 
@@ -104,16 +103,17 @@ async def test_resolver_error_is_logged_not_raised(caplog):
     boom = AsyncMock(side_effect=RuntimeError("simulated failure"))
     with patch.object(manager, "respond_to_confirmation", boom):
         # Should not raise. The resolver's try/except catches and logs.
-        await resolver({
-            "type": "confirmation_request",
-            "confirmation_id": "abc123",
-        })
+        await resolver(
+            {
+                "type": "confirmation_request",
+                "confirmation_id": "abc123",
+            }
+        )
 
     boom.assert_awaited_once()
-    assert any(
-        "Eval auto-confirm resolver failed" in rec.message
-        for rec in caplog.records
-    ), f"expected resolver failure log; got {[r.message for r in caplog.records]}"
+    assert any("Eval auto-confirm resolver failed" in rec.message for rec in caplog.records), (
+        f"expected resolver failure log; got {[r.message for r in caplog.records]}"
+    )
 
 
 @pytest.mark.asyncio

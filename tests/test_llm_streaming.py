@@ -14,12 +14,14 @@ pytestmark = pytest.mark.live_llm
 
 class FakeSSEEvent:
     """Simulates an httpx-sse ServerSentEvent."""
+
     def __init__(self, data):
         self.data = data
 
 
 class FakeResponse:
     """Simulates an httpx Response with a status code."""
+
     def __init__(self, status_code=200, body=b""):
         self.status_code = status_code
         self.headers = {}
@@ -31,6 +33,7 @@ class FakeResponse:
 
 class FakeEventSource:
     """Simulates an httpx-sse event source that yields events."""
+
     def __init__(self, events, status_code=200):
         self._events = events
         self.response = FakeResponse(status_code)
@@ -50,14 +53,26 @@ def _make_text_events(tokens, usage=None):
     """Create SSE events for a simple text response."""
     events = []
     for token in tokens:
-        events.append(FakeSSEEvent(json.dumps({
-            "choices": [{"delta": {"content": token}}],
-        })))
+        events.append(
+            FakeSSEEvent(
+                json.dumps(
+                    {
+                        "choices": [{"delta": {"content": token}}],
+                    }
+                )
+            )
+        )
     if usage:
-        events.append(FakeSSEEvent(json.dumps({
-            "choices": [{"delta": {}}],
-            "usage": usage,
-        })))
+        events.append(
+            FakeSSEEvent(
+                json.dumps(
+                    {
+                        "choices": [{"delta": {}}],
+                        "usage": usage,
+                    }
+                )
+            )
+        )
     events.append(FakeSSEEvent("[DONE]"))
     return events
 
@@ -66,21 +81,49 @@ def _make_tool_call_events(name, arguments_chunks, tool_id="call_0", index=0):
     """Create SSE events for a tool call."""
     events = []
     # First chunk: name + start of arguments
-    events.append(FakeSSEEvent(json.dumps({
-        "choices": [{"delta": {"tool_calls": [{
-            "index": index,
-            "id": tool_id,
-            "function": {"name": name, "arguments": arguments_chunks[0]},
-        }]}}],
-    })))
+    events.append(
+        FakeSSEEvent(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": index,
+                                        "id": tool_id,
+                                        "function": {"name": name, "arguments": arguments_chunks[0]},
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                }
+            )
+        )
+    )
     # Subsequent chunks: argument deltas
     for chunk in arguments_chunks[1:]:
-        events.append(FakeSSEEvent(json.dumps({
-            "choices": [{"delta": {"tool_calls": [{
-                "index": index,
-                "function": {"arguments": chunk},
-            }]}}],
-        })))
+        events.append(
+            FakeSSEEvent(
+                json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": index,
+                                            "function": {"arguments": chunk},
+                                        }
+                                    ]
+                                }
+                            }
+                        ],
+                    }
+                )
+            )
+        )
     events.append(FakeSSEEvent("[DONE]"))
     return events
 
@@ -89,6 +132,7 @@ def _config():
     """Minimal config for testing."""
     from decafclaw.config import Config
     from decafclaw.config_types import LlmConfig
+
     return Config(llm=LlmConfig(url="http://test/v1/chat/completions"))
 
 
@@ -123,8 +167,7 @@ async def test_streaming_with_usage():
         mock_sse.return_value = FakeEventSource(events)
         result = await call_llm_streaming(_config(), [])
 
-    assert result["usage"] == {"prompt_tokens": 10, "completion_tokens": 5,
-                               "cached_tokens": 0}
+    assert result["usage"] == {"prompt_tokens": 10, "completion_tokens": 5, "cached_tokens": 0}
 
 
 @pytest.mark.asyncio
@@ -169,10 +212,25 @@ async def test_streaming_mixed_text_and_tools():
     """Mixed text + tool calls both work."""
     events = [
         FakeSSEEvent(json.dumps({"choices": [{"delta": {"content": "Let me search"}}]})),
-        FakeSSEEvent(json.dumps({"choices": [{"delta": {"tool_calls": [{
-            "index": 0, "id": "call_1",
-            "function": {"name": "search", "arguments": "{}"},
-        }]}}]})),
+        FakeSSEEvent(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "function": {"name": "search", "arguments": "{}"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            )
+        ),
         FakeSSEEvent("[DONE]"),
     ]
     chunks_received = []
@@ -245,7 +303,7 @@ def test_sanitize_tool_call_id_empty():
 async def test_streaming_tool_call_id_sanitized():
     """Streaming tool calls with __thought__ IDs get sanitized."""
     bloated_id = "call_xyz__thought__CiUBjz1rXlongbase64data"
-    events = _make_tool_call_events("memory_search", ['{}'], tool_id=bloated_id)
+    events = _make_tool_call_events("memory_search", ["{}"], tool_id=bloated_id)
 
     with patch("httpx_sse.aconnect_sse") as mock_sse:
         mock_sse.return_value = FakeEventSource(events)
@@ -260,6 +318,7 @@ async def test_streaming_tool_call_id_sanitized():
 
 class ErrorEventSource:
     """Event source that raises after yielding some events."""
+
     def __init__(self, events_before_error, error):
         self._events = events_before_error
         self._error = error
@@ -293,9 +352,7 @@ async def test_streaming_error_returns_partial_on_partial_content():
         FakeSSEEvent(json.dumps({"choices": [{"delta": {"content": "Hello"}}]})),
     ]
     with patch("httpx_sse.aconnect_sse") as mock_sse:
-        mock_sse.return_value = ErrorEventSource(
-            partial_events, httpx.ReadError("stream interrupted")
-        )
+        mock_sse.return_value = ErrorEventSource(partial_events, httpx.ReadError("stream interrupted"))
         result = await call_llm_streaming(_config(), [])
 
     # Should return the partial content, not raise
@@ -327,6 +384,7 @@ async def test_streaming_429_retries_then_succeeds():
             pass
 
     with patch("httpx_sse.aconnect_sse") as mock_sse:
+
         def make_source(*args, **kwargs):
             nonlocal call_count
             call_count += 1

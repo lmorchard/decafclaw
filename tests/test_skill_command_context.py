@@ -15,11 +15,7 @@ from decafclaw.skills import discover_skills
 def test_vault_requiring_commands_run_inline():
     skills = discover_skills(load_config())
     offenders = [
-        s.name
-        for s in skills
-        if s.user_invocable
-        and "vault" in (s.requires_skills or [])
-        and s.context == "fork"
+        s.name for s in skills if s.user_invocable and "vault" in (s.requires_skills or []) and s.context == "fork"
     ]
     assert not offenders, (
         "user-invocable skills that require the vault must use `context: inline`, "

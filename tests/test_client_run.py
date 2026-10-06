@@ -17,6 +17,7 @@ class FakeTransport:
 
     def __init__(self, batches, conv_id="web-fake"):
         import asyncio
+
         self._batches = list(batches)
         self._conv_id = conv_id
         self.sent: list[dict] = []
@@ -41,7 +42,7 @@ class FakeTransport:
     async def events(self):
         while True:
             ev = await self._queue.get()
-            if ev is None:        # sentinel: stream closed
+            if ev is None:  # sentinel: stream closed
                 return
             yield ev
 
@@ -54,20 +55,22 @@ class FakeTransport:
 
 
 def _args(**kw):
-    base = dict(action="send", token="dfc_x", host="http://h",
-                timeout=5.0, fmt="summary", prompts=["hi"])
+    base = dict(action="send", token="dfc_x", host="http://h", timeout=5.0, fmt="summary", prompts=["hi"])
     base.update(kw)
     return SmokeArgs(**base)
 
 
 @pytest.mark.asyncio
 async def test_drive_turn_stops_on_turn_complete():
-    t = FakeTransport([[
-        {"type": "turn_start", "conv_id": "web-fake"},
-        {"type": "message_complete", "conv_id": "web-fake",
-         "role": "assistant", "text": "done"},
-        {"type": "turn_complete", "conv_id": "web-fake"},
-    ]])
+    t = FakeTransport(
+        [
+            [
+                {"type": "turn_start", "conv_id": "web-fake"},
+                {"type": "message_complete", "conv_id": "web-fake", "role": "assistant", "text": "done"},
+                {"type": "turn_complete", "conv_id": "web-fake"},
+            ]
+        ]
+    )
     await t.send({"type": "send", "conv_id": "web-fake", "text": "hi"})
     rec = TurnRecorder("web-fake")
     reason = await drive_turn(t, rec, timeout=5.0, sink=None)
@@ -77,13 +80,23 @@ async def test_drive_turn_stops_on_turn_complete():
 
 @pytest.mark.asyncio
 async def test_drive_turn_halts_on_confirmation():
-    t = FakeTransport([[
-        {"type": "turn_start", "conv_id": "web-fake"},
-        {"type": "confirm_request", "conv_id": "web-fake",
-         "confirmation_id": "c1", "action_type": "shell",
-         "tool": "shell_exec", "command": "ls", "message": "ok?"},
-        {"type": "turn_complete", "conv_id": "web-fake"},  # must NOT be reached
-    ]])
+    t = FakeTransport(
+        [
+            [
+                {"type": "turn_start", "conv_id": "web-fake"},
+                {
+                    "type": "confirm_request",
+                    "conv_id": "web-fake",
+                    "confirmation_id": "c1",
+                    "action_type": "shell",
+                    "tool": "shell_exec",
+                    "command": "ls",
+                    "message": "ok?",
+                },
+                {"type": "turn_complete", "conv_id": "web-fake"},  # must NOT be reached
+            ]
+        ]
+    )
     await t.send({"type": "send", "conv_id": "web-fake", "text": "hi"})
     rec = TurnRecorder("web-fake")
     reason = await drive_turn(t, rec, timeout=5.0, sink=None)
@@ -103,9 +116,13 @@ async def test_drive_turn_times_out():
 
 @pytest.mark.asyncio
 async def test_run_send_creates_conv_when_absent():
-    t = FakeTransport([[
-        {"type": "turn_complete", "conv_id": "web-fake"},
-    ]])
+    t = FakeTransport(
+        [
+            [
+                {"type": "turn_complete", "conv_id": "web-fake"},
+            ]
+        ]
+    )
     summaries = await run_send(t, _args(conv=None))
     assert t.created is True
     assert summaries[0].conv_id == "web-fake"
@@ -123,12 +140,18 @@ async def test_run_send_sets_model_when_given():
 
 @pytest.mark.asyncio
 async def test_run_send_multi_prompt_runs_sequentially():
-    t = FakeTransport([
-        [{"type": "message_complete", "conv_id": "web-1", "role": "assistant",
-          "text": "a"}, {"type": "turn_complete", "conv_id": "web-1"}],
-        [{"type": "message_complete", "conv_id": "web-1", "role": "assistant",
-          "text": "b"}, {"type": "turn_complete", "conv_id": "web-1"}],
-    ])
+    t = FakeTransport(
+        [
+            [
+                {"type": "message_complete", "conv_id": "web-1", "role": "assistant", "text": "a"},
+                {"type": "turn_complete", "conv_id": "web-1"},
+            ],
+            [
+                {"type": "message_complete", "conv_id": "web-1", "role": "assistant", "text": "b"},
+                {"type": "turn_complete", "conv_id": "web-1"},
+            ],
+        ]
+    )
     summaries = await run_send(t, _args(conv="web-1", prompts=["one", "two"]))
     assert [s.assistant_text for s in summaries] == ["a", "b"]
     sends = [m for m in t.sent if m["type"] == "send"]
@@ -141,11 +164,15 @@ async def test_run_send_stops_after_disconnect_mid_sequence():
     # stream). The loop must stop and NOT send the second prompt — on a real
     # transport that send would hit a closed socket and raise ConnectionClosed
     # past _amain's TransportError handler.
-    t = FakeTransport([
-        [{"type": "turn_start", "conv_id": "web-1"}, None],
-        [{"type": "message_complete", "conv_id": "web-1", "role": "assistant",
-          "text": "b"}, {"type": "turn_complete", "conv_id": "web-1"}],
-    ])
+    t = FakeTransport(
+        [
+            [{"type": "turn_start", "conv_id": "web-1"}, None],
+            [
+                {"type": "message_complete", "conv_id": "web-1", "role": "assistant", "text": "b"},
+                {"type": "turn_complete", "conv_id": "web-1"},
+            ],
+        ]
+    )
     summaries = await run_send(t, _args(conv="web-1", prompts=["one", "two"]))
     assert len(summaries) == 1
     assert summaries[0].status == "error"
@@ -156,9 +183,16 @@ async def test_run_send_stops_after_disconnect_mid_sequence():
 @pytest.mark.asyncio
 async def test_run_respond_sends_confirm_response():
     t = FakeTransport([[{"type": "turn_complete", "conv_id": "web-1"}]])
-    args = SmokeArgs(action="respond", token="dfc_x", host="http://h",
-                     timeout=5.0, fmt="summary", conv="web-1",
-                     confirmation_id="c1", approved=True)
+    args = SmokeArgs(
+        action="respond",
+        token="dfc_x",
+        host="http://h",
+        timeout=5.0,
+        fmt="summary",
+        conv="web-1",
+        confirmation_id="c1",
+        approved=True,
+    )
     summaries = await run_respond(t, args)
     cr = [m for m in t.sent if m["type"] == "confirm_response"]
     assert cr and cr[0]["confirmation_id"] == "c1" and cr[0]["approved"] is True
@@ -170,9 +204,17 @@ async def test_run_respond_sends_confirm_response():
 @pytest.mark.asyncio
 async def test_run_respond_forwards_value_as_data():
     t = FakeTransport([[{"type": "turn_complete", "conv_id": "web-1"}]])
-    args = SmokeArgs(action="respond", token="dfc_x", host="http://h",
-                     timeout=5.0, fmt="summary", conv="web-1",
-                     confirmation_id="c1", approved=True, value="tide pools")
+    args = SmokeArgs(
+        action="respond",
+        token="dfc_x",
+        host="http://h",
+        timeout=5.0,
+        fmt="summary",
+        conv="web-1",
+        confirmation_id="c1",
+        approved=True,
+        value="tide pools",
+    )
     await run_respond(t, args)
     cr = [m for m in t.sent if m["type"] == "confirm_response"]
     assert cr[0]["data"] == {"value": "tide pools"}
@@ -200,12 +242,16 @@ async def test_drive_turn_disconnects_when_stream_ends():
 @pytest.mark.asyncio
 async def test_run_send_jsonl_streams_raw_events(capsys):
     import json
-    t = FakeTransport([[
-        {"type": "turn_start", "conv_id": "web-1"},
-        {"type": "message_complete", "conv_id": "web-1", "role": "assistant",
-         "text": "hi"},
-        {"type": "turn_complete", "conv_id": "web-1"},
-    ]])
+
+    t = FakeTransport(
+        [
+            [
+                {"type": "turn_start", "conv_id": "web-1"},
+                {"type": "message_complete", "conv_id": "web-1", "role": "assistant", "text": "hi"},
+                {"type": "turn_complete", "conv_id": "web-1"},
+            ]
+        ]
+    )
     await run_send(t, _args(conv="web-1", fmt="jsonl"))
     out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
     types = [json.loads(line)["type"] for line in out_lines]

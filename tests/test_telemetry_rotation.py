@@ -33,11 +33,14 @@ def _read_jsonl(path: Path) -> list[dict]:
 def test_rotates_old_records_to_archive(tmp_path):
     retention_days = 30
     path = tmp_path / "telemetry" / "tool_usage.jsonl"
-    _write_jsonl(path, [
-        {"id": "old1", "timestamp": _past(60), "tool": "Old 1"},
-        {"id": "old2", "timestamp": _past(45), "tool": "Old 2"},
-        {"id": "new1", "timestamp": _past(5), "tool": "New 1"},
-    ])
+    _write_jsonl(
+        path,
+        [
+            {"id": "old1", "timestamp": _past(60), "tool": "Old 1"},
+            {"id": "old2", "timestamp": _past(45), "tool": "Old 2"},
+            {"id": "new1", "timestamp": _past(5), "tool": "New 1"},
+        ],
+    )
 
     rotate_if_needed(path, retention_days)
 
@@ -75,10 +78,13 @@ def test_rotate_if_needed_ignores_empty_file(tmp_path):
 
 def test_rotate_if_needed_no_old_records(tmp_path):
     path = tmp_path / "telemetry" / "tool_usage.jsonl"
-    _write_jsonl(path, [
-        {"id": "new1", "timestamp": _past(5), "tool": "New 1"},
-        {"id": "new2", "timestamp": _past(2), "tool": "New 2"},
-    ])
+    _write_jsonl(
+        path,
+        [
+            {"id": "new1", "timestamp": _past(5), "tool": "New 1"},
+            {"id": "new2", "timestamp": _past(2), "tool": "New 2"},
+        ],
+    )
     rotate_if_needed(path, 30)
 
     lines = _read_jsonl(path)

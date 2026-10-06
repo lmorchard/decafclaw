@@ -30,12 +30,18 @@ def authed_client(app, http_config):
 def authed_client_with_session(app, http_config, authed_client):
     def _make(buffer: bytes = b""):
         session = TerminalSession(
-            conv_id="c1", tab_id="canvas_1", session_id="s1",
-            cwd="/tmp", shell="/bin/sh", pid=123, fd=9,
+            conv_id="c1",
+            tab_id="canvas_1",
+            session_id="s1",
+            cwd="/tmp",
+            shell="/bin/sh",
+            pid=123,
+            fd=9,
             buffer=bytearray(buffer),
         )
         app.state.terminal_registry._sessions[("c1", "canvas_1")] = session
         return authed_client
+
     return _make
 
 
@@ -55,8 +61,7 @@ def test_terminal_ws_session_not_found_sends_ended(authed_client):
     """
     with authed_client.websocket_connect("/ws/terminal/c1/canvas_1") as ws:
         msg = ws.receive_json()
-        assert msg == {"type": "session_ended", "reason": "no_session",
-                       "exit_status": None}
+        assert msg == {"type": "session_ended", "reason": "no_session", "exit_status": None}
 
 
 def test_terminal_ws_replays_buffer_then_done(authed_client_with_session):
@@ -128,11 +133,12 @@ async def test_ws_handler_serves_real_spawned_session(http_config):
         ws.send_bytes = AsyncMock(side_effect=lambda b: sent_bytes.append(bytes(b)))
         ws.send_json = AsyncMock(side_effect=lambda m: sent_json.append(m))
         # One resize frame, then disconnect.
-        ws.receive = AsyncMock(side_effect=[
-            {"type": "websocket.receive",
-             "text": json.dumps({"type": "resize", "cols": 100, "rows": 30})},
-            {"type": "websocket.disconnect"},
-        ])
+        ws.receive = AsyncMock(
+            side_effect=[
+                {"type": "websocket.receive", "text": json.dumps({"type": "resize", "cols": 100, "rows": 30})},
+                {"type": "websocket.disconnect"},
+            ]
+        )
 
         await websocket_terminal(ws, http_config, registry)
 

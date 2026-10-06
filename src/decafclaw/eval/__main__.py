@@ -19,19 +19,20 @@ from .runner import run_eval
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="DecafClaw eval runner — test prompts and tools with real LLM calls"
-    )
+    parser = argparse.ArgumentParser(description="DecafClaw eval runner — test prompts and tools with real LLM calls")
     parser.add_argument("path", nargs="?", help="YAML file or directory of YAML files")
     parser.add_argument("--model", help="Override LLM model")
     parser.add_argument("--judge-model", help="Model for failure reflection (default: same as --model)")
-    parser.add_argument("--verbose", action="store_true",
-                        help="Show a truncated response snippet (first 200 chars) per test")
+    parser.add_argument(
+        "--verbose", action="store_true", help="Show a truncated response snippet (first 200 chars) per test"
+    )
     parser.add_argument("--concurrency", type=int, default=4, help="Max concurrent tests (default: 4)")
-    parser.add_argument("--history", action="store_true",
-                        help="Print the eval-run history table and exit (no eval run)")
-    parser.add_argument("--history-limit", type=int, default=20,
-                        help="With --history, show this many most-recent runs (default: 20)")
+    parser.add_argument(
+        "--history", action="store_true", help="Print the eval-run history table and exit (no eval run)"
+    )
+    parser.add_argument(
+        "--history-limit", type=int, default=20, help="With --history, show this many most-recent runs (default: 20)"
+    )
     args = parser.parse_args()
 
     # --history reads evals/history.jsonl and prints the trend table; no eval run.
@@ -89,6 +90,7 @@ def main():
 
     # Initialize provider registry
     from ..llm import init_providers
+
     init_providers(config)
 
     # Resolve model: check model_configs first, then fall back to raw name
@@ -99,8 +101,7 @@ def main():
 
     # Run evals
     results, timestamp, effective_model = asyncio.run(
-        run_eval(all_cases, config, model=args.model, verbose=args.verbose,
-                 concurrency=args.concurrency)
+        run_eval(all_cases, config, model=args.model, verbose=args.verbose, concurrency=args.concurrency)
     )
 
     # Create result bundle
@@ -115,10 +116,7 @@ def main():
         reflect_dir = bundle_dir / "reflections"
         for i, test_result in failed_tests:
             test_case = all_cases[i]
-            ref_path = asyncio.run(
-                reflect_on_failure(config, test_case, test_result,
-                                    judge_model, reflect_dir)
-            )
+            ref_path = asyncio.run(reflect_on_failure(config, test_case, test_result, judge_model, reflect_dir))
             if ref_path:
                 test_result["reflection_file"] = f"reflections/{ref_path}"
 
@@ -148,8 +146,10 @@ def main():
         print(f"warning: could not append to {HISTORY_PATH}: {exc}", file=sys.stderr)
 
     # Print summary
-    print(f"\n{s['total']} tests, {s['passed']} passed, {s['failed']} failed "
-          f"({s['duration_sec']}s, {s['total_tokens']} tokens)")
+    print(
+        f"\n{s['total']} tests, {s['passed']} passed, {s['failed']} failed "
+        f"({s['duration_sec']}s, {s['total_tokens']} tokens)"
+    )
     print(f"Results: {bundle_dir}/")
     print(f"History: {HISTORY_PATH} (use `make eval-history` to view the trend)\n")
 

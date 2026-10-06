@@ -63,7 +63,10 @@ class TestTokenize:
         # ("get" is in the stopword list — common verb, no discriminating
         # power when many tools have get_* naming.)
         assert tokenize("mcp__oblique_strategies__get_strategy") == {
-            "mcp", "oblique", "strategies", "strategy",
+            "mcp",
+            "oblique",
+            "strategies",
+            "strategy",
         }
 
     def test_stopword_list_non_empty(self):

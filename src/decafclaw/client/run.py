@@ -24,8 +24,7 @@ _EXIT_BY_STATUS = {
 }
 
 
-async def drive_turn(transport, recorder: TurnRecorder, *, timeout: float,
-                     sink: Callable[[dict], None] | None) -> str:
+async def drive_turn(transport, recorder: TurnRecorder, *, timeout: float, sink: Callable[[dict], None] | None) -> str:
     """Consume events until a stop condition. Returns the stop reason:
     "turn_complete" | "confirmation" | "timeout" | "disconnect".
     """
@@ -59,15 +58,13 @@ async def run_send(transport, args: SmokeArgs) -> list[TurnSummary]:
     conv_id = args.conv or await transport.create_conversation()
     await _select(transport, conv_id)
     if args.model:
-        await transport.send({"type": "set_model", "conv_id": conv_id,
-                              "model": args.model})
+        await transport.send({"type": "set_model", "conv_id": conv_id, "model": args.model})
     sink = _sink_for(args.fmt)
     summaries: list[TurnSummary] = []
     for prompt in args.prompts or []:
         recorder = TurnRecorder(conv_id)
         await transport.send({"type": "send", "conv_id": conv_id, "text": prompt})
-        reason = await drive_turn(transport, recorder, timeout=args.timeout,
-                                  sink=sink)
+        reason = await drive_turn(transport, recorder, timeout=args.timeout, sink=sink)
         summaries.append(recorder.finalize(reason))
         if reason != "turn_complete":
             # Only a completed turn continues the sequence. A halt, timeout, or
@@ -83,15 +80,17 @@ async def run_respond(transport, args: SmokeArgs) -> list[TurnSummary]:
     await _select(transport, conv_id)
     recorder = TurnRecorder(conv_id)
     payload: dict = {
-        "type": "confirm_response", "conv_id": conv_id,
+        "type": "confirm_response",
+        "conv_id": conv_id,
         "confirmation_id": args.confirmation_id or "",
-        "approved": args.approved, "always": False, "add_pattern": False,
+        "approved": args.approved,
+        "always": False,
+        "add_pattern": False,
     }
     if args.value:
         payload["data"] = {"value": args.value}
     await transport.send(payload)
-    reason = await drive_turn(transport, recorder, timeout=args.timeout,
-                              sink=_sink_for(args.fmt))
+    reason = await drive_turn(transport, recorder, timeout=args.timeout, sink=_sink_for(args.fmt))
     return [recorder.finalize(reason)]
 
 
@@ -120,8 +119,7 @@ async def _amain(args: SmokeArgs) -> int:
         else:
             summaries = await run_respond(transport, args)
     except TransportError as exc:
-        print(json.dumps({"status": "error", "errors": [str(exc)]}),
-              file=sys.stderr)
+        print(json.dumps({"status": "error", "errors": [str(exc)]}), file=sys.stderr)
         return 4
     finally:
         await transport.close()

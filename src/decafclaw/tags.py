@@ -7,6 +7,7 @@ All comparisons use the lowercased canonical form; display casing is the
 first seen (across a full ``collect_all_tags`` scan, in page-then-journal,
 file-then-occurrence order).
 """
+
 from __future__ import annotations
 
 import logging

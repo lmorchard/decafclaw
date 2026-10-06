@@ -58,14 +58,10 @@ async def send_mail(
     cfg = config.email
     sender = (cfg.sender_address or "").strip()
     if not sender:
-        raise ValueError(
-            "config.email.sender_address must be non-empty"
-        )
+        raise ValueError("config.email.sender_address must be non-empty")
 
     raw_recipients = [to] if isinstance(to, str) else list(to)
-    recipients = [
-        r.strip() for r in raw_recipients if r and r.strip()
-    ]
+    recipients = [r.strip() for r in raw_recipients if r and r.strip()]
     if not recipients:
         raise ValueError("at least one recipient is required")
 
@@ -86,13 +82,19 @@ async def send_mail(
         maintype, subtype = ctype.split("/", 1)
         data = await asyncio.to_thread(path.read_bytes)
         msg.add_attachment(
-            data, maintype=maintype, subtype=subtype, filename=path.name,
+            data,
+            maintype=maintype,
+            subtype=subtype,
+            filename=path.name,
         )
 
     log.info(
         "email: sending to=%s subject=%r attachments=%d via %s:%d",
-        recipients, subject, len(attachments or []),
-        cfg.smtp_host, cfg.smtp_port,
+        recipients,
+        subject,
+        len(attachments or []),
+        cfg.smtp_host,
+        cfg.smtp_port,
     )
 
     await aiosmtplib.send(

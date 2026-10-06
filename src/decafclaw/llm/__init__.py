@@ -38,47 +38,76 @@ _tracer = get_tracer(__name__)
 log = logging.getLogger(__name__)
 
 
-async def call_llm(config: Any, messages: list, tools: list | None = None,
-                   llm_url: str | None = None, llm_model: str | None = None,
-                   llm_api_key: str | None = None,
-                   model_name: str | None = None) -> dict:
+async def call_llm(
+    config: Any,
+    messages: list,
+    tools: list | None = None,
+    llm_url: str | None = None,
+    llm_model: str | None = None,
+    llm_api_key: str | None = None,
+    model_name: str | None = None,
+) -> dict:
     with _tracer.start_as_current_span("call_llm") as span:
         span.set_attribute("llm.model_name", model_name or "")
         return await _call_llm_impl(config, messages, tools, llm_url, llm_model, llm_api_key, model_name)
 
-async def _call_llm_impl(config: Any, messages: list, tools: list | None = None,
-                   llm_url: str | None = None, llm_model: str | None = None,
-                   llm_api_key: str | None = None,
-                   model_name: str | None = None) -> dict:
+
+async def _call_llm_impl(
+    config: Any,
+    messages: list,
+    tools: list | None = None,
+    llm_url: str | None = None,
+    llm_model: str | None = None,
+    llm_api_key: str | None = None,
+    model_name: str | None = None,
+) -> dict:
     """Call the LLM and return the response message.
 
     Use model_name to resolve through the provider/model config system.
     Or use llm_url/llm_model/llm_api_key for legacy override behavior.
     """
     provider, model, timeout = _resolve(
-        config, model_name=model_name,
-        llm_url=llm_url, llm_model=llm_model, llm_api_key=llm_api_key,
+        config,
+        model_name=model_name,
+        llm_url=llm_url,
+        llm_model=llm_model,
+        llm_api_key=llm_api_key,
     )
     return await provider.complete(
-        model, messages, tools=tools, streaming=False, timeout=timeout,
+        model,
+        messages,
+        tools=tools,
+        streaming=False,
+        timeout=timeout,
     )
 
 
 async def call_llm_streaming(
-    config: Any, messages: list, tools: list | None = None,
-    on_chunk: Any = None, cancel_event: Any = None,
-    llm_url: str | None = None, llm_model: str | None = None,
+    config: Any,
+    messages: list,
+    tools: list | None = None,
+    on_chunk: Any = None,
+    cancel_event: Any = None,
+    llm_url: str | None = None,
+    llm_model: str | None = None,
     llm_api_key: str | None = None,
     model_name: str | None = None,
 ) -> dict:
     with _tracer.start_as_current_span("call_llm_streaming") as span:
         span.set_attribute("llm.model_name", model_name or "")
-        return await _call_llm_streaming_impl(config, messages, tools, on_chunk, cancel_event, llm_url, llm_model, llm_api_key, model_name)
+        return await _call_llm_streaming_impl(
+            config, messages, tools, on_chunk, cancel_event, llm_url, llm_model, llm_api_key, model_name
+        )
+
 
 async def _call_llm_streaming_impl(
-    config: Any, messages: list, tools: list | None = None,
-    on_chunk: Any = None, cancel_event: Any = None,
-    llm_url: str | None = None, llm_model: str | None = None,
+    config: Any,
+    messages: list,
+    tools: list | None = None,
+    on_chunk: Any = None,
+    cancel_event: Any = None,
+    llm_url: str | None = None,
+    llm_model: str | None = None,
     llm_api_key: str | None = None,
     model_name: str | None = None,
 ) -> dict:
@@ -88,17 +117,24 @@ async def _call_llm_streaming_impl(
     Or use llm_url/llm_model/llm_api_key for legacy override behavior.
     """
     provider, model, timeout = _resolve(
-        config, model_name=model_name,
-        llm_url=llm_url, llm_model=llm_model, llm_api_key=llm_api_key,
+        config,
+        model_name=model_name,
+        llm_url=llm_url,
+        llm_model=llm_model,
+        llm_api_key=llm_api_key,
     )
     return await provider.complete(
-        model, messages, tools=tools, streaming=True,
-        on_chunk=on_chunk, cancel_event=cancel_event, timeout=timeout,
+        model,
+        messages,
+        tools=tools,
+        streaming=True,
+        on_chunk=on_chunk,
+        cancel_event=cancel_event,
+        timeout=timeout,
     )
 
 
-async def embed_text(config: Any, text: str,
-                     model_name: str | None = None) -> list[float] | None:
+async def embed_text(config: Any, text: str, model_name: str | None = None) -> list[float] | None:
     """Embed text using a named model config.
 
     Falls back to the default model's provider if model_name is not given.
@@ -126,6 +162,7 @@ def _resolve(
     # Path 1: Named model config
     if model_name:
         from ..config import resolve_model
+
         try:
             pc, mc = resolve_model(config, model_name)
             provider = get_provider(mc.provider)
@@ -152,8 +189,7 @@ def _resolve(
             provider = get_provider(mc.provider)
             return provider, mc.model, mc.timeout
         except KeyError as exc:
-            log.debug("default model %r not in provider registry: %s; falling through",
-                      config.default_model, exc)
+            log.debug("default model %r not in provider registry: %s; falling through", config.default_model, exc)
 
     # Fall back to "default" provider in registry
     try:
@@ -190,8 +226,12 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
                         )
                         if limit:
                             mc.context_window_size = int(limit)
-                            log.info("Auto-detected context window size for model %r (%r): %d",
-                                     model_name, mc.model, mc.context_window_size)
+                            log.info(
+                                "Auto-detected context window size for model %r (%r): %d",
+                                model_name,
+                                mc.model,
+                                mc.context_window_size,
+                            )
                             return mc.context_window_size
                 _failed_model_info.add(cache_key)
             except Exception as e:

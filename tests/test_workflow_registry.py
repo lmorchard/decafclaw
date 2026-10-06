@@ -22,7 +22,9 @@ def test_duplicate_name_raises():
     @workflow("dup_wf")
     async def a(h):
         return 1
+
     with pytest.raises(ValueError):
+
         @workflow("dup_wf")
         async def b(h):
             return 2
@@ -75,8 +77,10 @@ def test_workflow_decorator_rejects_bare_string_requires_skills():
     import pytest
 
     with pytest.raises(TypeError, match="requires_skills must be a sequence"):
+
         @workflow("test-bare-string", requires_skills="tabstack")
         async def f(wf):
             pass
+
     # The decorator raised BEFORE registering, so the registry stays clean.
     assert "test-bare-string" not in REGISTRY

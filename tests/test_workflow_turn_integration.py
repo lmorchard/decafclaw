@@ -14,8 +14,10 @@ from decafclaw.events import EventBus
 def make_manager(config):
     """Factory fixture: returns a callable that builds a ConversationManager
     pointing at the test tmp workspace."""
+
     def _make():
         return ConversationManager(config=config, event_bus=EventBus())
+
     return _make
 
 
@@ -24,8 +26,8 @@ async def test_post_confirmation_sets_pending_without_waiter(make_manager):
     manager = make_manager()
     conv_id = "convP"
     req = ConfirmationRequest(
-        action_type=ConfirmationAction.WORKFLOW_USER_INPUT,
-        message="topic?", action_data={"seq": 0}, timeout=None)
+        action_type=ConfirmationAction.WORKFLOW_USER_INPUT, message="topic?", action_data={"seq": 0}, timeout=None
+    )
 
     await manager.post_confirmation(conv_id, req)
 
@@ -38,22 +40,22 @@ async def test_post_confirmation_sets_pending_without_waiter(make_manager):
 @pytest.mark.asyncio
 async def test_post_confirmation_raises_when_slot_busy(make_manager):
     import pytest
+
     manager = make_manager()
     conv_id = "convBusy"
     req = ConfirmationRequest(
-        action_type=ConfirmationAction.WORKFLOW_USER_INPUT,
-        message="q1?", action_data={"seq": 0}, timeout=None)
+        action_type=ConfirmationAction.WORKFLOW_USER_INPUT, message="q1?", action_data={"seq": 0}, timeout=None
+    )
     await manager.post_confirmation(conv_id, req)
     req2 = ConfirmationRequest(
-        action_type=ConfirmationAction.WORKFLOW_USER_INPUT,
-        message="q2?", action_data={"seq": 1}, timeout=None)
+        action_type=ConfirmationAction.WORKFLOW_USER_INPUT, message="q2?", action_data={"seq": 1}, timeout=None
+    )
     with pytest.raises(RuntimeError):
         await manager.post_confirmation(conv_id, req2)
 
 
 @pytest.mark.asyncio
-async def test_post_confirmation_busy_raise_does_not_leave_archive_orphan(
-        make_manager, config):
+async def test_post_confirmation_busy_raise_does_not_leave_archive_orphan(make_manager, config):
     """Regression: if post_confirmation raises on a busy slot, the rejected
     request must NOT appear in the archive. Otherwise startup_scan would
     recover it as a ghost pending confirmation with no backing workflow
@@ -61,17 +63,18 @@ async def test_post_confirmation_busy_raise_does_not_leave_archive_orphan(
     import pytest
 
     from decafclaw.archive import read_archive
+
     manager = make_manager()
     conv_id = "convOrphan"
 
     first = ConfirmationRequest(
-        action_type=ConfirmationAction.WORKFLOW_USER_INPUT,
-        message="first", action_data={"seq": 0}, timeout=None)
+        action_type=ConfirmationAction.WORKFLOW_USER_INPUT, message="first", action_data={"seq": 0}, timeout=None
+    )
     await manager.post_confirmation(conv_id, first)
 
     rejected = ConfirmationRequest(
-        action_type=ConfirmationAction.WORKFLOW_USER_INPUT,
-        message="rejected", action_data={"seq": 1}, timeout=None)
+        action_type=ConfirmationAction.WORKFLOW_USER_INPUT, message="rejected", action_data={"seq": 1}, timeout=None
+    )
     with pytest.raises(RuntimeError):
         await manager.post_confirmation(conv_id, rejected)
 
@@ -91,17 +94,19 @@ async def test_workflow_turn_runs_and_suspends_end_to_end(make_manager):
     WORKFLOW_USER_INPUT confirmation for the topic question."""
     import decafclaw.workflow.workflows  # noqa: F401 — register interview
     from decafclaw.conversation_manager import TurnKind
+
     manager = make_manager()
     conv_id = "convWF"
 
     fut = await manager.enqueue_turn(
-        conv_id, kind=TurnKind.WORKFLOW, prompt="",
-        metadata={"workflow_name": "interview", "resume": False})
+        conv_id, kind=TurnKind.WORKFLOW, prompt="", metadata={"workflow_name": "interview", "resume": False}
+    )
     await fut  # wait for the turn to finish (it suspends, then ends)
 
     state = manager._conversations[conv_id]
     assert state.pending_confirmation is not None
     from decafclaw.confirmations import ConfirmationAction
+
     assert state.pending_confirmation.action_type is ConfirmationAction.WORKFLOW_USER_INPUT
     assert state.pending_confirmation.action_data["workflow_name"] == "interview"
     assert state.pending_confirmation.action_data["seq"] == "0"
@@ -141,8 +146,7 @@ async def test_durable_resume_after_simulated_restart(tmp_path):
     assert len(reloaded.entries) == 0  # nothing journaled yet for the unanswered input
 
     # --- The resume handler would journal the user's answer at the suspend seq ---
-    reloaded.append(out1.suspend.seq, "user_input",
-                    out1.suspend.args_fingerprint, "tide pools")
+    reloaded.append(out1.suspend.seq, "user_input", out1.suspend.args_fingerprint, "tide pools")
     reloaded.status = "running"
     save_journal(cfg, conv_id, reloaded)
 
@@ -154,8 +158,7 @@ async def test_durable_resume_after_simulated_restart(tmp_path):
         # One canned dict satisfies BOTH the decision schema {done, question}
         # and the synth schema {title, body}: done=True ends the loop, then the
         # synth call returns the artifact.
-        return {"done": True, "question": "",
-                "title": "Tide Pools", "body": "A brief."}
+        return {"done": True, "question": "", "title": "Tide Pools", "body": "A brief."}
 
     j2 = load_journal(cfg, conv_id)
     out2 = await run_workflow(fresh_ctx(), spec.fn, j2, llm_caller=fake_llm)
@@ -209,12 +212,9 @@ async def test_startup_scan_resumes_running_workflow_end_to_end(make_manager, co
 
     @workflow(workflow_name)
     async def _three_stage(wf):
-        r1 = await wf.llm_call(
-            prompt=_STAGE_PROMPTS[0], schema=_SCHEMA, system=_STAGE_SYSTEM)
-        r2 = await wf.llm_call(
-            prompt=_STAGE_PROMPTS[1], schema=_SCHEMA, system=_STAGE_SYSTEM)
-        r3 = await wf.llm_call(
-            prompt=_STAGE_PROMPTS[2], schema=_SCHEMA, system=_STAGE_SYSTEM)
+        r1 = await wf.llm_call(prompt=_STAGE_PROMPTS[0], schema=_SCHEMA, system=_STAGE_SYSTEM)
+        r2 = await wf.llm_call(prompt=_STAGE_PROMPTS[1], schema=_SCHEMA, system=_STAGE_SYSTEM)
+        r3 = await wf.llm_call(prompt=_STAGE_PROMPTS[2], schema=_SCHEMA, system=_STAGE_SYSTEM)
         return {
             "title": "combined",
             "body": f"{r1['value']}|{r2['value']}|{r3['value']}",
@@ -232,8 +232,7 @@ async def test_startup_scan_resumes_running_workflow_end_to_end(make_manager, co
         # before the third llm_call returned. status="running" is the crash
         # signal that startup_scan_workflows recovers on.
         def _fp(prompt: str) -> str:
-            return fingerprint("llm_call", {
-                "prompt": prompt, "schema": _SCHEMA, "system": _STAGE_SYSTEM})
+            return fingerprint("llm_call", {"prompt": prompt, "schema": _SCHEMA, "system": _STAGE_SYSTEM})
 
         j = Journal(workflow_name=workflow_name, status="running", attempts=0)
         j.append((0,), "llm_call", _fp(_STAGE_PROMPTS[0]), {"value": "one"})

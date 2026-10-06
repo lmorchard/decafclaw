@@ -139,8 +139,7 @@ def _suggest_pattern(command: str) -> str:
     return command
 
 
-async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "shell",
-                               message: str = "") -> dict:
+async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "shell", message: str = "") -> dict:
     """Check whether a shell command is approved (shared by shell + background tools).
 
     Returns {"approved": True} if auto-approved, or the user's confirmation result.
@@ -159,7 +158,9 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
         }
 
     if decision.status == SecurityStatus.ASK:
-        log.info(f"[{tool_name}] security monitor requires explicit confirmation: {command} (reason: {decision.reason})")
+        log.info(
+            f"[{tool_name}] security monitor requires explicit confirmation: {command} (reason: {decision.reason})"
+        )
         if ctx.is_unattended:
             log.warning(f"[{tool_name}] denied on unattended turn (security monitor ASK decision): {command}")
             return {
@@ -168,7 +169,9 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
             }
         suggested_pattern = _suggest_pattern(command)
         result = await request_confirmation(
-            ctx, tool_name=tool_name, command=command,
+            ctx,
+            tool_name=tool_name,
+            command=command,
             message=message or f"Shell command (security review requested): `{command}`",
             suggested_pattern=suggested_pattern,
         )
@@ -200,7 +203,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 f"Command: {command}\n"
                 f"Working Directory: {ctx.config.workspace_path}\n"
                 "Determine if this is a low-risk command that should be auto-approved, or if it requires user confirmation.\n"
-                "Return a JSON object: {\"auto_approve\": bool, \"reason\": \"<string>\", \"risk\": \"low\" | \"medium\" | \"high\"}\n"
+                'Return a JSON object: {"auto_approve": bool, "reason": "<string>", "risk": "low" | "medium" | "high"}\n'
                 "Only auto-approve low risk read-only or harmless commands (like ls, git status, cat). "
                 "Do not auto-approve anything that modifies state, installs software, makes network requests, etc."
             )
@@ -209,15 +212,19 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
             raw_text = response.get("content", "").strip()
 
             import re as re_mod
+
             if "```" in raw_text:
                 raw_text = re_mod.sub(r"^```(?:json)?\n?", "", raw_text, flags=re_mod.MULTILINE)
                 raw_text = re_mod.sub(r"```$", "", raw_text, flags=re_mod.MULTILINE).strip()
 
             import json as json_mod
+
             data = json_mod.loads(raw_text)
 
             if data.get("auto_approve") is True:
-                log.info(f"[{tool_name}] auto-approved by aux LLM (risk: {data.get('risk')}): {command} - {data.get('reason')}")
+                log.info(
+                    f"[{tool_name}] auto-approved by aux LLM (risk: {data.get('risk')}): {command} - {data.get('reason')}"
+                )
                 suggested_pattern = _suggest_pattern(command)
                 ctx.tools.llm_approved_shell_patterns.append(suggested_pattern)
 
@@ -225,27 +232,47 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 if not ctx.skip_archive:
                     try:
                         from decafclaw.archive import append_message
-                        append_message(ctx.config, ctx.conv_id, {
-                            "role": "shell_approval", "tool": "shell auto-approval: ALLOWED", "content": msg_content
-                        })
+
+                        append_message(
+                            ctx.config,
+                            ctx.conv_id,
+                            {"role": "shell_approval", "tool": "shell auto-approval: ALLOWED", "content": msg_content},
+                        )
                     except Exception as e:
                         log.error(f"Archive write failed for shell_approval: {e}")
-                await ctx.publish("shell_approval", command=command, risk=data.get("risk", ""), reason=data.get("reason", ""), approved=True)
+                await ctx.publish(
+                    "shell_approval",
+                    command=command,
+                    risk=data.get("risk", ""),
+                    reason=data.get("reason", ""),
+                    approved=True,
+                )
 
                 return {"approved": True}
             else:
-                log.info(f"[{tool_name}] aux LLM declined auto-approval (risk: {data.get('risk')}): {command} - {data.get('reason')}")
+                log.info(
+                    f"[{tool_name}] aux LLM declined auto-approval (risk: {data.get('risk')}): {command} - {data.get('reason')}"
+                )
 
                 msg_content = f"Command: {command}\nRisk: {data.get('risk')}\nReason: {data.get('reason')}"
                 if not ctx.skip_archive:
                     try:
                         from decafclaw.archive import append_message
-                        append_message(ctx.config, ctx.conv_id, {
-                            "role": "shell_approval", "tool": "shell auto-approval: DECLINED", "content": msg_content
-                        })
+
+                        append_message(
+                            ctx.config,
+                            ctx.conv_id,
+                            {"role": "shell_approval", "tool": "shell auto-approval: DECLINED", "content": msg_content},
+                        )
                     except Exception as e:
                         log.error(f"Archive write failed for shell_approval: {e}")
-                await ctx.publish("shell_approval", command=command, risk=data.get("risk", ""), reason=data.get("reason", ""), approved=False)
+                await ctx.publish(
+                    "shell_approval",
+                    command=command,
+                    risk=data.get("risk", ""),
+                    reason=data.get("reason", ""),
+                    approved=False,
+                )
         except Exception as e:
             log.warning(f"[{tool_name}] aux LLM approval failed, falling through: {e}")
 
@@ -254,14 +281,13 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
         # Nobody can answer a prompt on this turn: it would block for the 60s
         # timeout and then be synthesized into this same denial. Deny now, and
         # say why rather than letting it look like a user decision.
-        log.warning(
-            f"[{tool_name}] denied on unattended turn "
-            f"(task_mode={ctx.task_mode!r}): {command}")
-        return {"approved": False,
-                "reason": "unattended turn: command matches no allow pattern"}
+        log.warning(f"[{tool_name}] denied on unattended turn (task_mode={ctx.task_mode!r}): {command}")
+        return {"approved": False, "reason": "unattended turn: command matches no allow pattern"}
 
     result = await request_confirmation(
-        ctx, tool_name=tool_name, command=command,
+        ctx,
+        tool_name=tool_name,
+        command=command,
         message=message or f"Shell command: `{command}`",
         suggested_pattern=suggested_pattern,
     )
@@ -294,8 +320,13 @@ def _execute_command(ctx: "Context", command: str) -> ToolResult:
     env = {**os.environ, "DECAFCLAW_WORKSPACE": str(ctx.config.workspace_path)}
     try:
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30,
-            cwd=str(ctx.config.workspace_path), env=env,
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(ctx.config.workspace_path),
+            env=env,
         )
         output = result.stdout
         if result.stderr:
@@ -323,7 +354,8 @@ async def tool_shell_patterns(ctx: "Context", action: str = "list", pattern: str
     elif action == "add" and pattern:
         # This requires confirmation — we're modifying admin config
         result = await request_confirmation(
-            ctx, tool_name="shell_patterns",
+            ctx,
+            tool_name="shell_patterns",
             command=f"Add shell allow pattern: {pattern}",
             message=f"Add shell allow pattern: `{pattern}`",
         )

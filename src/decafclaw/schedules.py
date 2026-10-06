@@ -71,6 +71,7 @@ _UNTRUSTED_TIERS = frozenset({"workspace", "extra"})
 @dataclass
 class ScheduleTask:
     """A parsed schedule file."""
+
     name: str
     schedule: str  # 5-field cron expression
     body: str
@@ -98,17 +99,36 @@ class ScheduleTask:
 
 # Frontmatter keys `parse_schedule_file` understands. Anything else lands
 # in `ScheduleTask.unknown_keys`. `effort` is the legacy alias for `model`.
-_KNOWN_FRONTMATTER_KEYS = frozenset({
-    "schedule", "enabled", "channel", "model", "effort",
-    "allowed-tools", "pre_script", "required-skills", "email-recipients",
-})
+_KNOWN_FRONTMATTER_KEYS = frozenset(
+    {
+        "schedule",
+        "enabled",
+        "channel",
+        "model",
+        "effort",
+        "allowed-tools",
+        "pre_script",
+        "required-skills",
+        "email-recipients",
+    }
+)
 
 # Valid patch keys accepted by `write_overlay`. Any other key raises ValueError.
-VALID_PATCH_KEYS = frozenset({
-    "disallowed_tools",
-    "enabled", "schedule", "body", "channel", "allowed_tools",
-    "required_skills", "shell_patterns", "email_recipients", "model", "pre_script",
-})
+VALID_PATCH_KEYS = frozenset(
+    {
+        "disallowed_tools",
+        "enabled",
+        "schedule",
+        "body",
+        "channel",
+        "allowed_tools",
+        "required_skills",
+        "shell_patterns",
+        "email_recipients",
+        "model",
+        "pre_script",
+    }
+)
 
 
 def parse_schedule_file(path: Path) -> ScheduleTask | None:
@@ -153,7 +173,9 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
     disallowed_tools, disallowed_patterns = _parse_allowed_tools(str(disallowed_tools_raw))
     if disallowed_patterns:
         log.warning("shell(...) patterns are not supported in disallowed-tools; use 'shell' to block the entire tool")
-        raise ValueError("shell(...) patterns are not supported in disallowed-tools; use 'shell' to block the entire tool")
+        raise ValueError(
+            "shell(...) patterns are not supported in disallowed-tools; use 'shell' to block the entire tool"
+        )
 
     required_skills = meta.get("required-skills", [])
     if not isinstance(required_skills, list):
@@ -165,8 +187,7 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
 
     unknown_keys = sorted(set(meta) - _KNOWN_FRONTMATTER_KEYS)
     if unknown_keys:
-        log.warning("Unrecognized frontmatter in %s: %s (ignored)",
-                    path.name, ", ".join(unknown_keys))
+        log.warning("Unrecognized frontmatter in %s: %s (ignored)", path.name, ", ".join(unknown_keys))
 
     return ScheduleTask(
         name=path.stem,
@@ -343,16 +364,13 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
     # Validate cron expression before touching disk.
     if "schedule" in patch:
         if not isinstance(patch["schedule"], str):
-            raise ValueError(
-                f"schedule must be a string, got {type(patch['schedule']).__name__}"
-            )
+            raise ValueError(f"schedule must be a string, got {type(patch['schedule']).__name__}")
         if not croniter.is_valid(patch["schedule"]):
             raise ValueError(f"invalid cron expression: {patch['schedule']!r}")
 
     # Validate list fields — reject non-list values (e.g. comma-separated strings)
     # rather than silently iterating characters.
-    for list_field in ("allowed_tools", "disallowed_tools", "required_skills",
-                       "shell_patterns", "email_recipients"):
+    for list_field in ("allowed_tools", "disallowed_tools", "required_skills", "shell_patterns", "email_recipients"):
         if list_field in patch and not isinstance(patch[list_field], list):
             raise ValueError(f"{list_field} must be a list of strings")
 
@@ -510,10 +528,21 @@ def _resolve_pre_script_path(config, task: ScheduleTask) -> Path | None:
 # pre_script's stdout goes straight into the model's context, so `print(os.environ)`
 # in an otherwise innocent script would exfiltrate them (#450 review).
 _PRE_SCRIPT_ENV_PASSTHROUGH = (
-    "PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR",
-    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
-    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-    "http_proxy", "https_proxy", "no_proxy",
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "TMPDIR",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
 )
 
 
@@ -524,16 +553,14 @@ def _pre_script_env(config, task: ScheduleTask) -> dict[str, str]:
     that genuinely needs a secret should read it from a file it is pointed at,
     which leaves a reviewable trail.
     """
-    env = {
-        k: os.environ[k]
-        for k in _PRE_SCRIPT_ENV_PASSTHROUGH
-        if k in os.environ
-    }
-    env.update({
-        "DECAFCLAW_AGENT_ID": config.agent.id,
-        "DECAFCLAW_ROUTINE_NAME": task.name,
-        "DECAFCLAW_WORKSPACE": str(config.workspace_path),
-    })
+    env = {k: os.environ[k] for k in _PRE_SCRIPT_ENV_PASSTHROUGH if k in os.environ}
+    env.update(
+        {
+            "DECAFCLAW_AGENT_ID": config.agent.id,
+            "DECAFCLAW_ROUTINE_NAME": task.name,
+            "DECAFCLAW_WORKSPACE": str(config.workspace_path),
+        }
+    )
     return env
 
 
@@ -573,8 +600,7 @@ async def _run_pre_script(config, task: ScheduleTask) -> str:
     try:
         script = _resolve_pre_script_path(config, task)
     except ValueError:
-        log.warning("Scheduled task %r: pre_script %r escapes the allowed roots",
-                    task.name, task.pre_script)
+        log.warning("Scheduled task %r: pre_script %r escapes the allowed roots", task.name, task.pre_script)
         return f"[pre_script error: {task.pre_script!r} is outside the allowed roots]"
     if script is None:
         return f"[pre_script error: {task.pre_script!r} not found]"
@@ -584,7 +610,8 @@ async def _run_pre_script(config, task: ScheduleTask) -> str:
     proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, str(script),
+            sys.executable,
+            str(script),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(config.workspace_path),
@@ -598,19 +625,16 @@ async def _run_pre_script(config, task: ScheduleTask) -> str:
             # zombie until GC and asyncio complains about the transport on
             # shutdown — the kind of "harmless" noise CLAUDE.md rules out.
             await proc.wait()
-        log.warning("Scheduled task %r: pre_script timed out after %ss",
-                    task.name, timeout)
+        log.warning("Scheduled task %r: pre_script timed out after %ss", task.name, timeout)
         return f"[pre_script error: timed out after {timeout}s]"
     except OSError as exc:
-        log.warning("Scheduled task %r: pre_script failed to start: %s",
-                    task.name, exc)
+        log.warning("Scheduled task %r: pre_script failed to start: %s", task.name, exc)
         return f"[pre_script error: {type(exc).__name__}: {exc}]"
 
     if err:
         # stderr is diagnostics, not interface — logged, never injected, so a
         # script's warnings don't end up in the model's context.
-        log.warning("Scheduled task %r pre_script stderr: %s",
-                    task.name, err.decode(errors="replace")[:500])
+        log.warning("Scheduled task %r pre_script stderr: %s", task.name, err.decode(errors="replace")[:500])
     if proc.returncode != 0:
         return f"[pre_script error: exited {proc.returncode}]"
 
@@ -619,11 +643,11 @@ async def _run_pre_script(config, task: ScheduleTask) -> str:
         # Say so rather than cutting silently. A truncated JSON array or item
         # list reads as a complete one, and the agent would summarize a partial
         # payload as if it were everything.
-        log.warning("Scheduled task %r: pre_script output truncated from %d chars",
-                    task.name, len(text))
-        text = (text[:_PRE_SCRIPT_MAX_CHARS]
-                + f"\n[pre_script output truncated at {_PRE_SCRIPT_MAX_CHARS} "
-                  f"characters — {len(text)} were produced]")
+        log.warning("Scheduled task %r: pre_script output truncated from %d chars", task.name, len(text))
+        text = (
+            text[:_PRE_SCRIPT_MAX_CHARS] + f"\n[pre_script output truncated at {_PRE_SCRIPT_MAX_CHARS} "
+            f"characters — {len(text)} were produced]"
+        )
     return text
 
 
@@ -675,7 +699,10 @@ def _resolve_skill_dir(config, task: "ScheduleTask") -> str:
             log.warning(
                 "Scheduled task %r: ignoring %s-tier skill %r when resolving "
                 "$SKILL_DIR — only trusted-tier skills may anchor it",
-                task.name, info.trust_tier, candidate)
+                task.name,
+                info.trust_tier,
+                candidate,
+            )
             continue
         return str(info.location.resolve())
     return str(task.path.parent.resolve())
@@ -708,8 +735,7 @@ def _render_required_skill_bodies(config, skill_names: list[str]) -> str:
     for name in skill_names:
         info = skill_map.get(name)
         if info is None:
-            log.warning(f"Schedule references unknown required-skill {name!r}; "
-                        f"skipping body injection")
+            log.warning(f"Schedule references unknown required-skill {name!r}; skipping body injection")
             continue
         if not grants_capability(info):
             # Logged, not silent: the agent gets a thin trigger referring to
@@ -718,7 +744,9 @@ def _render_required_skill_bodies(config, skill_names: list[str]) -> str:
                 "Skipping body injection for %s-tier required-skill %r — "
                 "workspace skills are agent-writable and <loaded_skills> is "
                 "presented as instructions in force",
-                info.trust_tier, name)
+                info.trust_tier,
+                name,
+            )
             continue
         if not info.body:
             continue
@@ -730,8 +758,7 @@ def _render_required_skill_bodies(config, skill_names: list[str]) -> str:
     return "<loaded_skills>\n" + "\n".join(blocks) + "\n</loaded_skills>"
 
 
-async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
-                             conv_id: str | None = None) -> dict:
+async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv_id: str | None = None) -> dict:
     """Run a single scheduled task as an agent turn via ConversationManager.
 
     If conv_id is provided, use it; otherwise generate from task.name + now.
@@ -765,9 +792,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
     skill_dir = _resolve_skill_dir(config, task)
     shell_patterns = None
     if trusted and task.shell_patterns:
-        shell_patterns = [
-            p.replace("$SKILL_DIR", skill_dir) for p in task.shell_patterns
-        ]
+        shell_patterns = [p.replace("$SKILL_DIR", skill_dir) for p in task.shell_patterns]
 
     # Per-task settings applied after the manager creates the context
     required_skills = list(task.required_skills)
@@ -795,6 +820,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
             discovered = config.discovered_skills
             skill_map = {s.name: s for s in discovered}
             from .tools.skill_tools import activate_skill_internal
+
             for skill_name in required_skills:
                 skill_info = skill_map.get(skill_name)
                 if skill_info and skill_info.trust_tier == "workspace":
@@ -810,14 +836,16 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
                     log.warning(
                         "Skipping workspace-tier skill '%s' required by task "
                         "'%s': workspace skills are not activated on "
-                        "scheduled turns", skill_name, task.name)
+                        "scheduled turns",
+                        skill_name,
+                        task.name,
+                    )
                     continue
                 if skill_info:
                     try:
                         await activate_skill_internal(ctx, skill_info)
                     except Exception as e:
-                        log.error(f"Failed to activate skill '{skill_name}' "
-                                  f"for task '{task.name}': {e}")
+                        log.error(f"Failed to activate skill '{skill_name}' for task '{task.name}': {e}")
 
     from .commands import substitute_body
     from .polling import build_task_preamble
@@ -830,14 +858,8 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
     # The pre_script tier gate lives inside `_run_pre_script`, on the
     # dangerous function rather than at this call site (#731).
     pre_output = await _run_pre_script(config, task)
-    pre_block = (
-        f"<pre_script_output>\n{pre_output.rstrip()}\n</pre_script_output>\n\n"
-        if pre_output else ""
-    )
-    prompt = (preamble
-              + (f"{loaded_skills}\n\n" if loaded_skills else "")
-              + pre_block
-              + body)
+    pre_block = f"<pre_script_output>\n{pre_output.rstrip()}\n</pre_script_output>\n\n" if pre_output else ""
+    prompt = preamble + (f"{loaded_skills}\n\n" if loaded_skills else "") + pre_block + body
 
     try:
         future = await manager.enqueue_turn(
@@ -852,17 +874,22 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
         )
         result = await future
         from .heartbeat import is_heartbeat_ok, response_starts_with_sentinel
+
         ok = is_heartbeat_ok(result)
         result_text = result.text if result else "(no response)"
         if response_starts_with_sentinel(result_text, SILENT_SENTINEL) and result and result.termination_reason is None:
             # Suppressed cycles must stay distinguishable from crashed ones in
             # the log — the notification that didn't happen is otherwise the
             # only trace, and an absence isn't diagnosable.
-            log.info("Scheduled task %r returned %s — suppressing notification",
-                     task.name, SILENT_SENTINEL)
+            log.info("Scheduled task %r returned %s — suppressing notification", task.name, SILENT_SENTINEL)
         else:
             await _notify_task_complete(
-                config, event_bus, task.name, result_text, ok, conv_id,
+                config,
+                event_bus,
+                task.name,
+                result_text,
+                ok,
+                conv_id,
             )
         return {
             "task_name": task.name,
@@ -874,8 +901,12 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
     except Exception as e:
         log.error(f"Scheduled task '{task.name}' failed: {e}", exc_info=True)
         await _notify_task_complete(
-            config, event_bus, task.name, f"[error: {e}]",
-            ok=False, conv_id=conv_id,
+            config,
+            event_bus,
+            task.name,
+            f"[error: {e}]",
+            ok=False,
+            conv_id=conv_id,
         )
         return {
             "task_name": task.name,
@@ -887,19 +918,27 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
 
 
 async def _notify_task_complete(
-    config, event_bus, task_name: str, response: str, ok: bool,
+    config,
+    event_bus,
+    task_name: str,
+    response: str,
+    ok: bool,
     conv_id: str = "",
 ) -> None:
     """Append an inbox notification for a scheduled-task run."""
     from . import notifications
+
     title = f"Scheduled: {task_name}" if ok else f"Scheduled task alert: {task_name}"
     body = response.strip().splitlines()[0] if response.strip() else ""
     if len(body) > 160:
         body = body[:157] + "..."
     try:
         await notifications.notify(
-            config, event_bus,
-            category="schedule", title=title, body=body,
+            config,
+            event_bus,
+            category="schedule",
+            title=title,
+            body=body,
             priority="high" if not ok else "normal",
             conv_id=conv_id or None,
         )
@@ -913,8 +952,7 @@ async def _notify_task_complete(
 _SCHEDULE_POLL_INTERVAL = 60
 
 
-async def run_schedule_timer(config, event_bus, manager, shutdown_event,
-                              on_result=None, poll_interval=None):
+async def run_schedule_timer(config, event_bus, manager, shutdown_event, on_result=None, poll_interval=None):
     """Run the schedule timer loop.
 
     Discovers schedule files, checks if tasks are due, and runs them.
@@ -956,8 +994,7 @@ async def run_schedule_timer(config, event_bus, manager, shutdown_event,
                     elif result["is_ok"]:
                         log.info(f"Schedule '{t.name}': HEARTBEAT_OK")
                     else:
-                        log.info(f"Schedule '{t.name}' response: "
-                                 f"{result['response'][:200]}")
+                        log.info(f"Schedule '{t.name}' response: {result['response'][:200]}")
                 except Exception as e:
                     log.error(f"Schedule '{t.name}' execution failed: {e}")
                 finally:

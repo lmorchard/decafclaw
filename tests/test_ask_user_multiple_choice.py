@@ -21,10 +21,12 @@ def test_normalize_bare_strings():
 
 
 def test_normalize_dicts_with_description():
-    out = _normalize_multiple_choice_options([
-        {"value": "a", "label": "Alpha", "description": "first"},
-        {"value": "b", "label": "Beta"},
-    ])
+    out = _normalize_multiple_choice_options(
+        [
+            {"value": "a", "label": "Alpha", "description": "first"},
+            {"value": "b", "label": "Beta"},
+        ]
+    )
     assert out == [
         {"value": "a", "label": "Alpha", "description": "first"},
         {"value": "b", "label": "Beta"},
@@ -39,8 +41,7 @@ def test_normalize_dict_missing_label_is_rejected():
 
 
 def test_normalize_mixed_strings_and_dicts():
-    out = _normalize_multiple_choice_options(
-        ["alpha", {"value": "b", "label": "Beta"}])
+    out = _normalize_multiple_choice_options(["alpha", {"value": "b", "label": "Beta"}])
     assert out[0]["label"] == "alpha"
     assert out[1]["label"] == "Beta"
 
@@ -58,8 +59,7 @@ def test_normalize_bad_entry_returns_none():
 
 
 def test_default_response_single_uses_label():
-    options = [{"value": "a", "label": "Alpha"},
-               {"value": "b", "label": "Beta"}]
+    options = [{"value": "a", "label": "Alpha"}, {"value": "b", "label": "Beta"}]
     cb = _default_multiple_choice_callback(options, allow_multiple=False)
     assert cb({"selected": "a"}) == "User selected: Alpha"
 
@@ -77,9 +77,7 @@ def test_default_response_single_missing_selection():
 
 
 def test_default_response_multi_joins_labels():
-    options = [{"value": "a", "label": "Alpha"},
-               {"value": "b", "label": "Beta"},
-               {"value": "c", "label": "Gamma"}]
+    options = [{"value": "a", "label": "Alpha"}, {"value": "b", "label": "Beta"}, {"value": "c", "label": "Gamma"}]
     cb = _default_multiple_choice_callback(options, allow_multiple=True)
     assert cb({"selected": ["a", "c"]}) == "User selected: Alpha, Gamma"
 
@@ -96,9 +94,7 @@ def test_default_response_multi_empty():
 @pytest.mark.asyncio
 async def test_ask_user_multiple_choice_happy_path():
     ctx = object()  # unused
-    result = await tool_ask_user_multiple_choice(
-        ctx, prompt="Which deploy target?",
-        options=["production", "staging"])
+    result = await tool_ask_user_multiple_choice(ctx, prompt="Which deploy target?", options=["production", "staging"])
     assert isinstance(result, ToolResult)
     assert result.end_turn is True
     assert isinstance(result.widget, WidgetRequest)
@@ -113,9 +109,7 @@ async def test_ask_user_multiple_choice_happy_path():
 @pytest.mark.asyncio
 async def test_ask_user_multiple_choice_allow_multiple():
     ctx = object()
-    result = await tool_ask_user_multiple_choice(
-        ctx, prompt="Which?",
-        options=["a", "b"], allow_multiple=True)
+    result = await tool_ask_user_multiple_choice(ctx, prompt="Which?", options=["a", "b"], allow_multiple=True)
     assert result.widget.data["allow_multiple"] is True
     # Callback handles a list of selections.
     inject = result.widget.on_response({"selected": ["a", "b"]})
@@ -143,8 +137,6 @@ async def test_ask_user_multiple_choice_default_callback_wired_correctly():
     """The default callback formatting matches what tests would
     expect: integrates with the normalized options so label > value."""
     ctx = object()
-    result = await tool_ask_user_multiple_choice(
-        ctx, prompt="?",
-        options=[{"value": "v1", "label": "Nice Label"}])
+    result = await tool_ask_user_multiple_choice(ctx, prompt="?", options=[{"value": "v1", "label": "Nice Label"}])
     inject = result.widget.on_response({"selected": "v1"})
     assert inject == "User selected: Nice Label"

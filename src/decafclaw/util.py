@@ -9,9 +9,7 @@ def estimate_tokens(text: str) -> int:
     return len(text) // 4 if text else 0
 
 
-def find_fuzzy_matches(
-    target: str, candidates: Iterable[str], n: int = 3, cutoff: float = 0.6
-) -> list[str]:
+def find_fuzzy_matches(target: str, candidates: Iterable[str], n: int = 3, cutoff: float = 0.6) -> list[str]:
     """Return up to ``n`` candidates close to ``target``, best match first.
 
     Ranking uses ``difflib.get_close_matches``. Duplicate candidates are

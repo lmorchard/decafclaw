@@ -22,13 +22,28 @@ def _isolate_env(monkeypatch):
     monkeypatch.setattr("decafclaw.config.load_dotenv", lambda **kw: None)
     # Clear common env vars that .env may have set
     for key in list(os.environ):
-        if any(key.startswith(p) for p in (
-            "LLM_", "MATTERMOST_", "COMPACTION_", "EMBEDDING_",
-            "HEARTBEAT_", "HTTP_", "TABSTACK_", "CLAUDE_CODE_",
-            "SKILLS_", "MEMORY_SEARCH", "SYSTEM_PROMPT",
-            "NOTIFICATIONS_", "EMAIL_", "EXTRA_SKILL_", "VAULT_GUIDE_",
-            "WORKFLOW_", "LOOP_BREAKER_",
-        )):
+        if any(
+            key.startswith(p)
+            for p in (
+                "LLM_",
+                "MATTERMOST_",
+                "COMPACTION_",
+                "EMBEDDING_",
+                "HEARTBEAT_",
+                "HTTP_",
+                "TABSTACK_",
+                "CLAUDE_CODE_",
+                "SKILLS_",
+                "MEMORY_SEARCH",
+                "SYSTEM_PROMPT",
+                "NOTIFICATIONS_",
+                "EMAIL_",
+                "EXTRA_SKILL_",
+                "VAULT_GUIDE_",
+                "WORKFLOW_",
+                "LOOP_BREAKER_",
+            )
+        ):
             monkeypatch.delenv(key, raising=False)
 
 
@@ -100,6 +115,7 @@ class TestDefaults:
     def test_vault_guide_defaults(self):
         """VaultGuideConfig defaults: enabled, AGENTS.md, 2000-token cap."""
         from decafclaw.config_types import VaultGuideConfig
+
         c = Config()
         assert isinstance(c.vault_guide, VaultGuideConfig)
         assert c.vault_guide.enabled is True
@@ -139,10 +155,14 @@ class TestJsonFileLoading:
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
         config_file = agent_dir / "config.json"
-        config_file.write_text(json.dumps({
-            "llm": {"model": "test-model"},
-            "mattermost": {"url": "https://mm.test.com"},
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "llm": {"model": "test-model"},
+                    "mattermost": {"url": "https://mm.test.com"},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         # Clear env vars that .env may have set so JSON values win
         monkeypatch.delenv("LLM_MODEL", raising=False)
@@ -159,9 +179,13 @@ class TestJsonFileLoading:
         """
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "mattermost": {"url": "https://mm.test.com", "token": "tok"},
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mattermost": {"url": "https://mm.test.com", "token": "tok"},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         monkeypatch.setenv("MATTERMOST_ENABLED", "false")
         c = load_config()
@@ -175,11 +199,15 @@ class TestJsonFileLoading:
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
         config_file = agent_dir / "config.json"
-        config_file.write_text(json.dumps({
-            "agent": {
-                "preemptive_search": {"enabled": False, "max_matches": 5},
-            },
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "agent": {
+                        "preemptive_search": {"enabled": False, "max_matches": 5},
+                    },
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         assert c.agent.preemptive_search.enabled is False
@@ -188,6 +216,7 @@ class TestJsonFileLoading:
     def test_widgets_map_config_defaults(self):
         """MapWidgetConfig defaults to OpenStreetMap public tiles."""
         from decafclaw.config_types import MapWidgetConfig, WidgetsConfig
+
         w = WidgetsConfig()
         assert isinstance(w.map, MapWidgetConfig)
         assert w.map.tile_url == "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -196,8 +225,7 @@ class TestJsonFileLoading:
 
     def test_widgets_map_config_env_override(self, tmp_path, monkeypatch):
         """Systematic env prefix WIDGETS_MAP_* overrides the tile config."""
-        monkeypatch.setenv(
-            "WIDGETS_MAP_TILE_URL", "https://example.test/{z}/{x}/{y}.png")
+        monkeypatch.setenv("WIDGETS_MAP_TILE_URL", "https://example.test/{z}/{x}/{y}.png")
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         assert c.widgets.map.tile_url == "https://example.test/{z}/{x}/{y}.png"
@@ -208,9 +236,13 @@ class TestJsonFileLoading:
         unexpected types."""
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "widgets": "not-a-dict",
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "widgets": "not-a-dict",
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()  # must not raise
         assert c.widgets.map.tile_url == "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -220,9 +252,13 @@ class TestJsonFileLoading:
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
         config_file = agent_dir / "config.json"
-        config_file.write_text(json.dumps({
-            "notifications": {"retention_days": 7},
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "notifications": {"retention_days": 7},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         assert c.notifications.retention_days == 7
@@ -232,18 +268,22 @@ class TestJsonFileLoading:
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
         config_file = agent_dir / "config.json"
-        config_file.write_text(json.dumps({
-            "email": {
-                "enabled": True,
-                "smtp_host": "smtp.fastmail.com",
-                "smtp_port": 587,
-                "smtp_username": "bot@example.com",
-                "smtp_password": "app-password",
-                "sender_address": "bot@example.com",
-                "allowed_recipients": ["admin@example.com", "@team.example.com"],
-                "max_attachment_bytes": 5000000,
-            },
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "email": {
+                        "enabled": True,
+                        "smtp_host": "smtp.fastmail.com",
+                        "smtp_port": 587,
+                        "smtp_username": "bot@example.com",
+                        "smtp_password": "app-password",
+                        "sender_address": "bot@example.com",
+                        "allowed_recipients": ["admin@example.com", "@team.example.com"],
+                        "max_attachment_bytes": 5000000,
+                    },
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         assert c.email.enabled is True
@@ -251,7 +291,8 @@ class TestJsonFileLoading:
         assert c.email.smtp_port == 587
         assert c.email.sender_address == "bot@example.com"
         assert c.email.allowed_recipients == [
-            "admin@example.com", "@team.example.com",
+            "admin@example.com",
+            "@team.example.com",
         ]
         assert c.email.max_attachment_bytes == 5000000
 
@@ -260,17 +301,21 @@ class TestJsonFileLoading:
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
         config_file = agent_dir / "config.json"
-        config_file.write_text(json.dumps({
-            "notifications": {
-                "channels": {
-                    "email": {
-                        "enabled": True,
-                        "recipient_addresses": ["ops@example.com"],
-                        "min_priority": "normal",
+        config_file.write_text(
+            json.dumps(
+                {
+                    "notifications": {
+                        "channels": {
+                            "email": {
+                                "enabled": True,
+                                "recipient_addresses": ["ops@example.com"],
+                                "min_priority": "normal",
+                            },
+                        },
                     },
-                },
-            },
-        }))
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         email_ch = c.notifications.channels.email
@@ -283,17 +328,21 @@ class TestJsonFileLoading:
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
         config_file = agent_dir / "config.json"
-        config_file.write_text(json.dumps({
-            "notifications": {
-                "channels": {
-                    "mattermost_dm": {
-                        "enabled": True,
-                        "recipient_username": "les",
-                        "min_priority": "normal",
+        config_file.write_text(
+            json.dumps(
+                {
+                    "notifications": {
+                        "channels": {
+                            "mattermost_dm": {
+                                "enabled": True,
+                                "recipient_username": "les",
+                                "min_priority": "normal",
+                            },
+                        },
                     },
-                },
-            },
-        }))
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         assert c.notifications.channels.mattermost_dm.enabled is True
@@ -305,17 +354,21 @@ class TestJsonFileLoading:
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
         config_file = agent_dir / "config.json"
-        config_file.write_text(json.dumps({
-            "notifications": {
-                "channels": {
-                    "vault_page": {
-                        "enabled": True,
-                        "min_priority": "normal",
-                        "folder": "agent/logs/notifications",
+        config_file.write_text(
+            json.dumps(
+                {
+                    "notifications": {
+                        "channels": {
+                            "vault_page": {
+                                "enabled": True,
+                                "min_priority": "normal",
+                                "folder": "agent/logs/notifications",
+                            },
+                        },
                     },
-                },
-            },
-        }))
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         vp = c.notifications.channels.vault_page
@@ -336,9 +389,13 @@ class TestJsonFileLoading:
         """extra_skill_paths read from config.json as a list of strings."""
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "extra_skill_paths": ["/opt/team-skills", "~/.claude/skills"],
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "extra_skill_paths": ["/opt/team-skills", "~/.claude/skills"],
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         assert c.extra_skill_paths == ["/opt/team-skills", "~/.claude/skills"]
@@ -347,9 +404,13 @@ class TestJsonFileLoading:
         """EXTRA_SKILL_PATHS env var (comma-separated) overrides config.json."""
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "extra_skill_paths": ["/from-json"],
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "extra_skill_paths": ["/from-json"],
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         monkeypatch.setenv("EXTRA_SKILL_PATHS", "/a,/b,/c")
         c = load_config()
@@ -373,16 +434,22 @@ class TestJsonFileLoading:
         assert c.extra_skill_paths == []
 
     def test_extra_skill_paths_empty_env_does_not_clobber_json(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         """An empty EXTRA_SKILL_PATHS env var falls through to config.json,
         matching the module's "first non-empty wins" docstring and
         load_sub_config's empty-string handling."""
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "extra_skill_paths": ["/from-json"],
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "extra_skill_paths": ["/from-json"],
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         monkeypatch.setenv("EXTRA_SKILL_PATHS", "")
         c = load_config()
@@ -395,9 +462,13 @@ class TestEnvVarOverride:
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
         config_file = agent_dir / "config.json"
-        config_file.write_text(json.dumps({
-            "llm": {"model": "from-file"},
-        }))
+        config_file.write_text(
+            json.dumps(
+                {
+                    "llm": {"model": "from-file"},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         monkeypatch.setenv("LLM_MODEL", "from-env")
         c = load_config()
@@ -432,9 +503,13 @@ class TestListFields:
     def test_list_from_json_file(self, tmp_path, monkeypatch):
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "mattermost": {"channel_blocklist": ["id1", "id2"]},
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "mattermost": {"channel_blocklist": ["id1", "id2"]},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         monkeypatch.delenv("MATTERMOST_CHANNEL_BLOCKLIST", raising=False)
         c = load_config()
@@ -448,34 +523,36 @@ class TestVaultUserWritablePathsTypeGuard:
         """`null` in JSON arrives as None — must not crash the validation loop."""
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "vault": {"user_writable_paths": None},
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "vault": {"user_writable_paths": None},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         with caplog.at_level("WARNING", logger="decafclaw.config"):
             c = load_config()
         assert c.vault.user_writable_paths == []
-        assert any(
-            "user_writable_paths must be a list" in rec.message
-            for rec in caplog.records
-        )
+        assert any("user_writable_paths must be a list" in rec.message for rec in caplog.records)
 
     def test_dict_value_coerced_to_empty(self, tmp_path, monkeypatch, caplog):
         """A non-list/non-None value (e.g. a dict) would silently iterate keys
         in the validation loop — guard catches it and warns."""
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "vault": {"user_writable_paths": {"creative": True}},
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "vault": {"user_writable_paths": {"creative": True}},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         with caplog.at_level("WARNING", logger="decafclaw.config"):
             c = load_config()
         assert c.vault.user_writable_paths == []
-        assert any(
-            "user_writable_paths must be a list" in rec.message
-            for rec in caplog.records
-        )
+        assert any("user_writable_paths must be a list" in rec.message for rec in caplog.records)
 
 
 class TestFallbackResolution:
@@ -527,9 +604,13 @@ class TestBootstrapOrder:
         """data_home comes from env, not from config file."""
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "agent": {"data_home": "/should/be/ignored"},
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "agent": {"data_home": "/should/be/ignored"},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         # The file's data_home is ignored because DATA_HOME env var wins
@@ -558,9 +639,13 @@ class TestEnvSection:
     def test_env_loaded_from_json(self, tmp_path, monkeypatch):
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "env": {"MY_CUSTOM_VAR": "hello", "ANOTHER": "world"},
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "env": {"MY_CUSTOM_VAR": "hello", "ANOTHER": "world"},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         monkeypatch.delenv("MY_CUSTOM_VAR", raising=False)
         monkeypatch.delenv("ANOTHER", raising=False)
@@ -572,9 +657,13 @@ class TestEnvSection:
     def test_env_does_not_override_existing(self, tmp_path, monkeypatch):
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "env": {"EXISTING_VAR": "from-config"},
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "env": {"EXISTING_VAR": "from-config"},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         monkeypatch.setenv("EXISTING_VAR", "from-env")
         load_config()
@@ -624,9 +713,13 @@ class TestWorkflowConfig:
         """config.json workflow.max_resume_attempts overrides the default."""
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "workflow": {"max_resume_attempts": 7},
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "workflow": {"max_resume_attempts": 7},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         monkeypatch.delenv("WORKFLOW_MAX_RESUME_ATTEMPTS", raising=False)
         c = load_config()
@@ -638,6 +731,7 @@ class TestTerminalConfig:
 
     def test_terminal_config_defaults(self):
         from decafclaw.config import load_config
+
         cfg = load_config()
         assert cfg.terminal.enabled is True
         assert cfg.terminal.buffer_bytes == 10 * 1024 * 1024
@@ -646,6 +740,7 @@ class TestTerminalConfig:
 
     def test_terminal_config_env_override(self, monkeypatch):
         from decafclaw.config import load_config
+
         monkeypatch.setenv("TERMINAL_ENABLED", "false")
         monkeypatch.setenv("TERMINAL_BUFFER_BYTES", "2048")
         monkeypatch.setenv("TERMINAL_ALLOWED_CWD_ROOTS", "/tmp,/var")
@@ -658,11 +753,16 @@ class TestTerminalConfig:
         # A JSON null where a list is expected (via config.json) must not
         # crash config load.
         from decafclaw.config import load_config
+
         agent_dir = tmp_path / "decafclaw"
         agent_dir.mkdir()
-        (agent_dir / "config.json").write_text(json.dumps({
-            "terminal": {"allowed_cwd_roots": None},
-        }))
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "terminal": {"allowed_cwd_roots": None},
+                }
+            )
+        )
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         cfg = load_config()  # must not raise
         assert cfg.terminal.allowed_cwd_roots == []
@@ -673,6 +773,7 @@ class TestLoopBreakerConfig:
 
     def test_loop_breaker_config_defaults(self):
         from decafclaw.config import load_config
+
         cfg = load_config()
         assert cfg.loop_breaker.enabled is True
         assert cfg.loop_breaker.repeat_threshold == 3
@@ -681,6 +782,7 @@ class TestLoopBreakerConfig:
 
     def test_loop_breaker_config_env_override(self, monkeypatch):
         from decafclaw.config import load_config
+
         monkeypatch.setenv("LOOP_BREAKER_ENABLED", "false")
         monkeypatch.setenv("LOOP_BREAKER_REPEAT_THRESHOLD", "2")
         cfg = load_config()

@@ -82,10 +82,18 @@ def terminal_send_env(config, monkeypatch, tmp_path):
         # random conv_id so tests can address it as "c1").
         index = ConversationIndex(cfg)
         now = datetime.now(timezone.utc).isoformat()
-        index._save([{
-            "conv_id": "c1", "user_id": "testuser", "title": "t",
-            "created_at": now, "updated_at": now, "archived": False,
-        }])
+        index._save(
+            [
+                {
+                    "conv_id": "c1",
+                    "user_id": "testuser",
+                    "title": "t",
+                    "created_at": now,
+                    "updated_at": now,
+                    "archived": False,
+                }
+            ]
+        )
 
         manager = _FakeManager()
         registry = TerminalRegistry(cfg)
@@ -93,13 +101,23 @@ def terminal_send_env(config, monkeypatch, tmp_path):
         spawn_calls = []
 
         async def fake_spawn(conv_id, tab_id, session_id, cwd, shell):
-            spawn_calls.append({
-                "conv_id": conv_id, "tab_id": tab_id,
-                "session_id": session_id, "cwd": cwd, "shell": shell,
-            })
+            spawn_calls.append(
+                {
+                    "conv_id": conv_id,
+                    "tab_id": tab_id,
+                    "session_id": session_id,
+                    "cwd": cwd,
+                    "shell": shell,
+                }
+            )
             session = TerminalSession(
-                conv_id=conv_id, tab_id=tab_id, session_id=session_id,
-                cwd=cwd, shell=shell, pid=-1, fd=-1,
+                conv_id=conv_id,
+                tab_id=tab_id,
+                session_id=session_id,
+                cwd=cwd,
+                shell=shell,
+                pid=-1,
+                fd=-1,
             )
             registry._sessions[(conv_id, tab_id)] = session
             return session
@@ -111,14 +129,16 @@ def terminal_send_env(config, monkeypatch, tmp_path):
 
         orig_new_tab = canvas_mod.new_tab
 
-        async def spy_new_tab(config, conv_id, widget_type, data, label=None, emit=None,
-                              **kwargs):
-            env.new_tab_calls.append({
-                "conv_id": conv_id, "widget_type": widget_type,
-                "data": data, "label": label,
-            })
-            return await orig_new_tab(config, conv_id, widget_type, data,
-                                      label=label, emit=emit, **kwargs)
+        async def spy_new_tab(config, conv_id, widget_type, data, label=None, emit=None, **kwargs):
+            env.new_tab_calls.append(
+                {
+                    "conv_id": conv_id,
+                    "widget_type": widget_type,
+                    "data": data,
+                    "label": label,
+                }
+            )
+            return await orig_new_tab(config, conv_id, widget_type, data, label=label, emit=emit, **kwargs)
 
         monkeypatch.setattr(canvas_mod, "new_tab", spy_new_tab)
 
@@ -162,7 +182,7 @@ async def test_terminal_command_no_turn_no_archive(terminal_send_env):
     env = terminal_send_env()
     await env.handle_send({"conv_id": "c1", "text": "/terminal"})
     env.manager.enqueue_turn.assert_not_called()  # load-bearing invariant
-    assert env.archive_appends == []              # no archive write
+    assert env.archive_appends == []  # no archive write
 
 
 @pytest.mark.asyncio
@@ -240,8 +260,7 @@ async def test_terminal_command_new_tab_failure_rejects_no_spawn(terminal_send_e
     without ever calling `spawn` (Minor review note: confirm this branch)."""
     env = terminal_send_env()
 
-    async def failing_new_tab(config, conv_id, widget_type, data, label=None, emit=None,
-                              **kwargs):
+    async def failing_new_tab(config, conv_id, widget_type, data, label=None, emit=None, **kwargs):
         return canvas_mod.CanvasOpResult(ok=False, error="boom")
 
     monkeypatch.setattr(canvas_mod, "new_tab", failing_new_tab)

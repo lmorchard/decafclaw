@@ -89,7 +89,8 @@ def _warn_once_and_none(folder: str, reason: str) -> None:
     if folder not in _warned_bad_folders:
         log.warning(
             "Vault page: folder %r rejected (%s) — channel is effectively disabled",
-            folder, reason,
+            folder,
+            reason,
         )
         _warned_bad_folders.add(folder)
     return None
@@ -128,29 +129,20 @@ def _format_entry(record: NotificationRecord, base_url: str) -> str:
         time_str = "??:?? UTC"
 
     glyph = PRIORITY_GLYPH.get(record.priority, "🔔")
-    heading = (
-        f"## {time_str} · {glyph} [{record.category}] {record.title}"
-    )
+    heading = f"## {time_str} · {glyph} [{record.category}] {record.title}"
 
     conv_id = record.conv_id or "—"
     link = _resolve_link(record, base_url) or "—"
     body = record.body or "—"
 
-    return (
-        f"{heading}\n\n"
-        f"- priority: {record.priority}\n"
-        f"- conv_id: {conv_id}\n"
-        f"- link: {link}\n\n"
-        f"{body}\n\n"
-    )
+    return f"{heading}\n\n- priority: {record.priority}\n- conv_id: {conv_id}\n- link: {link}\n\n{body}\n\n"
 
 
 def _resolve_link(record: NotificationRecord, base_url: str) -> str | None:
     """Same resolution rules as the email channel — explicit http(s)
     link wins; else build ``<base_url>/#conv=<conv_id>`` when both are
     available; else None."""
-    if record.link and (record.link.startswith("http://")
-                        or record.link.startswith("https://")):
+    if record.link and (record.link.startswith("http://") or record.link.startswith("https://")):
         return record.link
     if base_url and record.conv_id:
         return f"{base_url.rstrip('/')}/#conv={record.conv_id}"
@@ -168,8 +160,7 @@ def make_vault_page_adapter(
     in-process config mutations take effect on the next notification.
     """
 
-    async def _deliver(record: NotificationRecord, path: Path,
-                       base_url: str) -> None:
+    async def _deliver(record: NotificationRecord, path: Path, base_url: str) -> None:
         """Background-task write — fire-and-forget from the handler."""
         try:
             lock = _get_lock(path)
@@ -183,10 +174,12 @@ def make_vault_page_adapter(
                     f.write(_format_entry(record, base_url))
         except Exception as exc:
             log.warning(
-                "Vault page delivery failed (path=%s category=%s "
-                "priority=%s conv=%s): %s",
-                path, record.category, record.priority,
-                record.conv_id or "-", exc,
+                "Vault page delivery failed (path=%s category=%s priority=%s conv=%s): %s",
+                path,
+                record.category,
+                record.priority,
+                record.conv_id or "-",
+                exc,
             )
 
     async def handle(event: dict) -> None:

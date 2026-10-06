@@ -253,16 +253,12 @@ async def test_confirm_response_includes_original_message(client):
 
 def test_buttons_empty_when_http_disabled(config):
     config.http.enabled = False
-    result = build_confirm_buttons(
-        config, "shell", "ls", "ls *", "ctx-1", "msg"
-    )
+    result = build_confirm_buttons(config, "shell", "ls", "ls *", "ctx-1", "msg")
     assert result == []
 
 
 def test_buttons_have_token_in_callback_url(http_config):
-    result = build_confirm_buttons(
-        http_config, "shell", "ls", "ls *", "ctx-1", "msg"
-    )
+    result = build_confirm_buttons(http_config, "shell", "ls", "ls *", "ctx-1", "msg")
     assert len(result) == 1
     actions = result[0]["actions"]
     for action in actions:
@@ -272,9 +268,7 @@ def test_buttons_have_token_in_callback_url(http_config):
 
 
 def test_shell_buttons_approve_deny_pattern(http_config):
-    result = build_confirm_buttons(
-        http_config, "shell", "ls -la", "ls *", "ctx-1", "msg"
-    )
+    result = build_confirm_buttons(http_config, "shell", "ls -la", "ls *", "ctx-1", "msg")
     actions = result[0]["actions"]
     action_ids = [a["id"] for a in actions]
     assert action_ids == ["approve", "deny", "allowpattern"]
@@ -282,9 +276,7 @@ def test_shell_buttons_approve_deny_pattern(http_config):
 
 
 def test_other_tool_buttons_approve_deny_always(http_config):
-    result = build_confirm_buttons(
-        http_config, "activate_skill", "Activate: tabstack", "", "ctx-1", "msg"
-    )
+    result = build_confirm_buttons(http_config, "activate_skill", "Activate: tabstack", "", "ctx-1", "msg")
     actions = result[0]["actions"]
     action_ids = [a["id"] for a in actions]
     assert action_ids == ["approve", "deny", "always"]
@@ -292,18 +284,14 @@ def test_other_tool_buttons_approve_deny_always(http_config):
 
 
 def test_buttons_context_includes_required_fields(http_config):
-    result = build_confirm_buttons(
-        http_config, "shell", "ls", "ls *", "ctx-abc", "original msg"
-    )
+    result = build_confirm_buttons(http_config, "shell", "ls", "ls *", "ctx-abc", "original msg")
     ctx = result[0]["actions"][0]["integration"]["context"]
     assert ctx["context_id"] == "ctx-abc"
     assert ctx["tool"] == "shell"
 
 
 def test_buttons_styles(http_config):
-    result = build_confirm_buttons(
-        http_config, "activate_skill", "cmd", "", "ctx-1", "msg"
-    )
+    result = build_confirm_buttons(http_config, "activate_skill", "cmd", "", "ctx-1", "msg")
     actions = result[0]["actions"]
     styles = {a["id"]: a.get("style") for a in actions}
     assert styles["approve"] == "primary"

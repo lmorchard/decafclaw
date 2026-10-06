@@ -45,11 +45,7 @@ def test_workspace_files_substring_miss_fails_with_reason(tmp_path: Path):
 
 def test_workspace_files_regex_match_passes(tmp_path: Path):
     _seed(tmp_path, {"page.md": "---\nsummary: about cats\n---\n\nBody"})
-    test_case = {
-        "expect_workspace": {
-            "workspace_files": {"page.md": "re:^---\\nsummary: about cats"}
-        }
-    }
+    test_case = {"expect_workspace": {"workspace_files": {"page.md": "re:^---\\nsummary: about cats"}}}
     passed, _ = _check_workspace_assertions(test_case, tmp_path)
     assert passed
 
@@ -57,20 +53,14 @@ def test_workspace_files_regex_match_passes(tmp_path: Path):
 def test_workspace_files_regex_supports_dotall(tmp_path: Path):
     """re.DOTALL lets `.+` match newlines — important for multi-section files."""
     _seed(tmp_path, {"page.md": "## A\n\nfoo\n\n## B\n\nbar\n"})
-    test_case = {
-        "expect_workspace": {
-            "workspace_files": {"page.md": "re:## A.+## B"}
-        }
-    }
+    test_case = {"expect_workspace": {"workspace_files": {"page.md": "re:## A.+## B"}}}
     passed, _ = _check_workspace_assertions(test_case, tmp_path)
     assert passed
 
 
 def test_workspace_files_regex_miss_fails_with_pattern_in_reason(tmp_path: Path):
     _seed(tmp_path, {"page.md": "no match here"})
-    test_case = {
-        "expect_workspace": {"workspace_files": {"page.md": "re:^---\\nsummary"}}
-    }
+    test_case = {"expect_workspace": {"workspace_files": {"page.md": "re:^---\\nsummary"}}}
     passed, reason = _check_workspace_assertions(test_case, tmp_path)
     assert not passed
     assert "page.md" in reason
@@ -78,9 +68,7 @@ def test_workspace_files_regex_miss_fails_with_pattern_in_reason(tmp_path: Path)
 
 
 def test_workspace_files_missing_file_fails(tmp_path: Path):
-    test_case = {
-        "expect_workspace": {"workspace_files": {"never-existed.md": "anything"}}
-    }
+    test_case = {"expect_workspace": {"workspace_files": {"never-existed.md": "anything"}}}
     passed, reason = _check_workspace_assertions(test_case, tmp_path)
     assert not passed
     assert "never-existed.md" in reason
@@ -89,27 +77,21 @@ def test_workspace_files_missing_file_fails(tmp_path: Path):
 
 def test_workspace_file_exists_passes(tmp_path: Path):
     _seed(tmp_path, {"a.txt": "", "sub/b.txt": ""})
-    test_case = {
-        "expect_workspace": {"workspace_file_exists": ["a.txt", "sub/b.txt"]}
-    }
+    test_case = {"expect_workspace": {"workspace_file_exists": ["a.txt", "sub/b.txt"]}}
     passed, _ = _check_workspace_assertions(test_case, tmp_path)
     assert passed
 
 
 def test_workspace_file_exists_fails_on_missing(tmp_path: Path):
     _seed(tmp_path, {"a.txt": ""})
-    test_case = {
-        "expect_workspace": {"workspace_file_exists": ["a.txt", "missing.txt"]}
-    }
+    test_case = {"expect_workspace": {"workspace_file_exists": ["a.txt", "missing.txt"]}}
     passed, reason = _check_workspace_assertions(test_case, tmp_path)
     assert not passed
     assert "missing.txt" in reason
 
 
 def test_workspace_file_absent_passes(tmp_path: Path):
-    test_case = {
-        "expect_workspace": {"workspace_file_absent": ["nope.txt", "also/nope.txt"]}
-    }
+    test_case = {"expect_workspace": {"workspace_file_absent": ["nope.txt", "also/nope.txt"]}}
     passed, _ = _check_workspace_assertions(test_case, tmp_path)
     assert passed
 
@@ -137,25 +119,19 @@ def test_combining_all_three_fields(tmp_path: Path):
 
 
 def test_absolute_path_rejected(tmp_path: Path):
-    test_case = {
-        "expect_workspace": {"workspace_file_exists": ["/etc/passwd"]}
-    }
+    test_case = {"expect_workspace": {"workspace_file_exists": ["/etc/passwd"]}}
     with pytest.raises(ValueError, match="relative"):
         _check_workspace_assertions(test_case, tmp_path)
 
 
 def test_parent_dir_escape_rejected(tmp_path: Path):
-    test_case = {
-        "expect_workspace": {"workspace_file_exists": ["../escape.txt"]}
-    }
+    test_case = {"expect_workspace": {"workspace_file_exists": ["../escape.txt"]}}
     with pytest.raises(ValueError, match="escapes"):
         _check_workspace_assertions(test_case, tmp_path)
 
 
 def test_parent_dir_escape_via_workspace_files_rejected(tmp_path: Path):
     """Sandbox check applies symmetrically across all three fields."""
-    test_case = {
-        "expect_workspace": {"workspace_files": {"../escape.txt": "anything"}}
-    }
+    test_case = {"expect_workspace": {"workspace_files": {"../escape.txt": "anything"}}}
     with pytest.raises(ValueError, match="escapes"):
         _check_workspace_assertions(test_case, tmp_path)

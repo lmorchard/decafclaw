@@ -8,8 +8,7 @@ from decafclaw.workflow.journal import Journal, fingerprint
 
 
 def _ctx(tmp_path):
-    return SimpleNamespace(config=SimpleNamespace(workspace_path=tmp_path),
-                           conv_id="convX")
+    return SimpleNamespace(config=SimpleNamespace(workspace_path=tmp_path), conv_id="convX")
 
 
 @pytest.mark.asyncio
@@ -152,8 +151,7 @@ async def test_llm_call_uses_key_prefix_via_next_seq(tmp_path):
     sub = parent._make_subhandle_at(outer_seq=(7,), idx=0)
     # Reset prefix to (7,) directly by constructing one explicitly: the
     # contract is that a handle whose _key_prefix is (7,) journals at (7, 0).
-    sub2 = WorkflowHandle(_ctx(tmp_path), j, llm_caller=fake_llm,
-                          _key_prefix=(7,))
+    sub2 = WorkflowHandle(_ctx(tmp_path), j, llm_caller=fake_llm, _key_prefix=(7,))
     result = await sub2.llm_call(prompt="q", schema={})
     assert result == {"sentinel": "v"}
     entry = j.get((7, 0))

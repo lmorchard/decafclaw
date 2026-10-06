@@ -59,8 +59,7 @@ def _save_index(config, index: dict[str, list[str]]) -> None:
     tmp = path.with_suffix(".json.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n",
-                        encoding="utf-8")
+        tmp.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         tmp.replace(path)
     except OSError as exc:
         log.debug("backlinks: failed to persist index: %s", exc)
@@ -71,9 +70,7 @@ def _save_index(config, index: dict[str, list[str]]) -> None:
             log.debug("backlinks: tmp cleanup failed: %s", cleanup_exc)
 
 
-def _build_page_lookup(
-    pages: list[Path], vault: Path
-) -> tuple[dict[str, str], dict[str, list[str]]]:
+def _build_page_lookup(pages: list[Path], vault: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
     """Build case-insensitive lookup maps for resolving raw link text.
 
     Returns (full_lower -> rel_path, stem_lower -> [rel_path, ...]). Both
@@ -121,8 +118,7 @@ def _extract_outbound_targets(
 
     targets: set[str] = set()
     for match in _WIKI_LINK_RE.finditer(text):
-        target_rel = _resolve_link_target(
-            match.group(1), full_lower_map, stem_lower_map)
+        target_rel = _resolve_link_target(match.group(1), full_lower_map, stem_lower_map)
         if target_rel is not None and target_rel != source_rel:
             targets.add(target_rel)
     return targets
@@ -152,9 +148,7 @@ def rebuild_index(config) -> dict[str, list[str]]:
             except OSError as exc:
                 log.debug("backlinks: failed reading %s: %s", p, exc)
                 continue
-            for target_rel in _extract_outbound_targets(
-                text, source_rel, full_lower_map, stem_lower_map
-            ):
+            for target_rel in _extract_outbound_targets(text, source_rel, full_lower_map, stem_lower_map):
                 inbound.setdefault(target_rel, set()).add(source_rel)
 
         result = {k: sorted(v) for k, v in sorted(inbound.items())}
@@ -247,8 +241,7 @@ def update_for_page(config, page: str) -> None:
 
         pages = sorted(vault.rglob("*.md"))
         full_lower_map, stem_lower_map = _build_page_lookup(pages, vault)
-        new_targets = _extract_outbound_targets(
-            text, source_rel, full_lower_map, stem_lower_map)
+        new_targets = _extract_outbound_targets(text, source_rel, full_lower_map, stem_lower_map)
 
         index = {k: set(v) for k, v in load_index(config).items()}
         for target_rel, linkers in list(index.items()):
@@ -277,6 +270,7 @@ def make_backlinks_subscriber(config) -> Callable[[dict], Awaitable[None]]:
 
     Fail-open — never propagates into the publishing turn.
     """
+
     async def handle(event: dict) -> None:
         try:
             if event.get("type") != "vault_changed":

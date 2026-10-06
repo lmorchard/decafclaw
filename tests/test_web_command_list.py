@@ -100,7 +100,9 @@ DREAM_SKILL = SkillInfo(
 # discovered skill would green a lookup-only check, so the reply is asserted to
 # exclude this one.
 HIDDEN_SKILL = dataclasses.replace(
-    DREAM_SKILL, name="hidden", user_invocable=False,
+    DREAM_SKILL,
+    name="hidden",
+    user_invocable=False,
 )
 
 

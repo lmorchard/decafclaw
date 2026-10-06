@@ -105,14 +105,8 @@ class TestClassifyTools:
 
     def test_critical_is_hard_floor(self, config):
         """Critical tools are included even when over budget."""
-        critical_tools = [
-            _make_tool_def(f"crit_{i}", "x" * 200, priority="critical")
-            for i in range(5)
-        ]
-        normal_tools = [
-            _make_tool_def(f"norm_{i}", "x" * 200, priority="normal")
-            for i in range(5)
-        ]
+        critical_tools = [_make_tool_def(f"crit_{i}", "x" * 200, priority="critical") for i in range(5)]
+        normal_tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(5)]
         config.compaction.max_tokens = 100  # tiny budget → 10 token budget
 
         active, deferred = classify_tools(critical_tools + normal_tools, config)
@@ -127,10 +121,7 @@ class TestClassifyTools:
 
     def test_normal_fills_budget(self, config):
         """Normal tools are added while under budget."""
-        tools = [
-            _make_tool_def(f"norm_{i}", "x" * 50, priority="normal")
-            for i in range(10)
-        ]
+        tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(10)]
         config.compaction.max_tokens = 1000000  # huge budget
         config.agent.max_active_tools = 40
 
@@ -140,14 +131,8 @@ class TestClassifyTools:
 
     def test_low_only_if_room(self, config):
         """Low priority tools deferred when no room after normal."""
-        normal_tools = [
-            _make_tool_def(f"norm_{i}", "x" * 50, priority="normal")
-            for i in range(5)
-        ]
-        low_tools = [
-            _make_tool_def(f"low_{i}", "x" * 50, priority="low")
-            for i in range(5)
-        ]
+        normal_tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(5)]
+        low_tools = [_make_tool_def(f"low_{i}", "x" * 50, priority="low") for i in range(5)]
         # Budget fits normal but not low
         config.agent.max_active_tools = 5
 
@@ -164,14 +149,8 @@ class TestClassifyTools:
 
     def test_low_included_when_budget_allows(self, config):
         """Low priority tools do make it in if there's room."""
-        normal_tools = [
-            _make_tool_def(f"norm_{i}", "x" * 50, priority="normal")
-            for i in range(2)
-        ]
-        low_tools = [
-            _make_tool_def(f"low_{i}", "x" * 50, priority="low")
-            for i in range(2)
-        ]
+        normal_tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(2)]
+        low_tools = [_make_tool_def(f"low_{i}", "x" * 50, priority="low") for i in range(2)]
         config.compaction.max_tokens = 1000000  # huge budget
 
         active, deferred = classify_tools(normal_tools + low_tools, config)
@@ -182,9 +161,7 @@ class TestClassifyTools:
 
     def test_max_active_tools_cap(self, config):
         """max_active_tools limits active set even when under token budget."""
-        tools = [
-            _make_tool_def(f"norm_{i}", priority="normal") for i in range(50)
-        ]
+        tools = [_make_tool_def(f"norm_{i}", priority="normal") for i in range(50)]
         config.compaction.max_tokens = 1000000  # huge budget
         config.agent.max_active_tools = 10
 
@@ -194,38 +171,25 @@ class TestClassifyTools:
 
     def test_fetched_tools_treated_critical(self, config):
         """Fetched tool names are promoted to critical regardless of declaration."""
-        tools = [
-            _make_tool_def(f"norm_{i}", "x" * 200, priority="normal")
-            for i in range(20)
-        ]
+        tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
         config.compaction.max_tokens = 100  # tight
 
-        active, deferred = classify_tools(
-            tools, config, fetched_names={"norm_5"}
-        )
+        active, deferred = classify_tools(tools, config, fetched_names={"norm_5"})
         active_names = {td["function"]["name"] for td in active}
         assert "norm_5" in active_names
 
     def test_skill_tool_names_treated_critical(self, config):
         """Activated skill tools are promoted to critical."""
-        tools = [
-            _make_tool_def(f"norm_{i}", "x" * 200, priority="normal")
-            for i in range(20)
-        ]
+        tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
         config.compaction.max_tokens = 100
 
-        active, deferred = classify_tools(
-            tools, config, skill_tool_names={"norm_3"}
-        )
+        active, deferred = classify_tools(tools, config, skill_tool_names={"norm_3"})
         active_names = {td["function"]["name"] for td in active}
         assert "norm_3" in active_names
 
     def test_env_override_treated_critical(self, config):
         """Env override (via critical_tools) promotes to critical."""
-        tools = [
-            _make_tool_def(f"norm_{i}", "x" * 200, priority="normal")
-            for i in range(20)
-        ]
+        tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
         config.compaction.max_tokens = 100
         config.agent.critical_tools = ["norm_7"]
 
@@ -235,14 +199,13 @@ class TestClassifyTools:
 
     def test_preempt_matches_treated_critical(self, config):
         """Names in preempt_matches are promoted to critical regardless of priority."""
-        tools = [
-            _make_tool_def(f"norm_{i}", "x" * 200, priority="normal")
-            for i in range(20)
-        ]
+        tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
         config.compaction.max_tokens = 100  # tight
 
         active, deferred = classify_tools(
-            tools, config, preempt_matches={"norm_3", "norm_9"},
+            tools,
+            config,
+            preempt_matches={"norm_3", "norm_9"},
         )
         active_names = {td["function"]["name"] for td in active}
         assert "norm_3" in active_names
@@ -404,7 +367,9 @@ class TestBuildDeferredListText:
             priority="normal",
         )
         core_tool = _make_tool_def(
-            "workspace_read", "Read a file.", priority="critical",
+            "workspace_read",
+            "Read a file.",
+            priority="critical",
         )
 
         # skill_tool_names is empty → owning skill 'writing-clearly' is
@@ -419,8 +384,7 @@ class TestBuildDeferredListText:
         deferred_names = {td["function"]["name"] for td in deferred}
 
         assert "edit_with_strunk" not in active_names, (
-            "hidden skill tool leaked into active list — LLM would see "
-            "its schema and call it directly"
+            "hidden skill tool leaked into active list — LLM would see its schema and call it directly"
         )
         assert "edit_with_strunk" in deferred_names
         assert "workspace_read" in active_names
@@ -457,6 +421,7 @@ class TestBuildDeferredListText:
         """Even when _source_skill is set and multiple skill tools exist,
         none of them appear in the visible deferred-tool list. (Previously
         they were clustered under '### Skills'; that section is gone.)"""
+
         def with_source(td, skill):
             return {**td, "_source_skill": skill}
 
@@ -524,8 +489,7 @@ class TestCoreToolsDeclarePriority:
                 name = td.get("function", {}).get("name", "<unknown>")
                 missing.append(name)
         assert not missing, (
-            f"Tool definitions missing 'priority' field: {missing}. "
-            "Every core tool must declare critical/normal/low."
+            f"Tool definitions missing 'priority' field: {missing}. Every core tool must declare critical/normal/low."
         )
 
     def test_all_priorities_valid(self):
@@ -563,8 +527,7 @@ def test_collect_dedupes_skill_tool_shadowing_core_tool(ctx):
 
     ctx.tools.extra_definitions.extend([_shadow_def("debug_context")])
 
-    names = [td.get("function", {}).get("name")
-             for td in collect_all_tool_defs(ctx)]
+    names = [td.get("function", {}).get("name") for td in collect_all_tool_defs(ctx)]
     assert names.count("debug_context") == 1
 
 
@@ -577,8 +540,7 @@ def test_collect_keeps_the_skill_definition_on_collision(ctx):
 
     ctx.tools.extra_definitions.extend([_shadow_def("debug_context")])
 
-    kept = next(td for td in collect_all_tool_defs(ctx)
-                if td.get("function", {}).get("name") == "debug_context")
+    kept = next(td for td in collect_all_tool_defs(ctx) if td.get("function", {}).get("name") == "debug_context")
     assert kept["function"]["description"] == "Shadowing definition from a skill."
 
 
@@ -587,15 +549,16 @@ def test_collect_never_emits_duplicate_names(ctx):
     MCP defs and any future concatenated source."""
     from decafclaw.tool_definitions import collect_all_tool_defs
 
-    ctx.tools.extra_definitions.extend([
-        _shadow_def("debug_context"),
-        _shadow_def("shell"),
-        _shadow_def("a_genuinely_new_tool"),
-        _shadow_def("a_genuinely_new_tool"),  # skill duplicating itself
-    ])
+    ctx.tools.extra_definitions.extend(
+        [
+            _shadow_def("debug_context"),
+            _shadow_def("shell"),
+            _shadow_def("a_genuinely_new_tool"),
+            _shadow_def("a_genuinely_new_tool"),  # skill duplicating itself
+        ]
+    )
 
-    names = [td.get("function", {}).get("name")
-             for td in collect_all_tool_defs(ctx)]
+    names = [td.get("function", {}).get("name") for td in collect_all_tool_defs(ctx)]
     dupes = {n for n in names if names.count(n) > 1}
     assert not dupes, f"duplicate declarations would be sent to the provider: {dupes}"
     # Deduping must not drop the tool entirely.

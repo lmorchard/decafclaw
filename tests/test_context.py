@@ -55,6 +55,7 @@ def test_fork_accepts_overrides(ctx):
 
 def test_fork_can_override_config(ctx):
     from decafclaw.config_types import AgentConfig
+
     new_config = Config(agent=AgentConfig(data_home="/tmp/other", id="other-agent"))
     child = ctx.fork(config=new_config)
     assert child.config is new_config
@@ -162,8 +163,7 @@ def test_fork_for_tool_call_propagates_all_fields(ctx):
             continue
         child_val = child_attrs[name]
         assert child_val is parent_val or child_val == parent_val, (
-            f"fork_for_tool_call did not propagate '{name}': "
-            f"parent={parent_val!r}, child={child_val!r}"
+            f"fork_for_tool_call did not propagate '{name}': parent={parent_val!r}, child={child_val!r}"
         )
 
     # Sub-objects: explicit checks

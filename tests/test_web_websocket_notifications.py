@@ -35,31 +35,39 @@ class TestNotificationForwarder:
     async def test_forwards_notification_created(self):
         sent, send = self._capture()
         forward = _make_notification_forwarder(send)
-        await forward({
-            "type": "notification_created",
-            "record": {"id": "abc", "title": "Hi"},
-            "unread_count": 3,
-        })
-        assert sent == [{
-            "type": "notification_created",
-            "record": {"id": "abc", "title": "Hi"},
-            "unread_count": 3,
-        }]
+        await forward(
+            {
+                "type": "notification_created",
+                "record": {"id": "abc", "title": "Hi"},
+                "unread_count": 3,
+            }
+        )
+        assert sent == [
+            {
+                "type": "notification_created",
+                "record": {"id": "abc", "title": "Hi"},
+                "unread_count": 3,
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_forwards_notification_read(self):
         sent, send = self._capture()
         forward = _make_notification_forwarder(send)
-        await forward({
-            "type": "notification_read",
-            "ids": ["a", "b"],
-            "unread_count": 0,
-        })
-        assert sent == [{
-            "type": "notification_read",
-            "ids": ["a", "b"],
-            "unread_count": 0,
-        }]
+        await forward(
+            {
+                "type": "notification_read",
+                "ids": ["a", "b"],
+                "unread_count": 0,
+            }
+        )
+        assert sent == [
+            {
+                "type": "notification_read",
+                "ids": ["a", "b"],
+                "unread_count": 0,
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_ignores_other_event_types(self):
@@ -89,11 +97,14 @@ def mock_ws():
 
 @pytest.mark.asyncio
 async def test_websocket_chat_subscribes_and_unsubscribes(
-    config, mock_ws, monkeypatch,
+    config,
+    mock_ws,
+    monkeypatch,
 ):
     """The notification forwarder subscribes on connect and unsubscribes
     on disconnect — no subscriber leak across connections."""
     from decafclaw.web import auth as auth_mod
+
     monkeypatch.setattr(auth_mod, "get_current_user", lambda ws, cfg: "testuser")
     bus = EventBus()
 
@@ -117,10 +128,13 @@ async def test_websocket_chat_subscribes_and_unsubscribes(
 
 @pytest.mark.asyncio
 async def test_websocket_chat_forwards_live_bus_events(
-    config, mock_ws, monkeypatch,
+    config,
+    mock_ws,
+    monkeypatch,
 ):
     """While the chat session is running, a bus publish reaches ws.send_json."""
     from decafclaw.web import auth as auth_mod
+
     monkeypatch.setattr(auth_mod, "get_current_user", lambda ws, cfg: "testuser")
     bus = EventBus()
 
@@ -133,11 +147,13 @@ async def test_websocket_chat_forwards_live_bus_events(
         nonlocal publish_fired
         if not publish_fired:
             publish_fired = True
-            await bus.publish({
-                "type": "notification_created",
-                "record": {"id": "xyz", "title": "live"},
-                "unread_count": 7,
-            })
+            await bus.publish(
+                {
+                    "type": "notification_created",
+                    "record": {"id": "xyz", "title": "live"},
+                    "unread_count": 7,
+                }
+            )
         raise WebSocketDisconnect()
 
     mock_ws.receive_text = AsyncMock(side_effect=publish_then_disconnect)

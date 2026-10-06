@@ -65,10 +65,12 @@ async def publish_vault_changed(
     try:
         if config is not None:
             invalidate_workspace_file_cache(config)
-        await event_bus.publish({
-            "type": VAULT_CHANGED_EVENT_TYPE,
-            "kind": kind,
-            "path": rel,
-        })
+        await event_bus.publish(
+            {
+                "type": VAULT_CHANGED_EVENT_TYPE,
+                "kind": kind,
+                "path": rel,
+            }
+        )
     except Exception as exc:
         log.debug("vault_changed publish failed: %s", exc)

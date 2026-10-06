@@ -21,9 +21,8 @@ from decafclaw.widget_input import (
 def test_widget_input_pause_construction():
     p = WidgetInputPause(
         tool_call_id="tc-1",
-        widget_payload={"widget_type": "multiple_choice",
-                        "target": "inline",
-                        "data": {"prompt": "?", "options": []}})
+        widget_payload={"widget_type": "multiple_choice", "target": "inline", "data": {"prompt": "?", "options": []}},
+    )
     assert p.tool_call_id == "tc-1"
     assert p.widget_payload["widget_type"] == "multiple_choice"
 
@@ -36,12 +35,12 @@ def test_register_widget_handler():
 
 
 @pytest.mark.asyncio
-async def test_recovery_handler_with_callback_writes_user_message(
-        config, tmp_path, monkeypatch):
+async def test_recovery_handler_with_callback_writes_user_message(config, tmp_path, monkeypatch):
     """When a callback is registered for a pending widget, the recovery
     handler invokes it and writes the returned string to the archive."""
-    monkeypatch.setattr("decafclaw.widget_input.pending_callbacks",
-                        {"tc-1": lambda data: f"Picked: {data['selected']}"})
+    monkeypatch.setattr(
+        "decafclaw.widget_input.pending_callbacks", {"tc-1": lambda data: f"Picked: {data['selected']}"}
+    )
     handler = WidgetResponseHandler()
     request = ConfirmationRequest(
         action_type=ConfirmationAction.WIDGET_RESPONSE,
@@ -60,16 +59,13 @@ async def test_recovery_handler_with_callback_writes_user_message(
     assert result["inject_message"] == "Picked: production"
 
     archived = read_archive(config, "conv-recovery")
-    user_msgs = [m for m in archived
-                 if m.get("role") == "user"
-                 and m.get("source") == "widget_response"]
+    user_msgs = [m for m in archived if m.get("role") == "user" and m.get("source") == "widget_response"]
     assert len(user_msgs) == 1
     assert user_msgs[0]["content"] == "Picked: production"
 
 
 @pytest.mark.asyncio
-async def test_recovery_handler_without_callback_uses_default(
-        config, monkeypatch):
+async def test_recovery_handler_without_callback_uses_default(config, monkeypatch):
     """No registered callback → handler writes a default 'User responded
     with: X' message."""
     monkeypatch.setattr("decafclaw.widget_input.pending_callbacks", {})
@@ -98,13 +94,11 @@ async def test_recovery_handler_without_callback_uses_default(
 
 
 @pytest.mark.asyncio
-async def test_recovery_handler_callback_raises_falls_back_to_default(
-        config, monkeypatch, caplog):
+async def test_recovery_handler_callback_raises_falls_back_to_default(config, monkeypatch, caplog):
     def boom(_data):
         raise RuntimeError("nope")
 
-    monkeypatch.setattr("decafclaw.widget_input.pending_callbacks",
-                        {"tc-boom": boom})
+    monkeypatch.setattr("decafclaw.widget_input.pending_callbacks", {"tc-boom": boom})
     handler = WidgetResponseHandler()
     request = ConfirmationRequest(
         action_type=ConfirmationAction.WIDGET_RESPONSE,
@@ -172,13 +166,9 @@ async def test_recovery_via_manager_dispatches_to_handler(config):
     )
     # No confirmation_event → manager will dispatch recovery.
 
-    await manager.respond_to_confirmation(
-        conv_id, "cfx-mgr", approved=True,
-        data={"selected": "yes"})
+    await manager.respond_to_confirmation(conv_id, "cfx-mgr", approved=True, data={"selected": "yes"})
 
     archived = read_archive(config, conv_id)
-    user_msgs = [m for m in archived
-                 if m.get("role") == "user"
-                 and m.get("source") == "widget_response"]
+    user_msgs = [m for m in archived if m.get("role") == "user" and m.get("source") == "widget_response"]
     assert len(user_msgs) == 1
     assert "yes" in user_msgs[0]["content"]

@@ -95,6 +95,7 @@ def append_record(config, record: dict) -> None:
 
 def make_tool_telemetry_subscriber(config) -> Callable[[dict], Awaitable[None]]:
     """EventBus subscriber: records each ``tool_end`` event. Fail-open."""
+
     async def handle(event: dict) -> None:
         try:
             if event.get("type") != "tool_end":
@@ -168,6 +169,7 @@ def known_tool_names(config) -> set[str]:
     unused-MCP detection is out of reach for this offline report.
     """
     from .tools import TOOL_DEFINITIONS
+
     names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
     names |= set(getattr(config, "skill_tool_owners", {}).keys())
     names.discard("")
@@ -183,8 +185,7 @@ def format_report(stats: dict[str, dict], unused: set[str]) -> str:
     lines.append("-" * 72)
     for tool, s in sorted(stats.items(), key=lambda kv: kv[1]["calls"], reverse=True):
         lines.append(
-            f"{tool:<32} {s['calls']:>6} {s['unique_convs']:>6} "
-            f"{s['error_rate'] * 100:>5.0f}%  {s['last_called']}"
+            f"{tool:<32} {s['calls']:>6} {s['unique_convs']:>6} {s['error_rate'] * 100:>5.0f}%  {s['last_called']}"
         )
     lines.append("")
     lines.append(f"## Unused tools ({len(unused)}) — consolidation candidates")
@@ -206,6 +207,7 @@ def build_report(config) -> str:
 
 def main() -> None:
     from .config import load_config
+
     config = load_config()
     print(build_report(config))
 

@@ -19,15 +19,11 @@ from decafclaw.skills.tabstack import tools
 
 def _event(kind, **data_fields):
     """Build a fake SSE event: discriminator + typed-ish .data payload."""
-    return types.SimpleNamespace(
-        event=kind, data=types.SimpleNamespace(**data_fields)
-    )
+    return types.SimpleNamespace(event=kind, data=types.SimpleNamespace(**data_fields))
 
 
 def _field(label, ref, required, field_type="text"):
-    return types.SimpleNamespace(
-        label=label, ref=ref, required=required, field_type=field_type
-    )
+    return types.SimpleNamespace(label=label, ref=ref, required=required, field_type=field_type)
 
 
 class _AsyncIter:
@@ -100,9 +96,11 @@ def ctx():
 @pytest.fixture
 def use_client(monkeypatch):
     """Install a fake tabstack client as the module-global _client."""
+
     def _install(client):
         monkeypatch.setattr(tools, "_client", client)
         return client
+
     return _install
 
 
@@ -111,9 +109,7 @@ def use_client(monkeypatch):
 
 def test_match_fields_matches_by_label_case_insensitive():
     fields = [_field("Email", "E1", True), _field("Full Name", "E2", True)]
-    matched, missing = tools._match_fields(
-        fields, {"email": "a@b.com", "full name": "Ada"}
-    )
+    matched, missing = tools._match_fields(fields, {"email": "a@b.com", "full name": "Ada"})
     assert missing == []
     assert {"ref": "E1", "value": "a@b.com"} in matched
     assert {"ref": "E2", "value": "Ada"} in matched
@@ -134,11 +130,13 @@ def test_match_fields_reports_missing_required_only():
 
 
 async def test_automate_extracts_final_answer_and_publishes(ctx, use_client):
-    agent = _FakeAgent(automate_events=[
-        _event("agent:status", message="working"),
-        _event("agent:reasoned", reasoning="thinking"),
-        _event("task:completed", final_answer="the answer"),
-    ])
+    agent = _FakeAgent(
+        automate_events=[
+            _event("agent:status", message="working"),
+            _event("agent:reasoned", reasoning="thinking"),
+            _event("task:completed", final_answer="the answer"),
+        ]
+    )
     use_client(_FakeClient(agent=agent))
 
     result = await tools.tool_tabstack_automate(ctx, task="do a thing")
@@ -172,9 +170,7 @@ async def test_automate_non_interactive_drops_data(ctx, use_client):
     agent = _FakeAgent(automate_events=[_event("complete", final_answer="x")])
     use_client(_FakeClient(agent=agent))
 
-    await tools.tool_tabstack_automate(
-        ctx, task="t", data={"Email": "a@b.com"}, interactive=False
-    )
+    await tools.tool_tabstack_automate(ctx, task="t", data={"Email": "a@b.com"}, interactive=False)
     assert "data" not in agent.last_automate_kwargs
     assert "interactive" not in agent.last_automate_kwargs
 
@@ -192,15 +188,17 @@ async def test_automate_uninitialized_client_returns_error(ctx, monkeypatch):
 
 
 async def test_automate_progress_surfaces_rich_events(ctx, use_client):
-    agent = _FakeAgent(automate_events=[
-        _event("agent:step", current_iteration=2),
-        _event("browser:navigated", title="Signup", url="http://x/s"),
-        _event("agent:extracted", extracted_data="price is $5"),
-        _event("browser:action_completed", success=True),  # success → no line
-        _event("browser:action_completed", success=False, error="element gone"),
-        _event("task:validated", completion_quality="excellent"),
-        _event("complete", final_answer="done"),
-    ])
+    agent = _FakeAgent(
+        automate_events=[
+            _event("agent:step", current_iteration=2),
+            _event("browser:navigated", title="Signup", url="http://x/s"),
+            _event("agent:extracted", extracted_data="price is $5"),
+            _event("browser:action_completed", success=True),  # success → no line
+            _event("browser:action_completed", success=False, error="element gone"),
+            _event("task:validated", completion_quality="excellent"),
+            _event("complete", final_answer="done"),
+        ]
+    )
     use_client(_FakeClient(agent=agent))
 
     await tools.tool_tabstack_automate(ctx, task="t")
@@ -217,10 +215,12 @@ async def test_automate_progress_surfaces_rich_events(ctx, use_client):
 
 async def test_automate_progress_never_leaks_typed_value(ctx, use_client):
     """agent:action carries the text typed into a field — it must not be echoed."""
-    agent = _FakeAgent(automate_events=[
-        _event("agent:action", action="type", ref="E1", value="ada@secret.com"),
-        _event("complete", final_answer="done"),
-    ])
+    agent = _FakeAgent(
+        automate_events=[
+            _event("agent:action", action="type", ref="E1", value="ada@secret.com"),
+            _event("complete", final_answer="done"),
+        ]
+    )
     use_client(_FakeClient(agent=agent))
 
     await tools.tool_tabstack_automate(ctx, task="t")
@@ -234,10 +234,13 @@ async def test_automate_progress_never_leaks_typed_value(ctx, use_client):
 
 
 async def test_automate_top_level_error_event_surfaced(ctx, use_client):
-    agent = _FakeAgent(automate_events=[
-        _event("error", error=types.SimpleNamespace(
-            message="navigation blocked by policy", code="E", timestamp="t")),
-    ])
+    agent = _FakeAgent(
+        automate_events=[
+            _event(
+                "error", error=types.SimpleNamespace(message="navigation blocked by policy", code="E", timestamp="t")
+            ),
+        ]
+    )
     use_client(_FakeClient(agent=agent))
 
     result = await tools.tool_tabstack_automate(ctx, task="t")
@@ -246,10 +249,16 @@ async def test_automate_top_level_error_event_surfaced(ctx, use_client):
 
 
 async def test_automate_unsuccessful_complete_reports_structured_error(ctx, use_client):
-    agent = _FakeAgent(automate_events=[
-        _event("complete", final_answer=None, success=False,
-               error=types.SimpleNamespace(message="ran out of iterations", code="MAX_ITERATIONS")),
-    ])
+    agent = _FakeAgent(
+        automate_events=[
+            _event(
+                "complete",
+                final_answer=None,
+                success=False,
+                error=types.SimpleNamespace(message="ran out of iterations", code="MAX_ITERATIONS"),
+            ),
+        ]
+    )
     use_client(_FakeClient(agent=agent))
 
     result = await tools.tool_tabstack_automate(ctx, task="t")
@@ -278,9 +287,7 @@ async def test_interactive_approve_submits_matched_fields(ctx, use_client, monke
 
     monkeypatch.setattr(tools, "request_confirmation", fake_confirm)
 
-    result = await tools.tool_tabstack_automate(
-        ctx, task="sign up", interactive=True, data={"Email": "a@b.com"}
-    )
+    result = await tools.tool_tabstack_automate(ctx, task="sign up", interactive=True, data={"Email": "a@b.com"})
 
     assert result == "done"
     assert agent.last_automate_kwargs["interactive"] is True
@@ -291,9 +298,7 @@ async def test_interactive_approve_submits_matched_fields(ctx, use_client, monke
     assert agent.input_calls == [("req-1", {"fields": [{"ref": "E1", "value": "a@b.com"}]})]
 
 
-async def test_interactive_missing_required_cancels_without_confirmation(
-    ctx, use_client, monkeypatch
-):
+async def test_interactive_missing_required_cancels_without_confirmation(ctx, use_client, monkeypatch):
     """Guard sabotage-check: a missing required field must cancel the request and
     must NOT reach the confirmation gate. Removing the missing-field branch in
     _handle_form_request makes this fail."""
@@ -316,9 +321,7 @@ async def test_interactive_missing_required_cancels_without_confirmation(
 
     monkeypatch.setattr(tools, "request_confirmation", fake_confirm)
 
-    result = await tools.tool_tabstack_automate(
-        ctx, task="sign up", interactive=True, data={"Email": "a@b.com"}
-    )
+    result = await tools.tool_tabstack_automate(ctx, task="sign up", interactive=True, data={"Email": "a@b.com"})
 
     assert confirm_called is False
     assert agent.input_calls == [("req-2", {"cancelled": True})]
@@ -341,9 +344,7 @@ async def test_interactive_denied_cancels_and_reports(ctx, use_client, monkeypat
 
     monkeypatch.setattr(tools, "request_confirmation", fake_confirm)
 
-    result = await tools.tool_tabstack_automate(
-        ctx, task="sign up", interactive=True, data={"Email": "a@b.com"}
-    )
+    result = await tools.tool_tabstack_automate(ctx, task="sign up", interactive=True, data={"Email": "a@b.com"})
 
     assert agent.input_calls == [("req-3", {"cancelled": True})]
     assert "declined" in result
@@ -360,6 +361,7 @@ def _status_error(code: int):
 
 async def test_safe_input_swallows_410_gone():
     """An expired/consumed input window (410 Gone) is expected — swallow it."""
+
     class _Agent:
         async def automate_input(self, request_id, **kwargs):
             raise _status_error(410)
@@ -371,6 +373,7 @@ async def test_safe_input_swallows_410_gone():
 
 async def test_safe_input_reraises_non_410():
     """Network/auth/5xx failures leave the run in an undefined state — surface them."""
+
     class _Agent:
         async def automate_input(self, request_id, **kwargs):
             raise _status_error(500)
@@ -384,10 +387,12 @@ async def test_safe_input_reraises_non_410():
 
 
 async def test_research_extracts_report(ctx, use_client):
-    agent = _FakeAgent(research_events=[
-        _event("planning:start", message="planning"),
-        _event("complete", message="done", report="the report"),
-    ])
+    agent = _FakeAgent(
+        research_events=[
+            _event("planning:start", message="planning"),
+            _event("complete", message="done", report="the report"),
+        ]
+    )
     use_client(_FakeClient(agent=agent))
 
     result = await tools.tool_tabstack_research(ctx, query="q")
@@ -405,11 +410,16 @@ async def test_research_no_report_returns_error(ctx, use_client):
 
 
 async def test_research_error_event_surfaced(ctx, use_client):
-    agent = _FakeAgent(research_events=[
-        _event("planning:start", message="planning"),
-        _event("error", message="research failed: rate limited",
-               error=types.SimpleNamespace(message="429", name="RateLimit")),
-    ])
+    agent = _FakeAgent(
+        research_events=[
+            _event("planning:start", message="planning"),
+            _event(
+                "error",
+                message="research failed: rate limited",
+                error=types.SimpleNamespace(message="429", name="RateLimit"),
+            ),
+        ]
+    )
     use_client(_FakeClient(agent=agent))
 
     result = await tools.tool_tabstack_research(ctx, query="q")
@@ -423,9 +433,7 @@ async def test_research_error_event_surfaced(ctx, use_client):
 async def test_extract_json_returns_plain_dict(ctx, use_client):
     use_client(_FakeClient(extract=_FakeExtract({"price": 42})))
 
-    result = await tools.tool_tabstack_extract_json(
-        ctx, url="http://x", json_schema={"type": "object"}
-    )
+    result = await tools.tool_tabstack_extract_json(ctx, url="http://x", json_schema={"type": "object"})
     assert result.data["result"] == {"price": 42}
     assert '"price": 42' in result.text
 

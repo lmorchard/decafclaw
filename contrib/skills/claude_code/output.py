@@ -107,11 +107,17 @@ class SessionLogger:
 
         return "\n".join(parts)
 
-    def build_data(self, session_id: str = "", exit_status: str = "success",
-                   sdk_session_id: str | None = None, send_count: int = 0,
-                   diff: str | None = None) -> dict:
+    def build_data(
+        self,
+        session_id: str = "",
+        exit_status: str = "success",
+        sdk_session_id: str | None = None,
+        send_count: int = 0,
+        diff: str | None = None,
+    ) -> dict:
         """Return structured result dict with JSON-safe types only."""
         from collections import Counter
+
         tool_counts = dict(Counter(self.tools_used))
         unique_files = list(dict.fromkeys(self.files_changed))
         errors = [{"message": e} for e in self.errors[:10]]
@@ -131,8 +137,7 @@ class SessionLogger:
             "diff": diff,
         }
 
-    def log_exec(self, command: str, exit_code: int | None,
-                 stdout: str, stderr: str, duration_ms: int) -> None:
+    def log_exec(self, command: str, exit_code: int | None, stdout: str, stderr: str, duration_ms: int) -> None:
         """Log a claude_code_exec command to the session's JSONL log."""
         record = {
             "type": "exec",

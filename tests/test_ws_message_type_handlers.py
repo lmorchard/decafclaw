@@ -13,6 +13,7 @@ to `ws: unknown inbound message type` and returns an error frame, so the client
 sends a well-formed message that the server drops. A green board and a wire
 type that does nothing.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,11 +27,7 @@ MANIFEST_PATH = Path(decafclaw.web.__file__).resolve().parent / "message_types.j
 
 def _client_to_server_types() -> set[str]:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    return {
-        name
-        for name, spec in manifest["messages"].items()
-        if spec["direction"] == "client_to_server"
-    }
+    return {name for name, spec in manifest["messages"].items() if spec["direction"] == "client_to_server"}
 
 
 def test_manifest_declares_client_to_server_types() -> None:

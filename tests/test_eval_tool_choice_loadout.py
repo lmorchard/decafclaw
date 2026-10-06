@@ -26,19 +26,17 @@ class TestBuildFullToolLoadout:
         names = _names(defs)
         # vault and background ship native tools; assert at least one
         # tool from each surfaces.
-        assert any(n.startswith("vault_") for n in names), \
-            f"expected at least one vault_* tool in {sorted(names)}"
-        assert any(
-            n.startswith("background_") or n in names for n in names
-        )
+        assert any(n.startswith("vault_") for n in names), f"expected at least one vault_* tool in {sorted(names)}"
+        assert any(n.startswith("background_") or n in names for n in names)
 
     def test_mcp_excluded_by_default(self, config):
         """The default loadout has zero mcp__* entries — MCP tools are
         deployment-specific and excluded unless explicitly opted in."""
         defs = build_full_tool_loadout(config)
         names = _names(defs)
-        assert not any(n.startswith("mcp__") for n in names), \
+        assert not any(n.startswith("mcp__") for n in names), (
             f"unexpected mcp__ tools: {[n for n in names if n.startswith('mcp__')]}"
+        )
 
     def test_include_mcp_no_registry_returns_same_set(self, config):
         """When the MCP registry isn't initialized (no servers
@@ -110,6 +108,7 @@ def test_production_loadout_classification(config):
 def test_default_mode_full_loadout(config):
     """G2: Default mode remains full loadout"""
     from decafclaw.eval.tool_choice.loadout import build_full_tool_loadout
+
     # The default loadout should not be split
     full_loadout = build_full_tool_loadout(config)
     assert len(full_loadout) > 0

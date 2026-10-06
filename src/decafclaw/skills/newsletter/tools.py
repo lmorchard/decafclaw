@@ -24,12 +24,8 @@ _skill_config: "SkillConfig | None" = None
 
 @dataclass
 class SkillConfig:
-    window_hours: int = field(
-        default=24, metadata={"env_alias": "NEWSLETTER_WINDOW_HOURS"}
-    )
-    email_enabled: bool = field(
-        default=False, metadata={"env_alias": "NEWSLETTER_EMAIL_ENABLED"}
-    )
+    window_hours: int = field(default=24, metadata={"env_alias": "NEWSLETTER_WINDOW_HOURS"})
+    email_enabled: bool = field(default=False, metadata={"env_alias": "NEWSLETTER_EMAIL_ENABLED"})
     email_recipients: list[str] = field(
         default_factory=list,
         metadata={"env_alias": "NEWSLETTER_EMAIL_RECIPIENTS"},
@@ -38,9 +34,7 @@ class SkillConfig:
         default="[decafclaw newsletter]",
         metadata={"env_alias": "NEWSLETTER_EMAIL_SUBJECT_PREFIX"},
     )
-    vault_page_enabled: bool = field(
-        default=True, metadata={"env_alias": "NEWSLETTER_VAULT_PAGE_ENABLED"}
-    )
+    vault_page_enabled: bool = field(default=True, metadata={"env_alias": "NEWSLETTER_VAULT_PAGE_ENABLED"})
     vault_folder: str = field(
         default="agent/journal/newsletters",
         metadata={"env_alias": "NEWSLETTER_VAULT_FOLDER"},
@@ -67,9 +61,7 @@ def _parse_window(spec: str) -> int:
     into an integer number of hours. Raises ValueError on malformed input."""
     match = _WINDOW_RE.match(spec)
     if not match:
-        raise ValueError(
-            f"invalid window spec {spec!r} — use forms like '24h', '7d', '2w'"
-        )
+        raise ValueError(f"invalid window spec {spec!r} — use forms like '24h', '7d', '2w'")
     n = int(match.group(1))
     if n <= 0:
         raise ValueError(f"invalid window spec {spec!r} — must be positive")
@@ -151,9 +143,7 @@ def _extract_activity(path: Path) -> tuple[str, list[str]]:
                     fn = (call.get("function") or {}).get("name")
                     if fn in _VAULT_WRITE_TOOLS:
                         try:
-                            args = json.loads(
-                                (call.get("function") or {}).get("arguments") or "{}"
-                            )
+                            args = json.loads((call.get("function") or {}).get("arguments") or "{}")
                         except json.JSONDecodeError:
                             continue
                         page = args.get("page")
@@ -172,8 +162,7 @@ def _collect_scheduled_activity(ctx: "Context", hours: int = 24) -> list[dict]:
     used by newsletter_list_scheduled_activity."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     out: list[dict] = []
-    archives = sorted(
-        iter_conversation_archives(ctx.config), key=lambda t: t[0])
+    archives = sorted(iter_conversation_archives(ctx.config), key=lambda t: t[0])
     for conv_id, path in archives:
         if not conv_id.startswith("schedule-"):
             continue
@@ -186,19 +175,19 @@ def _collect_scheduled_activity(ctx: "Context", hours: int = 24) -> list[dict]:
         if ts < cutoff:
             continue
         final, touched = _extract_activity(path)
-        out.append({
-            "skill_name": skill_name,
-            "conv_id": conv_id,
-            "started_at": ts.isoformat(),
-            "final_message": final,
-            "vault_pages_touched": touched,
-        })
+        out.append(
+            {
+                "skill_name": skill_name,
+                "conv_id": conv_id,
+                "started_at": ts.isoformat(),
+                "final_message": final,
+                "vault_pages_touched": touched,
+            }
+        )
     return out
 
 
-async def newsletter_list_scheduled_activity(
-    ctx, hours: int | None = None, window: str = ""
-) -> ToolResult:
+async def newsletter_list_scheduled_activity(ctx, hours: int | None = None, window: str = "") -> ToolResult:
     """List scheduled-task activity within the given time window.
 
     ``window`` is a compact string like ``"7d"``, ``"48h"``, ``"2w"`` and
@@ -214,10 +203,7 @@ async def newsletter_list_scheduled_activity(
     except ValueError as exc:
         return ToolResult(text=f"[error: {exc}]")
     activity = _collect_scheduled_activity(ctx, resolved_hours)
-    summary = (
-        f"Found {len(activity)} scheduled-task conversation(s) "
-        f"in the last {display}."
-    )
+    summary = f"Found {len(activity)} scheduled-task conversation(s) in the last {display}."
     return ToolResult(
         text=summary,
         data={"activity": activity, "hours": resolved_hours, "window": display},
@@ -241,19 +227,18 @@ def _collect_vault_changes(ctx: "Context", hours: int = 24) -> list[dict]:
         rel = row["path"]
         if newsletter_folder and rel.startswith(newsletter_folder.rstrip("/") + "/"):
             continue
-        out.append({
-            "path": rel,
-            "mtime": datetime.fromtimestamp(
-                row["mtime"], tz=timezone.utc).isoformat(),
-            "size": row["size"],
-        })
+        out.append(
+            {
+                "path": rel,
+                "mtime": datetime.fromtimestamp(row["mtime"], tz=timezone.utc).isoformat(),
+                "size": row["size"],
+            }
+        )
     out.sort(key=lambda r: r["mtime"])
     return out
 
 
-async def newsletter_list_vault_changes(
-    ctx, hours: int | None = None, window: str = ""
-) -> ToolResult:
+async def newsletter_list_vault_changes(ctx, hours: int | None = None, window: str = "") -> ToolResult:
     """List vault markdown files modified in the given window (mtime-based).
 
     ``window`` is a compact string like ``"7d"``, ``"48h"``, ``"2w"`` and
@@ -320,10 +305,15 @@ async def newsletter_publish(
 
     # Advance state
     last_run_path = newsletter_dir / "last_run.json"
-    last_run_path.write_text(json.dumps({
-        "last_run_utc": now.isoformat(),
-        "window_end_utc": now.isoformat(),
-    }), encoding="utf-8")
+    last_run_path.write_text(
+        json.dumps(
+            {
+                "last_run_utc": now.isoformat(),
+                "window_end_utc": now.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
     delivered_targets: list[str] = []
     if has_content and _skill_config is not None:
@@ -350,9 +340,7 @@ async def newsletter_publish(
                 # Sandbox check: reject empty, absolute, or path-traversal values.
                 folder_ok = True
                 if not vault_folder:
-                    log.warning(
-                        "Newsletter vault_folder is empty — skipping vault-page delivery"
-                    )
+                    log.warning("Newsletter vault_folder is empty — skipping vault-page delivery")
                     folder_ok = False
                 elif Path(vault_folder).is_absolute():
                     log.warning(
@@ -370,8 +358,7 @@ async def newsletter_publish(
                     resolved_dir = (vault_root_path / vault_folder).resolve()
                     if not resolved_dir.is_relative_to(vault_root_path.resolve()):
                         log.warning(
-                            "Newsletter vault_folder %r resolves outside vault root — "
-                            "skipping vault-page delivery",
+                            "Newsletter vault_folder %r resolves outside vault root — skipping vault-page delivery",
                             vault_folder,
                         )
                         folder_ok = False
@@ -391,22 +378,19 @@ async def newsletter_publish(
                         log.warning("Newsletter vault-page delivery failed: %s", exc)
 
     if delivered_targets:
-        summary_text = (
-            f"Newsletter archived to {archive_path.name}. "
-            f"Delivered to: {', '.join(delivered_targets)}."
-        )
+        summary_text = f"Newsletter archived to {archive_path.name}. Delivered to: {', '.join(delivered_targets)}."
     elif has_content:
-        summary_text = (
-            f"Newsletter archived to {archive_path.name}. "
-            f"No delivery targets enabled."
-        )
+        summary_text = f"Newsletter archived to {archive_path.name}. No delivery targets enabled."
     else:
         summary_text = f"Nothing to report; window advanced. Archive: {archive_path.name}."
-    return ToolResult(text=summary_text, data={
-        "archive_path": str(archive_path),
-        "has_content": has_content,
-        "delivered_targets": delivered_targets,
-    })
+    return ToolResult(
+        text=summary_text,
+        data={
+            "archive_path": str(archive_path),
+            "has_content": has_content,
+            "delivered_targets": delivered_targets,
+        },
+    )
 
 
 # -- Registration -------------------------------------------------------------
@@ -440,8 +424,7 @@ TOOL_DEFINITIONS = [
                     "hours": {
                         "type": "integer",
                         "description": (
-                            "Numeric window fallback in hours. Defaults to 24 "
-                            "(or SkillConfig.window_hours)."
+                            "Numeric window fallback in hours. Defaults to 24 (or SkillConfig.window_hours)."
                         ),
                     },
                 },
@@ -469,8 +452,7 @@ TOOL_DEFINITIONS = [
                     "hours": {
                         "type": "integer",
                         "description": (
-                            "Numeric window fallback in hours. Defaults to 24 "
-                            "(or SkillConfig.window_hours)."
+                            "Numeric window fallback in hours. Defaults to 24 (or SkillConfig.window_hours)."
                         ),
                     },
                 },
@@ -500,15 +482,14 @@ TOOL_DEFINITIONS = [
                     "subject_hint": {
                         "type": "string",
                         "description": (
-                            "Optional single-line highlight used in the email subject. "
-                            "Falls back to the date."
+                            "Optional single-line highlight used in the email subject. Falls back to the date."
                         ),
                     },
                     "has_content": {
                         "type": "boolean",
                         "description": (
                             "True if the window had real activity to narrate. "
-                            "False to record a \"nothing to report\" stub and skip "
+                            'False to record a "nothing to report" stub and skip '
                             "delivery. Defaults to True."
                         ),
                     },

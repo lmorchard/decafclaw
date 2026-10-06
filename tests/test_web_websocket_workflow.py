@@ -50,7 +50,9 @@ async def test_workflow_command_archives_user_invocation(config):
     index.get.return_value = conv
 
     await websocket._handle_send(
-        ws_send, index, "testuser",
+        ws_send,
+        index,
+        "testuser",
         {"conv_id": conv_id, "text": "/interview"},
         state,
     )
@@ -58,7 +60,5 @@ async def test_workflow_command_archives_user_invocation(config):
     assert enqueued, "workflow intercept should enqueue a WORKFLOW turn"
     msgs = read_archive(config, conv_id)
     user_msgs = [m for m in msgs if m.get("role") == "user"]
-    assert user_msgs, (
-        "expected a role=user archive row for the /interview invocation"
-    )
+    assert user_msgs, "expected a role=user archive row for the /interview invocation"
     assert user_msgs[0].get("content") == "/interview"

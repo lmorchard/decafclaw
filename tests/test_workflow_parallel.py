@@ -5,6 +5,7 @@ result list; each thunk gets a sub-handle so its journaled calls land at
 hierarchical seqs. Mid-fan-out crash → re-dispatch, each thunk replays its
 own cached calls and resumes from the first non-cached one.
 """
+
 import asyncio
 
 import pytest
@@ -23,6 +24,7 @@ async def test_parallel_live_path_basic(ctx):
     async def make_thunk(i):
         async def thunk(sub):
             return i
+
         return thunk
 
     thunks = [await make_thunk(i) for i in range(3)]
@@ -54,8 +56,8 @@ async def test_parallel_live_path_with_journaled_calls(ctx):
 
     def make_thunk(i):
         async def thunk(sub):
-            return await sub.llm_call(
-                prompt=f"q{i}", schema={"type": "object"})
+            return await sub.llm_call(prompt=f"q{i}", schema={"type": "object"})
+
         return thunk
 
     thunks = [make_thunk(i) for i in range(3)]
@@ -90,8 +92,8 @@ async def test_parallel_replay_path_full_cache(ctx):
 
     def boom_thunk_factory(label):
         async def thunk(sub):
-            raise AssertionError(
-                f"thunk {label} MUST NOT run during full-cache replay")
+            raise AssertionError(f"thunk {label} MUST NOT run during full-cache replay")
+
         return thunk
 
     thunks = [boom_thunk_factory(i) for i in range(3)]
@@ -128,8 +130,8 @@ async def test_parallel_mid_fanout_resume(ctx):
 
     def make_thunk(i):
         async def thunk(sub):
-            return await sub.llm_call(
-                prompt=f"q{i}", schema={"type": "object"})
+            return await sub.llm_call(prompt=f"q{i}", schema={"type": "object"})
+
         return thunk
 
     out = await h.parallel([make_thunk(i) for i in range(3)])
