@@ -8,6 +8,7 @@ Instances upgrading from the old flat conversations/{conv_id}.SUFFIX
 layout run scripts/migrate_sidecars_to_dirs.py (`make migrate-sidecars`)
 once to move existing files into per-conversation directories.
 """
+
 from __future__ import annotations
 
 import logging

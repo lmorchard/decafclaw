@@ -10,9 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 _THIS_DIR = Path(__file__).parent
-_tools_spec = importlib.util.spec_from_file_location(
-    "decafclaw_contrib_blog_ideas_tools", _THIS_DIR / "tools.py"
-)
+_tools_spec = importlib.util.spec_from_file_location("decafclaw_contrib_blog_ideas_tools", _THIS_DIR / "tools.py")
 assert _tools_spec is not None and _tools_spec.loader is not None
 blog_ideas_tools = importlib.util.module_from_spec(_tools_spec)
 sys.modules["decafclaw_contrib_blog_ideas_tools"] = blog_ideas_tools

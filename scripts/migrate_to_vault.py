@@ -67,12 +67,10 @@ def migrate_directory(src: Path, dst: Path, label: str, dry_run: bool) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="Migrate wiki/memories to vault")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show what would be done without making changes")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
     config = load_config()
     workspace = config.workspace_path

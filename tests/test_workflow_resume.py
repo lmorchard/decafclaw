@@ -47,23 +47,26 @@ async def test_handler_journals_answer_and_enqueues_resume(tmp_path):
     j = Journal(workflow_name="interview", status="suspended")
     save_journal(cfg, "convR", j)
 
-    fp = fingerprint("user_input",
-                     {"prompt": "What should this interview be about?",
-                      "choices": None})
+    fp = fingerprint("user_input", {"prompt": "What should this interview be about?", "choices": None})
     request = ConfirmationRequest(
         action_type=ConfirmationAction.WORKFLOW_USER_INPUT,
         message="What should this interview be about?",
-        action_data={"workflow_name": "interview", "seq": "0",
-                     "args_fingerprint": fp, "prompt": "...", "choices": None},
+        action_data={
+            "workflow_name": "interview",
+            "seq": "0",
+            "args_fingerprint": fp,
+            "prompt": "...",
+            "choices": None,
+        },
         timeout=None,
     )
-    response = ConfirmationResponse(confirmation_id="x", approved=True,
-                                    data={"value": "tide pools"})
+    response = ConfirmationResponse(confirmation_id="x", approved=True, data={"value": "tide pools"})
 
     enqueued = []
 
     class FakeManager:
         config = cfg
+
         async def enqueue_turn(self, conv_id, **kw):
             enqueued.append((conv_id, kw))
 
@@ -88,19 +91,19 @@ async def test_run_workflow_turn_fresh_start_suspends_and_posts(tmp_path):
 
     class FakeManager:
         config = SimpleNamespace(workspace_path=tmp_path)
+
         async def post_confirmation(self, conv_id, request):
             posted.append(request)
 
     ctx = _ctx(tmp_path, "convT")
-    result = await run_workflow_turn(
-        ctx, FakeManager(),
-        workflow_name="interview", resume=False)
+    result = await run_workflow_turn(ctx, FakeManager(), workflow_name="interview", resume=False)
     assert posted, "a confirmation should be posted on suspend"
     assert posted[0].action_type == ConfirmationAction.WORKFLOW_USER_INPUT
     # action_data carries the tuple-path seq as a dotted string for JSON safety.
     assert posted[0].action_data["seq"] == "0"
     assert posted[0].action_data["workflow_name"] == "interview"
     from decafclaw.media import ToolResult
+
     assert isinstance(result, ToolResult)
     assert result.text.startswith("_")  # italic-wrapped prompt
 
@@ -135,27 +138,26 @@ async def test_run_workflow_turn_done_archives_artifact(config):
             raise AssertionError("done path should not post a confirmation")
 
     ctx = SimpleNamespace(config=config, conv_id=conv_id, publish=_noop)
-    result = await run_workflow_turn(
-        ctx, FakeManager(),
-        workflow_name="artifact_done_test", resume=True)
+    result = await run_workflow_turn(ctx, FakeManager(), workflow_name="artifact_done_test", resume=True)
     assert "Tide Pools" in result.text
 
     msgs = read_archive(config, conv_id)
     assistant_msgs = [m for m in msgs if m.get("role") == "assistant"]
-    assert assistant_msgs, (
-        "expected a role=assistant archive row for the workflow artifact"
-    )
+    assert assistant_msgs, "expected a role=assistant archive row for the workflow artifact"
     assert "Tide Pools" in (assistant_msgs[-1].get("content") or "")
 
 
 def _make_skill_info(tmp_path, name, *, trust_tier="bundled", always_loaded=False):
     """Lightweight SkillInfo factory mirroring tests/test_skills.py's helper."""
     from decafclaw.skills import SkillInfo
+
     location = tmp_path / name
     location.mkdir(parents=True, exist_ok=True)
     info = SkillInfo(
-        name=name, description=f"{name} description",
-        location=location, body="Instructions here.",
+        name=name,
+        description=f"{name} description",
+        location=location,
+        body="Instructions here.",
         has_native_tools=False,
         trust_tier=trust_tier,
     )
@@ -165,7 +167,10 @@ def _make_skill_info(tmp_path, name, *, trust_tier="bundled", always_loaded=Fals
 
 @pytest.mark.asyncio
 async def test_run_workflow_turn_activates_always_loaded_before_orchestrator(
-    config, ctx, tmp_path, monkeypatch,
+    config,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """Always-loaded skills are activated and their tools are visible in
     ctx.tools.extra by the time run_workflow is invoked."""
@@ -182,7 +187,8 @@ async def test_run_workflow_turn_activates_always_loaded_before_orchestrator(
         ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     captured = {}
@@ -191,10 +197,12 @@ async def test_run_workflow_turn_activates_always_loaded_before_orchestrator(
         # Snapshot at the moment run_workflow is called.
         captured["tools_extra"] = dict(ctx_arg.tools.extra)
         from decafclaw.workflow.engine import WorkflowOutcome
+
         return WorkflowOutcome(status="done", result="ok")
 
     monkeypatch.setattr(
-        "decafclaw.workflow.resume.run_workflow", fake_run_workflow,
+        "decafclaw.workflow.resume.run_workflow",
+        fake_run_workflow,
     )
 
     @register_workflow("wf_always_loaded_test")
@@ -202,17 +210,15 @@ async def test_run_workflow_turn_activates_always_loaded_before_orchestrator(
         return "ok"
 
     try:
+
         class FakeManager:
             async def post_confirmation(self, conv_id, request):
                 raise AssertionError("done path should not post a confirmation")
 
-        await run_workflow_turn(
-            ctx, FakeManager(),
-            workflow_name="wf_always_loaded_test", resume=False)
+        await run_workflow_turn(ctx, FakeManager(), workflow_name="wf_always_loaded_test", resume=False)
 
         assert "fake_tool" in captured["tools_extra"], (
-            "always-loaded skill's tool must be in ctx.tools.extra "
-            "before run_workflow is called"
+            "always-loaded skill's tool must be in ctx.tools.extra before run_workflow is called"
         )
     finally:
         REGISTRY.pop("wf_always_loaded_test", None)
@@ -220,7 +226,10 @@ async def test_run_workflow_turn_activates_always_loaded_before_orchestrator(
 
 @pytest.mark.asyncio
 async def test_run_workflow_turn_activates_requires_skills(
-    config, ctx, tmp_path, monkeypatch,
+    config,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """A workflow's declared requires_skills are activated and their tools
     land in ctx.tools.extra before the orchestrator runs."""
@@ -237,7 +246,8 @@ async def test_run_workflow_turn_activates_requires_skills(
         ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     captured = {}
@@ -245,30 +255,31 @@ async def test_run_workflow_turn_activates_requires_skills(
     async def fake_run_workflow(ctx_arg, fn, journal, *, model):
         captured["tools_extra"] = dict(ctx_arg.tools.extra)
         from decafclaw.workflow.engine import WorkflowOutcome
+
         return WorkflowOutcome(status="done", result="ok")
 
     monkeypatch.setattr(
-        "decafclaw.workflow.resume.run_workflow", fake_run_workflow,
+        "decafclaw.workflow.resume.run_workflow",
+        fake_run_workflow,
     )
 
     @register_workflow(
-        "wf_requires_skills_test", requires_skills=("tabstack-like",),
+        "wf_requires_skills_test",
+        requires_skills=("tabstack-like",),
     )
     async def _wf(wf):
         return "ok"
 
     try:
+
         class FakeManager:
             async def post_confirmation(self, conv_id, request):
                 raise AssertionError("done path should not post a confirmation")
 
-        await run_workflow_turn(
-            ctx, FakeManager(),
-            workflow_name="wf_requires_skills_test", resume=False)
+        await run_workflow_turn(ctx, FakeManager(), workflow_name="wf_requires_skills_test", resume=False)
 
         assert "fake_tool" in captured["tools_extra"], (
-            "requires_skills skill's tool must be in ctx.tools.extra "
-            "before run_workflow is called"
+            "requires_skills skill's tool must be in ctx.tools.extra before run_workflow is called"
         )
     finally:
         REGISTRY.pop("wf_requires_skills_test", None)
@@ -276,7 +287,10 @@ async def test_run_workflow_turn_activates_requires_skills(
 
 @pytest.mark.asyncio
 async def test_run_workflow_turn_returns_error_on_activation_failure(
-    config, ctx, tmp_path, monkeypatch,
+    config,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """When a requires_skills entry is unknown, activate_skills_for_workflow
     raises WorkflowSkillActivationFailed; the turn returns an error ToolResult,
@@ -297,23 +311,24 @@ async def test_run_workflow_turn_returns_error_on_activation_failure(
         raise AssertionError("should not run")
 
     monkeypatch.setattr(
-        "decafclaw.workflow.resume.run_workflow", sabotage_run_workflow,
+        "decafclaw.workflow.resume.run_workflow",
+        sabotage_run_workflow,
     )
 
     @register_workflow(
-        "wf_activation_fail_test", requires_skills=("missing-skill",),
+        "wf_activation_fail_test",
+        requires_skills=("missing-skill",),
     )
     async def _wf(wf):
         return "ok"
 
     try:
+
         class FakeManager:
             async def post_confirmation(self, conv_id, request):
                 raise AssertionError("error path should not post a confirmation")
 
-        result = await run_workflow_turn(
-            ctx, FakeManager(),
-            workflow_name="wf_activation_fail_test", resume=False)
+        result = await run_workflow_turn(ctx, FakeManager(), workflow_name="wf_activation_fail_test", resume=False)
 
         assert isinstance(result, ToolResult)
         assert result.text.startswith("[error: skill activation failed:")
@@ -330,7 +345,10 @@ async def test_run_workflow_turn_returns_error_on_activation_failure(
 
 @pytest.mark.asyncio
 async def test_run_workflow_turn_activation_idempotent_on_resume(
-    config, ctx, tmp_path, monkeypatch,
+    config,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """If a requires_skills entry is already in ctx.skills.activated (e.g.
     after a resume), activate_skill_internal is NOT called again — the
@@ -348,33 +366,37 @@ async def test_run_workflow_turn_activation_idempotent_on_resume(
         raise AssertionError("should not be called on resume")
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", sabotage_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        sabotage_activate,
     )
 
     async def fake_run_workflow(ctx_arg, fn, journal, *, model):
         from decafclaw.workflow.engine import WorkflowOutcome
+
         return WorkflowOutcome(status="done", result="ok")
 
     monkeypatch.setattr(
-        "decafclaw.workflow.resume.run_workflow", fake_run_workflow,
+        "decafclaw.workflow.resume.run_workflow",
+        fake_run_workflow,
     )
 
     @register_workflow(
-        "wf_idempotent_test", requires_skills=("foo-skill",),
+        "wf_idempotent_test",
+        requires_skills=("foo-skill",),
     )
     async def _wf(wf):
         return "ok"
 
     try:
+
         class FakeManager:
             async def post_confirmation(self, conv_id, request):
                 raise AssertionError("done path should not post a confirmation")
 
-        result = await run_workflow_turn(
-            ctx, FakeManager(),
-            workflow_name="wf_idempotent_test", resume=False)
+        result = await run_workflow_turn(ctx, FakeManager(), workflow_name="wf_idempotent_test", resume=False)
 
         from decafclaw.media import ToolResult
+
         assert isinstance(result, ToolResult)
         # Sabotage mock NOT called — assertion proven by the test not raising.
     finally:
@@ -390,12 +412,15 @@ async def test_handler_deny_marks_error_and_archives(tmp_path):
     save_journal(cfg, "convD", j)
     request = ConfirmationRequest(
         action_type=ConfirmationAction.WORKFLOW_USER_INPUT,
-        message="q?", action_data={"workflow_name": "interview", "seq": 0,
-        "args_fingerprint": "fp", "prompt": "q?", "choices": None}, timeout=None)
+        message="q?",
+        action_data={"workflow_name": "interview", "seq": 0, "args_fingerprint": "fp", "prompt": "q?", "choices": None},
+        timeout=None,
+    )
     response = ConfirmationResponse(confirmation_id="x", approved=False)
 
     class FakeManager:
         config = cfg
+
         async def enqueue_turn(self, conv_id, **kw):
             raise AssertionError("deny must NOT enqueue a resume turn")
 

@@ -58,6 +58,7 @@ class MCPServerConfig:
 
 def _expand_env(value: str) -> str:
     """Expand ${VAR} and ${VAR:-default} in a string from os.environ."""
+
     def _replace(match):
         var_name = match.group(1)
         default = match.group(2)
@@ -122,16 +123,18 @@ def load_mcp_config(config) -> list[MCPServerConfig]:
         server_data: dict = _expand_config(server_data)  # type: ignore[assignment]
 
         server_type = server_data.get("type", "stdio")
-        configs.append(MCPServerConfig(
-            name=name,
-            type=server_type,
-            command=server_data.get("command", ""),
-            args=server_data.get("args", []),
-            env=server_data.get("env", {}),
-            url=server_data.get("url", ""),
-            headers=server_data.get("headers", {}),
-            timeout=server_data.get("timeout", 30000),
-        ))
+        configs.append(
+            MCPServerConfig(
+                name=name,
+                type=server_type,
+                command=server_data.get("command", ""),
+                args=server_data.get("args", []),
+                env=server_data.get("env", {}),
+                url=server_data.get("url", ""),
+                headers=server_data.get("headers", {}),
+                timeout=server_data.get("timeout", 30000),
+            )
+        )
 
     log.info(f"Loaded {len(configs)} MCP server config(s): {[c.name for c in configs]}")
     return configs
@@ -305,12 +308,14 @@ def _convert_resource_response(result):
 
             blob_count += 1
             filename = f"mcp-resource-{blob_count}{ext}"
-            media.append({
-                "type": "file",
-                "filename": filename,
-                "data": data,
-                "content_type": mime_type,
-            })
+            media.append(
+                {
+                    "type": "file",
+                    "filename": filename,
+                    "data": data,
+                    "content_type": mime_type,
+                }
+            )
             parts.append(f"[file attached: {filename} ({mime_type}) — will appear as an attachment on your reply]")
         else:
             parts.append(f"[unsupported resource content from {item_uri}]")
@@ -435,8 +440,7 @@ class MCPRegistry:
                 tool_def = _convert_tool_definition(server_name, mcp_tool)
                 namespaced = tool_def["function"]["name"]
                 tool_name = mcp_tool.name if hasattr(mcp_tool, "name") else mcp_tool["name"]
-                new_tools[namespaced] = self._make_tool_caller(
-                    server_name, tool_name, state.config.timeout)
+                new_tools[namespaced] = self._make_tool_caller(server_name, tool_name, state.config.timeout)
                 new_defs.append(tool_def)
 
             # Atomic swap
@@ -459,8 +463,10 @@ class MCPRegistry:
             state.resources = _extract_list(res_result, "resources")
             tmpl_result = await state.session.list_resource_templates()
             state.resource_templates = _extract_list(tmpl_result, "resourceTemplates")
-            log.info(f"MCP server {server_name!r} resources refreshed: "
-                     f"{len(state.resources)} resource(s), {len(state.resource_templates)} template(s)")
+            log.info(
+                f"MCP server {server_name!r} resources refreshed: "
+                f"{len(state.resources)} resource(s), {len(state.resource_templates)} template(s)"
+            )
         except Exception as e:
             log.warning(f"MCP server {server_name!r}: failed to refresh resources: {e}")
 
@@ -485,6 +491,7 @@ class MCPRegistry:
         Handles ToolListChanged, ResourceListChanged, and PromptListChanged
         notifications by re-discovering the corresponding primitives.
         """
+
         async def handler(message):
             from mcp import types as _mcp_types
 
@@ -570,15 +577,14 @@ class MCPRegistry:
 
             if self.event_bus:
                 try:
-                    await self.event_bus.publish({
-                        "type": "mcp_server_connected",
-                        "server": name
-                    })
+                    await self.event_bus.publish({"type": "mcp_server_connected", "server": name})
                 except Exception as e:
                     log.debug("failed to publish mcp_server_connected: %s", e)
 
-            log.info(f"MCP server {name!r} connected: {len(state.tools)} tool(s), "
-                     f"{len(state.resources)} resource(s), {len(state.prompts)} prompt(s)")
+            log.info(
+                f"MCP server {name!r} connected: {len(state.tools)} tool(s), "
+                f"{len(state.resources)} resource(s), {len(state.prompts)} prompt(s)"
+            )
 
         except BaseException as e:
             log.warning(f"MCP server {name!r} failed to connect: {e}")
@@ -601,15 +607,11 @@ class MCPRegistry:
             args=server_config.args,
             env={**os.environ, **server_config.env} if server_config.env else None,
         )
-        read_stream, write_stream = await exit_stack.enter_async_context(
-            stdio_client(params)
-        )
+        read_stream, write_stream = await exit_stack.enter_async_context(stdio_client(params))
         kwargs = {}
         if message_handler:
             kwargs["message_handler"] = message_handler
-        session = await exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream, **kwargs)
-        )
+        session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream, **kwargs))
         await session.initialize()
         return session
 
@@ -624,15 +626,11 @@ class MCPRegistry:
             http_client = httpx.AsyncClient(headers=server_config.headers)
             http_kwargs["http_client"] = http_client
 
-        read_stream, write_stream, _ = await exit_stack.enter_async_context(
-            streamable_http_client(**http_kwargs)
-        )
+        read_stream, write_stream, _ = await exit_stack.enter_async_context(streamable_http_client(**http_kwargs))
         session_kwargs = {}
         if message_handler:
             session_kwargs["message_handler"] = message_handler
-        session = await exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream, **session_kwargs)
-        )
+        session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream, **session_kwargs))
         await session.initialize()
         return session
 
@@ -686,14 +684,15 @@ class MCPRegistry:
             return False
 
         # Check backoff timing
-        backoff = min(2 ** state.retry_count, 8)
+        backoff = min(2**state.retry_count, 8)
         now = time.monotonic()
         if now - state.last_retry_time < backoff:
             return False
 
         # Attempt reconnection
-        log.info(f"Attempting reconnection for MCP server {server_name!r} "
-                 f"(attempt {state.retry_count + 1}/{max_retries})")
+        log.info(
+            f"Attempting reconnection for MCP server {server_name!r} (attempt {state.retry_count + 1}/{max_retries})"
+        )
         state.last_retry_time = now
 
         # Disconnect first if there's stale state

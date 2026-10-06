@@ -11,6 +11,7 @@ try:
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+
     _HAVE_OTLP = True
 except ImportError:
     _HAVE_OTLP = False
@@ -18,6 +19,7 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 _is_initialized = False
+
 
 def init_tracer(config) -> None:
     """Initialize the OpenTelemetry TracerProvider based on configuration.
@@ -35,9 +37,7 @@ def init_tracer(config) -> None:
             log.warning("OTLP endpoint configured but opentelemetry-sdk not installed. Tracing disabled.")
             return
 
-        resource = Resource(attributes={
-            SERVICE_NAME: config.telemetry.otlp_service_name
-        })
+        resource = Resource(attributes={SERVICE_NAME: config.telemetry.otlp_service_name})
         provider = TracerProvider(resource=resource)
 
         # Use SimpleSpanProcessor if we want immediate export, otherwise Batch is better.
@@ -50,6 +50,7 @@ def init_tracer(config) -> None:
         log.info(f"OpenTelemetry tracing enabled, exporting to {otlp_endpoint}")
 
     _is_initialized = True
+
 
 def get_tracer(name: str):
     """Return an OpenTelemetry tracer for the given module name."""

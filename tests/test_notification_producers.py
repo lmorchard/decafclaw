@@ -26,10 +26,12 @@ async def test_heartbeat_cycle_emits_notification(config):
 
     bus = EventBus()
     manager = ConversationManager(config, bus)
-    mock_agent = AsyncMock(side_effect=[
-        ToolResult(text="HEARTBEAT_OK"),
-        ToolResult(text="Something broke"),  # not OK
-    ])
+    mock_agent = AsyncMock(
+        side_effect=[
+            ToolResult(text="HEARTBEAT_OK"),
+            ToolResult(text="Something broke"),  # not OK
+        ]
+    )
     with patch("decafclaw.agent.run_agent_turn", mock_agent):
         await run_heartbeat_cycle(config, bus, manager)
 
@@ -69,15 +71,22 @@ async def test_scheduled_task_emits_notification(config, tmp_path):
     task_file.write_text("Body")
 
     task = ScheduleTask(
-        name="test-task", schedule="* * * * *", channel="", enabled=True,
-        body="Do the thing", source="admin", path=task_file,
-        model="", allowed_tools=[], required_skills=[], shell_patterns=[],
+        name="test-task",
+        schedule="* * * * *",
+        channel="",
+        enabled=True,
+        body="Do the thing",
+        source="admin",
+        path=task_file,
+        model="",
+        allowed_tools=[],
+        required_skills=[],
+        shell_patterns=[],
     )
 
     bus = EventBus()
     manager = ConversationManager(config, bus)
-    with patch("decafclaw.agent.run_agent_turn",
-               AsyncMock(return_value=ToolResult(text="HEARTBEAT_OK: done"))):
+    with patch("decafclaw.agent.run_agent_turn", AsyncMock(return_value=ToolResult(text="HEARTBEAT_OK: done"))):
         await run_schedule_task(config, bus, manager, task)
 
     records, _ = notifs.read_inbox(config)
@@ -101,15 +110,22 @@ async def test_scheduled_task_failure_emits_high_priority(config, tmp_path):
     task_file.write_text("Body")
 
     task = ScheduleTask(
-        name="broken", schedule="* * * * *", channel="", enabled=True,
-        body="Do the thing", source="admin", path=task_file,
-        model="", allowed_tools=[], required_skills=[], shell_patterns=[],
+        name="broken",
+        schedule="* * * * *",
+        channel="",
+        enabled=True,
+        body="Do the thing",
+        source="admin",
+        path=task_file,
+        model="",
+        allowed_tools=[],
+        required_skills=[],
+        shell_patterns=[],
     )
 
     bus = EventBus()
     manager = ConversationManager(config, bus)
-    with patch("decafclaw.agent.run_agent_turn",
-               AsyncMock(side_effect=RuntimeError("boom"))):
+    with patch("decafclaw.agent.run_agent_turn", AsyncMock(side_effect=RuntimeError("boom"))):
         await run_schedule_task(config, bus, manager, task)
 
     records, _ = notifs.read_inbox(config)
@@ -167,5 +183,3 @@ async def test_background_job_failure_emits_high_priority(config):
     assert len(records) == 1
     assert records[0].priority == "high"
     assert "failed" in records[0].title.lower()
-
-

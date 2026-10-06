@@ -29,7 +29,7 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
         return {}, text
 
     yaml_text = match.group(1)
-    body = text[match.end():]
+    body = text[match.end() :]
 
     if not yaml_text.strip():
         return {}, body
@@ -72,7 +72,7 @@ def split_frontmatter(text: str) -> tuple[str | None, str]:
     match = _FRONTMATTER_RE.match(text)
     if not match:
         return None, text
-    return match.group(1), text[match.end():]
+    return match.group(1), text[match.end() :]
 
 
 def join_frontmatter(raw_yaml: str | None, body: str) -> str:

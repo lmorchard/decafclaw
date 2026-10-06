@@ -36,7 +36,10 @@ def patched_generate():
 class TestRunBackfill:
     @pytest.mark.asyncio
     async def test_fills_bare_page_and_skips_complete_page(
-        self, config, agent_pages, patched_generate,
+        self,
+        config,
+        agent_pages,
+        patched_generate,
     ):
         bare = agent_pages / "bare.md"
         bare.write_text("Body of the bare page.\n", encoding="utf-8")
@@ -75,7 +78,10 @@ class TestRunBackfill:
 
     @pytest.mark.asyncio
     async def test_does_not_clobber_partial_manual_frontmatter(
-        self, config, agent_pages, patched_generate,
+        self,
+        config,
+        agent_pages,
+        patched_generate,
     ):
         p = agent_pages / "partial.md"
         p.write_text(
@@ -106,14 +112,15 @@ class TestRunBackfill:
 
     @pytest.mark.asyncio
     async def test_limit_caps_llm_calls_but_not_free_skips(
-        self, config, agent_pages, patched_generate,
+        self,
+        config,
+        agent_pages,
+        patched_generate,
     ):
         # Named to sort before the bare pages, so it's visited (and skipped
         # for free) before the limit is reached.
         (agent_pages / "aaa-complete.md").write_text(
-            "---\n"
-            "summary: s\nkeywords: [a]\ntags: [b]\nimportance: 0.5\n"
-            "---\nBody.\n",
+            "---\nsummary: s\nkeywords: [a]\ntags: [b]\nimportance: 0.5\n---\nBody.\n",
             encoding="utf-8",
         )
         (agent_pages / "bare-a.md").write_text("Body A.\n", encoding="utf-8")

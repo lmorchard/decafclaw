@@ -76,21 +76,24 @@ def _write_config(config, data):
 
 
 def test_load_mcp_config_valid(config):
-    _write_config(config, {
-        "mcpServers": {
-            "test-server": {
-                "type": "stdio",
-                "command": "echo",
-                "args": ["hello"],
-                "env": {"FOO": "bar"},
-            },
-            "remote": {
-                "type": "http",
-                "url": "https://example.com/mcp",
-                "headers": {"X-Key": "val"},
-            },
-        }
-    })
+    _write_config(
+        config,
+        {
+            "mcpServers": {
+                "test-server": {
+                    "type": "stdio",
+                    "command": "echo",
+                    "args": ["hello"],
+                    "env": {"FOO": "bar"},
+                },
+                "remote": {
+                    "type": "http",
+                    "url": "https://example.com/mcp",
+                    "headers": {"X-Key": "val"},
+                },
+            }
+        },
+    )
     configs = load_mcp_config(config)
     assert len(configs) == 2
     names = {c.name for c in configs}
@@ -113,12 +116,15 @@ def test_load_mcp_config_missing_file(config):
 
 
 def test_load_mcp_config_skips_invalid_names(config):
-    _write_config(config, {
-        "mcpServers": {
-            "valid-name": {"type": "stdio", "command": "echo"},
-            "INVALID NAME": {"type": "stdio", "command": "echo"},
-        }
-    })
+    _write_config(
+        config,
+        {
+            "mcpServers": {
+                "valid-name": {"type": "stdio", "command": "echo"},
+                "INVALID NAME": {"type": "stdio", "command": "echo"},
+            }
+        },
+    )
     configs = load_mcp_config(config)
     assert len(configs) == 1
     assert configs[0].name == "valid-name"
@@ -126,35 +132,30 @@ def test_load_mcp_config_skips_invalid_names(config):
 
 def test_load_mcp_config_expands_env(config, monkeypatch):
     monkeypatch.setenv("MY_API_KEY", "secret123")
-    _write_config(config, {
-        "mcpServers": {
-            "api-server": {
-                "type": "http",
-                "url": "https://example.com/mcp",
-                "headers": {"Authorization": "Bearer ${MY_API_KEY}"},
+    _write_config(
+        config,
+        {
+            "mcpServers": {
+                "api-server": {
+                    "type": "http",
+                    "url": "https://example.com/mcp",
+                    "headers": {"Authorization": "Bearer ${MY_API_KEY}"},
+                }
             }
-        }
-    })
+        },
+    )
     configs = load_mcp_config(config)
     assert configs[0].headers["Authorization"] == "Bearer secret123"
 
 
 def test_load_mcp_config_default_timeout(config):
-    _write_config(config, {
-        "mcpServers": {
-            "server": {"type": "stdio", "command": "echo"}
-        }
-    })
+    _write_config(config, {"mcpServers": {"server": {"type": "stdio", "command": "echo"}}})
     configs = load_mcp_config(config)
     assert configs[0].timeout == 30000
 
 
 def test_load_mcp_config_custom_timeout(config):
-    _write_config(config, {
-        "mcpServers": {
-            "server": {"type": "stdio", "command": "echo", "timeout": 60000}
-        }
-    })
+    _write_config(config, {"mcpServers": {"server": {"type": "stdio", "command": "echo", "timeout": 60000}}})
     configs = load_mcp_config(config)
     assert configs[0].timeout == 60000
 
@@ -218,6 +219,7 @@ def test_convert_tool_definition_dict():
 
 def test_convert_tool_definition_object():
     """Handles SDK Tool objects with attribute access."""
+
     class FakeTool:
         name = "search"
         description = "Search things"
@@ -254,6 +256,7 @@ def test_convert_mcp_response_error():
 
 def test_convert_mcp_response_image_media():
     import base64
+
     img_data = base64.b64encode(b"fake-png-data").decode()
     result = {
         "content": [{"type": "image", "data": img_data, "mimeType": "image/png"}],
@@ -270,6 +273,7 @@ def test_convert_mcp_response_image_media():
 
 def test_convert_mcp_response_audio_media():
     import base64
+
     audio_data = base64.b64encode(b"fake-wav").decode()
     result = {
         "content": [{"type": "audio", "data": audio_data, "mimeType": "audio/wav"}],
@@ -284,6 +288,7 @@ def test_convert_mcp_response_audio_media():
 
 def test_convert_mcp_response_mixed_text_and_image():
     import base64
+
     img_data = base64.b64encode(b"img").decode()
     result = {
         "content": [
@@ -345,8 +350,7 @@ def _make_fake_prompt(name, description="", arguments=None):
     return prompt
 
 
-def _make_mock_session(tools=None, capabilities=None, resources=None,
-                       resource_templates=None, prompts=None):
+def _make_mock_session(tools=None, capabilities=None, resources=None, resource_templates=None, prompts=None):
     """Create a mock ClientSession that returns given tools/resources/prompts."""
     session = AsyncMock()
     tools_result = MagicMock()
@@ -477,7 +481,9 @@ async def test_tool_caller_timeout():
     cfg = MCPServerConfig(name="slow", type="stdio", timeout=100)  # 100ms timeout
     # Set up server state so the caller can find the session
     registry.servers["slow"] = MCPServerState(
-        config=cfg, status="connected", session=slow_session,
+        config=cfg,
+        status="connected",
+        session=slow_session,
     )
     caller = registry._make_tool_caller("slow", "slow_tool", cfg.timeout)
 
@@ -504,7 +510,9 @@ async def test_maybe_reconnect_max_retries():
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="dead", type="stdio")
     registry.servers["dead"] = MCPServerState(
-        config=cfg, status="failed", retry_count=3,
+        config=cfg,
+        status="failed",
+        retry_count=3,
     )
 
     assert await registry._maybe_reconnect("dead") is False
@@ -521,7 +529,10 @@ async def test_maybe_reconnect_success():
 
     cfg = MCPServerConfig(name="flaky", type="stdio", command="echo")
     registry.servers["flaky"] = MCPServerState(
-        config=cfg, status="failed", retry_count=0, last_retry_time=0.0,
+        config=cfg,
+        status="failed",
+        retry_count=0,
+        last_retry_time=0.0,
     )
 
     assert await registry._maybe_reconnect("flaky") is True
@@ -540,7 +551,10 @@ async def test_maybe_reconnect_increments_retry():
 
     cfg = MCPServerConfig(name="broken", type="stdio", command="nope")
     registry.servers["broken"] = MCPServerState(
-        config=cfg, status="failed", retry_count=0, last_retry_time=0.0,
+        config=cfg,
+        status="failed",
+        retry_count=0,
+        last_retry_time=0.0,
     )
 
     assert await registry._maybe_reconnect("broken") is False
@@ -570,7 +584,8 @@ async def test_mcp_status_shows_servers(ctx, monkeypatch):
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="test-server", type="stdio")
     registry.servers["test-server"] = MCPServerState(
-        config=cfg, status="connected",
+        config=cfg,
+        status="connected",
         tools={"mcp__test-server__tool1": AsyncMock(), "mcp__test-server__tool2": AsyncMock()},
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -594,8 +609,10 @@ async def test_connect_discovers_resources_when_capable():
     caps.resources = MagicMock()  # truthy = has resources
     caps.prompts = None
     mock_session = _make_mock_session(
-        tools=[fake_tool], capabilities=caps,
-        resources=[fake_res], resource_templates=[fake_tmpl],
+        tools=[fake_tool],
+        capabilities=caps,
+        resources=[fake_res],
+        resource_templates=[fake_tmpl],
     )
 
     registry = MCPRegistry()
@@ -643,7 +660,9 @@ async def test_connect_discovers_prompts_when_capable():
     caps.resources = None
     caps.prompts = MagicMock()  # truthy = has prompts
     mock_session = _make_mock_session(
-        tools=[fake_tool], capabilities=caps, prompts=[fake_prompt],
+        tools=[fake_tool],
+        capabilities=caps,
+        prompts=[fake_prompt],
     )
 
     registry = MCPRegistry()
@@ -690,11 +709,13 @@ async def test_get_resources_only_connected():
 
     registry.servers["good"] = MCPServerState(
         config=MCPServerConfig(name="good", type="stdio"),
-        status="connected", resources=[res1],
+        status="connected",
+        resources=[res1],
     )
     registry.servers["bad"] = MCPServerState(
         config=MCPServerConfig(name="bad", type="stdio"),
-        status="failed", resources=[res2],
+        status="failed",
+        resources=[res2],
     )
 
     results = registry.get_resources()
@@ -711,11 +732,13 @@ async def test_get_prompts_only_connected():
 
     registry.servers["good"] = MCPServerState(
         config=MCPServerConfig(name="good", type="stdio"),
-        status="connected", prompts=[p1],
+        status="connected",
+        prompts=[p1],
     )
     registry.servers["bad"] = MCPServerState(
         config=MCPServerConfig(name="bad", type="stdio"),
-        status="failed", prompts=[p2],
+        status="failed",
+        prompts=[p2],
     )
 
     results = registry.get_prompts()
@@ -760,7 +783,9 @@ async def test_refresh_resources():
     caps.resources = MagicMock()
     caps.prompts = None
     mock_session = _make_mock_session(
-        tools=[fake_tool], capabilities=caps, resources=[res1],
+        tools=[fake_tool],
+        capabilities=caps,
+        resources=[res1],
     )
 
     registry = MCPRegistry()
@@ -792,7 +817,9 @@ async def test_refresh_prompts():
     caps.resources = None
     caps.prompts = MagicMock()
     mock_session = _make_mock_session(
-        tools=[fake_tool], capabilities=caps, prompts=[p1],
+        tools=[fake_tool],
+        capabilities=caps,
+        prompts=[p1],
     )
 
     registry = MCPRegistry()
@@ -916,6 +943,7 @@ def test_convert_resource_response_text():
 def test_convert_resource_response_blob():
     """Blob resource content is returned as media attachment."""
     import base64
+
     result = MagicMock()
     item = MagicMock()
     item.text = None
@@ -982,7 +1010,9 @@ async def test_mcp_list_resources_shows_resources(ctx, monkeypatch):
     res = _make_fake_resource("file:///data.csv", "data.csv", "A CSV file", "text/csv")
     cfg = MCPServerConfig(name="data-srv", type="stdio")
     registry.servers["data-srv"] = MCPServerState(
-        config=cfg, status="connected", resources=[res],
+        config=cfg,
+        status="connected",
+        resources=[res],
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
 
@@ -1001,7 +1031,8 @@ async def test_mcp_list_resources_empty(ctx, monkeypatch):
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="empty-srv", type="stdio")
     registry.servers["empty-srv"] = MCPServerState(
-        config=cfg, status="connected",
+        config=cfg,
+        status="connected",
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
 
@@ -1028,7 +1059,9 @@ async def test_mcp_read_resource_success(ctx, monkeypatch):
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="test-srv", type="stdio")
     registry.servers["test-srv"] = MCPServerState(
-        config=cfg, status="connected", session=mock_session,
+        config=cfg,
+        status="connected",
+        session=mock_session,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
 
@@ -1063,7 +1096,9 @@ async def test_mcp_list_prompts_shows_prompts(ctx, monkeypatch):
     prompt = _make_fake_prompt("summarize", "Summarize text", [arg])
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
-        config=cfg, status="connected", prompts=[prompt],
+        config=cfg,
+        status="connected",
+        prompts=[prompt],
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
 
@@ -1092,7 +1127,9 @@ async def test_mcp_get_prompt_success(ctx, monkeypatch):
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
-        config=cfg, status="connected", session=mock_session,
+        config=cfg,
+        status="connected",
+        session=mock_session,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
 
@@ -1136,7 +1173,9 @@ async def test_dispatch_mcp_prompt_command_success(ctx, monkeypatch):
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
-        config=cfg, status="connected", session=mock_session,
+        config=cfg,
+        status="connected",
+        session=mock_session,
         prompts=[prompt],
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1162,7 +1201,9 @@ async def test_dispatch_mcp_prompt_command_missing_required_arg(ctx, monkeypatch
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
-        config=cfg, status="connected", session=AsyncMock(),
+        config=cfg,
+        status="connected",
+        session=AsyncMock(),
         prompts=[prompt],
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1196,7 +1237,9 @@ async def test_dispatch_mcp_prompt_command_unknown_prompt(ctx, monkeypatch):
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
-        config=cfg, status="connected", session=AsyncMock(),
+        config=cfg,
+        status="connected",
+        session=AsyncMock(),
         prompts=[],
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1220,7 +1263,9 @@ def test_format_help_includes_mcp_prompts(monkeypatch):
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
-        config=cfg, status="connected", prompts=[prompt],
+        config=cfg,
+        status="connected",
+        prompts=[prompt],
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
 

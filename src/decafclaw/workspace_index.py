@@ -41,6 +41,7 @@ _main_loop: asyncio.AbstractEventLoop | None = None
 @dataclass
 class WorkspaceIndex:
     """Persisted workspace index structure."""
+
     files: list[str]
     timestamp: float
 
@@ -55,6 +56,7 @@ async def _scan_workspace_files(config: "Config") -> list[str]:
 
     Runs synchronously via asyncio.to_thread to avoid blocking.
     """
+
     def _do_scan():
         workspace_root = config.workspace_path
         if not workspace_root.is_dir():
@@ -69,11 +71,13 @@ async def _scan_workspace_files(config: "Config") -> list[str]:
             pass
 
         # Directories to prune from walk
-        prune_dirs = frozenset({
-            "conversations",
-            ".schedule_last_run",
-            "attachments",
-        })
+        prune_dirs = frozenset(
+            {
+                "conversations",
+                ".schedule_last_run",
+                "attachments",
+            }
+        )
 
         for dirpath, dirnames, filenames in os.walk(workspace_root):
             # Prune hidden, node_modules, and specific top-level dirs
@@ -84,7 +88,8 @@ async def _scan_workspace_files(config: "Config") -> list[str]:
                 pass
 
             dirnames[:] = [
-                d for d in dirnames
+                d
+                for d in dirnames
                 if not d.startswith(".")
                 and d != "node_modules"
                 and (not is_root or d not in prune_dirs)
@@ -122,13 +127,12 @@ async def _load_index_from_disk(config: "Config") -> WorkspaceIndex | None:
         return None
 
     try:
+
         def _do_load():
             with open(index_path) as f:
                 data = json.load(f)
-                return WorkspaceIndex(
-                    files=data.get("files", []),
-                    timestamp=data.get("timestamp", 0.0)
-                )
+                return WorkspaceIndex(files=data.get("files", []), timestamp=data.get("timestamp", 0.0))
+
         return await asyncio.to_thread(_do_load)
     except Exception as e:
         log.warning("Failed to load workspace index from %s: %s", index_path, e)
@@ -212,9 +216,7 @@ def trigger_workspace_index_refresh(config: "Config") -> asyncio.Task | None:
         log.debug("Triggered background workspace index refresh")
     except RuntimeError:
         if _main_loop and _main_loop.is_running():
-            _main_loop.call_soon_threadsafe(
-                lambda: trigger_workspace_index_refresh(config)
-            )
+            _main_loop.call_soon_threadsafe(lambda: trigger_workspace_index_refresh(config))
         else:
             log.warning("Cannot trigger workspace index refresh: no running event loop")
 
@@ -310,6 +312,7 @@ def invalidate_workspace_file_cache(config: "Config | None" = None) -> None:
 
 def make_workspace_index_subscriber(config: "Config"):
     """EventBus subscriber: invalidates workspace index cache on `vault_changed` events."""
+
     async def handle(event: dict) -> None:
         try:
             if event.get("type") == "vault_changed":
@@ -318,4 +321,3 @@ def make_workspace_index_subscriber(config: "Config"):
             log.debug("workspace_index subscriber error: %s", exc)
 
     return handle
-

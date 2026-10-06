@@ -20,21 +20,33 @@ def test_search_no_history(ctx):
 
 
 def test_search_finds_match_in_dir_layout(ctx):
-    _write_dir(ctx.config, "conv-dir", [
-        {"role": "user", "content": "tell me about pelican migration"},
-    ])
+    _write_dir(
+        ctx.config,
+        "conv-dir",
+        [
+            {"role": "user", "content": "tell me about pelican migration"},
+        ],
+    )
     out = tool_conversation_search(ctx, "pelican")
     assert "conv-dir" in out
     assert "pelican migration" in out
 
 
 def test_search_finds_across_multiple_conversations(ctx):
-    _write_dir(ctx.config, "conv-one", [
-        {"role": "user", "content": "osprey sighting"},
-    ])
-    _write_dir(ctx.config, "conv-two", [
-        {"role": "user", "content": "osprey nesting"},
-    ])
+    _write_dir(
+        ctx.config,
+        "conv-one",
+        [
+            {"role": "user", "content": "osprey sighting"},
+        ],
+    )
+    _write_dir(
+        ctx.config,
+        "conv-two",
+        [
+            {"role": "user", "content": "osprey nesting"},
+        ],
+    )
     out = tool_conversation_search(ctx, "osprey")
     assert "conv-one" in out
     assert "conv-two" in out
@@ -42,22 +54,29 @@ def test_search_finds_across_multiple_conversations(ctx):
 
 # --- #535: token-aware matching (plurality / inflection) ---
 
+
 def test_search_matches_across_plural_inflection(ctx):
     """The issue's headline repro: singular seed, plural query."""
-    _write_dir(ctx.config, "conv-embed", [
-        {"role": "user",
-         "content": "I'm planning to switch our embedding provider "
-                    "from OpenAI to Vertex"},
-    ])
+    _write_dir(
+        ctx.config,
+        "conv-embed",
+        [
+            {"role": "user", "content": "I'm planning to switch our embedding provider from OpenAI to Vertex"},
+        ],
+    )
     out = tool_conversation_search(ctx, "embedding providers")
     assert "conv-embed" in out
 
 
 def test_search_matches_ignoring_stopwords_and_plurals(ctx):
     """The acceptance-criteria repro: 'colors I like' -> 'color ... blue'."""
-    _write_dir(ctx.config, "conv-color", [
-        {"role": "user", "content": "My favorite color is blue"},
-    ])
+    _write_dir(
+        ctx.config,
+        "conv-color",
+        [
+            {"role": "user", "content": "My favorite color is blue"},
+        ],
+    )
     out = tool_conversation_search(ctx, "colors I like")
     assert "conv-color" in out
     assert "favorite color is blue" in out
@@ -67,9 +86,13 @@ def test_search_preserves_midword_substring_match(ctx):
     """Zero regression: a mid-word substring query still matches. Token
     stemming alone would miss 'config' -> 'configuration'; the substring
     branch must keep it working."""
-    _write_dir(ctx.config, "conv-cfg", [
-        {"role": "user", "content": "the configuration was wrong"},
-    ])
+    _write_dir(
+        ctx.config,
+        "conv-cfg",
+        [
+            {"role": "user", "content": "the configuration was wrong"},
+        ],
+    )
     out = tool_conversation_search(ctx, "config")
     assert "conv-cfg" in out
 
@@ -77,12 +100,20 @@ def test_search_preserves_midword_substring_match(ctx):
 def test_search_ranks_higher_overlap_first(ctx):
     """A message overlapping more query tokens should surface before one
     overlapping fewer."""
-    _write_dir(ctx.config, "conv-weak", [
-        {"role": "user", "content": "we discussed the embedding format"},
-    ])
-    _write_dir(ctx.config, "conv-strong", [
-        {"role": "user", "content": "we should switch embedding providers soon"},
-    ])
+    _write_dir(
+        ctx.config,
+        "conv-weak",
+        [
+            {"role": "user", "content": "we discussed the embedding format"},
+        ],
+    )
+    _write_dir(
+        ctx.config,
+        "conv-strong",
+        [
+            {"role": "user", "content": "we should switch embedding providers soon"},
+        ],
+    )
     out = tool_conversation_search(ctx, "switch embedding providers")
     assert "conv-strong" in out
     assert "conv-weak" in out
@@ -92,9 +123,7 @@ def test_search_ranks_higher_overlap_first(ctx):
 def test_search_caps_results_at_ten_keeping_earliest_on_ties(ctx):
     """More than _MAX_RESULTS matches with equal score: exactly 10 come back,
     and equal-score ties keep the earliest messages (bounded top-k heap)."""
-    _write_dir(ctx.config, "conv-many", [
-        {"role": "user", "content": f"osprey note {i}"} for i in range(12)
-    ])
+    _write_dir(ctx.config, "conv-many", [{"role": "user", "content": f"osprey note {i}"} for i in range(12)])
     out = tool_conversation_search(ctx, "osprey")
     assert "Found 10 matching" in out
     for i in range(10):
@@ -105,8 +134,12 @@ def test_search_caps_results_at_ten_keeping_earliest_on_ties(ctx):
 
 
 def test_search_no_match_when_no_tokens_overlap(ctx):
-    _write_dir(ctx.config, "conv-x", [
-        {"role": "user", "content": "the weather is sunny today"},
-    ])
+    _write_dir(
+        ctx.config,
+        "conv-x",
+        [
+            {"role": "user", "content": "the weather is sunny today"},
+        ],
+    )
     out = tool_conversation_search(ctx, "quantum chromodynamics")
     assert "No conversation history found" in out

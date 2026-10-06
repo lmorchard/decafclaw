@@ -1,4 +1,5 @@
 """Tests for the rss-ingest fetch_feeds pure logic (importlib-loaded)."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -8,9 +9,7 @@ from pathlib import Path
 import pytest
 
 _THIS_DIR = Path(__file__).parent
-_spec = importlib.util.spec_from_file_location(
-    "decafclaw_contrib_rss_fetch_feeds", _THIS_DIR / "fetch_feeds.py"
-)
+_spec = importlib.util.spec_from_file_location("decafclaw_contrib_rss_fetch_feeds", _THIS_DIR / "fetch_feeds.py")
 assert _spec is not None and _spec.loader is not None
 ff = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ff)
@@ -19,18 +18,26 @@ UTC = timezone.utc
 
 
 def _entry(guid, published, feed_name="Blog", title="t", link="http://x/1", summary="s"):
-    return {"guid": guid, "title": title, "link": link,
-            "published": published, "summary": summary, "feed_name": feed_name}
+    return {
+        "guid": guid,
+        "title": title,
+        "link": link,
+        "published": published,
+        "summary": summary,
+        "feed_name": feed_name,
+    }
 
 
 def test_parse_feeds_txt_handles_comments_blanks_and_names():
-    text = "\n".join([
-        "# a comment",
-        "",
-        "https://a.example/feed.xml",
-        "Simon|https://b.example/atom.xml",
-        "   ",
-    ])
+    text = "\n".join(
+        [
+            "# a comment",
+            "",
+            "https://a.example/feed.xml",
+            "Simon|https://b.example/atom.xml",
+            "   ",
+        ]
+    )
     assert ff.parse_feeds_txt(text) == [
         ("https://a.example/feed.xml", None),
         ("https://b.example/atom.xml", "Simon"),
@@ -48,7 +55,7 @@ def test_select_new_entries_first_run_uses_24h_window():
 def test_select_new_entries_filters_by_last_published():
     now = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
     state = {"last_published": "2026-07-23T06:00:00+00:00", "seen_guids": []}
-    older = _entry("g1", now - timedelta(hours=12))   # before last_published
+    older = _entry("g1", now - timedelta(hours=12))  # before last_published
     newer = _entry("g2", now - timedelta(hours=1))
     out = ff.select_new_entries([older, newer], state, now)
     assert [e["guid"] for e in out] == ["g2"]
@@ -70,7 +77,7 @@ def test_select_new_entries_emits_same_timestamp_new_guid():
     ts = datetime(2026, 7, 23, 6, 0, tzinfo=UTC)
     state = {"last_published": ts.isoformat(), "seen_guids": ["already"]}
     same_seen = _entry("already", ts)  # same ts, already emitted → dropped
-    same_new = _entry("fresh", ts)     # same ts, NEW guid → must emit
+    same_new = _entry("fresh", ts)  # same ts, NEW guid → must emit
     out = ff.select_new_entries([same_seen, same_new], state, now)
     assert [e["guid"] for e in out] == ["fresh"]
 
@@ -109,8 +116,7 @@ def test_cmd_feeds_remove_before_any_add_does_not_crash(tmp_path, monkeypatch):
 def test_save_state_caps_seen_guids(tmp_path):
     p = tmp_path / "state.json"
     guids = [f"g{i}" for i in range(300)]
-    ff.save_state(p, {"feed": {"last_published": "2026-07-23T00:00:00+00:00",
-                               "seen_guids": guids}}, guid_cap=200)
+    ff.save_state(p, {"feed": {"last_published": "2026-07-23T00:00:00+00:00", "seen_guids": guids}}, guid_cap=200)
     loaded = ff.load_state(p)
     assert len(loaded["feed"]["seen_guids"]) == 200
     assert loaded["feed"]["seen_guids"][-1] == "g299"  # keeps most recent

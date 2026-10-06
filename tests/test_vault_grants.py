@@ -51,33 +51,31 @@ class TestNormalizeFolder:
 
     def test_warn_on_invalid_logs_for_non_empty(self, caplog):
         import logging
+
         with caplog.at_level(logging.WARNING, logger="decafclaw.skills.vault._grants"):
             assert _grants.normalize_folder("../etc", warn_on_invalid=True) == ""
-        assert any("Skipping invalid vault folder entry" in r.message
-                   for r in caplog.records)
+        assert any("Skipping invalid vault folder entry" in r.message for r in caplog.records)
 
     def test_warn_on_invalid_silent_for_empty(self, caplog):
         import logging
+
         with caplog.at_level(logging.WARNING, logger="decafclaw.skills.vault._grants"):
             assert _grants.normalize_folder("", warn_on_invalid=True) == ""
             assert _grants.normalize_folder("   ", warn_on_invalid=True) == ""
-        assert not any("Skipping invalid vault folder entry" in r.message
-                       for r in caplog.records)
+        assert not any("Skipping invalid vault folder entry" in r.message for r in caplog.records)
 
     def test_warn_off_silent_for_invalid(self, caplog):
         import logging
+
         with caplog.at_level(logging.WARNING, logger="decafclaw.skills.vault._grants"):
             assert _grants.normalize_folder("../etc") == ""
-        assert not any("Skipping invalid vault folder entry" in r.message
-                       for r in caplog.records)
+        assert not any("Skipping invalid vault folder entry" in r.message for r in caplog.records)
 
 
 class TestGrantsSidecarPath:
     def test_basic(self, grants_config):
         path = _grants._grants_sidecar_path(grants_config, "abc123")
-        expected = (
-            grants_config.workspace_path / "conversations" / "abc123" / "vault_grants.json"
-        )
+        expected = grants_config.workspace_path / "conversations" / "abc123" / "vault_grants.json"
         assert path == expected.resolve()
 
     def test_strips_path_traversal_in_conv_id(self, grants_config):
@@ -160,9 +158,13 @@ class TestReadAddGrants:
         """
         path = _grants._grants_sidecar_path(grants_config, "manual")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
-            "folders": ["", "..", "../escape", "good/", 42, None],
-        }))
+        path.write_text(
+            json.dumps(
+                {
+                    "folders": ["", "..", "../escape", "good/", 42, None],
+                }
+            )
+        )
         assert _grants.read_grants(grants_config, "manual") == {"good/"}
 
     def test_atomic_write_no_partial_tmp(self, grants_config):

@@ -4,6 +4,7 @@
 Source of truth: src/decafclaw/web/message_types.json
 Run via: make gen-message-types
 """
+
 from __future__ import annotations
 
 import json
@@ -54,11 +55,11 @@ def sorted_messages(data: dict) -> list[tuple[str, dict]]:
 
 
 _SCALAR_TYPES = {
-    "string":  ("str", "string"),
-    "number":  ("int", "number"),
+    "string": ("str", "string"),
+    "number": ("int", "number"),
     "boolean": ("bool", "boolean"),
-    "object":  ("dict[str, object]", "Record<string, unknown>"),
-    "null":    ("None", "null"),
+    "object": ("dict[str, object]", "Record<string, unknown>"),
+    "null": ("None", "null"),
 }
 
 
@@ -83,10 +84,7 @@ def _interface_name(message_name: str, direction: str) -> str:
     elif direction == "client_to_server":
         prefix = "Cli"
     else:
-        raise ValueError(
-            f"_interface_name: unsupported direction {direction!r} for "
-            f"message {message_name!r}"
-        )
+        raise ValueError(f"_interface_name: unsupported direction {direction!r} for message {message_name!r}")
     return prefix + "".join(parts)
 
 
@@ -108,7 +106,7 @@ def parse_field_type(s: str) -> tuple[str, str, bool]:
         s = s[:-1]
 
     if s.startswith("array of "):
-        elem = s[len("array of "):]
+        elem = s[len("array of ") :]
         # Array element types are explicit (not derived from _SCALAR_TYPES) —
         # current manifest only uses arrays of string and object. Add new
         # element types here AND to _SCALAR_TYPES if scalar support is needed.
@@ -198,7 +196,7 @@ def render_python_typed(data: dict) -> str:
         # correctly. Pyright treats StrEnum members as enum-member literals,
         # not as `str` literals, so the latter would force every call site
         # to be rewritten with bare strings.
-        out.append(f'    type: Literal[WSMessageType.{name.upper()}]')
+        out.append(f"    type: Literal[WSMessageType.{name.upper()}]")
         for fname, ftype in entry["fields"].items():
             py_base, _, required = parse_field_type(ftype)
             if required:
@@ -314,9 +312,7 @@ def render_doc(data: dict) -> str:
         ("Bidirectional", "bidirectional"),
     )
     for heading, direction in sections:
-        in_dir = sorted(
-            (n, e) for n, e in data["messages"].items() if e["direction"] == direction
-        )
+        in_dir = sorted((n, e) for n, e in data["messages"].items() if e["direction"] == direction)
         if not in_dir:
             continue
         out.append(f"## {heading}")

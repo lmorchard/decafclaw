@@ -6,6 +6,7 @@ from decafclaw.media import ToolResult
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
+
 async def tool_friction_analyze(ctx: "Context") -> ToolResult:
     """Scan recent archives for repeated user corrections and return proposed AGENT.md additions."""
     themes = await analyze_friction(ctx)

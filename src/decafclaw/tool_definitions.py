@@ -72,13 +72,9 @@ def refresh_dynamic_tools(ctx: "Context") -> None:
             ctx.tools.dynamic_provider_names[skill_name] = set()
 
     # Remove all dynamic-provider tools (old + new names) from extra
-    ctx.tools.extra = {
-        name: fn for name, fn in ctx.tools.extra.items()
-        if name not in names_to_remove
-    }
+    ctx.tools.extra = {name: fn for name, fn in ctx.tools.extra.items() if name not in names_to_remove}
     ctx.tools.extra_definitions = [
-        td for td in ctx.tools.extra_definitions
-        if td.get("function", {}).get("name") not in names_to_remove
+        td for td in ctx.tools.extra_definitions if td.get("function", {}).get("name") not in names_to_remove
     ]
 
     # Re-add the current turn's tools from each provider
@@ -111,6 +107,7 @@ def collect_all_tool_defs(ctx: "Context") -> list:
             if skill_info.has_native_tools and grants_capability(skill_info):
                 try:
                     from .tools.skill_tools import _load_native_tools
+
                     _, tool_defs, _ = _load_native_tools(skill_info)
                     _cached.extend(tool_defs)
                 except Exception as e:
@@ -125,6 +122,7 @@ def collect_all_tool_defs(ctx: "Context") -> list:
             preloaded_names.add(name)
 
     from .mcp_client import get_registry
+
     mcp_registry = get_registry()
     if mcp_registry:
         all_tools = all_tools + mcp_registry.get_tool_definitions()
@@ -185,14 +183,14 @@ def build_tool_list(ctx: "Context") -> tuple[list, str | None]:
     all_defs = collect_all_tool_defs(ctx)
     fetched = get_fetched_tools(ctx)
     # Skill tools (from activated skills) should never be deferred
-    skill_tool_names = {
-        td.get("function", {}).get("name", "")
-        for td in ctx.tools.extra_definitions
-    }
+    skill_tool_names = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions}
     # Pre-emptive matches populated by ContextComposer at turn start;
     # reused across iterations so mid-turn reclassification stays consistent.
     active, deferred = classify_tools(
-        all_defs, ctx.config, fetched, skill_tool_names,
+        all_defs,
+        ctx.config,
+        fetched,
+        skill_tool_names,
         preempt_matches=ctx.tools.preempt_matches,
     )
 
@@ -201,24 +199,12 @@ def build_tool_list(ctx: "Context") -> tuple[list, str | None]:
     disallowed = ctx.tools.disallowed or set()
 
     if allowed is not None:
-        active = [
-            t for t in active
-            if t.get("function", {}).get("name") in allowed
-        ]
-        deferred = [
-            t for t in deferred
-            if t.get("function", {}).get("name") in allowed
-        ]
+        active = [t for t in active if t.get("function", {}).get("name") in allowed]
+        deferred = [t for t in deferred if t.get("function", {}).get("name") in allowed]
 
     if disallowed:
-        active = [
-            t for t in active
-            if t.get("function", {}).get("name") not in disallowed
-        ]
-        deferred = [
-            t for t in deferred
-            if t.get("function", {}).get("name") not in disallowed
-        ]
+        active = [t for t in active if t.get("function", {}).get("name") not in disallowed]
+        deferred = [t for t in deferred if t.get("function", {}).get("name") not in disallowed]
 
     if not deferred:
         return active, None

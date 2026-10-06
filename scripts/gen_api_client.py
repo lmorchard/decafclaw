@@ -39,17 +39,25 @@ def add_discard_overload(service: Path, method_name: str, verb: str, url: str) -
     source = service.read_text()
     # The generator puts zero-argument signatures on one line.
     source = source.replace(f"public static {method_name}():", f"public static {method_name}(\n    ):")
-    pattern = (rf"    public static {re.escape(method_name)}\(\n"
-               r"(?P<parameters>.*?)    \): CancelablePromise<(?P<response>[^>]+)> \{")
+    pattern = (
+        rf"    public static {re.escape(method_name)}\(\n"
+        r"(?P<parameters>.*?)    \): CancelablePromise<(?P<response>[^>]+)> \{"
+    )
 
     def overload(match: re.Match) -> str:
         method = f"    public static {method_name}(\n"
         parameters = match["parameters"]
         response = match["response"]
         return (
-            method + parameters + f"    ): CancelablePromise<{response}>;\n"
-            + method + parameters + "        discardResponse: true,\n    ): CancelablePromise<void>;\n"
-            + method + parameters + "        discardResponse = false,\n"
+            method
+            + parameters
+            + f"    ): CancelablePromise<{response}>;\n"
+            + method
+            + parameters
+            + "        discardResponse: true,\n    ): CancelablePromise<void>;\n"
+            + method
+            + parameters
+            + "        discardResponse = false,\n"
             + f"    ): CancelablePromise<{response} | void> {{"
         )
 
@@ -145,9 +153,12 @@ def dump_openapi():
     static = Path("src/decafclaw/web/static")
     cmd = [
         str(static / "node_modules/.bin/openapi"),
-        "--input", "openapi.json",
-        "--output", "src/decafclaw/web/static/lib/api-client",
-        "--client", "fetch"
+        "--input",
+        "openapi.json",
+        "--output",
+        "src/decafclaw/web/static/lib/api-client",
+        "--client",
+        "fetch",
     ]
     subprocess.run(cmd, check=True)
     repair_arbitrary_json_types(static)
@@ -194,12 +205,18 @@ def dump_openapi():
     shutil.copyfile("scripts/sticky_api_request.ts", core / "request.ts")
     # Bundle only the generated runtime. The adjacent index.ts preserves
     # response types for checkJs callers importing index.js.
-    subprocess.run([
-        str(static / "node_modules/.bin/esbuild"),
-        str(static / "lib/api-client/index.ts"),
-        "--bundle", "--format=esm", "--platform=browser", "--target=es2022",
-        "--outfile=" + str(static / "lib/api-client/index.js"),
-    ], check=True)
+    subprocess.run(
+        [
+            str(static / "node_modules/.bin/esbuild"),
+            str(static / "lib/api-client/index.ts"),
+            "--bundle",
+            "--format=esm",
+            "--platform=browser",
+            "--target=es2022",
+            "--outfile=" + str(static / "lib/api-client/index.js"),
+        ],
+        check=True,
+    )
 
 
 if __name__ == "__main__":

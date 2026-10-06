@@ -51,9 +51,9 @@ def response_delta(first: str, final: str) -> tuple[int, float]:
     return char_delta, round(overlap, 4)
 
 
-def classify_outcome(*, first_response: str | None, last_error: str,
-                     retry_count: int, exhausted: bool,
-                     final_content: str) -> str | None:
+def classify_outcome(
+    *, first_response: str | None, last_error: str, retry_count: int, exhausted: bool, final_content: str
+) -> str | None:
     """Decide the outcome bucket for a judge-eligible turn.
 
     Returns ``None`` when no row should be emitted (eligible turn that never
@@ -101,6 +101,7 @@ def append_record(config, record: dict) -> None:
 
 def make_reflection_metrics_subscriber(config) -> Callable[[dict], Awaitable[None]]:
     """EventBus subscriber: records each ``reflection_turn`` event. Fail-open."""
+
     async def handle(event: dict) -> None:
         try:
             if event.get("type") != "reflection_turn":
@@ -143,8 +144,7 @@ def aggregate(records: list[dict]) -> dict:
     for r in records:
         buckets[r.get("outcome", "unknown")] += 1
         total_retries += r.get("retry_count", 0)
-        total_judge_tokens += (r.get("judge_prompt_tokens", 0)
-                               + r.get("judge_completion_tokens", 0))
+        total_judge_tokens += r.get("judge_prompt_tokens", 0) + r.get("judge_completion_tokens", 0)
     return {
         "total_turns": n,
         "buckets": dict(buckets),
@@ -161,12 +161,10 @@ def format_stats(stats: dict) -> str:
     lines.append(f"Turns recorded: {stats['total_turns']}")
     lines.append("")
     lines.append("Outcome buckets:")
-    for bucket in ("passed_first", "passed_after_retry", "loop_exhausted",
-                   "errored", "skipped_empty"):
+    for bucket in ("passed_first", "passed_after_retry", "loop_exhausted", "errored", "skipped_empty"):
         lines.append(f"  {bucket:<20} {stats['buckets'].get(bucket, 0)}")
     for other, count in sorted(stats["buckets"].items()):
-        if other not in ("passed_first", "passed_after_retry", "loop_exhausted",
-                         "errored", "skipped_empty"):
+        if other not in ("passed_first", "passed_after_retry", "loop_exhausted", "errored", "skipped_empty"):
             lines.append(f"  {other:<20} {count}")
     lines.append("")
     lines.append(f"pass-first rate:     {stats['pass_first_rate'] * 100:.1f}%  (pure overhead)")
@@ -183,6 +181,7 @@ def build_stats_report(config) -> str:
 
 def main() -> None:
     from .config import load_config
+
     config = load_config()
     print(build_stats_report(config))
 

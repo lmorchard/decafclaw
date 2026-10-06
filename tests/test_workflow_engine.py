@@ -7,8 +7,7 @@ from decafclaw.workflow.journal import Journal, fingerprint
 
 
 def _ctx(tmp_path):
-    return SimpleNamespace(config=SimpleNamespace(workspace_path=tmp_path),
-                           conv_id="convE")
+    return SimpleNamespace(config=SimpleNamespace(workspace_path=tmp_path), conv_id="convE")
 
 
 @pytest.mark.asyncio

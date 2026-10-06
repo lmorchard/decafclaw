@@ -131,10 +131,12 @@ class TestAdapterHandler:
         mm_client = AsyncMock()
         handler = make_mattermost_dm_adapter(config, mm_client)
 
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="high", title="Alert").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="high", title="Alert").to_dict(),
+            }
+        )
         # _deliver runs in a create_task — let it flush
         await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -161,10 +163,12 @@ class TestAdapterHandler:
         mm_client = AsyncMock()
         handler = make_mattermost_dm_adapter(config, mm_client)
 
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="high").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="high").to_dict(),
+            }
+        )
         await asyncio.sleep(0)
         mm_client.post_direct_message.assert_not_called()
 
@@ -174,10 +178,12 @@ class TestAdapterHandler:
         mm_client = AsyncMock()
         handler = make_mattermost_dm_adapter(config, mm_client)
 
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="high").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="high").to_dict(),
+            }
+        )
         await asyncio.sleep(0)
         mm_client.post_direct_message.assert_not_called()
 
@@ -188,18 +194,22 @@ class TestAdapterHandler:
         handler = make_mattermost_dm_adapter(config, mm_client)
 
         # normal < high — should be filtered out
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="normal").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="normal").to_dict(),
+            }
+        )
         await asyncio.sleep(0)
         mm_client.post_direct_message.assert_not_called()
 
         # high >= high — should pass through
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="high").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="high").to_dict(),
+            }
+        )
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         mm_client.post_direct_message.assert_awaited_once()
@@ -212,17 +222,18 @@ class TestAdapterHandler:
         handler = make_mattermost_dm_adapter(config, mm_client)
 
         # Should not raise from the handler
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="high").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="high").to_dict(),
+            }
+        )
         # Let _deliver task run and fail
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
         # Warning was logged; no exception bubbled up
-        assert any("Mattermost DM delivery failed" in r.message
-                   for r in caplog.records)
+        assert any("Mattermost DM delivery failed" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_unknown_recipient_logs_warning(self, config, caplog):
@@ -230,6 +241,7 @@ class TestAdapterHandler:
         don't let that be a silent failure.
         """
         import logging
+
         caplog.set_level(logging.WARNING)
         _enabled_config(config, recipient="ghost", min_priority="normal")
         mm_client = AsyncMock()
@@ -237,15 +249,16 @@ class TestAdapterHandler:
         mm_client.post_direct_message.return_value = None
         handler = make_mattermost_dm_adapter(config, mm_client)
 
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="high").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="high").to_dict(),
+            }
+        )
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
-        assert any("recipient 'ghost' not found" in r.message
-                   for r in caplog.records)
+        assert any("recipient 'ghost' not found" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_config_reread_each_event(self, config):
@@ -262,20 +275,24 @@ class TestAdapterHandler:
         handler = make_mattermost_dm_adapter(config, mm_client)
 
         # First event: enabled → delivered
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="high").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="high").to_dict(),
+            }
+        )
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert mm_client.post_direct_message.await_count == 1
 
         # Flip the config; second event should be skipped
         config.notifications.channels.mattermost_dm.enabled = False
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="high").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="high").to_dict(),
+            }
+        )
         await asyncio.sleep(0)
         assert mm_client.post_direct_message.await_count == 1  # unchanged
 
@@ -293,7 +310,11 @@ class TestEndToEnd:
         bus.subscribe(make_mattermost_dm_adapter(config, mm_client))
 
         await notifs.notify(
-            config, bus, category="test", title="Ping", priority="high",
+            config,
+            bus,
+            category="test",
+            title="Ping",
+            priority="high",
         )
         await asyncio.sleep(0)
         await asyncio.sleep(0)

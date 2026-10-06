@@ -66,8 +66,7 @@ def _write_workspace_skill(config, name: str) -> str:
     skill_dir = config.workspace_path / "skills" / name
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
-        f"---\nname: {name}\ndescription: A workspace skill for testing.\n---\n\n"
-        f"Body of {name}.\n"
+        f"---\nname: {name}\ndescription: A workspace skill for testing.\n---\n\nBody of {name}.\n"
     )
     return name
 
@@ -154,8 +153,7 @@ async def test_unattended_workspace_skill_denied_without_prompting(ctx, config):
             f"it (activated={sorted(ctx.skills.activated)}): {text[:200]!r}"
         )
         assert name not in ctx.skills.activated, (
-            f"unattended turn (task_mode={task_mode!r}, user_id={user_id!r}) "
-            f"marked workspace skill {name!r} active"
+            f"unattended turn (task_mode={task_mode!r}, user_id={user_id!r}) marked workspace skill {name!r} active"
         )
         assert len(spy.calls) == 0, (
             f"unattended turn (task_mode={task_mode!r}, user_id={user_id!r}) "
@@ -176,12 +174,9 @@ async def test_unattended_shell_allows_matching_pattern(ctx, config):
     result = await check_shell_approval(ctx, "ls -al")
 
     assert result.get("approved"), (
-        f"command matching persisted allow pattern 'ls -al' was not "
-        f"approved on an unattended turn: {result!r}"
+        f"command matching persisted allow pattern 'ls -al' was not approved on an unattended turn: {result!r}"
     )
-    assert len(spy.calls) == 0, (
-        f"an allowlisted command should not prompt; got {len(spy.calls)} prompt(s)"
-    )
+    assert len(spy.calls) == 0, f"an allowlisted command should not prompt; got {len(spy.calls)} prompt(s)"
 
 
 @pytest.mark.asyncio
@@ -189,10 +184,7 @@ async def test_unattended_bundled_skill_still_activates(ctx, config):
     """Bundled-tier skills are trusted by placement and still activate on an
     unattended turn with no prompt and no denial."""
     config.discovered_skills = discover_skills(config)
-    candidates = [
-        s for s in config.discovered_skills
-        if s.trust_tier == "bundled" and not s.has_native_tools
-    ]
+    candidates = [s for s in config.discovered_skills if s.trust_tier == "bundled" and not s.has_native_tools]
     assert candidates, "expected at least one bundled text-only skill to be discovered"
     skill = candidates[0]
     assert skill.trust_tier == "bundled"
@@ -201,16 +193,12 @@ async def test_unattended_bundled_skill_still_activates(ctx, config):
     result = await tool_activate_skill(ctx, name=skill.name)
     text = _text(result)
 
-    assert DENIAL_MARKER not in text, (
-        f"bundled skill {skill.name!r} was denied on an unattended turn: {text[:200]!r}"
-    )
+    assert DENIAL_MARKER not in text, f"bundled skill {skill.name!r} was denied on an unattended turn: {text[:200]!r}"
     assert skill.name in ctx.skills.activated, (
-        f"bundled skill {skill.name!r} did not activate on an unattended turn: "
-        f"{text[:200]!r}"
+        f"bundled skill {skill.name!r} did not activate on an unattended turn: {text[:200]!r}"
     )
     assert len(spy.calls) == 0, (
-        f"bundled skill {skill.name!r} prompted for confirmation "
-        f"({len(spy.calls)} prompt(s)) on an unattended turn"
+        f"bundled skill {skill.name!r} prompted for confirmation ({len(spy.calls)} prompt(s)) on an unattended turn"
     )
 
 
@@ -221,8 +209,7 @@ async def test_always_grant_authorizes_unattended(ctx, config):
     name = _write_workspace_skill(config, "ws-granted")
     info = _discover(config, name)
     assert info.trust_tier == "workspace", (
-        f"fixture skill {name!r} has trust_tier {info.trust_tier!r}, "
-        f"expected 'workspace'"
+        f"fixture skill {name!r} has trust_tier {info.trust_tier!r}, expected 'workspace'"
     )
     perms_path = config.agent_path / "skill_permissions.json"
     perms_path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,16 +220,13 @@ async def test_always_grant_authorizes_unattended(ctx, config):
     text = _text(result)
 
     assert DENIAL_MARKER not in text, (
-        f"skill {name!r} with an 'always' grant was denied on an unattended "
-        f"turn: {text[:200]!r}"
+        f"skill {name!r} with an 'always' grant was denied on an unattended turn: {text[:200]!r}"
     )
     assert name in ctx.skills.activated, (
-        f"skill {name!r} with an 'always' grant did not activate on an "
-        f"unattended turn: {text[:200]!r}"
+        f"skill {name!r} with an 'always' grant did not activate on an unattended turn: {text[:200]!r}"
     )
     assert len(spy.calls) == 0, (
-        f"skill {name!r} with an 'always' grant prompted "
-        f"({len(spy.calls)} prompt(s)) on an unattended turn"
+        f"skill {name!r} with an 'always' grant prompted ({len(spy.calls)} prompt(s)) on an unattended turn"
     )
 
 
@@ -258,12 +242,9 @@ async def test_interactive_still_prompts(ctx):
     result = await check_shell_approval(ctx, UNSAFE_COMMAND)
 
     assert len(spy.calls) == 1, (
-        f"interactive turn issued {len(spy.calls)} confirmation prompt(s) for "
-        f"{UNSAFE_COMMAND!r}; expected exactly 1"
+        f"interactive turn issued {len(spy.calls)} confirmation prompt(s) for {UNSAFE_COMMAND!r}; expected exactly 1"
     )
-    assert result.get("approved"), (
-        f"interactive turn did not honor the user's approval: {result!r}"
-    )
+    assert result.get("approved"), f"interactive turn did not honor the user's approval: {result!r}"
 
 
 @pytest.mark.asyncio
@@ -284,12 +265,9 @@ async def test_child_agent_of_unattended_turn_denies_without_prompting(ctx):
 
         result = await check_shell_approval(child_ctx, UNSAFE_COMMAND)
         assert len(spy.calls) == 0, (
-            f"child of unattended turn (task_mode={task_mode!r}) issued "
-            f"{len(spy.calls)} confirmation prompt(s)"
+            f"child of unattended turn (task_mode={task_mode!r}) issued {len(spy.calls)} confirmation prompt(s)"
         )
-        assert not result.get("approved"), (
-            f"child of unattended turn did not deny {UNSAFE_COMMAND!r}: {result!r}"
-        )
+        assert not result.get("approved"), f"child of unattended turn did not deny {UNSAFE_COMMAND!r}: {result!r}"
 
 
 @pytest.mark.asyncio
@@ -310,10 +288,5 @@ async def test_child_agent_of_interactive_turn_still_prompts(ctx):
     assert not child_ctx.is_unattended, "child of interactive parent must not be unattended"
 
     result = await check_shell_approval(child_ctx, UNSAFE_COMMAND)
-    assert len(spy.calls) == 1, (
-        f"child of interactive turn issued {len(spy.calls)} confirmation prompt(s); expected 1"
-    )
-    assert result.get("approved"), (
-        f"child of interactive turn did not honor approval: {result!r}"
-    )
-
+    assert len(spy.calls) == 1, f"child of interactive turn issued {len(spy.calls)} confirmation prompt(s); expected 1"
+    assert result.get("approved"), f"child of interactive turn did not honor approval: {result!r}"

@@ -9,8 +9,7 @@ from contrib.skills.claude_code.tools import _capture_git_diff, _get_git_head
 
 def _git(cwd, *args):
     """Run a git command in the given directory."""
-    subprocess.run(["git", "-C", str(cwd)] + list(args),
-                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(cwd)] + list(args), check=True, capture_output=True)
 
 
 def _init_repo(tmp_path):

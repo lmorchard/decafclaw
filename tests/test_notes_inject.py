@@ -61,8 +61,7 @@ class TestComposeNotes:
     def test_respects_context_max_entries(self, ctx):
         ctx.config.notes.context_max_entries = 3
         for i in range(10):
-            append_note(ctx.config, ctx.conv_id, f"note-{i}",
-                        now=f"2026-01-{i+1:02d}T00:00:00Z")
+            append_note(ctx.config, ctx.conv_id, f"note-{i}", now=f"2026-01-{i + 1:02d}T00:00:00Z")
         composer = ContextComposer()
         msgs, entry = composer._compose_notes(ctx, ctx.config, ComposerMode.INTERACTIVE)
         assert entry.items_included == 3

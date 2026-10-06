@@ -1,4 +1,3 @@
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -58,10 +57,7 @@ def stub_llm(monkeypatch):
 @pytest.fixture(autouse=True)
 def guard_chat_completions(monkeypatch, request):
     """Guard chat completion seams against unstubbed real network calls in tests."""
-    if (
-        request.node.get_closest_marker("live_llm")
-        or request.node.get_closest_marker("integration")
-    ):
+    if request.node.get_closest_marker("live_llm") or request.node.get_closest_marker("integration"):
         return
 
     if "stub_llm" in request.fixturenames:
@@ -91,12 +87,17 @@ def mock_friction_llm(request):
         with patch("decafclaw.friction.call_structured", new_callable=AsyncMock) as mock_call_structured:
             mock_call_structured.return_value = {
                 "themes": [
-                    {"theme": "Use standard logger instead of print", "proposed_addition": "Always use the standard logger, never use print.", "occurrences": 3}
+                    {
+                        "theme": "Use standard logger instead of print",
+                        "proposed_addition": "Always use the standard logger, never use print.",
+                        "occurrences": 3,
+                    }
                 ]
             }
             yield mock_call_structured
     else:
         yield
+
 
 @pytest.fixture(autouse=True)
 def reset_otlp_singletons():

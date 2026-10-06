@@ -45,12 +45,14 @@ async def tool_get_attachment(ctx: "Context", filename: str) -> str | ToolResult
         path = match["path"]
         return ToolResult(
             text=f"Image attachment: {filename} ({mime})\n\n![{filename}]({path})",
-            media=[{
-                "type": "file",
-                "filename": filename,
-                "data": b64,
-                "content_type": mime,
-            }],
+            media=[
+                {
+                    "type": "file",
+                    "filename": filename,
+                    "data": b64,
+                    "content_type": mime,
+                }
+            ],
         )
 
     if mime.startswith("text/"):
@@ -60,10 +62,7 @@ async def tool_get_attachment(ctx: "Context", filename: str) -> str | ToolResult
             lines = full_path.read_text().splitlines(keepends=True)
             if len(lines) > max_lines:
                 content = "".join(lines[:max_lines])
-                return (
-                    f"File: {filename} (showing first {max_lines} of "
-                    f"{len(lines)} lines)\n\n{content}"
-                )
+                return f"File: {filename} (showing first {max_lines} of {len(lines)} lines)\n\n{content}"
             return f"File: {filename}\n\n{''.join(lines)}"
         except Exception as e:
             return ToolResult(text=f"[error reading {filename}: {e}]")

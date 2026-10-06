@@ -65,8 +65,7 @@ def read_canvas_state(config, conv_id: str) -> dict:
     try:
         state = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
-        log.warning("Failed to read canvas state for %s; treating as empty",
-                    conv_id, exc_info=True)
+        log.warning("Failed to read canvas state for %s; treating as empty", conv_id, exc_info=True)
         return empty_canvas_state()
     # Phase 3 migration: synthesize next_tab_id from existing tabs if missing.
     if "next_tab_id" not in state:
@@ -103,9 +102,11 @@ def write_canvas_state(config, conv_id: str, state: dict) -> bool:
 # State operation result
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CanvasOpResult:
     """Outcome of a canvas state operation."""
+
     ok: bool
     text: str = ""
     error: str = ""
@@ -115,6 +116,7 @@ class CanvasOpResult:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _humanize(s: str) -> str:
     return s.replace("_", " ").title()
@@ -153,13 +155,15 @@ def _validate_widget_for_canvas(widget_type: str, data: dict) -> str | None:
     return None
 
 
-async def _emit_canvas_update(emit: EmitFn | None,
-                              conv_id: str,
-                              kind: str,
-                              *,
-                              active_tab: str | None,
-                              tab: dict | None = None,
-                              closed_tab_id: str | None = None) -> None:
+async def _emit_canvas_update(
+    emit: EmitFn | None,
+    conv_id: str,
+    kind: str,
+    *,
+    active_tab: str | None,
+    tab: dict | None = None,
+    closed_tab_id: str | None = None,
+) -> None:
     """Publish a canvas_update event for subscribed clients. Fail-open."""
     if emit is None:
         return
@@ -181,10 +185,8 @@ async def _emit_canvas_update(emit: EmitFn | None,
 # Mutation operations
 # ---------------------------------------------------------------------------
 
-async def clear_canvas(config,
-                       conv_id: str,
-                       emit: EmitFn | None = None,
-                       registry=None) -> CanvasOpResult:
+
+async def clear_canvas(config, conv_id: str, emit: EmitFn | None = None, registry=None) -> CanvasOpResult:
     """Remove all canvas tabs; hides the panel.
 
     ``next_tab_id`` is preserved across clears so a closed tab id is never
@@ -215,8 +217,7 @@ async def clear_canvas(config,
     state = empty_canvas_state()
     state["next_tab_id"] = next_id
     if not write_canvas_state(config, conv_id, state):
-        return CanvasOpResult(ok=False,
-                              error="failed to write canvas state to disk")
+        return CanvasOpResult(ok=False, error="failed to write canvas state to disk")
     await _emit_canvas_update(emit, conv_id, "clear", active_tab=None, tab=None)
     return CanvasOpResult(ok=True, text="canvas cleared")
 
@@ -224,6 +225,7 @@ async def clear_canvas(config,
 # ---------------------------------------------------------------------------
 # Tab-aware state operations
 # ---------------------------------------------------------------------------
+
 
 def get_tab(config, conv_id: str, tab_id: str) -> dict | None:
     """Return a specific tab dict by id, or None if not found."""
@@ -234,14 +236,16 @@ def get_tab(config, conv_id: str, tab_id: str) -> dict | None:
     return None
 
 
-async def new_tab(config,
-                  conv_id: str,
-                  widget_type: str,
-                  data: dict,
-                  label: str | None = None,
-                  emit: EmitFn | None = None,
-                  enforce_agent_creatable: bool = True,
-                  enforce_agent_createable: bool | None = None) -> CanvasOpResult:
+async def new_tab(
+    config,
+    conv_id: str,
+    widget_type: str,
+    data: dict,
+    label: str | None = None,
+    emit: EmitFn | None = None,
+    enforce_agent_creatable: bool = True,
+    enforce_agent_createable: bool | None = None,
+) -> CanvasOpResult:
     """Append a new tab and make it active. Returns the new tab_id.
 
     `enforce_agent_creatable` gates the `agent_creatable` widget-descriptor
@@ -259,11 +263,8 @@ async def new_tab(config,
             enforce = enforce_agent_createable
         if enforce:
             descriptor = registry.get(widget_type)
-            if descriptor and not getattr(descriptor, 'agent_creatable', getattr(descriptor, 'agent_createable', True)):
-                return CanvasOpResult(
-                    ok=False,
-                    error=f"widget type '{widget_type}' is not agent_creatable"
-                )
+            if descriptor and not getattr(descriptor, "agent_creatable", getattr(descriptor, "agent_createable", True)):
+                return CanvasOpResult(ok=False, error=f"widget type '{widget_type}' is not agent_creatable")
         data = registry.normalize(widget_type, data)
     state = read_canvas_state(config, conv_id)
     next_n = state.get("next_tab_id", 1)
@@ -279,18 +280,12 @@ async def new_tab(config,
     state["active_tab"] = tab_id
     state["next_tab_id"] = next_n + 1
     if not write_canvas_state(config, conv_id, state):
-        return CanvasOpResult(ok=False,
-                              error="failed to write canvas state to disk")
-    await _emit_canvas_update(emit, conv_id, "new_tab",
-                              active_tab=tab_id, tab=new_tab_dict)
+        return CanvasOpResult(ok=False, error="failed to write canvas state to disk")
+    await _emit_canvas_update(emit, conv_id, "new_tab", active_tab=tab_id, tab=new_tab_dict)
     return CanvasOpResult(ok=True, text="tab created", tab_id=tab_id)
 
 
-async def update_tab(config,
-                     conv_id: str,
-                     tab_id: str,
-                     data: dict,
-                     emit: EmitFn | None = None) -> CanvasOpResult:
+async def update_tab(config, conv_id: str, tab_id: str, data: dict, emit: EmitFn | None = None) -> CanvasOpResult:
     """Replace data of an existing tab; preserves widget_type + label."""
     state = read_canvas_state(config, conv_id)
     for tab in state.get("tabs", []):
@@ -303,20 +298,13 @@ async def update_tab(config,
                 data = registry.normalize(tab["widget_type"], data)
             tab["data"] = data
             if not write_canvas_state(config, conv_id, state):
-                return CanvasOpResult(ok=False,
-                                      error="failed to write canvas state to disk")
-            await _emit_canvas_update(emit, conv_id, "update",
-                                      active_tab=state.get("active_tab"),
-                                      tab=tab)
+                return CanvasOpResult(ok=False, error="failed to write canvas state to disk")
+            await _emit_canvas_update(emit, conv_id, "update", active_tab=state.get("active_tab"), tab=tab)
             return CanvasOpResult(ok=True, text=f"tab {tab_id} updated")
     return CanvasOpResult(ok=False, error=f"tab '{tab_id}' not found")
 
 
-async def close_tab(config,
-                    conv_id: str,
-                    tab_id: str,
-                    emit: EmitFn | None = None,
-                    registry=None) -> CanvasOpResult:
+async def close_tab(config, conv_id: str, tab_id: str, emit: EmitFn | None = None, registry=None) -> CanvasOpResult:
     """Remove a tab. If active, switch to left neighbor (else right; else None).
 
     If the tab is a terminal widget and a ``TerminalRegistry`` is supplied,
@@ -330,8 +318,7 @@ async def close_tab(config,
             try:
                 await registry.kill(session)
             except Exception as exc:
-                log.warning("close_tab: failed to kill terminal session "
-                           "conv=%s tab=%s: %s", conv_id, tab_id, exc)
+                log.warning("close_tab: failed to kill terminal session conv=%s tab=%s: %s", conv_id, tab_id, exc)
     state = read_canvas_state(config, conv_id)
     tabs = state.get("tabs", [])
     idx = next((i for i, t in enumerate(tabs) if t.get("id") == tab_id), -1)
@@ -347,31 +334,20 @@ async def close_tab(config,
         else:
             state["active_tab"] = None
     if not write_canvas_state(config, conv_id, state):
-        return CanvasOpResult(ok=False,
-                              error="failed to write canvas state to disk")
+        return CanvasOpResult(ok=False, error="failed to write canvas state to disk")
     new_active = state.get("active_tab")
-    await _emit_canvas_update(emit, conv_id, "close_tab",
-                              active_tab=new_active,
-                              tab=None,
-                              closed_tab_id=tab_id)
-    text = (f"tab {tab_id} closed"
-            + (f" (active={new_active})" if new_active
-               else " (canvas hidden — no tabs left)"))
+    await _emit_canvas_update(emit, conv_id, "close_tab", active_tab=new_active, tab=None, closed_tab_id=tab_id)
+    text = f"tab {tab_id} closed" + (f" (active={new_active})" if new_active else " (canvas hidden — no tabs left)")
     return CanvasOpResult(ok=True, text=text)
 
 
-async def set_active_tab(config,
-                         conv_id: str,
-                         tab_id: str,
-                         emit: EmitFn | None = None) -> CanvasOpResult:
+async def set_active_tab(config, conv_id: str, tab_id: str, emit: EmitFn | None = None) -> CanvasOpResult:
     """Set the active tab; broadcasts kind='set_active'."""
     state = read_canvas_state(config, conv_id)
     if not any(t.get("id") == tab_id for t in state.get("tabs", [])):
         return CanvasOpResult(ok=False, error=f"tab '{tab_id}' not found")
     state["active_tab"] = tab_id
     if not write_canvas_state(config, conv_id, state):
-        return CanvasOpResult(ok=False,
-                              error="failed to write canvas state to disk")
-    await _emit_canvas_update(emit, conv_id, "set_active",
-                              active_tab=tab_id, tab=None)
+        return CanvasOpResult(ok=False, error="failed to write canvas state to disk")
+    await _emit_canvas_update(emit, conv_id, "set_active", active_tab=tab_id, tab=None)
     return CanvasOpResult(ok=True, text=f"active tab set to {tab_id}")

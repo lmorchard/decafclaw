@@ -14,10 +14,8 @@ from decafclaw.skills.vault.tools import (
 
 def test_semantic_widget_shape():
     results = [
-        {"file_path": "a/b.md", "similarity": 0.987654321,
-         "source_type": "page", "entry_text": "hello world"},
-        {"file_path": "c.md", "similarity": 0.5, "source_type": "journal",
-         "entry_text": "x" * 300},
+        {"file_path": "a/b.md", "similarity": 0.987654321, "source_type": "page", "entry_text": "hello world"},
+        {"file_path": "c.md", "similarity": 0.5, "source_type": "journal", "entry_text": "x" * 300},
     ]
     widget = _semantic_results_widget("hello", results)
     assert widget.widget_type == "data_table"
@@ -56,10 +54,18 @@ class _StubResult(dict):
 
 async def _fake_search_similar_hits(*args, **kwargs):
     return [
-        {"file_path": "projects/widgets.md", "similarity": 0.92,
-         "source_type": "page", "entry_text": "Widgets are rendered…"},
-        {"file_path": "journal/2026-04-20.md", "similarity": 0.71,
-         "source_type": "journal", "entry_text": "Talked about widgets today."},
+        {
+            "file_path": "projects/widgets.md",
+            "similarity": 0.92,
+            "source_type": "page",
+            "entry_text": "Widgets are rendered…",
+        },
+        {
+            "file_path": "journal/2026-04-20.md",
+            "similarity": 0.71,
+            "source_type": "journal",
+            "entry_text": "Talked about widgets today.",
+        },
     ]
 
 
@@ -73,12 +79,12 @@ async def test_vault_search_semantic_emits_widget(config, monkeypatch):
     config.vault_root.mkdir(parents=True, exist_ok=True)
     config.embedding.search_strategy = "semantic"
 
-    monkeypatch.setattr(
-        "decafclaw.embeddings.search_similar", _fake_search_similar_hits)
+    monkeypatch.setattr("decafclaw.embeddings.search_similar", _fake_search_similar_hits)
 
     # Minimal ctx: the tool only uses ctx.config.
     class _Ctx:
         pass
+
     ctx = _Ctx()
     ctx.config = config
 
@@ -91,18 +97,17 @@ async def test_vault_search_semantic_emits_widget(config, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_vault_search_semantic_empty_no_widget_falls_through(
-        config, tmp_path, monkeypatch):
+async def test_vault_search_semantic_empty_no_widget_falls_through(config, tmp_path, monkeypatch):
     """Empty semantic results fall through to the substring path, which
     will return 'No results matching' when the vault is empty, and that
     path does not emit a widget."""
     config.vault_root.mkdir(parents=True, exist_ok=True)
     config.embedding.search_strategy = "semantic"
-    monkeypatch.setattr(
-        "decafclaw.embeddings.search_similar", _fake_search_similar_empty)
+    monkeypatch.setattr("decafclaw.embeddings.search_similar", _fake_search_similar_empty)
 
     class _Ctx:
         pass
+
     ctx = _Ctx()
     ctx.config = config
 
@@ -116,8 +121,7 @@ async def test_vault_search_semantic_empty_no_widget_falls_through(
 
 def test_substring_search_with_hits_emits_widget(config):
     config.vault_root.mkdir(parents=True, exist_ok=True)
-    (config.vault_root / "doc.md").write_text(
-        "# Hello\nwidgets are cool\nmore text here\n")
+    (config.vault_root / "doc.md").write_text("# Hello\nwidgets are cool\nmore text here\n")
     result = _substring_search(config, query="widgets")
     assert result.widget is not None
     data = result.widget.data

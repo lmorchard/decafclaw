@@ -22,7 +22,8 @@ def _enable_email(config, **overrides):
     config.email.smtp_password = "pass"
     config.email.sender_address = "bot@example.com"
     config.email.allowed_recipients = overrides.get(
-        "allowed_recipients", [],
+        "allowed_recipients",
+        [],
     )
     return config
 
@@ -48,7 +49,8 @@ class TestRecipientAllowed:
         This is intentional: allowlist semantics should be strict.
         """
         assert not _recipient_allowed(
-            "carol@sub.example.com", ["@example.com"],
+            "carol@sub.example.com",
+            ["@example.com"],
         )
 
     def test_domain_case_insensitive(self):
@@ -73,12 +75,14 @@ class TestRecipientAllowed:
 class TestAllRecipientsAllowed:
     def test_all_match(self):
         assert _all_recipients_allowed(
-            ["a@x.com", "b@x.com"], ["@x.com"],
+            ["a@x.com", "b@x.com"],
+            ["@x.com"],
         )
 
     def test_one_fails(self):
         assert not _all_recipients_allowed(
-            ["a@x.com", "c@y.com"], ["@x.com"],
+            ["a@x.com", "c@y.com"],
+            ["@x.com"],
         )
 
     def test_empty_recipients(self):
@@ -152,7 +156,10 @@ class TestSendEmailTool:
     async def test_rejects_when_email_disabled(self, ctx):
         ctx.config.email.enabled = False
         result = await tool_send_email(
-            ctx, to="a@x.com", subject="s", body="b",
+            ctx,
+            to="a@x.com",
+            subject="s",
+            body="b",
         )
         assert "not configured" in result.text.lower()
 
@@ -165,7 +172,10 @@ class TestSendEmailTool:
         _enable_email(ctx.config, allowed_recipients=["@x.com"])
         ctx.config.email.sender_address = ""
         result = await tool_send_email(
-            ctx, to="a@x.com", subject="s", body="b",
+            ctx,
+            to="a@x.com",
+            subject="s",
+            body="b",
         )
         assert "not configured" in result.text.lower()
         assert "sender_address" in result.text.lower()
@@ -182,7 +192,10 @@ class TestSendEmailTool:
         _enable_email(ctx.config, allowed_recipients=["@x.com"])
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
             result = await tool_send_email(
-                ctx, to=["a@x.com", "b@x.com"], subject="s", body="b",
+                ctx,
+                to=["a@x.com", "b@x.com"],
+                subject="s",
+                body="b",
             )
         assert "sent" in result.text.lower()
         mock_send.assert_awaited_once()
@@ -194,7 +207,10 @@ class TestSendEmailTool:
         ctx.tools.preapproved_email_recipients = ["@team.com"]
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
             result = await tool_send_email(
-                ctx, to="digest@team.com", subject="s", body="b",
+                ctx,
+                to="digest@team.com",
+                subject="s",
+                body="b",
             )
         assert "sent" in result.text.lower()
         mock_send.assert_awaited_once()
@@ -203,13 +219,15 @@ class TestSendEmailTool:
     async def test_confirmation_required_for_non_allowlisted(self, ctx):
         _enable_email(ctx.config, allowed_recipients=["@safe.com"])
         with (
-            patch("decafclaw.tools.email_tools.request_confirmation",
-                  new_callable=AsyncMock) as mock_confirm,
+            patch("decafclaw.tools.email_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm,
             patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send,
         ):
             mock_confirm.return_value = {"approved": True}
             result = await tool_send_email(
-                ctx, to="random@elsewhere.com", subject="s", body="b",
+                ctx,
+                to="random@elsewhere.com",
+                subject="s",
+                body="b",
             )
         mock_confirm.assert_awaited_once()
         # The confirmation message should include the recipient + subject
@@ -222,13 +240,15 @@ class TestSendEmailTool:
     async def test_confirmation_denied(self, ctx):
         _enable_email(ctx.config, allowed_recipients=[])
         with (
-            patch("decafclaw.tools.email_tools.request_confirmation",
-                  new_callable=AsyncMock) as mock_confirm,
+            patch("decafclaw.tools.email_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm,
             patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send,
         ):
             mock_confirm.return_value = {"approved": False}
             result = await tool_send_email(
-                ctx, to="random@x.com", subject="s", body="b",
+                ctx,
+                to="random@x.com",
+                subject="s",
+                body="b",
             )
         assert "denied" in result.text.lower()
         mock_send.assert_not_called()
@@ -238,14 +258,15 @@ class TestSendEmailTool:
         """If ANY recipient isn't allowlisted, confirm the full batch."""
         _enable_email(ctx.config, allowed_recipients=["@safe.com"])
         with (
-            patch("decafclaw.tools.email_tools.request_confirmation",
-                  new_callable=AsyncMock) as mock_confirm,
+            patch("decafclaw.tools.email_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm,
             patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send,
         ):
             mock_confirm.return_value = {"approved": True}
             await tool_send_email(
-                ctx, to=["ok@safe.com", "unknown@x.com"],
-                subject="s", body="b",
+                ctx,
+                to=["ok@safe.com", "unknown@x.com"],
+                subject="s",
+                body="b",
             )
         mock_confirm.assert_awaited_once()
         mock_send.assert_awaited_once()
@@ -256,7 +277,10 @@ class TestSendEmailTool:
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
             mock_send.side_effect = RuntimeError("smtp down")
             result = await tool_send_email(
-                ctx, to="a@x.com", subject="s", body="b",
+                ctx,
+                to="a@x.com",
+                subject="s",
+                body="b",
             )
         assert "failed" in result.text.lower()
 
@@ -265,7 +289,10 @@ class TestSendEmailTool:
         _enable_email(ctx.config, allowed_recipients=["@x.com"])
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
             result = await tool_send_email(
-                ctx, to="a@x.com", subject="s", body="b",
+                ctx,
+                to="a@x.com",
+                subject="s",
+                body="b",
                 attachments=["/etc/passwd"],
             )
         assert "error" in result.text.lower()

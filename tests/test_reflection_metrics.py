@@ -49,41 +49,59 @@ def test_response_delta_empty_both():
 
 
 def test_classify_passed_first():
-    assert reflection_metrics.classify_outcome(
-        first_response="hi", last_error="", retry_count=0,
-        exhausted=False, final_content="hi") == "passed_first"
+    assert (
+        reflection_metrics.classify_outcome(
+            first_response="hi", last_error="", retry_count=0, exhausted=False, final_content="hi"
+        )
+        == "passed_first"
+    )
 
 
 def test_classify_passed_after_retry():
-    assert reflection_metrics.classify_outcome(
-        first_response="v0", last_error="", retry_count=1,
-        exhausted=False, final_content="v1") == "passed_after_retry"
+    assert (
+        reflection_metrics.classify_outcome(
+            first_response="v0", last_error="", retry_count=1, exhausted=False, final_content="v1"
+        )
+        == "passed_after_retry"
+    )
 
 
 def test_classify_loop_exhausted():
-    assert reflection_metrics.classify_outcome(
-        first_response="v0", last_error="", retry_count=2,
-        exhausted=True, final_content="v2") == "loop_exhausted"
+    assert (
+        reflection_metrics.classify_outcome(
+            first_response="v0", last_error="", retry_count=2, exhausted=True, final_content="v2"
+        )
+        == "loop_exhausted"
+    )
 
 
 def test_classify_errored():
-    assert reflection_metrics.classify_outcome(
-        first_response="v0", last_error="judge boom", retry_count=0,
-        exhausted=False, final_content="v0") == "errored"
+    assert (
+        reflection_metrics.classify_outcome(
+            first_response="v0", last_error="judge boom", retry_count=0, exhausted=False, final_content="v0"
+        )
+        == "errored"
+    )
 
 
 def test_classify_skipped_empty():
-    assert reflection_metrics.classify_outcome(
-        first_response=None, last_error="", retry_count=0,
-        exhausted=False, final_content="") == "skipped_empty"
+    assert (
+        reflection_metrics.classify_outcome(
+            first_response=None, last_error="", retry_count=0, exhausted=False, final_content=""
+        )
+        == "skipped_empty"
+    )
 
 
 def test_classify_none_when_not_evaluated_but_has_content():
     # Eligible but judge never ran and content is non-empty (e.g. end_turn
     # path) → no row.
-    assert reflection_metrics.classify_outcome(
-        first_response=None, last_error="", retry_count=0,
-        exhausted=False, final_content="a real answer") is None
+    assert (
+        reflection_metrics.classify_outcome(
+            first_response=None, last_error="", retry_count=0, exhausted=False, final_content="a real answer"
+        )
+        is None
+    )
 
 
 # -- subscriber writes a record ------------------------------------------------
@@ -93,17 +111,19 @@ def test_classify_none_when_not_evaluated_but_has_content():
 async def test_subscriber_writes_record(tmp_path):
     cfg = _config(tmp_path)
     handle = reflection_metrics.make_reflection_metrics_subscriber(cfg)
-    await handle({
-        "type": "reflection_turn",
-        "conv_id": "conv-1",
-        "outcome": "passed_after_retry",
-        "retry_count": 1,
-        "judge_prompt_tokens": 300,
-        "judge_completion_tokens": 20,
-        "char_delta": 45,
-        "overlap_ratio": 0.6,
-        "critique_fingerprint": "the answer omits the error handling",
-    })
+    await handle(
+        {
+            "type": "reflection_turn",
+            "conv_id": "conv-1",
+            "outcome": "passed_after_retry",
+            "retry_count": 1,
+            "judge_prompt_tokens": 300,
+            "judge_completion_tokens": 20,
+            "char_delta": 45,
+            "overlap_ratio": 0.6,
+            "critique_fingerprint": "the answer omits the error handling",
+        }
+    )
     path = cfg.workspace_path / cfg.telemetry.reflection_metrics_path
     records = [json.loads(line) for line in path.read_text().splitlines()]
     assert len(records) == 1
@@ -142,14 +162,10 @@ async def test_subscriber_fail_open(tmp_path):
 
 def test_aggregate_stats():
     records = [
-        {"outcome": "passed_first", "retry_count": 0, "judge_prompt_tokens": 100,
-         "judge_completion_tokens": 10},
-        {"outcome": "passed_first", "retry_count": 0, "judge_prompt_tokens": 120,
-         "judge_completion_tokens": 12},
-        {"outcome": "passed_after_retry", "retry_count": 1, "judge_prompt_tokens": 300,
-         "judge_completion_tokens": 30},
-        {"outcome": "loop_exhausted", "retry_count": 2, "judge_prompt_tokens": 500,
-         "judge_completion_tokens": 50},
+        {"outcome": "passed_first", "retry_count": 0, "judge_prompt_tokens": 100, "judge_completion_tokens": 10},
+        {"outcome": "passed_first", "retry_count": 0, "judge_prompt_tokens": 120, "judge_completion_tokens": 12},
+        {"outcome": "passed_after_retry", "retry_count": 1, "judge_prompt_tokens": 300, "judge_completion_tokens": 30},
+        {"outcome": "loop_exhausted", "retry_count": 2, "judge_prompt_tokens": 500, "judge_completion_tokens": 50},
     ]
     stats = reflection_metrics.aggregate(records)
     assert stats["total_turns"] == 4

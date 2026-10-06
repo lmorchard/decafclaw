@@ -52,6 +52,7 @@ def test_handle_posted_extracts_file_ids():
         },
     }
     import json
+
     evt = {
         "data": {
             "post": json.dumps(post),
@@ -87,6 +88,7 @@ def test_handle_posted_file_only_message():
         },
     }
     import json
+
     evt = {
         "data": {
             "post": json.dumps(post),
@@ -116,6 +118,7 @@ def test_handle_posted_no_text_no_files_ignored():
         "props": {},
     }
     import json
+
     evt = {
         "data": {
             "post": json.dumps(post),
@@ -143,13 +146,15 @@ async def test_download_attachments_saves_files(tmp_path):
     client = _make_client(http)
     config = _FakeConfig(workspace_path=tmp_path)
 
-    msgs = [{
-        "text": "check this",
-        "file_ids": ["fid1"],
-        "file_metadata": {
-            "fid1": {"name": "photo.jpg", "mime_type": "image/jpeg"},
-        },
-    }]
+    msgs = [
+        {
+            "text": "check this",
+            "file_ids": ["fid1"],
+            "file_metadata": {
+                "fid1": {"name": "photo.jpg", "mime_type": "image/jpeg"},
+            },
+        }
+    ]
 
     attachments = await client._download_attachments(msgs, "conv1", config)
 
@@ -213,14 +218,16 @@ async def test_download_attachments_failure_continues(tmp_path):
     client = _make_client(http)
     config = _FakeConfig(workspace_path=tmp_path)
 
-    msgs = [{
-        "text": "files",
-        "file_ids": ["bad", "good"],
-        "file_metadata": {
-            "bad": {"name": "fail.bin", "mime_type": "application/octet-stream"},
-            "good": {"name": "ok.png", "mime_type": "image/png"},
-        },
-    }]
+    msgs = [
+        {
+            "text": "files",
+            "file_ids": ["bad", "good"],
+            "file_metadata": {
+                "bad": {"name": "fail.bin", "mime_type": "application/octet-stream"},
+                "good": {"name": "ok.png", "mime_type": "image/png"},
+            },
+        }
+    ]
 
     attachments = await client._download_attachments(msgs, "conv3", config)
 
@@ -252,11 +259,13 @@ async def test_download_attachments_missing_metadata(tmp_path):
     client = _make_client(http)
     config = _FakeConfig(workspace_path=tmp_path)
 
-    msgs = [{
-        "text": "mysterious file",
-        "file_ids": ["fid1"],
-        "file_metadata": {},  # no metadata for this file
-    }]
+    msgs = [
+        {
+            "text": "mysterious file",
+            "file_ids": ["fid1"],
+            "file_metadata": {},  # no metadata for this file
+        }
+    ]
 
     attachments = await client._download_attachments(msgs, "conv5", config)
 

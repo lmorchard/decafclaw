@@ -43,9 +43,7 @@ async def test_show_sections_outline(vault_ctx):
 @pytest.mark.asyncio
 async def test_show_sections_specific(vault_ctx):
     _write_note(vault_ctx)
-    result = await tool_vault_show_sections(
-        vault_ctx, page="agent/pages/note", section="top/sub a"
-    )
+    result = await tool_vault_show_sections(vault_ctx, page="agent/pages/note", section="top/sub a")
     assert "content a" in result.text
     assert "content b" not in result.text
 
@@ -61,9 +59,7 @@ async def test_move_lines_basic(vault_ctx):
     vault = vault_ctx.config.vault_root
     agent_pages = vault / "agent" / "pages"
     agent_pages.mkdir(parents=True, exist_ok=True)
-    (agent_pages / "src.md").write_text(
-        "# Top\n\n- [ ] task1\n- [ ] task2\n- [ ] task3\n"
-    )
+    (agent_pages / "src.md").write_text("# Top\n\n- [ ] task1\n- [ ] task2\n- [ ] task3\n")
     (agent_pages / "dst.md").write_text("# Today\n\n## inbox\n")
     result = await tool_vault_move_lines(
         vault_ctx,
@@ -87,9 +83,7 @@ async def test_move_lines_refuses_write_outside_agent(vault_ctx):
     vault = vault_ctx.config.vault_root
     (vault / "agent" / "pages").mkdir(parents=True, exist_ok=True)
     (vault / "user_notes").mkdir()
-    (vault / "agent" / "pages" / "src.md").write_text(
-        "# Top\n\n- [ ] x\n"
-    )
+    (vault / "agent" / "pages" / "src.md").write_text("# Top\n\n- [ ] x\n")
     (vault / "user_notes" / "dst.md").write_text("# User\n")
     # Writing into a user page must be refused
     result = await tool_vault_move_lines(
@@ -206,9 +200,7 @@ async def test_move_lines_multiline_prepend_into_section_preserved(vault_ctx):
     vault = vault_ctx.config.vault_root
     agent_pages = vault / "agent" / "pages"
     agent_pages.mkdir(parents=True, exist_ok=True)
-    (agent_pages / "src.md").write_text(
-        "# Top\n\n- [ ] alpha\n- [ ] beta\n- [ ] gamma\n"
-    )
+    (agent_pages / "src.md").write_text("# Top\n\n- [ ] alpha\n- [ ] beta\n- [ ] gamma\n")
     (agent_pages / "dst.md").write_text("# Today\n\n## inbox\n")
     result = await tool_vault_move_lines(
         vault_ctx,
@@ -234,9 +226,7 @@ async def test_move_lines_multiline_prepend_sectionless_preserved(vault_ctx):
     vault = vault_ctx.config.vault_root
     agent_pages = vault / "agent" / "pages"
     agent_pages.mkdir(parents=True, exist_ok=True)
-    (agent_pages / "src.md").write_text(
-        "# Top\n\n- [ ] alpha\n- [ ] beta\n- [ ] gamma\n"
-    )
+    (agent_pages / "src.md").write_text("# Top\n\n- [ ] alpha\n- [ ] beta\n- [ ] gamma\n")
     (agent_pages / "dst.md").write_text("# Target\n\n")
     result = await tool_vault_move_lines(
         vault_ctx,
@@ -305,8 +295,10 @@ async def test_move_lines_reindexes_both_pages(vault_ctx):
     agent_pages.mkdir(parents=True, exist_ok=True)
     (agent_pages / "src.md").write_text("# Top\n\n- [ ] task1\n- [ ] task2\n")
     (agent_pages / "dst.md").write_text("# Today\n\n## inbox\n")
-    with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock) as mock_index, \
-         patch("decafclaw.embeddings.delete_entries"):
+    with (
+        patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock) as mock_index,
+        patch("decafclaw.embeddings.delete_entries"),
+    ):
         result = await tool_vault_move_lines(
             vault_ctx,
             from_page="agent/pages/src",
@@ -329,8 +321,10 @@ async def test_vault_section_reindexes_after_add(vault_ctx):
     agent_pages = vault / "agent" / "pages"
     agent_pages.mkdir(parents=True, exist_ok=True)
     (agent_pages / "note.md").write_text("# Top\n\n## First\n")
-    with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock) as mock_index, \
-         patch("decafclaw.embeddings.delete_entries"):
+    with (
+        patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock) as mock_index,
+        patch("decafclaw.embeddings.delete_entries"),
+    ):
         result = await tool_vault_section(
             vault_ctx,
             page="agent/pages/note",
@@ -361,8 +355,10 @@ async def test_vault_section_publishes_vault_changed(vault_ctx):
         captured.append(event)
 
     vault_ctx.event_bus.publish = capture
-    with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock), \
-         patch("decafclaw.embeddings.delete_entries"):
+    with (
+        patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        patch("decafclaw.embeddings.delete_entries"),
+    ):
         result = await tool_vault_section(
             vault_ctx,
             page="agent/pages/note",
@@ -385,9 +381,7 @@ async def test_vault_move_lines_publishes_vault_changed_for_both_pages(vault_ctx
     vault = vault_ctx.config.vault_root
     agent_pages = vault / "agent" / "pages"
     agent_pages.mkdir(parents=True, exist_ok=True)
-    (agent_pages / "src.md").write_text(
-        "# Top\n\n- [ ] task1\n- [ ] task2\n- [ ] task3\n"
-    )
+    (agent_pages / "src.md").write_text("# Top\n\n- [ ] task1\n- [ ] task2\n- [ ] task3\n")
     (agent_pages / "dst.md").write_text("# Today\n\n## inbox\n")
     captured: list[dict] = []
 
@@ -395,8 +389,10 @@ async def test_vault_move_lines_publishes_vault_changed_for_both_pages(vault_ctx
         captured.append(event)
 
     vault_ctx.event_bus.publish = capture
-    with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock), \
-         patch("decafclaw.embeddings.delete_entries"):
+    with (
+        patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        patch("decafclaw.embeddings.delete_entries"),
+    ):
         result = await tool_vault_move_lines(
             vault_ctx,
             from_page="agent/pages/src",
@@ -476,9 +472,7 @@ async def test_section_ambiguous_path_errors_with_candidates(vault_ctx):
     vault = vault_ctx.config.vault_root
     agent_pages = vault / "agent" / "pages"
     agent_pages.mkdir(parents=True)
-    (agent_pages / "amb.md").write_text(
-        "# Top\n\n## Notes\n\na\n\n## Archive\n\n### Notes\n\nb\n"
-    )
+    (agent_pages / "amb.md").write_text("# Top\n\n## Notes\n\na\n\n## Archive\n\n### Notes\n\nb\n")
     result = await tool_vault_section(
         vault_ctx,
         page="agent/pages/amb",
@@ -503,9 +497,7 @@ async def test_section_add_with_content(vault_ctx):
     vault = vault_ctx.config.vault_root
     agent_pages = vault / "agent" / "pages"
     agent_pages.mkdir(parents=True)
-    (agent_pages / "note.md").write_text(
-        "# Project Notes\n\n## Background\n\nkeep me\n\n## TODO\n\n- Old item\n"
-    )
+    (agent_pages / "note.md").write_text("# Project Notes\n\n## Background\n\nkeep me\n\n## TODO\n\n- Old item\n")
     result = await tool_vault_section(
         vault_ctx,
         page="agent/pages/note",
@@ -556,9 +548,7 @@ async def test_section_add_infers_level_from_anchor(vault_ctx):
     vault = vault_ctx.config.vault_root
     agent_pages = vault / "agent" / "pages"
     agent_pages.mkdir(parents=True)
-    (agent_pages / "note.md").write_text(
-        "# Project Notes\n\n## Background\n\nkeep me\n\n## TODO\n\n- Old item\n"
-    )
+    (agent_pages / "note.md").write_text("# Project Notes\n\n## Background\n\nkeep me\n\n## TODO\n\n- Old item\n")
     result = await tool_vault_section(
         vault_ctx,
         page="agent/pages/note",

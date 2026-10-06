@@ -7,6 +7,7 @@ from decafclaw.skills.garden.tools import SkillConfig, init, tool_vault_reorgani
 
 pytestmark = pytest.mark.asyncio
 
+
 async def test_garden_detects_and_suggests_cluster_folder_moves(tmp_path, ctx):
     pages_dir = tmp_path / "vault" / "agent" / "pages"
     pages_dir.mkdir(parents=True)
@@ -28,6 +29,7 @@ async def test_garden_detects_and_suggests_cluster_folder_moves(tmp_path, ctx):
 
     assert (pages_dir / "dog.md").exists()
 
+
 async def test_garden_folder_move_updates_links(tmp_path, ctx):
     pages_dir = tmp_path / "vault" / "agent" / "pages"
     pages_dir.mkdir(parents=True)
@@ -43,6 +45,7 @@ async def test_garden_folder_move_updates_links(tmp_path, ctx):
 
     content = (pages_dir / "index.md").read_text()
     assert "[[agent/pages/fruit/apple|apple]]" in content
+
 
 async def test_garden_folder_move_dry_run_and_respect_user_folders(tmp_path, ctx):
     pages_dir = tmp_path / "vault" / "agent" / "pages"

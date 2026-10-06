@@ -14,9 +14,15 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # Tools that are always auto-approved (read-only, no side effects)
-AUTO_APPROVE_TOOLS = frozenset({
-    "Read", "Glob", "Grep", "WebSearch", "WebFetch",
-})
+AUTO_APPROVE_TOOLS = frozenset(
+    {
+        "Read",
+        "Glob",
+        "Grep",
+        "WebSearch",
+        "WebFetch",
+    }
+)
 
 
 def _allowlist_path(config) -> Path:
@@ -66,7 +72,9 @@ def make_permission_handler(ctx: "Context", config):
     """
     from decafclaw.tools.confirmation import request_confirmation
 
-    async def can_use_tool(tool_name: str, tool_input: dict, tool_context) -> PermissionResultAllow | PermissionResultDeny:
+    async def can_use_tool(
+        tool_name: str, tool_input: dict, tool_context
+    ) -> PermissionResultAllow | PermissionResultDeny:
         log.info(f"Claude Code permission check: {tool_name}")
 
         # Auto-approve read-only tools

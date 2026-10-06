@@ -50,13 +50,9 @@ def _write_skill(skill_dir: Path, name: str, marker: Path) -> None:
     skill_dir.mkdir(parents=True, exist_ok=True)
     marker.parent.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
-        f"---\nname: {name}\ndescription: Test skill for the tier gate.\n"
-        f"---\n\nBody of {name}.\n"
+        f"---\nname: {name}\ndescription: Test skill for the tier gate.\n---\n\nBody of {name}.\n"
     )
-    (skill_dir / "tools.py").write_text(
-        f"open({str(marker)!r}, 'w').close()\n\n"
-        "TOOLS = {}\nTOOL_DEFINITIONS = []\n"
-    )
+    (skill_dir / "tools.py").write_text(f"open({str(marker)!r}, 'w').close()\n\nTOOLS = {{}}\nTOOL_DEFINITIONS = []\n")
 
 
 def _write_schedule(path: Path, text: str = SCHEDULE) -> None:
@@ -73,11 +69,11 @@ async def _ctx_for(config, task):
 
     async def fake_run(ctx, user_message, history, **kwargs):
         from decafclaw.media import ToolResult
+
         seen["ctx"] = ctx
         return ToolResult(text="Done.")
 
-    with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run), \
-            patch("decafclaw.notifications.notify"):
+    with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run), patch("decafclaw.notifications.notify"):
         await run_schedule_task(config, EventBus(), manager, task)
     return seen["ctx"]
 
@@ -89,8 +85,7 @@ async def test_workspace_schedule_cannot_activate_workspace_skill(config):
     _write_skill(config.workspace_path / "skills" / "evil", "evil", marker)
     _write_schedule(config.workspace_path / "schedules" / "maintenance.md")
     config.discovered_skills = discover_skills(config)
-    assert {s.name: s.trust_tier for s in config.discovered_skills}["evil"] \
-        == "workspace"
+    assert {s.name: s.trust_tier for s in config.discovered_skills}["evil"] == "workspace"
 
     task = {t.name: t for t in discover_schedules(config)}["maintenance"]
     assert task.source == "workspace"
@@ -128,8 +123,7 @@ async def test_admin_tier_skill_still_activates(config):
     _write_skill(config.agent_path / "skills" / "evil", "evil", marker)
     _write_schedule(config.agent_path / "schedules" / "maintenance.md")
     config.discovered_skills = discover_skills(config)
-    assert {s.name: s.trust_tier for s in config.discovered_skills}["evil"] \
-        == "admin"
+    assert {s.name: s.trust_tier for s in config.discovered_skills}["evil"] == "admin"
 
     task = {t.name: t for t in discover_schedules(config)}["maintenance"]
     ctx = await _ctx_for(config, task)

@@ -51,21 +51,18 @@ def test_parse_axes_unhashable_element_raises_valueerror():
 
 
 def test_validate_axes_passes_for_valid_cases():
-    validate_axes([{"name": "a", "tests": "retrieval"},
-                   {"name": "b", "tests": ["routing", "answer_quality"]},
-                   {"name": "c"}])  # untagged is fine
+    validate_axes(
+        [{"name": "a", "tests": "retrieval"}, {"name": "b", "tests": ["routing", "answer_quality"]}, {"name": "c"}]
+    )  # untagged is fine
 
 
 def test_validate_axes_raises_on_unknown_axis_naming_the_case():
     with pytest.raises(ValueError, match="bad-case"):
-        validate_axes([{"name": "ok", "tests": "retrieval"},
-                       {"name": "bad-case", "tests": "smartness"}])
+        validate_axes([{"name": "ok", "tests": "retrieval"}, {"name": "bad-case", "tests": "smartness"}])
 
 
 def test_canonical_axes_exact_set():
-    assert CANONICAL_AXES == frozenset(
-        {"retrieval", "routing", "answer_quality", "workflow_discipline"}
-    )
+    assert CANONICAL_AXES == frozenset({"retrieval", "routing", "answer_quality", "workflow_discipline"})
 
 
 def test_aggregate_single_axis_and_untagged():
@@ -117,7 +114,7 @@ def test_detect_files_cited_path_and_wiki():
     known = ["agent/pages/escalation-runbook.md", "agent/pages/oncall-rotation.md"]
     cited = detect_files_cited(resp, known)
     assert "agent/pages/escalation-runbook.md" in cited  # stem 'escalation-runbook' matched
-    assert "Escalation Runbook" in cited                 # wiki-mention
+    assert "Escalation Runbook" in cited  # wiki-mention
     assert "agent/pages/oncall-rotation.md" not in cited  # never mentioned
 
 
@@ -133,17 +130,24 @@ def _sidecar():
         "context_window_size": 1000000,
         "compaction_threshold": 150000,
         "sources": [
-            {"source": "system", "tokens_estimated": 3000, "items_included": 1,
-             "items_truncated": 0, "details": {}},
-            {"source": "tools", "tokens_estimated": 2000, "items_included": 8,
-             "items_truncated": 40, "details": {}},
-            {"source": "retrieved_context", "tokens_estimated": 1500,
-             "items_included": 3, "items_truncated": 0, "details": {}},
+            {"source": "system", "tokens_estimated": 3000, "items_included": 1, "items_truncated": 0, "details": {}},
+            {"source": "tools", "tokens_estimated": 2000, "items_included": 8, "items_truncated": 40, "details": {}},
+            {
+                "source": "retrieved_context",
+                "tokens_estimated": 1500,
+                "items_included": 3,
+                "items_truncated": 0,
+                "details": {},
+            },
         ],
         "memory_candidates": [
-            {"file_path": "agent/pages/escalation-runbook.md",
-             "composite_score": 0.82, "similarity": 0.79, "recency": 0.5,
-             "importance": 0.9},
+            {
+                "file_path": "agent/pages/escalation-runbook.md",
+                "composite_score": 0.82,
+                "similarity": 0.79,
+                "recency": 0.5,
+                "importance": 0.9,
+            },
         ],
     }
 
@@ -152,8 +156,7 @@ def test_build_turn_diagnostics_full():
     calls = [("vault_read", {"page": "agent/pages/escalation-runbook.md"})]
     resp = "Per the escalation-runbook, Priya is paged first."
     d = build_turn_diagnostics(_sidecar(), calls, resp)
-    assert d["tokens_by_section"] == {"system": 3000, "tools": 2000,
-                                      "retrieved_context": 1500}
+    assert d["tokens_by_section"] == {"system": 3000, "tools": 2000, "retrieved_context": 1500}
     assert d["active_tools"] == 8
     assert d["deferred_tools"] == 40
     assert d["total_tokens_estimated"] == 12000
@@ -184,23 +187,32 @@ class _FakeResult:
 async def test_run_test_attaches_diagnostics(tmp_path, monkeypatch):
     # Fake the LLM turn: append a synthetic vault_read call to history, no model.
     async def _fake_turn(ctx, turn_input, history):
-        history.append({
-            "role": "assistant", "content": "",
-            "tool_calls": [{"id": "c0", "function": {
-                "name": "vault_read",
-                "arguments": json.dumps({"page": "agent/pages/foo"})}}],
-        })
+        history.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c0",
+                        "function": {"name": "vault_read", "arguments": json.dumps({"page": "agent/pages/foo"})},
+                    }
+                ],
+            }
+        )
         history.append({"role": "tool", "tool_call_id": "c0", "content": "ok"})
         return _FakeResult("I read agent/pages/foo and here is the answer.")
 
     monkeypatch.setattr(eval_runner, "run_agent_turn", _fake_turn)
     monkeypatch.setattr(
-        eval_runner, "read_context_sidecar",
+        eval_runner,
+        "read_context_sidecar",
         lambda config, conv_id: {
-            "total_tokens_estimated": 100, "sources": [
-                {"source": "tools", "tokens_estimated": 10,
-                 "items_included": 5, "items_truncated": 20, "details": {}}],
-            "memory_candidates": []},
+            "total_tokens_estimated": 100,
+            "sources": [
+                {"source": "tools", "tokens_estimated": 10, "items_included": 5, "items_truncated": 20, "details": {}}
+            ],
+            "memory_candidates": [],
+        },
     )
 
     cfg = _build_test_config(Config(), {"setup": {}}, str(tmp_path))

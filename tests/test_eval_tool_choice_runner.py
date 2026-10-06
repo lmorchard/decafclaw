@@ -41,29 +41,21 @@ class TestLoadCases:
         assert cases[1].notes == ""
 
     def test_directory_loads_all_yamls(self, tmp_path):
-        (tmp_path / "a.yaml").write_text(
-            "- {name: a, scenario: x, expected: t, near_miss: [u]}\n"
-        )
-        (tmp_path / "b.yaml").write_text(
-            "- {name: b, scenario: y, expected: t, near_miss: [u]}\n"
-        )
+        (tmp_path / "a.yaml").write_text("- {name: a, scenario: x, expected: t, near_miss: [u]}\n")
+        (tmp_path / "b.yaml").write_text("- {name: b, scenario: y, expected: t, near_miss: [u]}\n")
         cases = load_cases(tmp_path)
         names = sorted(c.name for c in cases)
         assert names == ["a", "b"]
 
     def test_rejects_missing_required_field(self, tmp_path):
         yaml_file = tmp_path / "bad.yaml"
-        yaml_file.write_text(
-            "- {name: missing-expected, scenario: x, near_miss: [u]}\n"
-        )
+        yaml_file.write_text("- {name: missing-expected, scenario: x, near_miss: [u]}\n")
         with pytest.raises(ValueError, match="missing required field"):
             load_cases(yaml_file)
 
     def test_rejects_empty_near_miss(self, tmp_path):
         yaml_file = tmp_path / "bad.yaml"
-        yaml_file.write_text(
-            "- {name: empty-near-miss, scenario: x, expected: t, near_miss: []}\n"
-        )
+        yaml_file.write_text("- {name: empty-near-miss, scenario: x, expected: t, near_miss: []}\n")
         with pytest.raises(ValueError, match="missing required field"):
             load_cases(yaml_file)
 
@@ -83,10 +75,7 @@ def _make_response(tool_names):
         return {"content": "no tools needed", "tool_calls": None, "role": "assistant", "usage": {}}
     return {
         "content": None,
-        "tool_calls": [
-            {"id": f"c{i}", "function": {"name": n, "arguments": "{}"}}
-            for i, n in enumerate(tool_names)
-        ],
+        "tool_calls": [{"id": f"c{i}", "function": {"name": n, "arguments": "{}"}} for i, n in enumerate(tool_names)],
         "role": "assistant",
         "usage": {},
     }
@@ -99,17 +88,20 @@ def patched_call_llm(monkeypatch):
     Tests set ``fake.response = ...`` to control the returned dict.
     The fake also records each call's args for additional asserts.
     """
+
     class Fake:
         def __init__(self):
             self.response = _make_response(["vault_search"])
             self.calls: list[dict] = []
 
         async def __call__(self, config, messages, tools=None, model_name=None):
-            self.calls.append({
-                "messages": messages,
-                "tools": tools,
-                "model_name": model_name,
-            })
+            self.calls.append(
+                {
+                    "messages": messages,
+                    "tools": tools,
+                    "model_name": model_name,
+                }
+            )
             return self.response
 
     fake = Fake()
@@ -120,13 +112,18 @@ def patched_call_llm(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_case_passes_when_expected_picked(config, patched_call_llm):
     case = Case(
-        name="t", scenario="find decisions", expected="vault_search",
+        name="t",
+        scenario="find decisions",
+        expected="vault_search",
         near_miss=["conversation_search"],
     )
     patched_call_llm.response = _make_response(["vault_search"])
 
     result = await run_case(
-        case, model="m", config=config, tool_loadout=[{"function": {"name": "vault_search"}}],
+        case,
+        model="m",
+        config=config,
+        tool_loadout=[{"function": {"name": "vault_search"}}],
     )
     assert result.picked == "vault_search"
     assert result.all_picks == ["vault_search"]
@@ -137,14 +134,15 @@ async def test_run_case_passes_when_expected_picked(config, patched_call_llm):
 async def test_run_case_with_reps_invokes_multiple_times(config, patched_call_llm):
     """CRITERION 1: `--reps N` invokes call_llm N times and carries per-case pass count."""
     case = Case(
-        name="t", scenario="find decisions", expected="vault_search",
+        name="t",
+        scenario="find decisions",
+        expected="vault_search",
         near_miss=["conversation_search"],
     )
     patched_call_llm.response = _make_response(["vault_search"])
 
     result = await run_case(
-        case, model="m", config=config, tool_loadout=[{"function": {"name": "vault_search"}}],
-        reps=3
+        case, model="m", config=config, tool_loadout=[{"function": {"name": "vault_search"}}], reps=3
     )
 
     assert len(patched_call_llm.calls) == 3
@@ -157,7 +155,9 @@ async def test_run_case_with_reps_invokes_multiple_times(config, patched_call_ll
 async def test_run_case_scripted_fraction_rate(config, monkeypatch):
     """CRITERION 2: LLM scripted to return expected 3 of 5 times → reported rate 3/5."""
     case = Case(
-        name="t", scenario="find decisions", expected="vault_search",
+        name="t",
+        scenario="find decisions",
+        expected="vault_search",
         near_miss=["conversation_search"],
     )
 
@@ -174,9 +174,7 @@ async def test_run_case_scripted_fraction_rate(config, monkeypatch):
 
     monkeypatch.setattr("decafclaw.eval.tool_choice.runner.call_llm", scripted_call_llm)
 
-    result = await run_case(
-        case, model="m", config=config, tool_loadout=[], reps=5
-    )
+    result = await run_case(case, model="m", config=config, tool_loadout=[], reps=5)
 
     assert result.reps == 5
     assert result.pass_count == 3
@@ -184,6 +182,7 @@ async def test_run_case_scripted_fraction_rate(config, monkeypatch):
 
     # Also verify that format_case_lines produces the required "3/5" substring
     from decafclaw.eval.tool_choice.report import format_case_lines
+
     lines = format_case_lines([result])
     assert "FAIL  t (3/5)" in lines[0]
     assert "picked conversation_search, vault_search" in lines[0]
@@ -192,7 +191,9 @@ async def test_run_case_scripted_fraction_rate(config, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_case_fails_with_picked_neighbor(config, patched_call_llm):
     case = Case(
-        name="t", scenario="...", expected="vault_search",
+        name="t",
+        scenario="...",
+        expected="vault_search",
         near_miss=["conversation_search"],
     )
     patched_call_llm.response = _make_response(["conversation_search"])
@@ -232,7 +233,9 @@ async def test_run_case_multi_call_records_first(config, patched_call_llm):
     """Multiple parallel tool calls: ``picked`` is the first; full
     list is on ``all_picks``."""
     case = Case(
-        name="t", scenario="...", expected="vault_search",
+        name="t",
+        scenario="...",
+        expected="vault_search",
         near_miss=["workspace_read"],
     )
     patched_call_llm.response = _make_response(["vault_search", "workspace_read"])
@@ -266,14 +269,15 @@ async def test_run_case_passes_through_loadout_and_model(config, patched_call_ll
 @pytest.mark.asyncio
 async def test_run_cases_concurrency(config, patched_call_llm):
     """run_cases returns one result per case, in order."""
-    cases = [
-        Case(name=f"c{i}", scenario=str(i), expected="t", near_miss=["u"])
-        for i in range(5)
-    ]
+    cases = [Case(name=f"c{i}", scenario=str(i), expected="t", near_miss=["u"]) for i in range(5)]
     patched_call_llm.response = _make_response(["t"])
 
     results = await run_cases(
-        cases, model="m", config=config, tool_loadout=[], concurrency=2,
+        cases,
+        model="m",
+        config=config,
+        tool_loadout=[],
+        concurrency=2,
     )
     assert isinstance(results, list)
     assert len(results) == 5
@@ -291,11 +295,11 @@ async def test_run_case_error_excludes_from_stats(config, monkeypatch):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return _make_response(None) # pass
+            return _make_response(None)  # pass
         elif call_count == 2:
-            raise RuntimeError("network exploded") # error
+            raise RuntimeError("network exploded")  # error
         else:
-            return _make_response(["some_tool"]) # fail
+            return _make_response(["some_tool"])  # fail
 
     monkeypatch.setattr("decafclaw.eval.tool_choice.runner.call_llm", scripted_call_llm)
 
@@ -313,6 +317,7 @@ async def test_run_case_swallows_llm_error(config, monkeypatch):
     """A provider error returns a CaseResult with NO_TOOL as fallback + passed=False
     instead of bubbling. The eval shouldn't abort halfway through a
     batch because one case errored."""
+
     async def boom(config, messages, tools=None, model_name=None):
         raise RuntimeError("network exploded")
 
@@ -328,6 +333,7 @@ async def test_run_case_swallows_llm_error(config, monkeypatch):
 # Quieten import-unused warning on Path
 _ = Path
 
+
 @pytest.mark.asyncio
 async def test_run_case_production_mode(config, monkeypatch):
     """C2: production mode includes tool_search and deferred_tools block"""
@@ -336,6 +342,7 @@ async def test_run_case_production_mode(config, monkeypatch):
 
     # We need to stub call_llm to capture the tools and messages
     captured_kwargs = {}
+
     async def mock_call_llm(*args, **kwargs):
         captured_kwargs.update(kwargs)
         if len(args) > 1:
@@ -344,18 +351,15 @@ async def test_run_case_production_mode(config, monkeypatch):
         return {
             "role": "assistant",
             "content": "",
-            "tool_calls": [{"id": "1", "type": "function", "function": {"name": "test_tool", "arguments": "{}"}}]
+            "tool_calls": [{"id": "1", "type": "function", "function": {"name": "test_tool", "arguments": "{}"}}],
         }
 
     monkeypatch.setattr("decafclaw.eval.tool_choice.runner.call_llm", mock_call_llm)
 
-    case = Case(
-        name="test_prod_mode",
-        scenario="Find me a tool",
-        expected="test_tool"
-    )
+    case = Case(name="test_prod_mode", scenario="Find me a tool", expected="test_tool")
 
     from decafclaw.eval.tool_choice.loadout import build_full_tool_loadout
+
     full_loadout = build_full_tool_loadout(config)
 
     await run_case(case, model="m", config=config, tool_loadout=full_loadout, production_mode=True)

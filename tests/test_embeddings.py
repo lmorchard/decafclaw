@@ -91,6 +91,7 @@ def test_vec0_populated_on_insert(config):
     import sqlite3 as _sqlite3
 
     import sqlite_vec as _sv
+
     conn = _sqlite3.connect(str(config.workspace_path / "embeddings.db"))
     conn.enable_load_extension(True)
     _sv.load(conn)
@@ -104,9 +105,7 @@ def test_vec0_table_exists(config):
     """The vec0 virtual table is created alongside the metadata tables."""
     conn = _get_db(config)
     # vec0 shadow tables appear in sqlite_master
-    tables = [r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    ).fetchall()]
+    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     conn.close()
     assert "embeddings_vec" in tables
 
@@ -117,6 +116,7 @@ def test_model_sentinel(config):
     index_entry_sync(config, "test.md", "test", vec)
 
     import sqlite3
+
     conn = sqlite3.connect(str(config.workspace_path / "embeddings.db"))
     row = conn.execute("SELECT value FROM metadata WHERE key='embedding_model'").fetchone()
     assert row is not None
@@ -159,7 +159,7 @@ def test_migration_from_legacy_db(config):
     # Insert a row with a real packed-float32 embedding (768 = legacy default)
     dim = config.embedding.dimensions
     vec = [1.0] * dim
-    blob = struct.pack(f'{len(vec)}f', *vec)
+    blob = struct.pack(f"{len(vec)}f", *vec)
     conn.execute(
         "INSERT INTO memory_embeddings (file_path, entry_hash, entry_text, embedding, source_type, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -311,15 +311,21 @@ class TestPruneStaleEmbeddings:
         # Second run sees no rows to drop.
         second = prune_stale_embeddings(config)
         assert second == {
-            "checked": 0, "dropped_missing": 0, "dropped_legacy": 0,
-            "kept": 0, "unknown": 0,
+            "checked": 0,
+            "dropped_missing": 0,
+            "dropped_legacy": 0,
+            "kept": 0,
+            "unknown": 0,
         }
 
     def test_empty_db_returns_zeros(self, config):
         counts = prune_stale_embeddings(config)
         assert counts == {
-            "checked": 0, "dropped_missing": 0, "dropped_legacy": 0,
-            "kept": 0, "unknown": 0,
+            "checked": 0,
+            "dropped_missing": 0,
+            "dropped_legacy": 0,
+            "kept": 0,
+            "unknown": 0,
         }
 
     def test_dropped_rows_remove_from_vec0(self, config):

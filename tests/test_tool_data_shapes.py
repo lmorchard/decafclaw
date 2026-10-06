@@ -44,10 +44,9 @@ def vault_dir(config):
 @pytest.mark.asyncio
 async def test_vault_read_data_shape(ctx, vault_dir):
     from decafclaw.skills.vault.tools import tool_vault_read
+
     page = vault_dir / "Sample.md"
-    page.write_text(
-        "---\ntags: [a, b]\nsummary: hi\n---\nbody line 1\nbody line 2\n"
-    )
+    page.write_text("---\ntags: [a, b]\nsummary: hi\n---\nbody line 1\nbody line 2\n")
     result = await tool_vault_read(ctx, "agent/pages/Sample")
     assert isinstance(result, ToolResult)
     assert result.data is not None
@@ -60,10 +59,9 @@ async def test_vault_read_data_shape(ctx, vault_dir):
 @pytest.mark.asyncio
 async def test_vault_write_data_shape(ctx, vault_dir):
     from decafclaw.skills.vault.tools import tool_vault_write
+
     with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
-        result = await tool_vault_write(
-            ctx, "agent/pages/New", "# Hello\n\nWorld."
-        )
+        result = await tool_vault_write(ctx, "agent/pages/New", "# Hello\n\nWorld.")
     assert isinstance(result, ToolResult)
     assert result.data is not None
     assert result.data["path"] == "agent/pages/New"
@@ -75,11 +73,10 @@ async def test_vault_write_data_shape(ctx, vault_dir):
 async def test_vault_write_data_shape_overwrite(ctx, vault_dir):
     """Second write to same page should report created=False."""
     from decafclaw.skills.vault.tools import tool_vault_write
+
     (vault_dir / "Existing.md").write_text("# Old")
     with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
-        result = await tool_vault_write(
-            ctx, "agent/pages/Existing", "# New"
-        )
+        result = await tool_vault_write(ctx, "agent/pages/Existing", "# New")
     assert result.data["created"] is False
 
 
@@ -88,10 +85,13 @@ async def test_vault_journal_append_data_shape(ctx, config):
     """Drives the real append path without patching the file writer; only
     the embedding index call is mocked since it's network-adjacent."""
     from decafclaw.skills.vault.tools import tool_vault_journal_append
+
     config.vault_agent_journal_dir.mkdir(parents=True, exist_ok=True)
     with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
         result = await tool_vault_journal_append(
-            ctx, tags=["alpha", "beta"], content="hello journal",
+            ctx,
+            tags=["alpha", "beta"],
+            content="hello journal",
         )
     assert isinstance(result, ToolResult)
     assert result.data is not None
@@ -112,6 +112,7 @@ async def test_workspace_read_data_shape(ctx):
         tool_workspace_read,
         tool_workspace_write,
     )
+
     tool_workspace_write(ctx, "f.txt", "line1\nline2\nline3")
     result = tool_workspace_read(ctx, "f.txt")
     assert isinstance(result, ToolResult)
@@ -129,6 +130,7 @@ async def test_workspace_read_partial_data_shape(ctx):
         tool_workspace_read,
         tool_workspace_write,
     )
+
     tool_workspace_write(ctx, "f.txt", "a\nb\nc\nd\ne")
     result = tool_workspace_read(ctx, "f.txt", start_line=2, end_line=4)
     assert result.data["range"] == [2, 4]
@@ -142,6 +144,7 @@ async def test_workspace_glob_data_shape(ctx):
         tool_workspace_glob,
         tool_workspace_write,
     )
+
     tool_workspace_write(ctx, "a.md", "alpha")
     tool_workspace_write(ctx, "sub/b.md", "beta")
     tool_workspace_write(ctx, "sub/c.txt", "gamma")
@@ -166,6 +169,7 @@ async def test_workspace_search_data_shape(ctx):
         tool_workspace_search,
         tool_workspace_write,
     )
+
     tool_workspace_write(ctx, "x.txt", "hello\nworld\nhello again\n")
     tool_workspace_write(ctx, "y.txt", "nope\n")
     result = tool_workspace_search(ctx, "hello")
@@ -187,6 +191,7 @@ async def test_workspace_list_data_shape(ctx):
         tool_workspace_list,
         tool_workspace_write,
     )
+
     tool_workspace_write(ctx, "a.txt", "aaa")
     tool_workspace_write(ctx, "sub/b.txt", "bbb")
     result = tool_workspace_list(ctx, ".")
@@ -210,6 +215,7 @@ async def test_workspace_list_data_shape(ctx):
 @pytest.mark.asyncio
 async def test_notes_append_data_shape(ctx):
     from decafclaw.tools.notes_tools import tool_notes_append
+
     result = tool_notes_append(ctx, "first note")
     assert isinstance(result, ToolResult)
     assert result.data is not None
@@ -223,6 +229,7 @@ async def test_notes_read_data_shape(ctx):
         tool_notes_append,
         tool_notes_read,
     )
+
     tool_notes_append(ctx, "alpha")
     tool_notes_append(ctx, "beta")
     result = tool_notes_read(ctx)
@@ -240,5 +247,6 @@ async def test_notes_read_data_shape(ctx):
 @pytest.mark.asyncio
 async def test_notes_read_empty_data_shape(ctx):
     from decafclaw.tools.notes_tools import tool_notes_read
+
     result = tool_notes_read(ctx)
     assert result.data == {"count": 0, "notes": []}

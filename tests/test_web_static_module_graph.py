@@ -24,13 +24,7 @@ the browser cannot (`?raw` suffixes, bare JSON imports).
 import pathlib
 import re
 
-STATIC_DIR = (
-    pathlib.Path(__file__).resolve().parent.parent
-    / "src"
-    / "decafclaw"
-    / "web"
-    / "static"
-)
+STATIC_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "decafclaw" / "web" / "static"
 
 # Directories holding files that are not hand-written app modules: `vendor/`
 # is esbuild output (`make vendor`) and `node_modules/` is npm's.
@@ -39,17 +33,14 @@ EXCLUDED_DIRS = {"node_modules", "vendor"}
 # `from '…'`, side-effect `import '…'`, and dynamic `import('…')`. Only
 # single- and double-quoted literals — a template literal is not statically
 # resolvable, so there is nothing to check.
-_SPECIFIER_RE = re.compile(
-    r"""(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]"""
-)
+_SPECIFIER_RE = re.compile(r"""(?:\bfrom\s*|\bimport\s*\(?\s*)['"]([^'"]+)['"]""")
 
 
 def _served_modules() -> list[pathlib.Path]:
     return [
         path
         for path in sorted(STATIC_DIR.rglob("*.js"))
-        if not EXCLUDED_DIRS & set(path.relative_to(STATIC_DIR).parts)
-        and not path.name.endswith(".test.js")
+        if not EXCLUDED_DIRS & set(path.relative_to(STATIC_DIR).parts) and not path.name.endswith(".test.js")
     ]
 
 

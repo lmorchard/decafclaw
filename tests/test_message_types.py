@@ -1,5 +1,6 @@
 """Tests for the WS message-type manifest, ensuring the generated artifacts
 stay aligned with the runtime call sites that consume them."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -56,23 +57,25 @@ def test_js_constants_match_python_enum() -> None:
     js_values = set(re.findall(r"'([a-z_][a-z0-9_]*)'", block.group(1)))
     py_values = {t.value for t in WSMessageType}
     assert js_values == py_values, (
-        f"JS↔Python mismatch — only in JS: {js_values - py_values}, "
-        f"only in Python: {py_values - js_values}"
+        f"JS↔Python mismatch — only in JS: {js_values - py_values}, only in Python: {py_values - js_values}"
     )
 
 
-@pytest.mark.parametrize("inp,expected_py,expected_ts,expected_required", [
-    ("string", "str", "string", True),
-    ("number", "int", "number", True),
-    ("boolean", "bool", "boolean", True),
-    ("object", "dict[str, object]", "Record<string, unknown>", True),
-    ("array of string", "list[str]", "string[]", True),
-    ("array of object", "list[dict[str, object]]", "Array<Record<string, unknown>>", True),
-    ("string | null", "str | None", "string | null", True),
-    ("string | object", "str | dict[str, object]", "string | Record<string, unknown>", True),
-    ("string?", "str", "string", False),
-    ("object?", "dict[str, object]", "Record<string, unknown>", False),
-])
+@pytest.mark.parametrize(
+    "inp,expected_py,expected_ts,expected_required",
+    [
+        ("string", "str", "string", True),
+        ("number", "int", "number", True),
+        ("boolean", "bool", "boolean", True),
+        ("object", "dict[str, object]", "Record<string, unknown>", True),
+        ("array of string", "list[str]", "string[]", True),
+        ("array of object", "list[dict[str, object]]", "Array<Record<string, unknown>>", True),
+        ("string | null", "str | None", "string | null", True),
+        ("string | object", "str | dict[str, object]", "string | Record<string, unknown>", True),
+        ("string?", "str", "string", False),
+        ("object?", "dict[str, object]", "Record<string, unknown>", False),
+    ],
+)
 def test_parse_field_type(inp, expected_py, expected_ts, expected_required):
     py, ts, req = _GEN_MODULE.parse_field_type(inp)
     assert py == expected_py
@@ -133,6 +136,4 @@ def test_every_typeddict_has_correct_type_literal() -> None:
         type_hint = hints["type"]
         assert get_origin(type_hint) is Literal
         args = get_args(type_hint)
-        assert len(args) == 1 and args[0] is member, (
-            f"expected Literal[{member!r}], got Literal[{args!r}]"
-        )
+        assert len(args) == 1 and args[0] is member, f"expected Literal[{member!r}], got Literal[{args!r}]"

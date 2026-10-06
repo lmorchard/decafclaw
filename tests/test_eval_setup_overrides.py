@@ -49,7 +49,8 @@ def test_config_overrides_cannot_escape_the_sandbox(tmp_path):
     applies the sandbox fields last, so they beat any user override."""
     cfg = Config()
     out = _build_test_config(
-        cfg, _overrides(**{"agent.data_home": "/etc", "agent.id": "not-eval"}),
+        cfg,
+        _overrides(**{"agent.data_home": "/etc", "agent.id": "not-eval"}),
         _tmp(tmp_path),
     )
     assert out.agent.data_home == _tmp(tmp_path)
@@ -63,7 +64,9 @@ def test_nested_override_applies(tmp_path):
     cfg = Config()
     cfg.reflection.enabled = True
     out = _build_test_config(
-        cfg, _overrides(**{"reflection.enabled": False}), _tmp(tmp_path),
+        cfg,
+        _overrides(**{"reflection.enabled": False}),
+        _tmp(tmp_path),
     )
     assert out.reflection.enabled is False
     # Base config is untouched — we returned a modified copy, not a mutation.
@@ -75,7 +78,9 @@ def test_override_works_in_both_directions(tmp_path):
     cfg = Config()
     cfg.reflection.enabled = False
     out = _build_test_config(
-        cfg, _overrides(**{"reflection.enabled": True}), _tmp(tmp_path),
+        cfg,
+        _overrides(**{"reflection.enabled": True}),
+        _tmp(tmp_path),
     )
     assert out.reflection.enabled is True
 
@@ -85,7 +90,9 @@ def test_max_tool_iterations_override(tmp_path):
     cfg = Config()
     baseline = cfg.agent.max_tool_iterations
     out = _build_test_config(
-        cfg, _overrides(**{"agent.max_tool_iterations": 3}), _tmp(tmp_path),
+        cfg,
+        _overrides(**{"agent.max_tool_iterations": 3}),
+        _tmp(tmp_path),
     )
     assert out.agent.max_tool_iterations == 3
     unset = _build_test_config(cfg, {}, _tmp(tmp_path))
@@ -98,10 +105,12 @@ def test_overrides_compose_across_sections(tmp_path):
     cfg.reflection.enabled = True
     out = _build_test_config(
         cfg,
-        _overrides(**{
-            "reflection.enabled": False,
-            "agent.max_tool_iterations": 2,
-        }),
+        _overrides(
+            **{
+                "reflection.enabled": False,
+                "agent.max_tool_iterations": 2,
+            }
+        ),
         _tmp(tmp_path),
     )
     assert out.reflection.enabled is False
@@ -117,10 +126,12 @@ def test_multiple_overrides_into_same_section(tmp_path):
     cfg = Config()
     out = _build_test_config(
         cfg,
-        _overrides(**{
-            "agent.max_tool_iterations": 7,
-            "agent.max_concurrent_tools": 2,
-        }),
+        _overrides(
+            **{
+                "agent.max_tool_iterations": 7,
+                "agent.max_concurrent_tools": 2,
+            }
+        ),
         _tmp(tmp_path),
     )
     assert out.agent.max_tool_iterations == 7
@@ -131,7 +142,9 @@ def test_top_level_scalar_override(tmp_path):
     """A single-segment path targets a field on Config itself."""
     cfg = Config()
     out = _build_test_config(
-        cfg, _overrides(**{"default_model": "some-model"}), _tmp(tmp_path),
+        cfg,
+        _overrides(**{"default_model": "some-model"}),
+        _tmp(tmp_path),
     )
     assert out.default_model == "some-model"
 
@@ -156,17 +169,13 @@ def test_every_config_section_is_reachable(tmp_path):
     the CLAUDE.md convention — a new config section should work on arrival.
     """
     cfg = Config()
-    sections = [
-        f.name for f in dataclasses.fields(Config)
-        if dataclasses.is_dataclass(getattr(cfg, f.name))
-    ]
+    sections = [f.name for f in dataclasses.fields(Config) if dataclasses.is_dataclass(getattr(cfg, f.name))]
     assert sections, "expected Config to have nested dataclass sections"
 
     for section in sections:
         sub = getattr(cfg, section)
         bool_field = next(
-            (f.name for f in dataclasses.fields(sub)
-             if isinstance(getattr(sub, f.name), bool)),
+            (f.name for f in dataclasses.fields(sub) if isinstance(getattr(sub, f.name), bool)),
             None,
         )
         if bool_field is None:
@@ -190,7 +199,9 @@ def test_unknown_nested_field_raises(tmp_path):
     cfg = Config()
     with pytest.raises(ValueError, match="reflection.nonesuch"):
         _build_test_config(
-            cfg, _overrides(**{"reflection.nonesuch": 1}), _tmp(tmp_path),
+            cfg,
+            _overrides(**{"reflection.nonesuch": 1}),
+            _tmp(tmp_path),
         )
 
 
@@ -199,7 +210,9 @@ def test_error_lists_available_fields(tmp_path):
     cfg = Config()
     with pytest.raises(ValueError, match="enabled"):
         _build_test_config(
-            cfg, _overrides(**{"reflection.nonesuch": 1}), _tmp(tmp_path),
+            cfg,
+            _overrides(**{"reflection.nonesuch": 1}),
+            _tmp(tmp_path),
         )
 
 
@@ -208,7 +221,9 @@ def test_descending_into_non_dataclass_raises(tmp_path):
     cfg = Config()
     with pytest.raises(ValueError, match="not a config section"):
         _build_test_config(
-            cfg, _overrides(**{"reflection.enabled.deeper": 1}), _tmp(tmp_path),
+            cfg,
+            _overrides(**{"reflection.enabled.deeper": 1}),
+            _tmp(tmp_path),
         )
 
 
@@ -223,23 +238,28 @@ def test_conflicting_paths_raise(tmp_path):
         )
 
 
-@pytest.mark.parametrize("bad", [
-    ["reflection.enabled=False"],
-    # Falsy non-mappings must raise too. A bare `config_overrides:` in YAML
-    # parses to None, and gating validation on truthiness would let that (and
-    # `[]`, `0`, `""`) silently no-op — the exact failure this mechanism
-    # exists to prevent. The repo has been bitten by null-YAML before; see
-    # test_schedule_null_allowed_tools.
-    None,
-    [],
-    0,
-    "",
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        ["reflection.enabled=False"],
+        # Falsy non-mappings must raise too. A bare `config_overrides:` in YAML
+        # parses to None, and gating validation on truthiness would let that (and
+        # `[]`, `0`, `""`) silently no-op — the exact failure this mechanism
+        # exists to prevent. The repo has been bitten by null-YAML before; see
+        # test_schedule_null_allowed_tools.
+        None,
+        [],
+        0,
+        "",
+    ],
+)
 def test_config_overrides_must_be_a_mapping(tmp_path, bad):
     cfg = Config()
     with pytest.raises(ValueError, match="must be a mapping"):
         _build_test_config(
-            cfg, {"setup": {"config_overrides": bad}}, _tmp(tmp_path),
+            cfg,
+            {"setup": {"config_overrides": bad}},
+            _tmp(tmp_path),
         )
 
 
@@ -247,7 +267,9 @@ def test_empty_mapping_is_an_explicit_noop(tmp_path):
     """`config_overrides: {}` is unambiguous — the author wrote no paths."""
     cfg = Config()
     out = _build_test_config(
-        cfg, {"setup": {"config_overrides": {}}}, _tmp(tmp_path),
+        cfg,
+        {"setup": {"config_overrides": {}}},
+        _tmp(tmp_path),
     )
     assert out.reflection.enabled == cfg.reflection.enabled
 
@@ -309,7 +331,9 @@ def test_unknown_setup_key_raises(tmp_path):
     cfg = Config()
     with pytest.raises(ValueError, match="workspace_file"):
         _build_test_config(
-            cfg, {"setup": {"workspace_file": {"a.md": "x"}}}, _tmp(tmp_path),
+            cfg,
+            {"setup": {"workspace_file": {"a.md": "x"}}},
+            _tmp(tmp_path),
         )
 
 
@@ -319,15 +343,18 @@ def test_unknown_setup_key_error_lists_valid_keys(tmp_path):
         _build_test_config(cfg, {"setup": {"nonesuch": 1}}, _tmp(tmp_path))
 
 
-@pytest.mark.parametrize("key", [
-    # PyYAML resolves `on:` / `no:` / `yes:` / `off:` to booleans, so a
-    # plausible typo yields a non-string key. Formatting the error message
-    # with `', '.join(sorted(...))` would then raise TypeError instead of
-    # the intended ValueError, and mixed types break `sorted` outright.
-    True,
-    False,
-    1,
-])
+@pytest.mark.parametrize(
+    "key",
+    [
+        # PyYAML resolves `on:` / `no:` / `yes:` / `off:` to booleans, so a
+        # plausible typo yields a non-string key. Formatting the error message
+        # with `', '.join(sorted(...))` would then raise TypeError instead of
+        # the intended ValueError, and mixed types break `sorted` outright.
+        True,
+        False,
+        1,
+    ],
+)
 def test_non_string_setup_key_raises_valueerror(tmp_path, key):
     """Validation must fail with a clear ValueError, never a TypeError."""
     cfg = Config()
@@ -340,7 +367,9 @@ def test_mixed_type_unknown_keys_raise_valueerror(tmp_path):
     cfg = Config()
     with pytest.raises(ValueError, match="unknown setup key"):
         _build_test_config(
-            cfg, {"setup": {"nonesuch": 1, 2: "x"}}, _tmp(tmp_path),
+            cfg,
+            {"setup": {"nonesuch": 1, 2: "x"}},
+            _tmp(tmp_path),
         )
 
 
@@ -353,7 +382,9 @@ def test_removed_keys_keep_their_migration_hint(tmp_path):
     cfg = Config()
     with pytest.raises(ValueError, match="config_overrides"):
         _build_test_config(
-            cfg, {"setup": {"reflection_enabled": False}}, _tmp(tmp_path),
+            cfg,
+            {"setup": {"reflection_enabled": False}},
+            _tmp(tmp_path),
         )
 
 
@@ -442,6 +473,8 @@ def test_dict_value_is_assigned_not_traversed(tmp_path):
     """
     cfg = Config()
     out = _build_test_config(
-        cfg, _overrides(**{"skills": {"demo": {"enabled": True}}}), _tmp(tmp_path),
+        cfg,
+        _overrides(**{"skills": {"demo": {"enabled": True}}}),
+        _tmp(tmp_path),
     )
     assert out.skills == {"demo": {"enabled": True}}

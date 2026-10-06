@@ -22,12 +22,7 @@ def test_section_walk_by_path():
 # `##` heading was addressable only as '<H1 Title>/<Section>' — so the obvious
 # spelling, a bare heading title, always missed.
 
-NESTED = (
-    "# Project Notes\n\n"
-    "## Background\n\nbg\n\n"
-    "## Archive\n\n### Background\n\nold bg\n\n"
-    "## TODO\n\n- Old item\n"
-)
+NESTED = "# Project Notes\n\n## Background\n\nbg\n\n## Archive\n\n### Background\n\nold bg\n\n## TODO\n\n- Old item\n"
 
 FLAT = "# Project Notes\n\n## Background\n\nbg\n\n## TODO\n\n- x\n"
 
@@ -199,9 +194,7 @@ def test_describe_section_miss_duplicate_headings_dont_advise_a_longer_path():
     Telling the caller to lengthen it is a dead end — observed sending the
     agent into a retry loop until it blew its tool budget.
     """
-    doc = Document.from_text(
-        "# Project Notes\n\n## Status\n\na\n\n## Status\n\nb\n"
-    )
+    doc = Document.from_text("# Project Notes\n\n## Status\n\na\n\n## Status\n\nb\n")
     msg = describe_section_miss(doc, "Status")
     assert "Use a longer path" not in msg
     assert "duplicate headings" in msg

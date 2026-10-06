@@ -12,6 +12,7 @@ and for forward compatibility with non-Python consumers. Legacy journals
 that wrote a bare int seq (pre-#574) are transparently upgraded to 1-tuples
 by `from_dict` so we don't need a migration step.
 """
+
 import dataclasses
 import hashlib
 import json
@@ -48,20 +49,19 @@ class Journal:
     # same replay position, this bounds the storm — the scan flips status to
     # "error" when attempts reach max_resume_attempts (before the bump).
     attempts: int = 0
-    entries: dict[tuple[int, ...], JournalEntry] = dataclasses.field(
-        default_factory=dict)
+    entries: dict[tuple[int, ...], JournalEntry] = dataclasses.field(default_factory=dict)
 
     def get(self, seq: tuple[int, ...]) -> JournalEntry | None:
         return self.entries.get(seq)
 
-    def append(self, seq: tuple[int, ...], kind: str,
-               args_fingerprint: str, result: Any) -> None:
+    def append(self, seq: tuple[int, ...], kind: str, args_fingerprint: str, result: Any) -> None:
         if seq in self.entries:
             prev = self.entries[seq]
             raise ValueError(
                 f"duplicate journal append at seq={seq}: "
                 f"recorded {prev.kind}/{prev.args_fingerprint}, "
-                f"now {kind}/{args_fingerprint}")
+                f"now {kind}/{args_fingerprint}"
+            )
         self.entries[seq] = JournalEntry(seq, kind, args_fingerprint, result)
 
     def to_dict(self) -> dict:
@@ -75,24 +75,19 @@ class Journal:
             "status": self.status,
             "attempts": self.attempts,
             "entries": [
-                {"seq": path_to_str(e.seq), "kind": e.kind,
-                 "args_fingerprint": e.args_fingerprint, "result": e.result}
+                {"seq": path_to_str(e.seq), "kind": e.kind, "args_fingerprint": e.args_fingerprint, "result": e.result}
                 for e in sorted(self.entries.values(), key=lambda e: e.seq)
             ],
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "Journal":
-        j = cls(workflow_name=d["workflow_name"],
-                status=d.get("status", "running"),
-                attempts=d.get("attempts", 0))
+        j = cls(workflow_name=d["workflow_name"], status=d.get("status", "running"), attempts=d.get("attempts", 0))
         for entry_d in d.get("entries", []):
             seq = path_from_any(entry_d["seq"])
             if seq in j.entries:
                 raise ValueError(f"duplicate seq in journal file: {seq}")
-            j.entries[seq] = JournalEntry(
-                seq, entry_d["kind"], entry_d["args_fingerprint"],
-                entry_d["result"])
+            j.entries[seq] = JournalEntry(seq, entry_d["kind"], entry_d["args_fingerprint"], entry_d["result"])
         return j
 
 

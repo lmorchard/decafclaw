@@ -20,8 +20,7 @@ def _assistant(tool_names):
         "role": "assistant",
         "content": "",
         "tool_calls": [
-            {"id": f"call_{i}", "function": {"name": n, "arguments": "{}"}}
-            for i, n in enumerate(tool_names)
+            {"id": f"call_{i}", "function": {"name": n, "arguments": "{}"}} for i, n in enumerate(tool_names)
         ],
     }
 
@@ -32,9 +31,7 @@ def _assistant_with_args(calls):
         "role": "assistant",
         "content": "",
         "tool_calls": [
-            {"id": f"call_{i}",
-             "function": {"name": n, "arguments": json.dumps(a)}}
-            for i, (n, a) in enumerate(calls)
+            {"id": f"call_{i}", "function": {"name": n, "arguments": json.dumps(a)}} for i, (n, a) in enumerate(calls)
         ],
     }
 
@@ -43,12 +40,13 @@ def _tool_result(call_id="call_0", content="ok"):
     return {"role": "tool", "tool_call_id": call_id, "content": content}
 
 
-def _check(test_case, history, response="response text", tool_calls=0,
-           tool_errors=0):
+def _check(test_case, history, response="response text", tool_calls=0, tool_errors=0):
     """Convenience wrapper: derive tool names/args from history and call
     _check_assertions."""
     return _check_assertions(
-        test_case, response, tool_calls,
+        test_case,
+        response,
+        tool_calls,
         tool_errors=tool_errors,
         tool_names=_collect_tool_names(history),
         tool_calls_detail=_collect_tool_calls(history),
@@ -56,6 +54,7 @@ def _check(test_case, history, response="response text", tool_calls=0,
 
 
 # --- _collect_tool_names sanity ---
+
 
 def test_collect_tool_names_empty_history():
     assert _collect_tool_names([]) == []
@@ -88,6 +87,7 @@ def test_collect_tool_names_skips_non_assistant_and_handles_missing():
 
 
 # --- expect_tool ---
+
 
 def test_expect_tool_string_match_passes():
     test_case = {"expect": {"expect_tool": "vault_search"}}
@@ -131,6 +131,7 @@ def test_expect_tool_no_tools_called_fails():
 
 # --- expect_no_tool ---
 
+
 def test_expect_no_tool_string_blocks_match():
     test_case = {"expect": {"expect_no_tool": "web_fetch"}}
     history = [_assistant(["web_fetch"]), _tool_result()]
@@ -163,12 +164,15 @@ def test_expect_no_tool_list_and_semantics_fails_when_one_called():
 
 # --- _collect_tool_calls + expect_tool_args ---
 
+
 def test_collect_tool_calls_parses_args():
     history = [
-        _assistant_with_args([
-            ("canvas_new_tab", {"widget_type": "map", "data": {"markers": []}}),
-            ("workspace_read", {"path": "x"}),
-        ]),
+        _assistant_with_args(
+            [
+                ("canvas_new_tab", {"widget_type": "map", "data": {"markers": []}}),
+                ("workspace_read", {"path": "x"}),
+            ]
+        ),
     ]
     detail = _collect_tool_calls(history)
     assert detail == [
@@ -178,43 +182,48 @@ def test_collect_tool_calls_parses_args():
 
 
 def test_collect_tool_calls_tolerates_bad_json():
-    history = [{
-        "role": "assistant", "content": "",
-        "tool_calls": [
-            {"id": "c0", "function": {"name": "t", "arguments": "{not json"}},
-        ],
-    }]
+    history = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c0", "function": {"name": "t", "arguments": "{not json"}},
+            ],
+        }
+    ]
     # Unparseable args degrade to {} rather than raising.
     assert _collect_tool_calls(history) == [("t", {})]
 
 
 def test_expect_tool_args_subset_match_passes():
-    test_case = {"expect": {
-        "expect_tool_args": [{"tool": "canvas_new_tab",
-                              "args": {"widget_type": "map"}}]}}
-    history = [_assistant_with_args([
-        ("canvas_new_tab", {"widget_type": "map", "data": {"markers": []}}),
-    ])]
+    test_case = {"expect": {"expect_tool_args": [{"tool": "canvas_new_tab", "args": {"widget_type": "map"}}]}}
+    history = [
+        _assistant_with_args(
+            [
+                ("canvas_new_tab", {"widget_type": "map", "data": {"markers": []}}),
+            ]
+        )
+    ]
     passed, reason = _check(test_case, history)
     assert passed, reason
 
 
 def test_expect_tool_args_wrong_value_fails():
-    test_case = {"expect": {
-        "expect_tool_args": [{"tool": "canvas_new_tab",
-                              "args": {"widget_type": "map"}}]}}
-    history = [_assistant_with_args([
-        ("canvas_new_tab", {"widget_type": "iframe_sandbox", "data": {}}),
-    ])]
+    test_case = {"expect": {"expect_tool_args": [{"tool": "canvas_new_tab", "args": {"widget_type": "map"}}]}}
+    history = [
+        _assistant_with_args(
+            [
+                ("canvas_new_tab", {"widget_type": "iframe_sandbox", "data": {}}),
+            ]
+        )
+    ]
     passed, reason = _check(test_case, history)
     assert not passed
     assert "widget_type" in reason
 
 
 def test_expect_tool_args_tool_not_called_fails():
-    test_case = {"expect": {
-        "expect_tool_args": [{"tool": "canvas_new_tab",
-                              "args": {"widget_type": "map"}}]}}
+    test_case = {"expect": {"expect_tool_args": [{"tool": "canvas_new_tab", "args": {"widget_type": "map"}}]}}
     history = [_assistant(["workspace_write"]), _tool_result()]
     passed, reason = _check(test_case, history)
     assert not passed
@@ -222,6 +231,7 @@ def test_expect_tool_args_tool_not_called_fails():
 
 
 # --- expect_tool_count_by_name ---
+
 
 def test_count_exact_match_passes():
     test_case = {"expect": {"expect_tool_count_by_name": {"a": 2, "b": 1}}}
@@ -302,6 +312,7 @@ def test_count_with_other_assertions_combine_fails_on_count():
 
 # --- Regression tests for existing fields with new kwarg threading ---
 
+
 def test_response_contains_regression():
     test_case = {"expect": {"response_contains": "hello"}}
     passed, reason = _check(test_case, [], response="well, Hello there")
@@ -345,6 +356,7 @@ def test_max_tool_errors_regression():
 
 
 # --- response_contains_all (AND semantics) ---
+
 
 def test_response_contains_all_string_passes():
     test_case = {"expect": {"response_contains_all": "hello"}}
@@ -404,6 +416,7 @@ def test_response_contains_all_combines_with_other_assertions():
 
 
 # --- Default kwarg behavior (call without tool_names) ---
+
 
 def test_check_assertions_defaults_when_tool_names_omitted():
     """`tool_names=None` default should still let non-tool-name asserts work."""

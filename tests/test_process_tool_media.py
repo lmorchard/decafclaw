@@ -18,11 +18,13 @@ class _FakeCtx:
 
 def _make_handler(workspace_ref=None, file_id=None, saved_filename=None):
     handler = AsyncMock()
-    handler.save_media = AsyncMock(return_value=MediaSaveResult(
-        workspace_ref=workspace_ref,
-        file_id=file_id,
-        saved_filename=saved_filename,
-    ))
+    handler.save_media = AsyncMock(
+        return_value=MediaSaveResult(
+            workspace_ref=workspace_ref,
+            file_id=file_id,
+            saved_filename=saved_filename,
+        )
+    )
     return handler
 
 

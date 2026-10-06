@@ -11,14 +11,16 @@ def test_single_response_contains():
 
 def test_multiple_assertions_all_listed():
     """Without this fix, only response_contains made it into the judge prompt."""
-    s = _summarize_expectations({
-        "expect": {
-            "response_contains": "ok",
-            "max_tool_calls": 5,
-            "expect_tool": "vault_search",
-            "expect_no_tool": ["shell", "web_fetch"],
+    s = _summarize_expectations(
+        {
+            "expect": {
+                "response_contains": "ok",
+                "max_tool_calls": 5,
+                "expect_tool": "vault_search",
+                "expect_no_tool": ["shell", "web_fetch"],
+            }
         }
-    })
+    )
     assert "response_contains" in s
     assert "max_tool_calls" in s
     assert "5" in s
@@ -44,9 +46,7 @@ def test_response_contains_all_appears():
 
 
 def test_count_by_name_renders():
-    s = _summarize_expectations({
-        "expect": {"expect_tool_count_by_name": {"tool_search": 2}}
-    })
+    s = _summarize_expectations({"expect": {"expect_tool_count_by_name": {"tool_search": 2}}})
     assert "expect_tool_count_by_name" in s
     assert "tool_search" in s
     assert "2" in s
@@ -64,12 +64,14 @@ def test_no_expect_key_at_all_renders_none_marker():
 
 def test_multi_turn_uses_last_turn_expect():
     """The failure typically happens on the last turn; summarize its expect."""
-    s = _summarize_expectations({
-        "turns": [
-            {"input": "first", "expect": {"response_contains": "hello"}},
-            {"input": "second", "expect": {"response_contains": "goodbye", "max_tool_calls": 3}},
-        ]
-    })
+    s = _summarize_expectations(
+        {
+            "turns": [
+                {"input": "first", "expect": {"response_contains": "hello"}},
+                {"input": "second", "expect": {"response_contains": "goodbye", "max_tool_calls": 3}},
+            ]
+        }
+    )
     assert "goodbye" in s
     assert "max_tool_calls" in s
     # First turn's expectation should NOT be summarized — it passed

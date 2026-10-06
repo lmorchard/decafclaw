@@ -37,10 +37,12 @@ def _enable_channel(config, **overrides):
     config.email.sender_address = "bot@example.com"
     config.notifications.channels.email.enabled = True
     config.notifications.channels.email.recipient_addresses = overrides.get(
-        "recipients", ["ops@example.com"],
+        "recipients",
+        ["ops@example.com"],
     )
     config.notifications.channels.email.min_priority = overrides.get(
-        "min_priority", "normal",
+        "min_priority",
+        "normal",
     )
     return config
 
@@ -65,17 +67,21 @@ class TestFormatBody:
 
     def test_explicit_http_link_preserved(self):
         body = _format_body(
-            _rec(link="https://example.com/x"), "http://agent.local",
+            _rec(link="https://example.com/x"),
+            "http://agent.local",
         )
         assert "https://example.com/x" in body
 
 
 class TestFormatSubject:
     def test_agent_then_category_then_title(self):
-        assert _format_subject(
-            "decafclaw",
-            _rec(category="heartbeat", title="OK"),
-        ) == "[decafclaw] [heartbeat] OK"
+        assert (
+            _format_subject(
+                "decafclaw",
+                _rec(category="heartbeat", title="OK"),
+            )
+            == "[decafclaw] [heartbeat] OK"
+        )
 
     def test_agent_id_appears_first(self):
         """The agent-id prefix is load-bearing for inbox filtering —
@@ -99,10 +105,12 @@ class TestAdapterHandler:
         handler = make_email_adapter(config)
 
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
-            await handler({
-                "type": "notification_created",
-                "record": _rec(priority="high", title="Alert").to_dict(),
-            })
+            await handler(
+                {
+                    "type": "notification_created",
+                    "record": _rec(priority="high", title="Alert").to_dict(),
+                }
+            )
             await asyncio.sleep(0)
             await asyncio.sleep(0)
 
@@ -127,10 +135,12 @@ class TestAdapterHandler:
         config.notifications.channels.email.enabled = False
         handler = make_email_adapter(config)
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
-            await handler({
-                "type": "notification_created",
-                "record": _rec(priority="high").to_dict(),
-            })
+            await handler(
+                {
+                    "type": "notification_created",
+                    "record": _rec(priority="high").to_dict(),
+                }
+            )
             await asyncio.sleep(0)
         mock_send.assert_not_called()
 
@@ -140,10 +150,12 @@ class TestAdapterHandler:
         config.email.enabled = False
         handler = make_email_adapter(config)
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
-            await handler({
-                "type": "notification_created",
-                "record": _rec(priority="high").to_dict(),
-            })
+            await handler(
+                {
+                    "type": "notification_created",
+                    "record": _rec(priority="high").to_dict(),
+                }
+            )
             await asyncio.sleep(0)
         mock_send.assert_not_called()
 
@@ -156,10 +168,12 @@ class TestAdapterHandler:
         config.email.sender_address = ""
         handler = make_email_adapter(config)
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
-            await handler({
-                "type": "notification_created",
-                "record": _rec(priority="high").to_dict(),
-            })
+            await handler(
+                {
+                    "type": "notification_created",
+                    "record": _rec(priority="high").to_dict(),
+                }
+            )
             await asyncio.sleep(0)
         mock_send.assert_not_called()
 
@@ -168,10 +182,12 @@ class TestAdapterHandler:
         _enable_channel(config, recipients=[])
         handler = make_email_adapter(config)
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
-            await handler({
-                "type": "notification_created",
-                "record": _rec(priority="high").to_dict(),
-            })
+            await handler(
+                {
+                    "type": "notification_created",
+                    "record": _rec(priority="high").to_dict(),
+                }
+            )
             await asyncio.sleep(0)
         mock_send.assert_not_called()
 
@@ -180,10 +196,12 @@ class TestAdapterHandler:
         _enable_channel(config, min_priority="high")
         handler = make_email_adapter(config)
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
-            await handler({
-                "type": "notification_created",
-                "record": _rec(priority="normal").to_dict(),
-            })
+            await handler(
+                {
+                    "type": "notification_created",
+                    "record": _rec(priority="normal").to_dict(),
+                }
+            )
             await asyncio.sleep(0)
         mock_send.assert_not_called()
 
@@ -193,14 +211,15 @@ class TestAdapterHandler:
         handler = make_email_adapter(config)
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
             mock_send.side_effect = RuntimeError("smtp down")
-            await handler({
-                "type": "notification_created",
-                "record": _rec(priority="high").to_dict(),
-            })
+            await handler(
+                {
+                    "type": "notification_created",
+                    "record": _rec(priority="high").to_dict(),
+                }
+            )
             await asyncio.sleep(0)
             await asyncio.sleep(0)
-        assert any("Email notification delivery failed" in r.message
-                   for r in caplog.records)
+        assert any("Email notification delivery failed" in r.message for r in caplog.records)
 
 
 class TestEndToEnd:
@@ -211,7 +230,10 @@ class TestEndToEnd:
         bus.subscribe(make_email_adapter(config))
         with patch("decafclaw.mail.send_mail", new_callable=AsyncMock) as mock_send:
             await notifs.notify(
-                config, bus, category="test", title="Ping",
+                config,
+                bus,
+                category="test",
+                title="Ping",
                 priority="high",
             )
             await asyncio.sleep(0)

@@ -46,31 +46,32 @@ async def run_all(app_ctx):
     # they capture startup events (e.g. MCP connections).
     if config.audit_log.enabled:
         from .audit_log import make_audit_log_subscriber
+
         app_ctx.event_bus.subscribe(make_audit_log_subscriber(config))
-        log.info("Audit log subscriber active (%s)",
-                 config.audit_log.path)
+        log.info("Audit log subscriber active (%s)", config.audit_log.path)
     if config.telemetry.tool_usage_enabled:
         from .tool_telemetry import make_tool_telemetry_subscriber
+
         app_ctx.event_bus.subscribe(make_tool_telemetry_subscriber(config))
-        log.info("Telemetry: tool-usage subscriber active (%s)",
-                 config.telemetry.tool_usage_path)
+        log.info("Telemetry: tool-usage subscriber active (%s)", config.telemetry.tool_usage_path)
     if config.telemetry.reflection_metrics_enabled:
         from .reflection_metrics import make_reflection_metrics_subscriber
+
         app_ctx.event_bus.subscribe(make_reflection_metrics_subscriber(config))
-        log.info("Telemetry: reflection-metrics subscriber active (%s)",
-                 config.telemetry.reflection_metrics_path)
+        log.info("Telemetry: reflection-metrics subscriber active (%s)", config.telemetry.reflection_metrics_path)
     if config.telemetry.loop_breaker_enabled:
         from .loop_breaker_telemetry import make_loop_breaker_subscriber
+
         app_ctx.event_bus.subscribe(make_loop_breaker_subscriber(config))
-        log.info("Telemetry: loop-breaker subscriber active (%s)",
-                 config.telemetry.loop_breaker_path)
+        log.info("Telemetry: loop-breaker subscriber active (%s)", config.telemetry.loop_breaker_path)
     if config.telemetry.retrieval_enabled:
         from .retrieval_telemetry import make_retrieval_telemetry_subscriber
+
         app_ctx.event_bus.subscribe(make_retrieval_telemetry_subscriber(config))
-        log.info("Telemetry: retrieval subscriber active (%s)",
-                 config.telemetry.retrieval_path)
+        log.info("Telemetry: retrieval subscriber active (%s)", config.telemetry.retrieval_path)
     if config.telemetry.metrics_enabled:
         from .metrics import make_metrics_subscriber
+
         app_ctx.event_bus.subscribe(make_metrics_subscriber())
         log.info("Metrics: Prometheus subscriber active (in-memory, scrape /metrics)")
 
@@ -86,6 +87,7 @@ async def run_all(app_ctx):
         # Create conversation manager (shared across web + future transports)
         from .conversation_manager import ConversationManager
         from .widget_input import register_widget_handler
+
         manager = ConversationManager(config, app_ctx.event_bus)
         register_widget_handler(manager.confirmation_registry)
         await manager.startup_scan()
@@ -93,31 +95,27 @@ async def run_all(app_ctx):
 
         # Start workspace index background refresh loop (server startup refresh)
         from .workspace_index import start_workspace_index_loop
+
         start_workspace_index_loop(config)
 
         # Start HTTP server (button callbacks + web gateway)
         if config.http.enabled:
             from .http_server import run_http_server
+
             http_task = asyncio.create_task(
-                run_http_server(config, app_ctx.event_bus, app_ctx=app_ctx,
-                                manager=manager)
+                run_http_server(config, app_ctx.event_bus, app_ctx=app_ctx, manager=manager)
             )
             log.info(f"HTTP server enabled on {config.http.host}:{config.http.port}")
 
         # Start Mattermost client (skipped when disabled — lets the web gateway
         # run standalone without connecting to Mattermost, e.g. for the decafclaw client)
-        mm_active = bool(
-            config.mattermost.enabled
-            and config.mattermost.url
-            and config.mattermost.token
-        )
+        mm_active = bool(config.mattermost.enabled and config.mattermost.url and config.mattermost.token)
         mm_client = None
         if mm_active:
             from .mattermost import MattermostClient
+
             mm_client = MattermostClient(config)
-            mattermost_task = asyncio.create_task(
-                mm_client.run(app_ctx, shutdown_event, manager=manager)
-            )
+            mattermost_task = asyncio.create_task(mm_client.run(app_ctx, shutdown_event, manager=manager))
             log.info("Mattermost client starting")
 
         # Wire notification channel adapters. Each adapter subscribes to
@@ -125,8 +123,10 @@ async def run_all(app_ctx):
         # guards + subscribe calls live in the notification_channels
         # package so adding a new channel doesn't touch this file.
         from .notification_channels import init_notification_channels
+
         init_notification_channels(
-            config, app_ctx.event_bus,
+            config,
+            app_ctx.event_bus,
             mm_client=mm_client,
         )
 
@@ -135,11 +135,12 @@ async def run_all(app_ctx):
         # instead of brute-force rescanning the vault on each query.
         # Fail-open — never propagates into the publishing turn.
         from .backlinks import make_backlinks_subscriber
+
         app_ctx.event_bus.subscribe(make_backlinks_subscriber(config))
 
         from .workspace_index import make_workspace_index_subscriber
-        app_ctx.event_bus.subscribe(make_workspace_index_subscriber(config))
 
+        app_ctx.event_bus.subscribe(make_workspace_index_subscriber(config))
 
         # Start heartbeat timer
         if parse_interval(config.heartbeat.interval) is not None:
@@ -152,14 +153,20 @@ async def run_all(app_ctx):
 
                 heartbeat_task = asyncio.create_task(
                     run_heartbeat_timer(
-                        config, app_ctx.event_bus, manager, shutdown_event,
+                        config,
+                        app_ctx.event_bus,
+                        manager,
+                        shutdown_event,
                         on_cycle=on_cycle,
                     )
                 )
             else:
                 heartbeat_task = asyncio.create_task(
                     run_heartbeat_timer(
-                        config, app_ctx.event_bus, manager, shutdown_event,
+                        config,
+                        app_ctx.event_bus,
+                        manager,
+                        shutdown_event,
                     )
                 )
             has_channel = config.heartbeat.channel or config.heartbeat.user
@@ -169,9 +176,8 @@ async def run_all(app_ctx):
 
         # Start schedule timer
         from .schedules import run_schedule_timer
-        schedule_task = asyncio.create_task(
-            run_schedule_timer(config, app_ctx.event_bus, manager, shutdown_event)
-        )
+
+        schedule_task = asyncio.create_task(run_schedule_timer(config, app_ctx.event_bus, manager, shutdown_event))
         log.info("Schedule timer started")
 
         # Wait for shutdown
@@ -187,6 +193,7 @@ async def run_all(app_ctx):
         # Graceful HTTP server shutdown (avoids uvicorn CancelledError tracebacks)
         if http_task:
             from .http_server import shutdown_http_server
+
             await shutdown_http_server()
             try:
                 await asyncio.wait_for(http_task, timeout=5)

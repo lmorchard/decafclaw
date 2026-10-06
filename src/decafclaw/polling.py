@@ -59,9 +59,7 @@ def build_task_preamble(task_type: str, task_name: str = "") -> str:
     """
     name_clause = f': "{task_name}"' if task_name else ""
     if "heartbeat" in task_type.lower():
-        closing = (
-            "If there is nothing to report, respond with HEARTBEAT_OK.\n"
-        )
+        closing = "If there is nothing to report, respond with HEARTBEAT_OK.\n"
     else:
         closing = (
             "End your turn with a short narrative summary of what you did "

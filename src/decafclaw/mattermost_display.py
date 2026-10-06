@@ -25,9 +25,16 @@ class ConversationDisplay:
     Works for both streaming and non-streaming mode.
     """
 
-    def __init__(self, client: MattermostClient, channel_id, root_id,
-                 throttle_ms=200, initial_post_id=None, config=None,
-                 conv_id=None):
+    def __init__(
+        self,
+        client: MattermostClient,
+        channel_id,
+        root_id,
+        throttle_ms=200,
+        initial_post_id=None,
+        config=None,
+        conv_id=None,
+    ):
         self.client = client
         self._channel_id = channel_id
         self._root_id = root_id
@@ -69,7 +76,9 @@ class ConversationDisplay:
             self._text_buffer = ""
             self._text_has_content = False
             post_id = await self.client.send(
-                self._channel_id, THINKING_INDICATOR, root_id=self._root_id,
+                self._channel_id,
+                THINKING_INDICATOR,
+                root_id=self._root_id,
                 attachments=self._stop_attachments,
             )
             self._current_post_id = post_id
@@ -83,9 +92,7 @@ class ConversationDisplay:
         self._text_has_content = True
         if self._current_type == "thinking":
             self._current_type = "text"
-        await self._throttled_edit(
-            self._current_post_id, self._text_buffer + THINKING_SUFFIX
-        )
+        await self._throttled_edit(self._current_post_id, self._text_buffer + THINKING_SUFFIX)
 
     async def on_text_done(self):
         """Streaming text segment complete — strip thinking suffix."""
@@ -105,7 +112,9 @@ class ConversationDisplay:
             await self._force_edit(self._current_post_id, text)
         else:
             post_id = await self.client.send(
-                self._channel_id, text, root_id=self._root_id,
+                self._channel_id,
+                text,
+                root_id=self._root_id,
                 attachments=self._stop_attachments,
             )
             self._current_post_id = post_id
@@ -147,7 +156,9 @@ class ConversationDisplay:
             else:
                 await self._finalize_current_text()
                 post_id = await self.client.send(
-                    self._channel_id, msg, root_id=self._root_id,
+                    self._channel_id,
+                    msg,
+                    root_id=self._root_id,
                     attachments=self._stop_attachments,
                 )
                 if self._stop_attachments:
@@ -155,7 +166,9 @@ class ConversationDisplay:
         else:
             # Subsequent concurrent tool — always a new post
             post_id = await self.client.send(
-                self._channel_id, msg, root_id=self._root_id,
+                self._channel_id,
+                msg,
+                root_id=self._root_id,
             )
 
         self._tool_posts[tool_call_id] = post_id
@@ -183,13 +196,14 @@ class ConversationDisplay:
             # Standalone status (no preceding tool_start) — create a new post
             try:
                 await self.client.send(
-                    self._channel_id, message, root_id=self._root_id,
+                    self._channel_id,
+                    message,
+                    root_id=self._root_id,
                 )
             except Exception as exc:
                 log.debug("Mattermost API call failed: %s", exc)
 
-    async def on_tool_end(self, tool_name, result_text, display_text, media,
-                          tool_call_id="", display_short_text=None):
+    async def on_tool_end(self, tool_name, result_text, display_text, media, tool_call_id="", display_short_text=None):
         """Tool finished — edit tool call message with result, handle media."""
         if display_text:
             msg = display_text
@@ -202,7 +216,9 @@ class ConversationDisplay:
         if post_id:
             try:
                 await self.client.edit_message(
-                    post_id, msg, props={"attachments": []},
+                    post_id,
+                    msg,
+                    props={"attachments": []},
                 )
                 if self._stop_on_post == post_id:
                     self._stop_on_post = None
@@ -220,18 +236,30 @@ class ConversationDisplay:
             return
         try:
             from .media import MattermostMediaHandler
+
             handler = MattermostMediaHandler(self.client._http, channel_id=self._channel_id)
             await handler.send_with_media(
-                self._channel_id, "", file_ids, root_id=self._root_id,
+                self._channel_id,
+                "",
+                file_ids,
+                root_id=self._root_id,
             )
         except Exception as e:
             log.debug(f"Failed to post tool media: {e}")
 
     # -- Confirmation ----------------------------------------------------------
 
-    async def on_confirm_request(self, tool_name, command, suggested_pattern,
-                                  event_bus, context_id, tool_call_id="",
-                                  conv_id="", confirmation_id="") -> str:
+    async def on_confirm_request(
+        self,
+        tool_name,
+        command,
+        suggested_pattern,
+        event_bus,
+        context_id,
+        tool_call_id="",
+        conv_id="",
+        confirmation_id="",
+    ) -> str:
         """Tool needs confirmation — show prompt with buttons and/or emoji.
 
         Returns the post ID of the confirmation message so the caller
@@ -241,8 +269,7 @@ class ConversationDisplay:
 
         # Map action types (e.g., "run_shell_command") back to legacy
         # tool names the display and button builder expect.
-        _LEGACY_TOOL_NAMES = {"run_shell_command": "shell",
-                              "activate_skill": "activate_skill"}
+        _LEGACY_TOOL_NAMES = {"run_shell_command": "shell", "activate_skill": "activate_skill"}
         tool_name = _LEGACY_TOOL_NAMES.get(tool_name) or tool_name
 
         config = self._config
@@ -254,10 +281,7 @@ class ConversationDisplay:
         show_emoji = not config or config.mattermost.enable_emoji_confirms
         if show_emoji:
             if tool_name == "shell" and suggested_pattern:
-                msg += (
-                    f"\nReact: \U0001f44d approve | \U0001f44e deny"
-                    f" | \U0001f4d3 allow `{suggested_pattern}`"
-                )
+                msg += f"\nReact: \U0001f44d approve | \U0001f44e deny | \U0001f4d3 allow `{suggested_pattern}`"
             else:
                 msg += "\nReact: \U0001f44d approve | \U0001f44e deny | \u2705 always"
 
@@ -265,12 +289,19 @@ class ConversationDisplay:
         attachments = []
         if config:
             attachments = build_confirm_buttons(
-                config, tool_name, command, suggested_pattern,
-                context_id, msg, tool_call_id=tool_call_id,
-                conv_id=conv_id, confirmation_id=confirmation_id,
+                config,
+                tool_name,
+                command,
+                suggested_pattern,
+                context_id,
+                msg,
+                tool_call_id=tool_call_id,
+                conv_id=conv_id,
+                confirmation_id=confirmation_id,
             )
             if attachments:
                 import json as _json
+
                 log.debug(f"Confirm buttons: {_json.dumps(attachments, indent=2)}")
 
         confirm_post_id = ""
@@ -279,7 +310,9 @@ class ConversationDisplay:
             # Edit existing post — can't add attachments to edit, so send new
             if attachments:
                 confirm_post_id = await self.client.send(
-                    self._channel_id, msg, root_id=self._root_id,
+                    self._channel_id,
+                    msg,
+                    root_id=self._root_id,
                     attachments=attachments,
                 )
             else:
@@ -290,7 +323,9 @@ class ConversationDisplay:
                 confirm_post_id = tool_post_id
         else:
             confirm_post_id = await self.client.send(
-                self._channel_id, msg, root_id=self._root_id,
+                self._channel_id,
+                msg,
+                root_id=self._root_id,
                 attachments=attachments,
             )
             self._tool_posts[tool_call_id] = confirm_post_id
@@ -336,7 +371,9 @@ class ConversationDisplay:
             resp.raise_for_status()
             current_text = resp.json().get("message", "")
             await self.client.edit_message(
-                post_id, current_text, props={"attachments": []},
+                post_id,
+                current_text,
+                props={"attachments": []},
             )
         except Exception as exc:
             log.debug("Mattermost API call failed: %s", exc)
@@ -350,7 +387,8 @@ class ConversationDisplay:
                 # Final text edit + strip stop button in one call
                 try:
                     await self.client.edit_message(
-                        self._current_post_id, self._text_buffer,
+                        self._current_post_id,
+                        self._text_buffer,
                         props={"attachments": []},
                     )
                     if self._stop_on_post == self._current_post_id:

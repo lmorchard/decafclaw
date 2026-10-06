@@ -31,14 +31,10 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class SkillConfig:
-    model: str = field(
-        default="", metadata={"env_alias": "CLAUDE_CODE_MODEL"})
-    budget_default: float = field(
-        default=2.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_DEFAULT"})
-    budget_max: float = field(
-        default=10.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_MAX"})
-    session_timeout: str = field(
-        default="30m", metadata={"env_alias": "CLAUDE_CODE_SESSION_TIMEOUT"})
+    model: str = field(default="", metadata={"env_alias": "CLAUDE_CODE_MODEL"})
+    budget_default: float = field(default=2.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_DEFAULT"})
+    budget_max: float = field(default=10.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_MAX"})
+    session_timeout: str = field(default="30m", metadata={"env_alias": "CLAUDE_CODE_SESSION_TIMEOUT"})
 
 
 # Module state, populated by init()
@@ -55,6 +51,7 @@ def init(config, skill_config: SkillConfig):
 
     # Parse timeout
     from decafclaw.heartbeat import parse_interval
+
     timeout_sec = parse_interval(skill_config.session_timeout) or 1800
 
     _session_manager = SessionManager(
@@ -62,8 +59,10 @@ def init(config, skill_config: SkillConfig):
         budget_default=skill_config.budget_default,
         budget_max=skill_config.budget_max,
     )
-    log.info(f"Claude Code skill initialized (timeout={timeout_sec}s, "
-             f"budget={skill_config.budget_default}/{skill_config.budget_max})")
+    log.info(
+        f"Claude Code skill initialized (timeout={timeout_sec}s, "
+        f"budget={skill_config.budget_default}/{skill_config.budget_max})"
+    )
 
 
 def _get_manager() -> SessionManager:
@@ -73,8 +72,7 @@ def _get_manager() -> SessionManager:
 
 
 _PROBE_TOOLS = ["python3", "node", "go", "uv", "pip", "npm", "pnpm", "make", "git", "cargo", "rustc"]
-_PROBE_FILES = ["Makefile", "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
-                "CLAUDE.md", "README.md", ".env"]
+_PROBE_FILES = ["Makefile", "pyproject.toml", "package.json", "go.mod", "Cargo.toml", "CLAUDE.md", "README.md", ".env"]
 
 
 def _assemble_prompt(prompt: str, instructions: str = "", context: str = "") -> str:
@@ -99,8 +97,7 @@ def _check_budget_warnings(cost: float, budget: float, fired: set[float]) -> lis
             pct = int(threshold * 100)
             actual_pct = (cost / budget) * 100
             warnings.append(
-                f"Budget warning: exceeded {pct}% threshold "
-                f"({actual_pct:.0f}% used, ${cost:.2f} of ${budget:.2f})"
+                f"Budget warning: exceeded {pct}% threshold ({actual_pct:.0f}% used, ${cost:.2f} of ${budget:.2f})"
             )
             fired.add(threshold)
     return warnings
@@ -112,34 +109,40 @@ async def _probe_environment(cwd: str) -> dict:
 
     async def _do_probe():
         # Batch check tools on PATH
-        script = "; ".join(
-            f"which {cmd} >/dev/null 2>&1 && echo {cmd}" for cmd in _PROBE_TOOLS
-        )
+        script = "; ".join(f"which {cmd} >/dev/null 2>&1 && echo {cmd}" for cmd in _PROBE_TOOLS)
         proc = await asyncio.create_subprocess_shell(
-            script, cwd=cwd,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            script,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
-        result["tools_available"] = [
-            line for line in stdout.decode().strip().splitlines() if line
-        ]
+        result["tools_available"] = [line for line in stdout.decode().strip().splitlines() if line]
 
         # Check project files
         cwd_path = Path(cwd)
-        result["project_files"] = [
-            name for name in _PROBE_FILES if (cwd_path / name).exists()
-        ]
+        result["project_files"] = [name for name in _PROBE_FILES if (cwd_path / name).exists()]
 
         # Git info
         if (cwd_path / ".git").exists():
             branch_proc = await asyncio.create_subprocess_exec(
-                "git", "-C", cwd, "branch", "--show-current",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                "git",
+                "-C",
+                cwd,
+                "branch",
+                "--show-current",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             branch_out, _ = await branch_proc.communicate()
             status_proc = await asyncio.create_subprocess_exec(
-                "git", "-C", cwd, "status", "--porcelain",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                "git",
+                "-C",
+                cwd,
+                "status",
+                "--porcelain",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             status_out, _ = await status_proc.communicate()
             result["git"] = {
@@ -160,8 +163,10 @@ async def _probe_environment(cwd: str) -> dict:
 async def _run_setup_command(cwd: str, command: str, timeout: float = 30.0) -> dict:
     """Run a setup command in cwd and return structured result."""
     proc = await asyncio.create_subprocess_shell(
-        command, cwd=cwd,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        command,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -189,8 +194,13 @@ async def _get_git_head(cwd: str) -> str | None:
     """Get the current git HEAD hash, or None if not a git repo / empty repo."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "-C", cwd, "rev-parse", "HEAD",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            "git",
+            "-C",
+            cwd,
+            "rev-parse",
+            "HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
         if proc.returncode == 0:
@@ -210,8 +220,13 @@ async def _capture_git_diff(cwd: str, baseline_ref: str | None) -> str | None:
 
         # 1. Committed changes since baseline (baseline..HEAD, excludes working tree)
         proc = await asyncio.create_subprocess_exec(
-            "git", "-C", cwd, "diff", f"{baseline_ref}..HEAD",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            "git",
+            "-C",
+            cwd,
+            "diff",
+            f"{baseline_ref}..HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
         committed_diff = stdout.decode(errors="replace").strip() if proc.returncode == 0 else ""
@@ -220,8 +235,12 @@ async def _capture_git_diff(cwd: str, baseline_ref: str | None) -> str | None:
 
         # 2. Unstaged changes to tracked files (working tree vs index)
         proc = await asyncio.create_subprocess_exec(
-            "git", "-C", cwd, "diff",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            "git",
+            "-C",
+            cwd,
+            "diff",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
         unstaged_diff = stdout.decode(errors="replace").strip() if proc.returncode == 0 else ""
@@ -230,8 +249,14 @@ async def _capture_git_diff(cwd: str, baseline_ref: str | None) -> str | None:
 
         # 3. New untracked files
         proc = await asyncio.create_subprocess_exec(
-            "git", "-C", cwd, "ls-files", "--others", "--exclude-standard",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            "git",
+            "-C",
+            cwd,
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await proc.communicate()
         untracked = stdout.decode(errors="replace").strip() if proc.returncode == 0 else ""
@@ -246,10 +271,15 @@ async def _capture_git_diff(cwd: str, baseline_ref: str | None) -> str | None:
         return None
 
 
-async def tool_claude_code_start(ctx: "Context", cwd: str, description: str = "",
-                                  model: str = "", budget_usd: float = 0,
-                                  setup_command: str = "",
-                                  instructions: str = "") -> ToolResult:
+async def tool_claude_code_start(
+    ctx: "Context",
+    cwd: str,
+    description: str = "",
+    model: str = "",
+    budget_usd: float = 0,
+    setup_command: str = "",
+    instructions: str = "",
+) -> ToolResult:
     """Start a new Claude Code session for a working directory within the workspace."""
     log.info(f"[tool:claude_code_start] cwd={cwd}")
     manager = _get_manager()
@@ -295,16 +325,14 @@ async def tool_claude_code_start(ctx: "Context", cwd: str, description: str = ""
                 ctx,
                 tool_name="claude_code_setup",
                 command=f"Setup: {setup_command}",
-                message=(
-                    f"**Claude Code** wants to run a setup command in `{cwd}`:\n"
-                    f"```\n{setup_command}\n```"
-                ),
+                message=(f"**Claude Code** wants to run a setup command in `{cwd}`:\n```\n{setup_command}\n```"),
             )
             if confirm.get("approved"):
                 session.approved = True
                 run_setup = True
                 if confirm.get("always"):
                     from contrib.skills.claude_code.permissions import save_allowlist_entry
+
                     save_allowlist_entry(_config, "claude_code_setup")
 
         if run_setup:
@@ -312,11 +340,21 @@ async def tool_claude_code_start(ctx: "Context", cwd: str, description: str = ""
                 setup_result = await _run_setup_command(cwd, setup_command)
             except Exception as e:
                 log.error(f"Setup command failed: {e}", exc_info=True)
-                setup_result = {"command": setup_command, "status": "error",
-                                "stdout": "", "stderr": str(e), "exit_code": None}
+                setup_result = {
+                    "command": setup_command,
+                    "status": "error",
+                    "stdout": "",
+                    "stderr": str(e),
+                    "exit_code": None,
+                }
         else:
-            setup_result = {"command": setup_command, "status": "skipped",
-                            "stdout": "", "stderr": "", "exit_code": None}
+            setup_result = {
+                "command": setup_command,
+                "status": "skipped",
+                "stdout": "",
+                "stderr": "",
+                "exit_code": None,
+            }
 
     # Build model string
     model_str = session.model or (_skill_config.model if _skill_config else "") or "(SDK default)"
@@ -454,12 +492,10 @@ def _summarize_tool_use(name: str, inp: dict) -> str:
     return f"{name} — {detail}"
 
 
-def _summarize_tool_result(tool_name: str, content: "str | list | None",
-                           is_error: bool) -> str:
+def _summarize_tool_result(tool_name: str, content: "str | list | None", is_error: bool) -> str:
     """Build a one-liner describing a tool result."""
     if is_error:
-        snippet = (content if isinstance(content, str)
-                   else str(content) if content else "")[:100]
+        snippet = (content if isinstance(content, str) else str(content) if content else "")[:100]
         return f"{tool_name} failed — {snippet}"
     # Successful result — show a brief snippet
     text = content if isinstance(content, str) else str(content) if content else ""
@@ -472,9 +508,9 @@ def _summarize_tool_result(tool_name: str, content: "str | list | None",
     return f"{tool_name} — {first_line}" if first_line else f"{tool_name} — done"
 
 
-async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
-                                context: str = "",
-                                include_diff: bool = True) -> ToolResult:
+async def tool_claude_code_send(
+    ctx: "Context", session_id: str, prompt: str, context: str = "", include_diff: bool = True
+) -> ToolResult:
     """Send a prompt to an active Claude Code session."""
     log.info(f"[tool:claude_code_send] session={session_id}")
     manager = _get_manager()
@@ -482,8 +518,7 @@ async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
     session = manager.get(session_id)
     if session is None:
         return ToolResult(
-            text=(f"[error: session '{session_id}' not found or expired. "
-                  f"Start a new session with claude_code_start.]"),
+            text=(f"[error: session '{session_id}' not found or expired. Start a new session with claude_code_start.]"),
             data=_send_error_data("error"),
         )
 
@@ -516,6 +551,7 @@ async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
             )
         if confirm.get("always"):
             from contrib.skills.claude_code.permissions import save_allowlist_entry
+
             save_allowlist_entry(_config, "claude_code_send")
         session.approved = True
 
@@ -527,8 +563,7 @@ async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
                 f"${session.budget_usd:.2f}). Stop this session and start a new one "
                 f"with a higher budget if needed.]"
             ),
-            data=_send_error_data("budget_exhausted",
-                                  cost_usd=session.total_cost_usd),
+            data=_send_error_data("budget_exhausted", cost_usd=session.total_cost_usd),
         )
 
     # Build options
@@ -583,8 +618,7 @@ async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
             }
 
         # Stream messages from the SDK
-        await ctx.publish("tool_status", tool="claude_code_send",
-                          message=f"Sending to Claude Code ({session.cwd})...")
+        await ctx.publish("tool_status", tool="claude_code_send", message=f"Sending to Claude Code ({session.cwd})...")
         try:
             async for message in query(prompt=prompt_stream(), options=options):
                 log.debug(f"Claude Code message: {type(message).__name__}")
@@ -601,21 +635,15 @@ async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
                             tool_id_to_name[block.id] = block.name
                             summary = _summarize_tool_use(block.name, block.input)
                             await ctx.publish(
-                                "tool_status", tool="claude_code_send",
-                                message=f"[{tool_call_count}] {summary}"
+                                "tool_status", tool="claude_code_send", message=f"[{tool_call_count}] {summary}"
                             )
 
                 elif isinstance(message, UserMessage):
                     for block in getattr(message, "content", []):
                         if isinstance(block, ToolResultBlock):
-                            tool_name = tool_id_to_name.get(
-                                block.tool_use_id, "unknown tool")
-                            summary = _summarize_tool_result(
-                                tool_name, block.content, bool(block.is_error))
-                            await ctx.publish(
-                                "tool_status", tool="claude_code_send",
-                                message=f"\u2192 {summary}"
-                            )
+                            tool_name = tool_id_to_name.get(block.tool_use_id, "unknown tool")
+                            summary = _summarize_tool_result(tool_name, block.content, bool(block.is_error))
+                            await ctx.publish("tool_status", tool="claude_code_send", message=f"\u2192 {summary}")
 
                 elif isinstance(message, ResultMessage):
                     # Capture the SDK session ID for resume
@@ -625,18 +653,16 @@ async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
                     if message.total_cost_usd is not None:
                         session.total_cost_usd = message.total_cost_usd
                         await ctx.publish(
-                            "tool_status", tool="claude_code_send",
-                            message=(f"Session cost: ${session.total_cost_usd:.2f} "
-                                     f"of ${session.budget_usd:.2f} budget")
+                            "tool_status",
+                            tool="claude_code_send",
+                            message=(
+                                f"Session cost: ${session.total_cost_usd:.2f} of ${session.budget_usd:.2f} budget"
+                            ),
                         )
                         for warning in _check_budget_warnings(
-                            session.total_cost_usd, session.budget_usd,
-                            warnings_fired
+                            session.total_cost_usd, session.budget_usd, warnings_fired
                         ):
-                            await ctx.publish(
-                                "tool_status", tool="claude_code_send",
-                                message=warning
-                            )
+                            await ctx.publish("tool_status", tool="claude_code_send", message=warning)
         except Exception as e:
             log.error(f"Claude Code SDK error: {e}", exc_info=True)
             return ToolResult(
@@ -669,8 +695,7 @@ async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
     return ToolResult(text=summary, data=data, display_short_text=short_text)
 
 
-async def tool_claude_code_exec(ctx: "Context", session_id: str, command: str,
-                                timeout: int = 30) -> ToolResult:
+async def tool_claude_code_exec(ctx: "Context", session_id: str, command: str, timeout: int = 30) -> ToolResult:
     """Run a shell command in a session's cwd without an LLM turn."""
     log.info(f"[tool:claude_code_exec] session={session_id} command={command[:80]}")
     manager = _get_manager()
@@ -678,10 +703,15 @@ async def tool_claude_code_exec(ctx: "Context", session_id: str, command: str,
     session = manager.get(session_id)
     if session is None:
         return ToolResult(
-            text=(f"[error: session '{session_id}' not found or expired. "
-                  f"Start a new session with claude_code_start.]"),
-            data={"status": "error", "exit_code": None, "stdout": "",
-                  "stderr": "", "duration_ms": 0, "command": command},
+            text=(f"[error: session '{session_id}' not found or expired. Start a new session with claude_code_start.]"),
+            data={
+                "status": "error",
+                "exit_code": None,
+                "stdout": "",
+                "stderr": "",
+                "duration_ms": 0,
+                "command": command,
+            },
         )
 
     # Confirmation — inherit from session if already approved
@@ -697,19 +727,23 @@ async def tool_claude_code_exec(ctx: "Context", session_id: str, command: str,
                 ctx,
                 tool_name="claude_code_exec",
                 command=f"Exec: {command}",
-                message=(
-                    f"**Claude Code** wants to run a command in `{session.cwd}`:\n"
-                    f"```\n{command}\n```"
-                ),
+                message=(f"**Claude Code** wants to run a command in `{session.cwd}`:\n```\n{command}\n```"),
             )
             if not confirm.get("approved"):
                 return ToolResult(
                     text="[error: command was denied by user]",
-                    data={"status": "cancelled", "exit_code": None, "stdout": "",
-                          "stderr": "", "duration_ms": 0, "command": command},
+                    data={
+                        "status": "cancelled",
+                        "exit_code": None,
+                        "stdout": "",
+                        "stderr": "",
+                        "duration_ms": 0,
+                        "command": command,
+                    },
                 )
             if confirm.get("always"):
                 from contrib.skills.claude_code.permissions import save_allowlist_entry
+
                 save_allowlist_entry(_config, "claude_code_exec")
             session.approved = True
 
@@ -724,11 +758,14 @@ async def tool_claude_code_exec(ctx: "Context", session_id: str, command: str,
 
     try:
         proc = await asyncio.create_subprocess_shell(
-            command, cwd=session.cwd,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            command,
+            cwd=session.cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout,
+            proc.communicate(),
+            timeout=timeout,
         )
         exit_code = proc.returncode
         stdout_str = stdout_bytes.decode(errors="replace")
@@ -783,8 +820,9 @@ async def tool_claude_code_exec(ctx: "Context", session_id: str, command: str,
     return ToolResult(text="\n".join(parts), data=data)
 
 
-async def tool_claude_code_push_file(ctx: "Context", session_id: str, source_path: str,
-                                     dest_name: str = "") -> ToolResult:
+async def tool_claude_code_push_file(
+    ctx: "Context", session_id: str, source_path: str, dest_name: str = ""
+) -> ToolResult:
     """Copy a file from the parent's workspace into the session's cwd."""
     log.info(f"[tool:claude_code_push_file] session={session_id} source={source_path}")
     manager = _get_manager()
@@ -839,13 +877,13 @@ async def tool_claude_code_push_file(ctx: "Context", session_id: str, source_pat
 
     return ToolResult(
         text=f"Pushed `{source_path}` → `{dest_name}` ({size} bytes)",
-        data={"status": "success", "source": str(source), "dest": str(dest),
-              "size_bytes": size},
+        data={"status": "success", "source": str(source), "dest": str(dest), "size_bytes": size},
     )
 
 
-async def tool_claude_code_pull_file(ctx: "Context", session_id: str, source_name: str,
-                                     dest_path: str = "") -> ToolResult:
+async def tool_claude_code_pull_file(
+    ctx: "Context", session_id: str, source_name: str, dest_path: str = ""
+) -> ToolResult:
     """Copy a file from the session's cwd to the parent's workspace."""
     log.info(f"[tool:claude_code_pull_file] session={session_id} source={source_name}")
     manager = _get_manager()
@@ -900,8 +938,7 @@ async def tool_claude_code_pull_file(ctx: "Context", session_id: str, source_nam
 
     return ToolResult(
         text=f"Pulled `{source_name}` → `{dest_path}` ({size} bytes)",
-        data={"status": "success", "source": str(source), "dest": str(dest),
-              "size_bytes": size},
+        data={"status": "success", "source": str(source), "dest": str(dest), "size_bytes": size},
     )
 
 

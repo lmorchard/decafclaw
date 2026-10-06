@@ -105,12 +105,9 @@ async def test_workspace_command_does_not_preapprove(config):
     mode, _result = await execute_command(ctx, skill, "")
 
     assert mode == "inline"
-    assert not ctx.tools.preapproved, (
-        f"workspace command pre-approved tools: {ctx.tools.preapproved}"
-    )
+    assert not ctx.tools.preapproved, f"workspace command pre-approved tools: {ctx.tools.preapproved}"
     assert not ctx.tools.preapproved_shell_patterns, (
-        f"workspace command pre-approved shell: "
-        f"{ctx.tools.preapproved_shell_patterns}"
+        f"workspace command pre-approved shell: {ctx.tools.preapproved_shell_patterns}"
     )
 
 

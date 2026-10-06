@@ -46,8 +46,7 @@ def _rec(**overrides) -> notifs.NotificationRecord:
     )
 
 
-def _enable_channel(config, *, folder="agent/pages/notifications",
-                    min_priority="low"):
+def _enable_channel(config, *, folder="agent/pages/notifications", min_priority="low"):
     config.notifications.channels.vault_page.enabled = True
     config.notifications.channels.vault_page.folder = folder
     config.notifications.channels.vault_page.min_priority = min_priority
@@ -87,17 +86,14 @@ class TestMeetsPriority:
 class TestResolveLink:
     def test_explicit_http_wins(self):
         rec = _rec(link="https://example.com/x", conv_id="c-1")
-        assert _resolve_link(rec, "http://agent.local") \
-            == "https://example.com/x"
+        assert _resolve_link(rec, "http://agent.local") == "https://example.com/x"
 
     def test_conv_id_builds_base_url_link(self):
         rec = _rec(conv_id="c-1")
-        assert _resolve_link(rec, "http://agent.local") \
-            == "http://agent.local/#conv=c-1"
+        assert _resolve_link(rec, "http://agent.local") == "http://agent.local/#conv=c-1"
 
     def test_trailing_slash_stripped(self):
-        assert _resolve_link(_rec(conv_id="c-1"), "http://x/") \
-            == "http://x/#conv=c-1"
+        assert _resolve_link(_rec(conv_id="c-1"), "http://x/") == "http://x/#conv=c-1"
 
     def test_none_without_base_url(self):
         assert _resolve_link(_rec(conv_id="c-1"), "") is None
@@ -127,15 +123,15 @@ class TestFormatNewPageHeader:
 class TestFormatEntry:
     def test_heading_shape(self):
         entry = _format_entry(
-            _rec(priority="high", title="Alert"), "",
+            _rec(priority="high", title="Alert"),
+            "",
         )
-        assert entry.startswith(
-            "## 14:32 UTC · ⚠️ [heartbeat] Alert\n"
-        )
+        assert entry.startswith("## 14:32 UTC · ⚠️ [heartbeat] Alert\n")
 
     def test_metadata_block(self):
         entry = _format_entry(
-            _rec(priority="normal", conv_id="c-1", body="something"), "",
+            _rec(priority="normal", conv_id="c-1", body="something"),
+            "",
         )
         assert "- priority: normal\n" in entry
         assert "- conv_id: c-1\n" in entry
@@ -150,7 +146,8 @@ class TestFormatEntry:
 
     def test_link_rendered_when_resolvable(self):
         entry = _format_entry(
-            _rec(conv_id="c-1"), "http://agent.local",
+            _rec(conv_id="c-1"),
+            "http://agent.local",
         )
         assert "- link: http://agent.local/#conv=c-1\n" in entry
 
@@ -174,9 +171,7 @@ class TestDailyPagePath:
         path = _daily_page_path(config, "2026-04-23T14:32:00Z")
         assert path is not None
         assert path.name == "2026-04-23.md"
-        assert path.parent == (
-            config.vault_root / "agent" / "pages" / "notifications"
-        ).resolve()
+        assert path.parent == (config.vault_root / "agent" / "pages" / "notifications").resolve()
 
     def test_empty_folder_returns_none(self, config):
         _enable_channel(config, folder="")
@@ -199,9 +194,7 @@ class TestDailyPagePath:
         _daily_page_path(config, "2026-04-23T14:33:00Z")
         _daily_page_path(config, "2026-04-23T14:34:00Z")
         # Single warning — throttled after first bad folder seen.
-        rejection_warnings = [
-            r for r in caplog.records if "rejected" in r.message.lower()
-        ]
+        rejection_warnings = [r for r in caplog.records if "rejected" in r.message.lower()]
         assert len(rejection_warnings) == 1
 
     def test_malformed_timestamp_returns_none(self, config):
@@ -218,14 +211,15 @@ class TestAdapterHandler:
         _enable_channel(config)
         handler = make_vault_page_adapter(config)
 
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="high", title="Boot").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="high", title="Boot").to_dict(),
+            }
+        )
         await _flush_create_tasks()
 
-        path = (config.vault_root / "agent" / "pages" /
-                "notifications" / "2026-04-23.md")
+        path = config.vault_root / "agent" / "pages" / "notifications" / "2026-04-23.md"
         assert path.exists()
         content = path.read_text()
         # Header frontmatter + H1
@@ -238,23 +232,28 @@ class TestAdapterHandler:
         _enable_channel(config)
         handler = make_vault_page_adapter(config)
 
-        await handler({
-            "type": "notification_created",
-            "record": _rec(
-                timestamp="2026-04-23T14:32:00Z", title="First",
-            ).to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(
+                    timestamp="2026-04-23T14:32:00Z",
+                    title="First",
+                ).to_dict(),
+            }
+        )
         await _flush_create_tasks()
-        await handler({
-            "type": "notification_created",
-            "record": _rec(
-                timestamp="2026-04-23T15:00:00Z", title="Second",
-            ).to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(
+                    timestamp="2026-04-23T15:00:00Z",
+                    title="Second",
+                ).to_dict(),
+            }
+        )
         await _flush_create_tasks()
 
-        content = (config.vault_root / "agent" / "pages" /
-                   "notifications" / "2026-04-23.md").read_text()
+        content = (config.vault_root / "agent" / "pages" / "notifications" / "2026-04-23.md").read_text()
         assert "First" in content and "Second" in content
         # Header written once
         assert content.count("# Notifications — 2026-04-23") == 1
@@ -272,10 +271,12 @@ class TestAdapterHandler:
         _enable_channel(config)
         config.notifications.channels.vault_page.enabled = False
         handler = make_vault_page_adapter(config)
-        await handler({
-            "type": "notification_created",
-            "record": _rec().to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec().to_dict(),
+            }
+        )
         await _flush_create_tasks()
         assert not (config.vault_root / "agent").exists()
 
@@ -283,39 +284,42 @@ class TestAdapterHandler:
     async def test_skips_when_folder_empty(self, config):
         _enable_channel(config, folder="")
         handler = make_vault_page_adapter(config)
-        await handler({
-            "type": "notification_created",
-            "record": _rec().to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec().to_dict(),
+            }
+        )
         await _flush_create_tasks()
         # Nothing written anywhere
-        assert not any(config.vault_root.iterdir()) \
-            if config.vault_root.exists() else True
+        assert not any(config.vault_root.iterdir()) if config.vault_root.exists() else True
 
     @pytest.mark.asyncio
     async def test_priority_filter(self, config):
         _enable_channel(config, min_priority="high")
         handler = make_vault_page_adapter(config)
-        await handler({
-            "type": "notification_created",
-            "record": _rec(priority="normal").to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec(priority="normal").to_dict(),
+            }
+        )
         await _flush_create_tasks()
-        assert not (config.vault_root / "agent" / "pages" /
-                    "notifications" / "2026-04-23.md").exists()
+        assert not (config.vault_root / "agent" / "pages" / "notifications" / "2026-04-23.md").exists()
 
     @pytest.mark.asyncio
     async def test_sandbox_rejection_skips_silently(self, config):
         _enable_channel(config, folder="../outside")
         handler = make_vault_page_adapter(config)
-        await handler({
-            "type": "notification_created",
-            "record": _rec().to_dict(),
-        })
+        await handler(
+            {
+                "type": "notification_created",
+                "record": _rec().to_dict(),
+            }
+        )
         await _flush_create_tasks()
         # No file anywhere under vault_root
-        assert not any(config.vault_root.rglob("*.md")) \
-            if config.vault_root.exists() else True
+        assert not any(config.vault_root.rglob("*.md")) if config.vault_root.exists() else True
 
     @pytest.mark.asyncio
     async def test_concurrent_appends_serialize(self, config):
@@ -328,24 +332,26 @@ class TestAdapterHandler:
 
         async def fire(i: int):
             ts = base_time.replace(second=i).strftime("%Y-%m-%dT%H:%M:%SZ")
-            await handler({
-                "type": "notification_created",
-                "record": _rec(
-                    id=f"id-{i}", timestamp=ts, title=f"#{i}",
-                ).to_dict(),
-            })
+            await handler(
+                {
+                    "type": "notification_created",
+                    "record": _rec(
+                        id=f"id-{i}",
+                        timestamp=ts,
+                        title=f"#{i}",
+                    ).to_dict(),
+                }
+            )
 
         await asyncio.gather(*(fire(i) for i in range(10)))
         # Let every detached _deliver task finish
         await asyncio.sleep(0.05)
 
-        path = (config.vault_root / "agent" / "pages" /
-                "notifications" / "2026-04-23.md")
+        path = config.vault_root / "agent" / "pages" / "notifications" / "2026-04-23.md"
         content = path.read_text()
         assert content.count("# Notifications — 2026-04-23") == 1
         # One `## ` heading per entry
-        assert sum(1 for line in content.splitlines()
-                   if line.startswith("## ")) == 10
+        assert sum(1 for line in content.splitlines() if line.startswith("## ")) == 10
 
     @pytest.mark.asyncio
     async def test_write_errors_are_swallowed(self, config, caplog):
@@ -354,19 +360,19 @@ class TestAdapterHandler:
         caplog.set_level("WARNING")
 
         # Patch Path.open to raise inside _deliver
-        with patch.object(type(config.vault_root), "open",
-                          side_effect=OSError("disk full"),
-                          create=True), \
-            patch("pathlib.Path.open",
-                  side_effect=OSError("disk full")):
-            await handler({
-                "type": "notification_created",
-                "record": _rec().to_dict(),
-            })
+        with (
+            patch.object(type(config.vault_root), "open", side_effect=OSError("disk full"), create=True),
+            patch("pathlib.Path.open", side_effect=OSError("disk full")),
+        ):
+            await handler(
+                {
+                    "type": "notification_created",
+                    "record": _rec().to_dict(),
+                }
+            )
             await _flush_create_tasks()
 
-        assert any("Vault page delivery failed" in r.message
-                   for r in caplog.records)
+        assert any("Vault page delivery failed" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_end_to_end_via_eventbus(self, config):
@@ -376,14 +382,15 @@ class TestAdapterHandler:
         bus.subscribe(make_vault_page_adapter(config))
 
         await notifs.notify(
-            config, bus, category="test", title="Ping", priority="high",
+            config,
+            bus,
+            category="test",
+            title="Ping",
+            priority="high",
         )
         await _flush_create_tasks()
 
         # Daily file uses whatever date notify() stamped
-        files = list(
-            (config.vault_root / "agent" / "pages" / "notifications"
-             ).glob("*.md")
-        )
+        files = list((config.vault_root / "agent" / "pages" / "notifications").glob("*.md"))
         assert len(files) == 1
         assert "Ping" in files[0].read_text()

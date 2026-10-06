@@ -121,25 +121,29 @@ def test_tracks_errors(tmp_path):
 def test_build_summary_full(tmp_path):
     logger = SessionLogger(tmp_path, "test-session")
     # Simulate a session with tool calls and result
-    logger.log_message(AssistantMessage(
-        content=[
-            ToolUseBlock(id="tc1", name="Read", input={"file_path": "x.py"}),
-            ToolUseBlock(id="tc2", name="Edit", input={"file_path": "x.py", "old_string": "a", "new_string": "b"}),
-        ],
-        model="claude-sonnet-4-6",
-        parent_tool_use_id=None,
-    ))
-    logger.log_message(ResultMessage(
-        subtype="success",
-        duration_ms=3000,
-        duration_api_ms=2500,
-        is_error=False,
-        num_turns=2,
-        session_id="sdk-123",
-        total_cost_usd=0.25,
-        usage=None,
-        result="Fixed the bug in x.py",
-    ))
+    logger.log_message(
+        AssistantMessage(
+            content=[
+                ToolUseBlock(id="tc1", name="Read", input={"file_path": "x.py"}),
+                ToolUseBlock(id="tc2", name="Edit", input={"file_path": "x.py", "old_string": "a", "new_string": "b"}),
+            ],
+            model="claude-sonnet-4-6",
+            parent_tool_use_id=None,
+        )
+    )
+    logger.log_message(
+        ResultMessage(
+            subtype="success",
+            duration_ms=3000,
+            duration_api_ms=2500,
+            is_error=False,
+            num_turns=2,
+            session_id="sdk-123",
+            total_cost_usd=0.25,
+            usage=None,
+            result="Fixed the bug in x.py",
+        )
+    )
 
     summary = logger.build_summary("abc123def456")
     assert "Claude Code completed" in summary
@@ -311,7 +315,10 @@ def test_short_text_deduplicates_files(tmp_path):
 
 
 def test_summarize_edit():
-    assert _summarize_tool_use("Edit", {"file_path": "src/foo.py", "old_string": "x", "new_string": "y"}) == "Edit src/foo.py"
+    assert (
+        _summarize_tool_use("Edit", {"file_path": "src/foo.py", "old_string": "x", "new_string": "y"})
+        == "Edit src/foo.py"
+    )
 
 
 def test_summarize_write():

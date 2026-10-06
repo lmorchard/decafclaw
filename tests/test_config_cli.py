@@ -13,16 +13,28 @@ def _isolate_env(monkeypatch):
     """Prevent .env file from leaking into tests."""
     monkeypatch.setattr("decafclaw.config.load_dotenv", lambda **kw: None)
     for key in list(os.environ):
-        if any(key.startswith(p) for p in (
-            "LLM_", "MATTERMOST_", "COMPACTION_", "EMBEDDING_",
-            "HEARTBEAT_", "HTTP_", "TABSTACK_", "CLAUDE_CODE_",
-            "SKILLS_", "MEMORY_SEARCH", "SYSTEM_PROMPT",
-        )):
+        if any(
+            key.startswith(p)
+            for p in (
+                "LLM_",
+                "MATTERMOST_",
+                "COMPACTION_",
+                "EMBEDDING_",
+                "HEARTBEAT_",
+                "HTTP_",
+                "TABSTACK_",
+                "CLAUDE_CODE_",
+                "SKILLS_",
+                "MEMORY_SEARCH",
+                "SYSTEM_PROMPT",
+            )
+        ):
             monkeypatch.delenv(key, raising=False)
 
 
 class _Args:
     """Simple namespace for argparse-like args."""
+
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
 
@@ -82,11 +94,15 @@ def test_show_providers_masks_api_key(capsys, monkeypatch, tmp_path):
     """providers dict prints per-entry fields, masking api_key by default."""
     agent_dir = tmp_path / "decafclaw"
     agent_dir.mkdir()
-    (agent_dir / "config.json").write_text(json.dumps({
-        "providers": {
-            "openai": {"type": "openai", "api_key": "sk-secret-123"},
-        },
-    }))
+    (agent_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "openai": {"type": "openai", "api_key": "sk-secret-123"},
+                },
+            }
+        )
+    )
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
     cmd_show(_Args(group=None, reveal=False))
     out = capsys.readouterr().out
@@ -99,11 +115,15 @@ def test_show_providers_reveal(capsys, monkeypatch, tmp_path):
     """--reveal unmasks provider secrets."""
     agent_dir = tmp_path / "decafclaw"
     agent_dir.mkdir()
-    (agent_dir / "config.json").write_text(json.dumps({
-        "providers": {
-            "openai": {"type": "openai", "api_key": "sk-secret-123"},
-        },
-    }))
+    (agent_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "openai": {"type": "openai", "api_key": "sk-secret-123"},
+                },
+            }
+        )
+    )
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
     cmd_show(_Args(group="providers", reveal=True))
     out = capsys.readouterr().out
@@ -114,11 +134,15 @@ def test_show_model_configs(capsys, monkeypatch, tmp_path):
     """model_configs dict prints per-entry fields."""
     agent_dir = tmp_path / "decafclaw"
     agent_dir.mkdir()
-    (agent_dir / "config.json").write_text(json.dumps({
-        "model_configs": {
-            "flash": {"provider": "vertex", "model": "gemini-2.5-flash"},
-        },
-    }))
+    (agent_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model_configs": {
+                    "flash": {"provider": "vertex", "model": "gemini-2.5-flash"},
+                },
+            }
+        )
+    )
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
     cmd_show(_Args(group="model_configs", reveal=False))
     out = capsys.readouterr().out
@@ -198,11 +222,11 @@ def test_import_env(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
     env_file = tmp_path / "test.env"
     env_file.write_text(
-        '# Comment\n'
-        'LLM_MODEL=test-model\n'
-        'MATTERMOST_URL=https://mm.test.com\n'
-        'HTTP_PORT=9999\n'
-        'CUSTOM_API_KEY=secret123\n'
+        "# Comment\n"
+        "LLM_MODEL=test-model\n"
+        "MATTERMOST_URL=https://mm.test.com\n"
+        "HTTP_PORT=9999\n"
+        "CUSTOM_API_KEY=secret123\n"
     )
     cmd_import_env(_Args(file=str(env_file)))
     data = json.loads((agent_dir / "config.json").read_text())

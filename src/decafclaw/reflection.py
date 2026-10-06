@@ -27,10 +27,11 @@ _BUNDLED_PROMPT = Path(__file__).parent / "prompts" / "REFLECTION.md"
 @dataclass
 class ReflectionResult:
     """Result of a reflection evaluation."""
+
     passed: bool
     critique: str = ""
     raw_response: str = ""  # full judge output for debug mode
-    error: str = ""         # non-empty if the judge call failed
+    error: str = ""  # non-empty if the judge call failed
     # Judge LLM token cost for this round (#409 telemetry). 0 when the
     # provider reports no usage or the call errored before completing.
     prompt_tokens: int = 0
@@ -120,7 +121,7 @@ def _summarize_tool_result(content: str, max_len: int) -> str:
                 total_len += len(line) + 1
             else:
                 # Truncate oversized body lines (e.g. minified JSON/HTML)
-                snippet = line[:max(0, remaining - 1)]
+                snippet = line[: max(0, remaining - 1)]
                 if snippet:
                     result_parts.append(snippet)
                     total_len += len(snippet) + 1
@@ -170,8 +171,10 @@ def build_tool_summary(history: list, turn_start_index: int, max_result_len: int
 
 
 def build_prior_turn_summary(
-    history: list, turn_start_index: int,
-    max_turns: int = 3, max_result_len: int = 200,
+    history: list,
+    turn_start_index: int,
+    max_turns: int = 3,
+    max_result_len: int = 200,
 ) -> str:
     """Extract tool call/result pairs from prior turns.
 
@@ -187,7 +190,8 @@ def build_prior_turn_summary(
     # Find turn boundaries (indices of real user messages, not reflection
     # critiques and not in-flight synthetic widget responses).
     turn_starts = [
-        i for i, msg in enumerate(prior)
+        i
+        for i, msg in enumerate(prior)
         if msg.get("role") == "user"
         and msg.get("source") != "widget_response"
         and not str(msg.get("content", "")).startswith("[reflection]")
@@ -248,7 +252,7 @@ def _parse_verdict(text: str) -> tuple[bool | None, str]:
         pass
 
     # Search for JSON object in the response text
-    for match in re.finditer(r'\{[^{}]*\}', text):
+    for match in re.finditer(r"\{[^{}]*\}", text):
         try:
             data = json.loads(match.group())
             if isinstance(data, dict):
@@ -323,8 +327,11 @@ async def evaluate_response(
             # and resolved() supplies the llm-group fallback.
             rc = config.reflection.resolved(config)
             response = await call_llm(
-                config, messages,
-                llm_url=rc.url, llm_model=rc.model, llm_api_key=rc.api_key,
+                config,
+                messages,
+                llm_url=rc.url,
+                llm_model=rc.model,
+                llm_api_key=rc.api_key,
             )
 
         raw = response.get("content", "")
@@ -335,14 +342,21 @@ async def evaluate_response(
 
         if passed is None:
             log.warning("Reflection judge returned unparseable output: %s", raw[:200])
-            return ReflectionResult(passed=True, raw_response=raw,
-                                    error="unparseable judge output",
-                                    prompt_tokens=judge_prompt,
-                                    completion_tokens=judge_completion)
+            return ReflectionResult(
+                passed=True,
+                raw_response=raw,
+                error="unparseable judge output",
+                prompt_tokens=judge_prompt,
+                completion_tokens=judge_completion,
+            )
 
-        return ReflectionResult(passed=passed, critique=critique, raw_response=raw,
-                                prompt_tokens=judge_prompt,
-                                completion_tokens=judge_completion)
+        return ReflectionResult(
+            passed=passed,
+            critique=critique,
+            raw_response=raw,
+            prompt_tokens=judge_prompt,
+            completion_tokens=judge_completion,
+        )
 
     except Exception as exc:
         log.error("Reflection judge call failed: %s", exc)

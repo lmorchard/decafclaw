@@ -11,8 +11,10 @@ from decafclaw.eval.runner import _seed_conversation_history
 
 def _config_pointing_at(tmp_path: Path):
     """Minimal config stub with the one attr the seeder reads."""
+
     class _Cfg:
         workspace_path = tmp_path
+
     return _Cfg()
 
 
@@ -48,25 +50,17 @@ def test_writes_archive_jsonl_at_eval_conv_path(tmp_path: Path):
 
 def test_stamps_timestamps_when_missing(tmp_path: Path):
     cfg = _config_pointing_at(tmp_path)
-    test_case = {
-        "setup": {"conversation_history": [{"role": "user", "content": "hi"}]}
-    }
+    test_case = {"setup": {"conversation_history": [{"role": "user", "content": "hi"}]}}
     out = _seed_conversation_history(cfg, test_case)
     assert "timestamp" in out[0]
-    archived = json.loads(
-        (tmp_path / "conversations" / "eval" / "archive.jsonl").read_text().strip()
-    )
+    archived = json.loads((tmp_path / "conversations" / "eval" / "archive.jsonl").read_text().strip())
     assert archived["timestamp"] == out[0]["timestamp"]
 
 
 def test_preserves_explicit_timestamps(tmp_path: Path):
     cfg = _config_pointing_at(tmp_path)
     test_case = {
-        "setup": {
-            "conversation_history": [
-                {"role": "user", "content": "old", "timestamp": "2024-01-01T00:00:00"}
-            ]
-        }
+        "setup": {"conversation_history": [{"role": "user", "content": "old", "timestamp": "2024-01-01T00:00:00"}]}
     }
     out = _seed_conversation_history(cfg, test_case)
     assert out[0]["timestamp"] == "2024-01-01T00:00:00"
@@ -81,9 +75,7 @@ def test_rejects_non_dict_entry(tmp_path: Path):
 
 def test_rejects_missing_role(tmp_path: Path):
     cfg = _config_pointing_at(tmp_path)
-    test_case = {
-        "setup": {"conversation_history": [{"content": "no role here"}]}
-    }
+    test_case = {"setup": {"conversation_history": [{"content": "no role here"}]}}
     with pytest.raises(ValueError, match="role"):
         _seed_conversation_history(cfg, test_case)
 
@@ -134,6 +126,7 @@ def test_round_trips_through_archive_reader(tmp_path: Path):
     _seed_conversation_history(cfg, test_case)
 
     from decafclaw.archive import read_archive
+
     rows = read_archive(cfg, "eval")
     assert len(rows) == 2
     assert rows[0]["role"] == "user"

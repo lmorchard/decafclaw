@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 class Priority(str, Enum):
     """Tool priority tiers. Used as str values in tool definition dicts
     via the top-level ``"priority"`` field."""
+
     CRITICAL = "critical"
     NORMAL = "normal"
     LOW = "low"
@@ -150,15 +151,17 @@ def classify_tools(
             "Critical tool set exceeds budget or count: "
             "%d tools / %d tokens (budget %d, max %d). "
             "Critical tools are included anyway.",
-            len(active), active_tokens, budget, max_active,
+            len(active),
+            active_tokens,
+            budget,
+            max_active,
         )
 
     def _fill(tier: list[dict]) -> None:
         nonlocal active_tokens
         for td in tier:
             tokens = token_cost[id(td)]
-            if (active_tokens + tokens <= budget
-                    and len(active) + 1 <= max_active):
+            if active_tokens + tokens <= budget and len(active) + 1 <= max_active:
                 active.append(td)
                 active_tokens += tokens
             else:
@@ -174,9 +177,11 @@ def classify_tools(
 
     if deferred:
         log.info(
-            "Tool classification: %d active (%d tokens), %d deferred "
-            "(%d hidden skill tools)",
-            len(active), active_tokens, len(deferred), len(hidden_skill_tools),
+            "Tool classification: %d active (%d tokens), %d deferred (%d hidden skill tools)",
+            len(active),
+            active_tokens,
+            len(deferred),
+            len(hidden_skill_tools),
         )
     return active, deferred
 
@@ -239,9 +244,8 @@ def build_deferred_list_text(
 
     if core_names is None:
         from . import TOOL_DEFINITIONS  # deferred: circular dep
-        core_names = {
-            td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS
-        }
+
+        core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
 
     core_tools: list[dict] = []
     mcp_tools: dict[str, list[dict]] = {}
@@ -260,10 +264,7 @@ def build_deferred_list_text(
 
     def _render(defs: list[dict]) -> list[str]:
         defs_sorted = sorted(defs, key=_deferred_sort_key)
-        return [
-            f"- {td['function']['name']} — {get_description(td)}"
-            for td in defs_sorted
-        ]
+        return [f"- {td['function']['name']} — {get_description(td)}" for td in defs_sorted]
 
     lines = ["## Available tools (use tool_search to load)\n"]
 

@@ -17,9 +17,7 @@ def _validate_path(path: str) -> str | None:
         return "Path cannot contain '..'"
     if path.startswith("/"):
         return "Path cannot start with '/'"
-    if path.startswith("_") or any(
-        seg.startswith("_") for seg in path.split("/")
-    ):
+    if path.startswith("_") or any(seg.startswith("_") for seg in path.split("/")):
         return "Path segments starting with '_' are reserved"
     if any(seg == "" for seg in path.split("/")):
         return "Path cannot contain empty segments"
@@ -41,10 +39,7 @@ class ConversationFolderIndex:
     """
 
     def __init__(self, config, username: str):
-        self._path = (
-            config.agent_path / "web" / "users" / username
-            / "conversation_folders.json"
-        )
+        self._path = config.agent_path / "web" / "users" / username / "conversation_folders.json"
         self._lock = asyncio.Lock()
 
     def _load(self) -> dict:
@@ -66,9 +61,7 @@ class ConversationFolderIndex:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         content = json.dumps(data, indent=2) + "\n"
         # Atomic write via temp file + rename
-        fd, tmp = tempfile.mkstemp(
-            dir=self._path.parent, suffix=".tmp"
-        )
+        fd, tmp = tempfile.mkstemp(dir=self._path.parent, suffix=".tmp")
         try:
             with open(fd, "w") as f:
                 f.write(content)
@@ -89,7 +82,7 @@ class ConversationFolderIndex:
                 if "/" not in folder:
                     result.add(folder)
             elif folder.startswith(prefix):
-                rest = folder[len(prefix):]
+                rest = folder[len(prefix) :]
                 if rest and "/" not in rest:
                     result.add(rest)
         return sorted(result)
@@ -131,9 +124,7 @@ class ConversationFolderIndex:
             self._save(data)
         return True, ""
 
-    async def rename_folder(
-        self, old_path: str, new_path: str
-    ) -> tuple[bool, str]:
+    async def rename_folder(self, old_path: str, new_path: str) -> tuple[bool, str]:
         """Rename/move a folder. Merges if target exists. Returns (success, error_message)."""
         err = _validate_path(new_path)
         if err:
@@ -151,7 +142,7 @@ class ConversationFolderIndex:
                 if old_f == old_path:
                     new_f = new_path
                 else:
-                    new_f = new_path + old_f[len(old_path):]
+                    new_f = new_path + old_f[len(old_path) :]
                 if new_f not in data["folders"]:
                     data["folders"].append(new_f)
             # Update assignments
@@ -159,7 +150,7 @@ class ConversationFolderIndex:
                 if folder == old_path:
                     data["assignments"][conv_id] = new_path
                 elif folder.startswith(old_prefix):
-                    data["assignments"][conv_id] = new_path + folder[len(old_path):]
+                    data["assignments"][conv_id] = new_path + folder[len(old_path) :]
             self._save(data)
         return True, ""
 
@@ -178,9 +169,7 @@ class ConversationFolderIndex:
             data = self._load()
         return data["assignments"].get(conv_id, "")
 
-    async def set_folder(
-        self, conv_id: str, folder: str
-    ) -> tuple[bool, str]:
+    async def set_folder(self, conv_id: str, folder: str) -> tuple[bool, str]:
         """Assign a conversation to a folder. Returns (success, error_message)."""
         if folder == "":
             # Move to top-level: just remove assignment
@@ -208,18 +197,14 @@ class ConversationFolderIndex:
                 del data["assignments"][conv_id]
                 self._save(data)
 
-    async def list_conversations_in_folder(
-        self, folder: str = ""
-    ) -> list[str]:
+    async def list_conversations_in_folder(self, folder: str = "") -> list[str]:
         """Return conv_ids assigned to this exact folder."""
         async with self._lock:
             data = self._load()
         if folder == "":
             # Top-level: caller must filter by checking assignments
             return []
-        return [
-            cid for cid, f in data["assignments"].items() if f == folder
-        ]
+        return [cid for cid, f in data["assignments"].items() if f == folder]
 
     async def get_all_assignments(self) -> dict[str, str]:
         """Return all conv_id → folder assignments."""

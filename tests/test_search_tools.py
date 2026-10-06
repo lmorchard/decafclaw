@@ -126,9 +126,7 @@ class TestKeywordScoring:
         # Both tools match, but the tool named `wait` must be rendered first.
         assert '"name": "wait"' in result.text
         assert "heartbeat_trigger" in result.text
-        assert result.text.index('"name": "wait"') < result.text.index(
-            "heartbeat_trigger"
-        )
+        assert result.text.index('"name": "wait"') < result.text.index("heartbeat_trigger")
 
     def test_max_results_keeps_highest_scored(self, scoring_ctx):
         # With a budget of 1, the name match must survive the truncation.
@@ -162,17 +160,13 @@ class TestKeywordScoring:
         # must still rank first — and `wait_for` is placed EARLIER in the
         # pool so a stable sort can't rescue it by accident.
         ctx.tools.deferred_pool = [
-            _make_tool_def(
-                "wait_for", "Block until a condition is met — wait politely."
-            ),
+            _make_tool_def("wait_for", "Block until a condition is met — wait politely."),
             _make_tool_def("wait", "Sleep for the specified number of seconds."),
         ]
         ctx.config.skill_tool_owners = {}
         ctx.config.discovered_skills = []
         result = tool_search(ctx, "wait")
-        assert result.text.index('"name": "wait"') < result.text.index(
-            '"name": "wait_for"'
-        )
+        assert result.text.index('"name": "wait"') < result.text.index('"name": "wait_for"')
 
 
 class TestEmptyPool:
@@ -222,7 +216,8 @@ class TestSkillResults:
         assert "writing-clearly" in result.text
 
     def test_hidden_tool_name_returns_owning_skill(
-        self, search_ctx_with_skill,
+        self,
+        search_ctx_with_skill,
     ):
         """An agent that recalls a hidden skill-tool name gets routed to
         the owning skill, not the tool — preserves the progressive-
@@ -236,7 +231,8 @@ class TestSkillResults:
         assert "edit_with_strunk" not in get_fetched_tools(search_ctx_with_skill)
 
     def test_select_hidden_tool_name_returns_owning_skill(
-        self, search_ctx_with_skill,
+        self,
+        search_ctx_with_skill,
     ):
         result = tool_search(search_ctx_with_skill, "select:edit_with_strunk")
         assert "writing-clearly" in result.text
@@ -253,7 +249,8 @@ class TestSkillResults:
         assert "workspace_edit" in result.text  # plain tool match
 
     def test_already_activated_skill_not_returned(
-        self, search_ctx_with_skill,
+        self,
+        search_ctx_with_skill,
     ):
         """A skill already in ctx.skills.activated isn't surfaced — its
         tools are already in the active set, so re-activating is noise."""

@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 
 class ConfirmationAction(str, Enum):
     """Known confirmation action types. Each maps to a registered handler."""
+
     RUN_SHELL_COMMAND = "run_shell_command"
     ACTIVATE_SKILL = "activate_skill"
     CONTINUE_TURN = "continue_turn"
@@ -28,6 +29,7 @@ class ConfirmationRequest:
     ``timeout=None`` disables the await deadline — used by widget requests
     where the user responds when ready.
     """
+
     action_type: ConfirmationAction
     action_data: dict = field(default_factory=dict)
     message: str = ""
@@ -73,6 +75,7 @@ class ConfirmationResponse:
     than approve/deny — e.g., widget submissions send their selected
     values here.
     """
+
     confirmation_id: str
     approved: bool
     always: bool = False
@@ -111,10 +114,9 @@ class ConfirmationHandler(Protocol):
     - continue_loop: bool — whether the agent loop should continue iterating
     - result: Any — action-specific result data (e.g., shell command output)
     """
-    async def on_approve(self, ctx: Any, request: ConfirmationRequest,
-                         response: ConfirmationResponse) -> dict: ...
-    async def on_deny(self, ctx: Any, request: ConfirmationRequest,
-                      response: ConfirmationResponse) -> dict: ...
+
+    async def on_approve(self, ctx: Any, request: ConfirmationRequest, response: ConfirmationResponse) -> dict: ...
+    async def on_deny(self, ctx: Any, request: ConfirmationRequest, response: ConfirmationResponse) -> dict: ...
 
 
 class ConfirmationRegistry:
@@ -129,18 +131,15 @@ class ConfirmationRegistry:
     def __init__(self):
         self._handlers: dict[ConfirmationAction, ConfirmationHandler] = {}
 
-    def register(self, action_type: ConfirmationAction,
-                 handler: ConfirmationHandler) -> None:
+    def register(self, action_type: ConfirmationAction, handler: ConfirmationHandler) -> None:
         """Register a handler for an action type."""
         self._handlers[action_type] = handler
 
-    def get_handler(self, action_type: ConfirmationAction
-                    ) -> ConfirmationHandler | None:
+    def get_handler(self, action_type: ConfirmationAction) -> ConfirmationHandler | None:
         """Look up the handler for an action type."""
         return self._handlers.get(action_type)
 
-    async def dispatch(self, ctx: Any, request: ConfirmationRequest,
-                       response: ConfirmationResponse) -> dict:
+    async def dispatch(self, ctx: Any, request: ConfirmationRequest, response: ConfirmationResponse) -> dict:
         """Dispatch a confirmation response to the appropriate handler.
 
         Returns the handler's result dict, or a default dict if no handler
@@ -148,8 +147,7 @@ class ConfirmationRegistry:
         """
         handler = self._handlers.get(request.action_type)
         if handler is None:
-            log.warning("No handler for confirmation action %s",
-                        request.action_type)
+            log.warning("No handler for confirmation action %s", request.action_type)
             return {"continue_loop": response.approved}
 
         if response.approved:

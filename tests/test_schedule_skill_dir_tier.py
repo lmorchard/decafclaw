@@ -67,12 +67,12 @@ async def _run(config, task):
 
     async def fake_run(ctx, user_message, history, **kwargs):
         from decafclaw.media import ToolResult
+
         seen["ctx"] = ctx
         seen["prompt"] = user_message
         return ToolResult(text="Done.")
 
-    with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run), \
-            patch("decafclaw.notifications.notify"):
+    with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run), patch("decafclaw.notifications.notify"):
         await run_schedule_task(config, EventBus(), manager, task)
     return seen["ctx"], seen["prompt"]
 
@@ -96,9 +96,7 @@ async def test_admin_schedule_skill_dir_skips_workspace_shadow(config):
     ctx, _prompt = await _run(config, task)
 
     ws = str(ws_skill.resolve())
-    assert not any(ws in p for p in _patterns(ctx)), (
-        f"agent-writable dir pre-approved: {_patterns(ctx)}"
-    )
+    assert not any(ws in p for p in _patterns(ctx)), f"agent-writable dir pre-approved: {_patterns(ctx)}"
 
 
 @pytest.mark.asyncio
@@ -121,9 +119,7 @@ async def test_admin_schedule_skill_dir_skips_workspace_only_skill(config):
     ctx, _prompt = await _run(config, task)
 
     ws = str(ws_skill.resolve())
-    assert not any(ws in p for p in _patterns(ctx)), (
-        f"agent-writable dir pre-approved: {_patterns(ctx)}"
-    )
+    assert not any(ws in p for p in _patterns(ctx)), f"agent-writable dir pre-approved: {_patterns(ctx)}"
 
 
 @pytest.mark.asyncio
@@ -186,7 +182,5 @@ async def test_extra_tier_skill_dir_unchanged(config, tmp_path):
     ctx, prompt = await _run(config, task)
 
     expected = f"{extra_skill.resolve()}/fetch.sh*"
-    assert expected in _patterns(ctx), (
-        f"contrib overlay case broke: {_patterns(ctx)}"
-    )
+    assert expected in _patterns(ctx), f"contrib overlay case broke: {_patterns(ctx)}"
     assert str(extra_skill.resolve()) in prompt

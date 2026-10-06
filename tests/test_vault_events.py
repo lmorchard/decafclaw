@@ -24,7 +24,9 @@ class TestPublishVaultChanged:
     async def test_publishes_dict_event_with_relative_path(self, config, vault_dir):
         bus = AsyncMock()
         await publish_vault_changed(
-            bus, config, kind=KIND_CREATE,
+            bus,
+            config,
+            kind=KIND_CREATE,
             path=vault_dir / "creative" / "foo.md",
         )
         bus.publish.assert_called_once()
@@ -39,7 +41,10 @@ class TestPublishVaultChanged:
     async def test_normalizes_relative_path_unchanged(self, config, vault_dir):
         bus = AsyncMock()
         await publish_vault_changed(
-            bus, config, kind=KIND_CREATE, path="creative/foo.md",
+            bus,
+            config,
+            kind=KIND_CREATE,
+            path="creative/foo.md",
         )
         ((event,), _) = bus.publish.call_args
         assert event["path"] == "creative/foo.md"
@@ -53,7 +58,10 @@ class TestPublishVaultChanged:
 
     @pytest.mark.asyncio
     async def test_path_outside_vault_root_falls_back_to_empty(
-        self, config, vault_dir, tmp_path,
+        self,
+        config,
+        vault_dir,
+        tmp_path,
     ):
         bus = AsyncMock()
         outside = tmp_path / "outside.md"
@@ -67,11 +75,12 @@ class TestPublishVaultChanged:
     async def test_publish_failure_is_swallowed(self, config, vault_dir, caplog):
         bus = AsyncMock()
         bus.publish.side_effect = RuntimeError("bus down")
-        with caplog.at_level(
-            logging.DEBUG, logger="decafclaw.skills.vault._events"
-        ):
+        with caplog.at_level(logging.DEBUG, logger="decafclaw.skills.vault._events"):
             await publish_vault_changed(
-                bus, config, kind=KIND_CREATE, path="foo.md",
+                bus,
+                config,
+                kind=KIND_CREATE,
+                path="foo.md",
             )
         # Did not raise. Debug log captured.
         assert any("publish failed" in r.message for r in caplog.records)
@@ -81,5 +90,8 @@ class TestPublishVaultChanged:
         # Just must not raise. No way to assert "no call" without a bus to
         # inspect.
         await publish_vault_changed(
-            None, config, kind=KIND_CREATE, path="foo.md",
+            None,
+            config,
+            kind=KIND_CREATE,
+            path="foo.md",
         )

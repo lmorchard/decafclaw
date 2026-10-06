@@ -18,6 +18,7 @@ class TestWrapXml:
     def test_preserves_internal_newlines(self):
         assert wrap_xml("foo", "line1\nline2") == "<foo>\nline1\nline2\n</foo>"
 
+
 # -- Default bundled load ------------------------------------------------------
 
 
@@ -31,9 +32,7 @@ class TestDefaultLoad:
         # USER.md doesn't exist in the tmp fixture, so it's skipped.
         tag_order = ["<soul>", "<agent_role>", "<skill_catalog>", "<loaded_skills>"]
         positions = [prompt.index(t) for t in tag_order]
-        assert positions == sorted(positions), (
-            f"tags out of expected order: {list(zip(tag_order, positions))}"
-        )
+        assert positions == sorted(positions), f"tags out of expected order: {list(zip(tag_order, positions))}"
 
     def test_user_context_absent_by_default(self, config):
         """No USER.md in the fixture's agent_path → no <user_context>."""
@@ -130,10 +129,9 @@ class TestSkillSections:
         <skill name="..."> block inside <loaded_skills>."""
         prompt, skills = load_system_prompt(config)
         always_loaded = [
-            s for s in skills
-            if s.always_loaded and Path(s.location).resolve().is_relative_to(
-                _BUNDLED_SKILLS_DIR.resolve()
-            )
+            s
+            for s in skills
+            if s.always_loaded and Path(s.location).resolve().is_relative_to(_BUNDLED_SKILLS_DIR.resolve())
         ]
         assert always_loaded, "test precondition: at least one always-loaded skill"
 
@@ -145,7 +143,9 @@ class TestSkillSections:
             assert "</skill>" in block
 
     def test_skill_name_xml_attribute_escaped(
-        self, config, monkeypatch,
+        self,
+        config,
+        monkeypatch,
     ):
         """Skill names come from YAML frontmatter with no character
         validation at ingest. Guard against a name containing `"`, `<`,
@@ -180,7 +180,10 @@ class TestSkillSections:
         assert "NASTY_BODY" in prompt
 
     def test_workspace_always_loaded_skill_body_excluded(
-        self, config, monkeypatch, tmp_path,
+        self,
+        config,
+        monkeypatch,
+        tmp_path,
     ):
         """The trust-boundary check excludes always_loaded bodies from
         workspace-tier skills. The discovery walker normally strips the
@@ -201,9 +204,7 @@ class TestSkillSections:
 
         # Keep the bundled discovery but prepend the rogue; the loader
         # will warn and skip its body.
-        real_discover = __import__(
-            "decafclaw.skills", fromlist=["discover_skills"]
-        ).discover_skills
+        real_discover = __import__("decafclaw.skills", fromlist=["discover_skills"]).discover_skills
 
         def fake_discover(cfg, rejections=None):
             return [rogue, *real_discover(cfg, rejections=rejections)]

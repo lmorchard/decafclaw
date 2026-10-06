@@ -58,9 +58,7 @@ async def test_push_file_happy_path(staging_env, ctx):
     # Create source file in workspace
     (workspace / "spec.md").write_text("# My Spec\n")
 
-    result = await cc_tools.tool_claude_code_push_file(
-        ctx, session.session_id, "spec.md"
-    )
+    result = await cc_tools.tool_claude_code_push_file(ctx, session.session_id, "spec.md")
 
     assert result.data is not None
     assert result.data["status"] == "success"
@@ -79,9 +77,7 @@ async def test_push_file_custom_dest(staging_env, ctx):
 
     (workspace / "spec.md").write_text("content")
 
-    result = await cc_tools.tool_claude_code_push_file(
-        ctx, session.session_id, "spec.md", dest_name="docs/spec.md"
-    )
+    result = await cc_tools.tool_claude_code_push_file(ctx, session.session_id, "spec.md", dest_name="docs/spec.md")
 
     assert result.data is not None
     assert result.data["status"] == "success"
@@ -96,9 +92,7 @@ async def test_push_file_source_not_found(staging_env, ctx):
     """Error when source file doesn't exist."""
     session = staging_env["session"]
 
-    result = await cc_tools.tool_claude_code_push_file(
-        ctx, session.session_id, "nonexistent.txt"
-    )
+    result = await cc_tools.tool_claude_code_push_file(ctx, session.session_id, "nonexistent.txt")
 
     assert result.data is not None
     assert result.data["status"] == "error"
@@ -113,9 +107,7 @@ async def test_push_file_source_is_directory(staging_env, ctx):
 
     (workspace / "somedir").mkdir()
 
-    result = await cc_tools.tool_claude_code_push_file(
-        ctx, session.session_id, "somedir"
-    )
+    result = await cc_tools.tool_claude_code_push_file(ctx, session.session_id, "somedir")
 
     assert result.data is not None
     assert result.data["status"] == "error"
@@ -142,9 +134,7 @@ async def test_push_file_dest_traversal(staging_env, ctx):
 @pytest.mark.asyncio
 async def test_push_file_session_not_found(staging_env, ctx):
     """Error when session doesn't exist."""
-    result = await cc_tools.tool_claude_code_push_file(
-        ctx, "nonexistent", "spec.md"
-    )
+    result = await cc_tools.tool_claude_code_push_file(ctx, "nonexistent", "spec.md")
 
     assert result.data is not None
     assert result.data["status"] == "error"
@@ -160,9 +150,7 @@ async def test_pull_file_happy_path(staging_env, ctx):
     # Create source file in session cwd
     (session_cwd / "output.txt").write_text("build result\n")
 
-    result = await cc_tools.tool_claude_code_pull_file(
-        ctx, session.session_id, "output.txt"
-    )
+    result = await cc_tools.tool_claude_code_pull_file(ctx, session.session_id, "output.txt")
 
     assert result.data is not None
     assert result.data["status"] == "success"
@@ -196,9 +184,7 @@ async def test_pull_file_source_not_found(staging_env, ctx):
     """Error when source file doesn't exist in session."""
     session = staging_env["session"]
 
-    result = await cc_tools.tool_claude_code_pull_file(
-        ctx, session.session_id, "nonexistent.txt"
-    )
+    result = await cc_tools.tool_claude_code_pull_file(ctx, session.session_id, "nonexistent.txt")
 
     assert result.data is not None
     assert result.data["status"] == "error"
@@ -210,9 +196,7 @@ async def test_pull_file_source_traversal(staging_env, ctx):
     """Error when source_name tries to escape session cwd."""
     session = staging_env["session"]
 
-    result = await cc_tools.tool_claude_code_pull_file(
-        ctx, session.session_id, "../../../../etc/passwd"
-    )
+    result = await cc_tools.tool_claude_code_pull_file(ctx, session.session_id, "../../../../etc/passwd")
 
     assert result.data is not None
     assert result.data["status"] == "error"
@@ -224,9 +208,7 @@ async def test_push_file_source_traversal(staging_env, ctx):
     """Error when source_path tries to escape workspace."""
     session = staging_env["session"]
 
-    result = await cc_tools.tool_claude_code_push_file(
-        ctx, session.session_id, "../../outside.txt"
-    )
+    result = await cc_tools.tool_claude_code_push_file(ctx, session.session_id, "../../outside.txt")
 
     assert result.data is not None
     assert result.data["status"] == "error"
@@ -259,9 +241,7 @@ async def test_push_binary_file(staging_env, ctx):
     binary_data = bytes(range(256))
     (workspace / "image.bin").write_bytes(binary_data)
 
-    result = await cc_tools.tool_claude_code_push_file(
-        ctx, session.session_id, "image.bin"
-    )
+    result = await cc_tools.tool_claude_code_push_file(ctx, session.session_id, "image.bin")
 
     assert result.data is not None
     assert result.data["status"] == "success"

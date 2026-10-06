@@ -53,6 +53,7 @@ def build_run_record(
             continue
         try:
             import yaml
+
             with p.open() as f:
                 file_cases = yaml.safe_load(f) or []
         except Exception:
@@ -68,8 +69,7 @@ def build_run_record(
         c["total"] += 1
         if result.get("status") == "pass":
             c["passed"] += 1
-    per_file = {k: {"passed": v["passed"], "total": v["total"]}
-                for k, v in counters.items()}
+    per_file = {k: {"passed": v["passed"], "total": v["total"]} for k, v in counters.items()}
 
     passed = sum(1 for r in test_results if r.get("status") == "pass")
     total = len(test_results)

@@ -110,9 +110,7 @@ def test_load_sections_content_before_header(config):
 def test_load_sections_multiple(config):
     admin_path = config.agent_path / "HEARTBEAT.md"
     admin_path.parent.mkdir(parents=True, exist_ok=True)
-    admin_path.write_text(
-        "## First\n\nOne.\n\n## Second\n\nTwo.\n\n## Third\n\nThree.\n"
-    )
+    admin_path.write_text("## First\n\nOne.\n\n## Second\n\nTwo.\n\n## Third\n\nThree.\n")
 
     sections = load_heartbeat_sections(config)
     assert len(sections) == 3
@@ -166,6 +164,7 @@ def test_is_heartbeat_ok_requires_a_word_boundary():
 
 def test_sentinel_helper_is_start_anchored():
     from decafclaw.heartbeat import response_starts_with_sentinel
+
     assert response_starts_with_sentinel("FOO_OK trailing", "foo_ok") is True
     assert response_starts_with_sentinel("  \n FOO_OK", "FOO_OK") is True
     assert response_starts_with_sentinel("prefix FOO_OK", "FOO_OK") is False
@@ -179,6 +178,7 @@ def test_sentinel_helper_word_boundary_only_for_word_endings():
     can't (\\b after ']' would demand a following word char, so "[SILENT] x"
     would match but "[SILENT]" alone would not)."""
     from decafclaw.heartbeat import response_starts_with_sentinel
+
     assert response_starts_with_sentinel("FOO_OKAY", "FOO_OK") is False
     assert response_starts_with_sentinel("[SILENT]", "[SILENT]") is True
     assert response_starts_with_sentinel("[SILENT] nothing changed", "[SILENT]") is True
@@ -250,8 +250,10 @@ def test_is_heartbeat_ok_abnormal_marker_matched_beyond_scan_window():
     window would re-couple this to that ordering — the length-contingency #710
     exists to remove.
     """
-    text = "HEARTBEAT_OK — nothing to report.\n\n" + "detail. " * 60 + (
-        "\n\n[Agent reached max tool iterations (30) without a final response]"
+    text = (
+        "HEARTBEAT_OK — nothing to report.\n\n"
+        + "detail. " * 60
+        + ("\n\n[Agent reached max tool iterations (30) without a final response]")
     )
     assert text.index("[Agent reached max tool iterations") > 300
     assert is_heartbeat_ok(ToolResult(text=text, termination_reason="max_iterations")) is False
@@ -262,6 +264,7 @@ def test_is_heartbeat_ok_abnormal_marker_matched_beyond_scan_window():
 
 def test_is_background_wake_ok_detects_sentinel():
     from decafclaw.heartbeat import is_background_wake_ok
+
     # Sentinel at start — TRUE
     assert is_background_wake_ok(ToolResult(text="BACKGROUND_WAKE_OK"))
     assert is_background_wake_ok(ToolResult(text="background_wake_ok — nothing to report"))
@@ -275,6 +278,7 @@ def test_is_background_wake_ok_detects_sentinel():
 
 def test_is_background_wake_ok_requires_prefix():
     from decafclaw.heartbeat import is_background_wake_ok
+
     # Prefix with leading whitespace — TRUE
     assert is_background_wake_ok(ToolResult(text="BACKGROUND_WAKE_OK"))
     assert is_background_wake_ok(ToolResult(text="  BACKGROUND_WAKE_OK — noted"))
@@ -331,10 +335,12 @@ async def test_run_heartbeat_cycle(config):
     admin_path.parent.mkdir(parents=True, exist_ok=True)
     admin_path.write_text("## Task one\n\nDo thing one.\n\n## Task two\n\nDo thing two.\n")
 
-    mock_agent = AsyncMock(side_effect=[
-        ToolResult(text="Result one"),
-        ToolResult(text="HEARTBEAT_OK nothing to report"),
-    ])
+    mock_agent = AsyncMock(
+        side_effect=[
+            ToolResult(text="Result one"),
+            ToolResult(text="HEARTBEAT_OK nothing to report"),
+        ]
+    )
     bus = EventBus()
     manager = ConversationManager(config, bus)
 
@@ -496,6 +502,7 @@ async def test_timer_fires_callback(config):
         shutdown.set()
 
     import decafclaw.heartbeat as hb
+
     original_poll = hb._POLL_INTERVAL
     hb._POLL_INTERVAL = 0.5  # fast polling for tests
 
@@ -550,6 +557,7 @@ async def test_timer_respects_shutdown(config):
         shutdown.set()
 
     import decafclaw.heartbeat as hb
+
     original_poll = hb._POLL_INTERVAL
     hb._POLL_INTERVAL = 0.5
 
@@ -569,13 +577,16 @@ def test_sentinel_helper_rejects_an_empty_sentinel():
     """An empty sentinel compiles to `^\\s*`, which matches everything — a
     config-driven empty value would silently suppress every response."""
     from decafclaw.heartbeat import response_starts_with_sentinel
+
     assert response_starts_with_sentinel("anything at all", "") is False
     assert response_starts_with_sentinel("anything at all", "   ") is False
+
 
 @pytest.mark.asyncio
 async def test_heartbeat_tool_restrictions(ctx, config, tmp_path):
     # CRITERION: WHEN a heartbeat section or schedule defines tool allowlists or blocklists in frontmatter, THEN the system SHALL enforce them during heartbeat execution.
     from decafclaw.heartbeat import _split_sections
+
     text = """## Section 1
 ---
 allowed-tools: [vault_read, shell]
@@ -611,6 +622,7 @@ Do another thing.
 
     # Test schedule parsing of disallowed-tools
     from decafclaw.schedules import ScheduleTask, discover_schedules
+
     schedule_file = config.agent_path / "schedules" / "test_sched.md"
     schedule_file.parent.mkdir(parents=True, exist_ok=True)
     schedule_file.write_text("""---
@@ -621,6 +633,7 @@ disallowed-tools: [workspace_write]
 Do something.
 """)
     from decafclaw.config import Config
+
     tasks = discover_schedules(config)
     task = next(t for t in tasks if t.name == "test_sched")
     assert task.disallowed_tools == ["workspace_write"]
@@ -630,4 +643,3 @@ Do something.
     ctx.tools.disallowed = set(task.disallowed_tools)
     res_sched = await execute_tool(ctx, "workspace_write", {})
     assert "blocked by this context" in res_sched.text
-

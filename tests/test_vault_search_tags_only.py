@@ -36,12 +36,10 @@ def tagged_pages(config):
     d = config.vault_agent_pages_dir
     d.mkdir(parents=True, exist_ok=True)
     (d / "storage-notes.md").write_text(
-        "---\ntags: [rust]\n---\n# Storage Notes\n\n"
-        "We compared Rust and Python here. The chosen runtime is Zephyr.\n"
+        "---\ntags: [rust]\n---\n# Storage Notes\n\nWe compared Rust and Python here. The chosen runtime is Zephyr.\n"
     )
     (d / "compute-notes.md").write_text(
-        "---\ntags: [python]\n---\n# Compute Notes\n\n"
-        "We compared Rust and Python here. The chosen runtime is Nimbus.\n"
+        "---\ntags: [python]\n---\n# Compute Notes\n\nWe compared Rust and Python here. The chosen runtime is Nimbus.\n"
     )
     return d
 
@@ -128,9 +126,7 @@ async def test_omitting_query_matches_passing_empty_string(ctx, tagged_pages):
 
 
 @pytest.mark.asyncio
-async def test_unconstrained_search_refuses_and_names_vault_list(
-    ctx, tagged_pages
-):
+async def test_unconstrained_search_refuses_and_names_vault_list(ctx, tagged_pages):
     """`vault_search()` with no query and no filters must refuse (#673).
 
     Making `query` omissible (#669) also made a fully-unconstrained call
@@ -149,9 +145,7 @@ async def test_unconstrained_search_refuses_and_names_vault_list(
         of any filter path, so an empty tag set can't vacuously match
         everything on the way out.
     """
-    with patch(
-        "decafclaw.skills.vault.tools.pages_with_tags"
-    ) as mock_pages_with_tags:
+    with patch("decafclaw.skills.vault.tools.pages_with_tags") as mock_pages_with_tags:
         result = await tool_vault_search(ctx)
 
     assert isinstance(result, ToolResult)
@@ -235,7 +229,6 @@ async def test_source_type_filters_on_substring_strategy(ctx, config):
     text = result.text if hasattr(result, "text") else str(result)
     assert "page-file" in text
     assert "journal-file" not in text
-
 
 
 # -- schema must not contradict the signature --

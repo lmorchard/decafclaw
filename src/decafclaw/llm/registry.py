@@ -27,9 +27,7 @@ def get_provider(name: str) -> Provider:
     """Get a provider by name. Raises KeyError if not found."""
     if name not in _providers:
         available = ", ".join(sorted(_providers.keys())) or "(none)"
-        raise KeyError(
-            f"Unknown LLM provider '{name}'. Available: {available}"
-        )
+        raise KeyError(f"Unknown LLM provider '{name}'. Available: {available}")
     return _providers[name]
 
 
@@ -62,10 +60,13 @@ def init_providers(config: Any) -> None:
         elif provider_type == PROVIDER_OPENAI:
             register_provider(name, OpenAIProvider(url=pc.url, api_key=pc.api_key))
         elif provider_type == PROVIDER_VERTEX:
-            register_provider(name, VertexProvider(
-                project=pc.project, region=pc.region or "us-central1",
-                service_account_file=pc.service_account_file,
-            ))
+            register_provider(
+                name,
+                VertexProvider(
+                    project=pc.project,
+                    region=pc.region or "us-central1",
+                    service_account_file=pc.service_account_file,
+                ),
+            )
         else:
-            log.warning("Unknown provider type '%s' for '%s', skipping",
-                        provider_type, name)
+            log.warning("Unknown provider type '%s' for '%s', skipping", provider_type, name)

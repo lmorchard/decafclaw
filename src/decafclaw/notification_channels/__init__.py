@@ -27,8 +27,7 @@ PRIORITY_GLYPH = {"low": "·", "normal": "🔔", "high": "⚠️"}
 
 def meets_priority(record_priority: str, min_priority: str) -> bool:
     """True when ``record_priority`` is at or above ``min_priority``."""
-    return (PRIORITY_ORDER.get(record_priority, 1)
-            >= PRIORITY_ORDER.get(min_priority, 1))
+    return PRIORITY_ORDER.get(record_priority, 1) >= PRIORITY_ORDER.get(min_priority, 1)
 
 
 def init_notification_channels(
@@ -58,28 +57,32 @@ def init_notification_channels(
     mm_dm_cfg = config.notifications.channels.mattermost_dm
     if mm_dm_cfg.enabled and mm_dm_cfg.recipient_username and mm_client:
         from .mattermost_dm import make_mattermost_dm_adapter
+
         event_bus.subscribe(make_mattermost_dm_adapter(config, mm_client))
         log.info(
-            "Notifications: Mattermost DM adapter subscribed "
-            "(recipient=%s, min_priority=%s)",
-            mm_dm_cfg.recipient_username, mm_dm_cfg.min_priority,
+            "Notifications: Mattermost DM adapter subscribed (recipient=%s, min_priority=%s)",
+            mm_dm_cfg.recipient_username,
+            mm_dm_cfg.min_priority,
         )
 
     # Email — needs both the channel config and the core email config
     # (including a non-empty sender_address; otherwise every send queues
     # a doomed task and logs a warning per notification).
     email_ch_cfg = config.notifications.channels.email
-    if (email_ch_cfg.enabled
-            and email_ch_cfg.recipient_addresses
-            and config.email.enabled
-            and config.email.smtp_host
-            and (config.email.sender_address or "").strip()):
+    if (
+        email_ch_cfg.enabled
+        and email_ch_cfg.recipient_addresses
+        and config.email.enabled
+        and config.email.smtp_host
+        and (config.email.sender_address or "").strip()
+    ):
         from .email import make_email_adapter
+
         event_bus.subscribe(make_email_adapter(config))
         log.info(
-            "Notifications: email adapter subscribed "
-            "(recipients=%s, min_priority=%s)",
-            email_ch_cfg.recipient_addresses, email_ch_cfg.min_priority,
+            "Notifications: email adapter subscribed (recipients=%s, min_priority=%s)",
+            email_ch_cfg.recipient_addresses,
+            email_ch_cfg.min_priority,
         )
 
     # Vault page — pure local file writes; no transport dep to check.
@@ -89,9 +92,10 @@ def init_notification_channels(
     vp_cfg = config.notifications.channels.vault_page
     if vp_cfg.enabled:
         from .vault_page import make_vault_page_adapter
+
         event_bus.subscribe(make_vault_page_adapter(config))
         log.info(
-            "Notifications: vault page adapter subscribed "
-            "(folder=%s, min_priority=%s)",
-            vp_cfg.folder, vp_cfg.min_priority,
+            "Notifications: vault page adapter subscribed (folder=%s, min_priority=%s)",
+            vp_cfg.folder,
+            vp_cfg.min_priority,
         )

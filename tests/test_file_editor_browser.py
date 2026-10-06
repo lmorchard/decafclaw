@@ -48,16 +48,26 @@ def test_browser_file_editor_scroll_follow_and_overflow(config):
             try:
                 page = browser.new_page(viewport={"width": 1000, "height": 600})
                 page.goto(base + "/static/lib/auth-client.js")
-                page.evaluate("""async token => {
+                page.evaluate(
+                    """async token => {
                     const { AuthClient } = await import('/static/lib/auth-client.js');
                     await new AuthClient().login(token);
-                }""", token)
-                page.add_script_tag(type="importmap", content=json.dumps({"imports": {
-                    "lit": "/static/vendor/bundle/lit.js",
-                    "codemirror": "/static/vendor/bundle/codemirror.js",
-                    "dompurify": "/static/vendor/bundle/dompurify.js",
-                    "marked": "/static/vendor/bundle/marked.js",
-                }}))
+                }""",
+                    token,
+                )
+                page.add_script_tag(
+                    type="importmap",
+                    content=json.dumps(
+                        {
+                            "imports": {
+                                "lit": "/static/vendor/bundle/lit.js",
+                                "codemirror": "/static/vendor/bundle/codemirror.js",
+                                "dompurify": "/static/vendor/bundle/dompurify.js",
+                                "marked": "/static/vendor/bundle/marked.js",
+                            }
+                        }
+                    ),
+                )
 
                 # Inject style links
                 page.evaluate("""() => {

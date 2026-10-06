@@ -36,9 +36,7 @@ def _patch_signals(retrieval_counts: dict[str, int], inbound_counts: dict[str, i
     return (
         patch(
             "decafclaw.retrieval_telemetry.aggregate",
-            return_value={
-                path: {"retrieval_count": n} for path, n in retrieval_counts.items()
-            },
+            return_value={path: {"retrieval_count": n} for path, n in retrieval_counts.items()},
         ),
         patch(
             "decafclaw.backlinks.inbound_count",
@@ -49,7 +47,9 @@ def _patch_signals(retrieval_counts: dict[str, int], inbound_counts: dict[str, i
 
 class TestComputeImportanceScores:
     def test_frequently_retrieved_and_linked_page_scores_near_one(
-        self, config, vault_pages,
+        self,
+        config,
+        vault_pages,
     ):
         p1, p2 = _patch_signals({STAR: 10}, {STAR: 5})
         with p1, p2:
@@ -107,9 +107,13 @@ class TestToolVaultRecomputeImportance:
         # with zero raw signal is left alone rather than zeroed (#197 cold
         # start).
         p1, p2 = _patch_signals({STAR: 10}, {})
-        with p1, p2, patch(
-            "decafclaw.skills.garden.tools.compute_importance_scores",
-            return_value={STAR: 0.9, ORPHAN: 0.0},
+        with (
+            p1,
+            p2,
+            patch(
+                "decafclaw.skills.garden.tools.compute_importance_scores",
+                return_value={STAR: 0.9, ORPHAN: 0.0},
+            ),
         ):
             result = await tool_vault_recompute_importance(ctx, dry_run=True)
 
@@ -128,13 +132,18 @@ class TestToolVaultRecomputeImportance:
         # this page must be skipped as unchanged (it also has zero raw
         # signal, so it would be skipped for that reason too).
         (ctx.config.vault_agent_pages_dir / "orphan.md").write_text(
-            "---\nimportance: 0.0\n---\nNobody cares about this.\n", encoding="utf-8",
+            "---\nimportance: 0.0\n---\nNobody cares about this.\n",
+            encoding="utf-8",
         )
 
         p1, p2 = _patch_signals({STAR: 10}, {})
-        with p1, p2, patch(
-            "decafclaw.skills.garden.tools.compute_importance_scores",
-            return_value={STAR: 0.9, ORPHAN: 0.0},
+        with (
+            p1,
+            p2,
+            patch(
+                "decafclaw.skills.garden.tools.compute_importance_scores",
+                return_value={STAR: 0.9, ORPHAN: 0.0},
+            ),
         ):
             result = await tool_vault_recompute_importance(ctx)
 
@@ -142,9 +151,7 @@ class TestToolVaultRecomputeImportance:
         changed_paths = {d["path"] for d in result.data["deltas"]}
         assert changed_paths == {STAR}
 
-        star_meta, _ = parse_frontmatter(
-            (ctx.config.vault_agent_pages_dir / "star.md").read_text(encoding="utf-8")
-        )
+        star_meta, _ = parse_frontmatter((ctx.config.vault_agent_pages_dir / "star.md").read_text(encoding="utf-8"))
         assert star_meta["importance"] == 0.9
 
         orphan_meta, orphan_body = parse_frontmatter(
@@ -205,22 +212,23 @@ class TestRecomputeColdStart:
         touched_paths = {d["path"] for d in result.data["deltas"]}
         assert STAR in touched_paths
 
-        star_meta, _ = parse_frontmatter(
-            (ctx.config.vault_agent_pages_dir / "star.md").read_text(encoding="utf-8")
-        )
+        star_meta, _ = parse_frontmatter((ctx.config.vault_agent_pages_dir / "star.md").read_text(encoding="utf-8"))
         # Only retrieval signal is present (default w_retrieval=0.6).
         assert star_meta["importance"] == pytest.approx(0.6)
 
     @pytest.mark.asyncio
     async def test_zero_signal_page_with_existing_importance_is_untouched(
-        self, ctx, vault_pages,
+        self,
+        ctx,
+        vault_pages,
     ):
         # A page with dream's initial importance guess but no measured
         # signal yet — recompute must not overwrite it, even though the
         # formula would compute 0.0 for it (no retrieval, no inbound links,
         # and its neighbor STAR absorbs all the normalized signal).
         (ctx.config.vault_agent_pages_dir / "orphan.md").write_text(
-            "---\nimportance: 0.7\n---\nNobody cares about this.\n", encoding="utf-8",
+            "---\nimportance: 0.7\n---\nNobody cares about this.\n",
+            encoding="utf-8",
         )
 
         p1, p2 = _patch_signals({STAR: 10}, {})
@@ -230,9 +238,7 @@ class TestRecomputeColdStart:
         touched_paths = {d["path"] for d in result.data["deltas"]}
         assert ORPHAN not in touched_paths
 
-        orphan_meta, _ = parse_frontmatter(
-            (ctx.config.vault_agent_pages_dir / "orphan.md").read_text(encoding="utf-8")
-        )
+        orphan_meta, _ = parse_frontmatter((ctx.config.vault_agent_pages_dir / "orphan.md").read_text(encoding="utf-8"))
         assert orphan_meta["importance"] == 0.7
 
     @pytest.mark.asyncio
@@ -244,7 +250,5 @@ class TestRecomputeColdStart:
         touched_paths = {d["path"] for d in result.data["deltas"]}
         assert ORPHAN not in touched_paths
 
-        orphan_meta, _ = parse_frontmatter(
-            (ctx.config.vault_agent_pages_dir / "orphan.md").read_text(encoding="utf-8")
-        )
+        orphan_meta, _ = parse_frontmatter((ctx.config.vault_agent_pages_dir / "orphan.md").read_text(encoding="utf-8"))
         assert "importance" not in orphan_meta

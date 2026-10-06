@@ -87,27 +87,41 @@ class OpenAICompatProvider:
     ) -> dict:
         if streaming:
             return await self._complete_streaming(
-                model, messages, tools=tools, on_chunk=on_chunk,
-                cancel_event=cancel_event, timeout=timeout,
+                model,
+                messages,
+                tools=tools,
+                on_chunk=on_chunk,
+                cancel_event=cancel_event,
+                timeout=timeout,
             )
         return await self._complete_nonstreaming(
-            model, messages, tools=tools, timeout=timeout,
+            model,
+            messages,
+            tools=tools,
+            timeout=timeout,
         )
 
     async def _complete_nonstreaming(
-        self, model, messages, *, tools=None, timeout=300,
+        self,
+        model,
+        messages,
+        *,
+        tools=None,
+        timeout=300,
     ) -> dict:
         url = self._completions_url()
         body: dict = {"model": model, "messages": messages}
         if tools:
             body["tools"] = tools
 
-        log.debug("LLM request: model=%s, messages=%d, tools=%d",
-                  model, len(messages), len(tools) if tools else 0)
+        log.debug("LLM request: model=%s, messages=%d, tools=%d", model, len(messages), len(tools) if tools else 0)
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                url, json=body, headers=self._headers(), timeout=timeout,
+                url,
+                json=body,
+                headers=self._headers(),
+                timeout=timeout,
             )
         resp.raise_for_status()
         data = resp.json()
@@ -124,12 +138,18 @@ class OpenAICompatProvider:
 
         if usage:
             usage["cached_tokens"] = _cached_tokens(usage)
-            log.debug("LLM usage: prompt=%s, completion=%s, cached=%s",
-                      usage.get("prompt_tokens"), usage.get("completion_tokens"),
-                      usage.get("cached_tokens"))
-        log.debug("LLM response: content=%s, tool_calls=%d, finish_reason=%s",
-                  bool(message.get("content")), len(message.get("tool_calls", [])),
-                  finish_reason)
+            log.debug(
+                "LLM usage: prompt=%s, completion=%s, cached=%s",
+                usage.get("prompt_tokens"),
+                usage.get("completion_tokens"),
+                usage.get("cached_tokens"),
+            )
+        log.debug(
+            "LLM response: content=%s, tool_calls=%d, finish_reason=%s",
+            bool(message.get("content")),
+            len(message.get("tool_calls", [])),
+            finish_reason,
+        )
 
         tool_calls = message.get("tool_calls")
         if tool_calls:
@@ -145,8 +165,14 @@ class OpenAICompatProvider:
         }
 
     async def _complete_streaming(
-        self, model, messages, *, tools=None, on_chunk=None,
-        cancel_event=None, timeout=300,
+        self,
+        model,
+        messages,
+        *,
+        tools=None,
+        on_chunk=None,
+        cancel_event=None,
+        timeout=300,
     ) -> dict:
         url = self._completions_url()
         body: dict = {
@@ -158,28 +184,36 @@ class OpenAICompatProvider:
         if tools:
             body["tools"] = tools
 
-        log.debug("LLM streaming request: model=%s, messages=%d, tools=%d",
-                  model, len(messages), len(tools) if tools else 0)
+        log.debug(
+            "LLM streaming request: model=%s, messages=%d, tools=%d", model, len(messages), len(tools) if tools else 0
+        )
 
         state = _StreamState(on_chunk)
 
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 await self._stream_one_attempt(
-                    url, body, timeout, cancel_event, state,
+                    url,
+                    body,
+                    timeout,
+                    cancel_event,
+                    state,
                 )
                 break  # Success
             except _RetryableError as e:
                 if attempt >= _MAX_RETRIES:
                     raise Exception(
-                        f"LLM failed after {_MAX_RETRIES} retries "
-                        f"(status {e.status}): {e.body[:200]}"
+                        f"LLM failed after {_MAX_RETRIES} retries (status {e.status}): {e.body[:200]}"
                     ) from e
-                delay = min(int(e.retry_after or 2 ** attempt), 30)
+                delay = min(int(e.retry_after or 2**attempt), 30)
                 log.warning(
                     "LLM %s (%d), retrying in %ds (attempt %d/%d): %s",
                     "rate limited" if e.status == 429 else "server error",
-                    e.status, delay, attempt + 1, _MAX_RETRIES, e.body[:200],
+                    e.status,
+                    delay,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    e.body[:200],
                 )
                 await _cancellable_sleep(delay, cancel_event)
             except Exception as e:
@@ -197,8 +231,12 @@ class OpenAICompatProvider:
 
         async with httpx.AsyncClient() as client:
             async with aconnect_sse(
-                client, "POST", url, json=body,
-                headers=self._headers(), timeout=httpx.Timeout(timeout),
+                client,
+                "POST",
+                url,
+                json=body,
+                headers=self._headers(),
+                timeout=httpx.Timeout(timeout),
             ) as event_source:
                 status = event_source.response.status_code
                 if 400 <= status < 500 and status != 429:
@@ -251,13 +289,18 @@ class OpenAICompatProvider:
             try:
                 async with httpx.AsyncClient() as client:
                     resp = await client.post(
-                        url, json=body, headers=self._headers(), timeout=timeout,
+                        url,
+                        json=body,
+                        headers=self._headers(),
+                        timeout=timeout,
                     )
                 if resp.status_code == 429 and attempt < max_retries:
-                    delay = 2 ** attempt
+                    delay = 2**attempt
                     log.warning(
-                        "Embedding API rate limited, retrying in %ds "
-                        "(attempt %d/%d)", delay, attempt + 1, max_retries,
+                        "Embedding API rate limited, retrying in %ds (attempt %d/%d)",
+                        delay,
+                        attempt + 1,
+                        max_retries,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -291,6 +334,7 @@ def _cached_tokens(usage: dict | None) -> int:
 
 class _RetryableError(Exception):
     """Raised on 429/5xx to trigger retry logic."""
+
     def __init__(self, status: int, body: str, retry_after: str | None = None):
         self.status = status
         self.body = body
@@ -377,16 +421,24 @@ class _StreamState:
                     },
                 }
                 if func.get("name"):
-                    await self._emit("tool_call_start", {
-                        "index": idx, "name": func["name"],
-                    })
+                    await self._emit(
+                        "tool_call_start",
+                        {
+                            "index": idx,
+                            "name": func["name"],
+                        },
+                    )
             else:
                 args_delta = func.get("arguments", "")
                 if args_delta:
                     self.tool_calls_in_progress[idx]["function"]["arguments"] += args_delta
-                    await self._emit("tool_call_delta", {
-                        "index": idx, "arguments_delta": args_delta,
-                    })
+                    await self._emit(
+                        "tool_call_delta",
+                        {
+                            "index": idx,
+                            "arguments_delta": args_delta,
+                        },
+                    )
                 name_delta = func.get("name", "")
                 if name_delta:
                     self.tool_calls_in_progress[idx]["function"]["name"] += name_delta
@@ -395,16 +447,16 @@ class _StreamState:
         """Build the final response dict and emit closing events."""
         tool_calls = None
         if self.tool_calls_in_progress:
-            tool_calls = [
-                self.tool_calls_in_progress[i]
-                for i in sorted(self.tool_calls_in_progress.keys())
-            ]
+            tool_calls = [self.tool_calls_in_progress[i] for i in sorted(self.tool_calls_in_progress.keys())]
             for idx, tc in enumerate(tool_calls):
-                await self._emit("tool_call_end", {
-                    "index": idx,
-                    "name": tc["function"]["name"],
-                    "arguments": tc["function"]["arguments"],
-                })
+                await self._emit(
+                    "tool_call_end",
+                    {
+                        "index": idx,
+                        "name": tc["function"]["name"],
+                        "arguments": tc["function"]["arguments"],
+                    },
+                )
 
         content = "".join(self.content_parts) or None
         finish_reason = self.finish_reason
@@ -417,11 +469,17 @@ class _StreamState:
         await self._emit("done", {"usage": self.usage})
 
         if self.usage:
-            log.debug("LLM streaming usage: prompt=%s, completion=%s",
-                      self.usage.get("prompt_tokens"),
-                      self.usage.get("completion_tokens"))
-        log.debug("LLM streaming response: content=%s, tool_calls=%d, finish_reason=%s",
-                  bool(content), len(tool_calls) if tool_calls else 0, finish_reason)
+            log.debug(
+                "LLM streaming usage: prompt=%s, completion=%s",
+                self.usage.get("prompt_tokens"),
+                self.usage.get("completion_tokens"),
+            )
+        log.debug(
+            "LLM streaming response: content=%s, tool_calls=%d, finish_reason=%s",
+            bool(content),
+            len(tool_calls) if tool_calls else 0,
+            finish_reason,
+        )
 
         if not content and not self.tool_calls_in_progress and self._all_events:
             log.warning(

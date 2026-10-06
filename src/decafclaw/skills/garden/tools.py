@@ -21,15 +21,19 @@ log = logging.getLogger(__name__)
 # and avoids rewriting a page for float noise between runs.
 _SCORE_PRECISION = 3
 
+
 @dataclass
 class SkillConfig:
     dry_run: bool = False
 
+
 _skill_config = SkillConfig()
+
 
 def init(config, skill_config: SkillConfig):
     global _skill_config
     _skill_config = skill_config
+
 
 def _iter_importance_candidates(config) -> list[tuple[str, Path]]:
     """List (vault-relative POSIX path, Path) for every scoreable agent page."""
@@ -37,24 +41,22 @@ def _iter_importance_candidates(config) -> list[tuple[str, Path]]:
     if not pages_dir.is_dir():
         return []
     vault = config.vault_root
-    return [
-        (path.relative_to(vault).as_posix(), path)
-        for path in sorted(pages_dir.rglob("*.md"))
-    ]
+    return [(path.relative_to(vault).as_posix(), path) for path in sorted(pages_dir.rglob("*.md"))]
+
 
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
+
 def _norm(value: float, max_value: float) -> float:
     return value / max_value if max_value > 0 else 0.0
+
 
 def compute_importance_signals(config) -> dict[str, tuple[int, int]]:
     pages = [rel for rel, _ in _iter_importance_candidates(config)]
     stats = retrieval_telemetry.aggregate(retrieval_telemetry.load_records(config))
-    return {
-        p: (stats.get(p, {}).get("retrieval_count", 0), backlinks.inbound_count(config, p))
-        for p in pages
-    }
+    return {p: (stats.get(p, {}).get("retrieval_count", 0), backlinks.inbound_count(config, p)) for p in pages}
+
 
 def compute_importance_scores(config) -> dict[str, float]:
     weights = config.importance
@@ -72,6 +74,7 @@ def compute_importance_scores(config) -> dict[str, float]:
         )
         for p in signals
     }
+
 
 async def tool_vault_recompute_importance(ctx: "Context", dry_run: bool = False) -> ToolResult:
     log.info(f"[tool:vault_recompute_importance] dry_run={dry_run}")
@@ -103,26 +106,22 @@ async def tool_vault_recompute_importance(ctx: "Context", dry_run: bool = False)
             continue
 
         result = await tool_vault_update_frontmatter(
-            ctx, rel, {"importance": new_rounded}, overwrite=True,
+            ctx,
+            rel,
+            {"importance": new_rounded},
+            overwrite=True,
         )
         if result.text.startswith("[error:"):
-            log.warning(
-                f"vault_recompute_importance: failed to write {rel}: {result.text}"
-            )
+            log.warning(f"vault_recompute_importance: failed to write {rel}: {result.text}")
             continue
         written += 1
 
     if dry_run:
-        text = (
-            f"Dry run: {len(deltas)} of {len(scores)} scored page(s) "
-            f"would change importance."
-        )
+        text = f"Dry run: {len(deltas)} of {len(scores)} scored page(s) would change importance."
     else:
-        text = (
-            f"Recomputed importance for {len(scores)} page(s): "
-            f"{written} updated, {len(scores) - written} unchanged."
-        )
+        text = f"Recomputed importance for {len(scores)} page(s): {written} updated, {len(scores) - written} unchanged."
     return ToolResult(text=text, data={"deltas": deltas, "dry_run": dry_run})
+
 
 async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = None) -> ToolResult:
     """Detect clusters of 3+ related agent pages and move them into dedicated folders."""
@@ -143,7 +142,7 @@ async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = N
             if not p.startswith(agent_pages_prefix):
                 continue
 
-            rel_to_pages = p[len(agent_pages_prefix):]
+            rel_to_pages = p[len(agent_pages_prefix) :]
             if "/" not in rel_to_pages:
                 pages_to_move.append(p)
 
@@ -191,9 +190,13 @@ async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = N
                 md_file.write_text(new_content, encoding="utf-8")
 
     if dry_run:
-        return ToolResult(text=f"[Dry run] Proposed {len(proposed_moves)} page moves into clusters.", data={"moves": proposed_moves})
+        return ToolResult(
+            text=f"[Dry run] Proposed {len(proposed_moves)} page moves into clusters.", data={"moves": proposed_moves}
+        )
     else:
-        return ToolResult(text=f"Reorganized pages. Moved {executed} pages to new cluster folders.", data={"moves": proposed_moves})
+        return ToolResult(
+            text=f"Reorganized pages. Moved {executed} pages to new cluster folders.", data={"moves": proposed_moves}
+        )
 
 
 # -- Registry ---------------------------------------------------------------
@@ -211,9 +214,7 @@ TOOL_DEFINITIONS = [
             "description": "Deterministically recompute every agent page's `importance` frontmatter...",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "dry_run": {"type": "boolean"}
-                },
+                "properties": {"dry_run": {"type": "boolean"}},
             },
         },
     },
@@ -224,9 +225,7 @@ TOOL_DEFINITIONS = [
             "description": "Detect clusters of 3+ related agent pages and move them into dedicated folders. Resolves and updates wiki-links.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "dry_run": {"type": "boolean"}
-                },
+                "properties": {"dry_run": {"type": "boolean"}},
             },
         },
     },

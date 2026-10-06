@@ -11,11 +11,15 @@ from decafclaw.config_types import ModelConfig, ProviderConfig
 
 def test_resolve_model_known(config):
     """Known model name resolves to provider + model config."""
-    config = dataclasses.replace(config, providers={
-        "vertex": ProviderConfig(type="vertex", project="test"),
-    }, model_configs={
-        "gemini-flash": ModelConfig(provider="vertex", model="gemini-2.5-flash"),
-    })
+    config = dataclasses.replace(
+        config,
+        providers={
+            "vertex": ProviderConfig(type="vertex", project="test"),
+        },
+        model_configs={
+            "gemini-flash": ModelConfig(provider="vertex", model="gemini-2.5-flash"),
+        },
+    )
     pc, mc = resolve_model(config, "gemini-flash")
     assert pc.type == "vertex"
     assert mc.model == "gemini-2.5-flash"
@@ -29,11 +33,16 @@ def test_resolve_model_unknown_raises(config):
 
 def test_resolve_model_default(config):
     """Empty name falls back to default_model."""
-    config = dataclasses.replace(config, providers={
-        "oai": ProviderConfig(type="openai", api_key="sk-test"),
-    }, model_configs={
-        "gpt4": ModelConfig(provider="oai", model="gpt-4o"),
-    }, default_model="gpt4")
+    config = dataclasses.replace(
+        config,
+        providers={
+            "oai": ProviderConfig(type="openai", api_key="sk-test"),
+        },
+        model_configs={
+            "gpt4": ModelConfig(provider="oai", model="gpt-4o"),
+        },
+        default_model="gpt4",
+    )
     pc, mc = resolve_model(config, "")
     assert mc.model == "gpt-4o"
 
@@ -46,9 +55,13 @@ def test_resolve_model_no_default_raises(config):
 
 def test_resolve_model_bad_provider_raises(config):
     """Model referencing unknown provider raises KeyError."""
-    config = dataclasses.replace(config, providers={}, model_configs={
-        "test": ModelConfig(provider="missing", model="foo"),
-    })
+    config = dataclasses.replace(
+        config,
+        providers={},
+        model_configs={
+            "test": ModelConfig(provider="missing", model="foo"),
+        },
+    )
     with pytest.raises(KeyError, match="unknown provider"):
         resolve_model(config, "test")
 
@@ -59,11 +72,15 @@ async def test_set_model_tool(ctx):
     from decafclaw.tools.model_tools import tool_set_model
 
     # Set up model configs on the context's config
-    ctx.config = dataclasses.replace(ctx.config, providers={
-        "vertex": ProviderConfig(type="vertex", project="test"),
-    }, model_configs={
-        "gemini-flash": ModelConfig(provider="vertex", model="gemini-2.5-flash"),
-    })
+    ctx.config = dataclasses.replace(
+        ctx.config,
+        providers={
+            "vertex": ProviderConfig(type="vertex", project="test"),
+        },
+        model_configs={
+            "gemini-flash": ModelConfig(provider="vertex", model="gemini-2.5-flash"),
+        },
+    )
 
     result = await tool_set_model(ctx, model="gemini-flash")
     assert ctx.active_model == "gemini-flash"
@@ -104,13 +121,7 @@ def test_skill_model_parsed(tmp_path):
 
     skill_md = tmp_path / "SKILL.md"
     skill_md.write_text(
-        "---\n"
-        "name: test-skill\n"
-        "description: A test skill\n"
-        "model: gemini-flash\n"
-        "context: fork\n"
-        "---\n"
-        "Do the thing.\n"
+        "---\nname: test-skill\ndescription: A test skill\nmodel: gemini-flash\ncontext: fork\n---\nDo the thing.\n"
     )
     info = parse_skill_md(skill_md)
     assert info is not None
@@ -123,14 +134,7 @@ def test_skill_legacy_effort_parsed_as_model(tmp_path):
     from decafclaw.skills import parse_skill_md
 
     skill_md = tmp_path / "SKILL.md"
-    skill_md.write_text(
-        "---\n"
-        "name: test-skill\n"
-        "description: A test skill\n"
-        "effort: fast\n"
-        "---\n"
-        "Do the thing.\n"
-    )
+    skill_md.write_text("---\nname: test-skill\ndescription: A test skill\neffort: fast\n---\nDo the thing.\n")
     info = parse_skill_md(skill_md)
     assert info is not None
     assert info.model == "fast"
@@ -141,13 +145,7 @@ def test_skill_model_default_empty(tmp_path):
     from decafclaw.skills import parse_skill_md
 
     skill_md = tmp_path / "SKILL.md"
-    skill_md.write_text(
-        "---\n"
-        "name: test-skill\n"
-        "description: A test skill\n"
-        "---\n"
-        "Do the thing.\n"
-    )
+    skill_md.write_text("---\nname: test-skill\ndescription: A test skill\n---\nDo the thing.\n")
     info = parse_skill_md(skill_md)
     assert info is not None
     assert info.model == ""
@@ -158,12 +156,17 @@ def test_skill_model_default_empty(tmp_path):
 
 def _config_with_models(config):
     """Config with two named models and a default, for override tests."""
-    return dataclasses.replace(config, providers={
-        "vertex": ProviderConfig(type="vertex", project="test"),
-    }, model_configs={
-        "vertex-gemini-flash": ModelConfig(provider="vertex", model="gemini-2.5-flash"),
-        "vertex-gemini-pro": ModelConfig(provider="vertex", model="gemini-2.5-pro"),
-    }, default_model="vertex-gemini-flash")
+    return dataclasses.replace(
+        config,
+        providers={
+            "vertex": ProviderConfig(type="vertex", project="test"),
+        },
+        model_configs={
+            "vertex-gemini-flash": ModelConfig(provider="vertex", model="gemini-2.5-flash"),
+            "vertex-gemini-pro": ModelConfig(provider="vertex", model="gemini-2.5-pro"),
+        },
+        default_model="vertex-gemini-flash",
+    )
 
 
 def test_unrecognized_active_model_warns(ctx, caplog):

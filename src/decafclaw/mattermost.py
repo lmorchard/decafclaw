@@ -29,6 +29,7 @@ class MattermostConvState:
     Agent loop state (history, busy, skill_state, circuit breaker, etc.)
     is in the ConversationManager's ConversationState.
     """
+
     debounce_timer: asyncio.Task | None = None
     last_response_time: float = 0
     pending_msgs: list = field(default_factory=list)
@@ -111,9 +112,12 @@ class MattermostClient:
     async def send_typing(self, channel_id):
         """Send a typing indicator."""
         try:
-            await self._http.post("/users/me/typing", json={
-                "channel_id": channel_id,
-            })
+            await self._http.post(
+                "/users/me/typing",
+                json={
+                    "channel_id": channel_id,
+                },
+            )
         except Exception as exc:
             log.debug("typing indicator failed (best-effort): %s", exc)
 
@@ -129,11 +133,15 @@ class MattermostClient:
                 log.info(f"Connecting WebSocket to {ws_url}")
                 async with websockets.connect(ws_url, ping_interval=30) as ws:
                     # Authenticate
-                    await ws.send(json.dumps({
-                        "seq": 1,
-                        "action": "authentication_challenge",
-                        "data": {"token": self.token},
-                    }))
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "seq": 1,
+                                "action": "authentication_challenge",
+                                "data": {"token": self.token},
+                            }
+                        )
+                    )
                     log.info("WebSocket connected")
 
                     while True:
@@ -174,11 +182,13 @@ class MattermostClient:
         post_type = post.get("type", "")
         user_id = post.get("user_id", "")
         props = post.get("props", {})
-        log.debug(f"posted event: sender={sender} channel_type={channel_type} "
-                   f"post_type={post_type!r} user_id={user_id[:8]} "
-                   f"is_self={user_id == self.bot_user_id} "
-                   f"from_bot={props.get('from_bot')} "
-                   f"from_webhook={props.get('from_webhook')}")
+        log.debug(
+            f"posted event: sender={sender} channel_type={channel_type} "
+            f"post_type={post_type!r} user_id={user_id[:8]} "
+            f"is_self={user_id == self.bot_user_id} "
+            f"from_bot={props.get('from_bot')} "
+            f"from_webhook={props.get('from_webhook')}"
+        )
 
         # Ignore system messages
         if post_type != "":
@@ -227,18 +237,20 @@ class MattermostClient:
             if isinstance(finfo, dict) and finfo.get("id"):
                 file_metadata[finfo["id"]] = finfo
 
-        on_message({
-            "text": message,
-            "channel_id": channel_id,
-            "post_id": post.get("id", ""),
-            "root_id": post.get("root_id", ""),
-            "user_id": post.get("user_id", ""),
-            "sender_name": data.get("sender_name", ""),
-            "channel_type": channel_type,
-            "mentioned": mentioned,
-            "file_ids": post_file_ids,
-            "file_metadata": file_metadata,
-        })
+        on_message(
+            {
+                "text": message,
+                "channel_id": channel_id,
+                "post_id": post.get("id", ""),
+                "root_id": post.get("root_id", ""),
+                "user_id": post.get("user_id", ""),
+                "sender_name": data.get("sender_name", ""),
+                "channel_type": channel_type,
+                "mentioned": mentioned,
+                "file_ids": post_file_ids,
+                "file_metadata": file_metadata,
+            }
+        )
 
     # -- Conversation processing -----------------------------------------------
 
@@ -265,8 +277,7 @@ class MattermostClient:
                     data = resp.content
 
                     if max_bytes and len(data) > max_bytes:
-                        log.warning(f"Mattermost file {fid} too large: "
-                                    f"{len(data)} bytes > {max_bytes} limit, skipping")
+                        log.warning(f"Mattermost file {fid} too large: {len(data)} bytes > {max_bytes} limit, skipping")
                         continue
 
                     fmeta = file_metadata.get(fid, {})
@@ -286,17 +297,13 @@ class MattermostClient:
 
         if response_media:
             from .media import MattermostMediaHandler, upload_and_collect
-            handler = MattermostMediaHandler(self._http, channel_id=channel_id)
-            file_ids = await upload_and_collect(
-                handler, channel_id, response_media
-            )
-            if file_ids:
-                await handler.send_with_media(
-                    channel_id, "", file_ids, root_id=root_id
-                )
 
-    async def _process_conversation(self, conv_id, channel_id, msgs,
-                                    app_ctx, mm_conversations, manager):
+            handler = MattermostMediaHandler(self._http, channel_id=channel_id)
+            file_ids = await upload_and_collect(handler, channel_id, response_media)
+            if file_ids:
+                await handler.send_with_media(channel_id, "", file_ids, root_id=root_id)
+
+    async def _process_conversation(self, conv_id, channel_id, msgs, app_ctx, mm_conversations, manager):
         """Process accumulated messages for a conversation."""
         mm_state = self._get_mm_state(mm_conversations, conv_id)
         cooldown_sec = self.cooldown_ms / 1000.0
@@ -354,7 +361,9 @@ class MattermostClient:
 
         # Create ConversationDisplay for this turn
         conv_display = ConversationDisplay(
-            self, channel_id, root_id,
+            self,
+            channel_id,
+            root_id,
             throttle_ms=app_ctx.config.mattermost.stream_throttle_ms,
             initial_post_id=placeholder_id,
             config=app_ctx.config,
@@ -364,12 +373,14 @@ class MattermostClient:
 
         # Attach stop button and start emoji-based cancel polling
         from .mattermost_ui import build_stop_button
+
         stop_attachments = build_stop_button(app_ctx.config, conv_id)
         if stop_attachments and placeholder_id:
             conv_display._stop_attachments = stop_attachments
             conv_display._stop_on_post = placeholder_id
             await self.edit_message(
-                placeholder_id, THINKING_INDICATOR,
+                placeholder_id,
+                THINKING_INDICATOR,
                 props={"attachments": stop_attachments},
             )
 
@@ -380,12 +391,14 @@ class MattermostClient:
                 await self._poll_cancel(placeholder_id, cancel_sentinel)
                 if cancel_sentinel.is_set():
                     await manager.cancel_turn(conv_id)
+
             mm_state.cancel_task = asyncio.create_task(poll_and_cancel())
 
         # Pre-load history with Mattermost thread-fork logic.
         # For threads: if no archive exists, fork from the channel history.
         # The manager's load_history will use this pre-loaded history.
         from .archive import restore_history
+
         restored = restore_history(app_ctx.config, conv_id)
         if restored:
             manager.set_initial_history(conv_id, restored)
@@ -395,16 +408,20 @@ class MattermostClient:
             channel_history = channel_state.history if channel_state else []
             if channel_history:
                 manager.set_initial_history(conv_id, list(channel_history))
-                log.debug("Forked thread %s history from channel %s (%d msgs)",
-                          conv_id[:8], channel_id[:8], len(channel_history))
+                log.debug(
+                    "Forked thread %s history from channel %s (%d msgs)",
+                    conv_id[:8],
+                    channel_id[:8],
+                    len(channel_history),
+                )
 
         # Subscribe to manager events for this conversation
-        self._ensure_subscribed(mm_state, conv_id, channel_id, root_id,
-                                app_ctx, manager)
+        self._ensure_subscribed(mm_state, conv_id, channel_id, root_id, app_ctx, manager)
 
         # Transport-specific context setup
         def context_setup(ctx: "Context"):
             from .media import MattermostMediaHandler
+
             ctx.media_handler = MattermostMediaHandler(self._http, channel_id=channel_id)
             ctx.channel_id = channel_id
             ctx.channel_name = ""
@@ -413,7 +430,8 @@ class MattermostClient:
 
         # Start the turn via the manager
         await manager.send_message(
-            conv_id, combined_text,
+            conv_id,
+            combined_text,
             user_id=app_ctx.config.agent.user_id,
             context_setup=context_setup,
             archive_text=archive_text,
@@ -421,8 +439,7 @@ class MattermostClient:
             command_ctx=command_ctx,
         )
 
-    def _ensure_subscribed(self, mm_state, conv_id, channel_id, root_id,
-                           app_ctx, manager):
+    def _ensure_subscribed(self, mm_state, conv_id, channel_id, root_id, app_ctx, manager):
         """Subscribe to manager events for a conversation, routing to ConversationDisplay."""
         # Unsubscribe previous subscription if any (fresh per-turn display)
         if mm_state.manager_sub_id:
@@ -432,6 +449,7 @@ class MattermostClient:
         client = self
         config = app_ctx.config
         from .config import resolve_streaming
+
         reflection_visibility = config.reflection.visibility
 
         def is_streaming():
@@ -439,6 +457,7 @@ class MattermostClient:
             conv_state = manager.get_state(conv_id)
             model = conv_state.persisted.active_model if conv_state else ""
             return resolve_streaming(config, model)
+
         compaction_post_id = None
 
         async def on_manager_event(event):
@@ -471,13 +490,13 @@ class MattermostClient:
 
             elif event_type == "tool_start" and cd:
                 await cd.on_tool_start(
-                    event.get("tool", "tool"), event.get("args", {}),
-                    tool_call_id=event.get("tool_call_id", ""))
+                    event.get("tool", "tool"), event.get("args", {}), tool_call_id=event.get("tool_call_id", "")
+                )
 
             elif event_type == "tool_status" and cd:
                 await cd.on_tool_status(
-                    event.get("tool", "tool"), event.get("message", ""),
-                    tool_call_id=event.get("tool_call_id", ""))
+                    event.get("tool", "tool"), event.get("message", ""), tool_call_id=event.get("tool_call_id", "")
+                )
 
             elif event_type == "tool_end" and cd:
                 await cd.on_tool_end(
@@ -514,13 +533,17 @@ class MattermostClient:
                         "Skipping Mattermost render for widget_response "
                         "confirmation %s — not a Mattermost-supported "
                         "widget surface",
-                        confirmation_id)
+                        confirmation_id,
+                    )
                     return
 
                 # Create confirmation post with buttons/emoji (no legacy polling)
                 confirm_post_id = await cd.on_confirm_request(
-                    action_type, command, suggested_pattern,
-                    app_ctx.event_bus, "",  # context_id not needed for manager flow
+                    action_type,
+                    command,
+                    suggested_pattern,
+                    app_ctx.event_bus,
+                    "",  # context_id not needed for manager flow
                     tool_call_id=event.get("tool_call_id", ""),
                     conv_id=conv_id,
                     confirmation_id=confirmation_id,
@@ -530,8 +553,11 @@ class MattermostClient:
                 if confirm_post_id:
                     asyncio.create_task(
                         client._poll_confirmation_manager(
-                            confirm_post_id, manager, conv_id,
-                            confirmation_id, action_type,
+                            confirm_post_id,
+                            manager,
+                            conv_id,
+                            confirmation_id,
+                            action_type,
                         )
                     )
 
@@ -544,15 +570,13 @@ class MattermostClient:
                     retry_num = event.get("retry_number", 0)
                     raw = event.get("raw_response", "")
                     error = event.get("error", "")
-                    text = (f"\U0001f50d **Reflection** (retry {retry_num}): "
-                            f"{'PASS' if passed else 'FAIL'}")
+                    text = f"\U0001f50d **Reflection** (retry {retry_num}): {'PASS' if passed else 'FAIL'}"
                     if critique:
                         text += f"\nCritique: {critique}"
                     if error:
                         text += f"\nError: {error}"
                     if raw:
-                        text += (f"\n\n<details><summary>Raw judge output"
-                                 f"</summary>\n\n{raw}\n</details>")
+                        text += f"\n\n<details><summary>Raw judge output</summary>\n\n{raw}\n</details>"
                     await cd.on_tool_status("reflection", text)
                 elif not event.get("passed", True):
                     critique = event.get("critique", "")
@@ -572,14 +596,13 @@ class MattermostClient:
                         if source_counts.get(st):
                             parts.append(f"{source_counts[st]} {st}")
                     summary = ", ".join(parts) or "context"
-                    await cd.on_tool_status(
-                        "vault_retrieval",
-                        f"\U0001f9e0 Retrieved {summary}")
+                    await cd.on_tool_status("vault_retrieval", f"\U0001f9e0 Retrieved {summary}")
 
             elif event_type == "compaction_start":
                 if channel_id:
                     compaction_post_id = await client.send(
-                        channel_id, "\U0001f4e6 Compacting conversation...",
+                        channel_id,
+                        "\U0001f4e6 Compacting conversation...",
                         root_id=root_id,
                     )
 
@@ -593,7 +616,7 @@ class MattermostClient:
                         if elapsed < 60:
                             duration = f"{elapsed:.0f}s"
                         else:
-                            duration = f"{elapsed/60:.1f}m"
+                            duration = f"{elapsed / 60:.1f}m"
                         details = f"{duration}"
                         if before and after:
                             details += f", {before} → {after} messages"
@@ -630,13 +653,11 @@ class MattermostClient:
                 if media and channel_id:
                     try:
                         from .media import MattermostMediaHandler, upload_and_collect
-                        handler = MattermostMediaHandler(
-                            client._http, channel_id=channel_id)
-                        file_ids = await upload_and_collect(
-                            handler, channel_id, media)
+
+                        handler = MattermostMediaHandler(client._http, channel_id=channel_id)
+                        file_ids = await upload_and_collect(handler, channel_id, media)
                         if file_ids:
-                            await handler.send_with_media(
-                                channel_id, "", file_ids, root_id=root_id)
+                            await handler.send_with_media(channel_id, "", file_ids, root_id=root_id)
                     except Exception as e:
                         log.warning("Failed to post response media: %s", e)
 
@@ -657,8 +678,7 @@ class MattermostClient:
 
         mm_state.manager_sub_id = manager.subscribe(conv_id, on_manager_event)
 
-    async def _debounce_fire(self, conv_id, channel_id, mm_conversations,
-                             app_ctx, manager):
+    async def _debounce_fire(self, conv_id, channel_id, mm_conversations, app_ctx, manager):
         """Wait for debounce window, then process accumulated messages."""
         debounce_sec = self.debounce_ms / 1000.0
         await asyncio.sleep(debounce_sec)
@@ -667,9 +687,7 @@ class MattermostClient:
         mm_state.pending_msgs = []
         mm_state.debounce_timer = None
         if msgs:
-            await self._process_conversation(
-                conv_id, channel_id, msgs, app_ctx, mm_conversations, manager
-            )
+            await self._process_conversation(conv_id, channel_id, msgs, app_ctx, mm_conversations, manager)
 
     # -- Main run loop ---------------------------------------------------------
 
@@ -701,8 +719,7 @@ class MattermostClient:
             user_last_msg_time[user_id] = now
 
             mm_state = self._get_mm_state(mm_conversations, conv_id)
-            log.info(f"Message from {msg['sender_name']} in {conv_id[:8]}: "
-                      f"{msg['text'][:50]}")
+            log.info(f"Message from {msg['sender_name']} in {conv_id[:8]}: {msg['text'][:50]}")
 
             # Accumulate message by conversation
             mm_state.pending_msgs.append(msg)
@@ -722,8 +739,12 @@ class MattermostClient:
                     agent_tasks.add(task)
                     try:
                         await self._process_conversation(
-                            conv_id, channel_id, msgs, app_ctx,
-                            mm_conversations, manager,
+                            conv_id,
+                            channel_id,
+                            msgs,
+                            app_ctx,
+                            mm_conversations,
+                            manager,
                         )
                     finally:
                         agent_tasks.discard(task)
@@ -745,15 +766,18 @@ class MattermostClient:
 
     # -- Confirmation polling (manager-based) ----------------------------------
 
-    async def _poll_confirmation_manager(self, post_id, manager, conv_id,
-                                         confirmation_id, action_type,
-                                         timeout=60, poll_interval=2):
+    async def _poll_confirmation_manager(
+        self, post_id, manager, conv_id, confirmation_id, action_type, timeout=60, poll_interval=2
+    ):
         """Poll a post for reactions to resolve a confirmation via the manager."""
 
         async def _resolve(approved, always=False, add_pattern=False, label=""):
             await manager.respond_to_confirmation(
-                conv_id, confirmation_id,
-                approved=approved, always=always, add_pattern=add_pattern,
+                conv_id,
+                confirmation_id,
+                approved=approved,
+                always=always,
+                add_pattern=add_pattern,
             )
             try:
                 resp = await self._http.get(f"/posts/{post_id}")
@@ -775,8 +799,7 @@ class MattermostClient:
                         continue
                     if emoji in ("notebook",) and action_type == "run_shell_command":
                         log.info(f"Tool approved with pattern by {user_id}")
-                        await _resolve(True, add_pattern=True,
-                                       label="\U0001f4d3 approved + pattern added")
+                        await _resolve(True, add_pattern=True, label="\U0001f4d3 approved + pattern added")
                         return
                     elif emoji in ("white_check_mark", "heavy_check_mark") and action_type != "run_shell_command":
                         log.info(f"Tool always-approved by {user_id}")
@@ -824,8 +847,7 @@ class MattermostClient:
 
     async def _get_dm_channel(self, user_id: str) -> str:
         """Get or create a DM channel between the bot and a user."""
-        resp = await self._http.post("/channels/direct",
-                                     json=[self.bot_user_id, user_id])
+        resp = await self._http.post("/channels/direct", json=[self.bot_user_id, user_id])
         resp.raise_for_status()
         return resp.json()["id"]
 
@@ -867,6 +889,7 @@ class MattermostClient:
 
         async def on_cycle():
             from .tools.heartbeat_tools import _guarded_heartbeat
+
             await _guarded_heartbeat(config, event_bus, manager)
 
         return on_cycle

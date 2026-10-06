@@ -79,9 +79,14 @@ class TestNotificationRecord:
         assert roundtripped == rec
 
     def test_defaults(self):
-        rec = notifs.NotificationRecord.from_dict({
-            "id": "x", "timestamp": "t", "category": "c", "title": "T",
-        })
+        rec = notifs.NotificationRecord.from_dict(
+            {
+                "id": "x",
+                "timestamp": "t",
+                "category": "c",
+                "title": "T",
+            }
+        )
         assert rec.priority == "normal"
         assert rec.body == ""
         assert rec.link is None
@@ -93,7 +98,10 @@ class TestNotificationRecord:
         must show up in the dict automatically — this test fails loudly if
         to_dict ever drops a declared field."""
         rec = notifs.NotificationRecord(
-            id="x", timestamp="t", category="c", title="T",
+            id="x",
+            timestamp="t",
+            category="c",
+            title="T",
         )
         d = rec.to_dict()
         expected = {f.name for f in dataclasses.fields(notifs.NotificationRecord)}
@@ -103,10 +111,15 @@ class TestNotificationRecord:
         """Forward compat: extra keys in archived records (e.g. from a
         newer agent version writing fields this build doesn't know about
         yet) must not crash on read."""
-        rec = notifs.NotificationRecord.from_dict({
-            "id": "x", "timestamp": "t", "category": "c", "title": "T",
-            "future_field_we_dont_know_yet": "ignored",
-        })
+        rec = notifs.NotificationRecord.from_dict(
+            {
+                "id": "x",
+                "timestamp": "t",
+                "category": "c",
+                "title": "T",
+                "future_field_we_dont_know_yet": "ignored",
+            }
+        )
         assert rec.id == "x"
 
 
@@ -133,10 +146,7 @@ class TestNotify:
 
     @pytest.mark.asyncio
     async def test_distinct_ids(self, config):
-        recs = [
-            await notifs.notify(config, category="test", title=f"#{i}")
-            for i in range(5)
-        ]
+        recs = [await notifs.notify(config, category="test", title=f"#{i}") for i in range(5)]
         assert len({r.id for r in recs}) == 5
 
     @pytest.mark.asyncio
@@ -149,9 +159,13 @@ class TestNotify:
     @pytest.mark.asyncio
     async def test_preserves_optional_fields(self, config):
         await notifs.notify(
-            config, category="test", title="Hi",
-            body="body text", priority="high",
-            link="conv://abc", conv_id="conv-1",
+            config,
+            category="test",
+            title="Hi",
+            body="body text",
+            priority="high",
+            link="conv://abc",
+            conv_id="conv-1",
         )
         lines = _read_jsonl(notifs._inbox_path(config))
         assert lines[0]["body"] == "body text"
@@ -162,6 +176,7 @@ class TestNotify:
     @pytest.mark.asyncio
     async def test_concurrent_notify_safe(self, config):
         """Concurrent notify() calls don't interleave or lose records."""
+
         async def fire(i: int):
             await notifs.notify(config, category="test", title=f"#{i}")
 
@@ -176,12 +191,17 @@ class TestNotify:
     async def test_publishes_event_when_bus_provided(self, config):
         """notify() publishes notification_created after the inbox append."""
         from decafclaw.events import EventBus
+
         bus = EventBus()
         received: list[dict] = []
         bus.subscribe(lambda e: received.append(e))
 
         rec = await notifs.notify(
-            config, bus, category="t", title="Hello", priority="high",
+            config,
+            bus,
+            category="t",
+            title="Hello",
+            priority="high",
         )
 
         assert len(received) == 1
@@ -215,10 +235,13 @@ class TestInboxRotation:
         # Seed with records all within retention
         inbox = notifs._inbox_path(config)
         inbox.parent.mkdir(parents=True, exist_ok=True)
-        _write_jsonl(inbox, [
-            {"id": "a", "timestamp": _past(5), "category": "t", "title": "A"},
-            {"id": "b", "timestamp": _past(2), "category": "t", "title": "B"},
-        ])
+        _write_jsonl(
+            inbox,
+            [
+                {"id": "a", "timestamp": _past(5), "category": "t", "title": "A"},
+                {"id": "b", "timestamp": _past(2), "category": "t", "title": "B"},
+            ],
+        )
         await notifs.notify(config, category="t", title="C")
         lines = _read_jsonl(inbox)
         assert len(lines) == 3
@@ -230,11 +253,14 @@ class TestInboxRotation:
         config.notifications.retention_days = 30
         inbox = notifs._inbox_path(config)
         inbox.parent.mkdir(parents=True, exist_ok=True)
-        _write_jsonl(inbox, [
-            {"id": "old1", "timestamp": _past(60), "category": "t", "title": "Old 1"},
-            {"id": "old2", "timestamp": _past(45), "category": "t", "title": "Old 2"},
-            {"id": "new1", "timestamp": _past(5), "category": "t", "title": "New 1"},
-        ])
+        _write_jsonl(
+            inbox,
+            [
+                {"id": "old1", "timestamp": _past(60), "category": "t", "title": "Old 1"},
+                {"id": "old2", "timestamp": _past(45), "category": "t", "title": "Old 2"},
+                {"id": "new1", "timestamp": _past(5), "category": "t", "title": "New 1"},
+            ],
+        )
         await notifs.notify(config, category="t", title="New 2")
 
         # Inbox now has recent + new record
@@ -262,10 +288,13 @@ class TestReadLogRotation:
         config.notifications.retention_days = 30
         read_log = notifs._read_log_path(config)
         read_log.parent.mkdir(parents=True, exist_ok=True)
-        _write_jsonl(read_log, [
-            {"event": "read", "id": "old", "timestamp": _past(60)},
-            {"event": "read", "id": "new", "timestamp": _past(5)},
-        ])
+        _write_jsonl(
+            read_log,
+            [
+                {"event": "read", "id": "old", "timestamp": _past(60)},
+                {"event": "read", "id": "new", "timestamp": _past(5)},
+            ],
+        )
         # Marking another as read triggers rotation
         await notifs.mark_read(config, "other")
         events = _read_jsonl(read_log)
@@ -320,6 +349,7 @@ class TestReadEvents:
     @pytest.mark.asyncio
     async def test_mark_read_publishes_event(self, config):
         from decafclaw.events import EventBus
+
         bus = EventBus()
         received: list[dict] = []
         bus.subscribe(lambda e: received.append(e))
@@ -346,6 +376,7 @@ class TestReadEvents:
     @pytest.mark.asyncio
     async def test_mark_all_read_aggregates_ids(self, config):
         from decafclaw.events import EventBus
+
         bus = EventBus()
         received: list[dict] = []
         bus.subscribe(lambda e: received.append(e))
@@ -371,6 +402,7 @@ class TestReadEvents:
     async def test_mark_all_read_empty_inbox_skips_publish(self, config):
         """Nothing to mark → no event (avoids no-op churn)."""
         from decafclaw.events import EventBus
+
         bus = EventBus()
         received: list[dict] = []
         bus.subscribe(lambda e: received.append(e))
@@ -381,6 +413,7 @@ class TestReadEvents:
     @pytest.mark.asyncio
     async def test_mark_all_read_fully_read_inbox_skips_publish(self, config):
         from decafclaw.events import EventBus
+
         bus = EventBus()
         received: list[dict] = []
         bus.subscribe(lambda e: received.append(e))

@@ -9,9 +9,7 @@ from pathlib import Path
 import pytest
 
 _THIS_DIR = Path(__file__).parent
-_tools_spec = importlib.util.spec_from_file_location(
-    "decafclaw_contrib_writing_clearly_tools", _THIS_DIR / "tools.py"
-)
+_tools_spec = importlib.util.spec_from_file_location("decafclaw_contrib_writing_clearly_tools", _THIS_DIR / "tools.py")
 assert _tools_spec is not None and _tools_spec.loader is not None
 writing_clearly_tools = importlib.util.module_from_spec(_tools_spec)
 sys.modules["decafclaw_contrib_writing_clearly_tools"] = writing_clearly_tools
