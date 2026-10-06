@@ -73,11 +73,13 @@ _CONFIG_FILES = [
 
 # Directories pruned from workspace_recent walks — they can grow huge and
 # we don't want to stat every file inside on each request.
-_WORKSPACE_RECENT_PRUNE_DIRS = frozenset({
-    "conversations",
-    ".schedule_last_run",
-    "attachments",
-})
+_WORKSPACE_RECENT_PRUNE_DIRS = frozenset(
+    {
+        "conversations",
+        ".schedule_last_run",
+        "attachments",
+    }
+)
 
 
 def _get_username_or_401(request: Request) -> str | None:
@@ -89,6 +91,7 @@ def _get_username_or_401(request: Request) -> str | None:
     session"; callers decide whether to 401 or return a redirect.
     """
     from .web.auth import get_current_user
+
     return get_current_user(request, request.app.state.config)
 
 
@@ -102,9 +105,9 @@ def _authenticated(handler):
     async def wrapper(request: Request):
         username = _get_username_or_401(request)
         if not username:
-            return JSONResponse({"error": "not authenticated"},
-                                status_code=401)
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
         return await handler(request, username)
+
     return wrapper
 
 
@@ -373,12 +376,14 @@ def _vault_root(config) -> Path:
 def _resolve_vault_page(config, page_name: str):
     """Resolve a vault page name to a file path."""
     from .skills.vault.tools import resolve_page
+
     return resolve_page(config, page_name)
 
 
 def _vault_source_type(config, filepath: Path) -> str:
     """Determine source type for a vault file."""
     from .skills.vault.tools import _source_type_for_path
+
     return _source_type_for_path(config, filepath)
 
 
@@ -391,7 +396,9 @@ def _dump_frontmatter(metadata: dict) -> str | None:
     if not metadata:
         return None
     return yaml.dump(
-        metadata, default_flow_style=False, allow_unicode=True,
+        metadata,
+        default_flow_style=False,
+        allow_unicode=True,
     ).rstrip("\n")
 
 
@@ -494,12 +501,14 @@ def _collect_recent_workspace_files(
 async def health(request: Request) -> JSONResponse:
     """Liveness probe — returns the static health snapshot."""
     from .tools.health import get_health_data
+
     return JSONResponse(get_health_data(request.app.state.config))
 
 
 async def metrics_endpoint(request: Request) -> Response:
     """Prometheus text format metrics endpoint."""
     from .metrics import format_prometheus_metrics
+
     content = format_prometheus_metrics()
     return Response(content, media_type="text/plain")
 
@@ -553,19 +562,24 @@ async def handle_confirm(request: Request) -> JSONResponse:
     # Route through manager if available, fall back to event bus
     if manager and conv_id and confirmation_id:
         await manager.respond_to_confirmation(
-            conv_id, confirmation_id,
-            approved=approved, always=always, add_pattern=add_pattern,
+            conv_id,
+            confirmation_id,
+            approved=approved,
+            always=always,
+            add_pattern=add_pattern,
         )
     else:
-        await event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": context_id,
-            "tool": tool_name,
-            "approved": approved,
-            **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-            **({"always": True} if always else {}),
-            **({"add_pattern": True} if add_pattern else {}),
-        })
+        await event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": context_id,
+                "tool": tool_name,
+                "approved": approved,
+                **({"tool_call_id": tool_call_id} if tool_call_id else {}),
+                **({"always": True} if always else {}),
+                **({"add_pattern": True} if add_pattern else {}),
+            }
+        )
 
     # Determine result label
     labels = {
@@ -577,12 +591,14 @@ async def handle_confirm(request: Request) -> JSONResponse:
     label = labels.get(action, f"\u2753 Unknown action: {action}")
 
     # Return update response — removes buttons, shows result
-    return JSONResponse({
-        "update": {
-            "message": f"{original_message}\n\n**Result:** {label}",
-            "props": {"attachments": []},
+    return JSONResponse(
+        {
+            "update": {
+                "message": f"{original_message}\n\n**Result:** {label}",
+                "props": {"attachments": []},
+            }
         }
-    })
+    )
 
 
 async def handle_cancel(request: Request) -> JSONResponse:
@@ -603,17 +619,21 @@ async def handle_cancel(request: Request) -> JSONResponse:
     if manager and conv_id:
         await manager.cancel_turn(conv_id)
     else:
-        await event_bus.publish({
-            "type": "cancel_turn",
-            "conv_id": conv_id,
-        })
+        await event_bus.publish(
+            {
+                "type": "cancel_turn",
+                "conv_id": conv_id,
+            }
+        )
 
-    return JSONResponse({
-        "update": {
-            "message": "\u23f9\ufe0f Stopped",
-            "props": {"attachments": []},
+    return JSONResponse(
+        {
+            "update": {
+                "message": "\u23f9\ufe0f Stopped",
+                "props": {"attachments": []},
+            }
         }
-    })
+    )
 
 
 # -- Auth routes -------------------------------------------------------------
@@ -634,6 +654,7 @@ class LogoutResponse(BaseModel):
 async def auth_login(request: Request) -> JSONResponse:
     """Validate a one-time login token, then set the session cookie."""
     from .web.auth import validate_token
+
     config = request.app.state.config
     body = await request.json()
     token = body.get("token", "")
@@ -642,8 +663,11 @@ async def auth_login(request: Request) -> JSONResponse:
         return JSONResponse({"error": "invalid token"}, status_code=401)
     response = JSONResponse({"username": username})
     response.set_cookie(
-        "decafclaw_session", token,
-        httponly=True, samesite="lax", max_age=30 * 24 * 3600,
+        "decafclaw_session",
+        token,
+        httponly=True,
+        samesite="lax",
+        max_age=30 * 24 * 3600,
     )
     return response
 
@@ -655,16 +679,16 @@ async def auth_logout(request: Request) -> JSONResponse:
     return response
 
 
-
-
 class UserResponse(BaseModel):
     username: str | None
+
 
 async def auth_me(request: Request) -> UserResponse:
     """Return the current authenticated user."""
     username = _get_username_or_401(request)
     if not username:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=401, detail="not authenticated")
     return UserResponse(username=username)
 
@@ -717,6 +741,7 @@ async def list_conversations(request: Request, folder: str = "") -> Conversation
     """
     from .web.conversation_folders import ConversationFolderIndex
     from .web.conversations import ConversationIndex
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -729,29 +754,28 @@ async def list_conversations(request: Request, folder: str = "") -> Conversation
     folder_index = ConversationFolderIndex(config, username)
     convs = index.list_for_user(username)
     assignments = await folder_index.get_all_assignments()
-    filtered = [
-        c for c in convs
-        if assignments.get(c.conv_id, "") == folder_param
-    ]
+    filtered = [c for c in convs if assignments.get(c.conv_id, "") == folder_param]
     child_names = await folder_index.list_folders(folder_param)
     folders: list[dict] = [
-        {"name": name, "path": f"{folder_param}/{name}" if folder_param else name}
-        for name in child_names
+        {"name": name, "path": f"{folder_param}/{name}" if folder_param else name} for name in child_names
     ]
     if not folder_param:
         folders.append({"name": "Archived", "path": "_archived", "virtual": True})
         folders.append({"name": "System", "path": "_system", "virtual": True})
-    return ConversationListingResponse.model_validate({
-        "folder": folder_param,
-        "folders": folders,
-        "conversations": [c.to_dict() for c in filtered],
-    })
+    return ConversationListingResponse.model_validate(
+        {
+            "folder": folder_param,
+            "folders": folders,
+            "conversations": [c.to_dict() for c in filtered],
+        }
+    )
 
 
 async def list_archived_conversations(request: Request, folder: str = "") -> ConversationListingResponse | JSONResponse:
     """List archived conversations, optionally filtered by folder."""
     from .web.conversation_folders import ConversationFolderIndex
     from .web.conversations import ConversationIndex
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -765,10 +789,7 @@ async def list_archived_conversations(request: Request, folder: str = "") -> Con
     convs = index.list_for_user(username, include_archived=True)
     archived = [c for c in convs if c.archived]
     assignments = await folder_index.get_all_assignments()
-    filtered = [
-        c for c in archived
-        if assignments.get(c.conv_id, "") == folder_param
-    ]
+    filtered = [c for c in archived if assignments.get(c.conv_id, "") == folder_param]
     # Derive child folders from archived conversation assignments — extract
     # immediate child segment of nested folder paths.
     prefix = f"{folder_param}/" if folder_param else ""
@@ -780,23 +801,27 @@ async def list_archived_conversations(request: Request, folder: str = "") -> Con
         if folder_param == "":
             child_names.add(folder.split("/")[0])
         elif folder.startswith(prefix):
-            rest = folder[len(prefix):]
+            rest = folder[len(prefix) :]
             if rest:
                 child_names.add(rest.split("/")[0])
     folders = [
-        {"name": name, "path": f"{folder_param}/{name}" if folder_param else name}
-        for name in sorted(child_names)
+        {"name": name, "path": f"{folder_param}/{name}" if folder_param else name} for name in sorted(child_names)
     ]
-    return ConversationListingResponse.model_validate({
-        "folder": folder_param,
-        "folders": folders,
-        "conversations": [c.to_dict() for c in filtered],
-    })
+    return ConversationListingResponse.model_validate(
+        {
+            "folder": folder_param,
+            "folders": folders,
+            "conversations": [c.to_dict() for c in filtered],
+        }
+    )
 
 
-async def list_system_conversations(request: Request, folder: str = "") -> SystemConversationListingResponse | JSONResponse:
+async def list_system_conversations(
+    request: Request, folder: str = ""
+) -> SystemConversationListingResponse | JSONResponse:
     """List system conversations, grouped by type sub-folders."""
     from .web.conversations import list_system_conversations as list_sys
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -809,20 +834,24 @@ async def list_system_conversations(request: Request, folder: str = "") -> Syste
             {"name": "Schedule", "path": "schedule"},
             {"name": "Delegated", "path": "delegated"},
         ]
-        return SystemConversationListingResponse.model_validate({
-            "folder": "",
-            "folders": folders,
-            "conversations": [],
-        })
+        return SystemConversationListingResponse.model_validate(
+            {
+                "folder": "",
+                "folders": folders,
+                "conversations": [],
+            }
+        )
     valid_types = {"heartbeat", "schedule", "delegated"}
     if folder_param not in valid_types:
         return JSONResponse({"error": "invalid system folder"}, status_code=400)
     filtered = [c for c in all_sys if c.get("conv_type") == folder_param]
-    return SystemConversationListingResponse.model_validate({
-        "folder": folder_param,
-        "folders": [],
-        "conversations": filtered,
-    })
+    return SystemConversationListingResponse.model_validate(
+        {
+            "folder": folder_param,
+            "folders": [],
+            "conversations": filtered,
+        }
+    )
 
 
 # Schema-only input: the handler retains legacy JSON parsing and coercions.
@@ -859,18 +888,20 @@ async def create_conversation(request: Request) -> JSONResponse:
         return JSONResponse({"error": f"Unknown model: {model_name}"}, status_code=400)
     if folder:
         from .web.conversation_folders import ConversationFolderIndex
+
         folder_index = ConversationFolderIndex(config, username)
         if not await folder_index.folder_exists(folder):
             return JSONResponse({"error": "Folder does not exist"}, status_code=400)
     from .web.conversations import ConversationIndex
+
     index = ConversationIndex(config)
     conv = index.create(username, title=body.get("title", ""))
     if folder:
         await folder_index.set_folder(conv.conv_id, folder)
     if model_name:
         from .archive import append_message
-        append_message(config, conv.conv_id,
-                       {"role": "model", "content": model_name})
+
+        append_message(config, conv.conv_id, {"role": "model", "content": model_name})
     result = conv.to_dict()
     if folder:
         result["folder"] = folder
@@ -883,6 +914,7 @@ async def create_conversation(request: Request) -> JSONResponse:
 async def get_conversation(request: Request, username: str) -> JSONResponse:
     """Get conversation metadata."""
     from .web.conversations import ConversationIndex
+
     config = request.app.state.config
     conv_id = request.path_params["id"]
     index = ConversationIndex(config)
@@ -908,6 +940,7 @@ class ConversationPatchResponse(TypedDict):
 async def rename_conversation(request: Request, id: str) -> JSONResponse:
     """Rename and/or move a conversation to a different folder."""
     from .web.conversations import ConversationIndex
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -922,6 +955,7 @@ async def rename_conversation(request: Request, id: str) -> JSONResponse:
     if folder is not None:
         folder = str(folder).strip()
         from .web.conversation_folders import ConversationFolderIndex
+
         folder_index = ConversationFolderIndex(config, username)
         if folder != "":
             if not await folder_index.folder_exists(folder):
@@ -946,6 +980,7 @@ async def rename_conversation(request: Request, id: str) -> JSONResponse:
 async def get_conversation_history(request: Request, username: str) -> JSONResponse:
     """Load paginated conversation history."""
     from .web.conversations import ConversationIndex, can_read_conversation
+
     config = request.app.state.config
     conv_id = request.path_params["id"]
     index = ConversationIndex(config)
@@ -1005,6 +1040,7 @@ async def get_context_diagnostics(request: Request, id: str) -> JSONResponse:
     """Return context composer diagnostics for a conversation."""
     from .context_composer import read_context_sidecar
     from .web.conversations import ConversationIndex, can_read_conversation
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -1029,6 +1065,7 @@ async def export_conversation(request: Request, id: str) -> Response:
     from .archive import archive_path, read_archive
     from .conversation_export import render_markdown
     from .web.conversations import ConversationIndex, can_read_conversation
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -1060,6 +1097,7 @@ async def export_conversation(request: Request, id: str) -> Response:
 async def archive_conversation(request: Request, id: str) -> JSONResponse:
     """Archive a conversation (hide from list, keep data)."""
     from .web.conversations import ConversationIndex
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -1076,6 +1114,7 @@ async def archive_conversation(request: Request, id: str) -> JSONResponse:
 async def unarchive_conversation(request: Request, id: str) -> JSONResponse:
     """Unarchive a conversation (restore to active list)."""
     from .web.conversations import ConversationIndex
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -1094,6 +1133,7 @@ async def delete_conversation(request: Request, id: str) -> JSONResponse:
     from .conversation_paths import delete_conversation_files
     from .web.conversation_folders import ConversationFolderIndex
     from .web.conversations import ConversationIndex
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -1136,6 +1176,7 @@ class ConversationFolderCreateResponse(ConversationFolderResponse):
 async def create_conv_folder(request: Request) -> JSONResponse:
     """Create a conversation folder."""
     from .web.conversation_folders import ConversationFolderIndex
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -1155,6 +1196,7 @@ async def create_conv_folder(request: Request) -> JSONResponse:
 async def delete_conv_folder(request: Request, path: str) -> JSONResponse:
     """Delete an empty conversation folder."""
     from .web.conversation_folders import ConversationFolderIndex
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -1172,6 +1214,7 @@ async def delete_conv_folder(request: Request, path: str) -> JSONResponse:
 async def rename_conv_folder(request: Request, path: str) -> JSONResponse:
     """Rename/move a conversation folder. Merges if target exists."""
     from .web.conversation_folders import ConversationFolderIndex
+
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -1228,6 +1271,7 @@ async def list_notifications(request: Request) -> JSONResponse:
     if not _get_username_or_401(request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     from . import notifications as notifs
+
     config = request.app.state.config
     try:
         limit = int(request.query_params.get("limit", "20"))
@@ -1238,13 +1282,12 @@ async def list_notifications(request: Request) -> JSONResponse:
     before = request.query_params.get("before") or None
     records, has_more = notifs.read_inbox(config, limit=limit, before=before)
     read_ids = notifs.get_read_ids(config)
-    return JSONResponse({
-        "records": [
-            {**r.to_dict(), "read": r.id in read_ids}
-            for r in records
-        ],
-        "has_more": has_more,
-    })
+    return JSONResponse(
+        {
+            "records": [{**r.to_dict(), "read": r.id in read_ids} for r in records],
+            "has_more": has_more,
+        }
+    )
 
 
 async def notifications_unread_count(request: Request) -> JSONResponse:
@@ -1252,6 +1295,7 @@ async def notifications_unread_count(request: Request) -> JSONResponse:
     if not _get_username_or_401(request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     from . import notifications as notifs
+
     return JSONResponse({"count": notifs.unread_count(request.app.state.config)})
 
 
@@ -1260,6 +1304,7 @@ async def notifications_mark_read(request: Request, id: str) -> JSONResponse:
     if not _get_username_or_401(request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     from . import notifications as notifs
+
     config = request.app.state.config
     event_bus = request.app.state.event_bus
     record_id = id
@@ -1274,8 +1319,10 @@ async def notifications_mark_all_read(request: Request) -> JSONResponse:
     if not _get_username_or_401(request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     from . import notifications as notifs
+
     await notifs.mark_all_read(
-        request.app.state.config, event_bus=request.app.state.event_bus,
+        request.app.state.config,
+        event_bus=request.app.state.event_bus,
     )
     return JSONResponse({"ok": True})
 
@@ -1287,6 +1334,7 @@ async def notifications_mark_all_read(request: Request) -> JSONResponse:
 async def serve_workspace_file(request: Request, username: str):
     """Serve a file from the agent workspace (authenticated, read-only)."""
     import mimetypes
+
     config = request.app.state.config
     file_path = request.path_params.get("path", "")
     if not file_path:
@@ -1351,11 +1399,13 @@ async def workspace_list(request: Request, username: str) -> JSONResponse:
 
     folders.sort(key=lambda f: f["name"].lower())
     files.sort(key=lambda f: f["name"].lower())
-    return JSONResponse({
-        "folder": folder_param,
-        "folders": folders,
-        "files": files,
-    })
+    return JSONResponse(
+        {
+            "folder": folder_param,
+            "folders": folders,
+            "files": files,
+        }
+    )
 
 
 @_authenticated
@@ -1380,11 +1430,13 @@ async def workspace_read_json(request: Request, username: str) -> JSONResponse:
         log.debug("workspace_read_json: read failed for %s: %s", resolved, exc)
         return JSONResponse({"error": "read failed"}, status_code=415)
     stat = resolved.stat()
-    return JSONResponse({
-        "content": content,
-        "modified": stat.st_mtime,
-        "readonly": is_readonly(file_path),
-    })
+    return JSONResponse(
+        {
+            "content": content,
+            "modified": stat.st_mtime,
+            "readonly": is_readonly(file_path),
+        }
+    )
 
 
 async def _workspace_rename(
@@ -1401,8 +1453,7 @@ async def _workspace_rename(
     intermediate destination dirs; prunes empty source parent dirs after.
     """
     if not isinstance(rename_to, str) or not rename_to.strip():
-        return JSONResponse({"error": "rename_to must be a non-empty string"},
-                            status_code=400)
+        return JSONResponse({"error": "rename_to must be a non-empty string"}, status_code=400)
     rename_to = rename_to.strip()
     # Secret/readonly checks BEFORE resolving so 403 vs 404 don't leak existence.
     if is_secret(old_rel) or is_secret(rename_to):
@@ -1421,14 +1472,17 @@ async def _workspace_rename(
     workspace_resolved = workspace.resolve()
     _prune_empty_parents(old_file.parent, workspace)
     from .workspace_index import invalidate_workspace_file_cache
+
     invalidate_workspace_file_cache(config)
     stat = new_file.stat()
     rel = new_file.relative_to(workspace_resolved)
-    return JSONResponse({
-        "ok": True,
-        "path": rel.as_posix(),
-        "modified": stat.st_mtime,
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "path": rel.as_posix(),
+            "modified": stat.st_mtime,
+        }
+    )
 
 
 @_authenticated
@@ -1481,6 +1535,7 @@ async def workspace_write(request: Request, username: str) -> JSONResponse:
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
     from .workspace_index import invalidate_workspace_file_cache
+
     invalidate_workspace_file_cache(config)
     return JSONResponse({"ok": True, "modified": resolved.stat().st_mtime})
 
@@ -1514,6 +1569,7 @@ async def workspace_delete(request: Request, username: str) -> JSONResponse:
 
     _prune_empty_parents(resolved.parent, workspace)
     from .workspace_index import invalidate_workspace_file_cache
+
     invalidate_workspace_file_cache(config)
     return JSONResponse({"ok": True})
 
@@ -1536,8 +1592,7 @@ async def workspace_create(request: Request, username: str) -> JSONResponse:
 
     kind = body.get("type")
     if kind not in ("file", "folder"):
-        return JSONResponse({"error": "type must be 'file' or 'folder'"},
-                            status_code=400)
+        return JSONResponse({"error": "type must be 'file' or 'folder'"}, status_code=400)
     rel_path = body.get("path")
     if not isinstance(rel_path, str) or not rel_path.strip():
         return JSONResponse({"error": "path (string) required"}, status_code=400)
@@ -1558,6 +1613,7 @@ async def workspace_create(request: Request, username: str) -> JSONResponse:
         try:
             resolved.mkdir(parents=True, exist_ok=False)
             from .workspace_index import invalidate_workspace_file_cache
+
             invalidate_workspace_file_cache(config)
         except FileExistsError:
             return JSONResponse({"error": "folder already exists"}, status_code=409)
@@ -1572,12 +1628,15 @@ async def workspace_create(request: Request, username: str) -> JSONResponse:
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
     from .workspace_index import invalidate_workspace_file_cache
+
     invalidate_workspace_file_cache(config)
-    return JSONResponse({
-        "ok": True,
-        "path": rel_path,
-        "modified": resolved.stat().st_mtime,
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "path": rel_path,
+            "modified": resolved.stat().st_mtime,
+        }
+    )
 
 
 @_authenticated
@@ -1589,9 +1648,7 @@ async def workspace_recent(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"files": []})
 
     workspace_resolved = workspace.resolve()
-    collected = await asyncio.to_thread(
-        _collect_recent_workspace_files, workspace_resolved
-    )
+    collected = await asyncio.to_thread(_collect_recent_workspace_files, workspace_resolved)
     files: list[dict] = []
     for _mtime, fpath, rel_str in collected:
         try:
@@ -1650,12 +1707,14 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
                                 continue
                             page_name = rel.with_suffix("").as_posix()
                             if not query or query.lower() in page_name.lower():
-                                matches.append({
-                                    "type": "vault",
-                                    "id": page_name,
-                                    "label": page_name,
-                                    "description": "Vault Page",
-                                })
+                                matches.append(
+                                    {
+                                        "type": "vault",
+                                        "id": page_name,
+                                        "label": page_name,
+                                        "description": "Vault Page",
+                                    }
+                                )
                         except (OSError, ValueError):
                             continue
 
@@ -1669,6 +1728,7 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
 
     # 2. Search MCP Resources
     from .mcp_client import get_registry
+
     registry = get_registry()
     if registry:
         try:
@@ -1680,12 +1740,14 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
                 desc = str(getattr(res, "description", ""))
                 mcp_id = f"{server_name}/{name}"
                 if not query or any(query.lower() in val.lower() for val in [server_name, name, uri]):
-                    mcp_matches.append({
-                        "type": "mcp",
-                        "id": mcp_id,
-                        "label": f"mcp/{server_name}/{name}",
-                        "description": desc or f"MCP Resource: {uri}",
-                    })
+                    mcp_matches.append(
+                        {
+                            "type": "mcp",
+                            "id": mcp_id,
+                            "label": f"mcp/{server_name}/{name}",
+                            "description": desc or f"MCP Resource: {uri}",
+                        }
+                    )
             mcp_matches.sort(key=lambda x: x["label"].lower())
             results.extend(mcp_matches[:20])
         except Exception as e:
@@ -1706,12 +1768,14 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
                 if len(matches) >= 20:
                     break
                 if not query or query.lower() in rel_str.lower():
-                    matches.append({
-                        "type": "file",
-                        "id": rel_str,
-                        "label": rel_str,
-                        "description": "Workspace File",
-                    })
+                    matches.append(
+                        {
+                            "type": "file",
+                            "id": rel_str,
+                            "label": rel_str,
+                            "description": "Workspace File",
+                        }
+                    )
 
             results.extend(matches)
         except Exception as e:
@@ -1756,26 +1820,30 @@ async def vault_list(request: Request, username: str) -> JSONResponse:
                 continue
             stat = child.stat()
             rel = child.relative_to(vault_resolved)
-            pages.append({
-                "title": child.stem,
-                "path": str(rel.with_suffix("")),
-                "folder": folder_param,
-                "modified": stat.st_mtime,
-                "summary": _page_summary(child),
-            })
+            pages.append(
+                {
+                    "title": child.stem,
+                    "path": str(rel.with_suffix("")),
+                    "folder": folder_param,
+                    "modified": stat.st_mtime,
+                    "summary": _page_summary(child),
+                }
+            )
     pages.sort(key=lambda p: p["title"].lower())
 
     folders = []
     for child in sorted(target_dir.iterdir(), key=lambda c: c.name.lower()):
-        if child.is_dir() and not child.name.startswith('.'):
+        if child.is_dir() and not child.name.startswith("."):
             rel = child.relative_to(vault_resolved)
             folders.append({"name": child.name, "path": str(rel)})
 
-    return JSONResponse({
-        "folder": folder_param,
-        "folders": folders,
-        "pages": pages,
-    })
+    return JSONResponse(
+        {
+            "folder": folder_param,
+            "folders": folders,
+            "pages": pages,
+        }
+    )
 
 
 @_authenticated
@@ -1809,17 +1877,18 @@ async def vault_recent(request: Request, username: str) -> JSONResponse:
         if not md_file.resolve().is_relative_to(agent_resolved):
             continue
         # Skip hidden directories (.obsidian, .git, .trash, etc.)
-        if any(part.startswith('.')
-               for part in md_file.relative_to(agent_resolved).parts[:-1]):
+        if any(part.startswith(".") for part in md_file.relative_to(agent_resolved).parts[:-1]):
             continue
         rel = md_file.relative_to(vault_resolved)
-        pages.append({
-            "title": md_file.stem,
-            "path": str(rel.with_suffix("")),
-            "folder": str(rel.parent) if str(rel.parent) != "." else "",
-            "modified": md_file.stat().st_mtime,
-            "summary": _page_summary(md_file),
-        })
+        pages.append(
+            {
+                "title": md_file.stem,
+                "path": str(rel.with_suffix("")),
+                "folder": str(rel.parent) if str(rel.parent) != "." else "",
+                "modified": md_file.stat().st_mtime,
+                "summary": _page_summary(md_file),
+            }
+        )
 
     pages.sort(key=lambda p: p["modified"], reverse=True)
     return JSONResponse({"pages": pages[:limit]})
@@ -1835,10 +1904,7 @@ async def vault_tags(request: Request, username: str) -> JSONResponse:
     config = request.app.state.config
     tag_map = collect_all_tags(config)
     ordered = sorted(tag_map.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
-    tags = [
-        {"tag": info["display"], "count": info["count"], "pages": info["pages"]}
-        for _, info in ordered
-    ]
+    tags = [{"tag": info["display"], "count": info["count"], "pages": info["pages"]} for _, info in ordered]
     return JSONResponse({"tags": tags})
 
 
@@ -1876,13 +1942,16 @@ async def vault_read(request: Request, username: str) -> JSONResponse:
 
 
 async def _vault_rename(
-    config, vault: Path, old_file: Path, old_name: str, rename_to: str,
+    config,
+    vault: Path,
+    old_file: Path,
+    old_name: str,
+    rename_to: str,
     event_bus=None,
 ) -> JSONResponse:
     """Rename/move a vault page; re-indexes embeddings on success."""
     if not isinstance(rename_to, str) or not rename_to.strip():
-        return JSONResponse({"error": "rename_to must be a non-empty string"},
-                            status_code=400)
+        return JSONResponse({"error": "rename_to must be a non-empty string"}, status_code=400)
     rename_to = rename_to.strip()
     if ".." in rename_to or rename_to.startswith("/"):
         return JSONResponse({"error": "invalid rename path"}, status_code=400)
@@ -1911,6 +1980,7 @@ async def _vault_rename(
         old_dir = old_dir.parent
     try:
         from .embeddings import delete_entries, index_entry
+
         old_rel = f"{old_name}.md"
         old_source_type = _vault_source_type(config, old_file)
         delete_entries(config, old_rel, source_type=old_source_type)
@@ -1924,13 +1994,15 @@ async def _vault_rename(
     stat = new_file.stat()
     rel = new_file.relative_to(vault_resolved)
     folder = str(rel.parent) if rel.parent != Path(".") else ""
-    return JSONResponse({
-        "ok": True,
-        "title": new_file.stem,
-        "path": str(rel.with_suffix("")),
-        "folder": folder,
-        "modified": stat.st_mtime,
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "title": new_file.stem,
+            "path": str(rel.with_suffix("")),
+            "folder": folder,
+            "modified": stat.st_mtime,
+        }
+    )
 
 
 @_authenticated
@@ -1952,17 +2024,18 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
 
     rename_to = body.get("rename_to")
     if rename_to is not None:
-        conflicting = [
-            key for key in ("content", "body", "frontmatter", "frontmatter_raw")
-            if key in body
-        ]
+        conflicting = [key for key in ("content", "body", "frontmatter", "frontmatter_raw") if key in body]
         if conflicting:
             return JSONResponse(
                 {"error": f"cannot combine rename_to with {', '.join(sorted(conflicting))}"},
                 status_code=400,
             )
         return await _vault_rename(
-            config, vault, target, page_name, rename_to,
+            config,
+            vault,
+            target,
+            page_name,
+            rename_to,
             event_bus=event_bus,
         )
 
@@ -1976,16 +2049,19 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     fm_patch = body.get("frontmatter")
     if new_body is not None and not isinstance(new_body, str):
         return JSONResponse(
-            {"error": f"{body_field} must be a string"}, status_code=400,
+            {"error": f"{body_field} must be a string"},
+            status_code=400,
         )
     if fm_patch is not None and not isinstance(fm_patch, dict):
         return JSONResponse(
-            {"error": "frontmatter must be an object"}, status_code=400,
+            {"error": "frontmatter must be an object"},
+            status_code=400,
         )
     fm_raw = body.get("frontmatter_raw")
     if fm_raw is not None and not isinstance(fm_raw, str):
         return JSONResponse(
-            {"error": "frontmatter_raw must be a string"}, status_code=400,
+            {"error": "frontmatter_raw must be a string"},
+            status_code=400,
         )
     if fm_patch is not None and fm_raw is not None:
         return JSONResponse(
@@ -1994,8 +2070,7 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
         )
     if new_body is None and fm_patch is None and fm_raw is None:
         return JSONResponse(
-            {"error": "request must include body (or its alias content), "
-                      "frontmatter, or frontmatter_raw"},
+            {"error": "request must include body (or its alias content), frontmatter, or frontmatter_raw"},
             status_code=400,
         )
 
@@ -2019,7 +2094,11 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     existing_meta, fm_error = parse_frontmatter_block(existing_raw)
 
     new_raw, fm_err_dict = _resolve_frontmatter(
-        existing_raw, existing_meta, fm_error, fm_raw, fm_patch,
+        existing_raw,
+        existing_meta,
+        fm_error,
+        fm_raw,
+        fm_patch,
     )
     if fm_err_dict is not None:
         return JSONResponse({"error": fm_err_dict["error"]}, status_code=fm_err_dict["status_code"])
@@ -2032,31 +2111,35 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     source_type = _vault_source_type(config, target)
     try:
         from .embeddings import delete_entries, index_entry
+
         rel_path = str(target.relative_to(vault.resolve()))
         delete_entries(config, rel_path, source_type=source_type)
         await index_entry(config, rel_path, content, source_type=source_type)
     except Exception as e:
         log.warning(f"Failed to index vault page '{page_name}': {e}")
     await publish_vault_changed(
-        event_bus, config,
+        event_bus,
+        config,
         kind=KIND_UPDATE if existed else KIND_CREATE,
         path=target,
     )
-    return JSONResponse({
-        "ok": True,
-        "modified": target.stat().st_mtime,
-        # Coerced for the wire only — `new_raw` above was already written to
-        # disk, so a real date stays unquoted in the user's file.
-        "frontmatter": to_json_safe(result_meta),
-        # Returned so the client can reseed its raw editor without a second
-        # GET. The metadata paths validate before writing, so they always leave
-        # a parseable block — but a body-only write splices an existing block
-        # back verbatim, malformed YAML included, and then reports
-        # `frontmatter: {}`. Mirror GET and report the parse error too, so no
-        # caller has to guess whether `{}` means "empty" or "unparseable".
-        "frontmatter_raw": new_raw or "",
-        "frontmatter_error": result_fm_error or "",
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "modified": target.stat().st_mtime,
+            # Coerced for the wire only — `new_raw` above was already written to
+            # disk, so a real date stays unquoted in the user's file.
+            "frontmatter": to_json_safe(result_meta),
+            # Returned so the client can reseed its raw editor without a second
+            # GET. The metadata paths validate before writing, so they always leave
+            # a parseable block — but a body-only write splices an existing block
+            # back verbatim, malformed YAML included, and then reports
+            # `frontmatter: {}`. Mirror GET and report the parse error too, so no
+            # caller has to guess whether `{}` means "empty" or "unparseable".
+            "frontmatter_raw": new_raw or "",
+            "frontmatter_error": result_fm_error or "",
+        }
+    )
 
 
 @_authenticated
@@ -2088,6 +2171,7 @@ async def vault_create(request: Request, username: str) -> JSONResponse:
     source_type = _vault_source_type(config, target)
     try:
         from .embeddings import index_entry
+
         rel_path = str(target.relative_to(vault.resolve()))
         await index_entry(config, rel_path, content, source_type=source_type)
     except Exception as e:
@@ -2148,6 +2232,7 @@ async def vault_delete(request: Request, username: str) -> JSONResponse:
         parent = parent.parent
     try:
         from .embeddings import delete_entries
+
         rel_path = f"{page_name}.md"
         source_type = _vault_source_type(config, target)
         delete_entries(config, rel_path, source_type=source_type)
@@ -2174,6 +2259,7 @@ async def handle_upload(request: Request, username: str) -> JSONResponse:
     """Handle file upload for a conversation."""
     from .attachments import save_attachment
     from .web.conversations import ConversationIndex
+
     config = request.app.state.config
     conv_id = request.path_params["conv_id"]
     index = ConversationIndex(config)
@@ -2191,8 +2277,7 @@ async def handle_upload(request: Request, username: str) -> JSONResponse:
     try:
         form = await request.form()
     except RuntimeError:
-        return JSONResponse({"error": "multipart form parsing unavailable"},
-                            status_code=400)
+        return JSONResponse({"error": "multipart form parsing unavailable"}, status_code=400)
     except ValueError:
         return JSONResponse({"error": "invalid form data"}, status_code=400)
     upload = form.get("file")
@@ -2219,14 +2304,12 @@ def _resolve_config_path(config, path_str: str) -> tuple:
     for f in _CONFIG_FILES:
         if f["path"] == path_str:
             if path_str.startswith("workspace/"):
-                return (config.workspace_path / path_str.removeprefix("workspace/"),
-                        f["scope"])
+                return (config.workspace_path / path_str.removeprefix("workspace/"), f["scope"])
             return config.agent_path / path_str, f["scope"]
     if re.match(r"^schedules/[^/]+\.md$", path_str):
         return config.agent_path / path_str, "admin"
     if re.match(r"^workspace/schedules/[^/]+\.md$", path_str):
-        return (config.workspace_path / path_str.removeprefix("workspace/"),
-                "workspace")
+        return (config.workspace_path / path_str.removeprefix("workspace/"), "workspace")
     return None, None
 
 
@@ -2242,14 +2325,16 @@ async def config_list_files(request: Request, username: str) -> JSONResponse:
             fpath = config.agent_path / f["path"]
         exists = fpath.exists()
         modified = fpath.stat().st_mtime if exists else None
-        result.append({
-            "name": f["name"],
-            "path": f["path"],
-            "description": f["description"],
-            "scope": f["scope"],
-            "modified": modified,
-            "exists": exists,
-        })
+        result.append(
+            {
+                "name": f["name"],
+                "path": f["path"],
+                "description": f["description"],
+                "scope": f["scope"],
+                "modified": modified,
+                "exists": exists,
+            }
+        )
     for scope, base, prefix in [
         ("admin", config.agent_path, "schedules"),
         ("workspace", config.workspace_path, "workspace/schedules"),
@@ -2258,14 +2343,16 @@ async def config_list_files(request: Request, username: str) -> JSONResponse:
         if sched_dir.is_dir():
             for p in sorted(sched_dir.glob("*.md")):
                 stat = p.stat()
-                result.append({
-                    "name": p.name,
-                    "path": f"{prefix}/{p.name}",
-                    "description": "Scheduled task",
-                    "scope": scope,
-                    "modified": stat.st_mtime,
-                    "exists": True,
-                })
+                result.append(
+                    {
+                        "name": p.name,
+                        "path": f"{prefix}/{p.name}",
+                        "description": "Scheduled task",
+                        "scope": scope,
+                        "modified": stat.st_mtime,
+                        "exists": True,
+                    }
+                )
     return JSONResponse(result)
 
 
@@ -2293,12 +2380,14 @@ async def config_read_file(request: Request, username: str) -> JSONResponse:
             content = ""
             modified = None
             is_default = True
-    return JSONResponse({
-        "content": content,
-        "modified": modified,
-        "name": Path(path_str).name,
-        "default": is_default,
-    })
+    return JSONResponse(
+        {
+            "content": content,
+            "modified": modified,
+            "name": Path(path_str).name,
+            "default": is_default,
+        }
+    )
 
 
 @_authenticated
@@ -2337,16 +2426,22 @@ async def config_write_file(request: Request, username: str) -> JSONResponse:
 async def ws_chat(websocket):
     """WebSocket entry point — defers to the gateway in `web/websocket.py`."""
     from .web.websocket import websocket_chat
+
     state = websocket.app.state
     await websocket_chat(
-        websocket, state.config, state.event_bus, state.app_ctx,
-        manager=state.manager, terminal_registry=state.terminal_registry,
+        websocket,
+        state.config,
+        state.event_bus,
+        state.app_ctx,
+        manager=state.manager,
+        terminal_registry=state.terminal_registry,
     )
 
 
 async def ws_terminal(websocket):
     """WebSocket entry point — defers to the gateway in `web/websocket.py`."""
     from .web.websocket import websocket_terminal
+
     state = websocket.app.state
     await websocket_terminal(websocket, state.config, state.terminal_registry)
 
@@ -2373,21 +2468,23 @@ async def list_widgets(request: Request) -> JSONResponse:
     if not _get_username_or_401(request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     from .widgets import get_widget_registry
+
     registry = get_widget_registry()
     if registry is None:
         return JSONResponse({"widgets": []})
     out = []
     for d in registry.list():
-        out.append({
-            "name": d.name,
-            "tier": d.tier,
-            "description": d.description,
-            "modes": d.modes,
-            "accepts_input": d.accepts_input,
-            "data_schema": d.data_schema,
-            "js_url": (f"/widgets/{d.tier}/{d.name}/widget.js"
-                       f"?v={int(d.mtime * 1000)}"),
-        })
+        out.append(
+            {
+                "name": d.name,
+                "tier": d.tier,
+                "description": d.description,
+                "modes": d.modes,
+                "accepts_input": d.accepts_input,
+                "data_schema": d.data_schema,
+                "js_url": (f"/widgets/{d.tier}/{d.name}/widget.js?v={int(d.mtime * 1000)}"),
+            }
+        )
     return JSONResponse({"widgets": out})
 
 
@@ -2401,6 +2498,7 @@ async def serve_widget_js(request: Request, username: str):
     symlinked widget.js can't expose arbitrary files.
     """
     from .widgets import get_widget_registry
+
     tier = request.path_params.get("tier", "")
     name = request.path_params.get("name", "")
     if tier not in ("bundled", "admin"):
@@ -2418,14 +2516,11 @@ async def serve_widget_js(request: Request, username: str):
     try:
         resolved.relative_to(desc.tier_root)
     except ValueError:
-        log.warning(
-            "widget %r resolves to %s outside tier root %s — refusing",
-            name, resolved, desc.tier_root)
+        log.warning("widget %r resolves to %s outside tier root %s — refusing", name, resolved, desc.tier_root)
         return JSONResponse({"error": "widget not found"}, status_code=404)
     return FileResponse(
-        str(resolved),
-        media_type="application/javascript",
-        headers={"X-Content-Type-Options": "nosniff"})
+        str(resolved), media_type="application/javascript", headers={"X-Content-Type-Options": "nosniff"}
+    )
 
 
 # -- Canvas routes ------------------------------------------------------------
@@ -2468,6 +2563,7 @@ class CanvasMutationResponse(BaseModel):
 def _user_owns_conv(config, conv_id: str, username: str) -> bool:
     """Authorization gate for canvas routes — caller must own the conv."""
     from .web.conversations import ConversationIndex
+
     index = ConversationIndex(config)
     conv = index.get(conv_id)
     return bool(conv and conv.user_id == username)
@@ -2476,6 +2572,7 @@ def _user_owns_conv(config, conv_id: str, username: str) -> bool:
 async def get_canvas_state(request: Request, conv_id: str) -> JSONResponse:
     """Load current canvas state for a conversation."""
     from . import canvas as canvas_mod
+
     config = request.app.state.config
     username = _get_username_or_401(request)
     if not username:
@@ -2496,6 +2593,7 @@ class StickyResponse(BaseModel):
 async def get_sticky_state(request: Request, conv_id: str) -> StickyResponse | JSONResponse:
     """Load current sticky-slot state for a conversation (reload recovery)."""
     from . import sticky as sticky_mod
+
     config = request.app.state.config
     username = _get_username_or_401(request)
     if not username:
@@ -2514,6 +2612,7 @@ async def get_sticky_state(request: Request, conv_id: str) -> StickyResponse | J
 async def post_canvas_new_tab(request: Request, conv_id: str) -> JSONResponse:
     """Create a new canvas tab. Backs the inline 'Open in Canvas' button."""
     from . import canvas as canvas_mod
+
     config = request.app.state.config
     manager = request.app.state.manager
     username = _get_username_or_401(request)
@@ -2534,7 +2633,12 @@ async def post_canvas_new_tab(request: Request, conv_id: str) -> JSONResponse:
     label = body.get("label")
     emit = manager.emit if manager else None
     result = await canvas_mod.new_tab(
-        config, conv_id, widget_type, data, label=label, emit=emit,
+        config,
+        conv_id,
+        widget_type,
+        data,
+        label=label,
+        emit=emit,
         enforce_agent_createable=False,
     )
     if not result.ok:
@@ -2545,6 +2649,7 @@ async def post_canvas_new_tab(request: Request, conv_id: str) -> JSONResponse:
 async def post_canvas_active_tab(request: Request, conv_id: str) -> JSONResponse:
     """Set the active tab via user click in the panel."""
     from . import canvas as canvas_mod
+
     config = request.app.state.config
     manager = request.app.state.manager
     username = _get_username_or_401(request)
@@ -2571,6 +2676,7 @@ async def post_canvas_active_tab(request: Request, conv_id: str) -> JSONResponse
 async def post_canvas_close_tab(request: Request, conv_id: str) -> JSONResponse:
     """Close a tab via user [×] click."""
     from . import canvas as canvas_mod
+
     config = request.app.state.config
     manager = request.app.state.manager
     username = _get_username_or_401(request)
@@ -2589,8 +2695,8 @@ async def post_canvas_close_tab(request: Request, conv_id: str) -> JSONResponse:
     tab_id = body.get("tab_id", "")
     emit = manager.emit if manager else None
     result = await canvas_mod.close_tab(
-        config, conv_id, tab_id, emit=emit,
-        registry=request.app.state.terminal_registry)
+        config, conv_id, tab_id, emit=emit, registry=request.app.state.terminal_registry
+    )
     if not result.ok:
         return JSONResponse({"error": result.error}, status_code=400)
     return JSONResponse({"ok": True})
@@ -2600,6 +2706,7 @@ async def post_canvas_close_tab(request: Request, conv_id: str) -> JSONResponse:
 async def get_canvas_page(request: Request, username: str):
     """Serve the standalone canvas HTML (bare or tab-locked URL)."""
     from starlette.responses import Response
+
     config = request.app.state.config
     conv_id = request.path_params.get("conv_id", "")
     tab_id = request.path_params.get("tab_id", "")  # may be empty for bare URL
@@ -2789,10 +2896,12 @@ async def models_list(request: Request, username: str) -> JSONResponse:
     `available_models` push is only populated once one loads.
     """
     config = request.app.state.config
-    return JSONResponse({
-        "models": sorted(config.model_configs),
-        "default": config.default_model,
-    })
+    return JSONResponse(
+        {
+            "models": sorted(config.model_configs),
+            "default": config.default_model,
+        }
+    )
 
 
 # -- Schedule handlers --------------------------------------------------------
@@ -2849,11 +2958,13 @@ async def schedules_get(request: Request, username: str) -> JSONResponse:
     # wiki-editor's conflict-banner reload reads body/modified at the top
     # level and knows nothing of the `schedule` envelope — same alias
     # schedules_update applies above for the same consumer.
-    return JSONResponse({
-        "schedule": sched,
-        "body": sched["body"],
-        "modified": sched["modified"],
-    })
+    return JSONResponse(
+        {
+            "schedule": sched,
+            "body": sched["body"],
+            "modified": sched["modified"],
+        }
+    )
 
 
 @_authenticated
@@ -2912,9 +3023,7 @@ async def schedules_run(request: Request, username: str) -> JSONResponse:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     conv_id = f"schedule-{task.name}-{timestamp}"
     write_last_run(config, task.name)
-    t = asyncio.create_task(
-        run_schedule_task(config, event_bus, manager, task, conv_id=conv_id)
-    )
+    t = asyncio.create_task(run_schedule_task(config, event_bus, manager, task, conv_id=conv_id))
     t.add_done_callback(_consume_exception)
     return JSONResponse(
         {
@@ -2926,14 +3035,12 @@ async def schedules_run(request: Request, username: str) -> JSONResponse:
     )
 
 
-
 async def openapi_yaml(request: Request) -> Response:
     import yaml
+
     app = request.app
-    return Response(
-        content=yaml.dump(app.openapi(), sort_keys=False),
-        media_type="application/x-yaml"
-    )
+    return Response(content=yaml.dump(app.openapi(), sort_keys=False), media_type="application/x-yaml")
+
 
 def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     """Wire up the FastAPI ASGI app — handlers live at module level
@@ -2946,301 +3053,618 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/metrics", metrics_endpoint, methods=["GET"]),
         APIRoute("/actions/confirm", handle_confirm, methods=["POST"]),
         APIRoute("/actions/cancel", handle_cancel, methods=["POST"]),
-        APIRoute("/api/auth/login", auth_login, methods=["POST"], response_model=LoginResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {"schema": LoginRequest.model_json_schema()},
-                 }}}),
+        APIRoute(
+            "/api/auth/login",
+            auth_login,
+            methods=["POST"],
+            response_model=LoginResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": LoginRequest.model_json_schema()},
+                    },
+                }
+            },
+        ),
         APIRoute("/api/auth/logout", auth_logout, methods=["POST"], response_model=LogoutResponse),
         APIRoute("/api/auth/me", auth_me, methods=["GET"]),
-        APIRoute("/api/conversations", list_conversations, methods=["GET"],
-                 response_model=ConversationListingResponse),
-        APIRoute("/api/conversations/archived", list_archived_conversations, methods=["GET"],
-                 response_model=ConversationListingResponse),
-        APIRoute("/api/conversations/system", list_system_conversations, methods=["GET"],
-                 response_model=SystemConversationListingResponse),
-        APIRoute("/api/conversations", create_conversation, methods=["POST"], status_code=201,
-                 response_model=ConversationCreateResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {"schema": ConversationCreateRequest.model_json_schema()},
-                 }}}),
+        APIRoute("/api/conversations", list_conversations, methods=["GET"], response_model=ConversationListingResponse),
+        APIRoute(
+            "/api/conversations/archived",
+            list_archived_conversations,
+            methods=["GET"],
+            response_model=ConversationListingResponse,
+        ),
+        APIRoute(
+            "/api/conversations/system",
+            list_system_conversations,
+            methods=["GET"],
+            response_model=SystemConversationListingResponse,
+        ),
+        APIRoute(
+            "/api/conversations",
+            create_conversation,
+            methods=["POST"],
+            status_code=201,
+            response_model=ConversationCreateResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": ConversationCreateRequest.model_json_schema()},
+                    },
+                }
+            },
+        ),
         APIRoute("/api/conversations/{id}", get_conversation, methods=["GET"]),
         # Document the input without replacing this route's legacy parsing,
         # null/coercion behavior, authentication order, or 400 responses.
-        APIRoute("/api/conversations/{id}", rename_conversation, methods=["PATCH"],
-                 response_model=ConversationPatchResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {"schema": ConversationPatchRequest.model_json_schema()},
-                 }}}),
+        APIRoute(
+            "/api/conversations/{id}",
+            rename_conversation,
+            methods=["PATCH"],
+            response_model=ConversationPatchResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": ConversationPatchRequest.model_json_schema()},
+                    },
+                }
+            },
+        ),
         APIRoute("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
-        APIRoute("/api/conversations/{id}/context", get_context_diagnostics, methods=["GET"],
-                 response_model=ContextDiagnosticsResponse),
-        APIRoute("/api/conversations/{id}/export", export_conversation, methods=["GET"],
-                 response_class=Response,
-                 # Describe the query without changing legacy 400/auth ordering.
-                 openapi_extra={"parameters": [{"name": "format", "in": "query", "required": True,
-                                                "schema": {"type": "string", "enum": ["jsonl", "markdown"]}}]},
-                 responses={200: {"content": {
-                     "application/x-ndjson": {"schema": {"type": "string"}},
-                     "text/markdown": {"schema": {"type": "string"}},
-                 }}}),
-        APIRoute("/api/conversations/folders", create_conv_folder, methods=["POST"],
-                 response_model=ConversationFolderCreateResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {"schema": ConversationFolderRequest.model_json_schema()},
-                 }}}),
-        APIRoute("/api/conversations/folders/{path:path}", delete_conv_folder, methods=["DELETE"],
-                 response_model=ConversationFolderResponse),
-        APIRoute("/api/conversations/folders/{path:path}", rename_conv_folder, methods=["PUT"],
-                 response_model=ConversationFolderResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {"schema": ConversationFolderRequest.model_json_schema()},
-                 }}}),
-        APIRoute("/api/conversations/{id}", delete_conversation, methods=["DELETE"],
-                 response_model=ConversationLifecycleResponse),
-        APIRoute("/api/conversations/{id}/archive", archive_conversation, methods=["POST"],
-                 response_model=ConversationLifecycleResponse),
-        APIRoute("/api/conversations/{id}/unarchive", unarchive_conversation, methods=["POST"],
-                 response_model=ConversationLifecycleResponse),
-        APIRoute("/api/notifications", list_notifications, methods=["GET"],
-                 response_model=NotificationListResponse,
-                 # Schema-only queries preserve legacy parsing and 400 responses.
-                 openapi_extra={"parameters": [
-                     {"name": "limit", "in": "query", "required": False,
-                      "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200}},
-                     {"name": "before", "in": "query", "required": False,
-                      "schema": {"type": "string"}},
-                 ]}),
-        APIRoute("/api/notifications/unread-count", notifications_unread_count, methods=["GET"],
-                 response_model=NotificationCountResponse),
-        APIRoute("/api/notifications/read-all", notifications_mark_all_read, methods=["POST"],
-                 response_model=NotificationReadResponse),
-        APIRoute("/api/notifications/{id}/read", notifications_mark_read, methods=["POST"],
-                 response_model=NotificationReadResponse),
-        APIRoute("/api/upload/{conv_id}", handle_upload, methods=["POST"],
-                 response_model=AttachmentResponse, status_code=201,
-                 openapi_extra={
-                     "parameters": [{
-                         "name": "conv_id", "in": "path", "required": True,
-                         "schema": {"type": "string"},
-                     }],
-                     "requestBody": {
-                         "required": True,
-                         "content": {"multipart/form-data": {"schema": {
-                             "type": "object",
-                             "properties": {"file": {"type": "string", "format": "binary"}},
-                             "required": ["file"],
-                         }}},
-                     },
-                 }),
+        APIRoute(
+            "/api/conversations/{id}/context",
+            get_context_diagnostics,
+            methods=["GET"],
+            response_model=ContextDiagnosticsResponse,
+        ),
+        APIRoute(
+            "/api/conversations/{id}/export",
+            export_conversation,
+            methods=["GET"],
+            response_class=Response,
+            # Describe the query without changing legacy 400/auth ordering.
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "format",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["jsonl", "markdown"]},
+                    }
+                ]
+            },
+            responses={
+                200: {
+                    "content": {
+                        "application/x-ndjson": {"schema": {"type": "string"}},
+                        "text/markdown": {"schema": {"type": "string"}},
+                    }
+                }
+            },
+        ),
+        APIRoute(
+            "/api/conversations/folders",
+            create_conv_folder,
+            methods=["POST"],
+            response_model=ConversationFolderCreateResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": ConversationFolderRequest.model_json_schema()},
+                    },
+                }
+            },
+        ),
+        APIRoute(
+            "/api/conversations/folders/{path:path}",
+            delete_conv_folder,
+            methods=["DELETE"],
+            response_model=ConversationFolderResponse,
+        ),
+        APIRoute(
+            "/api/conversations/folders/{path:path}",
+            rename_conv_folder,
+            methods=["PUT"],
+            response_model=ConversationFolderResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": ConversationFolderRequest.model_json_schema()},
+                    },
+                }
+            },
+        ),
+        APIRoute(
+            "/api/conversations/{id}",
+            delete_conversation,
+            methods=["DELETE"],
+            response_model=ConversationLifecycleResponse,
+        ),
+        APIRoute(
+            "/api/conversations/{id}/archive",
+            archive_conversation,
+            methods=["POST"],
+            response_model=ConversationLifecycleResponse,
+        ),
+        APIRoute(
+            "/api/conversations/{id}/unarchive",
+            unarchive_conversation,
+            methods=["POST"],
+            response_model=ConversationLifecycleResponse,
+        ),
+        APIRoute(
+            "/api/notifications",
+            list_notifications,
+            methods=["GET"],
+            response_model=NotificationListResponse,
+            # Schema-only queries preserve legacy parsing and 400 responses.
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
+                    },
+                    {"name": "before", "in": "query", "required": False, "schema": {"type": "string"}},
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/notifications/unread-count",
+            notifications_unread_count,
+            methods=["GET"],
+            response_model=NotificationCountResponse,
+        ),
+        APIRoute(
+            "/api/notifications/read-all",
+            notifications_mark_all_read,
+            methods=["POST"],
+            response_model=NotificationReadResponse,
+        ),
+        APIRoute(
+            "/api/notifications/{id}/read",
+            notifications_mark_read,
+            methods=["POST"],
+            response_model=NotificationReadResponse,
+        ),
+        APIRoute(
+            "/api/upload/{conv_id}",
+            handle_upload,
+            methods=["POST"],
+            response_model=AttachmentResponse,
+            status_code=201,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "conv_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {"file": {"type": "string", "format": "binary"}},
+                                "required": ["file"],
+                            }
+                        }
+                    },
+                },
+            },
+        ),
         # Literal workspace routes must come before the {path:path} catch-all.
-        APIRoute("/api/workspace", workspace_list, methods=["GET"],
-                 response_model=WorkspaceListingResponse,
-                 # Describe the optional query without changing legacy parsing
-                 # or the existing 404 response for invalid folders.
-                 openapi_extra={"parameters": [{
-                     "name": "folder", "in": "query", "required": False,
-                     "schema": {"type": "string"},
-                 }]}),
+        APIRoute(
+            "/api/workspace",
+            workspace_list,
+            methods=["GET"],
+            response_model=WorkspaceListingResponse,
+            # Describe the optional query without changing legacy parsing
+            # or the existing 404 response for invalid folders.
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "folder",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
         APIRoute("/api/workspace", workspace_create, methods=["POST"]),
-        APIRoute("/api/workspace/recent", workspace_recent, methods=["GET"],
-                 response_model=WorkspaceRecentResponse),
-        APIRoute("/api/autocomplete", autocomplete, methods=["GET"],
-                 response_model=AutocompleteResponse,
-                 # Every browser caller supplies q, while the handler still
-                 # accepts a missing value for legacy clients.
-                 openapi_extra={"parameters": [{
-                     "name": "q", "in": "query", "required": True,
-                     "schema": {"type": "string"},
-                 }]}),
-        APIRoute("/api/workspace-file/{path:path}", workspace_read_json, methods=["GET"],
-                 response_model=WorkspaceTextResponse,
-                 openapi_extra={"parameters": [{
-                     "name": "path", "in": "path", "required": True,
-                     "schema": {"type": "string"},
-                 }]}),
-        APIRoute("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"],
-                 response_class=FileResponse,
-                 openapi_extra={
-                     "parameters": [{
-                         "name": "path", "in": "path", "required": True,
-                         "schema": {"type": "string"},
-                     }],
-                     "responses": {"200": {
-                         "description": "Workspace file bytes",
-                         "content": {"application/octet-stream": {
-                             "schema": {"type": "string", "format": "binary"},
-                         }},
-                         "headers": {
-                             "X-Content-Type-Options": {
-                                 "schema": {"type": "string"},
-                                 "description": "Always nosniff",
-                             },
-                             "Content-Disposition": {
-                                 "schema": {"type": "string"},
-                                 "description": "Attachment filename for non-safe-image content",
-                             },
-                         },
-                     }},
-                 }),
+        APIRoute("/api/workspace/recent", workspace_recent, methods=["GET"], response_model=WorkspaceRecentResponse),
+        APIRoute(
+            "/api/autocomplete",
+            autocomplete,
+            methods=["GET"],
+            response_model=AutocompleteResponse,
+            # Every browser caller supplies q, while the handler still
+            # accepts a missing value for legacy clients.
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/workspace-file/{path:path}",
+            workspace_read_json,
+            methods=["GET"],
+            response_model=WorkspaceTextResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "path",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/workspace/{path:path}",
+            serve_workspace_file,
+            methods=["GET"],
+            response_class=FileResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "path",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Workspace file bytes",
+                        "content": {
+                            "application/octet-stream": {
+                                "schema": {"type": "string", "format": "binary"},
+                            }
+                        },
+                        "headers": {
+                            "X-Content-Type-Options": {
+                                "schema": {"type": "string"},
+                                "description": "Always nosniff",
+                            },
+                            "Content-Disposition": {
+                                "schema": {"type": "string"},
+                                "description": "Attachment filename for non-safe-image content",
+                            },
+                        },
+                    }
+                },
+            },
+        ),
         # Describe both existing PUT forms without moving parsing into FastAPI:
         # saves have an optional JSON body schema, while renames send only the
         # rename_to query. The handlers retain their legacy 400 responses.
-        APIRoute("/api/workspace/{path:path}", workspace_write, methods=["PUT"],
-                 response_model=WorkspaceWriteResponse,
-                 openapi_extra={
-                     "parameters": [
-                         {"name": "path", "in": "path", "required": True,
-                          "schema": {"type": "string"}},
-                         {"name": "rename_to", "in": "query", "required": False,
-                          "schema": {"type": "string"}},
-                     ],
-                     "requestBody": {"required": False, "content": {
-                         "application/json": {
-                             "schema": WorkspaceSaveRequest.model_json_schema(),
-                         },
-                     }},
-                 }),
-        APIRoute("/api/workspace/{path:path}", workspace_delete, methods=["DELETE"],
-                 response_model=WorkspaceDeleteResponse,
-                 openapi_extra={"parameters": [{
-                     "name": "path", "in": "path", "required": True,
-                     "schema": {"type": "string"},
-                 }]}),
-        APIRoute("/api/config/files", config_list_files, methods=["GET"],
-                 response_model=list[ConfigFileEntry]),
-        APIRoute("/api/config/files/{path:path}", config_read_file, methods=["GET"],
-                 response_model=ConfigFileResponse,
-                 openapi_extra={"parameters": [{
-                     "name": "path", "in": "path", "required": True,
-                     "schema": {"type": "string"},
-                 }]}),
-        APIRoute("/api/config/files/{path:path}", config_write_file, methods=["PUT"],
-                 response_model=ConfigWriteResponse,
-                 # Schema metadata only: keep manual parsing and its existing
-                 # 400 responses instead of introducing FastAPI 422s.
-                 openapi_extra={
-                     "parameters": [{
-                         "name": "path", "in": "path", "required": True,
-                         "schema": {"type": "string"},
-                     }],
-                     "requestBody": {"required": True, "content": {
-                         "application/json": {
-                             "schema": _request_schema(ConfigSaveRequest),
-                         },
-                     }},
-                 }),
-        APIRoute("/api/models", models_list, methods=["GET"],
-                 response_model=ModelListResponse),
-        APIRoute("/api/schedules", schedules_list, methods=["GET"],
-                 response_model=ScheduleListResponse),
-        APIRoute("/api/schedules/{name}/run", schedules_run, methods=["POST"],
-                 response_model=ScheduleRunResponse,
-                 status_code=202,
-                 openapi_extra={"parameters": [{
-                     "name": "name", "in": "path", "required": True,
-                     "schema": {"type": "string"},
-                 }]}),
-        APIRoute("/api/schedules/{name}/overlay", schedules_reset, methods=["DELETE"],
-                 response_model=ScheduleResetResponse,
-                 openapi_extra={"parameters": [{
-                     "name": "name", "in": "path", "required": True,
-                     "schema": {"type": "string"},
-                 }]}),
-        APIRoute("/api/schedules/{name}", schedules_get, methods=["GET"],
-                 response_model=ScheduleDetailResponse,
-                 openapi_extra={"parameters": [{
-                     "name": "name", "in": "path", "required": True,
-                     "schema": {"type": "string"},
-                 }]}),
-        APIRoute("/api/schedules/{name}", schedules_update, methods=["PUT"],
-                 response_model=ScheduleUpdateResponse,
-                 openapi_extra={
-                     "parameters": [{
-                         "name": "name", "in": "path", "required": True,
-                         "schema": {"type": "string"},
-                     }],
-                     "requestBody": {"required": True, "content": {
-                         "application/json": {
-                             "schema": _request_schema(ScheduleUpdateRequest),
-                         },
-                     }},
-                 }),
-        APIRoute("/api/vault", vault_create, methods=["POST"],
-                 response_model=VaultCreateResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {
-                         "schema": _request_schema(VaultCreateRequest),
-                     },
-                 }}}),
-        APIRoute("/api/vault", vault_list, methods=["GET"],
-                 response_model=VaultListingResponse,
-                 # Schema-only query metadata preserves the handler's current
-                 # validation and its established 400/403/404 responses.
-                 openapi_extra={"parameters": [{
-                     "name": "folder", "in": "query", "required": False,
-                     "schema": {"type": "string"},
-                 }]}),
-        APIRoute("/api/vault/folders", vault_create_folder, methods=["POST"],
-                 response_model=VaultFolderCreateResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {
-                         "schema": _request_schema(VaultFolderCreateRequest),
-                     },
-                 }}}),
-        APIRoute("/api/vault/recent", vault_recent, methods=["GET"],
-                 response_model=VaultRecentResponse),
-        APIRoute("/api/vault/tags", vault_tags, methods=["GET"],
-                 response_model=VaultTagsResponse),
-        APIRoute("/api/vault/{page:path}", vault_write, methods=["PUT"],
-                 response_model=VaultWriteResponse,
-                 # Schema metadata only: the handler keeps its manual parsing,
-                 # conflict checks, mutually-exclusive fields, and 400s.
-                 openapi_extra={
-                     "parameters": [{
-                         "name": "page", "in": "path", "required": True,
-                         "schema": {"type": "string"},
-                     }],
-                     "requestBody": {"required": True, "content": {
-                         "application/json": {
-                             "schema": _request_schema(VaultWriteRequest),
-                         },
-                     }},
-                 }),
-        APIRoute("/api/vault/{page:path}", vault_read, methods=["GET"],
-                 response_model=VaultPageResponse,
-                 openapi_extra={"parameters": [{
-                     "name": "page", "in": "path", "required": True,
-                     "schema": {"type": "string"},
-                 }]}),
-        APIRoute("/api/vault/{page:path}", vault_delete, methods=["DELETE"],
-                 response_model=VaultDeleteResponse,
-                 openapi_extra={"parameters": [{
-                     "name": "page", "in": "path", "required": True,
-                     "schema": {"type": "string"},
-                 }]}),
+        APIRoute(
+            "/api/workspace/{path:path}",
+            workspace_write,
+            methods=["PUT"],
+            response_model=WorkspaceWriteResponse,
+            openapi_extra={
+                "parameters": [
+                    {"name": "path", "in": "path", "required": True, "schema": {"type": "string"}},
+                    {"name": "rename_to", "in": "query", "required": False, "schema": {"type": "string"}},
+                ],
+                "requestBody": {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": WorkspaceSaveRequest.model_json_schema(),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/workspace/{path:path}",
+            workspace_delete,
+            methods=["DELETE"],
+            response_model=WorkspaceDeleteResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "path",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
+        APIRoute("/api/config/files", config_list_files, methods=["GET"], response_model=list[ConfigFileEntry]),
+        APIRoute(
+            "/api/config/files/{path:path}",
+            config_read_file,
+            methods=["GET"],
+            response_model=ConfigFileResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "path",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/config/files/{path:path}",
+            config_write_file,
+            methods=["PUT"],
+            response_model=ConfigWriteResponse,
+            # Schema metadata only: keep manual parsing and its existing
+            # 400 responses instead of introducing FastAPI 422s.
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "path",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(ConfigSaveRequest),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute("/api/models", models_list, methods=["GET"], response_model=ModelListResponse),
+        APIRoute("/api/schedules", schedules_list, methods=["GET"], response_model=ScheduleListResponse),
+        APIRoute(
+            "/api/schedules/{name}/run",
+            schedules_run,
+            methods=["POST"],
+            response_model=ScheduleRunResponse,
+            status_code=202,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/schedules/{name}/overlay",
+            schedules_reset,
+            methods=["DELETE"],
+            response_model=ScheduleResetResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/schedules/{name}",
+            schedules_get,
+            methods=["GET"],
+            response_model=ScheduleDetailResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/schedules/{name}",
+            schedules_update,
+            methods=["PUT"],
+            response_model=ScheduleUpdateResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(ScheduleUpdateRequest),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/vault",
+            vault_create,
+            methods=["POST"],
+            response_model=VaultCreateResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(VaultCreateRequest),
+                        },
+                    },
+                }
+            },
+        ),
+        APIRoute(
+            "/api/vault",
+            vault_list,
+            methods=["GET"],
+            response_model=VaultListingResponse,
+            # Schema-only query metadata preserves the handler's current
+            # validation and its established 400/403/404 responses.
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "folder",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/vault/folders",
+            vault_create_folder,
+            methods=["POST"],
+            response_model=VaultFolderCreateResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(VaultFolderCreateRequest),
+                        },
+                    },
+                }
+            },
+        ),
+        APIRoute("/api/vault/recent", vault_recent, methods=["GET"], response_model=VaultRecentResponse),
+        APIRoute("/api/vault/tags", vault_tags, methods=["GET"], response_model=VaultTagsResponse),
+        APIRoute(
+            "/api/vault/{page:path}",
+            vault_write,
+            methods=["PUT"],
+            response_model=VaultWriteResponse,
+            # Schema metadata only: the handler keeps its manual parsing,
+            # conflict checks, mutually-exclusive fields, and 400s.
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(VaultWriteRequest),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/vault/{page:path}",
+            vault_read,
+            methods=["GET"],
+            response_model=VaultPageResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/vault/{page:path}",
+            vault_delete,
+            methods=["DELETE"],
+            response_model=VaultDeleteResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
         APIRoute("/vault/{page:path}", serve_vault_page, methods=["GET"]),
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
         APIRoute("/api/wiki", vault_list, methods=["GET"]),
         APIRoute("/api/wiki/{page:path}", vault_read, methods=["GET"]),
-        APIRoute("/api/widgets", list_widgets, methods=["GET"],
-                 response_model=WidgetCatalogResponse),
-        APIRoute("/widgets/{tier}/{name}/widget.js", serve_widget_js,
-              methods=["GET"]),
-        APIRoute("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"],
-                 response_model=CanvasStateResponse),
+        APIRoute("/api/widgets", list_widgets, methods=["GET"], response_model=WidgetCatalogResponse),
+        APIRoute("/widgets/{tier}/{name}/widget.js", serve_widget_js, methods=["GET"]),
+        APIRoute("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"], response_model=CanvasStateResponse),
         APIRoute("/api/sticky/{conv_id}", get_sticky_state, methods=["GET"], response_model=StickyResponse),
-        APIRoute("/api/canvas/{conv_id}/new_tab", post_canvas_new_tab, methods=["POST"],
-                 response_model=CanvasNewTabResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {"schema": CanvasNewTabRequest.model_json_schema()}}}}),
-        APIRoute("/api/canvas/{conv_id}/active_tab", post_canvas_active_tab, methods=["POST"],
-                 response_model=CanvasMutationResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {"schema": CanvasTabRequest.model_json_schema()}}}}),
-        APIRoute("/api/canvas/{conv_id}/close_tab", post_canvas_close_tab, methods=["POST"],
-                 response_model=CanvasMutationResponse,
-                 openapi_extra={"requestBody": {"required": True, "content": {
-                     "application/json": {"schema": CanvasTabRequest.model_json_schema()}}}}),
+        APIRoute(
+            "/api/canvas/{conv_id}/new_tab",
+            post_canvas_new_tab,
+            methods=["POST"],
+            response_model=CanvasNewTabResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": CanvasNewTabRequest.model_json_schema()}},
+                }
+            },
+        ),
+        APIRoute(
+            "/api/canvas/{conv_id}/active_tab",
+            post_canvas_active_tab,
+            methods=["POST"],
+            response_model=CanvasMutationResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": CanvasTabRequest.model_json_schema()}},
+                }
+            },
+        ),
+        APIRoute(
+            "/api/canvas/{conv_id}/close_tab",
+            post_canvas_close_tab,
+            methods=["POST"],
+            response_model=CanvasMutationResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": CanvasTabRequest.model_json_schema()}},
+                }
+            },
+        ),
         APIRoute("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
         APIRoute("/canvas/{conv_id}/{tab_id}", get_canvas_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
@@ -3250,6 +3674,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     # Static file serving for web UI
     static_dir = Path(__file__).parent / "web" / "static"
     if static_dir.is_dir():
+
         async def serve_index(request: Request):
             return FileResponse(static_dir / "index.html")
 
@@ -3265,6 +3690,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     app.state.manager = manager
     app.state.app_ctx = app_ctx
     from .terminals import TerminalRegistry
+
     app.state.terminal_registry = TerminalRegistry(config)
 
     # Wire terminal registry to manager if available
@@ -3282,6 +3708,7 @@ async def run_http_server(config, event_bus, app_ctx=None, manager=None) -> None
     """Start the HTTP server as an asyncio task."""
     global _http_server, _http_app
     import uvicorn
+
     app = create_app(config, event_bus, app_ctx=app_ctx, manager=manager)
     _http_app = app
     server_config = uvicorn.Config(
@@ -3292,6 +3719,7 @@ async def run_http_server(config, event_bus, app_ctx=None, manager=None) -> None
     )
     _http_server = uvicorn.Server(server_config)
     from .workspace_index import start_workspace_index_loop
+
     start_workspace_index_loop(config)
     log.info(f"HTTP server starting on {config.http.host}:{config.http.port}")
     await _http_server.serve()

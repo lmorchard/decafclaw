@@ -5,6 +5,7 @@ TurnKind.WORKFLOW. WorkflowUserInputHandler is registered on the
 ConfirmationRegistry; it fires via the confirmation *recovery* path
 (no awaiting waiter) because a workflow suspend ends the turn.
 """
+
 import logging
 from typing import TYPE_CHECKING
 
@@ -36,8 +37,7 @@ def _render_artifact(result) -> str:
     return str(result)
 
 
-async def run_workflow_turn(ctx: "Context", manager, *,
-                            workflow_name: str, resume: bool) -> ToolResult:
+async def run_workflow_turn(ctx: "Context", manager, *, workflow_name: str, resume: bool) -> ToolResult:
     spec = get_workflow(workflow_name)
     if spec is None:
         return ToolResult(text=f"[error: unknown workflow {workflow_name!r}]")
@@ -59,24 +59,21 @@ async def run_workflow_turn(ctx: "Context", manager, *,
     except WorkflowSkillActivationFailed as exc:
         journal.status = "error"
         save_journal(ctx.config, ctx.conv_id, journal)
-        log.error("Workflow %r: skill activation failed: %s",
-                  workflow_name, exc)
+        log.error("Workflow %r: skill activation failed: %s", workflow_name, exc)
         return ToolResult(text=f"[error: skill activation failed: {exc}]")
 
-    await ctx.publish("tool_status", tool="workflow",
-                      message=f"[workflow: {workflow_name}] running")
+    await ctx.publish("tool_status", tool="workflow", message=f"[workflow: {workflow_name}] running")
     outcome = await run_workflow(ctx, spec.fn, journal, model=spec.model)
 
     if outcome.status == "done":
-        await ctx.publish("tool_status", tool="workflow",
-                          message=f"[workflow: {workflow_name}] complete")
+        await ctx.publish("tool_status", tool="workflow", message=f"[workflow: {workflow_name}] complete")
         artifact_text = _render_artifact(outcome.result)
         # Persist the rendered artifact so a conversation reload still
         # shows the workflow's final output (the WORKFLOW turn path bypasses
         # the agent loop's normal assistant-message archive write).
         from decafclaw.archive import append_message  # noqa: PLC0415
-        append_message(ctx.config, ctx.conv_id,
-                       {"role": "assistant", "content": artifact_text})
+
+        append_message(ctx.config, ctx.conv_id, {"role": "assistant", "content": artifact_text})
         return ToolResult(text=artifact_text)
 
     if outcome.status == "suspended":
@@ -109,8 +106,7 @@ class WorkflowUserInputHandler:
     def __init__(self, manager):
         self.manager = manager
 
-    async def on_approve(self, ctx, request: ConfirmationRequest,
-                         response: ConfirmationResponse) -> dict:
+    async def on_approve(self, ctx, request: ConfirmationRequest, response: ConfirmationResponse) -> dict:
         ad = request.action_data
         answer = (response.data or {}).get("value", "")
         journal = load_journal(ctx.config, ctx.conv_id)
@@ -125,22 +121,30 @@ class WorkflowUserInputHandler:
         # Lazy import to avoid a circular import (conversation_manager
         # will import this module once TurnKind.WORKFLOW dispatch is wired).
         from decafclaw.conversation_manager import TurnKind  # noqa: PLC0415
+
         await self.manager.enqueue_turn(
-            ctx.conv_id, kind=TurnKind.WORKFLOW, prompt="",
-            metadata={"workflow_name": ad["workflow_name"], "resume": True})
+            ctx.conv_id,
+            kind=TurnKind.WORKFLOW,
+            prompt="",
+            metadata={"workflow_name": ad["workflow_name"], "resume": True},
+        )
         return {"continue_loop": False}
 
-    async def on_deny(self, ctx, request: ConfirmationRequest,
-                      response: ConfirmationResponse) -> dict:
+    async def on_deny(self, ctx, request: ConfirmationRequest, response: ConfirmationResponse) -> dict:
         ad = request.action_data
         journal = load_journal(ctx.config, ctx.conv_id)
         if journal is not None:
             journal.status = "error"
             save_journal(ctx.config, ctx.conv_id, journal)
         from decafclaw.archive import append_message  # noqa: PLC0415
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "assistant",
-            "source": "workflow_cancelled",
-            "content": f"Workflow {ad.get('workflow_name', '?')!r} cancelled.",
-        })
+
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "assistant",
+                "source": "workflow_cancelled",
+                "content": f"Workflow {ad.get('workflow_name', '?')!r} cancelled.",
+            },
+        )
         return {"continue_loop": False}

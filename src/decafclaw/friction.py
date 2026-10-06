@@ -8,6 +8,7 @@ from decafclaw.workflow.llm import call_structured
 
 log = logging.getLogger(__name__)
 
+
 @dataclass
 class FrictionTheme:
     theme: str
@@ -50,20 +51,24 @@ async def analyze_friction(config_or_ctx) -> list[FrictionTheme]:
                     "properties": {
                         "theme": {"type": "string"},
                         "proposed_addition": {"type": "string"},
-                        "occurrences": {"type": "integer"}
+                        "occurrences": {"type": "integer"},
                     },
-                    "required": ["theme", "proposed_addition", "occurrences"]
-                }
+                    "required": ["theme", "proposed_addition", "occurrences"],
+                },
             }
         },
-        "required": ["themes"]
+        "required": ["themes"],
     }
 
     system = "You analyze user messages to extract recurring corrections or friction points."
 
     # Combine messages into a single prompt payload
     lines = [f"- {m}" for m in messages]
-    prompt_text = "Here are user correction messages:\n" + "\n".join(lines) + "\n\nGroup them by theme and propose AGENT.md additions for each theme. Occurrences should count how many times this theme appeared."
+    prompt_text = (
+        "Here are user correction messages:\n"
+        + "\n".join(lines)
+        + "\n\nGroup them by theme and propose AGENT.md additions for each theme. Occurrences should count how many times this theme appeared."
+    )
 
     try:
         res = await call_structured(
@@ -72,7 +77,7 @@ async def analyze_friction(config_or_ctx) -> list[FrictionTheme]:
             user_msg=prompt_text,
             schema=schema,
             tool_name="submit_themes",
-            model="gemini-2.5-flash"  # Default fast model
+            model="gemini-2.5-flash",  # Default fast model
         )
 
         extracted = res.get("themes", [])
@@ -80,4 +85,3 @@ async def analyze_friction(config_or_ctx) -> list[FrictionTheme]:
     except Exception as e:
         log.error(f"Friction analysis failed: {e}")
         return []
-

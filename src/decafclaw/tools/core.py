@@ -62,6 +62,7 @@ def tool_debug_context(ctx: "Context") -> str | ToolResult:
 
     # Build the full LLM context: messages + tool definitions
     from . import TOOL_DEFINITIONS
+
     extra_tool_defs = ctx.tools.extra_definitions
     all_tool_defs = TOOL_DEFINITIONS + extra_tool_defs
 
@@ -106,20 +107,22 @@ def tool_debug_context(ctx: "Context") -> str | ToolResult:
         },
     ]
     if system_msg:
-        media.append({
-            "type": "file",
-            "filename": "debug_system_prompt.md",
-            "data": (system_msg.get("content", "")).encode(),
-            "content_type": "text/markdown",
-        })
+        media.append(
+            {
+                "type": "file",
+                "filename": "debug_system_prompt.md",
+                "data": (system_msg.get("content", "")).encode(),
+                "content_type": "text/markdown",
+            }
+        )
 
     return ToolResult(text=summary_text, media=media)
-
 
 
 def tool_current_time(ctx: "Context") -> str | ToolResult:
     """Return the current date and time."""
     from datetime import datetime
+
     now = datetime.now()
     return now.strftime("%Y-%m-%d %H:%M:%S (%A)")
 
@@ -132,6 +135,7 @@ async def tool_wait(ctx: "Context", seconds: int = 30) -> str | ToolResult:
     Maximum wait time is 300 seconds (5 minutes).
     """
     import asyncio
+
     max_wait = 300
     seconds = max(1, min(seconds, max_wait))
     log.info(f"[tool:wait] sleeping {seconds}s")
@@ -169,8 +173,7 @@ def _normalize_multiple_choice_options(options: list) -> list[dict] | None:
     return out
 
 
-def _default_multiple_choice_callback(options: list[dict],
-                                       allow_multiple: bool):
+def _default_multiple_choice_callback(options: list[dict], allow_multiple: bool):
     """Build the default ``on_response`` callback for ask_user_multiple_choice.
 
     Single: returns ``"User selected: <label>"``; multi: comma-joins
@@ -196,19 +199,21 @@ def _default_multiple_choice_callback(options: list[dict],
     return _cb
 
 
-async def tool_ask_user_multiple_choice(ctx: "Context", prompt: str, options: list,
-                                        allow_multiple: bool = False) -> ToolResult:
+async def tool_ask_user_multiple_choice(
+    ctx: "Context", prompt: str, options: list, allow_multiple: bool = False
+) -> ToolResult:
     """Pause the turn and ask the user to pick from a fixed list of options."""
-    log.info(f"[tool:ask_user_multiple_choice] prompt={prompt!r} "
-             f"options={len(options)} allow_multiple={allow_multiple}")
+    log.info(
+        f"[tool:ask_user_multiple_choice] prompt={prompt!r} options={len(options)} allow_multiple={allow_multiple}"
+    )
     if not prompt or not prompt.strip():
-        return ToolResult(
-            text="[error: ask_user_multiple_choice requires a non-empty prompt]")
+        return ToolResult(text="[error: ask_user_multiple_choice requires a non-empty prompt]")
     normalized = _normalize_multiple_choice_options(options)
     if normalized is None:
         return ToolResult(
             text="[error: ask_user_multiple_choice needs at least one option; "
-                 "each must be a string or {value, label} dict]")
+            "each must be a string or {value, label} dict]"
+        )
     widget_data = {
         "prompt": prompt,
         "options": normalized,
@@ -217,11 +222,9 @@ async def tool_ask_user_multiple_choice(ctx: "Context", prompt: str, options: li
     widget = WidgetRequest(
         widget_type="multiple_choice",
         data=widget_data,
-        on_response=_default_multiple_choice_callback(normalized,
-                                                      bool(allow_multiple)),
+        on_response=_default_multiple_choice_callback(normalized, bool(allow_multiple)),
     )
-    short = (f"ask: {len(normalized)} option(s)"
-             + (" (multi)" if allow_multiple else ""))
+    short = f"ask: {len(normalized)} option(s)" + (" (multi)" if allow_multiple else "")
     return ToolResult(
         text=f"[awaiting user response: {prompt}]",
         display_short_text=short,
@@ -283,6 +286,7 @@ def _default_text_input_callback(field_keys: list[str]):
     keys in the field-definition order. Empty / no recognised data:
     ``"User did not respond."``.
     """
+
     def _cb(data: dict) -> str:
         if not isinstance(data, dict) or not data:
             return "User did not respond."
@@ -300,14 +304,13 @@ def _default_text_input_callback(field_keys: list[str]):
     return _cb
 
 
-async def tool_ask_user_text(ctx: "Context", prompt: str, fields: list | None = None,
-                             submit_label: str = "Submit") -> ToolResult:
+async def tool_ask_user_text(
+    ctx: "Context", prompt: str, fields: list | None = None, submit_label: str = "Submit"
+) -> ToolResult:
     """Pause the turn and ask the user for free-form text input."""
-    log.info(f"[tool:ask_user_text] prompt={prompt!r} "
-             f"fields={len(fields) if fields else 0}")
+    log.info(f"[tool:ask_user_text] prompt={prompt!r} fields={len(fields) if fields else 0}")
     if not prompt or not prompt.strip():
-        return ToolResult(
-            text="[error: ask_user_text requires a non-empty prompt]")
+        return ToolResult(text="[error: ask_user_text requires a non-empty prompt]")
     if not fields:
         normalized: list[dict] = [{"key": "value", "label": prompt.strip()}]
     else:
@@ -315,7 +318,8 @@ async def tool_ask_user_text(ctx: "Context", prompt: str, fields: list | None = 
         if normalized_or_none is None or not normalized_or_none:
             return ToolResult(
                 text="[error: ask_user_text fields must each be a non-empty "
-                     "string or a {key, label, ...} dict with unique keys]")
+                "string or a {key, label, ...} dict with unique keys]"
+            )
         normalized = normalized_or_none
     widget_data: dict = {"prompt": prompt, "fields": normalized}
     if submit_label and submit_label != "Submit":
@@ -323,11 +327,9 @@ async def tool_ask_user_text(ctx: "Context", prompt: str, fields: list | None = 
     widget = WidgetRequest(
         widget_type="text_input",
         data=widget_data,
-        on_response=_default_text_input_callback(
-            [f["key"] for f in normalized]),
+        on_response=_default_text_input_callback([f["key"] for f in normalized]),
     )
-    short = (f"ask: {len(normalized)} field"
-             + ("s" if len(normalized) != 1 else ""))
+    short = f"ask: {len(normalized)} field" + ("s" if len(normalized) != 1 else "")
     return ToolResult(
         text=f"[awaiting user response: {prompt}]",
         display_short_text=short,
@@ -350,8 +352,10 @@ def tool_context_stats(ctx: "Context") -> str | ToolResult:
 
     # Tool definitions
     from . import TOOL_DEFINITIONS
+
     extra_tool_defs = ctx.tools.extra_definitions
     from ..mcp_client import get_registry
+
     mcp_registry = get_registry()
     mcp_tool_defs = mcp_registry.get_tool_definitions() if mcp_registry else []
     all_tool_defs = TOOL_DEFINITIONS + extra_tool_defs + mcp_tool_defs
@@ -382,7 +386,8 @@ def tool_context_stats(ctx: "Context") -> str | ToolResult:
 
     # Archive size
     from ..archive import archive_path
-    conv_id = (ctx.conv_id or "unknown")
+
+    conv_id = ctx.conv_id or "unknown"
     archive_file = archive_path(config, conv_id)
     archive_size = archive_file.stat().st_size if archive_file.exists() else 0
 
@@ -395,10 +400,10 @@ def tool_context_stats(ctx: "Context") -> str | ToolResult:
         "### Estimated breakdown (approx)",
         "| Component | Chars | ~Tokens | % of budget |",
         "|-----------|-------|---------|-------------|",
-        f"| System prompt | {system_chars:,} | ~{system_tokens:,} | {system_tokens*100//compaction_max if compaction_max else 0}% |",
-        f"| Tool definitions ({len(all_tool_defs)}) | {len(tools_json):,} | ~{tools_tokens:,} | {tools_tokens*100//compaction_max if compaction_max else 0}% |",
-        f"| Conversation history | {history_chars:,} | ~{history_tokens:,} | {history_tokens*100//compaction_max if compaction_max else 0}% |",
-        f"| **Total estimated** | | **~{total_estimated:,}** | **{total_estimated*100//compaction_max if compaction_max else 0}%** |",
+        f"| System prompt | {system_chars:,} | ~{system_tokens:,} | {system_tokens * 100 // compaction_max if compaction_max else 0}% |",
+        f"| Tool definitions ({len(all_tool_defs)}) | {len(tools_json):,} | ~{tools_tokens:,} | {tools_tokens * 100 // compaction_max if compaction_max else 0}% |",
+        f"| Conversation history | {history_chars:,} | ~{history_tokens:,} | {history_tokens * 100 // compaction_max if compaction_max else 0}% |",
+        f"| **Total estimated** | | **~{total_estimated:,}** | **{total_estimated * 100 // compaction_max if compaction_max else 0}%** |",
         "",
         "### Messages by role",
     ]
@@ -524,8 +529,8 @@ CORE_TOOL_DEFINITIONS = [
                 "choice on your own. Prefer to act on your best judgment; "
                 "calling this tool is costly — it interrupts the user's "
                 "flow. Reserve for decisions the user would want to weigh "
-                "in on (e.g., \"which of these three files should I edit?\", "
-                "\"publish or save as draft?\"). "
+                'in on (e.g., "which of these three files should I edit?", '
+                '"publish or save as draft?"). '
                 "Only works in the web UI; Mattermost / terminal render "
                 "the prompt as text and the turn ends without the choice."
             ),

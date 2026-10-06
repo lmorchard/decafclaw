@@ -42,8 +42,7 @@ def _format_dm(record: NotificationRecord, base_url: str) -> str:
 
 def _resolve_link(record: NotificationRecord, base_url: str) -> str | None:
     """Pick the link URL for a DM, or None."""
-    if record.link and (record.link.startswith("http://")
-                        or record.link.startswith("https://")):
+    if record.link and (record.link.startswith("http://") or record.link.startswith("https://")):
         return record.link
     if base_url and record.conv_id:
         return f"{base_url.rstrip('/')}/#conv={record.conv_id}"
@@ -51,7 +50,8 @@ def _resolve_link(record: NotificationRecord, base_url: str) -> str | None:
 
 
 def make_mattermost_dm_adapter(
-    config: Any, mm_client: Any,
+    config: Any,
+    mm_client: Any,
 ) -> Callable[[dict], Awaitable[None]]:
     """Return an event-bus handler that DMs notifications to a Mattermost user.
 
@@ -64,25 +64,27 @@ def make_mattermost_dm_adapter(
     restart, since there's no file-reload mechanism today.
     """
 
-    async def _deliver(record: NotificationRecord, recipient: str,
-                       base_url: str) -> None:
+    async def _deliver(record: NotificationRecord, recipient: str, base_url: str) -> None:
         """Background-task delivery — fire-and-forget from the handler."""
         try:
             body = _format_dm(record, base_url)
             result = await mm_client.post_direct_message(recipient, body)
             if result is None:
                 log.warning(
-                    "Mattermost DM delivery failed: recipient '%s' not found "
-                    "(category=%s priority=%s conv=%s)",
-                    recipient, record.category, record.priority,
+                    "Mattermost DM delivery failed: recipient '%s' not found (category=%s priority=%s conv=%s)",
+                    recipient,
+                    record.category,
+                    record.priority,
                     record.conv_id or "-",
                 )
         except Exception as exc:
             log.warning(
-                "Mattermost DM delivery failed (recipient=%s category=%s "
-                "priority=%s conv=%s): %s",
-                recipient, record.category, record.priority,
-                record.conv_id or "-", exc,
+                "Mattermost DM delivery failed (recipient=%s category=%s priority=%s conv=%s): %s",
+                recipient,
+                record.category,
+                record.priority,
+                record.conv_id or "-",
+                exc,
             )
 
     async def handle(event: dict) -> None:

@@ -23,16 +23,12 @@ async def tool_set_model(ctx: "Context", model: str) -> str | ToolResult:
     if model not in config.model_configs:
         available = sorted(config.model_configs.keys())
         return ToolResult(
-            text=f"[error: unknown model '{model}'. "
-                 f"Available: {', '.join(available) or '(none configured)'}]"
+            text=f"[error: unknown model '{model}'. Available: {', '.join(available) or '(none configured)'}]"
         )
 
     mc = config.model_configs[model]
     if mc.provider not in config.providers:
-        return ToolResult(
-            text=f"[error: model '{model}' references unknown provider "
-                 f"'{mc.provider}']"
-        )
+        return ToolResult(text=f"[error: model '{model}' references unknown provider '{mc.provider}']")
 
     ctx.active_model = model
 
@@ -41,9 +37,14 @@ async def tool_set_model(ctx: "Context", model: str) -> str | ToolResult:
 
     conv_id = ctx.conv_id or ctx.channel_id
     if conv_id:
-        append_message(ctx.config, conv_id, {
-            "role": "model", "content": model,
-        })
+        append_message(
+            ctx.config,
+            conv_id,
+            {
+                "role": "model",
+                "content": model,
+            },
+        )
 
     pc = config.providers[mc.provider]
     return (

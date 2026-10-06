@@ -24,8 +24,7 @@ def test_every_declared_tier_is_classified():
     """Adding a tier without deciding its trust fails here."""
     classified = _PREAPPROVAL_TIERS | _UNTRUSTED_TIERS
     assert set(SCHEDULE_TIERS) == classified, (
-        f"unclassified: {set(SCHEDULE_TIERS) - classified}; "
-        f"stale: {classified - set(SCHEDULE_TIERS)}"
+        f"unclassified: {set(SCHEDULE_TIERS) - classified}; stale: {classified - set(SCHEDULE_TIERS)}"
     )
 
 
@@ -72,9 +71,7 @@ def test_discovery_only_produces_declared_tiers(config, tmp_path, monkeypatch):
     # message below (a future reader could "fix" that one by weakening the
     # assertion, per the brief's "fix the fixture, do not weaken the
     # assertion" — this ordering keeps that mistake from being tempting).
-    assert found <= set(SCHEDULE_TIERS), (
-        f"discovery produced undeclared tier(s): {found - set(SCHEDULE_TIERS)}"
-    )
+    assert found <= set(SCHEDULE_TIERS), f"discovery produced undeclared tier(s): {found - set(SCHEDULE_TIERS)}"
     # Bundled skills (dream, garden, newsletter) ship SCHEDULE.md, so the
     # bundled tier is exercised without any fixture setup.
     assert {"admin", "workspace", "extra", "bundled"} <= found, (

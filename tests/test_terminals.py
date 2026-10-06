@@ -10,9 +10,16 @@ from decafclaw.terminals import TerminalRegistry, TerminalSession
 
 def _session(**kw) -> TerminalSession:
     base = dict(
-        conv_id="c1", tab_id="canvas_1", session_id="s1",
-        cwd="/tmp", shell="/bin/sh", pid=123, fd=9,
-        buffer=bytearray(), attached=set(), viewports={},
+        conv_id="c1",
+        tab_id="canvas_1",
+        session_id="s1",
+        cwd="/tmp",
+        shell="/bin/sh",
+        pid=123,
+        fd=9,
+        buffer=bytearray(),
+        attached=set(),
+        viewports={},
     )
     base.update(kw)
     return TerminalSession(**base)
@@ -24,7 +31,7 @@ def test_ring_buffer_caps_from_front():
     reg = TerminalRegistry(cfg)
     s = _session()
     reg._handle_output(s, b"12345")
-    reg._handle_output(s, b"6789")   # total 9 bytes → cap 8 → drop 1 from front
+    reg._handle_output(s, b"6789")  # total 9 bytes → cap 8 → drop 1 from front
     assert bytes(s.buffer) == b"23456789"
 
 
@@ -34,15 +41,18 @@ async def test_broadcast_fans_out_and_drops_failing_sink():
     s = _session()
     good = []
 
-    async def good_sink(chunk): good.append(chunk)
-    async def bad_sink(chunk): raise RuntimeError("client gone")
+    async def good_sink(chunk):
+        good.append(chunk)
+
+    async def bad_sink(chunk):
+        raise RuntimeError("client gone")
 
     s.attached.add(good_sink)
     s.attached.add(bad_sink)
     reg._handle_output(s, b"hello")
     await asyncio.sleep(0)  # let broadcast task run
     assert good == [b"hello"]
-    assert bad_sink not in s.attached   # failing sink removed
+    assert bad_sink not in s.attached  # failing sink removed
 
 
 @pytest.mark.asyncio
@@ -99,7 +109,10 @@ def test_count_for_conv():
 async def test_real_pty_echo_and_cleanup():
     reg = TerminalRegistry(load_config())
     out = bytearray()
-    async def sink(chunk): out.extend(chunk)
+
+    async def sink(chunk):
+        out.extend(chunk)
+
     # /bin/echo (not $SHELL) — fast, no rc-file noise
     s = await reg.spawn("c1", "canvas_1", "s1", cwd="/tmp", shell="/bin/echo")
     await reg.attach(s, sink, lambda m: asyncio.sleep(0))
@@ -108,7 +121,7 @@ async def test_real_pty_echo_and_cleanup():
         if reg.get("c1", "canvas_1") is None:
             break
         await asyncio.sleep(0.01)
-    assert reg.get("c1", "canvas_1") is None      # cleaned up on EOF
+    assert reg.get("c1", "canvas_1") is None  # cleaned up on EOF
     assert s.exit_status == 0
 
 
@@ -117,7 +130,9 @@ async def test_shutdown_all_kills_and_clears(monkeypatch):
     reg = TerminalRegistry(load_config())
     killed = []
 
-    async def fake_kill(session, grace=1.0): killed.append(session.tab_id)
+    async def fake_kill(session, grace=1.0):
+        killed.append(session.tab_id)
+
     monkeypatch.setattr(reg, "kill", fake_kill)
     reg._sessions[("c1", "canvas_1")] = _session()
     reg._sessions[("c1", "canvas_2")] = _session(tab_id="canvas_2")
@@ -131,7 +146,9 @@ async def test_kill_sessions_for_conv(monkeypatch):
     reg = TerminalRegistry(load_config())
     killed = []
 
-    async def fake_kill(session, grace=1.0): killed.append((session.conv_id, session.tab_id))
+    async def fake_kill(session, grace=1.0):
+        killed.append((session.conv_id, session.tab_id))
+
     monkeypatch.setattr(reg, "kill", fake_kill)
     reg._sessions[("c1", "canvas_1")] = _session()
     reg._sessions[("c1", "canvas_2")] = _session(tab_id="canvas_2")
@@ -146,6 +163,7 @@ def test_no_agent_side_imports():
     load-bearing 'agent cannot touch terminals' guarantee."""
     import pathlib
     import re
+
     root = pathlib.Path(__file__).resolve().parent.parent / "src" / "decafclaw"
     # Catches every realistic import spelling: "import decafclaw.terminals",
     # "from decafclaw.terminals import X", "from decafclaw import terminals",
@@ -163,6 +181,7 @@ def test_no_agent_side_imports():
 # ---------------------------------------------------------------------------
 # C4 — the object reachable from agent-side code cannot touch a PTY
 # ---------------------------------------------------------------------------
+
 
 def test_agent_terminal_handle_exposes_no_pty_access():
     """C4: Agent-facing terminal handle SHALL expose ONLY get/kill, NOT pty access."""
@@ -185,11 +204,13 @@ def test_agent_terminal_handle_exposes_no_pty_access():
     try:
         # Attempt 1: Look for an explicit AgentTerminalHandle class
         from decafclaw.terminals import AgentTerminalHandle
+
         handle = AgentTerminalHandle()
     except (ImportError, AttributeError):
         # Attempt 2: Maybe there's a factory function
         try:
             from decafclaw.terminals import get_agent_terminal_handle
+
             handle = get_agent_terminal_handle()
         except (ImportError, AttributeError):
             # Implementation doesn't exist yet - fail with clear guidance
@@ -202,10 +223,10 @@ def test_agent_terminal_handle_exposes_no_pty_access():
             )
 
     # Verify the handle HAS the required safe methods
-    assert hasattr(handle, "get") and callable(handle.get), \
-        "Agent terminal handle must provide callable 'get' method"
-    assert hasattr(handle, "kill") and callable(handle.kill), \
+    assert hasattr(handle, "get") and callable(handle.get), "Agent terminal handle must provide callable 'get' method"
+    assert hasattr(handle, "kill") and callable(handle.kill), (
         "Agent terminal handle must provide callable 'kill' method"
+    )
 
     # Verify the handle does NOT expose forbidden PTY-access methods
     forbidden = ["spawn", "attach", "detach", "write_input", "set_viewport", "shutdown_all"]
@@ -214,5 +235,4 @@ def test_agent_terminal_handle_exposes_no_pty_access():
         if hasattr(handle, method_name):
             exposed.append(method_name)
 
-    assert not exposed, \
-        f"Agent terminal handle must NOT expose PTY-access methods, but found: {exposed}"
+    assert not exposed, f"Agent terminal handle must NOT expose PTY-access methods, but found: {exposed}"

@@ -12,13 +12,17 @@ from decafclaw.widgets import (
 )
 
 
-def _write_widget(catalog: Path, name: str, *,
-                  schema: dict | None = None,
-                  description: str = "test widget",
-                  modes: list[str] | None = None,
-                  accepts_input: bool = False,
-                  js_body: str = "// stub\n",
-                  skip_js: bool = False) -> None:
+def _write_widget(
+    catalog: Path,
+    name: str,
+    *,
+    schema: dict | None = None,
+    description: str = "test widget",
+    modes: list[str] | None = None,
+    accepts_input: bool = False,
+    js_body: str = "// stub\n",
+    skip_js: bool = False,
+) -> None:
     d = catalog / name
     d.mkdir(parents=True)
     descriptor = {
@@ -26,7 +30,8 @@ def _write_widget(catalog: Path, name: str, *,
         "description": description,
         "modes": modes or ["inline"],
         "accepts_input": accepts_input,
-        "data_schema": schema or {
+        "data_schema": schema
+        or {
             "type": "object",
             "required": ["value"],
             "properties": {"value": {"type": "string"}},
@@ -41,6 +46,7 @@ def _write_widget(catalog: Path, name: str, *,
 def fake_config(tmp_path):
     class _Cfg:
         agent_path = tmp_path / "agent"
+
     return _Cfg()
 
 
@@ -48,18 +54,14 @@ def fake_config(tmp_path):
 
 
 def test_scan_empty_dirs(tmp_path, fake_config):
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=tmp_path / "bundled",
-                               admin_dir=tmp_path / "admin")
+    reg = load_widget_registry(fake_config, bundled_dir=tmp_path / "bundled", admin_dir=tmp_path / "admin")
     assert reg.list() == []
 
 
 def test_scan_bundled_only(tmp_path, fake_config):
     bundled = tmp_path / "bundled"
     _write_widget(bundled, "data_table")
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled,
-                               admin_dir=tmp_path / "admin")
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=tmp_path / "admin")
     assert reg.tier("data_table") == "bundled"
     assert reg.get("data_table") is not None
 
@@ -67,12 +69,9 @@ def test_scan_bundled_only(tmp_path, fake_config):
 def test_admin_overrides_bundled(tmp_path, fake_config):
     bundled = tmp_path / "bundled"
     admin = tmp_path / "admin"
-    _write_widget(bundled, "pie_chart",
-                  description="bundled version")
-    _write_widget(admin, "pie_chart",
-                  description="admin version")
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled, admin_dir=admin)
+    _write_widget(bundled, "pie_chart", description="bundled version")
+    _write_widget(admin, "pie_chart", description="admin version")
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=admin)
     assert reg.tier("pie_chart") == "admin"
     assert reg.get("pie_chart").description == "admin version"
 
@@ -81,9 +80,7 @@ def test_missing_widget_js_skipped(tmp_path, fake_config, caplog):
     bundled = tmp_path / "bundled"
     _write_widget(bundled, "no_js", skip_js=True)
     _write_widget(bundled, "ok_one")
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled,
-                               admin_dir=tmp_path / "admin")
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=tmp_path / "admin")
     assert reg.get("no_js") is None
     assert reg.get("ok_one") is not None
 
@@ -94,9 +91,7 @@ def test_malformed_widget_json_skipped(tmp_path, fake_config, caplog):
     d.mkdir(parents=True)
     (d / "widget.json").write_text("{ not valid json")
     (d / "widget.js").write_text("// stub")
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled,
-                               admin_dir=tmp_path / "admin")
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=tmp_path / "admin")
     assert reg.get("bad") is None
 
 
@@ -105,23 +100,23 @@ def test_meta_schema_rejects_missing_fields(tmp_path, fake_config):
     d = bundled / "incomplete"
     d.mkdir(parents=True)
     # Missing `data_schema` and `modes`.
-    (d / "widget.json").write_text(json.dumps({
-        "name": "incomplete",
-        "description": "x",
-    }))
+    (d / "widget.json").write_text(
+        json.dumps(
+            {
+                "name": "incomplete",
+                "description": "x",
+            }
+        )
+    )
     (d / "widget.js").write_text("// stub")
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled,
-                               admin_dir=tmp_path / "admin")
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=tmp_path / "admin")
     assert reg.get("incomplete") is None
 
 
 def test_meta_schema_rejects_invalid_mode(tmp_path, fake_config):
     bundled = tmp_path / "bundled"
     _write_widget(bundled, "weird", modes=["something_else"])
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled,
-                               admin_dir=tmp_path / "admin")
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=tmp_path / "admin")
     assert reg.get("weird") is None
 
 
@@ -130,17 +125,19 @@ def test_meta_schema_rejects_invalid_mode(tmp_path, fake_config):
 
 def test_validate_happy(tmp_path, fake_config):
     bundled = tmp_path / "bundled"
-    _write_widget(bundled, "data_table", schema={
-        "type": "object",
-        "required": ["columns", "rows"],
-        "properties": {
-            "columns": {"type": "array"},
-            "rows": {"type": "array"},
+    _write_widget(
+        bundled,
+        "data_table",
+        schema={
+            "type": "object",
+            "required": ["columns", "rows"],
+            "properties": {
+                "columns": {"type": "array"},
+                "rows": {"type": "array"},
+            },
         },
-    })
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled,
-                               admin_dir=tmp_path / "admin")
+    )
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=tmp_path / "admin")
     ok, err = reg.validate("data_table", {"columns": [], "rows": []})
     assert ok is True
     assert err is None
@@ -148,17 +145,19 @@ def test_validate_happy(tmp_path, fake_config):
 
 def test_validate_missing_required_field(tmp_path, fake_config):
     bundled = tmp_path / "bundled"
-    _write_widget(bundled, "data_table", schema={
-        "type": "object",
-        "required": ["columns", "rows"],
-        "properties": {
-            "columns": {"type": "array"},
-            "rows": {"type": "array"},
+    _write_widget(
+        bundled,
+        "data_table",
+        schema={
+            "type": "object",
+            "required": ["columns", "rows"],
+            "properties": {
+                "columns": {"type": "array"},
+                "rows": {"type": "array"},
+            },
         },
-    })
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled,
-                               admin_dir=tmp_path / "admin")
+    )
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=tmp_path / "admin")
     ok, err = reg.validate("data_table", {"columns": []})  # missing rows
     assert ok is False
     assert err is not None
@@ -166,9 +165,7 @@ def test_validate_missing_required_field(tmp_path, fake_config):
 
 
 def test_validate_unknown_widget(tmp_path, fake_config):
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=tmp_path / "bundled",
-                               admin_dir=tmp_path / "admin")
+    reg = load_widget_registry(fake_config, bundled_dir=tmp_path / "bundled", admin_dir=tmp_path / "admin")
     ok, err = reg.validate("no_such_widget", {})
     assert ok is False
     assert "unknown widget" in err
@@ -178,14 +175,16 @@ def test_validate_does_not_raise_on_bad_input_shape(tmp_path, fake_config):
     """Validate must never raise, even with odd inputs — callers expect
     a (bool, str|None) return."""
     bundled = tmp_path / "bundled"
-    _write_widget(bundled, "strict", schema={
-        "type": "object",
-        "required": ["x"],
-        "properties": {"x": {"type": "integer"}},
-    })
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled,
-                               admin_dir=tmp_path / "admin")
+    _write_widget(
+        bundled,
+        "strict",
+        schema={
+            "type": "object",
+            "required": ["x"],
+            "properties": {"x": {"type": "integer"}},
+        },
+    )
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=tmp_path / "admin")
     ok, err = reg.validate("strict", {"x": "not an integer"})
     assert ok is False
     assert err is not None
@@ -197,18 +196,14 @@ def test_validate_does_not_raise_on_bad_input_shape(tmp_path, fake_config):
 def test_resolve_path_returns_js(tmp_path, fake_config):
     bundled = tmp_path / "bundled"
     _write_widget(bundled, "foo")
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=bundled,
-                               admin_dir=tmp_path / "admin")
+    reg = load_widget_registry(fake_config, bundled_dir=bundled, admin_dir=tmp_path / "admin")
     path = reg.resolve_path("foo")
     assert path.name == "widget.js"
     assert path.is_file()
 
 
 def test_resolve_path_unknown_raises(tmp_path, fake_config):
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=tmp_path / "bundled",
-                               admin_dir=tmp_path / "admin")
+    reg = load_widget_registry(fake_config, bundled_dir=tmp_path / "bundled", admin_dir=tmp_path / "admin")
     with pytest.raises(KeyError):
         reg.resolve_path("nope")
 
@@ -222,9 +217,9 @@ def test_registry_empty_by_default():
 
 def test_load_registry_missing_dirs_does_not_raise(fake_config):
     """Startup must tolerate entirely-absent catalog dirs (first-run)."""
-    reg = load_widget_registry(fake_config,
-                               bundled_dir=Path("/nonexistent/bundled"),
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(
+        fake_config, bundled_dir=Path("/nonexistent/bundled"), admin_dir=Path("/nonexistent/admin")
+    )
     assert reg.list() == []
 
 
@@ -234,8 +229,7 @@ def test_load_registry_missing_dirs_does_not_raise(fake_config):
 def test_bundled_data_table_is_registered(fake_config):
     """A default registry scan should find the bundled data_table widget
     shipped with the app, with the expected schema shape."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("data_table")
     assert desc is not None
     assert desc.tier == "bundled"
@@ -246,10 +240,13 @@ def test_bundled_data_table_is_registered(fake_config):
     assert "columns" in required
     assert "rows" in required
     # A happy payload validates.
-    ok, err = reg.validate("data_table", {
-        "columns": [{"key": "a", "label": "A"}],
-        "rows": [{"a": 1}],
-    })
+    ok, err = reg.validate(
+        "data_table",
+        {
+            "columns": [{"key": "a", "label": "A"}],
+            "rows": [{"a": 1}],
+        },
+    )
     assert ok is True, err
     # A missing-rows payload fails.
     ok, err = reg.validate("data_table", {"columns": []})
@@ -258,8 +255,7 @@ def test_bundled_data_table_is_registered(fake_config):
 
 def test_bundled_multiple_choice_is_registered(fake_config):
     """Fresh registry scan finds the bundled multiple_choice widget."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("multiple_choice")
     assert desc is not None
     assert desc.tier == "bundled"
@@ -268,21 +264,22 @@ def test_bundled_multiple_choice_is_registered(fake_config):
     required = desc.data_schema.get("required", [])
     assert "prompt" in required
     assert "options" in required
-    ok, err = reg.validate("multiple_choice", {
-        "prompt": "pick one",
-        "options": [{"value": "a", "label": "Alpha"}],
-    })
+    ok, err = reg.validate(
+        "multiple_choice",
+        {
+            "prompt": "pick one",
+            "options": [{"value": "a", "label": "Alpha"}],
+        },
+    )
     assert ok is True, err
     # Empty options list violates minItems.
-    ok, _ = reg.validate("multiple_choice",
-                         {"prompt": "x", "options": []})
+    ok, _ = reg.validate("multiple_choice", {"prompt": "x", "options": []})
     assert ok is False
 
 
 def test_bundled_markdown_document_is_registered(fake_config):
     """Fresh registry scan finds the bundled markdown_document widget."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("markdown_document")
     assert desc is not None
     assert desc.tier == "bundled"
@@ -297,8 +294,7 @@ def test_bundled_markdown_document_is_registered(fake_config):
 
 def test_bundled_iframe_sandbox_is_registered(fake_config):
     """Fresh registry scan finds the bundled iframe_sandbox widget descriptor."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("iframe_sandbox")
     assert desc is not None
     assert desc.tier == "bundled"
@@ -310,8 +306,7 @@ def test_bundled_iframe_sandbox_is_registered(fake_config):
     ok, err = reg.validate("iframe_sandbox", {"body": "<h1>Hi</h1>"})
     assert ok is True, err
     # body + title is valid
-    ok, err = reg.validate("iframe_sandbox",
-                           {"body": "<p>x</p>", "title": "demo"})
+    ok, err = reg.validate("iframe_sandbox", {"body": "<p>x</p>", "title": "demo"})
     assert ok is True, err
     # missing body rejected
     bad, _ = reg.validate("iframe_sandbox", {"title": "no body"})
@@ -322,13 +317,11 @@ def test_bundled_iframe_sandbox_is_registered(fake_config):
     # additionalProperties: false rejects unknown keys (safety against
     # agent confusion). The server-injected `html` key is in `properties`,
     # so it's allowed for round-trips.
-    bad, _ = reg.validate("iframe_sandbox",
-                          {"body": "x", "unexpected": "no"})
+    bad, _ = reg.validate("iframe_sandbox", {"body": "x", "unexpected": "no"})
     assert not bad
     # Round-trip with html field is permitted (allowed on input so
     # canvas_read → canvas_update doesn't fail; normalization regenerates).
-    ok, _ = reg.validate("iframe_sandbox",
-                         {"body": "x", "html": "<stale-doc>"})
+    ok, _ = reg.validate("iframe_sandbox", {"body": "x", "html": "<stale-doc>"})
     assert ok is True
     # Oversized body rejected (256 KB cap)
     big = "a" * (262144 + 1)
@@ -338,8 +331,7 @@ def test_bundled_iframe_sandbox_is_registered(fake_config):
     # field) — closes the loophole where a tiny body + huge html would
     # otherwise pass validation before normalize wipes html.
     huge_html = "a" * (524288 + 1)
-    bad, err = reg.validate("iframe_sandbox",
-                            {"body": "x", "html": huge_html})
+    bad, err = reg.validate("iframe_sandbox", {"body": "x", "html": huge_html})
     assert not bad
 
 
@@ -352,17 +344,19 @@ def test_iframe_sandbox_normalizer_skips_admin_override(tmp_path, fake_config):
     instead of wrapping (which would crash or corrupt admin-tier data).
     """
     admin = tmp_path / "admin"
-    _write_widget(admin, "iframe_sandbox",
-                  description="admin override with different shape",
-                  modes=["inline"],
-                  schema={
-                      "type": "object",
-                      "required": ["payload"],
-                      "properties": {"payload": {"type": "string"}},
-                      "additionalProperties": False,
-                  })
-    reg = load_widget_registry(fake_config,
-                               admin_dir=admin)
+    _write_widget(
+        admin,
+        "iframe_sandbox",
+        description="admin override with different shape",
+        modes=["inline"],
+        schema={
+            "type": "object",
+            "required": ["payload"],
+            "properties": {"payload": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    )
+    reg = load_widget_registry(fake_config, admin_dir=admin)
     desc = reg.get("iframe_sandbox")
     assert desc is not None
     assert desc.tier == "admin"
@@ -379,10 +373,8 @@ def test_iframe_sandbox_normalizer_skips_admin_override(tmp_path, fake_config):
 
 def test_iframe_sandbox_normalize_injects_csp(fake_config):
     """Normalization wraps body into a CSP-locked HTML document."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
-    out = reg.normalize("iframe_sandbox",
-                        {"body": "<h1>Hello</h1>", "title": "Demo"})
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
+    out = reg.normalize("iframe_sandbox", {"body": "<h1>Hello</h1>", "title": "Demo"})
     assert "html" in out
     wrapped = out["html"]
     # Doctype first
@@ -410,8 +402,7 @@ def test_iframe_sandbox_normalize_injects_csp(fake_config):
 
 def test_iframe_sandbox_normalize_no_title(fake_config):
     """Normalization works without title — no <title> tag emitted."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     out = reg.normalize("iframe_sandbox", {"body": "<p>x</p>"})
     assert "<title>" not in out["html"]
     assert "title" not in out
@@ -419,12 +410,14 @@ def test_iframe_sandbox_normalize_no_title(fake_config):
 
 def test_iframe_sandbox_normalize_escapes_title(fake_config):
     """Adversarial title can't break out of the <title> element."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
-    out = reg.normalize("iframe_sandbox", {
-        "body": "<p>safe</p>",
-        "title": "</title><script>alert(1)</script>",
-    })
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
+    out = reg.normalize(
+        "iframe_sandbox",
+        {
+            "body": "<p>safe</p>",
+            "title": "</title><script>alert(1)</script>",
+        },
+    )
     wrapped = out["html"]
     # Literal `</title>` must not appear unescaped — html.escape converts
     # `<` and `>` to entities, so the dangerous closing tag is neutralized.
@@ -438,26 +431,26 @@ def test_iframe_sandbox_normalize_escapes_title(fake_config):
 def test_iframe_sandbox_normalize_idempotent(fake_config):
     """Normalize regenerates html from body — re-normalizing same input
     produces identical output, and a stale html field gets overwritten."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
-    once = reg.normalize("iframe_sandbox",
-                         {"body": "<p>same</p>", "title": "T"})
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
+    once = reg.normalize("iframe_sandbox", {"body": "<p>same</p>", "title": "T"})
     twice = reg.normalize("iframe_sandbox", once)
     assert once == twice
 
     # Stale html in input must not survive — should be regenerated from body.
-    poisoned = reg.normalize("iframe_sandbox", {
-        "body": "<p>fresh</p>",
-        "html": "<!doctype html><html>STALE</html>",
-    })
+    poisoned = reg.normalize(
+        "iframe_sandbox",
+        {
+            "body": "<p>fresh</p>",
+            "html": "<!doctype html><html>STALE</html>",
+        },
+    )
     assert "STALE" not in poisoned["html"]
     assert "<p>fresh</p>" in poisoned["html"]
 
 
 def test_normalize_passes_through_for_non_iframe_widgets(fake_config):
     """Widgets without a registered normalizer get their data unchanged."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     data = {"content": "# hi"}
     out = reg.normalize("markdown_document", data)
     assert out is data  # exact same object — no copy, no mutation
@@ -465,8 +458,7 @@ def test_normalize_passes_through_for_non_iframe_widgets(fake_config):
 
 def test_bundled_code_block_is_registered(fake_config):
     """Fresh registry scan finds the bundled code_block widget descriptor."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("code_block")
     assert desc is not None
     assert desc.tier == "bundled"
@@ -496,14 +488,14 @@ def test_bundled_code_block_is_registered(fake_config):
 def test_normalize_passes_config_to_normalizer(fake_config):
     """Registry threads its config into normalizers."""
     import decafclaw.widgets as widgets_mod
+
     seen = {}
 
     def _spy(data, config):
         seen["config"] = config
         return data
 
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     # iframe_sandbox is bundled, so its normalizer runs; temporarily swap it.
     orig = widgets_mod._NORMALIZERS.get("iframe_sandbox")
     widgets_mod._NORMALIZERS["iframe_sandbox"] = _spy
@@ -515,8 +507,7 @@ def test_normalize_passes_config_to_normalizer(fake_config):
 
 
 def test_bundled_map_is_registered(fake_config):
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("map")
     assert desc is not None
     assert desc.tier == "bundled"
@@ -528,10 +519,15 @@ def test_bundled_map_is_registered(fake_config):
     ok, err = reg.validate("map", {"markers": [{"lat": 37.8, "lng": -122.3}]})
     assert ok is True, err
     # Valid: marker with label + popup, explicit center/zoom.
-    ok, err = reg.validate("map", {
-        "markers": [{"lat": 1.0, "lng": 2.0, "label": "A", "popup": "hi"}],
-        "center": {"lat": 1.0, "lng": 2.0}, "zoom": 10, "title": "Map",
-    })
+    ok, err = reg.validate(
+        "map",
+        {
+            "markers": [{"lat": 1.0, "lng": 2.0, "label": "A", "popup": "hi"}],
+            "center": {"lat": 1.0, "lng": 2.0},
+            "zoom": 10,
+            "title": "Map",
+        },
+    )
     assert ok is True, err
     # Valid: empty map (no markers, no center) — forgiving.
     ok, err = reg.validate("map", {"markers": []})
@@ -555,15 +551,13 @@ def _map_config_stub(tmp_path, tile_url, attribution, max_zoom=11):
 
     class _Cfg:
         agent_path = tmp_path / "agent"
-        widgets = WidgetsConfig(map=MapWidgetConfig(
-            tile_url=tile_url, tile_attribution=attribution, max_zoom=max_zoom))
+        widgets = WidgetsConfig(map=MapWidgetConfig(tile_url=tile_url, tile_attribution=attribution, max_zoom=max_zoom))
+
     return _Cfg()
 
 
 def test_map_normalize_injects_tile_config(tmp_path):
-    cfg = _map_config_stub(tmp_path,
-                           "https://custom.test/{z}/{x}/{y}.png", "custom attr",
-                           max_zoom=11)
+    cfg = _map_config_stub(tmp_path, "https://custom.test/{z}/{x}/{y}.png", "custom attr", max_zoom=11)
     reg = load_widget_registry(cfg, admin_dir=Path("/nonexistent/admin"))
     out = reg.normalize("map", {"markers": [{"lat": 1.0, "lng": 2.0}]})
     assert out["tile_url"] == "https://custom.test/{z}/{x}/{y}.png"
@@ -575,15 +569,15 @@ def test_map_normalize_injects_tile_config(tmp_path):
 
 
 def test_map_normalize_overwrites_agent_supplied_tile(tmp_path):
-    cfg = _map_config_stub(tmp_path,
-                           "https://custom.test/{z}/{x}/{y}.png", "custom attr")
-    out = load_widget_registry(
-        cfg, admin_dir=Path("/nonexistent/admin")
-    ).normalize("map", {
-        "markers": [],
-        "tile_url": "https://evil.test/{z}/{x}/{y}.png",
-        "tile_attribution": "spoof",
-    })
+    cfg = _map_config_stub(tmp_path, "https://custom.test/{z}/{x}/{y}.png", "custom attr")
+    out = load_widget_registry(cfg, admin_dir=Path("/nonexistent/admin")).normalize(
+        "map",
+        {
+            "markers": [],
+            "tile_url": "https://evil.test/{z}/{x}/{y}.png",
+            "tile_attribution": "spoof",
+        },
+    )
     assert out["tile_url"] == "https://custom.test/{z}/{x}/{y}.png"
     assert out["tile_attribution"] == "custom attr"
 
@@ -600,6 +594,7 @@ def test_map_normalize_falls_back_to_defaults_without_config():
     sane OSM defaults rather than crashing."""
     import decafclaw.widgets as widgets_mod
     from decafclaw.config_types import MapWidgetConfig
+
     out = widgets_mod._normalize_map({"markers": []}, None)
     assert out["tile_url"] == MapWidgetConfig().tile_url
     assert out["tile_attribution"] == MapWidgetConfig().tile_attribution
@@ -608,8 +603,7 @@ def test_map_normalize_falls_back_to_defaults_without_config():
 
 def test_sticky_is_a_valid_mode(fake_config):
     """Verify that sticky mode is a valid widget mode option."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("markdown_document")
     assert desc is not None
     assert "sticky" in desc.modes
@@ -617,8 +611,7 @@ def test_sticky_is_a_valid_mode(fake_config):
 
 def test_bundled_progress_tracker_is_registered(fake_config):
     """Fresh registry scan finds the bundled progress_tracker widget."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("progress_tracker")
     assert desc is not None
     assert desc.tier == "bundled"
@@ -628,31 +621,36 @@ def test_bundled_progress_tracker_is_registered(fake_config):
 
 def test_progress_tracker_validates_all_statuses(fake_config):
     """The schema accepts every status value and rejects an unknown one."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
-    ok, err = reg.validate("progress_tracker", {
-        "title": "Work",
-        "summary": "1/5",
-        "steps": [
-            {"label": "a", "status": "done", "note": "n"},
-            {"label": "b", "status": "in_progress"},
-            {"label": "c", "status": "pending"},
-            {"label": "d", "status": "failed"},
-            {"label": "e", "status": "skipped"},
-        ],
-    })
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
+    ok, err = reg.validate(
+        "progress_tracker",
+        {
+            "title": "Work",
+            "summary": "1/5",
+            "steps": [
+                {"label": "a", "status": "done", "note": "n"},
+                {"label": "b", "status": "in_progress"},
+                {"label": "c", "status": "pending"},
+                {"label": "d", "status": "failed"},
+                {"label": "e", "status": "skipped"},
+            ],
+        },
+    )
     assert ok, err
-    bad_ok, _ = reg.validate("progress_tracker", {
-        "steps": [{"label": "x", "status": "bogus"}],
-    })
+    bad_ok, _ = reg.validate(
+        "progress_tracker",
+        {
+            "steps": [{"label": "x", "status": "bogus"}],
+        },
+    )
     assert bad_ok is False
     missing_ok, _ = reg.validate("progress_tracker", {"steps": [{"label": "x"}]})
     assert missing_ok is False
 
+
 def test_diff_view_catalog(fake_config):
     """WHEN widget metadata is requested via `/api/widgets`, THEN `diff_view` SHALL be returned with modes `["inline", "canvas"]`, `accepts_input: false`, and the correct data schema."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("diff_view")
     assert desc is not None
     assert desc.tier == "bundled"
@@ -672,8 +670,7 @@ def test_diff_view_catalog(fake_config):
 
 def test_diff_view_widget_validation(fake_config):
     """WHEN the `diff_view` widget is rendered with `before` and `after` text blobs, THEN the widget SHALL display the diff between the two texts with syntax highlighting and support switching between unified and split views."""
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     ok, err = reg.validate("diff_view", {"before": "a", "after": "b"})
     assert ok is True, err
     # test required
@@ -687,8 +684,7 @@ def test_diff_view_widget_validation(fake_config):
 
 
 def test_json_view_expand_depth(fake_config):
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("json_view")
     assert desc is not None
     assert desc.tier == "bundled"
@@ -699,8 +695,7 @@ def test_json_view_expand_depth(fake_config):
 
 
 def test_json_view_path_filter(fake_config):
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("json_view")
     assert desc is not None
     # test validation with path_filter
@@ -709,8 +704,7 @@ def test_json_view_path_filter(fake_config):
 
 
 def test_json_view_schema_validation(fake_config):
-    reg = load_widget_registry(fake_config,
-                               admin_dir=Path("/nonexistent/admin"))
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("json_view")
     assert desc is not None
 

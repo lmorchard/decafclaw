@@ -86,12 +86,15 @@ class _EvalConversationManager(ConversationManager):
                 return
             try:
                 await self.respond_to_confirmation(
-                    conv_id, cid, approved=approved,
+                    conv_id,
+                    cid,
+                    approved=approved,
                 )
             except Exception:
                 log.exception(
                     "Eval auto-confirm resolver failed for conv %s / cid %s",
-                    conv_id, cid,
+                    conv_id,
+                    cid,
                 )
 
         self.subscribe(conv_id, _resolver)
@@ -141,9 +144,7 @@ def _seed_conversation_history(config, test_case: dict) -> list[dict]:
     out: list[dict] = []
     for i, msg in enumerate(seed):
         if not isinstance(msg, dict) or "role" not in msg:
-            raise ValueError(
-                f"setup.conversation_history[{i}] must be a dict with a 'role' key"
-            )
+            raise ValueError(f"setup.conversation_history[{i}] must be a dict with a 'role' key")
         # Stamp upfront so the returned list and on-disk archive agree.
         stamped = {**msg, "timestamp": msg.get("timestamp") or now_iso}
         append_message(config, "eval", stamped)
@@ -154,6 +155,7 @@ def _seed_conversation_history(config, test_case: dict) -> list[dict]:
 async def _setup_workspace(config, test_case: dict):
     """Create fixture data in the temp workspace."""
     import shutil
+
     setup = _setup_of(test_case)
 
     # Copy pre-built embeddings fixture if specified
@@ -202,16 +204,11 @@ async def _setup_workspace(config, test_case: dict):
     # Index journal entries for semantic search if strategy is semantic
     if config.embedding.search_strategy == "semantic" and memories:
         from ..embeddings import index_entry
+
         for mem in memories:
             tag_str = ", ".join(mem.get("tags", []))
-            entry_text = (
-                f"## 2026-01-01 00:00\n\n"
-                f"- **channel:** eval (eval)\n"
-                f"- **tags:** {tag_str}\n\n"
-                f"{mem['content']}"
-            )
-            await index_entry(config, "eval-fixture", entry_text,
-                              source_type="journal")
+            entry_text = f"## 2026-01-01 00:00\n\n- **channel:** eval (eval)\n- **tags:** {tag_str}\n\n{mem['content']}"
+            await index_entry(config, "eval-fixture", entry_text, source_type="journal")
 
 
 def _count_tool_calls(history: list) -> int:
@@ -240,6 +237,7 @@ def _collect_tool_calls(history: list) -> list[tuple[str, dict]]:
     robust against malformed model output.
     """
     import json
+
     calls: list[tuple[str, dict]] = []
     for msg in history:
         if msg.get("role") != "assistant":
@@ -289,8 +287,7 @@ def _collect_tool_errors(history: list) -> list[str]:
     return errors
 
 
-def _check_workspace_assertions(test_case: dict,
-                                workspace_path: Path) -> tuple[bool, str]:
+def _check_workspace_assertions(test_case: dict, workspace_path: Path) -> tuple[bool, str]:
     """Check post-turn workspace-state assertions.
 
     Reads ``test_case["expect_workspace"]`` (top-level, parallel to ``setup:``)
@@ -331,15 +328,9 @@ def _check_workspace_assertions(test_case: dict,
         content = dest.read_text(encoding="utf-8")
         if expected.startswith("re:"):
             if not re.search(expected[3:], content, re.IGNORECASE | re.DOTALL):
-                return False, (
-                    f"workspace_files[{rel_path!r}]: content did not match "
-                    f"pattern {expected!r}"
-                )
+                return False, (f"workspace_files[{rel_path!r}]: content did not match pattern {expected!r}")
         elif expected.lower() not in content.lower():
-            return False, (
-                f"workspace_files[{rel_path!r}]: content did not contain "
-                f"expected substring {expected!r}"
-            )
+            return False, (f"workspace_files[{rel_path!r}]: content did not contain expected substring {expected!r}")
 
     for rel_path in expect_ws.get("workspace_file_exists") or []:
         dest = _resolve(rel_path)
@@ -354,11 +345,14 @@ def _check_workspace_assertions(test_case: dict,
     return True, ""
 
 
-def _check_assertions(test_case: dict, response: str, tool_calls: int,
-                      tool_errors: int = 0,
-                      tool_names: list[str] | None = None,
-                      tool_calls_detail: list[tuple[str, dict]] | None = None,
-                      ) -> tuple[bool, str]:
+def _check_assertions(
+    test_case: dict,
+    response: str,
+    tool_calls: int,
+    tool_errors: int = 0,
+    tool_names: list[str] | None = None,
+    tool_calls_detail: list[tuple[str, dict]] | None = None,
+) -> tuple[bool, str]:
     """Check test assertions. Returns (passed, failure_reason)."""
     import re
 
@@ -436,9 +430,7 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
             got = sum(1 for n in names if n == name)
             if got != want:
                 paren = f"called tools: {called_list}" if names else "no tools were called"
-                return False, (
-                    f"Tool count mismatch for '{name}': expected {want}, got {got} ({paren})"
-                )
+                return False, (f"Tool count mismatch for '{name}': expected {want}, got {got} ({paren})")
 
     # expect_tool_args: assert a tool was called with specific argument
     # values. Each spec is {tool: <name>, args: {k: v, ...}}; it passes if at
@@ -454,20 +446,12 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
             want_tool = spec.get("tool")
             want_args = spec.get("args") or {}
             matched = any(
-                name == want_tool
-                and all(args.get(k) == v for k, v in want_args.items())
-                for name, args in detail
+                name == want_tool and all(args.get(k) == v for k, v in want_args.items()) for name, args in detail
             )
             if not matched:
-                got = [
-                    {k: a.get(k) for k in want_args}
-                    for n, a in detail if n == want_tool
-                ]
+                got = [{k: a.get(k) for k in want_args} for n, a in detail if n == want_tool]
                 if got:
-                    return False, (
-                        f"Expected {want_tool} called with {want_args}, but "
-                        f"matching-key args were {got}"
-                    )
+                    return False, (f"Expected {want_tool} called with {want_args}, but matching-key args were {got}")
                 return False, (
                     f"Expected {want_tool} called with {want_args}, but "
                     f"{want_tool} was not called (called: {called_list})"
@@ -488,15 +472,17 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
 # ``test_known_setup_keys_match_docs`` is the keeper: it asserts this set
 # matches the ``setup.*`` rows in the docs/eval-loop.md table, so adding a
 # key means touching both and forgetting either one fails.
-_KNOWN_SETUP_KEYS = frozenset({
-    "skills",
-    "memories",
-    "workspace_files",
-    "conversation_history",
-    "embeddings_fixture",
-    "auto_confirm",
-    "config_overrides",
-})
+_KNOWN_SETUP_KEYS = frozenset(
+    {
+        "skills",
+        "memories",
+        "workspace_files",
+        "conversation_history",
+        "embeddings_fixture",
+        "auto_confirm",
+        "config_overrides",
+    }
+)
 
 # Bespoke setup keys folded into the generic config_overrides mechanism.
 # Kept only to fail loudly — a silently-ignored key would look like a
@@ -542,10 +528,7 @@ def _setup_of(test_case: dict) -> dict:
         # mixed-type set raises TypeError, and joining a non-str does too —
         # either would mask the validation error we're trying to report.
         names = ", ".join(sorted(str(k) for k in unknown))
-        raise ValueError(
-            f"unknown setup key(s): {names}. "
-            f"Valid keys: {', '.join(sorted(_KNOWN_SETUP_KEYS))}"
-        )
+        raise ValueError(f"unknown setup key(s): {names}. Valid keys: {', '.join(sorted(_KNOWN_SETUP_KEYS))}")
     return setup
 
 
@@ -573,7 +556,7 @@ def _nest_overrides(flat: dict) -> dict:
         for i, part in enumerate(parts[:-1]):
             existing = cursor.setdefault(part, {})
             if isinstance(existing, _Leaf):
-                prefix = ".".join(parts[:i + 1])
+                prefix = ".".join(parts[: i + 1])
                 raise ValueError(
                     f"config_overrides: path conflict — '{path}' descends into "
                     f"'{prefix}', which another override sets as a value"
@@ -582,8 +565,7 @@ def _nest_overrides(flat: dict) -> dict:
         last = parts[-1]
         if isinstance(cursor.get(last), dict):
             raise ValueError(
-                f"config_overrides: path conflict — '{path}' is set as a value "
-                f"but other overrides descend into it"
+                f"config_overrides: path conflict — '{path}' is set as a value but other overrides descend into it"
             )
         cursor[last] = _Leaf(value)
     return nested
@@ -598,18 +580,14 @@ def _apply_overrides(obj: _T, overrides: dict, path: str = "") -> _T:
     # `isinstance(obj, type)` rules out a dataclass *class* (as opposed to an
     # instance), which `replace` cannot take.
     if not dataclasses.is_dataclass(obj) or isinstance(obj, type):
-        raise ValueError(
-            f"config_overrides: '{path}' is not a config section, so it has "
-            f"no fields to descend into"
-        )
+        raise ValueError(f"config_overrides: '{path}' is not a config section, so it has no fields to descend into")
     valid = {f.name for f in dataclasses.fields(obj)}
     kwargs = {}
     for key, node in overrides.items():
         full = f"{path}.{key}" if path else key
         if key not in valid:
             raise ValueError(
-                f"config_overrides: unknown config field '{full}'. "
-                f"Available here: {', '.join(sorted(valid))}"
+                f"config_overrides: unknown config field '{full}'. Available here: {', '.join(sorted(valid))}"
             )
         if isinstance(node, _Leaf):
             kwargs[key] = node.value
@@ -748,13 +726,18 @@ async def run_test(config: Config, test_case: dict) -> dict:
 
     def _handle_confirm(event):
         if event.get("type") == "tool_confirm_request":
-            asyncio.get_running_loop().create_task(bus.publish({
-                "type": "tool_confirm_response",
-                "context_id": event.get("context_id", ""),
-                "tool": event.get("tool", ""),
-                "tool_call_id": event.get("tool_call_id", ""),
-                "approved": auto_confirm,
-            }))
+            asyncio.get_running_loop().create_task(
+                bus.publish(
+                    {
+                        "type": "tool_confirm_response",
+                        "context_id": event.get("context_id", ""),
+                        "tool": event.get("tool", ""),
+                        "tool_call_id": event.get("tool_call_id", ""),
+                        "approved": auto_confirm,
+                    }
+                )
+            )
+
     bus.subscribe(_handle_confirm)
 
     # Determine turns
@@ -792,13 +775,15 @@ async def run_test(config: Config, test_case: dict) -> dict:
             start = time.monotonic()
             response = cmd.text
             duration = time.monotonic() - start
-            all_responses.append({
-                "turn": turn_idx + 1,
-                "input": turn["input"],
-                "response": response,
-                "duration_sec": round(duration, 1),
-                "tool_calls": 0,
-            })
+            all_responses.append(
+                {
+                    "turn": turn_idx + 1,
+                    "input": turn["input"],
+                    "response": response,
+                    "duration_sec": round(duration, 1),
+                    "tool_calls": 0,
+                }
+            )
             expect = turn.get("expect", {})
             if expect:
                 passed, reason = _check_assertions(turn, response, 0, 0, tool_names=[])
@@ -824,16 +809,20 @@ async def run_test(config: Config, test_case: dict) -> dict:
         turn_slice = history[pre_turn_history_len:]
         sidecar = read_context_sidecar(config, ctx.conv_id)
         diagnostics = build_turn_diagnostics(
-            sidecar, _collect_tool_calls(turn_slice), response,
+            sidecar,
+            _collect_tool_calls(turn_slice),
+            response,
         )
-        all_responses.append({
-            "turn": turn_idx + 1,
-            "input": turn["input"],
-            "response": response,
-            "duration_sec": round(duration, 1),
-            "tool_calls": tool_calls,
-            "diagnostics": diagnostics,
-        })
+        all_responses.append(
+            {
+                "turn": turn_idx + 1,
+                "input": turn["input"],
+                "response": response,
+                "duration_sec": round(duration, 1),
+                "tool_calls": tool_calls,
+                "diagnostics": diagnostics,
+            }
+        )
 
         # Check assertions for this turn
         expect = turn.get("expect", {})
@@ -841,9 +830,14 @@ async def run_test(config: Config, test_case: dict) -> dict:
             tool_errors = _count_tool_errors(history) - pre_turn_tool_errors
             turn_slice = history[pre_turn_history_len:]
             tool_names = _collect_tool_names(turn_slice)
-            passed, reason = _check_assertions(turn, response, tool_calls, tool_errors,
-                                               tool_names=tool_names,
-                                               tool_calls_detail=_collect_tool_calls(turn_slice))
+            passed, reason = _check_assertions(
+                turn,
+                response,
+                tool_calls,
+                tool_errors,
+                tool_names=tool_names,
+                tool_calls_detail=_collect_tool_calls(turn_slice),
+            )
             if not passed:
                 overall_passed = False
                 # Collect errors from this turn's messages only
@@ -859,7 +853,8 @@ async def run_test(config: Config, test_case: dict) -> dict:
     # before this passed — first failure still wins.
     if overall_passed:
         ws_passed, ws_reason = _check_workspace_assertions(
-            test_case, config.workspace_path,
+            test_case,
+            config.workspace_path,
         )
         if not ws_passed:
             overall_passed = False
@@ -899,10 +894,9 @@ async def run_test(config: Config, test_case: dict) -> dict:
     return result
 
 
-async def run_eval(yaml_data: list[dict], config: Config,
-                   model: str | None = None,
-                   verbose: bool = False,
-                   concurrency: int = 4) -> tuple[dict, str, str]:
+async def run_eval(
+    yaml_data: list[dict], config: Config, model: str | None = None, verbose: bool = False, concurrency: int = 4
+) -> tuple[dict, str, str]:
     """Run all test cases and return (results, timestamp, model_name).
 
     Tests run concurrently (up to `concurrency` at a time) but results
@@ -950,8 +944,7 @@ async def run_eval(yaml_data: list[dict], config: Config,
         "timestamp": datetime.now().isoformat(),
         "model": effective_model,
         "tests": [],
-        "summary": {"total": 0, "passed": 0, "failed": 0,
-                     "duration_sec": 0, "total_tokens": 0},
+        "summary": {"total": 0, "passed": 0, "failed": 0, "duration_sec": 0, "total_tokens": 0},
     }
 
     for i, result in enumerate(test_results):
@@ -974,7 +967,7 @@ async def run_eval(yaml_data: list[dict], config: Config,
         tools = result["tool_calls"]
         dur = result["duration_sec"]
         pad = "." * max(1, 50 - len(name))
-        print(f"[{i+1}/{total}] {name} {pad} {status}  ({dur}s, {tokens} tokens, {tools} tools)")
+        print(f"[{i + 1}/{total}] {name} {pad} {status}  ({dur}s, {tokens} tokens, {tools} tools)")
 
         if verbose and result.get("response"):
             print(f"         Response: {result['response'][:200]}")
@@ -982,17 +975,20 @@ async def run_eval(yaml_data: list[dict], config: Config,
             if diag:
                 tbs = diag.get("tokens_by_section") or {}
                 tok = "  ".join(f"{k}={v}" for k, v in tbs.items())
-                print(f"         Tokens: {tok}"
-                      f"  (active={diag.get('active_tools')}, "
-                      f"deferred={diag.get('deferred_tools')})")
+                print(
+                    f"         Tokens: {tok}"
+                    f"  (active={diag.get('active_tools')}, "
+                    f"deferred={diag.get('deferred_tools')})"
+                )
                 cands = diag.get("retrieved_candidates") or []
-                top = ", ".join(f"{c['file_path']}:{c.get('composite_score')}"
-                                for c in cands[:3])
+                top = ", ".join(f"{c['file_path']}:{c.get('composite_score')}" for c in cands[:3])
                 if top:
                     print(f"         Candidates: {top}")
-                print(f"         Read: {diag.get('files_read')}  "
-                      f"Cited: {diag.get('files_cited')}  "
-                      f"Tools: {diag.get('tool_calls', {}).get('names')}")
+                print(
+                    f"         Read: {diag.get('files_read')}  "
+                    f"Cited: {diag.get('files_cited')}  "
+                    f"Tools: {diag.get('tool_calls', {}).get('names')}"
+                )
 
         if result["status"] == "fail":
             print(f"         {result.get('failure_reason', '')}")
@@ -1014,7 +1010,6 @@ async def run_eval(yaml_data: list[dict], config: Config,
         print("\nBy axis (failure-mode scorecard):")
         for axis in sorted(by_axis):
             b = by_axis[axis]
-            print(f"  {axis:<22} {b['passed']}/{b['total']}  "
-                  f"({b['pass_rate'] * 100:.0f}%)")
+            print(f"  {axis:<22} {b['passed']}/{b['total']}  ({b['pass_rate'] * 100:.0f}%)")
 
     return results, timestamp, effective_model

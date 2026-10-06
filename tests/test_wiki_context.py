@@ -123,7 +123,11 @@ def test_compose_wiki_context_injects(ctx):
 
     composer = ContextComposer()
     msgs, entry = composer._compose_vault_references(
-        ctx, ctx.config, "tell me about @[[TestPage]]", [], ComposerMode.INTERACTIVE,
+        ctx,
+        ctx.config,
+        "tell me about @[[TestPage]]",
+        [],
+        ComposerMode.INTERACTIVE,
     )
     assert len(msgs) == 1
     assert "wiki content here" in msgs[0]["content"]
@@ -141,12 +145,19 @@ def test_compose_wiki_context_skips_already_injected(ctx):
     (vault_dir / "TestPage.md").write_text("wiki content")
 
     history = [
-        {"role": "vault_references", "content": "[Referenced wiki page: TestPage]\n\nwiki content",
-         "wiki_page": "TestPage"},
+        {
+            "role": "vault_references",
+            "content": "[Referenced wiki page: TestPage]\n\nwiki content",
+            "wiki_page": "TestPage",
+        },
     ]
     composer = ContextComposer()
     msgs, entry = composer._compose_vault_references(
-        ctx, ctx.config, "tell me more about @[[TestPage]]", history, ComposerMode.INTERACTIVE,
+        ctx,
+        ctx.config,
+        "tell me more about @[[TestPage]]",
+        history,
+        ComposerMode.INTERACTIVE,
     )
     assert len(msgs) == 0  # no duplicate injection
 
@@ -162,7 +173,11 @@ def test_compose_wiki_context_injects_open_page(ctx):
 
     composer = ContextComposer()
     msgs, _ = composer._compose_vault_references(
-        ctx, ctx.config, "hello", [], ComposerMode.INTERACTIVE,
+        ctx,
+        ctx.config,
+        "hello",
+        [],
+        ComposerMode.INTERACTIVE,
     )
     assert len(msgs) == 1
     assert "[Currently viewing wiki page: OpenPage]" in msgs[0]["content"]
@@ -177,7 +192,11 @@ def test_compose_wiki_context_missing_page(ctx):
 
     composer = ContextComposer()
     msgs, _ = composer._compose_vault_references(
-        ctx, ctx.config, "see @[[NonExistent]]", [], ComposerMode.INTERACTIVE,
+        ctx,
+        ctx.config,
+        "see @[[NonExistent]]",
+        [],
+        ComposerMode.INTERACTIVE,
     )
     assert len(msgs) == 1
     assert "[Wiki page 'NonExistent' not found]" in msgs[0]["content"]

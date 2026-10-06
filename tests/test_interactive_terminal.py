@@ -42,8 +42,7 @@ async def _noop_async(*args, **kwargs):
 
 
 @pytest.mark.asyncio
-async def test_text_before_tools_is_rendered_when_not_streaming(
-        ctx, monkeypatch, capsys):
+async def test_text_before_tools_is_rendered_when_not_streaming(ctx, monkeypatch, capsys):
     """#707: the loop-breaker docs claimed every transport rendered each
     iteration's preamble live, and the terminal rendered it nowhere — so
     `_finalize_with_note` was dropping text no one had ever seen."""
@@ -57,8 +56,7 @@ async def test_text_before_tools_is_rendered_when_not_streaming(
 
 
 @pytest.mark.asyncio
-async def test_text_before_tools_is_suppressed_when_streaming(
-        ctx, monkeypatch, capsys):
+async def test_text_before_tools_is_suppressed_when_streaming(ctx, monkeypatch, capsys):
     """With streaming on, the same text already arrived as `chunk` events —
     printing it again would duplicate every preamble."""
     ctx.config.llm.streaming = True

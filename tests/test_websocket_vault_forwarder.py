@@ -20,16 +20,20 @@ class TestVaultChangeForwarder:
     async def test_forwards_matching_event(self):
         ws_send = AsyncMock()
         forward = _make_vault_change_forwarder(ws_send)
-        await forward({
-            "type": "vault_changed",
-            "kind": "create",
-            "path": "creative/foo.md",
-        })
-        ws_send.assert_awaited_once_with({
-            "type": WSMessageType.VAULT_CHANGED,
-            "path": "creative/foo.md",
-            "kind": "create",
-        })
+        await forward(
+            {
+                "type": "vault_changed",
+                "kind": "create",
+                "path": "creative/foo.md",
+            }
+        )
+        ws_send.assert_awaited_once_with(
+            {
+                "type": WSMessageType.VAULT_CHANGED,
+                "path": "creative/foo.md",
+                "kind": "create",
+            }
+        )
 
     @pytest.mark.asyncio
     async def test_ignores_non_matching_event(self):

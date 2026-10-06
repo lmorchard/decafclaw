@@ -15,11 +15,15 @@ def test_archive_includes_timestamp(config):
 
 def test_archive_preserves_existing_timestamp(config):
     """If message already has a timestamp, don't overwrite it."""
-    append_message(config, "test-ts", {
-        "role": "user",
-        "content": "hello",
-        "timestamp": "2025-01-01T00:00:00",
-    })
+    append_message(
+        config,
+        "test-ts",
+        {
+            "role": "user",
+            "content": "hello",
+            "timestamp": "2025-01-01T00:00:00",
+        },
+    )
 
     msgs = read_archive(config, "test-ts")
     assert msgs[0]["timestamp"] == "2025-01-01T00:00:00"

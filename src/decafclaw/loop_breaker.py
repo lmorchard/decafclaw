@@ -86,6 +86,7 @@ class CallSignature(NamedTuple):
     giving generic advice — the detector used to hash the args away and keep
     only an is_error bool (#707).
     """
+
     tool_name: str
     fingerprint: str
     is_error: bool
@@ -100,6 +101,7 @@ class Offense:
     `tool_name` and `args_text` are empty for an error-surge trip, which by
     definition has no single offending call.
     """
+
     reason: str = ""
     tool_name: str = ""
     args_text: str = ""
@@ -117,6 +119,7 @@ class _Offender:
     only trips again once it reaches N+1, i.e. once the agent has repeated
     the call *again* after being told to stop.
     """
+
     tool_name: str
     count: int = 0
     last_tripped_count: int = 0
@@ -143,8 +146,8 @@ class LoopBreaker:
         self._cfg = config
         self._counts: dict[str, _Offender] = {}
         self._recent_errors: list[bool] = []  # rolling is_error flags
-        self._total_errors = 0                # monotonic; never trimmed
-        self._errors_at_last_trip = 0         # watermark for the error signal
+        self._total_errors = 0  # monotonic; never trimmed
+        self._errors_at_last_trip = 0  # watermark for the error signal
         self._trips = 0
         self._last_error_text = ""
         self._offense = Offense()
@@ -195,7 +198,8 @@ class LoopBreaker:
         a fully compliant agent still got walked to a hard stop (#707).
         """
         return [
-            entry for entry in self._counts.values()
+            entry
+            for entry in self._counts.values()
             if entry.count >= self._cfg.repeat_threshold
             # count == last_tripped_count → already tripped at this count, so
             # the agent stopped repeating it.
@@ -225,8 +229,7 @@ class LoopBreaker:
         """
         if sum(self._recent_errors) < self._cfg.error_threshold:
             return False
-        return (self._total_errors - self._errors_at_last_trip
-                >= self._cfg.error_threshold)
+        return self._total_errors - self._errors_at_last_trip >= self._cfg.error_threshold
 
     def verdict(self) -> LoopVerdict:
         """Compute the verdict for the most recently recorded round.
@@ -252,8 +255,7 @@ class LoopBreaker:
                 entry.last_tripped_count = entry.count
             self._errors_at_last_trip = self._total_errors
             self._offense = Offense(
-                reason=(f"called {offender.tool_name} {offender.count}× "
-                        "with the same args"),
+                reason=(f"called {offender.tool_name} {offender.count}× with the same args"),
                 tool_name=offender.tool_name,
                 args_text=offender.args_text,
                 error_text=offender.error_text,
@@ -263,8 +265,7 @@ class LoopBreaker:
             self._errors_at_last_trip = self._total_errors
             errs = sum(self._recent_errors)
             self._offense = Offense(
-                reason=(f"{errs} of the last {len(self._recent_errors)} "
-                        "tool results were errors"),
+                reason=(f"{errs} of the last {len(self._recent_errors)} tool results were errors"),
                 error_text=self._last_error_text,
                 signal="error_surge",
             )

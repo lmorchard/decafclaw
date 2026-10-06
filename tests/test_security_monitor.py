@@ -17,8 +17,8 @@ def test_evaluates_dangerous_commands_as_block(tmp_path: Path):
         "rm -rf ~/",
         "rm -rf $HOME/",
         "rm -rf '$HOME'",
-        "rm -rf \"$HOME/\"",
-        "rm -rf \"/\"",
+        'rm -rf "$HOME/"',
+        'rm -rf "/"',
         "dd if=/dev/zero of=/dev/sda",
         "shutdown -h now",
     ]
@@ -134,4 +134,3 @@ async def test_tier2_llm_classifier_ambiguous_command(tmp_path: Path):
         decision = await evaluate_command_llm(ambiguous_cmd, ctx=ctx, workspace_path=tmp_path)
         assert decision.status == SecurityStatus.BLOCK
         assert "Base64 obfuscated pipeline" in decision.reason
-

@@ -27,25 +27,15 @@ _skill_config: "SkillConfig | None" = None
 
 @dataclass
 class SkillConfig:
-    enabled: bool = field(
-        default=False, metadata={"env_alias": "KINDLE_ENABLED"}
-    )
-    cookies_path: str = field(
-        default="", metadata={"env_alias": "KINDLE_COOKIES_PATH"}
-    )
-    amazon_domain: str = field(
-        default="amazon.com", metadata={"env_alias": "KINDLE_AMAZON_DOMAIN"}
-    )
+    enabled: bool = field(default=False, metadata={"env_alias": "KINDLE_ENABLED"})
+    cookies_path: str = field(default="", metadata={"env_alias": "KINDLE_COOKIES_PATH"})
+    amazon_domain: str = field(default="amazon.com", metadata={"env_alias": "KINDLE_AMAZON_DOMAIN"})
     vault_subfolder: str = field(
         default="agent/pages/kindle",
         metadata={"env_alias": "KINDLE_VAULT_SUBFOLDER"},
     )
-    sync_min_interval_seconds: int = field(
-        default=60, metadata={"env_alias": "KINDLE_SYNC_MIN_INTERVAL_SECONDS"}
-    )
-    archive_deleted: bool = field(
-        default=True, metadata={"env_alias": "KINDLE_ARCHIVE_DELETED"}
-    )
+    sync_min_interval_seconds: int = field(default=60, metadata={"env_alias": "KINDLE_SYNC_MIN_INTERVAL_SECONDS"})
+    archive_deleted: bool = field(default=True, metadata={"env_alias": "KINDLE_ARCHIVE_DELETED"})
     user_agent: str = field(
         default=(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -53,9 +43,7 @@ class SkillConfig:
         ),
         metadata={"env_alias": "KINDLE_USER_AGENT"},
     )
-    cookies_warn_after_days: int = field(
-        default=300, metadata={"env_alias": "KINDLE_COOKIES_WARN_AFTER_DAYS"}
-    )
+    cookies_warn_after_days: int = field(default=300, metadata={"env_alias": "KINDLE_COOKIES_WARN_AFTER_DAYS"})
 
 
 def init(config, skill_config: SkillConfig) -> None:
@@ -98,9 +86,7 @@ def _cookie_file_age_days(path: Path) -> float:
     return (datetime.now().timestamp() - path.stat().st_mtime) / 86400.0
 
 
-def _make_session(
-    cookie_jar: http.cookiejar.MozillaCookieJar, user_agent: str
-) -> AsyncSession:
+def _make_session(cookie_jar: http.cookiejar.MozillaCookieJar, user_agent: str) -> AsyncSession:
     """Construct a curl_cffi AsyncSession with cookies + Chrome impersonation."""
     return AsyncSession(
         impersonate="chrome131",
@@ -164,9 +150,7 @@ def _parse_books_list(html: str) -> list[BookSummary]:
         elif author.lower().startswith("by "):
             author = author[3:].strip()
         cover_url = str(cover_node.get("src") or "") if cover_node else ""
-        books.append(
-            BookSummary(asin=asin, title=title, author=author, cover_url=cover_url)
-        )
+        books.append(BookSummary(asin=asin, title=title, author=author, cover_url=cover_url))
     return books
 
 
@@ -201,7 +185,7 @@ def _parse_highlights(html: str) -> list[HighlightEntry]:
         for elem in row.select("[class]"):
             for cls in elem.get("class") or []:
                 if cls.startswith("kp-notebook-highlight-"):
-                    suffix = cls[len("kp-notebook-highlight-"):]
+                    suffix = cls[len("kp-notebook-highlight-") :]
                     if suffix in _HIGHLIGHT_COLORS:
                         color = suffix
                         break
@@ -367,9 +351,7 @@ def _upsert_book_page(
         metadata["cover_url"] = book.cover_url
     metadata["tags"] = sorted(set((metadata.get("tags") or []) + ["ingested", "kindle"]))
     metadata["highlight_count"] = len(fresh_highlights)
-    metadata["archived_count"] = (
-        len(archived_blocks) + len(newly_archived) if archive_deleted else 0
-    )
+    metadata["archived_count"] = len(archived_blocks) + len(newly_archived) if archive_deleted else 0
     metadata["last_synced"] = now.replace(microsecond=0).isoformat()
     # Embedding-retrieval defaults: only set if absent (user edits preserved).
     parts = ["Kindle highlights"]
@@ -409,9 +391,7 @@ async def _fetch_books_list_html(session: AsyncSession, domain: str) -> str:
     return response.text
 
 
-async def _fetch_book_highlights_html(
-    session: AsyncSession, asin: str, domain: str
-) -> str:
+async def _fetch_book_highlights_html(session: AsyncSession, asin: str, domain: str) -> str:
     response = await session.get(_notebook_url(domain, asin))
     response.raise_for_status()
     return response.text
@@ -488,9 +468,7 @@ async def kindle_fetch_highlights(ctx, asin: str) -> ToolResult:
         return ToolResult(text=f"[error: {exc}]")
     async with _make_session(jar, _skill_config.user_agent) as session:
         try:
-            html = await _fetch_book_highlights_html(
-                session, asin, _skill_config.amazon_domain
-            )
+            html = await _fetch_book_highlights_html(session, asin, _skill_config.amazon_domain)
         except Exception as exc:  # noqa: BLE001
             return ToolResult(text=f"[error: failed to fetch highlights for {asin}: {exc}]")
     entries = _parse_highlights(html)
@@ -541,18 +519,17 @@ async def kindle_sync_book(ctx, asin: str, *, book: "BookSummary | None" = None)
 
     now = datetime.now(timezone.utc)
     new_md = _upsert_book_page(
-        existing_md, fresh, matched, now,
+        existing_md,
+        fresh,
+        matched,
+        now,
         archive_deleted=_skill_config.archive_deleted,
     )
 
     # Count diff for the return summary
     # Restrict existing_ids to Highlights section only (match what _upsert_book_page does)
     # to avoid re-counting previously-archived entries on subsequent syncs.
-    existing_highlights_body = (
-        existing_md.split("## Archived")[0]
-        if "## Archived" in existing_md
-        else existing_md
-    )
+    existing_highlights_body = existing_md.split("## Archived")[0] if "## Archived" in existing_md else existing_md
     existing_ids = set(re.findall(r"<!-- annotation-id: (\S+) -->", existing_highlights_body))
     fresh_ids = {h.annotation_id for h in fresh}
     new_count = len(fresh_ids - existing_ids)
@@ -564,16 +541,18 @@ async def kindle_sync_book(ctx, asin: str, *, book: "BookSummary | None" = None)
         return write_result
 
     summary = (
-        f"Synced '{matched.title}' ({asin}): "
-        f"{new_count} new, {edited_count} re-checked, {archived_count} archived."
+        f"Synced '{matched.title}' ({asin}): {new_count} new, {edited_count} re-checked, {archived_count} archived."
     )
-    return ToolResult(text=summary, data={
-        "asin": asin,
-        "page": page,
-        "new_count": new_count,
-        "archived_count": archived_count,
-        "highlight_count": len(fresh),
-    })
+    return ToolResult(
+        text=summary,
+        data={
+            "asin": asin,
+            "page": page,
+            "new_count": new_count,
+            "archived_count": archived_count,
+            "highlight_count": len(fresh),
+        },
+    )
 
 
 async def kindle_sync_all(ctx) -> ToolResult:
@@ -636,13 +615,16 @@ async def kindle_sync_all(ctx) -> ToolResult:
         f"{new_total} new highlights, {archived_total} archived, "
         f"{len(failures)} failures."
     )
-    return ToolResult(text=summary, data={
-        "books_synced": len(results),
-        "books_total": len(books),
-        "new_total": new_total,
-        "archived_total": archived_total,
-        "failures": failures,
-    })
+    return ToolResult(
+        text=summary,
+        data={
+            "books_synced": len(results),
+            "books_total": len(books),
+            "new_total": new_total,
+            "archived_total": archived_total,
+            "failures": failures,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -681,9 +663,7 @@ TOOL_DEFINITIONS = [
             ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "asin": {"type": "string", "description": "Amazon ASIN of the book."}
-                },
+                "properties": {"asin": {"type": "string", "description": "Amazon ASIN of the book."}},
                 "required": ["asin"],
             },
         },

@@ -71,9 +71,7 @@ def test_unassigned_trust_tier_is_untrusted(tmp_path):
 
     skill_dir = tmp_path / "unplaced"
     skill_dir.mkdir()
-    (skill_dir / "SKILL.md").write_text(
-        "---\nname: unplaced\ndescription: Built without a placement.\n---\n\nBody.\n"
-    )
+    (skill_dir / "SKILL.md").write_text("---\nname: unplaced\ndescription: Built without a placement.\n---\n\nBody.\n")
 
     info = parse_skill_md(skill_dir / "SKILL.md")
 
@@ -82,16 +80,19 @@ def test_unassigned_trust_tier_is_untrusted(tmp_path):
     assert grants_capability(info) is False
 
 
-@pytest.mark.parametrize("tier,expected", [
-    ("workspace", False),
-    ("admin", True),
-    ("bundled", True),
-    ("extra", True),
-    # Anything unrecognized must fail closed. "Workspace" (capitalized) and ""
-    # are the shapes a typo or an unset field actually takes.
-    ("", False),
-    ("Workspace", False),
-    ("plugin", False),
-])
+@pytest.mark.parametrize(
+    "tier,expected",
+    [
+        ("workspace", False),
+        ("admin", True),
+        ("bundled", True),
+        ("extra", True),
+        # Anything unrecognized must fail closed. "Workspace" (capitalized) and ""
+        # are the shapes a typo or an unset field actually takes.
+        ("", False),
+        ("Workspace", False),
+        ("plugin", False),
+    ],
+)
 def test_grants_capability(tier, expected):
     assert grants_capability(_info(tier)) is expected

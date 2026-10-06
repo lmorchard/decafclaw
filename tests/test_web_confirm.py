@@ -28,13 +28,15 @@ async def test_confirm_response_forwards_tool_call_id():
         "approved": True,
     }
     tool_call_id = msg.get("tool_call_id", "")
-    await bus.publish({
-        "type": "tool_confirm_response",
-        "context_id": msg.get("context_id", ""),
-        "tool": msg.get("tool", ""),
-        "approved": msg.get("approved", False),
-        **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-    })
+    await bus.publish(
+        {
+            "type": "tool_confirm_response",
+            "context_id": msg.get("context_id", ""),
+            "tool": msg.get("tool", ""),
+            "approved": msg.get("approved", False),
+            **({"tool_call_id": tool_call_id} if tool_call_id else {}),
+        }
+    )
 
     assert len(published) == 1
     event = published[0]
@@ -60,13 +62,15 @@ async def test_confirm_response_without_tool_call_id():
         # no tool_call_id
     }
     tool_call_id = msg.get("tool_call_id", "")
-    await bus.publish({
-        "type": "tool_confirm_response",
-        "context_id": msg.get("context_id", ""),
-        "tool": msg.get("tool", ""),
-        "approved": msg.get("approved", False),
-        **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-    })
+    await bus.publish(
+        {
+            "type": "tool_confirm_response",
+            "context_id": msg.get("context_id", ""),
+            "tool": msg.get("tool", ""),
+            "approved": msg.get("approved", False),
+            **({"tool_call_id": tool_call_id} if tool_call_id else {}),
+        }
+    )
 
     assert len(published) == 1
     event = published[0]
@@ -93,17 +97,22 @@ async def test_confirm_round_trip_with_tool_call_id(ctx):
         # Wait for the request to be published
         await asyncio.sleep(0.05)
         # Simulate browser echoing back tool_call_id
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "shell",
-            "tool_call_id": "call_abc",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "shell",
+                "tool_call_id": "call_abc",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(browser_approve())
     result = await request_confirmation(
-        ctx, tool_name="shell", command="curl example.com", message="Confirm?",
+        ctx,
+        tool_name="shell",
+        command="curl example.com",
+        message="Confirm?",
     )
 
     # Request included tool_call_id
@@ -133,8 +142,7 @@ async def test_publish_does_not_override_explicit_tool_call_id(ctx):
     ctx.event_bus.subscribe(lambda e: published.append(e))
 
     ctx.tools.current_call_id = "call_xyz"
-    await ctx.publish("tool_status", tool="shell", message="running...",
-                      tool_call_id="call_override")
+    await ctx.publish("tool_status", tool="shell", message="running...", tool_call_id="call_override")
 
     assert published[0]["tool_call_id"] == "call_override"
 
@@ -171,8 +179,7 @@ def test_confirmation_to_dict_omits_default_labels():
 
     req = ConfirmationRequest(
         action_type=ConfirmationAction.RUN_SHELL_COMMAND,
-        action_data={"command": "tv list-screens",
-                     "suggested_pattern": "tv list-screens *"},
+        action_data={"command": "tv list-screens", "suggested_pattern": "tv list-screens *"},
         message="Shell command: `tv list-screens`",
     )
     payload = _confirmation_to_dict(req)
@@ -215,8 +222,7 @@ def test_request_via_manager_uses_empty_label_defaults():
 
     async def fake_request_confirmation(request: ConfirmationRequest):
         captured.append(request)
-        return ConfirmationResponse(
-            confirmation_id=request.confirmation_id, approved=False)
+        return ConfirmationResponse(confirmation_id=request.confirmation_id, approved=False)
 
     # Reach into the manager helper directly with a stub ctx — covers the
     # default-label propagation without needing a full ConversationManager.
@@ -229,11 +235,16 @@ def test_request_via_manager_uses_empty_label_defaults():
         tools = _ToolsState()
         request_confirmation = staticmethod(fake_request_confirmation)
 
-    asyncio.run(_request_via_manager(
-        _StubCtx(), tool_name="shell", command="tv list-screens",
-        message="Shell command: `tv list-screens`", timeout=1.0,
-        suggested_pattern="tv list-screens *",
-    ))
+    asyncio.run(
+        _request_via_manager(
+            _StubCtx(),
+            tool_name="shell",
+            command="tv list-screens",
+            message="Shell command: `tv list-screens`",
+            timeout=1.0,
+            suggested_pattern="tv list-screens *",
+        )
+    )
 
     assert len(captured) == 1
     req = captured[0]

@@ -15,6 +15,7 @@ extract stage simply pulls `text` out of the tool_call result dict, so
 swapping in a different fetch/search tool only requires changing the
 constant + the per-thunk `query=` keyword.
 """
+
 from ..registry import workflow
 
 _SEARCH_TOOL = "tabstack_research"
@@ -75,8 +76,7 @@ def _research_plan_prompt(topic: str, scope: str) -> str:
     if scope:
         lines.append(f"Scope / angle: {scope}")
     lines.append("")
-    lines.append(
-        "Generate 2-3 search queries that together cover this topic.")
+    lines.append("Generate 2-3 search queries that together cover this topic.")
     return "\n".join(lines)
 
 
@@ -86,11 +86,7 @@ def _summarize_prompt(source_text: str) -> str:
     # research report; if a search tool ever returns much more, this is the
     # knob to revisit.
     capped = source_text[:8000]
-    return (
-        "Source content:\n\n"
-        f"{capped}\n\n"
-        "Summarize the 3-5 most important specific points."
-    )
+    return f"Source content:\n\n{capped}\n\nSummarize the 3-5 most important specific points."
 
 
 def _render_summary(s: dict) -> str:
@@ -105,10 +101,12 @@ def _render_summary(s: dict) -> str:
 def _is_error_result(r) -> bool:
     """`wf.tool_call` returns `{"text", "data"}`; failed tools surface as
     text starting with `[error:` (the decafclaw tool-failure convention)."""
-    return (isinstance(r, dict)
-            and r.get("data") is None
-            and isinstance(r.get("text"), str)
-            and r["text"].startswith("[error:"))
+    return (
+        isinstance(r, dict)
+        and r.get("data") is None
+        and isinstance(r.get("text"), str)
+        and r["text"].startswith("[error:")
+    )
 
 
 def _synth_prompt(topic: str, scope: str, summaries: list[dict]) -> str:
@@ -129,17 +127,17 @@ def _make_search_thunk(query: str):
     """Build a thunk for `wf.parallel`. Plain function returning an async
     function (NOT `async def` returning the inner) — `wf.parallel` expects
     `Callable[[sub], Awaitable[...]]`, not a coroutine."""
+
     async def _thunk(sub):
         return await sub.tool_call(_SEARCH_TOOL, query=query)
+
     return _thunk
 
 
 @workflow("research", requires_skills=("tabstack",))
 async def research(wf):
     topic = await wf.user_input("What topic should I research?")
-    scope = await wf.user_input(
-        "Any specific angle, audience, or constraint? "
-        "(Press enter for none.)")
+    scope = await wf.user_input("Any specific angle, audience, or constraint? (Press enter for none.)")
 
     plan = await wf.llm_call(
         prompt=_research_plan_prompt(topic, scope),
@@ -150,8 +148,7 @@ async def research(wf):
 
     # Fan out the searches. Each thunk gets its own sub-handle from
     # wf.parallel; the tool_call inside lands at (outer, idx, 0).
-    search_results = await wf.parallel(
-        [_make_search_thunk(q) for q in queries])
+    search_results = await wf.parallel([_make_search_thunk(q) for q in queries])
 
     # Fail fast if the search tool isn't actually available in this
     # workflow context (skill tools aren't reachable from workflow turns
@@ -163,7 +160,8 @@ async def research(wf):
         raise RuntimeError(
             f"/research: all {len(queries)} searches via {_SEARCH_TOOL!r} "
             f"failed — tool likely unavailable in this workflow context. "
-            f"First error: {sample[:200]}")
+            f"First error: {sample[:200]}"
+        )
 
     # Per-result extract → summarize. Stage 1 is a pure dict→str
     # transform (NOT journaled; safe to re-run on replay). Stage 2
@@ -178,8 +176,7 @@ async def research(wf):
             system=_SYS_SUMMARIZE,
         )
 
-    summaries = await wf.pipeline(
-        search_results, _extract_stage, _summarize_stage)
+    summaries = await wf.pipeline(search_results, _extract_stage, _summarize_stage)
 
     # Final synthesis as a child agent turn with structured output.
     return await wf.subagent(

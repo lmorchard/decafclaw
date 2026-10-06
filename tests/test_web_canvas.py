@@ -31,9 +31,7 @@ def md_doc_registry(tmp_path, monkeypatch):
 
     class _Reg:
         _d = {
-            "markdown_document": SimpleNamespace(
-                modes=["inline", "canvas"], required=["content"]
-            ),
+            "markdown_document": SimpleNamespace(modes=["inline", "canvas"], required=["content"]),
         }
 
         def get(self, name):
@@ -55,6 +53,7 @@ def md_doc_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(widgets_module, "_registry", reg)
     # Also patch the canvas module's import of get_widget_registry
     from decafclaw import canvas as canvas_mod
+
     monkeypatch.setattr(canvas_mod, "get_widget_registry", lambda: reg)
     return reg
 
@@ -76,6 +75,7 @@ def app(http_config, manager_mock, md_doc_registry):
 def owned_conv(http_config):
     """Create a conversation owned by testuser. Returns conv_id."""
     from decafclaw.web.conversations import ConversationIndex
+
     index = ConversationIndex(http_config)
     return index.create("testuser", title="Test").conv_id
 
@@ -84,6 +84,7 @@ def owned_conv(http_config):
 def other_user_conv(http_config):
     """Create a conversation owned by a different user. Returns conv_id."""
     from decafclaw.web.conversations import ConversationIndex
+
     index = ConversationIndex(http_config)
     return index.create("otheruser", title="Other").conv_id
 
@@ -137,12 +138,13 @@ async def test_get_canvas_state_other_user_conv_404(authed_client, other_user_co
 
 @pytest.mark.asyncio
 async def test_post_canvas_new_tab_writes_state_and_emits(
-    authed_client, manager_mock, owned_conv,
+    authed_client,
+    manager_mock,
+    owned_conv,
 ):
     resp = await authed_client.post(
         f"/api/canvas/{owned_conv}/new_tab",
-        json={"widget_type": "markdown_document",
-              "data": {"content": "# Doc\n\nbody"}},
+        json={"widget_type": "markdown_document", "data": {"content": "# Doc\n\nbody"}},
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["tab_id"] == "canvas_1"
@@ -172,8 +174,7 @@ async def test_post_canvas_new_tab_rejects_unknown_widget(authed_client, owned_c
 async def test_post_canvas_new_tab_other_user_conv_404(authed_client, other_user_conv):
     resp = await authed_client.post(
         f"/api/canvas/{other_user_conv}/new_tab",
-        json={"widget_type": "markdown_document",
-              "data": {"content": "# pwn"}},
+        json={"widget_type": "markdown_document", "data": {"content": "# pwn"}},
     )
     assert resp.status_code == 404
 
@@ -190,7 +191,9 @@ async def test_post_canvas_new_tab_requires_auth(unauthed_client, owned_conv):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["new_tab", "active_tab", "close_tab"])
 async def test_canvas_mutations_keep_manual_non_object_validation(
-    authed_client, owned_conv, action,
+    authed_client,
+    owned_conv,
+    action,
 ):
     resp = await authed_client.post(f"/api/canvas/{owned_conv}/{action}", json=[])
     assert resp.status_code == 400
@@ -304,7 +307,8 @@ async def test_get_standalone_canvas_with_tab_id(authed_client, owned_conv):
 
 @pytest.mark.asyncio
 async def test_get_standalone_canvas_with_tab_id_other_user_404(
-    authed_client, other_user_conv,
+    authed_client,
+    other_user_conv,
 ):
     resp = await authed_client.get(f"/canvas/{other_user_conv}/canvas_1")
     assert resp.status_code == 404
@@ -320,11 +324,15 @@ async def test_canvas_update_event_kind_new_tab():
 
     state = {"ws_send": ws_send, "config": None}
     callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
-    await callback({
-        "type": "canvas_update", "conv_id": "conv-x",
-        "kind": "new_tab", "active_tab": "canvas_3",
-        "tab": {"id": "canvas_3", "label": "L", "widget_type": "code_block", "data": {"code": "x"}},
-    })
+    await callback(
+        {
+            "type": "canvas_update",
+            "conv_id": "conv-x",
+            "kind": "new_tab",
+            "active_tab": "canvas_3",
+            "tab": {"id": "canvas_3", "label": "L", "widget_type": "code_block", "data": {"code": "x"}},
+        }
+    )
     assert sent[0]["kind"] == "new_tab"
     assert sent[0]["tab"]["id"] == "canvas_3"
 
@@ -338,11 +346,16 @@ async def test_canvas_update_event_kind_close_tab():
 
     state = {"ws_send": ws_send, "config": None}
     callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
-    await callback({
-        "type": "canvas_update", "conv_id": "conv-x",
-        "kind": "close_tab", "active_tab": "canvas_2",
-        "tab": None, "closed_tab_id": "canvas_3",
-    })
+    await callback(
+        {
+            "type": "canvas_update",
+            "conv_id": "conv-x",
+            "kind": "close_tab",
+            "active_tab": "canvas_2",
+            "tab": None,
+            "closed_tab_id": "canvas_3",
+        }
+    )
     assert sent[0]["kind"] == "close_tab"
     assert sent[0]["closed_tab_id"] == "canvas_3"
 
@@ -356,10 +369,15 @@ async def test_canvas_update_event_kind_set_active():
 
     state = {"ws_send": ws_send, "config": None}
     callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
-    await callback({
-        "type": "canvas_update", "conv_id": "conv-x",
-        "kind": "set_active", "active_tab": "canvas_1", "tab": None,
-    })
+    await callback(
+        {
+            "type": "canvas_update",
+            "conv_id": "conv-x",
+            "kind": "set_active",
+            "active_tab": "canvas_1",
+            "tab": None,
+        }
+    )
     assert sent[0]["kind"] == "set_active"
     assert sent[0]["active_tab"] == "canvas_1"
 
@@ -395,25 +413,25 @@ async def test_canvas_update_event_projected_to_client():
     state = {"ws_send": ws_send, "config": None}
     callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
 
-    await callback({
-        "type": "canvas_update",
-        "conv_id": "conv-x",
-        "kind": "set",
-        "active_tab": "canvas_1",
-        "tab": {"id": "canvas_1", "label": "L",
-                "widget_type": "markdown_document",
-                "data": {"content": "x"}},
-    })
+    await callback(
+        {
+            "type": "canvas_update",
+            "conv_id": "conv-x",
+            "kind": "set",
+            "active_tab": "canvas_1",
+            "tab": {"id": "canvas_1", "label": "L", "widget_type": "markdown_document", "data": {"content": "x"}},
+        }
+    )
 
-    assert sent == [{
-        "type": "canvas_update",
-        "conv_id": "conv-x",
-        "kind": "set",
-        "active_tab": "canvas_1",
-        "tab": {"id": "canvas_1", "label": "L",
-                "widget_type": "markdown_document",
-                "data": {"content": "x"}},
-    }]
+    assert sent == [
+        {
+            "type": "canvas_update",
+            "conv_id": "conv-x",
+            "kind": "set",
+            "active_tab": "canvas_1",
+            "tab": {"id": "canvas_1", "label": "L", "widget_type": "markdown_document", "data": {"content": "x"}},
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -426,6 +444,5 @@ async def test_canvas_update_event_skipped_for_other_conv():
 
     state = {"ws_send": ws_send, "config": None}
     callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
-    await callback({"type": "canvas_update", "conv_id": "OTHER",
-                    "kind": "set", "active_tab": None, "tab": None})
+    await callback({"type": "canvas_update", "conv_id": "OTHER", "kind": "set", "active_tab": None, "tab": None})
     assert sent == []

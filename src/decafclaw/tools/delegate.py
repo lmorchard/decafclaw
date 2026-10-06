@@ -33,22 +33,26 @@ ERROR_TEXT_PREFIX = "[error:"
 # WRITE tools are categorically blocked — if a child's work should
 # land in the vault, the parent does the write itself after the child
 # returns. New vault tools should update these sets when added.
-_VAULT_READ_TOOLS = frozenset({
-    "vault_read",
-    "vault_search",
-    "vault_list",
-    "vault_backlinks",
-    "vault_show_sections",
-})
+_VAULT_READ_TOOLS = frozenset(
+    {
+        "vault_read",
+        "vault_search",
+        "vault_list",
+        "vault_backlinks",
+        "vault_show_sections",
+    }
+)
 
-_VAULT_WRITE_TOOLS = frozenset({
-    "vault_write",
-    "vault_delete",
-    "vault_rename",
-    "vault_journal_append",
-    "vault_move_lines",
-    "vault_section",
-})
+_VAULT_WRITE_TOOLS = frozenset(
+    {
+        "vault_write",
+        "vault_delete",
+        "vault_rename",
+        "vault_journal_append",
+        "vault_move_lines",
+        "vault_section",
+    }
+)
 
 # Structured-return addendum (#395). Appended to the child system
 # prompt when `delegate_task` is called with a `return_schema` hint.
@@ -83,8 +87,8 @@ def _render_schema_addendum(schema: dict) -> str:
         rendered = json.dumps(schema, indent=2)
     except (TypeError, ValueError) as exc:
         log.warning(
-            "delegate_task: failed to render return_schema as JSON; "
-            "skipping addendum: %s", exc,
+            "delegate_task: failed to render return_schema as JSON; skipping addendum: %s",
+            exc,
         )
         return ""
     return _STRUCTURED_OUTPUT_INSTRUCTION.format(schema=rendered)
@@ -117,15 +121,18 @@ def _parse_structured_output(text: str) -> tuple[Any | None, str]:
     return parsed, prose
 
 
-async def run_child_turn(parent_ctx: "Context", task, model: str = "",
-                         max_iterations: int = 0,
-                         *,
-                         allowed_tools: list[str] | None = None,
-                         allow_vault_retrieval: bool = False,
-                         allow_vault_read: bool = False,
-                         return_schema: dict | None = None,
-                         event_context_id_override: str | None = None
-                         ) -> tuple[str, dict | None]:
+async def run_child_turn(
+    parent_ctx: "Context",
+    task,
+    model: str = "",
+    max_iterations: int = 0,
+    *,
+    allowed_tools: list[str] | None = None,
+    allow_vault_retrieval: bool = False,
+    allow_vault_read: bool = False,
+    return_schema: dict | None = None,
+    event_context_id_override: str | None = None,
+) -> tuple[str, dict | None]:
     """Run a child agent turn via ConversationManager, preserving the
     parent's tools, skills, and event routing.
 
@@ -193,8 +200,7 @@ async def run_child_turn(parent_ctx: "Context", task, model: str = "",
 
     child_config = replace(
         config,
-        agent=replace(config.agent, max_tool_iterations=(
-            max_iterations or config.agent.child_max_tool_iterations)),
+        agent=replace(config.agent, max_tool_iterations=(max_iterations or config.agent.child_max_tool_iterations)),
         system_prompt=child_system_prompt,
     )
     # Children don't discover or activate skills — they inherit parent's
@@ -218,8 +224,7 @@ async def run_child_turn(parent_ctx: "Context", task, model: str = "",
         # children at a separate id so per-child progress doesn't flood
         # the parent UI when running batches in parallel.
         child_ctx.event_context_id = (
-            event_context_id_override if event_context_id_override is not None
-            else parent_event_id
+            event_context_id_override if event_context_id_override is not None else parent_event_id
         )
 
         # Child inherits parent's tools minus delegation/activation.
@@ -266,8 +271,7 @@ async def run_child_turn(parent_ctx: "Context", task, model: str = "",
     manager = parent_ctx.manager
     if manager is None:
         return (
-            "[error: delegate_task requires a ConversationManager; "
-            "no manager on parent ctx]",
+            "[error: delegate_task requires a ConversationManager; no manager on parent ctx]",
             None,
         )
 
@@ -294,8 +298,7 @@ async def run_child_turn(parent_ctx: "Context", task, model: str = "",
     parsed, prose = _parse_structured_output(raw_text)
     if parsed is None:
         log.debug(
-            "run_child_turn: child response had no parseable JSON block; "
-            "falling back to prose-only return",
+            "run_child_turn: child response had no parseable JSON block; falling back to prose-only return",
         )
         return (raw_text, None)
     return (prose or raw_text, parsed)
@@ -325,8 +328,7 @@ async def tool_delegate_task(
     a debug log — the parent gets the raw response as text. See #395.
     """
     log.info(
-        "[tool:delegate_task] model=%s vault_retrieval=%s vault_read=%s "
-        "schema=%s %s...",
+        "[tool:delegate_task] model=%s vault_retrieval=%s vault_read=%s schema=%s %s...",
         model or "inherit",
         allow_vault_retrieval,
         allow_vault_read,
@@ -338,7 +340,9 @@ async def tool_delegate_task(
         return ToolResult(text="[error: task description is required]")
 
     text, data = await run_child_turn(
-        ctx, task, model=model,
+        ctx,
+        task,
+        model=model,
         allow_vault_retrieval=allow_vault_retrieval,
         allow_vault_read=allow_vault_read,
         return_schema=return_schema,
@@ -378,7 +382,9 @@ async def _run_one_delegated(
     async with semaphore:
         try:
             text, data = await run_child_turn(
-                parent_ctx, task, model=model,
+                parent_ctx,
+                task,
+                model=model,
                 allow_vault_retrieval=allow_vault_retrieval,
                 allow_vault_read=allow_vault_read,
                 return_schema=return_schema,
@@ -387,7 +393,9 @@ async def _run_one_delegated(
         except Exception as exc:
             log.warning(
                 "delegate_tasks: child %d raised unexpectedly: %s",
-                idx, exc, exc_info=True,
+                idx,
+                exc,
+                exc_info=True,
             )
             entry: dict = {
                 "index": idx,
@@ -420,8 +428,9 @@ async def _run_one_delegated(
             )
         except Exception:
             log.debug(
-                "delegate_tasks: failed to publish progress event "
-                "(child %d)", idx, exc_info=True,
+                "delegate_tasks: failed to publish progress event (child %d)",
+                idx,
+                exc_info=True,
             )
         return entry
 
@@ -462,21 +471,23 @@ async def tool_delegate_tasks(
         return ToolResult(text="[error: tasks must be a non-empty list]")
     for i, t in enumerate(tasks):
         if not isinstance(t, str) or not t.strip():
-            return ToolResult(text=(
-                f"[error: tasks[{i}] must be a non-empty string]"
-            ))
+            return ToolResult(text=(f"[error: tasks[{i}] must be a non-empty string]"))
     if cap_count > 0 and len(tasks) > cap_count:
-        return ToolResult(text=(
-            f"[error: too many tasks ({len(tasks)}); cap is "
-            f"{cap_count} per call. Split the batch or raise "
-            "config.agent.max_tasks_per_delegate_call.]"
-        ))
+        return ToolResult(
+            text=(
+                f"[error: too many tasks ({len(tasks)}); cap is "
+                f"{cap_count} per call. Split the batch or raise "
+                "config.agent.max_tasks_per_delegate_call.]"
+            )
+        )
 
     log.info(
-        "[tool:delegate_tasks] count=%d parallel<=%d model=%s "
-        "vault_retrieval=%s vault_read=%s schema=%s",
-        len(tasks), cap_parallel, model or "inherit",
-        allow_vault_retrieval, allow_vault_read,
+        "[tool:delegate_tasks] count=%d parallel<=%d model=%s vault_retrieval=%s vault_read=%s schema=%s",
+        len(tasks),
+        cap_parallel,
+        model or "inherit",
+        allow_vault_retrieval,
+        allow_vault_read,
         "yes" if return_schema else "no",
     )
 
@@ -511,27 +522,31 @@ async def tool_delegate_tasks(
         if isinstance(r, BaseException):
             log.warning(
                 "delegate_tasks: gather slot %d raised unexpectedly: %s",
-                i, r, exc_info=r,
+                i,
+                r,
+                exc_info=r,
             )
-            results.append({
-                "index": i,
-                "ok": False,
-                "error": f"delegate_tasks internal error: {r}",
-            })
+            results.append(
+                {
+                    "index": i,
+                    "ok": False,
+                    "error": f"delegate_tasks internal error: {r}",
+                }
+            )
         else:
             results.append(r)
 
     results.sort(key=lambda e: e["index"])
     ok_count = sum(1 for e in results if e["ok"])
     fail_count = total - ok_count
-    summary_line = (
-        f"{total} subtasks: {ok_count} succeeded, {fail_count} failed"
-    )
+    summary_line = f"{total} subtasks: {ok_count} succeeded, {fail_count} failed"
     return ToolResult(
         text=summary_line,
         data={
             "summary": {
-                "total": total, "ok": ok_count, "failed": fail_count,
+                "total": total,
+                "ok": ok_count,
+                "failed": fail_count,
             },
             "results": results,
         },
@@ -570,16 +585,12 @@ DELEGATE_TOOL_DEFINITIONS = [
                     "task": {
                         "type": "string",
                         "description": (
-                            "Task description with enough context for the "
-                            "child agent to work independently"
+                            "Task description with enough context for the child agent to work independently"
                         ),
                     },
                     "model": {
                         "type": "string",
-                        "description": (
-                            "Named model config for the subtask. "
-                            "Omit to inherit parent's model."
-                        ),
+                        "description": ("Named model config for the subtask. Omit to inherit parent's model."),
                     },
                     "allow_vault_retrieval": {
                         "type": "boolean",
@@ -665,8 +676,7 @@ DELEGATE_TOOL_DEFINITIONS = [
                     "model": {
                         "type": "string",
                         "description": (
-                            "Named model config for every subtask in the "
-                            "batch. Omit to inherit parent's model."
+                            "Named model config for every subtask in the batch. Omit to inherit parent's model."
                         ),
                     },
                     "allow_vault_retrieval": {

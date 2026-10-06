@@ -182,20 +182,32 @@ async def test_provider_streaming_captures_finish_reason_length():
     """Streaming completions capture finish_reason='length' when truncated."""
     provider = OpenAICompatProvider(url="http://test/v1/chat/completions", api_key="dummy")
     events = [
-        FakeSSEEvent(json.dumps({
-            "choices": [{
-                "delta": {
-                    "tool_calls": [{
-                        "index": 0,
-                        "id": "call_123",
-                        "function": {"name": "memory_search", "arguments": '{"query": "test"}'},
-                    }]
+        FakeSSEEvent(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_123",
+                                        "function": {"name": "memory_search", "arguments": '{"query": "test"}'},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
                 }
-            }]
-        })),
-        FakeSSEEvent(json.dumps({
-            "choices": [{"delta": {}, "finish_reason": "length"}],
-        })),
+            )
+        ),
+        FakeSSEEvent(
+            json.dumps(
+                {
+                    "choices": [{"delta": {}, "finish_reason": "length"}],
+                }
+            )
+        ),
         FakeSSEEvent("[DONE]"),
     ]
 
@@ -213,20 +225,30 @@ async def test_provider_streaming_disconnected_stream_marks_error():
     """A streaming connection error after receiving partial tool calls sets finish_reason='error'."""
     provider = OpenAICompatProvider(url="http://test/v1/chat/completions", api_key="dummy")
     partial_events = [
-        FakeSSEEvent(json.dumps({
-            "choices": [{
-                "delta": {
-                    "tool_calls": [{
-                        "index": 0,
-                        "id": "call_123",
-                        "function": {"name": "memory_search", "arguments": '{"query": "test"}'},
-                    }]
+        FakeSSEEvent(
+            json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_123",
+                                        "function": {"name": "memory_search", "arguments": '{"query": "test"}'},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
                 }
-            }]
-        })),
+            )
+        ),
     ]
 
-    with patch("httpx_sse.aconnect_sse", return_value=ErrorEventSource(partial_events, httpx.ReadError("connection drop"))):
+    with patch(
+        "httpx_sse.aconnect_sse", return_value=ErrorEventSource(partial_events, httpx.ReadError("connection drop"))
+    ):
         res = await provider.complete("test-model", [], streaming=True)
 
     assert res["finish_reason"] == FINISH_REASON_ERROR
@@ -239,6 +261,7 @@ async def test_provider_streaming_disconnected_stream_marks_error():
 async def test_provider_streaming_cancelled_sets_finish_reason():
     """Streaming cancelled via cancel_event sets finish_reason='cancelled'."""
     import asyncio
+
     cancel_event = asyncio.Event()
     cancel_event.set()
 
@@ -266,11 +289,13 @@ async def test_agent_turn_rejects_truncated_tool_call(ctx):
 
     truncated_response = {
         "content": "I will search memories",
-        "tool_calls": [{
-            "id": "call_trunc_1",
-            "type": "function",
-            "function": {"name": "memory_search", "arguments": '{"query": "hello"}'},
-        }],
+        "tool_calls": [
+            {
+                "id": "call_trunc_1",
+                "type": "function",
+                "function": {"name": "memory_search", "arguments": '{"query": "hello"}'},
+            }
+        ],
         "role": "assistant",
         "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         "finish_reason": FINISH_REASON_LENGTH,
@@ -290,8 +315,10 @@ async def test_agent_turn_rejects_truncated_tool_call(ctx):
         tool_executed = True
         return ToolResult(text="search result")
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool):
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool),
+    ):
         mock_llm.side_effect = [truncated_response, final_response]
         history: list[dict] = []
         result = await run_agent_turn(ctx, "find things", history)
@@ -366,8 +393,10 @@ async def test_agent_turn_rejects_multiple_truncated_tool_calls(ctx):
         tool_called = True
         return ToolResult(text="ok")
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool):
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool),
+    ):
         mock_llm.side_effect = [truncated_response, final_response]
         history: list[dict] = []
         result = await run_agent_turn(ctx, "run tools", history)
@@ -397,11 +426,13 @@ async def test_agent_turn_executes_tool_call_on_stop(ctx):
 
     normal_tool_response = {
         "content": None,
-        "tool_calls": [{
-            "id": "call_normal_1",
-            "type": "function",
-            "function": {"name": "memory_recent", "arguments": '{"n": 1}'},
-        }],
+        "tool_calls": [
+            {
+                "id": "call_normal_1",
+                "type": "function",
+                "function": {"name": "memory_recent", "arguments": '{"n": 1}'},
+            }
+        ],
         "role": "assistant",
         "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         "finish_reason": FINISH_REASON_STOP,
@@ -421,8 +452,10 @@ async def test_agent_turn_executes_tool_call_on_stop(ctx):
         tool_executed = True
         return ToolResult(text="memory result 123")
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool):
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool),
+    ):
         mock_llm.side_effect = [normal_tool_response, final_response]
         history: list[dict] = []
         result = await run_agent_turn(ctx, "show memory", history)
@@ -443,11 +476,13 @@ async def test_agent_turn_executes_tool_call_on_tool_calls_reason(ctx):
 
     normal_tool_response = {
         "content": None,
-        "tool_calls": [{
-            "id": "call_tc_1",
-            "type": "function",
-            "function": {"name": "memory_recent", "arguments": '{"n": 1}'},
-        }],
+        "tool_calls": [
+            {
+                "id": "call_tc_1",
+                "type": "function",
+                "function": {"name": "memory_recent", "arguments": '{"n": 1}'},
+            }
+        ],
         "role": "assistant",
         "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         "finish_reason": FINISH_REASON_TOOL_CALLS,
@@ -467,8 +502,10 @@ async def test_agent_turn_executes_tool_call_on_tool_calls_reason(ctx):
         tool_executed = True
         return ToolResult(text="memory result 456")
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool):
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool),
+    ):
         mock_llm.side_effect = [normal_tool_response, final_response]
         history: list[dict] = []
         result = await run_agent_turn(ctx, "check", history)
@@ -488,11 +525,13 @@ async def test_agent_turn_rejects_disconnected_stream_tool_calls(ctx):
 
     error_response = {
         "content": None,
-        "tool_calls": [{
-            "id": "call_stream_err",
-            "type": "function",
-            "function": {"name": "dangerous_action", "arguments": '{"key": "val"}'},
-        }],
+        "tool_calls": [
+            {
+                "id": "call_stream_err",
+                "type": "function",
+                "function": {"name": "dangerous_action", "arguments": '{"key": "val"}'},
+            }
+        ],
         "role": "assistant",
         "usage": None,
         "finish_reason": FINISH_REASON_ERROR,
@@ -512,8 +551,10 @@ async def test_agent_turn_rejects_disconnected_stream_tool_calls(ctx):
         tool_executed = True
         return ToolResult(text="should not execute")
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool):
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool),
+    ):
         mock_llm.side_effect = [error_response, final_response]
         history: list[dict] = []
         result = await run_agent_turn(ctx, "do action", history)
@@ -535,11 +576,13 @@ async def test_streaming_truncation_behaves_identically_to_non_streaming(ctx):
 
     streaming_trunc_response = {
         "content": "Analyzing...",
-        "tool_calls": [{
-            "id": "call_stream_trunc",
-            "type": "function",
-            "function": {"name": "run_analysis", "arguments": '{"depth": 3}'},
-        }],
+        "tool_calls": [
+            {
+                "id": "call_stream_trunc",
+                "type": "function",
+                "function": {"name": "run_analysis", "arguments": '{"depth": 3}'},
+            }
+        ],
         "role": "assistant",
         "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         "finish_reason": FINISH_REASON_LENGTH,
@@ -559,8 +602,10 @@ async def test_streaming_truncation_behaves_identically_to_non_streaming(ctx):
         tool_executed = True
         return ToolResult(text="never run")
 
-    with patch("decafclaw.llm.call_llm_streaming", new_callable=AsyncMock) as mock_streaming, \
-         patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool):
+    with (
+        patch("decafclaw.llm.call_llm_streaming", new_callable=AsyncMock) as mock_streaming,
+        patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool),
+    ):
         mock_streaming.side_effect = [streaming_trunc_response, streaming_final_response]
         history: list[dict] = []
         result = await run_agent_turn(ctx, "run analysis", history)

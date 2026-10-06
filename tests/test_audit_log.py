@@ -13,32 +13,41 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_audit_log_records_llm_call(tmp_path):
-    config = type("Config", (), {
-        "workspace_path": tmp_path,
-        "audit_log": type("AuditLogConfig", (), {
-            "enabled": True,
-            "path": "audit.jsonl",
-            "max_size_bytes": 1024 * 1024,
-            "max_backups": 3,
-        })()
-    })()
+    config = type(
+        "Config",
+        (),
+        {
+            "workspace_path": tmp_path,
+            "audit_log": type(
+                "AuditLogConfig",
+                (),
+                {
+                    "enabled": True,
+                    "path": "audit.jsonl",
+                    "max_size_bytes": 1024 * 1024,
+                    "max_backups": 3,
+                },
+            )(),
+        },
+    )()
 
     bus = EventBus()
     subscriber = make_audit_log_subscriber(config)
     bus.subscribe(subscriber)
 
-    await bus.publish({
-        "type": "llm_end",
-        "iteration": 1,
-        "model": "gemini-test",
-        "usage": {
-            "input_tokens": 100,
-            "output_tokens": 50,
-        },
-        "duration_ms": 1234,
-        "streaming": True,
-    })
-
+    await bus.publish(
+        {
+            "type": "llm_end",
+            "iteration": 1,
+            "model": "gemini-test",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+            },
+            "duration_ms": 1234,
+            "streaming": True,
+        }
+    )
 
     log_path = tmp_path / "audit.jsonl"
     assert log_path.exists()
@@ -53,29 +62,38 @@ async def test_audit_log_records_llm_call(tmp_path):
 
 
 async def test_audit_log_records_tool_call(tmp_path):
-    config = type("Config", (), {
-        "workspace_path": tmp_path,
-        "audit_log": type("AuditLogConfig", (), {
-            "enabled": True,
-            "path": "audit.jsonl",
-            "max_size_bytes": 1024 * 1024,
-            "max_backups": 3,
-        })()
-    })()
+    config = type(
+        "Config",
+        (),
+        {
+            "workspace_path": tmp_path,
+            "audit_log": type(
+                "AuditLogConfig",
+                (),
+                {
+                    "enabled": True,
+                    "path": "audit.jsonl",
+                    "max_size_bytes": 1024 * 1024,
+                    "max_backups": 3,
+                },
+            )(),
+        },
+    )()
 
     bus = EventBus()
     subscriber = make_audit_log_subscriber(config)
     bus.subscribe(subscriber)
 
-    await bus.publish({
-        "type": "tool_end",
-        "tool": "test_tool",
-        "args": {"arg1": "val1"},
-        "duration_ms": 42,
-        "result_text": "success output",
-        "input_bytes": 10,
-    })
-
+    await bus.publish(
+        {
+            "type": "tool_end",
+            "tool": "test_tool",
+            "args": {"arg1": "val1"},
+            "duration_ms": 42,
+            "result_text": "success output",
+            "input_bytes": 10,
+        }
+    )
 
     log_path = tmp_path / "audit.jsonl"
     assert log_path.exists()
@@ -91,30 +109,41 @@ async def test_audit_log_records_tool_call(tmp_path):
 
 
 async def test_audit_log_records_skill_and_mcp(tmp_path):
-    config = type("Config", (), {
-        "workspace_path": tmp_path,
-        "audit_log": type("AuditLogConfig", (), {
-            "enabled": True,
-            "path": "audit.jsonl",
-            "max_size_bytes": 1024 * 1024,
-            "max_backups": 3,
-        })()
-    })()
+    config = type(
+        "Config",
+        (),
+        {
+            "workspace_path": tmp_path,
+            "audit_log": type(
+                "AuditLogConfig",
+                (),
+                {
+                    "enabled": True,
+                    "path": "audit.jsonl",
+                    "max_size_bytes": 1024 * 1024,
+                    "max_backups": 3,
+                },
+            )(),
+        },
+    )()
 
     bus = EventBus()
     subscriber = make_audit_log_subscriber(config)
     bus.subscribe(subscriber)
 
-    await bus.publish({
-        "type": "skill_activated",
-        "skill": "test_skill",
-    })
+    await bus.publish(
+        {
+            "type": "skill_activated",
+            "skill": "test_skill",
+        }
+    )
 
-    await bus.publish({
-        "type": "mcp_server_connected",
-        "server": "test_mcp_server",
-    })
-
+    await bus.publish(
+        {
+            "type": "mcp_server_connected",
+            "server": "test_mcp_server",
+        }
+    )
 
     log_path = tmp_path / "audit.jsonl"
     lines = log_path.read_text().strip().split("\n")
@@ -129,25 +158,29 @@ async def test_audit_log_records_skill_and_mcp(tmp_path):
 
 
 async def test_audit_log_rotation(tmp_path):
-    config = type("Config", (), {
-        "workspace_path": tmp_path,
-        "audit_log": type("AuditLogConfig", (), {
-            "enabled": True,
-            "path": "audit.jsonl",
-            "max_size_bytes": 100, # Very small to force rotation
-            "max_backups": 2,
-        })()
-    })()
+    config = type(
+        "Config",
+        (),
+        {
+            "workspace_path": tmp_path,
+            "audit_log": type(
+                "AuditLogConfig",
+                (),
+                {
+                    "enabled": True,
+                    "path": "audit.jsonl",
+                    "max_size_bytes": 100,  # Very small to force rotation
+                    "max_backups": 2,
+                },
+            )(),
+        },
+    )()
 
     subscriber = AuditLogSubscriber(config)
 
     # Write entries that exceed 100 bytes
     for i in range(5):
-        subscriber.append_record({
-            "event": "test_event",
-            "index": i,
-            "data": "x" * 50
-        })
+        subscriber.append_record({"event": "test_event", "index": i, "data": "x" * 50})
 
     log_path = tmp_path / "audit.jsonl"
     assert log_path.exists()

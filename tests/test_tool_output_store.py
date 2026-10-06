@@ -33,6 +33,7 @@ async def test_tool_output_exceeding_limit_is_managed(ctx):
     # The file path logic puts it in:
     # workspace/conversations/{conv_id}/tool_outputs/{tool_call_id}.txt
     from decafclaw.conversation_paths import conversation_dir
+
     tool_outputs_dir = conversation_dir(ctx.config, ctx.conv_id, create=False) / "tool_outputs"
     filepath = tool_outputs_dir / "call_123.txt"
 
@@ -48,6 +49,7 @@ async def test_read_managed_tool_output_file(ctx):
     long_text = "B" * 150
 
     from decafclaw.conversation_paths import conversation_dir
+
     tool_outputs_dir = conversation_dir(ctx.config, ctx.conv_id, create=True) / "tool_outputs"
     tool_outputs_dir.mkdir(parents=True, exist_ok=True)
     filepath = tool_outputs_dir / "call_123.txt"

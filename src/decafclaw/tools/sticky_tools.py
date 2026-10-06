@@ -22,8 +22,7 @@ log = logging.getLogger(__name__)
 async def tool_widget_pin_sticky(ctx: "Context", widget_type: str, data: dict) -> ToolResult:
     """Pin a widget into the sticky slot above the chat input."""
     log.info("[tool:widget_pin_sticky] widget=%s", widget_type)
-    result = await sticky_mod.set_sticky(
-        ctx.config, ctx.conv_id, widget_type, data, emit=emit_for_ctx(ctx))
+    result = await sticky_mod.set_sticky(ctx.config, ctx.conv_id, widget_type, data, emit=emit_for_ctx(ctx))
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
     return ToolResult(text=result.text)
@@ -32,8 +31,7 @@ async def tool_widget_pin_sticky(ctx: "Context", widget_type: str, data: dict) -
 async def tool_widget_unpin_sticky(ctx: "Context") -> ToolResult:
     """Clear the sticky slot."""
     log.info("[tool:widget_unpin_sticky]")
-    result = await sticky_mod.clear_sticky(
-        ctx.config, ctx.conv_id, emit=emit_for_ctx(ctx))
+    result = await sticky_mod.clear_sticky(ctx.config, ctx.conv_id, emit=emit_for_ctx(ctx))
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
     return ToolResult(text=result.text)

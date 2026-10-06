@@ -1,4 +1,5 @@
 """Tests for WorkflowHandle.tool_call (Phase 3)."""
+
 import pytest
 
 from decafclaw.media import ToolResult
@@ -15,8 +16,7 @@ async def test_tool_call_live_path(ctx):
 
     def echo_tool(ctx, **kwargs):
         calls.append(kwargs)
-        return ToolResult(text=f"echoed: {kwargs.get('message', '')}",
-                          data={"received": kwargs})
+        return ToolResult(text=f"echoed: {kwargs.get('message', '')}", data={"received": kwargs})
 
     ctx.tools.extra = {"echo": echo_tool}
     ctx.tools.allowed = {"echo"}
@@ -28,8 +28,7 @@ async def test_tool_call_live_path(ctx):
     entry = j.get((0,))
     assert entry is not None
     assert entry.kind == "tool_call"
-    expected_fp = fingerprint("tool_call",
-                              {"name": "echo", "args": {"message": "hi"}})
+    expected_fp = fingerprint("tool_call", {"name": "echo", "args": {"message": "hi"}})
     assert entry.args_fingerprint == expected_fp
     assert len(calls) == 1
 
@@ -44,6 +43,7 @@ async def test_tool_call_live_path(ctx):
 async def test_tool_call_replay_path(ctx):
     """A pre-populated journal entry is returned verbatim; the live tool
     function MUST NOT be called during replay."""
+
     def boom_tool(ctx, **kwargs):
         raise AssertionError("live tool MUST NOT run during replay")
 
@@ -98,6 +98,7 @@ async def test_tool_call_with_no_allowlist_allows_any_registered_tool(ctx):
     Guards against a regression to "None collapses to empty set =
     nothing allowed."
     """
+
     def fake_tool(ctx, **kwargs):
         return ToolResult(text="fake-ok", data={"args": kwargs})
 
@@ -117,6 +118,7 @@ async def test_tool_call_with_no_allowlist_allows_any_registered_tool(ctx):
 async def test_tool_call_strips_media_from_journal(ctx):
     """Media attachments on the ToolResult are not stored in the journal —
     only text + data make the trip."""
+
     def media_tool(ctx, **kwargs):
         return ToolResult(
             text="ok",
@@ -141,6 +143,7 @@ async def test_tool_call_strips_media_from_journal(ctx):
 @pytest.mark.asyncio
 async def test_tool_call_fingerprint_includes_name_and_args(ctx):
     """Different name OR different args yield different fingerprints."""
+
     def t(ctx, **kwargs):
         return ToolResult(text="ok")
 
@@ -172,6 +175,7 @@ async def test_tool_call_fingerprint_includes_name_and_args(ctx):
 @pytest.mark.asyncio
 async def test_tool_call_uses_sub_handle_key_prefix(ctx):
     """A sub-handle at prefix (7,) journals its tool_call at seq (7, 0)."""
+
     def t(ctx, **kwargs):
         return ToolResult(text="ok", data=None)
 

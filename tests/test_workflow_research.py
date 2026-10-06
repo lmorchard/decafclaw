@@ -12,6 +12,7 @@ delegate.run_child_turn) so we can walk the orchestrator deterministically
 without touching real model/search providers. Phase 8's live smoke covers
 the real wiring.
 """
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -24,13 +25,13 @@ from decafclaw.workflow.registry import get_workflow
 
 # --- Helpers ---------------------------------------------------------------
 
+
 def _fp_user(prompt):
     return fingerprint("user_input", {"prompt": prompt, "choices": None})
 
 
 def _fp_llm(prompt, schema, system):
-    return fingerprint(
-        "llm_call", {"prompt": prompt, "schema": schema, "system": system})
+    return fingerprint("llm_call", {"prompt": prompt, "schema": schema, "system": system})
 
 
 def _fp_tool(name, args):
@@ -42,11 +43,11 @@ def _fp_parallel(count):
 
 
 def _fp_pipeline(items, stage_count):
-    return fingerprint(
-        "pipeline", {"items": items, "stage_count": stage_count})
+    return fingerprint("pipeline", {"items": items, "stage_count": stage_count})
 
 
 # --- Tests -----------------------------------------------------------------
+
 
 def test_research_registers_as_workflow():
     """The @workflow('research') decorator side-effects the registry on
@@ -60,6 +61,7 @@ def test_research_declares_tabstack_requirement():
     """The /research workflow declares the tabstack skill so its
     tool_call invocations of `tabstack_research` reach a real tool."""
     from decafclaw.workflow.workflows.research import _SEARCH_TOOL
+
     spec = get_workflow("research")
     assert spec is not None
     assert "tabstack" in spec.requires_skills
@@ -90,17 +92,16 @@ async def test_research_orchestrator_walks_to_completion(ctx):
     # walks past the suspend points. Everything downstream runs "live"
     # against mocked primitives.
     j = Journal(workflow_name="research")
-    j.append((0,), "user_input",
-             _fp_user("What topic should I research?"),
-             "tide pool ecology")
-    j.append((1,), "user_input",
-             _fp_user("Any specific angle, audience, or constraint? "
-                      "(Press enter for none.)"),
-             "for a general audience")
+    j.append((0,), "user_input", _fp_user("What topic should I research?"), "tide pool ecology")
+    j.append(
+        (1,),
+        "user_input",
+        _fp_user("Any specific angle, audience, or constraint? (Press enter for none.)"),
+        "for a general audience",
+    )
 
     # Mock the LLM caller (plan stage + per-source summarize stages).
-    plan_result = {"queries": ["q1: anemones", "q2: hermit crabs",
-                                "q3: ochre stars"]}
+    plan_result = {"queries": ["q1: anemones", "q2: hermit crabs", "q3: ochre stars"]}
     summarize_returns = [
         {"title": "Anemones", "key_points": ["sting", "symbiosis"]},
         {"title": "Hermit crabs", "key_points": ["shells", "moult"]},
@@ -125,26 +126,25 @@ async def test_research_orchestrator_walks_to_completion(ctx):
 
     async def fake_tool(ctx, name, args):
         tool_calls.append((name, args))
-        return ToolResult(text=f"Results for {args.get('query', '?')}",
-                          data=None)
+        return ToolResult(text=f"Results for {args.get('query', '?')}", data=None)
 
     # Mock the subagent (delegate.run_child_turn).
-    final_report = {"title": "Tide pools",
-                    "body": "# Tide pools\n\nSynthesized."}
+    final_report = {"title": "Tide pools", "body": "# Tide pools\n\nSynthesized."}
 
     # ctx needs a workspace_path the journal can persist to.
     # The research orchestrator gates tool_call by ctx.tools.allowed; allow
     # the chosen search tool through.
     ctx.tools.allowed = {_SEARCH_TOOL}
 
-    with patch("decafclaw.workflow.handle.execute_tool", new=fake_tool), \
-         patch(
-             "decafclaw.tools.delegate.run_child_turn",
-             new_callable=AsyncMock,
-             return_value=("ignored text", final_report),
-         ) as mock_child:
-        outcome = await run_workflow(
-            ctx, spec.fn, j, llm_caller=fake_llm)
+    with (
+        patch("decafclaw.workflow.handle.execute_tool", new=fake_tool),
+        patch(
+            "decafclaw.tools.delegate.run_child_turn",
+            new_callable=AsyncMock,
+            return_value=("ignored text", final_report),
+        ) as mock_child,
+    ):
+        outcome = await run_workflow(ctx, spec.fn, j, llm_caller=fake_llm)
 
     # The orchestrator returns the structured report (subagent with schema
     # returns the dict, not the text).
@@ -184,11 +184,10 @@ async def test_research_fails_fast_when_search_tool_returns_all_errors(ctx):
     assert spec is not None
 
     j = Journal(workflow_name="research")
-    j.append((0,), "user_input",
-             _fp_user("What topic should I research?"), "topic")
-    j.append((1,), "user_input",
-             _fp_user("Any specific angle, audience, or constraint? "
-                      "(Press enter for none.)"), "scope")
+    j.append((0,), "user_input", _fp_user("What topic should I research?"), "topic")
+    j.append(
+        (1,), "user_input", _fp_user("Any specific angle, audience, or constraint? (Press enter for none.)"), "scope"
+    )
 
     plan_result = {"queries": ["q1", "q2"]}
 
@@ -199,21 +198,21 @@ async def test_research_fails_fast_when_search_tool_returns_all_errors(ctx):
         raise AssertionError("summarize llm_call must not run after fail-fast")
 
     async def error_tool(ctx, name, args):
-        return ToolResult(
-            text=f"[error: unknown tool {name!r}]", data=None)
+        return ToolResult(text=f"[error: unknown tool {name!r}]", data=None)
 
     ctx.tools.allowed = {_SEARCH_TOOL}
 
-    with patch("decafclaw.workflow.handle.execute_tool", new=error_tool), \
-         patch(
-             "decafclaw.tools.delegate.run_child_turn",
-             new_callable=AsyncMock,
-         ) as mock_child:
+    with (
+        patch("decafclaw.workflow.handle.execute_tool", new=error_tool),
+        patch(
+            "decafclaw.tools.delegate.run_child_turn",
+            new_callable=AsyncMock,
+        ) as mock_child,
+    ):
         outcome = await run_workflow(ctx, spec.fn, j, llm_caller=fake_llm)
 
     assert outcome.status == "error"
-    assert "tool likely unavailable" in outcome.error.lower() or \
-           "all" in outcome.error.lower()
+    assert "tool likely unavailable" in outcome.error.lower() or "all" in outcome.error.lower()
     mock_child.assert_not_called()
 
 
@@ -249,17 +248,14 @@ async def test_research_orchestrator_resumes_from_journal(ctx):
 
     j = Journal(workflow_name="research")
     # (0,) user_input — topic
-    j.append((0,), "user_input",
-             _fp_user("What topic should I research?"), topic)
+    j.append((0,), "user_input", _fp_user("What topic should I research?"), topic)
     # (1,) user_input — scope
-    j.append((1,), "user_input",
-             _fp_user("Any specific angle, audience, or constraint? "
-                      "(Press enter for none.)"), scope)
+    j.append(
+        (1,), "user_input", _fp_user("Any specific angle, audience, or constraint? (Press enter for none.)"), scope
+    )
     # (2,) llm_call — plan
     plan_prompt = _research_plan_prompt(topic, scope)
-    j.append((2,), "llm_call",
-             _fp_llm(plan_prompt, _PLAN_SCHEMA, _SYS_PLAN),
-             {"queries": queries})
+    j.append((2,), "llm_call", _fp_llm(plan_prompt, _PLAN_SCHEMA, _SYS_PLAN), {"queries": queries})
 
     # (3,) parallel — search fan-out. Per-thunk child entries:
     #   (3, i, 0) tool_call — search for queries[i]
@@ -267,8 +263,7 @@ async def test_research_orchestrator_resumes_from_journal(ctx):
     for i, q in enumerate(queries):
         text = search_text_template.format(q=q)
         result_dict = {"text": text, "data": None}
-        j.append((3, i, 0), "tool_call",
-                 _fp_tool(_SEARCH_TOOL, {"query": q}), result_dict)
+        j.append((3, i, 0), "tool_call", _fp_tool(_SEARCH_TOOL, {"query": q}), result_dict)
         search_results.append(result_dict)
     j.append((3,), "parallel", _fp_parallel(len(queries)), search_results)
 
@@ -278,11 +273,8 @@ async def test_research_orchestrator_resumes_from_journal(ctx):
     for i, q in enumerate(queries):
         extracted = search_text_template.format(q=q)
         prompt = _summarize_prompt(extracted)
-        j.append((4, i, 0), "llm_call",
-                 _fp_llm(prompt, _SUMMARY_SCHEMA, _SYS_SUMMARIZE),
-                 summaries[i])
-    j.append((4,), "pipeline",
-             _fp_pipeline(search_results, 2), summaries)
+        j.append((4, i, 0), "llm_call", _fp_llm(prompt, _SUMMARY_SCHEMA, _SYS_SUMMARIZE), summaries[i])
+    j.append((4,), "pipeline", _fp_pipeline(search_results, 2), summaries)
 
     # (5,) subagent — the first live boundary. NOT pre-populated.
 
@@ -290,25 +282,23 @@ async def test_research_orchestrator_resumes_from_journal(ctx):
     # via WorkflowSuspended if the cache misses), llm_call / tool_call
     # would blow up if invoked live.
     async def boom_llm(ctx, **kw):
-        raise AssertionError(
-            f"llm_call MUST NOT run during journal-driven replay: {kw}")
+        raise AssertionError(f"llm_call MUST NOT run during journal-driven replay: {kw}")
 
     async def boom_tool(ctx, name, args):
-        raise AssertionError(
-            f"tool_call MUST NOT run during journal-driven replay: "
-            f"{name} {args}")
+        raise AssertionError(f"tool_call MUST NOT run during journal-driven replay: {name} {args}")
 
     # The subagent IS live: that's what we're verifying gets reached.
-    with patch("decafclaw.workflow.handle.execute_tool", new=boom_tool), \
-         patch(
-             "decafclaw.tools.delegate.run_child_turn",
-             new_callable=AsyncMock,
-             return_value=("ignored", report),
-         ) as mock_child:
+    with (
+        patch("decafclaw.workflow.handle.execute_tool", new=boom_tool),
+        patch(
+            "decafclaw.tools.delegate.run_child_turn",
+            new_callable=AsyncMock,
+            return_value=("ignored", report),
+        ) as mock_child,
+    ):
         spec = get_workflow("research")
         assert spec is not None
-        outcome = await run_workflow(
-            ctx, spec.fn, j, llm_caller=boom_llm)
+        outcome = await run_workflow(ctx, spec.fn, j, llm_caller=boom_llm)
 
     assert outcome.status == "done", f"got {outcome.status}: {outcome.error}"
     assert outcome.result == report
@@ -330,8 +320,7 @@ async def test_research_first_suspend_is_topic_question(ctx):
     spec = get_workflow("research")
     assert spec is not None
 
-    outcome = await run_workflow(
-        ctx, spec.fn, Journal(workflow_name="research"))
+    outcome = await run_workflow(ctx, spec.fn, Journal(workflow_name="research"))
     assert outcome.status == "suspended"
     assert outcome.suspend is not None
     assert "topic" in outcome.suspend.prompt.lower()

@@ -51,10 +51,7 @@ class AuditLogSubscriber:
         self.logger.propagate = False
 
         handler = RotatingFileHandler(
-            path,
-            maxBytes=config.audit_log.max_size_bytes,
-            backupCount=config.audit_log.max_backups,
-            encoding="utf-8"
+            path, maxBytes=config.audit_log.max_size_bytes, backupCount=config.audit_log.max_backups, encoding="utf-8"
         )
         handler.setFormatter(logging.Formatter("%(message)s"))
         self.logger.addHandler(handler)
@@ -72,14 +69,16 @@ class AuditLogSubscriber:
 
             if event_type == "llm_end":
                 usage = event.get("usage", {})
-                self.append_record({
-                    "event": "llm_call",
-                    "model": event.get("model", ""),
-                    "prompt_tokens": usage.get("input_tokens", 0),
-                    "completion_tokens": usage.get("output_tokens", 0),
-                    "duration_ms": event.get("duration_ms", 0),
-                    "streaming": event.get("streaming", False),
-                })
+                self.append_record(
+                    {
+                        "event": "llm_call",
+                        "model": event.get("model", ""),
+                        "prompt_tokens": usage.get("input_tokens", 0),
+                        "completion_tokens": usage.get("output_tokens", 0),
+                        "duration_ms": event.get("duration_ms", 0),
+                        "streaming": event.get("streaming", False),
+                    }
+                )
             elif event_type == "tool_end":
                 result_text = event.get("result_text", "") or ""
                 raw_args = event.get("args", {})
@@ -89,24 +88,30 @@ class AuditLogSubscriber:
                 except Exception:
                     args_str = str(sanitized_args)
 
-                self.append_record({
-                    "event": "tool_call",
-                    "tool_name": event.get("tool", ""),
-                    "args": args_str,
-                    "result_length": len(result_text),
-                    "duration_ms": event.get("duration_ms", 0),
-                    "outcome": infer_outcome(result_text),
-                })
+                self.append_record(
+                    {
+                        "event": "tool_call",
+                        "tool_name": event.get("tool", ""),
+                        "args": args_str,
+                        "result_length": len(result_text),
+                        "duration_ms": event.get("duration_ms", 0),
+                        "outcome": infer_outcome(result_text),
+                    }
+                )
             elif event_type == "skill_activated":
-                self.append_record({
-                    "event": "skill_activated",
-                    "identifier": event.get("skill", ""),
-                })
+                self.append_record(
+                    {
+                        "event": "skill_activated",
+                        "identifier": event.get("skill", ""),
+                    }
+                )
             elif event_type == "mcp_server_connected":
-                self.append_record({
-                    "event": "mcp_server_connected",
-                    "identifier": event.get("server", ""),
-                })
+                self.append_record(
+                    {
+                        "event": "mcp_server_connected",
+                        "identifier": event.get("server", ""),
+                    }
+                )
         except Exception as exc:
             log.debug("audit log subscriber error: %s", exc)
 

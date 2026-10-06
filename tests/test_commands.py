@@ -100,7 +100,9 @@ class TestFormatHelp:
     def test_with_hint(self):
         skills = [
             SkillInfo(
-                name="weather", description="Get weather", location=Path("."),
+                name="weather",
+                description="Get weather",
+                location=Path("."),
                 argument_hint="[city]",
             ),
         ]
@@ -135,8 +137,11 @@ class TestExecuteCommand:
     @pytest.mark.asyncio
     async def test_inline_mode(self, ctx):
         skill = SkillInfo(
-            name="test-cmd", description="Test", location=Path("."),
-            body="Do $ARGUMENTS", context="inline",
+            name="test-cmd",
+            description="Test",
+            location=Path("."),
+            body="Do $ARGUMENTS",
+            context="inline",
             allowed_tools=["vault_read"],
             # Explicit trusted tier: only capability tiers pre-approve (#737),
             # and `trust_tier` defaults to the untrusted tier. This test's
@@ -151,8 +156,11 @@ class TestExecuteCommand:
     @pytest.mark.asyncio
     async def test_fork_mode(self, ctx):
         skill = SkillInfo(
-            name="test-cmd", description="Test", location=Path("."),
-            body="Do $ARGUMENTS", context="fork",
+            name="test-cmd",
+            description="Test",
+            location=Path("."),
+            body="Do $ARGUMENTS",
+            context="fork",
             allowed_tools=["shell"],
             # Explicit trusted tier — see test_inline_mode. Subject here is
             # fork-mode dispatch, not tier policy.
@@ -170,8 +178,12 @@ class TestExecuteCommand:
     async def test_shell_skill_not_activated(self, ctx):
         """Shell-based skills (no native tools) don't get activated — body IS the prompt."""
         skill = SkillInfo(
-            name="test-cmd", description="Test", location=Path("."),
-            body="Do stuff", context="inline", has_native_tools=False,
+            name="test-cmd",
+            description="Test",
+            location=Path("."),
+            body="Do stuff",
+            context="inline",
+            has_native_tools=False,
         )
         await execute_command(ctx, skill, "")
         assert "test-cmd" not in ctx.skills.activated
@@ -180,19 +192,28 @@ class TestExecuteCommand:
     async def test_native_skill_auto_activated(self, ctx):
         """Skills with native tools DO get activated to register callables."""
         skill = SkillInfo(
-            name="test-cmd", description="Test", location=Path("."),
-            body="Do stuff", context="inline", has_native_tools=True,
+            name="test-cmd",
+            description="Test",
+            location=Path("."),
+            body="Do stuff",
+            context="inline",
+            has_native_tools=True,
         )
         # Mock the activation since there's no actual tools.py
-        with patch("decafclaw.tools.skill_tools.activate_skill_internal", new_callable=AsyncMock, return_value="activated"):
+        with patch(
+            "decafclaw.tools.skill_tools.activate_skill_internal", new_callable=AsyncMock, return_value="activated"
+        ):
             await execute_command(ctx, skill, "")
 
     @pytest.mark.asyncio
     async def test_already_activated_skips(self, ctx):
         """If skill already activated, don't re-activate."""
         skill = SkillInfo(
-            name="test-cmd", description="Test", location=Path("."),
-            body="Do stuff", context="inline",
+            name="test-cmd",
+            description="Test",
+            location=Path("."),
+            body="Do stuff",
+            context="inline",
         )
         ctx.skills.activated["test-cmd"] = ""
         # Should not error even though activation logic isn't called
@@ -203,7 +224,9 @@ class TestExecuteCommand:
     async def test_fork_required_skills_activated(self, ctx):
         """Fork commands pre-activate required-skills before spawning child."""
         dep_skill = SkillInfo(
-            name="tabstack", description="Tabstack", location=Path("."),
+            name="tabstack",
+            description="Tabstack",
+            location=Path("."),
             has_native_tools=True,
             # Explicit trusted tier: a workspace-tier dependency is
             # deliberately NOT activated (#737 — the human named the command,
@@ -214,14 +237,21 @@ class TestExecuteCommand:
         ctx.config.discovered_skills = [dep_skill]
 
         skill = SkillInfo(
-            name="test-cmd", description="Test", location=Path("."),
-            body="Do stuff", context="fork",
+            name="test-cmd",
+            description="Test",
+            location=Path("."),
+            body="Do stuff",
+            context="fork",
             requires_skills=["tabstack"],
         )
-        with patch("decafclaw.tools.skill_tools.activate_skill_internal",
-                    new_callable=AsyncMock, return_value="activated") as mock_activate, \
-             patch("decafclaw.tools.delegate.run_child_turn",
-                    new_callable=AsyncMock, return_value=("child result", None)):
+        with (
+            patch(
+                "decafclaw.tools.skill_tools.activate_skill_internal", new_callable=AsyncMock, return_value="activated"
+            ) as mock_activate,
+            patch(
+                "decafclaw.tools.delegate.run_child_turn", new_callable=AsyncMock, return_value=("child result", None)
+            ),
+        ):
             mode, result = await execute_command(ctx, skill, "")
 
         assert mode == "fork"
@@ -231,20 +261,25 @@ class TestExecuteCommand:
     async def test_fork_required_skills_already_active(self, ctx):
         """Already-activated skills are not re-activated."""
         dep_skill = SkillInfo(
-            name="tabstack", description="Tabstack", location=Path("."),
+            name="tabstack",
+            description="Tabstack",
+            location=Path("."),
         )
         ctx.config.discovered_skills = [dep_skill]
         ctx.skills.activated["tabstack"] = ""
 
         skill = SkillInfo(
-            name="test-cmd", description="Test", location=Path("."),
-            body="Do stuff", context="fork",
+            name="test-cmd",
+            description="Test",
+            location=Path("."),
+            body="Do stuff",
+            context="fork",
             requires_skills=["tabstack"],
         )
-        with patch("decafclaw.tools.skill_tools.activate_skill_internal",
-                    new_callable=AsyncMock) as mock_activate, \
-             patch("decafclaw.tools.delegate.run_child_turn",
-                    new_callable=AsyncMock, return_value=("done", None)):
+        with (
+            patch("decafclaw.tools.skill_tools.activate_skill_internal", new_callable=AsyncMock) as mock_activate,
+            patch("decafclaw.tools.delegate.run_child_turn", new_callable=AsyncMock, return_value=("done", None)),
+        ):
             await execute_command(ctx, skill, "")
 
         mock_activate.assert_not_called()
@@ -257,8 +292,11 @@ class TestExecuteCommand:
         ctx.manager = sentinel_manager
 
         skill = SkillInfo(
-            name="test-cmd", description="Test", location=Path("."),
-            body="Do $ARGUMENTS", context="fork",
+            name="test-cmd",
+            description="Test",
+            location=Path("."),
+            body="Do $ARGUMENTS",
+            context="fork",
         )
         with patch(
             "decafclaw.tools.delegate.run_child_turn",
@@ -280,8 +318,11 @@ class TestExecuteCommand:
         ctx.manager = None  # explicit for the test's intent
 
         skill = SkillInfo(
-            name="test-cmd", description="Test", location=Path("."),
-            body="Do $ARGUMENTS", context="fork",
+            name="test-cmd",
+            description="Test",
+            location=Path("."),
+            body="Do $ARGUMENTS",
+            context="fork",
         )
         # Do NOT mock run_child_turn — let the real function hit its own
         # bail-out so the error text is the one real users would see.

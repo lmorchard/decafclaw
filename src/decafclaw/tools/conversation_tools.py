@@ -38,8 +38,7 @@ def tool_conversation_search(ctx: "Context", query: str) -> str:
     """Search conversation archives by stemmed-token overlap plus substring."""
     log.info(f"[tool:conversation_search] query={query}")
 
-    archives = sorted(
-        iter_conversation_archives(ctx.config), key=lambda t: t[0], reverse=True)
+    archives = sorted(iter_conversation_archives(ctx.config), key=lambda t: t[0], reverse=True)
     if not archives:
         return f"No conversation history found matching '{query}'"
 
@@ -102,6 +101,7 @@ async def tool_conversation_compact(ctx: "Context") -> str | ToolResult:
     """Manually trigger conversation compaction."""
     log.info("[tool:conversation_compact]")
     from ..compaction import compact_history
+
     history = ctx.history
     if history is None:
         return ToolResult(text="[error: no conversation history available]")

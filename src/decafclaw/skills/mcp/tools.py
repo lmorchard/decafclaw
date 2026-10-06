@@ -162,6 +162,7 @@ async def tool_mcp_read_resource(ctx: "Context", server: str = "", uri: str = ""
 
     try:
         from pydantic import AnyUrl
+
         timeout_s = state.config.timeout / 1000
         result = await asyncio.wait_for(
             state.session.read_resource(AnyUrl(uri)),
@@ -210,8 +211,9 @@ async def tool_mcp_list_prompts(ctx: "Context") -> str | ToolResult:
     return "\n".join(lines)
 
 
-async def tool_mcp_get_prompt(ctx: "Context", server: str = "", name: str = "",
-                               arguments: str = "{}") -> str | ToolResult:
+async def tool_mcp_get_prompt(
+    ctx: "Context", server: str = "", name: str = "", arguments: str = "{}"
+) -> str | ToolResult:
     """Get a prompt from an MCP server and return its messages."""
     import asyncio
     import json as _json
@@ -303,10 +305,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "mcp_read_resource",
-            "description": (
-                "Read a resource from an MCP server by URI. "
-                "Returns text content or binary attachments."
-            ),
+            "description": ("Read a resource from an MCP server by URI. Returns text content or binary attachments."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -328,8 +327,7 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "mcp_list_prompts",
             "description": (
-                "List all prompts from connected MCP servers. "
-                "Shows name, description, and arguments for each prompt."
+                "List all prompts from connected MCP servers. Shows name, description, and arguments for each prompt."
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },

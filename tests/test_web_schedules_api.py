@@ -59,8 +59,7 @@ class TestSchedulesAPI:
     async def test_list_shape(self, client):
         r = await client.get("/api/schedules")
         dream = next(s for s in r.json()["schedules"] if s["name"] == "dream")
-        for key in ("name", "source_tier", "has_overlay", "enabled",
-                    "schedule", "body", "next_run_iso"):
+        for key in ("name", "source_tier", "has_overlay", "enabled", "schedule", "body", "next_run_iso"):
             assert key in dream, f"missing key: {key}"
         assert dream["source_tier"] == "bundled"
         assert dream["has_overlay"] is False
@@ -75,9 +74,7 @@ class TestSchedulesAPI:
         assert overlay.exists()
         # Subsequent GET reflects overlay
         listed_r = await client.get("/api/schedules")
-        listed = next(
-            s for s in listed_r.json()["schedules"] if s["name"] == "dream"
-        )
+        listed = next(s for s in listed_r.json()["schedules"] if s["name"] == "dream")
         assert listed["source_tier"] == "admin"
         assert listed["has_overlay"] is True
         assert listed["enabled"] is False
@@ -99,9 +96,7 @@ class TestSchedulesAPI:
     async def test_put_workspace_writes_in_place(self, client, http_config):
         ws_dir = http_config.workspace_path / "schedules"
         ws_dir.mkdir(parents=True, exist_ok=True)
-        (ws_dir / "agent-task.md").write_text(
-            "---\nschedule: '0 * * * *'\n---\nAgent self-scheduled.\n"
-        )
+        (ws_dir / "agent-task.md").write_text("---\nschedule: '0 * * * *'\n---\nAgent self-scheduled.\n")
         r = await client.put("/api/schedules/agent-task", json={"enabled": False})
         assert r.status_code == 200
         # Written in-place to workspace, not to admin overlay path
@@ -119,9 +114,7 @@ class TestSchedulesAPI:
         r = await client.delete("/api/schedules/dream/overlay")
         assert r.status_code == 200
         listed_r = await client.get("/api/schedules")
-        listed = next(
-            s for s in listed_r.json()["schedules"] if s["name"] == "dream"
-        )
+        listed = next(s for s in listed_r.json()["schedules"] if s["name"] == "dream")
         assert listed["source_tier"] == "bundled"
         assert listed["has_overlay"] is False
         assert listed["schedule"] == "0 3 * * *"
@@ -146,9 +139,7 @@ class TestSchedulesAPI:
         admin_dir = http_config.agent_path / "schedules"
         admin_dir.mkdir(parents=True, exist_ok=True)
         standalone = admin_dir / "admin-only.md"
-        standalone.write_text(
-            "---\nschedule: '0 * * * *'\n---\nAdmin-only standalone.\n"
-        )
+        standalone.write_text("---\nschedule: '0 * * * *'\n---\nAdmin-only standalone.\n")
         r = await client.delete("/api/schedules/admin-only/overlay")
         assert r.status_code == 404
         # File MUST still exist — the handler must not have deleted it
@@ -193,15 +184,15 @@ class TestSchedulesAPI:
     @pytest.mark.asyncio
     async def test_put_400_on_non_dict_body(self, client):
         """Important 4: non-dict JSON body must return 400."""
-        r = await client.put("/api/schedules/dream", content=b"[1, 2, 3]",
-                             headers={"Content-Type": "application/json"})
+        r = await client.put("/api/schedules/dream", content=b"[1, 2, 3]", headers={"Content-Type": "application/json"})
         assert r.status_code == 400
 
     @pytest.mark.asyncio
     async def test_put_400_on_invalid_json(self, client):
         """Important 4 (optional): malformed JSON must return 400."""
-        r = await client.put("/api/schedules/dream", content=b"not valid json{",
-                             headers={"Content-Type": "application/json"})
+        r = await client.put(
+            "/api/schedules/dream", content=b"not valid json{", headers={"Content-Type": "application/json"}
+        )
         assert r.status_code == 400
 
     @pytest.mark.asyncio
@@ -277,8 +268,7 @@ class TestSchedulesAPI:
         async def fake_run(cfg, ev, mgr, task, *, conv_id=None):
             captured["task_name"] = task.name
             captured["conv_id"] = conv_id
-            return {"task_name": task.name, "is_ok": True, "channel": "",
-                    "response": "", "context_id": None}
+            return {"task_name": task.name, "is_ok": True, "channel": "", "response": "", "context_id": None}
 
         monkeypatch.setattr("decafclaw.http_server.run_schedule_task", fake_run)
 
@@ -309,16 +299,13 @@ class TestSchedulesAPI:
         """Manual run bypasses the enabled flag."""
         ws_dir = http_config.workspace_path / "schedules"
         ws_dir.mkdir(parents=True, exist_ok=True)
-        (ws_dir / "disabled-task.md").write_text(
-            "---\nschedule: '0 * * * *'\nenabled: false\n---\nDisabled body.\n"
-        )
+        (ws_dir / "disabled-task.md").write_text("---\nschedule: '0 * * * *'\nenabled: false\n---\nDisabled body.\n")
 
         fired = {"count": 0}
 
         async def fake_run(cfg, ev, mgr, task, *, conv_id=None):
             fired["count"] += 1
-            return {"task_name": task.name, "is_ok": True, "channel": "",
-                    "response": "", "context_id": None}
+            return {"task_name": task.name, "is_ok": True, "channel": "", "response": "", "context_id": None}
 
         monkeypatch.setattr("decafclaw.http_server.run_schedule_task", fake_run)
 

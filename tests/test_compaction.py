@@ -83,9 +83,7 @@ class TestFlattenMessages:
     def test_tool_calls_and_results(self):
         messages = [
             {"role": "user", "content": "run ls"},
-            {"role": "assistant", "content": "Let me check.", "tool_calls": [
-                {"function": {"name": "shell"}}
-            ]},
+            {"role": "assistant", "content": "Let me check.", "tool_calls": [{"function": {"name": "shell"}}]},
             {"role": "tool", "tool_call_id": "tc1", "content": "file1.txt\nfile2.txt"},
             {"role": "assistant", "content": "Found 2 files."},
         ]
@@ -126,10 +124,7 @@ class TestCompactHistory:
     async def test_compacts_when_enough_turns(self, ctx, populated_archive):
         """With 8 turns and preserve=5, should compact 3 old turns."""
         ctx.config.compaction.preserve_turns = 5
-        history = [
-            {"role": "user", "content": f"message {i}"}
-            for i in range(8)
-        ]
+        history = [{"role": "user", "content": f"message {i}"} for i in range(8)]
 
         mock_response = {
             "content": "Summary of earlier conversation.",
@@ -211,10 +206,14 @@ class TestCompactHistory:
         for i in range(5, 10):
             prev_recent.append({"role": "user", "content": f"message {i}"})
             prev_recent.append({"role": "assistant", "content": f"response {i}"})
-        write_compacted_history(config, conv_id, [
-            {"role": "user", "content": prev_summary},
-            *prev_recent,
-        ])
+        write_compacted_history(
+            config,
+            conv_id,
+            [
+                {"role": "user", "content": prev_summary},
+                *prev_recent,
+            ],
+        )
 
         # Now add 3 more turns (turns 10-12) to the archive
         for i in range(10, 13):
@@ -262,10 +261,14 @@ class TestCompactHistory:
         for i in range(3, 8):
             prev_recent.append({"role": "user", "content": f"message {i}"})
             prev_recent.append({"role": "assistant", "content": f"response {i}"})
-        write_compacted_history(config, conv_id, [
-            {"role": "user", "content": f"{SUMMARY_PREFIX}Summary of turns 0-2."},
-            *prev_recent,
-        ])
+        write_compacted_history(
+            config,
+            conv_id,
+            [
+                {"role": "user", "content": f"{SUMMARY_PREFIX}Summary of turns 0-2."},
+                *prev_recent,
+            ],
+        )
 
         # No new messages added — same 8 turns, same boundary.
         history = [{"role": "user", "content": "placeholder"}]
@@ -277,9 +280,13 @@ class TestTurnHasProtectedTool:
     def test_detects_activate_skill(self):
         turn = [
             {"role": "user", "content": "activate tabstack"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc1", "function": {"name": "activate_skill", "arguments": '{"name": "tabstack"}'}}
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "tc1", "function": {"name": "activate_skill", "arguments": '{"name": "tabstack"}'}}
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "skill body here"},
         ]
         assert _turn_has_protected_tool(turn) is True
@@ -287,9 +294,11 @@ class TestTurnHasProtectedTool:
     def test_ignores_regular_tools(self):
         turn = [
             {"role": "user", "content": "run ls"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc1", "function": {"name": "shell", "arguments": '{"command": "ls"}'}}
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "tc1", "function": {"name": "shell", "arguments": '{"command": "ls"}'}}],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "file1.txt"},
         ]
         assert _turn_has_protected_tool(turn) is False
@@ -320,19 +329,34 @@ class TestSkillProtectionDuringCompaction:
         append_message(config, conv_id, {"role": "assistant", "content": "hi"})
         # Turn 1: skill activation
         append_message(config, conv_id, {"role": "user", "content": "activate tabstack"})
-        append_message(config, conv_id, {
-            "role": "assistant", "content": None,
-            "tool_calls": [{"id": "tc1", "function": {
-                "name": "activate_skill", "arguments": '{"name": "tabstack"}'
-            }}],
-        })
-        append_message(config, conv_id, {
-            "role": "tool", "tool_call_id": "tc1",
-            "content": "# Tabstack Skill\nFull skill body with instructions...",
-        })
-        append_message(config, conv_id, {
-            "role": "assistant", "content": "Tabstack is now active.",
-        })
+        append_message(
+            config,
+            conv_id,
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "tc1", "function": {"name": "activate_skill", "arguments": '{"name": "tabstack"}'}}
+                ],
+            },
+        )
+        append_message(
+            config,
+            conv_id,
+            {
+                "role": "tool",
+                "tool_call_id": "tc1",
+                "content": "# Tabstack Skill\nFull skill body with instructions...",
+            },
+        )
+        append_message(
+            config,
+            conv_id,
+            {
+                "role": "assistant",
+                "content": "Tabstack is now active.",
+            },
+        )
         # Turns 2-7: regular
         for i in range(2, 8):
             append_message(config, conv_id, {"role": "user", "content": f"message {i}"})
@@ -347,7 +371,9 @@ class TestSkillProtectionDuringCompaction:
 
         mock_response = {
             "content": "Summary of non-skill turns.",
-            "tool_calls": None, "role": "assistant", "usage": None,
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
         }
 
         with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
@@ -366,15 +392,26 @@ class TestSkillProtectionDuringCompaction:
         conv_id = "test-conv"
         # Turn 0: skill activation
         append_message(config, conv_id, {"role": "user", "content": "activate tabstack"})
-        append_message(config, conv_id, {
-            "role": "assistant", "content": None,
-            "tool_calls": [{"id": "tc1", "function": {
-                "name": "activate_skill", "arguments": '{"name": "tabstack"}'
-            }}],
-        })
-        append_message(config, conv_id, {
-            "role": "tool", "tool_call_id": "tc1", "content": "skill body",
-        })
+        append_message(
+            config,
+            conv_id,
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "tc1", "function": {"name": "activate_skill", "arguments": '{"name": "tabstack"}'}}
+                ],
+            },
+        )
+        append_message(
+            config,
+            conv_id,
+            {
+                "role": "tool",
+                "tool_call_id": "tc1",
+                "content": "skill body",
+            },
+        )
         append_message(config, conv_id, {"role": "assistant", "content": "activated"})
         # Turns 1-5: regular (these will be the "recent" window)
         for i in range(1, 6):
@@ -408,8 +445,10 @@ class TestMemorySweep:
         history = [{"role": "user", "content": f"message {i}"} for i in range(8)]
 
         mock_response = {
-            "content": "Summary.", "tool_calls": None,
-            "role": "assistant", "usage": None,
+            "content": "Summary.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
         }
 
         created_tasks = []
@@ -422,8 +461,7 @@ class TestMemorySweep:
 
         with (
             patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response),
-            patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
-                  return_value=AsyncMock(text="sweep done")),
+            patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock, return_value=AsyncMock(text="sweep done")),
             patch("decafclaw.compaction.asyncio.create_task", side_effect=capture_create_task),
         ):
             result = await compact_history(ctx, history)
@@ -440,8 +478,10 @@ class TestMemorySweep:
         history = [{"role": "user", "content": f"message {i}"} for i in range(8)]
 
         mock_response = {
-            "content": "Summary.", "tool_calls": None,
-            "role": "assistant", "usage": None,
+            "content": "Summary.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
         }
 
         with (
@@ -465,8 +505,7 @@ class TestMemorySweep:
 
         mock_result = ToolResult(text="Nothing noteworthy.")
 
-        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
-                    return_value=mock_result) as mock_turn:
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock, return_value=mock_result) as mock_turn:
             await _run_memory_sweep(ctx, messages)
 
         mock_turn.assert_called_once()
@@ -485,8 +524,7 @@ class TestMemorySweep:
         """Sweep errors are caught and logged, not propagated."""
         messages = [{"role": "user", "content": "hello"}]
 
-        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
-                    side_effect=Exception("LLM exploded")):
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock, side_effect=Exception("LLM exploded")):
             # Should not raise
             await _run_memory_sweep(ctx, messages)
 
@@ -509,7 +547,9 @@ class TestDecisionSliceIntegration:
 
     @pytest.mark.asyncio
     async def test_first_compaction_persists_slice_and_renders_prefix(
-        self, ctx, populated_archive,
+        self,
+        ctx,
+        populated_archive,
     ):
         """A successful parse persists the slice to the sidecar and
         prepends the rendered slice to the prose summary."""
@@ -536,8 +576,7 @@ class TestDecisionSliceIntegration:
             "usage": None,
         }
 
-        with patch("decafclaw.context.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response):
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
             result = await compact_history(ctx, history)
 
         assert result is True
@@ -560,7 +599,9 @@ class TestDecisionSliceIntegration:
 
     @pytest.mark.asyncio
     async def test_second_compaction_carries_existing_entries_verbatim(
-        self, ctx, populated_archive,
+        self,
+        ctx,
+        populated_archive,
     ):
         """If the LLM emits a partially-overlapping slice, the merge
         keeps existing entries' created_at and adds new ones with the
@@ -602,8 +643,7 @@ class TestDecisionSliceIntegration:
             "usage": None,
         }
 
-        with patch("decafclaw.context.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response):
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
             await compact_history(ctx, history)
 
         merged = load_slice(ctx.config, ctx.conv_id or "test-conv")
@@ -618,7 +658,9 @@ class TestDecisionSliceIntegration:
 
     @pytest.mark.asyncio
     async def test_missing_json_block_falls_through(
-        self, ctx, populated_archive,
+        self,
+        ctx,
+        populated_archive,
     ):
         """When the LLM forgets the JSON block, prose-only fallback
         still works — slice file is not touched."""
@@ -635,8 +677,7 @@ class TestDecisionSliceIntegration:
             "usage": None,
         }
 
-        with patch("decafclaw.context.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response):
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
             result = await compact_history(ctx, history)
 
         assert result is True
@@ -650,7 +691,9 @@ class TestDecisionSliceIntegration:
 
     @pytest.mark.asyncio
     async def test_disabled_skips_feature_entirely(
-        self, ctx, populated_archive,
+        self,
+        ctx,
+        populated_archive,
     ):
         """With decisions_enabled=False, no slice operations even if
         the LLM happens to emit a JSON block."""
@@ -661,18 +704,13 @@ class TestDecisionSliceIntegration:
         history = [{"role": "user", "content": "u0"}]
 
         mock_response = {
-            "content": (
-                "Prose.\n\n```json\n"
-                '{"decisions": ["x"], "open_questions": [], "artifacts": []}\n'
-                "```"
-            ),
+            "content": ('Prose.\n\n```json\n{"decisions": ["x"], "open_questions": [], "artifacts": []}\n```'),
             "tool_calls": None,
             "role": "assistant",
             "usage": None,
         }
 
-        with patch("decafclaw.context.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response):
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
             await compact_history(ctx, history)
 
         # Sidecar untouched.
@@ -754,6 +792,7 @@ class TestBuildSweepUserInput:
         out = _build_sweep_user_input("any text")
         assert "Conversation history to review:" not in out
 
+
 @pytest.mark.asyncio
 async def test_compaction_uses_auxiliary_model():
     """Verify compaction calls use the auxiliary model when configured."""
@@ -765,7 +804,10 @@ async def test_compaction_uses_auxiliary_model():
     from decafclaw.context import Context
 
     config = Config()
-    config.model_configs = {"primary": ModelConfig(provider="p", model="m"), "aux": ModelConfig(provider="p", model="m")}
+    config.model_configs = {
+        "primary": ModelConfig(provider="p", model="m"),
+        "aux": ModelConfig(provider="p", model="m"),
+    }
     config.default_model = "primary"
     config.auxiliary_model = "aux"
 

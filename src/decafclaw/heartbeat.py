@@ -98,6 +98,7 @@ def _split_sections(text: str) -> list[dict]:
                 import re
 
                 import yaml
+
                 allowed_tools = []
                 disallowed_tools = []
                 fm_match = re.match(r"^---\n(.*?)\n---(?:\n|$)", body, re.DOTALL)
@@ -115,13 +116,15 @@ def _split_sections(text: str) -> list[dict]:
                             disallowed_tools, _ = _parse_allowed_tools(meta["disallowed_tools"])
                     except Exception as e:
                         log.warning(f"Failed to parse heartbeat section frontmatter: {e}")
-                    body = body[fm_match.end():].strip()
-                sections.append({
-                    "title": current_title or "General",
-                    "body": body,
-                    "allowed_tools": allowed_tools,
-                    "disallowed_tools": disallowed_tools,
-                })
+                    body = body[fm_match.end() :].strip()
+                sections.append(
+                    {
+                        "title": current_title or "General",
+                        "body": body,
+                        "allowed_tools": allowed_tools,
+                        "disallowed_tools": disallowed_tools,
+                    }
+                )
 
     for line in text.splitlines():
         if line.startswith("## "):
@@ -214,7 +217,12 @@ def build_section_prompt(section: dict) -> str:
 
 
 async def run_section_turn(
-    config, event_bus, manager, section: dict, timestamp: str, index: int,
+    config,
+    event_bus,
+    manager,
+    section: dict,
+    timestamp: str,
+    index: int,
 ) -> dict:
     """Run a single heartbeat section as an agent turn via ConversationManager.
 
@@ -292,6 +300,7 @@ async def _notify_cycle_complete(config, event_bus, results: list[dict]) -> None
     if not results:
         return
     from . import notifications
+
     ok_count = sum(1 for r in results if r.get("is_ok"))
     err_count = len(results) - ok_count
     if err_count:
@@ -303,8 +312,12 @@ async def _notify_cycle_complete(config, event_bus, results: list[dict]) -> None
     body = f"{ok_count} OK, {err_count} alert(s) across {len(results)} section(s)."
     try:
         await notifications.notify(
-            config, event_bus,
-            category="heartbeat", title=title, body=body, priority=priority,
+            config,
+            event_bus,
+            category="heartbeat",
+            title=title,
+            body=body,
+            priority=priority,
         )
     except Exception as e:
         log.warning(f"Failed to emit heartbeat notification: {e}")
@@ -340,8 +353,7 @@ def _write_last_heartbeat(config):
 _POLL_INTERVAL = 60
 
 
-async def run_heartbeat_timer(config, event_bus, manager, shutdown_event,
-                              on_cycle=None, on_results=None):
+async def run_heartbeat_timer(config, event_bus, manager, shutdown_event, on_cycle=None, on_results=None):
     """Run the heartbeat timer loop.
 
     Persists the last heartbeat time to disk so the timer survives
@@ -367,11 +379,14 @@ async def run_heartbeat_timer(config, event_bus, manager, shutdown_event,
     if last_run > 0:
         elapsed = time.time() - last_run
         remaining = max(0, interval - elapsed)
-        log.info(f"Heartbeat timer starting: interval={config.heartbeat.interval} ({interval}s), "
-                 f"last run {elapsed:.0f}s ago, next in {remaining:.0f}s")
+        log.info(
+            f"Heartbeat timer starting: interval={config.heartbeat.interval} ({interval}s), "
+            f"last run {elapsed:.0f}s ago, next in {remaining:.0f}s"
+        )
     else:
-        log.info(f"Heartbeat timer starting: interval={config.heartbeat.interval} ({interval}s), "
-                 f"no previous run recorded")
+        log.info(
+            f"Heartbeat timer starting: interval={config.heartbeat.interval} ({interval}s), no previous run recorded"
+        )
 
     async def _tick():
         # Check if enough time has passed since last heartbeat

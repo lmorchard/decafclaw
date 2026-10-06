@@ -17,13 +17,15 @@ def _config(tmp_path):
 async def test_subscriber_writes_record(tmp_path):
     cfg = _config(tmp_path)
     handle = loop_breaker_telemetry.make_loop_breaker_subscriber(cfg)
-    await handle({
-        "type": "loop_breaker",
-        "context_id": "c1",
-        "action": "stop",
-        "signal": "error_surge",
-        "reason": "4 of the last 6 tool results were errors"
-    })
+    await handle(
+        {
+            "type": "loop_breaker",
+            "context_id": "c1",
+            "action": "stop",
+            "signal": "error_surge",
+            "reason": "4 of the last 6 tool results were errors",
+        }
+    )
 
     path = cfg.workspace_path / cfg.telemetry.loop_breaker_path
     records = [json.loads(line) for line in path.read_text().splitlines()]

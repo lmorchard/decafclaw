@@ -241,7 +241,8 @@ async def test_serve_workspace_file_non_secret_still_serves_bytes(client, http_c
 
 @pytest.mark.asyncio
 async def test_serve_workspace_safe_image_stays_inline_with_security_headers(
-    client, http_config,
+    client,
+    http_config,
 ):
     workspace: Path = http_config.workspace_path
     target = workspace / "nested" / "safe image.png"
@@ -258,7 +259,8 @@ async def test_serve_workspace_safe_image_stays_inline_with_security_headers(
 
 @pytest.mark.asyncio
 async def test_serve_workspace_unsafe_content_keeps_ascii_download_filename(
-    client, http_config,
+    client,
+    http_config,
 ):
     workspace: Path = http_config.workspace_path
     target = workspace / "nested" / "diagram.svg"
@@ -274,7 +276,8 @@ async def test_serve_workspace_unsafe_content_keeps_ascii_download_filename(
 
 @pytest.mark.asyncio
 async def test_serve_workspace_ascii_download_keeps_filename_and_media_type(
-    client, http_config,
+    client,
+    http_config,
 ):
     workspace: Path = http_config.workspace_path
     (workspace / "report.txt").write_text("plain report")
@@ -289,7 +292,8 @@ async def test_serve_workspace_ascii_download_keeps_filename_and_media_type(
 
 @pytest.mark.asyncio
 async def test_serve_workspace_ascii_download_needing_quoting_uses_utf8_filename(
-    client, http_config,
+    client,
+    http_config,
 ):
     # #895: FileResponse emits filename*= for any name that needs URL quoting,
     # including plain ASCII names with spaces. That form is accepted; pin it.
@@ -305,7 +309,8 @@ async def test_serve_workspace_ascii_download_needing_quoting_uses_utf8_filename
 
 @pytest.mark.asyncio
 async def test_serve_workspace_non_latin_download_uses_utf8_filename(
-    client, http_config,
+    client,
+    http_config,
 ):
     # #895: a non-Latin name in a hand-built Content-Disposition header made
     # Starlette raise UnicodeEncodeError, so the download had no response.
@@ -521,11 +526,9 @@ async def test_workspace_write_path_escape_returns_404(client, http_config):
 @pytest.mark.parametrize(
     ("request_kwargs", "error"),
     [
-        ({"content": b"not-json", "headers": {"Content-Type": "application/json"}},
-         "invalid JSON body"),
+        ({"content": b"not-json", "headers": {"Content-Type": "application/json"}}, "invalid JSON body"),
         ({"json": {}}, "content (string) required"),
-        ({"json": {"content": "keep", "modified": "not-a-number"}},
-         "modified must be a number"),
+        ({"json": {"content": "keep", "modified": "not-a-number"}}, "modified must be a number"),
     ],
 )
 async def test_workspace_write_invalid_body_retains_400(client, request_kwargs, error):
@@ -771,9 +774,7 @@ async def test_workspace_delete_non_empty_folder_returns_409(client, http_config
 
 
 @pytest.mark.asyncio
-async def test_workspace_delete_folder_under_readonly_subtree_returns_403(
-    client, http_config
-):
+async def test_workspace_delete_folder_under_readonly_subtree_returns_403(client, http_config):
     workspace: Path = http_config.workspace_path
     sub = workspace / ".schedule_last_run" / "leftover"
     sub.mkdir(parents=True)
@@ -906,9 +907,7 @@ async def test_workspace_create_file_readonly_path_returns_403(client, http_conf
 
 
 @pytest.mark.asyncio
-async def test_workspace_create_folder_under_readonly_subtree_returns_403(
-    client, http_config
-):
+async def test_workspace_create_folder_under_readonly_subtree_returns_403(client, http_config):
     workspace: Path = http_config.workspace_path
 
     resp = await client.post(

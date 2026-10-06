@@ -84,9 +84,7 @@ class TestCollectAllTags:
         (agent_pages / "Async.md").write_text("body mentions #Rust and #async")
         journal_day_dir = agent_journal / "2026"
         journal_day_dir.mkdir(parents=True, exist_ok=True)
-        (journal_day_dir / "2026-07-24.md").write_text(
-            "## 2026-07-24 10:00\n\n- **tags:** rust\n\nnotes"
-        )
+        (journal_day_dir / "2026-07-24.md").write_text("## 2026-07-24 10:00\n\n- **tags:** rust\n\nnotes")
 
         result = collect_all_tags(config)
 
@@ -123,9 +121,7 @@ class TestCollectAllTags:
         # extract_tags must also apply here (#318 follow-on fix).
         journal_day_dir = agent_journal / "2026"
         journal_day_dir.mkdir(parents=True, exist_ok=True)
-        (journal_day_dir / "2026-07-24.md").write_text(
-            "## 2026-07-24 10:00\n\n- **tags:** untagged\n\nsome note"
-        )
+        (journal_day_dir / "2026-07-24.md").write_text("## 2026-07-24 10:00\n\n- **tags:** untagged\n\nsome note")
 
         result = collect_all_tags(config)
 

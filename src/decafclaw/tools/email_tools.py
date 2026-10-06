@@ -53,9 +53,7 @@ def _recipient_allowed(addr: str, allowlist: list[str]) -> bool:
 
 
 def _all_recipients_allowed(recipients: list[str], allowlist: list[str]) -> bool:
-    return bool(recipients) and all(
-        _recipient_allowed(r, allowlist) for r in recipients
-    )
+    return bool(recipients) and all(_recipient_allowed(r, allowlist) for r in recipients)
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +62,8 @@ def _all_recipients_allowed(recipients: list[str], allowlist: list[str]) -> bool
 
 
 def _validate_attachments(
-    config, attachment_paths: list[str],
+    config,
+    attachment_paths: list[str],
 ) -> tuple[list[str], str | None]:
     """Resolve each attachment under ``config.workspace_path`` and enforce
     the total-size cap.
@@ -86,23 +85,16 @@ def _validate_attachments(
         if not rel or not isinstance(rel, str):
             return [], f"[error: invalid attachment path '{rel}']"
         if Path(rel).is_absolute():
-            return [], (
-                f"[error: attachment path must be relative to workspace: '{rel}']"
-            )
+            return [], (f"[error: attachment path must be relative to workspace: '{rel}']")
         candidate = (workspace / rel).resolve()
         if not candidate.is_relative_to(workspace):
-            return [], (
-                f"[error: attachment path '{rel}' escapes workspace]"
-            )
+            return [], (f"[error: attachment path '{rel}' escapes workspace]")
         if not candidate.is_file():
             return [], f"[error: attachment not found: '{rel}']"
         size = candidate.stat().st_size
         total_size += size
         if total_size > max_bytes:
-            return [], (
-                f"[error: attachments total {total_size} bytes exceeds "
-                f"max {max_bytes}]"
-            )
+            return [], (f"[error: attachments total {total_size} bytes exceeds max {max_bytes}]")
         resolved.append(str(candidate))
 
     return resolved, None
@@ -114,8 +106,11 @@ def _validate_attachments(
 
 
 def _format_confirmation_message(
-    recipients: list[str], subject: str, body: str,
-    attachment_count: int, attachment_bytes: int,
+    recipients: list[str],
+    subject: str,
+    body: str,
+    attachment_count: int,
+    attachment_bytes: int,
 ) -> str:
     lines = [
         f"Email to: {', '.join(recipients)}",
@@ -131,8 +126,12 @@ def _format_confirmation_message(
 
 
 async def check_email_approval(
-    ctx, recipients: list[str], subject: str, body: str,
-    attachment_count: int = 0, attachment_bytes: int = 0,
+    ctx,
+    recipients: list[str],
+    subject: str,
+    body: str,
+    attachment_count: int = 0,
+    attachment_bytes: int = 0,
 ) -> dict:
     """Return ``{"approved": bool}`` for an outbound email.
 
@@ -141,18 +140,21 @@ async def check_email_approval(
     union. Otherwise requests interactive confirmation showing the full
     send.
     """
-    allowlist = list(ctx.config.email.allowed_recipients) + list(
-        ctx.tools.preapproved_email_recipients
-    )
+    allowlist = list(ctx.config.email.allowed_recipients) + list(ctx.tools.preapproved_email_recipients)
     if _all_recipients_allowed(recipients, allowlist):
         log.info("[send_email] pre-approved by allowlist: %s", recipients)
         return {"approved": True}
 
     message = _format_confirmation_message(
-        recipients, subject, body, attachment_count, attachment_bytes,
+        recipients,
+        subject,
+        body,
+        attachment_count,
+        attachment_bytes,
     )
     return await request_confirmation(
-        ctx, tool_name="send_email",
+        ctx,
+        tool_name="send_email",
         command=f"email to {', '.join(recipients)}",
         message=message,
     )
@@ -164,7 +166,10 @@ async def check_email_approval(
 
 
 async def tool_send_email(
-    ctx, to: str | list[str], subject: str, body: str,
+    ctx,
+    to: str | list[str],
+    subject: str,
+    body: str,
     html_body: str | None = None,
     attachments: list[str] | None = None,
 ) -> ToolResult:
@@ -174,8 +179,7 @@ async def tool_send_email(
     cfg = ctx.config.email
     if not cfg.enabled or not cfg.smtp_host or not (cfg.sender_address or "").strip():
         return ToolResult(
-            text="[error: email is not configured (set config.email.enabled, "
-                 "smtp_host, and sender_address)]"
+            text="[error: email is not configured (set config.email.enabled, smtp_host, and sender_address)]"
         )
 
     recipients = [to] if isinstance(to, str) else list(to)
@@ -184,16 +188,18 @@ async def tool_send_email(
         return ToolResult(text="[error: no recipients specified]")
 
     resolved_attachments, err = _validate_attachments(
-        ctx.config, attachments or [],
+        ctx.config,
+        attachments or [],
     )
     if err:
         return ToolResult(text=err)
-    attachment_bytes = sum(
-        Path(p).stat().st_size for p in resolved_attachments
-    )
+    attachment_bytes = sum(Path(p).stat().st_size for p in resolved_attachments)
 
     approval = await check_email_approval(
-        ctx, recipients, subject, body,
+        ctx,
+        recipients,
+        subject,
+        body,
         attachment_count=len(resolved_attachments),
         attachment_bytes=attachment_bytes,
     )
@@ -201,19 +207,21 @@ async def tool_send_email(
         return ToolResult(text="[error: email send was denied by user]")
 
     from decafclaw.mail import send_mail
+
     try:
         await send_mail(
-            ctx.config, to=recipients, subject=subject, body=body,
-            html_body=html_body, attachments=resolved_attachments,
+            ctx.config,
+            to=recipients,
+            subject=subject,
+            body=body,
+            html_body=html_body,
+            attachments=resolved_attachments,
         )
     except Exception as exc:
         log.warning("Email send failed: %s", exc)
         return ToolResult(text=f"[error: email send failed: {exc}]")
 
-    att_note = (
-        f" with {len(resolved_attachments)} attachment(s)"
-        if resolved_attachments else ""
-    )
+    att_note = f" with {len(resolved_attachments)} attachment(s)" if resolved_attachments else ""
     return ToolResult(
         text=f"Email sent to {', '.join(recipients)}{att_note}.",
     )
@@ -246,9 +254,7 @@ EMAIL_TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {
                     "to": {
-                        "description": (
-                            "Single recipient address or list of addresses."
-                        ),
+                        "description": ("Single recipient address or list of addresses."),
                         "anyOf": [
                             {"type": "string"},
                             {"type": "array", "items": {"type": "string"}},

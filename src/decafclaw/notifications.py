@@ -29,11 +29,12 @@ log = logging.getLogger(__name__)
 @dataclass
 class NotificationRecord:
     """A single notification entry in the inbox."""
+
     id: str
-    timestamp: str                  # ISO-8601 UTC, e.g. "2026-04-22T10:15:00Z"
-    category: str                   # "heartbeat" | "schedule" | "background" | ...
+    timestamp: str  # ISO-8601 UTC, e.g. "2026-04-22T10:15:00Z"
+    category: str  # "heartbeat" | "schedule" | "background" | ...
     title: str
-    priority: str = "normal"        # "low" | "normal" | "high"
+    priority: str = "normal"  # "low" | "normal" | "high"
     body: str = ""
     link: str | None = None
     conv_id: str | None = None
@@ -215,7 +216,8 @@ def _rotate_inbox_if_needed(config) -> None:
     _atomic_rewrite(inbox, recent)
     log.info(
         "Notification inbox rotated: %d record(s) archived across %d month(s)",
-        len(old), len(by_month),
+        len(old),
+        len(by_month),
     )
 
 
@@ -285,7 +287,10 @@ async def notify(
 
     log.info(
         "notification: [%s/%s] %s (conv=%s)",
-        category, priority, title, conv_id or "-",
+        category,
+        priority,
+        title,
+        conv_id or "-",
     )
 
     # Fan out to channel adapters after the durable write. Event bus is
@@ -295,11 +300,13 @@ async def notify(
     # re-reading the inbox — see docs/notifications.md for the WebSocket
     # push architecture.
     if event_bus is not None:
-        await event_bus.publish({
-            "type": "notification_created",
-            "record": record.to_dict(),
-            "unread_count": unread_count(config),
-        })
+        await event_bus.publish(
+            {
+                "type": "notification_created",
+                "record": record.to_dict(),
+                "unread_count": unread_count(config),
+            }
+        )
 
     return record
 
@@ -351,11 +358,13 @@ async def mark_read(config, record_id: str, event_bus=None) -> None:
         _append_line(_read_log_path(config), event)
 
     if event_bus is not None:
-        await event_bus.publish({
-            "type": "notification_read",
-            "ids": [record_id],
-            "unread_count": unread_count(config),
-        })
+        await event_bus.publish(
+            {
+                "type": "notification_read",
+                "ids": [record_id],
+                "unread_count": unread_count(config),
+            }
+        )
 
 
 async def mark_all_read(config, event_bus=None) -> None:
@@ -376,10 +385,7 @@ async def mark_all_read(config, event_bus=None) -> None:
         # unread → read. Captured inside the lock so a concurrent
         # mark_read can't shrink the snapshot out from under us.
         read_before = get_read_ids(config)
-        live_ids = [
-            r.get("id", "") for r in _read_lines(_inbox_path(config))
-            if r.get("id", "")
-        ]
+        live_ids = [r.get("id", "") for r in _read_lines(_inbox_path(config)) if r.get("id", "")]
         unread_snapshot = [rid for rid in live_ids if rid not in read_before]
 
         _rotate_read_log_if_needed(config)
@@ -391,11 +397,13 @@ async def mark_all_read(config, event_bus=None) -> None:
         # may have appended a new unread record in the interval. Reading
         # at publish time keeps the event's count consistent with any
         # notification_created event the same client may interleave.
-        await event_bus.publish({
-            "type": "notification_read",
-            "ids": unread_snapshot,
-            "unread_count": unread_count(config),
-        })
+        await event_bus.publish(
+            {
+                "type": "notification_read",
+                "ids": unread_snapshot,
+                "unread_count": unread_count(config),
+            }
+        )
 
 
 def get_read_ids(config) -> set[str]:

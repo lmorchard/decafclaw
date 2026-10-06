@@ -15,10 +15,14 @@ async def test_sticky_set_event_forwarded():
 
     state = {"ws_send": ws_send, "config": None}
     callback = ws_mod._make_sticky_forwarder(state, conv_id="conv-x")
-    await callback({
-        "type": "sticky_set", "conv_id": "conv-x",
-        "widget_type": "markdown_document", "data": {"content": "# hi"},
-    })
+    await callback(
+        {
+            "type": "sticky_set",
+            "conv_id": "conv-x",
+            "widget_type": "markdown_document",
+            "data": {"content": "# hi"},
+        }
+    )
     assert sent[0]["type"] == WSMessageType.STICKY_SET
     assert sent[0]["conv_id"] == "conv-x"
     assert sent[0]["widget_type"] == "markdown_document"
@@ -48,10 +52,14 @@ async def test_sticky_event_skipped_for_other_conv():
 
     state = {"ws_send": ws_send, "config": None}
     callback = ws_mod._make_sticky_forwarder(state, conv_id="conv-x")
-    await callback({
-        "type": "sticky_set", "conv_id": "other",
-        "widget_type": "x", "data": {},
-    })
+    await callback(
+        {
+            "type": "sticky_set",
+            "conv_id": "other",
+            "widget_type": "x",
+            "data": {},
+        }
+    )
     assert sent == []
 
 

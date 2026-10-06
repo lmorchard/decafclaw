@@ -26,48 +26,49 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="decafclaw-client",
         description="Drive a conversation in a running decafclaw instance over "
-                    "the /ws/chat WebSocket gateway and emit machine-readable "
-                    "results for smoke testing.",
+        "the /ws/chat WebSocket gateway and emit machine-readable "
+        "results for smoke testing.",
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--token", default=None,
-                       help="Web token (or env DECAFCLAW_TOKEN).")
-        p.add_argument("--host", default=None,
-                       help="Base URL (or env DECAFCLAW_HOST; "
-                            "default http://localhost:8088).")
-        p.add_argument("--timeout", type=float, default=180.0,
-                       help="Per-turn timeout in seconds (default 180).")
-        p.add_argument("--format", dest="fmt", choices=("summary", "jsonl"),
-                       default="summary", help="Output format (default summary).")
+        p.add_argument("--token", default=None, help="Web token (or env DECAFCLAW_TOKEN).")
+        p.add_argument("--host", default=None, help="Base URL (or env DECAFCLAW_HOST; default http://localhost:8088).")
+        p.add_argument("--timeout", type=float, default=180.0, help="Per-turn timeout in seconds (default 180).")
+        p.add_argument(
+            "--format",
+            dest="fmt",
+            choices=("summary", "jsonl"),
+            default="summary",
+            help="Output format (default summary).",
+        )
 
     p_send = sub.add_parser("send", help="Send prompt(s) and record the turn(s).")
     add_common(p_send)
-    p_send.add_argument("--conv", default=None,
-                        help="Existing conversation id; omit to create a new one.")
-    p_send.add_argument("--model", default=None,
-                        help="Set the conversation model before sending.")
-    p_send.add_argument("--prompt", action="append", default=[],
-                        help="Prompt text. Repeatable; runs sequentially.")
-    p_send.add_argument("--script", default=None,
-                        help="File of prompts, one per line (blank lines skipped).")
+    p_send.add_argument("--conv", default=None, help="Existing conversation id; omit to create a new one.")
+    p_send.add_argument("--model", default=None, help="Set the conversation model before sending.")
+    p_send.add_argument("--prompt", action="append", default=[], help="Prompt text. Repeatable; runs sequentially.")
+    p_send.add_argument("--script", default=None, help="File of prompts, one per line (blank lines skipped).")
 
     p_resp = sub.add_parser("respond", help="Respond to a pending confirmation.")
     add_common(p_resp)
     p_resp.add_argument("--conv", required=True, help="Conversation id.")
-    p_resp.add_argument("--confirmation-id", dest="confirmation_id", required=True,
-                        help="Confirmation id to respond to (copy it from the "
-                             "halted send's `confirmations` output).")
+    p_resp.add_argument(
+        "--confirmation-id",
+        dest="confirmation_id",
+        required=True,
+        help="Confirmation id to respond to (copy it from the halted send's `confirmations` output).",
+    )
     decision = p_resp.add_mutually_exclusive_group()
-    decision.add_argument("--approve", dest="approved", action="store_true",
-                          default=True, help="Approve (default).")
-    decision.add_argument("--deny", dest="approved", action="store_false",
-                          help="Deny.")
-    p_resp.add_argument("--value", default="",
-                        help="Payload forwarded as data={'value': VALUE}. "
-                             "Required by workflow_user_input confirmations "
-                             "(the answer text); ignored when omitted.")
+    decision.add_argument("--approve", dest="approved", action="store_true", default=True, help="Approve (default).")
+    decision.add_argument("--deny", dest="approved", action="store_false", help="Deny.")
+    p_resp.add_argument(
+        "--value",
+        default="",
+        help="Payload forwarded as data={'value': VALUE}. "
+        "Required by workflow_user_input confirmations "
+        "(the answer text); ignored when omitted.",
+    )
 
     return parser
 
@@ -89,12 +90,24 @@ def parse_args(argv: list[str] | None = None) -> SmokeArgs:
         if not prompts:
             parser.error("send requires at least one --prompt or --script")
         return SmokeArgs(
-            action="send", token=token, host=host, timeout=ns.timeout,
-            fmt=ns.fmt, conv=ns.conv, model=ns.model, prompts=prompts,
+            action="send",
+            token=token,
+            host=host,
+            timeout=ns.timeout,
+            fmt=ns.fmt,
+            conv=ns.conv,
+            model=ns.model,
+            prompts=prompts,
         )
 
     return SmokeArgs(
-        action="respond", token=token, host=host, timeout=ns.timeout,
-        fmt=ns.fmt, conv=ns.conv, confirmation_id=ns.confirmation_id,
-        approved=ns.approved, value=ns.value,
+        action="respond",
+        token=token,
+        host=host,
+        timeout=ns.timeout,
+        fmt=ns.fmt,
+        conv=ns.conv,
+        confirmation_id=ns.confirmation_id,
+        approved=ns.approved,
+        value=ns.value,
     )

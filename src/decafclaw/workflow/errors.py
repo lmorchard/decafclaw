@@ -17,8 +17,7 @@ class WorkflowSuspended(Exception):
     response, journal the answer at the right position.
     """
 
-    def __init__(self, *, seq: tuple[int, ...], args_fingerprint: str,
-                 prompt: str, choices: list[str] | None = None):
+    def __init__(self, *, seq: tuple[int, ...], args_fingerprint: str, prompt: str, choices: list[str] | None = None):
         super().__init__(f"workflow suspended at step {seq}: {prompt!r}")
         self.seq: tuple[int, ...] = seq
         self.args_fingerprint = args_fingerprint
@@ -52,8 +51,7 @@ class WorkflowNonDeterministic(WorkflowError):
     orchestrator. Fail loudly rather than return a stale result.
     """
 
-    def __init__(self, seq: tuple[int, ...], recorded_kind: str,
-                 recorded_fp: str, got_kind: str, got_fp: str):
+    def __init__(self, seq: tuple[int, ...], recorded_kind: str, recorded_fp: str, got_kind: str, got_fp: str):
         super().__init__(
             f"workflow non-deterministic at step {seq}: recorded "
             f"{recorded_kind}/{recorded_fp}, replay produced {got_kind}/{got_fp}"

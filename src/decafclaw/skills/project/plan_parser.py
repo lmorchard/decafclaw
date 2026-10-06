@@ -28,14 +28,10 @@ _MARKER_TO_STATUS = {
 _STATUS_TO_MARKER = {v: k for k, v in _MARKER_TO_STATUS.items()}
 
 # Matches: "- [x] 1.2. Description text" (numbered)
-_STEP_RE = re.compile(
-    r"^(\s*)- \[([x >-])\] (\d+(?:\.\d+)*)\.\s+(.*)"
-)
+_STEP_RE = re.compile(r"^(\s*)- \[([x >-])\] (\d+(?:\.\d+)*)\.\s+(.*)")
 
 # Matches: "- [x] Description text" (unnumbered — will be auto-numbered)
-_UNNUMBERED_STEP_RE = re.compile(
-    r"^(\s*)- \[([x >-])\]\s+(.*)"
-)
+_UNNUMBERED_STEP_RE = re.compile(r"^(\s*)- \[([x >-])\]\s+(.*)")
 
 # Matches: "  > Note text" (blockquote note after a step)
 _NOTE_RE = re.compile(r"^(\s*)>\s+(.*)")
@@ -193,9 +189,7 @@ def next_actionable(steps: list[Step]) -> Step | None:
                 return child
             # If all children are done/skipped but parent isn't marked done,
             # the parent itself is actionable (needs to be marked done)
-            if step.status == "in_progress" and all(
-                c.status in ("done", "skipped") for c in step.children
-            ):
+            if step.status == "in_progress" and all(c.status in ("done", "skipped") for c in step.children):
                 return step
         if step.status == "pending":
             return step
@@ -204,9 +198,7 @@ def next_actionable(steps: list[Step]) -> Step | None:
     return None
 
 
-def update_step_status(
-    steps: list[Step], number: str, status: str, note: str = ""
-) -> bool:
+def update_step_status(steps: list[Step], number: str, status: str, note: str = "") -> bool:
     """Update a step's status and optional note. Returns True if found."""
     step = find_step(steps, number)
     if not step:
@@ -217,9 +209,7 @@ def update_step_status(
     return True
 
 
-def insert_steps(
-    steps: list[Step], after_number: str, new_descriptions: list[str]
-) -> bool:
+def insert_steps(steps: list[Step], after_number: str, new_descriptions: list[str]) -> bool:
     """Insert new steps after the given step number.
 
     If after_number is a top-level step (e.g. "2"), inserts new top-level
@@ -239,9 +229,7 @@ def insert_steps(
         parent = find_step(steps, parent_number)
         if not parent:
             return False
-        return _insert_in_list(
-            parent.children, after_number, new_descriptions, prefix=parent_number
-        )
+        return _insert_in_list(parent.children, after_number, new_descriptions, prefix=parent_number)
 
 
 def _insert_in_list(

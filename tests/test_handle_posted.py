@@ -28,9 +28,18 @@ def _make_client(config=None):
     return client
 
 
-def _make_event(message="hello", user_id="user123", channel_type="D",
-                root_id="", post_type="", from_bot=None, from_webhook=None,
-                channel_id="chan1", post_id="post1", sender_name="testuser"):
+def _make_event(
+    message="hello",
+    user_id="user123",
+    channel_type="D",
+    root_id="",
+    post_type="",
+    from_bot=None,
+    from_webhook=None,
+    channel_id="chan1",
+    post_id="post1",
+    sender_name="testuser",
+):
     """Build a Mattermost websocket posted event."""
     props = {}
     if from_bot is not None:
@@ -202,8 +211,12 @@ def test_message_fields_populated():
     client = _make_client()
     received = []
     evt = _make_event(
-        message="test msg", user_id="u1", channel_id="c1",
-        post_id="p1", root_id="r1", sender_name="alice",
+        message="test msg",
+        user_id="u1",
+        channel_id="c1",
+        post_id="p1",
+        root_id="r1",
+        sender_name="alice",
         channel_type="O",
     )
     # In a thread (root_id present), doesn't need mention

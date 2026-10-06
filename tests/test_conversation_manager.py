@@ -1714,11 +1714,11 @@ async def test_drain_pending_fanout_handles_head_exception(manager, config, monk
     for fut in (f1, f2, f3):
         await asyncio.wait_for(fut, timeout=2.0)
 
-    # The head future (f3, last in queue) gets the "[error: ...]" result from
-    # _start_turn's exception handler via set_result (never set_exception).
-    # The _fanout callback propagates that same result to the tail futures so
-    # every waiting caller is unblocked.  The primary invariant is that none
-    # of them hang — the exact value (error string or None) is secondary.
+        # The head future (f3, last in queue) gets the "[error: ...]" result from
+        # _start_turn's exception handler via set_result (never set_exception).
+        # The _fanout callback propagates that same result to the tail futures so
+        # every waiting caller is unblocked.  The primary invariant is that none
+        # of them hang — the exact value (error string or None) is secondary.
         assert f3.result() is not None and "error" in f3.result().text
     # Tail futures receive the same result value via _fanout.
     assert f1.result() == f3.result()

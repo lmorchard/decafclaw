@@ -53,10 +53,11 @@ class NotesConfig:
     colocated with the conversation archive and other sidecars. Recent
     entries auto-inject into context at turn start.
     """
+
     enabled: bool = True
-    max_entry_chars: int = 1024     # silent truncation at this cap
-    context_max_entries: int = 20   # most recent N injected per turn
-    context_max_chars: int = 4096   # body cap on the inject (drops oldest)
+    max_entry_chars: int = 1024  # silent truncation at this cap
+    context_max_entries: int = 20  # most recent N injected per turn
+    context_max_chars: int = 4096  # body cap on the inject (drops oldest)
     # File-level cap. ``read_notes`` reads the full file, so we trim
     # the oldest entries on append once the file exceeds this many
     # lines — keeps long-running conversations from accumulating
@@ -80,16 +81,17 @@ class RecentJournalConfig:
     each entry appears at most once. Skipped for heartbeat / scheduled /
     child-agent modes.
     """
+
     enabled: bool = True
-    max_hours: int = 24        # only entries written within this window
-    max_entries: int = 5       # most recent K within the window, whichever is tighter
-    max_tokens: int = 1024     # soft cap on the injected body (trims oldest)
+    max_hours: int = 24  # only entries written within this window
+    max_entries: int = 5  # most recent K within the window, whichever is tighter
+    max_tokens: int = 1024  # soft cap on the injected body (trims oldest)
 
 
 @dataclass
 class CompactionConfig:
-    url: str = ""       # empty = resolve from llm via resolved()
-    model: str = ""     # empty = resolve from llm via resolved()
+    url: str = ""  # empty = resolve from llm via resolved()
+    model: str = ""  # empty = resolve from llm via resolved()
     api_key: str = field(default="", metadata={"secret": True})
     max_tokens: int = 100000
     llm_max_tokens: int = 0  # 0 = use max_tokens
@@ -104,7 +106,8 @@ class CompactionConfig:
 
     def resolved(self, config) -> CompactionConfig:
         """Return copy with empty fields filled from config.llm."""
-        return replace(self,
+        return replace(
+            self,
             url=self.url or config.llm.url,
             model=self.model or config.llm.model,
             api_key=self.api_key or config.llm.api_key,
@@ -119,32 +122,35 @@ class CleanupConfig:
     on raw tool output it has already synthesized. See
     docs/context-composer.md and #298.
     """
+
     enabled: bool = True
     min_turn_age: int = 2  # tool messages from the last N user turns are protected
     min_size_bytes: int = 1024  # smaller messages aren't worth clearing
-    preserve_tools: list[str] = field(default_factory=lambda: [
-        "activate_skill",
-        "checklist_create",
-        "checklist_step_done",
-        "checklist_abort",
-        "checklist_status",
-    ])
+    preserve_tools: list[str] = field(
+        default_factory=lambda: [
+            "activate_skill",
+            "checklist_create",
+            "checklist_step_done",
+            "checklist_abort",
+            "checklist_status",
+        ]
+    )
 
 
 @dataclass
 class EmbeddingConfig:
     model: str = "text-embedding-004"
     provider: str = ""  # named provider from config.providers; empty = legacy resolved()
-    url: str = ""       # empty = resolve from llm via resolved()
+    url: str = ""  # empty = resolve from llm via resolved()
     api_key: str = field(default="", metadata={"secret": True})
     search_strategy: str = "substring"
     dimensions: int = 768
 
     def resolved(self, config) -> EmbeddingConfig:
         """Return copy with empty fields filled from config.llm."""
-        return replace(self,
-            url=self.url or config.llm.url.replace(
-                "/chat/completions", "/embeddings"),
+        return replace(
+            self,
+            url=self.url or config.llm.url.replace("/chat/completions", "/embeddings"),
             api_key=self.api_key or config.llm.api_key,
         )
 
@@ -176,10 +182,10 @@ class ShellConfig:
 @dataclass
 class TerminalConfig:
     enabled: bool = True
-    buffer_bytes: int = 10 * 1024 * 1024      # ring buffer cap per session
-    default_cwd: str | None = None            # falls back to workspace_path
+    buffer_bytes: int = 10 * 1024 * 1024  # ring buffer cap per session
+    default_cwd: str | None = None  # falls back to workspace_path
     allowed_cwd_roots: list[str] = field(default_factory=list)  # empty → [workspace, $HOME]
-    shell_override: str | None = None         # falls back to $SHELL or /bin/sh
+    shell_override: str | None = None  # falls back to $SHELL or /bin/sh
     max_sessions_per_conv: int = 8
 
 
@@ -189,6 +195,7 @@ class PreemptiveSearchConfig:
     promote relevant deferred tools into the active set for the turn.
     See docs/preemptive-tool-search.md.
     """
+
     enabled: bool = True
     max_matches: int = 10
 
@@ -199,17 +206,16 @@ class MapWidgetConfig:
     injected into widget data by the registry normalizer so the agent can't
     author it. Default is OpenStreetMap's public tile server (fine for
     low-volume personal use; point at your own server for anything heavier)."""
+
     tile_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-    tile_attribution: str = (
-        '&copy; <a href="https://www.openstreetmap.org/copyright">'
-        'OpenStreetMap</a> contributors'
-    )
+    tile_attribution: str = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     max_zoom: int = 19
 
 
 @dataclass
 class WidgetsConfig:
     """Per-widget server-side configuration."""
+
     map: MapWidgetConfig = field(default_factory=MapWidgetConfig)
 
 
@@ -245,8 +251,8 @@ class AgentConfig:
 @dataclass
 class ReflectionConfig:
     enabled: bool = True
-    url: str = ""       # empty = resolve from llm
-    model: str = ""     # empty = resolve from llm
+    url: str = ""  # empty = resolve from llm
+    model: str = ""  # empty = resolve from llm
     # A model_configs key. When set AND present in config.model_configs, every
     # reflection judge routes through it, so the author does not grade its own
     # homework (#591). Otherwise resolution continues down the chain: `model`
@@ -262,12 +268,12 @@ class ReflectionConfig:
 
     def resolved(self, config) -> ReflectionConfig:
         """Return copy with empty url/model/api_key filled from config.llm."""
-        return replace(self,
+        return replace(
+            self,
             url=self.url or config.llm.url,
             model=self.model or config.llm.model,
             api_key=self.api_key or config.llm.api_key,
         )
-
 
 
 @dataclass
@@ -308,9 +314,10 @@ class VaultGuideConfig:
     interactive turn (#592). Independent of vault_retrieval — plain file
     read, no embeddings.
     """
+
     enabled: bool = True
-    path: str = "AGENTS.md"      # relative to vault root
-    max_tokens: int = 2000       # AGENTS.md is ~500 tok; generous cap
+    path: str = "AGENTS.md"  # relative to vault root
+    max_tokens: int = 2000  # AGENTS.md is ~500 tok; generous cap
 
 
 @dataclass
@@ -337,6 +344,7 @@ class ImportanceConfig:
     multiplied against an all-zero signal. See
     ``skills/garden/tools.py::compute_importance_scores``.
     """
+
     w_retrieval: float = 0.6
     w_inbound: float = 0.4
     w_reference: float = 0.0
@@ -345,19 +353,21 @@ class ImportanceConfig:
 @dataclass
 class ProviderConfig:
     """Connection config for an LLM provider."""
+
     type: str = ""  # "vertex", "openai", "openai-compat" (also accepts "litellm")
     api_key: str = field(default="", metadata={"secret": True})
-    url: str = ""           # litellm/openai base URL
-    project: str = ""       # vertex GCP project
-    region: str = ""        # vertex region (e.g. "us-central1")
+    url: str = ""  # litellm/openai base URL
+    project: str = ""  # vertex GCP project
+    region: str = ""  # vertex region (e.g. "us-central1")
     service_account_file: str = ""  # vertex: path to service account JSON key
 
 
 @dataclass
 class ModelConfig:
     """Named model configuration referencing a provider."""
-    provider: str = ""      # key into providers dict
-    model: str = ""         # model name for the provider
+
+    provider: str = ""  # key into providers dict
+    model: str = ""  # model name for the provider
     context_window_size: int = 0
     timeout: int = 300
     streaming: bool = True
@@ -372,13 +382,14 @@ class EmailConfig:
     channel has its own trust-boundary list in
     ``NotificationsChannelsConfig.email.recipient_addresses``.
     """
+
     enabled: bool = False
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = field(default="", metadata={"secret": True})
     smtp_password: str = field(default="", metadata={"secret": True})
-    use_tls: bool = True                     # STARTTLS on port 587
-    sender_address: str = ""                 # From:
+    use_tls: bool = True  # STARTTLS on port 587
+    sender_address: str = ""  # From:
     # Tool-only allowlist. Entries match exact addresses or `@domain.com`
     # suffix patterns (case-insensitive). Empty list = every send
     # requires interactive confirmation.
@@ -395,6 +406,7 @@ class EmailChannelConfig:
     consult ``EmailConfig.allowed_recipients`` — these recipients are
     the trust boundary.
     """
+
     enabled: bool = False
     recipient_addresses: list[str] = field(default_factory=list)
     min_priority: str = "high"  # "low" | "normal" | "high"
@@ -407,6 +419,7 @@ class MattermostDMChannelConfig:
     Delivery is skipped when ``recipient_username`` is empty or when the
     Mattermost client isn't running. See docs/notifications.md.
     """
+
     enabled: bool = False
     recipient_username: str = ""
     min_priority: str = "high"  # "low" | "normal" | "high"
@@ -431,6 +444,7 @@ class VaultPageChannelConfig:
     useful out of the box. Disable by setting ``enabled: false`` in
     ``config.json`` if you don't want the vault pages.
     """
+
     enabled: bool = True
     min_priority: str = "low"  # "low" | "normal" | "high"
     folder: str = "agent/pages/notifications"
@@ -439,6 +453,7 @@ class VaultPageChannelConfig:
 @dataclass
 class NotificationsChannelsConfig:
     """Per-channel adapter configuration for notifications."""
+
     mattermost_dm: MattermostDMChannelConfig = field(default_factory=MattermostDMChannelConfig)
     email: EmailChannelConfig = field(default_factory=EmailChannelConfig)
     vault_page: VaultPageChannelConfig = field(default_factory=VaultPageChannelConfig)
@@ -447,6 +462,7 @@ class NotificationsChannelsConfig:
 @dataclass
 class NotificationsConfig:
     """Notification inbox settings. See docs/notifications.md."""
+
     retention_days: int = 30
     channels: NotificationsChannelsConfig = field(default_factory=NotificationsChannelsConfig)
 
@@ -454,6 +470,7 @@ class NotificationsConfig:
 @dataclass
 class BackgroundConfig:
     """Configuration for background-process tool behavior."""
+
     wake_max_per_window: int = 20
     wake_window_sec: int = 60
     default_completion_tail_lines: int = 50
@@ -469,6 +486,7 @@ class WorkflowConfig:
     reaches ``max_resume_attempts``, the scan flips ``status="error"``
     instead of retrying (bounds replay-storm risk).
     """
+
     max_resume_attempts: int = 3
 
 
@@ -485,6 +503,7 @@ class PreScriptConfig:
     Nothing has been inferred yet when the script runs, so a slow fetch must not
     shrink the reasoning budget it was gathering data for.
     """
+
     enabled: bool = True
     # Float so tests can use sub-second values; ints work fine in config.json.
     timeout_sec: float = 60.0
@@ -499,10 +518,11 @@ class LoopBreakerConfig:
     W tool results). Tuning these thresholds tunes the sensitivity of
     the trip signal.
     """
+
     enabled: bool = True
-    repeat_threshold: int = 3      # same (tool, args) N times → trip
-    error_threshold: int = 4       # this many errors...
-    error_window: int = 6          # ...within the last N tool results → trip
+    repeat_threshold: int = 3  # same (tool, args) N times → trip
+    error_threshold: int = 4  # this many errors...
+    error_window: int = 6  # ...within the last N tool results → trip
 
 
 @dataclass
@@ -513,6 +533,7 @@ class AuditLogConfig:
     and MCP connections to a structured JSONL log. Supports file rotation
     or truncation.
     """
+
     enabled: bool = True
     path: str = "audit.jsonl"
     max_size_bytes: int = 10 * 1024 * 1024  # 10 MB default
@@ -535,6 +556,7 @@ class TelemetryConfig:
     out — it gates the Prometheus subscriber, which keeps no sidecar at all.
     See docs/tools.md, docs/reflection.md, docs/vault.md, and docs/metrics.md.
     """
+
     retention_days: int = 30
     tool_usage_enabled: bool = True
     tool_usage_path: str = "tool_usage.jsonl"
@@ -547,7 +569,6 @@ class TelemetryConfig:
     metrics_enabled: bool = True
     otlp_endpoint: str | None = None
     otlp_service_name: str = "decafclaw"
-
 
 
 def is_secret(dc_class: type, field_name: str) -> bool:

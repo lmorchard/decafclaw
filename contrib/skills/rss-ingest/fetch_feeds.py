@@ -8,6 +8,7 @@
 feedparser is used ONLY inside parse_feed() (lazy import) so the rest of this
 module imports cleanly in the project test env, where feedparser is absent.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -97,7 +98,7 @@ def select_new_entries(entries: list[dict], feed_state: dict, now: datetime) -> 
         if pub is not None and pub < cutoff:
             continue
         out.append(e)
-    out.sort(key=lambda e: (e["published"] or now))
+    out.sort(key=lambda e: e["published"] or now)
     return out
 
 
@@ -135,14 +136,16 @@ def parse_feed(raw: str, feed_name: str) -> list[dict]:
         struct = e.get("published_parsed") or e.get("updated_parsed")
         published = datetime(*struct[:6], tzinfo=UTC) if struct is not None else None
         guid = e.get("id") or e.get("guid") or e.get("link") or ""
-        entries.append({
-            "guid": guid,
-            "title": e.get("title", "(untitled)"),
-            "link": e.get("link", ""),
-            "published": published,
-            "summary": clean_summary(e.get("summary", "")),
-            "feed_name": feed_name,
-        })
+        entries.append(
+            {
+                "guid": guid,
+                "title": e.get("title", "(untitled)"),
+                "link": e.get("link", ""),
+                "published": published,
+                "summary": clean_summary(e.get("summary", "")),
+                "feed_name": feed_name,
+            }
+        )
     return entries
 
 

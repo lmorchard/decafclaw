@@ -36,7 +36,7 @@ def parse_command_trigger(text: str, prefix: str = "!") -> tuple[str, str] | Non
     """
     if not text.startswith(prefix):
         return None
-    rest = text[len(prefix):]
+    rest = text[len(prefix) :]
     if not rest or not rest[0].isalpha():
         return None
     parts = rest.split(None, 1)
@@ -78,7 +78,6 @@ def substitute_body(body: str, arguments: str = "", skill_dir: str = "") -> str:
         result = result.rstrip() + f"\n\nARGUMENTS: {arguments}"
 
     return result
-
 
 
 def list_invokable_commands(discovered_skills: list[SkillInfo]) -> list[dict[str, object]]:
@@ -187,6 +186,7 @@ def _parse_mcp_prompt_command(cmd_name: str) -> tuple[str, str] | None:
 def _parse_positional_args(arguments: str) -> list[str]:
     """Parse positional arguments, respecting quoted strings."""
     import shlex
+
     if not arguments:
         return []
     try:
@@ -211,14 +211,16 @@ class CommandResult:
     - "inline": command body substituted, run as agent turn with ctx setup done
     - "error": command failed, display error directly
     """
+
     mode: str
     text: str = ""
     display_text: str = ""  # short version for archive/display (inline commands)
     skill: SkillInfo | None = None
 
 
-async def _execute_mcp_prompt_command(ctx: "Context", server_name: str, prompt_name: str,
-                                       arguments: str, prefix: str = "!") -> CommandResult:
+async def _execute_mcp_prompt_command(
+    ctx: "Context", server_name: str, prompt_name: str, arguments: str, prefix: str = "!"
+) -> CommandResult:
     """Execute an MCP prompt as a user-invokable command."""
     import asyncio
 
@@ -230,8 +232,7 @@ async def _execute_mcp_prompt_command(ctx: "Context", server_name: str, prompt_n
 
     state = registry.servers.get(server_name)
     if not state or state.status != "connected" or not state.session:
-        return CommandResult(mode="error",
-                             text=f"MCP server '{server_name}' is not connected.")
+        return CommandResult(mode="error", text=f"MCP server '{server_name}' is not connected.")
 
     # Find the prompt in the cached list
     prompt_info = None
@@ -241,8 +242,7 @@ async def _execute_mcp_prompt_command(ctx: "Context", server_name: str, prompt_n
             break
 
     if not prompt_info:
-        return CommandResult(mode="error",
-                             text=f"Prompt '{prompt_name}' not found on server '{server_name}'.")
+        return CommandResult(mode="error", text=f"Prompt '{prompt_name}' not found on server '{server_name}'.")
 
     # Map positional args to declared argument names
     declared_args = getattr(prompt_info, "arguments", []) or []
@@ -275,7 +275,9 @@ async def _execute_mcp_prompt_command(ctx: "Context", server_name: str, prompt_n
         hints = []
         for arg_def in declared_args:
             an = getattr(arg_def, "name", "") if not isinstance(arg_def, dict) else arg_def.get("name", "")
-            ar = getattr(arg_def, "required", False) if not isinstance(arg_def, dict) else arg_def.get("required", False)
+            ar = (
+                getattr(arg_def, "required", False) if not isinstance(arg_def, dict) else arg_def.get("required", False)
+            )
             hints.append(f"<{an}>" if ar else f"[{an}]")
         lines.append(f"\nUsage: `{prefix}mcp__{server_name}__{prompt_name} {' '.join(hints)}`")
         return CommandResult(mode="error", text="\n".join(lines))
@@ -289,22 +291,22 @@ async def _execute_mcp_prompt_command(ctx: "Context", server_name: str, prompt_n
         )
         text = _convert_prompt_response(result)
     except asyncio.TimeoutError:
-        return CommandResult(mode="error",
-                             text=f"MCP prompt '{prompt_name}' timed out.")
+        return CommandResult(mode="error", text=f"MCP prompt '{prompt_name}' timed out.")
     except Exception as e:
-        return CommandResult(mode="error",
-                             text=f"Failed to get MCP prompt '{prompt_name}': {e}")
+        return CommandResult(mode="error", text=f"Failed to get MCP prompt '{prompt_name}': {e}")
 
     # Inject as user message with a note
     cmd_display = f"mcp__{server_name}__{prompt_name}"
-    injected = (f"The user invoked MCP prompt `{cmd_display}` which returned:\n\n{text}")
+    injected = f"The user invoked MCP prompt `{cmd_display}` which returned:\n\n{text}"
 
-    return CommandResult(mode="inline", text=injected,
-                         display_text=f"{prefix}{cmd_display} {arguments}".strip())
+    return CommandResult(mode="inline", text=injected, display_text=f"{prefix}{cmd_display} {arguments}".strip())
 
 
-async def dispatch_command(ctx: "Context", text: str, prefixes: list[str] | None = None,
-                           ) -> CommandResult:
+async def dispatch_command(
+    ctx: "Context",
+    text: str,
+    prefixes: list[str] | None = None,
+) -> CommandResult:
     """Detect, validate, and execute a command from user text.
 
     This is the single entry point for all command handling. Both Mattermost
@@ -357,8 +359,7 @@ async def dispatch_command(ctx: "Context", text: str, prefixes: list[str] | None
         # Check if it's an MCP prompt command
         mcp_parsed = _parse_mcp_prompt_command(cmd_name)
         if mcp_parsed:
-            return await _execute_mcp_prompt_command(ctx, mcp_parsed[0], mcp_parsed[1], cmd_args,
-                                                           prefix=matched_prefix)
+            return await _execute_mcp_prompt_command(ctx, mcp_parsed[0], mcp_parsed[1], cmd_args, prefix=matched_prefix)
         return CommandResult(
             mode="unknown",
             text=f"Unknown command: `{cmd_name}`. Type `{matched_prefix}help` for available commands.",
@@ -378,8 +379,7 @@ async def dispatch_command(ctx: "Context", text: str, prefixes: list[str] | None
     display = f"{matched_prefix}{cmd_name}"
     if cmd_args:
         display += f" {cmd_args}"
-    return CommandResult(mode="inline", text=result_text,
-                         display_text=display, skill=skill)
+    return CommandResult(mode="inline", text=result_text, display_text=display, skill=skill)
 
 
 async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> tuple[str, str]:
@@ -420,14 +420,13 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> t
 
     if grants_capability(skill):
         ctx.tools.preapproved = set(skill.allowed_tools)
-        ctx.tools.preapproved_shell_patterns = [
-            p.replace("$SKILL_DIR", skill_dir)
-            for p in skill.shell_patterns
-        ]
+        ctx.tools.preapproved_shell_patterns = [p.replace("$SKILL_DIR", skill_dir) for p in skill.shell_patterns]
     elif skill.allowed_tools or skill.shell_patterns:
         log.warning(
-            "Command %r is %s tier: its allowed-tools/shell patterns restrict "
-            "but do not pre-approve", skill.name, skill.trust_tier)
+            "Command %r is %s tier: its allowed-tools/shell patterns restrict but do not pre-approve",
+            skill.name,
+            skill.trust_tier,
+        )
 
     # Auto-activate the skill ONLY if it has native tools to register.
     # Shell-based skills don't need activation — the command body IS the prompt.
@@ -455,33 +454,35 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> t
                 log.warning(
                     "Command %r: skipping %s-tier required skill %r — "
                     "workspace skills are not activated as dependencies",
-                    skill.name, req_info.trust_tier, req_name)
+                    skill.name,
+                    req_info.trust_tier,
+                    req_name,
+                )
                 continue
             if req_info:
                 try:
                     result = await activate_skill_internal(ctx, req_info)
                     if isinstance(result, _ToolResult):
-                        log.error(f"Failed to activate required skill "
-                                  f"'{req_name}' for command '{skill.name}': "
-                                  f"{result.text}")
+                        log.error(
+                            f"Failed to activate required skill '{req_name}' for command '{skill.name}': {result.text}"
+                        )
                         return "error", result.text
                 except Exception as e:
-                    log.error(f"Failed to activate required skill "
-                              f"'{req_name}' for command '{skill.name}': {e}")
+                    log.error(f"Failed to activate required skill '{req_name}' for command '{skill.name}': {e}")
 
     # Substitute arguments and skill directory into the body
-    body = substitute_body(skill.body, arguments,
-                           skill_dir=skill_dir)
+    body = substitute_body(skill.body, arguments, skill_dir=skill_dir)
 
     if skill.context == "fork":
         from .tools.delegate import run_child_turn
+
         # Fork mode: hard-restrict tools since the child turn is isolated
         if skill.allowed_tools:
             ctx.tools.allowed = set(skill.allowed_tools)
         # User-invoked commands use the full iteration limit, not the child limit
         text, _data = await run_child_turn(
-            ctx, body, model=skill.model or "",
-            max_iterations=ctx.config.agent.max_tool_iterations)
+            ctx, body, model=skill.model or "", max_iterations=ctx.config.agent.max_tool_iterations
+        )
         return "fork", text
 
     # Inline mode: return the substituted body as the user message

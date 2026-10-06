@@ -15,6 +15,7 @@ from decafclaw.tools.checklist_tools import (
 
 # --- pure mapping ---------------------------------------------------------
 
+
 def test_progress_data_maps_first_unchecked_to_in_progress():
     items = [
         {"text": "A", "done": True, "note": "did a"},
@@ -36,6 +37,7 @@ def test_progress_data_all_done_summary_has_no_current():
 
 
 # --- existing behavior (now async) ---------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_checklist_create(ctx):
@@ -108,6 +110,7 @@ async def test_checklist_status_empty(ctx):
 
 # --- sticky auto-emit wiring (monkeypatch sticky funcs) -------------------
 
+
 @pytest.mark.asyncio
 async def test_create_emits_set_sticky(ctx, monkeypatch):
     set_mock = AsyncMock()
@@ -146,6 +149,7 @@ async def test_abort_clears_sticky(ctx, monkeypatch):
 @pytest.mark.asyncio
 async def test_step_done_no_checklist_does_not_clear_sticky(ctx, monkeypatch):
     from unittest.mock import AsyncMock
+
     clear_mock = AsyncMock()
     monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
     monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
@@ -156,10 +160,8 @@ async def test_step_done_no_checklist_does_not_clear_sticky(ctx, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sticky_failure_is_fail_open(ctx, monkeypatch):
-    monkeypatch.setattr("decafclaw.sticky.set_sticky",
-                        AsyncMock(side_effect=RuntimeError("boom")))
-    monkeypatch.setattr("decafclaw.sticky.clear_sticky",
-                        AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock(side_effect=RuntimeError("boom")))
     # Must not raise; checklist still works.
     result = await tool_checklist_create(ctx, steps=["A"])
     assert "1 step" in result.text or "1 steps" in result.text
@@ -170,8 +172,8 @@ async def test_ok_false_result_is_logged(ctx, monkeypatch, caplog):
     from unittest.mock import AsyncMock
 
     from decafclaw.sticky import StickyOpResult
-    monkeypatch.setattr("decafclaw.sticky.set_sticky",
-                        AsyncMock(return_value=StickyOpResult(ok=False, error="boom")))
+
+    monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock(return_value=StickyOpResult(ok=False, error="boom")))
     monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock(return_value=StickyOpResult(ok=True)))
     with caplog.at_level("WARNING"):
         await tool_checklist_create(ctx, steps=["A", "B"])

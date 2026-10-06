@@ -85,14 +85,18 @@ class TerminalRegistry:
             except OSError:
                 self._os._exit(127)  # exec failed — do not fall back into async code
         session = TerminalSession(
-            conv_id=conv_id, tab_id=tab_id, session_id=session_id,
-            cwd=cwd, shell=shell, pid=pid, fd=fd,
+            conv_id=conv_id,
+            tab_id=tab_id,
+            session_id=session_id,
+            cwd=cwd,
+            shell=shell,
+            pid=pid,
+            fd=fd,
         )
         self._sessions[(conv_id, tab_id)] = session
         self._json_sinks[id(session)] = {}
         loop.add_reader(fd, self._on_readable, session)
-        log.info("terminal spawned conv=%s tab=%s pid=%s cwd=%s shell=%s",
-                 conv_id, tab_id, pid, cwd, shell)
+        log.info("terminal spawned conv=%s tab=%s pid=%s cwd=%s shell=%s", conv_id, tab_id, pid, cwd, shell)
         return session
 
     # -- output --------------------------------------------------------------
@@ -148,8 +152,7 @@ class TerminalRegistry:
         # tombstone the client closes on sight.
         for send_json in list(self._json_sinks.get(id(session), {}).values()):
             try:
-                await send_json({"type": "session_ended", "reason": "exited",
-                                 "exit_status": session.exit_status})
+                await send_json({"type": "session_ended", "reason": "exited", "exit_status": session.exit_status})
             except Exception as exc:
                 log.debug("terminal ended-notify drop: %s", exc)
         try:
@@ -158,8 +161,7 @@ class TerminalRegistry:
             pass
         self._sessions.pop((session.conv_id, session.tab_id), None)
         self._json_sinks.pop(id(session), None)
-        log.info("terminal exited conv=%s tab=%s exit=%s",
-                 session.conv_id, session.tab_id, session.exit_status)
+        log.info("terminal exited conv=%s tab=%s exit=%s", session.conv_id, session.tab_id, session.exit_status)
 
     # -- attach / detach -----------------------------------------------------
     async def attach(self, session, send_bytes, send_json):
@@ -198,8 +200,7 @@ class TerminalRegistry:
             return
         cols, rows = size
         try:
-            fcntl.ioctl(session.fd, termios.TIOCSWINSZ,
-                        struct.pack("HHHH", rows, cols, 0, 0))
+            fcntl.ioctl(session.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         except OSError as exc:
             log.debug("terminal resize drop conv=%s: %s", session.conv_id, exc)
 

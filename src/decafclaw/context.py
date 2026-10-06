@@ -15,13 +15,14 @@ from .llm import call_llm, call_llm_streaming
 
 class TurnLifecycle(Enum):
     """Lifecycle phases for synchronous context interception."""
-    BEFORE_LLM_CALL = auto()
 
+    BEFORE_LLM_CALL = auto()
 
 
 @dataclass
 class TokenUsage:
     """Per-turn token counters."""
+
     total_prompt: int = 0
     total_completion: int = 0
     last_prompt: int = 0
@@ -34,6 +35,7 @@ class TokenUsage:
 @dataclass
 class ToolState:
     """Tool-related state for the current conversation."""
+
     extra: dict[str, Any] = field(default_factory=dict)
     extra_definitions: list[dict] = field(default_factory=list)
     deferred_pool: list[dict] = field(default_factory=list)
@@ -71,9 +73,7 @@ class ToolState:
     # the same name genuinely wins. Removing a shadowing name on reload would
     # otherwise take the still-active shadowed skill's version with it, and
     # nothing would remain to rebind from. Insertion order is activation order.
-    skill_contributions: dict[str, tuple[dict[str, Any], list[dict]]] = field(
-        default_factory=dict
-    )
+    skill_contributions: dict[str, tuple[dict[str, Any], list[dict]]] = field(default_factory=dict)
     # Tool names promoted for this turn by pre-emptive keyword matching
     # against the current user message + prior assistant response.
     # Populated once at the start of a turn by ContextComposer; reused
@@ -85,6 +85,7 @@ class ToolState:
 @dataclass
 class SkillState:
     """Skill activation state for the current conversation."""
+
     activated: dict[str, str] = field(default_factory=dict)
     data: dict[str, Any] = field(default_factory=dict)
     # Skill names surfaced for this turn by pre-emptive keyword matching
@@ -98,23 +99,18 @@ class SkillState:
 
 class BoundLlmClient:
     """An LLM client bound to a specific config and model name."""
+
     def __init__(self, config: Any, model_name: str):
         self.config = config
         self.model_name = model_name
 
     async def __call__(self, messages: list, tools: list | None = None, **kwargs) -> dict:
-        return await call_llm(
-            self.config, messages, tools=tools, model_name=self.model_name, **kwargs
-        )
+        return await call_llm(self.config, messages, tools=tools, model_name=self.model_name, **kwargs)
 
     async def complete(self, messages: list, tools: list | None = None, streaming: bool = False, **kwargs) -> dict:
         if streaming:
-            return await call_llm_streaming(
-                self.config, messages, tools=tools, model_name=self.model_name, **kwargs
-            )
-        return await call_llm(
-            self.config, messages, tools=tools, model_name=self.model_name, **kwargs
-        )
+            return await call_llm_streaming(self.config, messages, tools=tools, model_name=self.model_name, **kwargs)
+        return await call_llm(self.config, messages, tools=tools, model_name=self.model_name, **kwargs)
 
 
 class Context:
@@ -307,5 +303,6 @@ class Context:
         an explicit ``event_bus`` argument.
         """
         from .notifications import notify
+
         kwargs.setdefault("conv_id", self.conv_id or None)
         await notify(self.config, self.event_bus, **kwargs)

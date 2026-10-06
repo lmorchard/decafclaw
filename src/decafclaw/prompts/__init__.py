@@ -99,8 +99,7 @@ def load_system_prompt(config, rejections: list | None = None):
         if not skill.always_loaded or not skill.body:
             continue
         if skill.trust_tier == "workspace":
-            log.warning(f"Ignoring always-loaded on workspace skill "
-                        f"'{skill.name}' at {skill.location}")
+            log.warning(f"Ignoring always-loaded on workspace skill '{skill.name}' at {skill.location}")
             continue
         # Escape the name for XML attribute safety. Skill names come from
         # YAML frontmatter with no character validation at ingest today,
@@ -111,8 +110,6 @@ def load_system_prompt(config, rejections: list | None = None):
         log.info(f"Always-loaded skill '{skill.name}' body appended to system prompt")
 
     if skill_blocks:
-        sections.append(
-            "<loaded_skills>\n" + "\n".join(skill_blocks) + "\n</loaded_skills>"
-        )
+        sections.append("<loaded_skills>\n" + "\n".join(skill_blocks) + "\n</loaded_skills>")
 
     return "\n\n".join(sections), skills

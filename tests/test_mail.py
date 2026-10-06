@@ -31,8 +31,10 @@ class TestSendMail:
         _configure_email(config)
         with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
             await send_mail(
-                config, to="alice@example.com",
-                subject="hello", body="world",
+                config,
+                to="alice@example.com",
+                subject="hello",
+                body="world",
             )
         assert mock_send.await_count == 1
         msg = mock_send.await_args.args[0]
@@ -55,8 +57,10 @@ class TestSendMail:
         _configure_email(config)
         with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
             await send_mail(
-                config, to=["a@x.com", "b@x.com"],
-                subject="s", body="b",
+                config,
+                to=["a@x.com", "b@x.com"],
+                subject="s",
+                body="b",
             )
         msg = mock_send.await_args.args[0]
         assert msg["To"] == "a@x.com, b@x.com"
@@ -66,8 +70,11 @@ class TestSendMail:
         _configure_email(config)
         with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
             await send_mail(
-                config, to="a@x.com", subject="s",
-                body="plain", html_body="<p>html</p>",
+                config,
+                to="a@x.com",
+                subject="s",
+                body="plain",
+                html_body="<p>html</p>",
             )
         msg = mock_send.await_args.args[0]
         assert msg.is_multipart()
@@ -82,7 +89,10 @@ class TestSendMail:
         att.write_text("contents")
         with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
             await send_mail(
-                config, to="a@x.com", subject="s", body="b",
+                config,
+                to="a@x.com",
+                subject="s",
+                body="b",
                 attachments=[str(att)],
             )
         msg = mock_send.await_args.args[0]
@@ -147,8 +157,10 @@ class TestSendMail:
         _configure_email(config)
         with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
             await send_mail(
-                config, to=[" a@x.com ", "b@x.com\n"],
-                subject="s", body="b",
+                config,
+                to=[" a@x.com ", "b@x.com\n"],
+                subject="s",
+                body="b",
             )
         msg = mock_send.await_args.args[0]
         assert msg["To"] == "a@x.com, b@x.com"

@@ -45,7 +45,11 @@ NOT_PATCHABLE = {"name", "source", "path", "unknown_keys"}
 # other field maps there either) while still masking the renamed field
 # behind an already-populated key.
 NON_FIELD_WIRE_KEYS = {
-    "has_overlay", "frontmatter_raw", "modified", "next_run_iso", "last_run_iso",
+    "has_overlay",
+    "frontmatter_raw",
+    "modified",
+    "next_run_iso",
+    "last_run_iso",
 }
 
 # Sample values by annotated type. A field with a new type raises
@@ -82,6 +86,7 @@ def _sample_for(spec):
         return not spec.default
     return SAMPLES[spec.type]
 
+
 # Values that must satisfy a validator rather than merely round-trip.
 SAMPLE_OVERRIDES = {"schedule": "*/5 * * * *"}
 
@@ -113,12 +118,7 @@ DISTINCT_VALUES = {
 def _seed(config, name="drift-probe"):
     path = config.workspace_path / "schedules" / f"{name}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "---\n"
-        'schedule: "0 3 * * *"\n'
-        "---\n\n"
-        "Body.\n"
-    )
+    path.write_text('---\nschedule: "0 3 * * *"\n---\n\nBody.\n')
     return path
 
 
@@ -128,10 +128,7 @@ def test_every_dataclass_field_reaches_the_wire(config):
     task = {t.name: t for t in discover_schedules(config)}["drift-probe"]
     payload = _schedule_to_dict(config, task)
 
-    missing = [
-        f.name for f in fields(ScheduleTask)
-        if WIRE_RENAMES.get(f.name, f.name) not in payload
-    ]
+    missing = [f.name for f in fields(ScheduleTask) if WIRE_RENAMES.get(f.name, f.name) not in payload]
     assert missing == [], (
         f"fields absent from _schedule_to_dict: {missing}. Add them to the "
         f"wire payload, or add a rename to WIRE_RENAMES if the key differs."
@@ -154,9 +151,7 @@ def test_wire_renames_are_injective(config):
     all and a field-only injectivity check can't see them).
     """
     mapped = [WIRE_RENAMES.get(f.name, f.name) for f in fields(ScheduleTask)]
-    assert len(set(mapped)) == len(mapped), (
-        f"two or more fields map to the same wire key: {mapped}"
-    )
+    assert len(set(mapped)) == len(mapped), f"two or more fields map to the same wire key: {mapped}"
 
     masked = set(WIRE_RENAMES.values()) & NON_FIELD_WIRE_KEYS
     assert not masked, (
@@ -181,9 +176,7 @@ def test_non_field_wire_keys_is_exactly_the_computed_remainder(config):
     task = {t.name: t for t in discover_schedules(config)}["nonfield-probe"]
     payload = _schedule_to_dict(config, task)
 
-    computed = set(payload) - {
-        WIRE_RENAMES.get(f.name, f.name) for f in fields(ScheduleTask)
-    }
+    computed = set(payload) - {WIRE_RENAMES.get(f.name, f.name) for f in fields(ScheduleTask)}
     assert NON_FIELD_WIRE_KEYS == computed, (
         f"NON_FIELD_WIRE_KEYS is stale. _schedule_to_dict emits computed keys "
         f"{sorted(computed)}; the set lists {sorted(NON_FIELD_WIRE_KEYS)}. "
@@ -202,10 +195,7 @@ def test_wire_values_match_task_fields(config):
     stubbed one.
     """
     path = _seed(config, name="value-probe")
-    patchable = [
-        f.name for f in fields(ScheduleTask)
-        if f.name not in NOT_PATCHABLE and f.name != "enabled"
-    ]
+    patchable = [f.name for f in fields(ScheduleTask) if f.name not in NOT_PATCHABLE and f.name != "enabled"]
     write_overlay(config, "value-probe", {name: DISTINCT_VALUES[name] for name in patchable})
 
     # unknown_keys is read-only: write_overlay's serialize_to_markdown
@@ -252,8 +242,7 @@ def test_wire_value_for_bool_field_round_trips(config):
         assert task.enabled is expected  # sanity: the overlay took
         payload = _schedule_to_dict(config, task)
         assert payload["enabled"] == expected, (
-            f"wire value for 'enabled' does not match the parsed task "
-            f"for {name!r} (expected {expected!r})"
+            f"wire value for 'enabled' does not match the parsed task for {name!r} (expected {expected!r})"
         )
 
 
@@ -286,6 +275,7 @@ def test_exemption_sets_name_only_real_fields(config):
 def test_valid_patch_keys_matches_dataclass_fields():
     """VALID_PATCH_KEYS must match patchable fields derived from ScheduleTask."""
     from decafclaw.schedules import VALID_PATCH_KEYS
+
     expected = {f.name for f in fields(ScheduleTask) if f.name not in NOT_PATCHABLE}
     assert VALID_PATCH_KEYS == expected
 
@@ -294,13 +284,7 @@ def test_frontmatter_raw_is_the_file_not_a_reserialization(config):
     """The raw view exists to show keys the parser drops."""
     path = config.workspace_path / "schedules" / "raw-probe.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "---\n"
-        'schedule: "0 3 * * *"\n'
-        "modle: vertex-gemini-pro\n"
-        "---\n\n"
-        "Body.\n"
-    )
+    path.write_text('---\nschedule: "0 3 * * *"\nmodle: vertex-gemini-pro\n---\n\nBody.\n')
     task = {t.name: t for t in discover_schedules(config)}["raw-probe"]
     payload = _schedule_to_dict(config, task)
 
@@ -311,8 +295,11 @@ def test_frontmatter_raw_is_the_file_not_a_reserialization(config):
 def test_frontmatter_raw_survives_a_missing_file(config):
     """Bundled tasks whose path was removed must not 500 the list endpoint."""
     task = ScheduleTask(
-        name="ghost", schedule="0 3 * * *", body="B",
-        source="bundled", path=Path("/nonexistent/SCHEDULE.md"),
+        name="ghost",
+        schedule="0 3 * * *",
+        body="B",
+        source="bundled",
+        path=Path("/nonexistent/SCHEDULE.md"),
     )
     payload = _schedule_to_dict(config, task)
     assert payload["frontmatter_raw"] == ""

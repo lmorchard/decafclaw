@@ -17,16 +17,19 @@ _SIMPLE_SCHEMA = {
 }
 
 
-def _write_widget(root, name, tier_subdir, *, description="desc",
-                  js_body="// stub\n"):
+def _write_widget(root, name, tier_subdir, *, description="desc", js_body="// stub\n"):
     d = root / name
     d.mkdir(parents=True)
-    (d / "widget.json").write_text(json.dumps({
-        "name": name,
-        "description": description,
-        "modes": ["inline"],
-        "data_schema": _SIMPLE_SCHEMA,
-    }))
+    (d / "widget.json").write_text(
+        json.dumps(
+            {
+                "name": name,
+                "description": description,
+                "modes": ["inline"],
+                "data_schema": _SIMPLE_SCHEMA,
+            }
+        )
+    )
     (d / "widget.js").write_text(js_body)
 
 
@@ -50,17 +53,13 @@ def bus():
 def widget_registry(tmp_path, monkeypatch):
     bundled = tmp_path / "widgets-bundled"
     admin = tmp_path / "widgets-admin"
-    _write_widget(bundled, "data_table", "bundled",
-                  description="Tabular display",
-                  js_body="export class Bundled{};\n")
-    _write_widget(admin, "custom_thing", "admin",
-                  description="Admin-only",
-                  js_body="export class AdminThing{};\n")
+    _write_widget(bundled, "data_table", "bundled", description="Tabular display", js_body="export class Bundled{};\n")
+    _write_widget(admin, "custom_thing", "admin", description="Admin-only", js_body="export class AdminThing{};\n")
 
     class _Cfg:
         agent_path = tmp_path / "agent_home"
-    registry = widgets_module.load_widget_registry(
-        _Cfg(), bundled_dir=bundled, admin_dir=admin)
+
+    registry = widgets_module.load_widget_registry(_Cfg(), bundled_dir=bundled, admin_dir=admin)
     monkeypatch.setattr(widgets_module, "_registry", registry)
     return registry
 
@@ -164,8 +163,7 @@ async def test_serve_widget_requires_auth(unauthed_client):
 
 
 @pytest.mark.asyncio
-async def test_serve_widget_rejects_symlink_escape(
-        tmp_data, monkeypatch, http_config, bus):
+async def test_serve_widget_rejects_symlink_escape(tmp_data, monkeypatch, http_config, bus):
     """An admin widget.js that's a symlink to a file outside the admin
     tier root must not be served — defense against admins (or compromised
     workspace tooling later) creating arbitrary-file-read symlinks."""
@@ -180,14 +178,13 @@ async def test_serve_widget_rejects_symlink_escape(
     widget_dir = admin_root / "evil"
     widget_dir.mkdir(parents=True)
     (widget_dir / "widget.json").write_text(
-        '{"name": "evil", "description": "x", "modes": ["inline"], '
-        '"data_schema": {"type": "object"}}')
+        '{"name": "evil", "description": "x", "modes": ["inline"], "data_schema": {"type": "object"}}'
+    )
     (widget_dir / "widget.js").symlink_to(secret_file)
 
     registry = widgets_module.load_widget_registry(
-        http_config,
-        bundled_dir=tmp_data / "no-bundled",
-        admin_dir=admin_root)
+        http_config, bundled_dir=tmp_data / "no-bundled", admin_dir=admin_root
+    )
     monkeypatch.setattr(widgets_module, "_registry", registry)
 
     app = create_app(http_config, bus)

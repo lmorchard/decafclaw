@@ -24,6 +24,7 @@ def _get_tool_action_map():
     global _TOOL_ACTION_MAP
     if _TOOL_ACTION_MAP is None:
         from ..confirmations import ConfirmationAction
+
         _TOOL_ACTION_MAP = {
             "shell": ConfirmationAction.RUN_SHELL_COMMAND,
             "shell_background_start": ConfirmationAction.RUN_SHELL_COMMAND,
@@ -33,8 +34,7 @@ def _get_tool_action_map():
     return _TOOL_ACTION_MAP
 
 
-async def _request_via_manager(ctx: "Context", tool_name, command, message, timeout,
-                               **extra_event_fields) -> dict:
+async def _request_via_manager(ctx: "Context", tool_name, command, message, timeout, **extra_event_fields) -> dict:
     """Bridge to the ConversationManager's confirmation flow."""
     from ..confirmations import ConfirmationAction, ConfirmationRequest
 
@@ -68,8 +68,7 @@ async def _request_via_manager(ctx: "Context", tool_name, command, message, time
     return result
 
 
-async def _request_via_event_bus(ctx: "Context", tool_name, command, message, timeout,
-                                 **extra_event_fields) -> dict:
+async def _request_via_event_bus(ctx: "Context", tool_name, command, message, timeout, **extra_event_fields) -> dict:
     """Legacy event-bus confirmation flow."""
     confirm_event = asyncio.Event()
     result = {"approved": False}
@@ -77,9 +76,11 @@ async def _request_via_event_bus(ctx: "Context", tool_name, command, message, ti
     match_context_id = ctx.event_context_id or ctx.context_id
 
     def on_confirm(event):
-        if (event.get("type") == "tool_confirm_response"
-                and event.get("context_id") == match_context_id
-                and event.get("tool") == tool_name):
+        if (
+            event.get("type") == "tool_confirm_response"
+            and event.get("context_id") == match_context_id
+            and event.get("tool") == tool_name
+        ):
             resp_id = event.get("tool_call_id", "")
             if tool_call_id and resp_id and resp_id != tool_call_id:
                 return
@@ -131,14 +132,14 @@ async def request_confirmation(
 
     # Route through manager
     if ctx.request_confirmation is not None:
-        return await _request_via_manager(
-            ctx, tool_name, command, message, timeout, **extra_event_fields)
+        return await _request_via_manager(ctx, tool_name, command, message, timeout, **extra_event_fields)
 
     # Fallback for contexts not managed by ConversationManager
     # (heartbeat, scheduled tasks). These should auto-approve via
     # preapproved checks above, so hitting this path is unexpected.
-    log.warning("No ConversationManager for confirmation request "
-                "(tool=%s, user=%s) — using legacy event bus",
-                tool_name, getattr(ctx, "user_id", "?"))
-    return await _request_via_event_bus(
-        ctx, tool_name, command, message, timeout, **extra_event_fields)
+    log.warning(
+        "No ConversationManager for confirmation request (tool=%s, user=%s) — using legacy event bus",
+        tool_name,
+        getattr(ctx, "user_id", "?"),
+    )
+    return await _request_via_event_bus(ctx, tool_name, command, message, timeout, **extra_event_fields)

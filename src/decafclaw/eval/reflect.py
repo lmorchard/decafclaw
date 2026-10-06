@@ -59,8 +59,7 @@ def _summarize_expectations(test_case: dict) -> str:
     return "\n".join(lines) if lines else "  (none set)"
 
 
-async def reflect_on_failure(config, test_case: dict, result: dict,
-                              judge_model: str, output_dir: Path) -> str | None:
+async def reflect_on_failure(config, test_case: dict, result: dict, judge_model: str, output_dir: Path) -> str | None:
     """Ask the judge model to analyze a test failure.
 
     Returns the relative path to the reflection file, or None on error.
@@ -70,10 +69,7 @@ async def reflect_on_failure(config, test_case: dict, result: dict,
 
     # Multi-turn tests use "turns" instead of "input"
     if "turns" in test_case:
-        input_text = "\n".join(
-            f"[turn {i + 1}] {t.get('input', '')}"
-            for i, t in enumerate(test_case["turns"])
-        )
+        input_text = "\n".join(f"[turn {i + 1}] {t.get('input', '')}" for i, t in enumerate(test_case["turns"]))
     else:
         input_text = test_case.get("input", "")
 

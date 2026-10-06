@@ -61,7 +61,9 @@ DANGEROUS_PATTERNS = [
         "Dangerous recursive deletion on root or home directory",
     ),
     (
-        re.compile(r"\b(?:mkfs|dd\s+.*of=/dev/(?:sd[a-z0-9_]*|hd[a-z0-9_]*|vd[a-z0-9_]*|nvme[a-z0-9_]*|disk[a-z0-9_]*))\b"),
+        re.compile(
+            r"\b(?:mkfs|dd\s+.*of=/dev/(?:sd[a-z0-9_]*|hd[a-z0-9_]*|vd[a-z0-9_]*|nvme[a-z0-9_]*|disk[a-z0-9_]*))\b"
+        ),
         "Raw disk block device overwrite or formatting",
     ),
     (
@@ -89,7 +91,10 @@ SENSITIVE_PATTERNS = [
         "Dangerous forced git push (git push --force)",
     ),
     (
-        re.compile(r"\bcurl\s+.*(?:-X\s*(?:POST|PUT|DELETE|PATCH)|--request\s+(?:POST|PUT|DELETE|PATCH)|-XPOST|-XPUT|-XDELETE|-XPATCH|-d\b|--data|--data-raw|--data-binary|--data-urlencode|-F\b|--form)\b", re.IGNORECASE),
+        re.compile(
+            r"\bcurl\s+.*(?:-X\s*(?:POST|PUT|DELETE|PATCH)|--request\s+(?:POST|PUT|DELETE|PATCH)|-XPOST|-XPUT|-XDELETE|-XPATCH|-d\b|--data|--data-raw|--data-binary|--data-urlencode|-F\b|--form)\b",
+            re.IGNORECASE,
+        ),
         "External HTTP request with body/data via curl",
     ),
     (
@@ -126,7 +131,9 @@ CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
 
 # Ambiguous command constructs that warrant Tier 2 LLM classification
 AMBIGUOUS_PATTERNS = [
-    re.compile(r"\|\s*(?:sh|bash|zsh|csh|ksh|python|python3|perl|ruby|eval)\b", re.IGNORECASE),  # Piped execution into interpreter/subshell
+    re.compile(
+        r"\|\s*(?:sh|bash|zsh|csh|ksh|python|python3|perl|ruby|eval)\b", re.IGNORECASE
+    ),  # Piped execution into interpreter/subshell
     re.compile(r"\b(?:eval|base64|sh\s+-c|bash\s+-c|python\s+-c|perl\s+-e)\b", re.IGNORECASE),  # Encoded/eval execution
     re.compile(r"#"),  # Inline comments in shell command
     re.compile(r"`|\$\("),  # Subshell substitution
@@ -243,7 +250,9 @@ def evaluate_command(
                     continue
 
                 # Allowed temporary directories (unless token uses relative '..' traversal)
-                if any(token_path.is_relative_to(t_dir) for t_dir in ALLOWED_TEMP_DIRS) and not cleaned.startswith(".."):
+                if any(token_path.is_relative_to(t_dir) for t_dir in ALLOWED_TEMP_DIRS) and not cleaned.startswith(
+                    ".."
+                ):
                     continue
 
                 # Check if path is within workspace
@@ -352,4 +361,3 @@ async def evaluate_command_llm(
         )
 
     return tier1_decision
-

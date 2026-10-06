@@ -10,9 +10,7 @@ def _cfg(tmp_path):
 
 def test_workflow_path_is_in_conv_subdirectory(tmp_path):
     cfg = _cfg(tmp_path)
-    assert workflow_path(cfg, "abc123") == (
-        tmp_path / "conversations" / "abc123" / "workflow.json"
-    )
+    assert workflow_path(cfg, "abc123") == (tmp_path / "conversations" / "abc123" / "workflow.json")
 
 
 def test_workflow_dir_is_created(tmp_path):

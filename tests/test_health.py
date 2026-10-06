@@ -99,12 +99,8 @@ async def test_health_embeddings_with_data(ctx):
         id INTEGER PRIMARY KEY, file_path TEXT, entry_hash TEXT UNIQUE,
         entry_text TEXT, embedding BLOB, source_type TEXT DEFAULT 'memory',
         created_at TEXT)""")
-    conn.execute(
-        "INSERT INTO memory_embeddings VALUES (1,'f','h1','t',X'00','journal','2024-01-01')"
-    )
-    conn.execute(
-        "INSERT INTO memory_embeddings VALUES (2,'f','h2','t',X'00','page','2024-01-01')"
-    )
+    conn.execute("INSERT INTO memory_embeddings VALUES (1,'f','h1','t',X'00','journal','2024-01-01')")
+    conn.execute("INSERT INTO memory_embeddings VALUES (2,'f','h2','t',X'00','page','2024-01-01')")
     conn.commit()
     conn.close()
 

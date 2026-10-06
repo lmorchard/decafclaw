@@ -91,13 +91,15 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     # ToolResult without any stubbing of execute_tool_calls.
     repeated_call = _mock_llm_response(
         content=None,
-        tool_calls=[{
-            "id": "tc-repeat",
-            "function": {
-                "name": "definitely_not_a_real_tool",
-                "arguments": "{}",
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc-repeat",
+                "function": {
+                    "name": "definitely_not_a_real_tool",
+                    "arguments": "{}",
+                },
+            }
+        ],
     )
 
     published_events = []
@@ -119,6 +121,7 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     # into history by restore_history on a restart/reload, permanently
     # polluting context on later turns. Confirm it's absent from the archive...
     from decafclaw.archive import read_archive
+
     archived = read_archive(ctx.config, ctx.conv_id)
     user_msgs = [m for m in archived if m.get("role") == "user"]
     assert not any("[loop-breaker]" in (m.get("content") or "") for m in user_msgs)
@@ -130,8 +133,7 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     # recorded call's list reflects the final state — both injected
     # diagnostics.
     sent_messages = mock_llm.call_args_list[-1][0][1]
-    diagnostics = [m for m in sent_messages
-                   if "[loop-breaker]" in (m.get("content") or "")]
+    diagnostics = [m for m in sent_messages if "[loop-breaker]" in (m.get("content") or "")]
     assert len(diagnostics) == 2, "expected both the nudge and the redirect"
     assert all(m["role"] == "user" for m in diagnostics)
     assert "STOP repeating that move" in diagnostics[0]["content"]
@@ -143,13 +145,11 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     assert any("[loop-breaker] Stopped" in (m.get("content") or "") for m in assistant_msgs)
 
     # The nudge is still observable via the durable/observable event signal.
-    nudge_events = [e for e in published_events
-                     if e.get("type") == "loop_breaker" and e.get("action") == "nudge"]
+    nudge_events = [e for e in published_events if e.get("type") == "loop_breaker" and e.get("action") == "nudge"]
     assert len(nudge_events) == 1
     assert nudge_events[0].get("signal") == "repeat"
 
-    stop_events = [e for e in published_events
-                   if e.get("type") == "loop_breaker" and e.get("action") == "stop"]
+    stop_events = [e for e in published_events if e.get("type") == "loop_breaker" and e.get("action") == "stop"]
     assert len(stop_events) == 1
     assert stop_events[0].get("signal") == "repeat"
 
@@ -178,10 +178,12 @@ async def test_redirect_rung_fires_between_nudge_and_stop(ctx):
 
     repeated_call = _mock_llm_response(
         content="Trying again.",
-        tool_calls=[{
-            "id": "tc-repeat",
-            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
-        }],
+        tool_calls=[
+            {
+                "id": "tc-repeat",
+                "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+            }
+        ],
     )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -190,18 +192,15 @@ async def test_redirect_rung_fires_between_nudge_and_stop(ctx):
 
     sent_messages = mock_llm.call_args_list[-1][0][1]
     contents = [m.get("content") or "" for m in sent_messages]
-    assert any("STOP repeating that move" in c for c in contents), \
-        "rung 1 (nudge) never fired"
-    assert any("single best hypothesis" in c for c in contents), \
-        "rung 2 (redirect) never fired"
+    assert any("STOP repeating that move" in c for c in contents), "rung 1 (nudge) never fired"
+    assert any("single best hypothesis" in c for c in contents), "rung 2 (redirect) never fired"
     assert "[loop-breaker] Stopped" in result.text, "rung 3 (stop) never fired"
 
     # The redirect names the actual offending tool, not generic advice (#707).
     redirect = next(c for c in contents if "single best hypothesis" in c)
     assert "definitely_not_a_real_tool" in redirect
 
-    actions = [e.get("action") for e in published_events
-               if e.get("type") == "loop_breaker"]
+    actions = [e.get("action") for e in published_events if e.get("type") == "loop_breaker"]
     assert actions == ["nudge", "redirect", "stop"]
 
 
@@ -217,10 +216,12 @@ async def test_redirect_is_never_archived(ctx):
 
     repeated_call = _mock_llm_response(
         content="Trying again.",
-        tool_calls=[{
-            "id": "tc-repeat",
-            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
-        }],
+        tool_calls=[
+            {
+                "id": "tc-repeat",
+                "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+            }
+        ],
     )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -228,10 +229,12 @@ async def test_redirect_is_never_archived(ctx):
         await run_agent_turn(ctx, "loop forever", [])
 
     from decafclaw.archive import read_archive
+
     archived = read_archive(ctx.config, ctx.conv_id)
     user_msgs = [m for m in archived if m.get("role") == "user"]
-    assert not any("[loop-breaker]" in (m.get("content") or "")
-                   for m in user_msgs), "an ephemeral diagnostic was archived"
+    assert not any("[loop-breaker]" in (m.get("content") or "") for m in user_msgs), (
+        "an ephemeral diagnostic was archived"
+    )
 
 
 # -- Integration: a genuine end-turn signal always wins over the breaker ------
@@ -260,13 +263,15 @@ async def test_end_turn_signal_preempts_loop_breaker(ctx):
 
     repeated_call = _mock_llm_response(
         content=None,
-        tool_calls=[{
-            "id": "tc-repeat",
-            "function": {
-                "name": "some_tool",
-                "arguments": "{}",
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc-repeat",
+                "function": {
+                    "name": "some_tool",
+                    "arguments": "{}",
+                },
+            }
+        ],
     )
     final_response = _mock_llm_response(content="All done here.")
 
@@ -291,9 +296,10 @@ async def test_end_turn_signal_preempts_loop_breaker(ctx):
     published_events = []
     ctx.event_bus.subscribe(lambda event: published_events.append(event))
 
-    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
-         patch("decafclaw.agent.execute_tool_calls",
-               side_effect=fake_execute_tool_calls) as mock_execute:
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.agent.execute_tool_calls", side_effect=fake_execute_tool_calls) as mock_execute,
+    ):
         mock_llm.side_effect = [repeated_call, repeated_call, repeated_call, final_response]
         history = []
         result = await run_agent_turn(ctx, "keep trying", history)
@@ -305,14 +311,12 @@ async def test_end_turn_signal_preempts_loop_breaker(ctx):
 
     # A NUDGE legitimately fired on the second iteration (breaker still
     # observes and escalates right up to the end-turn iteration)...
-    nudge_events = [e for e in published_events
-                    if e.get("type") == "loop_breaker" and e.get("action") == "nudge"]
+    nudge_events = [e for e in published_events if e.get("type") == "loop_breaker" and e.get("action") == "nudge"]
     assert len(nudge_events) == 1
 
     # ...but STOP never fires, because the third iteration's end_turn=True
     # is handled before the breaker ever records/verdicts that iteration.
-    stop_events = [e for e in published_events
-                   if e.get("type") == "loop_breaker" and e.get("action") == "stop"]
+    stop_events = [e for e in published_events if e.get("type") == "loop_breaker" and e.get("action") == "stop"]
     assert len(stop_events) == 0
 
     # 3 tool-call iterations + 1 final no-tools call after end_turn=True.
@@ -340,10 +344,12 @@ async def test_loop_break_delivers_and_archives_only_the_note(ctx):
     preamble = "I will try activating the skill again."
     repeated_call = _mock_llm_response(
         content=preamble,
-        tool_calls=[{
-            "id": "tc-repeat",
-            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
-        }],
+        tool_calls=[
+            {
+                "id": "tc-repeat",
+                "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+            }
+        ],
     )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -353,17 +359,13 @@ async def test_loop_break_delivers_and_archives_only_the_note(ctx):
 
     assert "[loop-breaker] Stopped" in result.text
     # The delivery half (#707).
-    assert preamble not in result.text, (
-        "the finalizer re-delivered preambles the transport already rendered"
-    )
+    assert preamble not in result.text, "the finalizer re-delivered preambles the transport already rendered"
 
     # The archive half (#675) — unchanged.
     from decafclaw.archive import read_archive
+
     archived = read_archive(ctx.config, ctx.conv_id)
-    occurrences = sum(
-        (m.get("content") or "").count(preamble)
-        for m in archived if m.get("role") == "assistant"
-    )
+    occurrences = sum((m.get("content") or "").count(preamble) for m in archived if m.get("role") == "assistant")
     iterations = mock_llm.call_count
     assert occurrences == iterations, (
         f"preamble archived {occurrences}× across {iterations} iterations — "
@@ -394,10 +396,12 @@ async def test_loop_break_delivers_preambles_for_unwatched_task_turns(ctx, task_
     preamble = "Checking the feed again."
     repeated_call = _mock_llm_response(
         content=preamble,
-        tool_calls=[{
-            "id": "tc-repeat",
-            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
-        }],
+        tool_calls=[
+            {
+                "id": "tc-repeat",
+                "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+            }
+        ],
     )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -405,17 +409,13 @@ async def test_loop_break_delivers_preambles_for_unwatched_task_turns(ctx, task_
         result = await run_agent_turn(ctx, "check the feed", [])
 
     assert "[loop-breaker] Stopped" in result.text
-    assert preamble in result.text, (
-        "an unwatched turn's accumulated work was dropped from delivery"
-    )
+    assert preamble in result.text, "an unwatched turn's accumulated work was dropped from delivery"
 
     # Archiving stays note-only regardless of the delivery branch (#675).
     from decafclaw.archive import read_archive
+
     archived = read_archive(ctx.config, ctx.conv_id)
-    occurrences = sum(
-        (m.get("content") or "").count(preamble)
-        for m in archived if m.get("role") == "assistant"
-    )
+    occurrences = sum((m.get("content") or "").count(preamble) for m in archived if m.get("role") == "assistant")
     assert occurrences == mock_llm.call_count
 
 
@@ -442,10 +442,12 @@ async def test_loop_break_note_comes_first_for_unwatched_turns(ctx):
     preamble = "Checking the feed again, HEARTBEAT_OK for now."
     repeated_call = _mock_llm_response(
         content=preamble,
-        tool_calls=[{
-            "id": "tc-repeat",
-            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
-        }],
+        tool_calls=[
+            {
+                "id": "tc-repeat",
+                "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+            }
+        ],
     )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -462,6 +464,7 @@ async def test_loop_break_note_comes_first_for_unwatched_turns(ctx):
     )
 
     from decafclaw.heartbeat import is_heartbeat_ok
+
     assert not is_heartbeat_ok(result), (
         "note-first should push this (long) loop-breaker note's own text "
         "to the front, keeping the sentinel out of the 300-char window"
@@ -469,11 +472,9 @@ async def test_loop_break_note_comes_first_for_unwatched_turns(ctx):
 
     # Archiving stays note-only regardless of delivery ordering (#675).
     from decafclaw.archive import read_archive
+
     archived = read_archive(ctx.config, ctx.conv_id)
-    occurrences = sum(
-        (m.get("content") or "").count(preamble)
-        for m in archived if m.get("role") == "assistant"
-    )
+    occurrences = sum((m.get("content") or "").count(preamble) for m in archived if m.get("role") == "assistant")
     assert occurrences == mock_llm.call_count
 
 
@@ -492,10 +493,12 @@ async def test_loop_break_delivers_only_the_note_for_a_background_wake(ctx):
     preamble = "Following up on that job."
     repeated_call = _mock_llm_response(
         content=preamble,
-        tool_calls=[{
-            "id": "tc-repeat",
-            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
-        }],
+        tool_calls=[
+            {
+                "id": "tc-repeat",
+                "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+            }
+        ],
     )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -527,10 +530,12 @@ async def test_nudge_self_identifies_as_automated(ctx):
 
     repeated_call = _mock_llm_response(
         content=None,
-        tool_calls=[{
-            "id": "tc-repeat",
-            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
-        }],
+        tool_calls=[
+            {
+                "id": "tc-repeat",
+                "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+            }
+        ],
     )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -538,8 +543,7 @@ async def test_nudge_self_identifies_as_automated(ctx):
         await run_agent_turn(ctx, "loop forever", [])
 
     sent_messages = mock_llm.call_args_list[-1][0][1]
-    nudge = next(m for m in sent_messages
-                 if "[loop-breaker]" in (m.get("content") or ""))
+    nudge = next(m for m in sent_messages if "[loop-breaker]" in (m.get("content") or ""))
 
     # Compliance: the user-role choice and the directive both survive.
     assert nudge["role"] == "user"

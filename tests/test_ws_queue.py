@@ -60,11 +60,13 @@ class TestQueueMode:
         state = manager._get_or_create(conv_id)
         state.busy = True
 
-        await _handle_send(ws_send, index, "testuser",
-                           {"conv_id": conv_id, "text": "queued msg"}, ws_state)
+        await _handle_send(ws_send, index, "testuser", {"conv_id": conv_id, "text": "queued msg"}, ws_state)
 
         assert len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, conv_id)) == 1
-        assert __import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, conv_id)[0]["text"] == "queued msg"
+        assert (
+            __import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, conv_id)[0]["text"]
+            == "queued msg"
+        )
 
     @pytest.mark.asyncio
     async def test_does_not_cancel_in_queue_mode(self, ws_state, conv_id, index, manager):
@@ -76,8 +78,7 @@ class TestQueueMode:
         state.busy = True
         state.cancel_event = cancel_event
 
-        await _handle_send(ws_send, index, "testuser",
-                           {"conv_id": conv_id, "text": "queued msg"}, ws_state)
+        await _handle_send(ws_send, index, "testuser", {"conv_id": conv_id, "text": "queued msg"}, ws_state)
 
         assert not cancel_event.is_set()
 
@@ -97,8 +98,7 @@ class TestCancelMode:
 
         state.agent_task = asyncio.create_task(fake_task())
 
-        await _handle_cancel_turn(ws_send, index, "testuser",
-                                  {"conv_id": conv_id}, ws_state)
+        await _handle_cancel_turn(ws_send, index, "testuser", {"conv_id": conv_id}, ws_state)
 
         assert cancel_event.is_set()
         await asyncio.sleep(0.05)
@@ -112,13 +112,26 @@ class TestQueueDrain:
         state = manager._get_or_create(conv_id)
 
         # Simulate a completed turn with queued messages
-        __import__("decafclaw.inbox", fromlist=["_append_inbox"])._append_inbox(manager.config, conv_id, {
-            "turn_id": "mock_id", "kind": "USER", "text": "queued msg", "user_id": "testuser",
-            "archive_text": "", "wiki_page": None, "task_mode": None, "metadata": None
-        })
+        __import__("decafclaw.inbox", fromlist=["_append_inbox"])._append_inbox(
+            manager.config,
+            conv_id,
+            {
+                "turn_id": "mock_id",
+                "kind": "USER",
+                "text": "queued msg",
+                "user_id": "testuser",
+                "archive_text": "",
+                "wiki_page": None,
+                "task_mode": None,
+                "metadata": None,
+            },
+        )
         state.inmemory_turn_data["mock_id"] = {
-            "context_setup": None, "command_ctx": None, "attachments": None,
-            "history": None, "future": None
+            "context_setup": None,
+            "command_ctx": None,
+            "attachments": None,
+            "history": None,
+            "future": None,
         }
 
         # Drain should process the queued message

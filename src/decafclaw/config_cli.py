@@ -83,9 +83,7 @@ def _coerce_cli_value(field_info, raw: str):
         return int(raw)
     if field_type in (float, "float"):
         return float(raw)
-    if field_type in ("list[str]",) or (
-        hasattr(field_type, "__origin__") and field_type.__origin__ is list
-    ):
+    if field_type in ("list[str]",) or (hasattr(field_type, "__origin__") and field_type.__origin__ is list):
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, list):
@@ -226,10 +224,13 @@ def cmd_set(args) -> None:
 # Mapping of env var names → JSON config paths
 _ENV_TO_PATH: dict[str, str] = {
     # llm
-    "LLM_URL": "llm.url", "LLM_MODEL": "llm.model",
-    "LLM_API_KEY": "llm.api_key", "LLM_STREAMING": "llm.streaming",
+    "LLM_URL": "llm.url",
+    "LLM_MODEL": "llm.model",
+    "LLM_API_KEY": "llm.api_key",
+    "LLM_STREAMING": "llm.streaming",
     # mattermost
-    "MATTERMOST_URL": "mattermost.url", "MATTERMOST_TOKEN": "mattermost.token",
+    "MATTERMOST_URL": "mattermost.url",
+    "MATTERMOST_TOKEN": "mattermost.token",
     "MATTERMOST_BOT_USERNAME": "mattermost.bot_username",
     "MATTERMOST_IGNORE_BOTS": "mattermost.ignore_bots",
     "MATTERMOST_IGNORE_WEBHOOKS": "mattermost.ignore_webhooks",
@@ -245,22 +246,27 @@ _ENV_TO_PATH: dict[str, str] = {
     "LLM_STREAM_THROTTLE_MS": "mattermost.stream_throttle_ms",
     "MATTERMOST_STREAM_THROTTLE_MS": "mattermost.stream_throttle_ms",
     # compaction
-    "COMPACTION_LLM_URL": "compaction.url", "COMPACTION_LLM_MODEL": "compaction.model",
+    "COMPACTION_LLM_URL": "compaction.url",
+    "COMPACTION_LLM_MODEL": "compaction.model",
     "COMPACTION_LLM_API_KEY": "compaction.api_key",
     "COMPACTION_MAX_TOKENS": "compaction.max_tokens",
     "COMPACTION_LLM_MAX_TOKENS": "compaction.llm_max_tokens",
     "COMPACTION_PRESERVE_TURNS": "compaction.preserve_turns",
     # embedding
-    "EMBEDDING_MODEL": "embedding.model", "EMBEDDING_URL": "embedding.url",
+    "EMBEDDING_MODEL": "embedding.model",
+    "EMBEDDING_URL": "embedding.url",
     "EMBEDDING_API_KEY": "embedding.api_key",
     "MEMORY_SEARCH_STRATEGY": "embedding.search_strategy",
     # heartbeat
-    "HEARTBEAT_INTERVAL": "heartbeat.interval", "HEARTBEAT_USER": "heartbeat.user",
+    "HEARTBEAT_INTERVAL": "heartbeat.interval",
+    "HEARTBEAT_USER": "heartbeat.user",
     "HEARTBEAT_CHANNEL": "heartbeat.channel",
     "HEARTBEAT_SUPPRESS_OK": "heartbeat.suppress_ok",
     # http
-    "HTTP_ENABLED": "http.enabled", "HTTP_HOST": "http.host",
-    "HTTP_PORT": "http.port", "HTTP_SECRET": "http.secret",
+    "HTTP_ENABLED": "http.enabled",
+    "HTTP_HOST": "http.host",
+    "HTTP_PORT": "http.port",
+    "HTTP_SECRET": "http.secret",
     "HTTP_BASE_URL": "http.base_url",
     # agent (DATA_HOME and AGENT_ID excluded — they're bootstrap-only,
     # determined by env vars, not the config file)
@@ -345,8 +351,7 @@ def main() -> None:
 
     show_p = sub.add_parser("show", help="Show resolved config values")
     show_p.add_argument("group", nargs="?", help="Filter by config group")
-    show_p.add_argument("--reveal", action="store_true",
-                        help="Show secret values (masked by default)")
+    show_p.add_argument("--reveal", action="store_true", help="Show secret values (masked by default)")
 
     get_p = sub.add_parser("get", help="Get a single config value")
     get_p.add_argument("path", help="Dotted path (e.g. mattermost.url)")
@@ -356,8 +361,7 @@ def main() -> None:
     set_p.add_argument("value", help="Value to set")
 
     import_p = sub.add_parser("import", help="Import settings from .env file")
-    import_p.add_argument("file", nargs="?", default=".env",
-                          help="Path to .env file (default: .env)")
+    import_p.add_argument("file", nargs="?", default=".env", help="Path to .env file (default: .env)")
 
     args = parser.parse_args()
     if args.command == "show":

@@ -87,10 +87,12 @@ class TestBuildToolNameIndex:
         history = [
             _assistant(tool_calls=[_tool_call("c1", "vault_read")]),
             _tool("c1", "..."),
-            _assistant(tool_calls=[
-                _tool_call("c2", "web_fetch"),
-                _tool_call("c3", "shell"),
-            ]),
+            _assistant(
+                tool_calls=[
+                    _tool_call("c2", "web_fetch"),
+                    _tool_call("c3", "shell"),
+                ]
+            ),
             _tool("c2", "..."),
             _tool("c3", "..."),
         ]
@@ -102,8 +104,9 @@ class TestBuildToolNameIndex:
 
 
 class TestClearOldToolResults:
-    def _scenario(self, *, large_content="x" * 2000, min_turn_age=2, min_size=1024,
-                  preserve=None, tool_name="vault_read"):
+    def _scenario(
+        self, *, large_content="x" * 2000, min_turn_age=2, min_size=1024, preserve=None, tool_name="vault_read"
+    ):
         """Build a history with one old large tool result and the
         boundary structure required for clearing to be eligible."""
         history = [

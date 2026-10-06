@@ -23,17 +23,85 @@ import re
 # stays current. Keeping inline for v1 because (a) zero additional
 # runtime deps, (b) this list is intentionally minimal and isn't
 # expected to change often.
-STOPWORDS: frozenset[str] = frozenset({
-    "about", "also", "all", "and", "any", "are", "been", "but", "can",
-    "could", "day", "every", "first", "for", "from", "get", "has",
-    "have", "her", "him", "his", "how", "into", "its", "just", "like",
-    "make", "man", "may", "maybe", "need", "new", "not", "now", "old",
-    "one", "only", "other", "our", "out", "please", "really", "say",
-    "see", "she", "should", "some", "than", "that", "the", "their",
-    "them", "then", "there", "these", "they", "thing", "this", "those",
-    "two", "use", "want", "was", "way", "were", "what", "when", "where",
-    "which", "who", "will", "with", "would", "you", "your",
-})
+STOPWORDS: frozenset[str] = frozenset(
+    {
+        "about",
+        "also",
+        "all",
+        "and",
+        "any",
+        "are",
+        "been",
+        "but",
+        "can",
+        "could",
+        "day",
+        "every",
+        "first",
+        "for",
+        "from",
+        "get",
+        "has",
+        "have",
+        "her",
+        "him",
+        "his",
+        "how",
+        "into",
+        "its",
+        "just",
+        "like",
+        "make",
+        "man",
+        "may",
+        "maybe",
+        "need",
+        "new",
+        "not",
+        "now",
+        "old",
+        "one",
+        "only",
+        "other",
+        "our",
+        "out",
+        "please",
+        "really",
+        "say",
+        "see",
+        "she",
+        "should",
+        "some",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "thing",
+        "this",
+        "those",
+        "two",
+        "use",
+        "want",
+        "was",
+        "way",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
+    }
+)
 
 # Minimum token length. Two-character tokens are usually grammatical
 # noise ("is", "of", "at", "by") or too generic to match meaningfully.
@@ -55,10 +123,7 @@ def tokenize(text: str) -> set[str]:
         return set()
     lowered = text.lower()
     raw_tokens = _SPLIT_RE.split(lowered)
-    return {
-        t for t in raw_tokens
-        if len(t) >= _MIN_TOKEN_LENGTH and t not in STOPWORDS
-    }
+    return {t for t in raw_tokens if len(t) >= _MIN_TOKEN_LENGTH and t not in STOPWORDS}
 
 
 def match_tools(
@@ -98,11 +163,13 @@ def match_tools(
         tool_tokens = tokenize(f"{name} {description}")
         overlap = input_tokens & tool_tokens
         if overlap:
-            scored.append({
-                "name": name,
-                "score": len(overlap),
-                "matched_tokens": sorted(overlap),
-            })
+            scored.append(
+                {
+                    "name": name,
+                    "score": len(overlap),
+                    "matched_tokens": sorted(overlap),
+                }
+            )
 
     # Sort by -score, then alphabetical name for determinism.
     scored.sort(key=lambda e: (-e["score"], e["name"]))

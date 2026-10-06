@@ -38,16 +38,20 @@ async def test_handle_send_attaches_manager_to_cmd_ctx(monkeypatch, config):
         captured["ctx"] = ctx
         captured["kwargs"] = kwargs
         return CommandResult(
-            mode="unknown", text="", display_text=text,
+            mode="unknown",
+            text="",
+            display_text=text,
             skill=None,
         )
 
     monkeypatch.setattr(
-        "decafclaw.commands.dispatch_command", fake_dispatch,
+        "decafclaw.commands.dispatch_command",
+        fake_dispatch,
     )
 
     # Minimal state: real config + event_bus, sentinel manager.
     from decafclaw.events import EventBus
+
     bus = EventBus()
     sentinel_manager = MagicMock()
     state = {
@@ -69,7 +73,11 @@ async def test_handle_send_attaches_manager_to_cmd_ctx(monkeypatch, config):
     msg = {"conv_id": "conv-1", "text": "!dream"}
 
     await websocket._handle_send(
-        ws_send, index, "testuser", msg, state,
+        ws_send,
+        index,
+        "testuser",
+        msg,
+        state,
     )
 
     assert "ctx" in captured, "dispatch_command was not invoked"
@@ -80,8 +88,7 @@ async def test_handle_send_attaches_manager_to_cmd_ctx(monkeypatch, config):
     # explicitly. Anything else silently kills `/command` in the browser.
     prefixes = captured["kwargs"].get("prefixes")
     assert prefixes is None or sorted(prefixes) == ["!", "/"], (
-        f"web dispatch_command narrowed the prefix set to {prefixes!r}; "
-        "the web UI accepts both ! and /"
+        f"web dispatch_command narrowed the prefix set to {prefixes!r}; the web UI accepts both ! and /"
     )
 
 

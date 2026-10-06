@@ -55,6 +55,7 @@ async def client(app, http_config):
 def reset_workspace_index_state():
     """Reset workspace index global state before each test."""
     import decafclaw.workspace_index as wi
+
     wi._workspace_index = None
     wi._index_timestamp = 0.0
     if wi._refresh_task and not wi._refresh_task.done():
@@ -291,6 +292,7 @@ async def test_autocomplete_uses_file_backed_cache(http_config):
 
     # Wait for background persistence
     import asyncio
+
     await asyncio.sleep(0.1)
 
     # Second call: must use cache (os.walk should NOT be called)
@@ -355,6 +357,7 @@ async def test_autocomplete_background_refresh(http_config):
 async def test_workspace_index_ttl_is_30_minutes():
     """TTL for workspace index cache should be 30 minutes (1800 seconds)."""
     import decafclaw.workspace_index as wi
+
     assert wi._INDEX_TTL_SECONDS == 1800.0
 
 

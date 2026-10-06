@@ -23,8 +23,7 @@ async def tool_heartbeat_trigger(ctx: "Context") -> str | ToolResult:
 
     if ctx.manager is None:
         return ToolResult(
-            text="[error: heartbeat_trigger requires a ConversationManager; "
-                 "no manager on ctx]",
+            text="[error: heartbeat_trigger requires a ConversationManager; no manager on ctx]",
         )
 
     if _heartbeat_lock.locked():
@@ -41,8 +40,12 @@ async def tool_heartbeat_trigger(ctx: "Context") -> str | ToolResult:
 
     has_channel = ctx.config.heartbeat.channel or ctx.config.heartbeat.user
     if has_channel:
-        return f"Heartbeat triggered: {len(sections)} section(s) queued. Results will be posted to the heartbeat channel."
-    return f"Heartbeat triggered: {len(sections)} section(s) queued. No reporting channel configured — running silently."
+        return (
+            f"Heartbeat triggered: {len(sections)} section(s) queued. Results will be posted to the heartbeat channel."
+        )
+    return (
+        f"Heartbeat triggered: {len(sections)} section(s) queued. No reporting channel configured — running silently."
+    )
 
 
 async def _guarded_heartbeat(config, event_bus, manager) -> None:
@@ -86,21 +89,27 @@ async def _run_heartbeat_to_channel(config, event_bus, manager) -> None:
     # Post marker and placeholders if we have a channel
     if http and channel_id:
         try:
-            marker_resp = await http.post("/posts", json={
-                "channel_id": channel_id,
-                "message": f"\u2764\ufe0f Heartbeat \u2014 {timestamp_str} ({len(sections)} section(s))",
-            })
+            marker_resp = await http.post(
+                "/posts",
+                json={
+                    "channel_id": channel_id,
+                    "message": f"\u2764\ufe0f Heartbeat \u2014 {timestamp_str} ({len(sections)} section(s))",
+                },
+            )
             marker_resp.raise_for_status()
             marker_id = marker_resp.json().get("id")
 
             for i, section in enumerate(sections):
                 title = section["title"]
                 try:
-                    resp = await http.post("/posts", json={
-                        "channel_id": channel_id,
-                        "message": f"\u23f3 **{title}** \u2014 running...",
-                        "root_id": marker_id,
-                    })
+                    resp = await http.post(
+                        "/posts",
+                        json={
+                            "channel_id": channel_id,
+                            "message": f"\u23f3 **{title}** \u2014 running...",
+                            "root_id": marker_id,
+                        },
+                    )
                     resp.raise_for_status()
                     section_post_ids[i] = resp.json().get("id")
                 except Exception as e:
@@ -116,7 +125,12 @@ async def _run_heartbeat_to_channel(config, event_bus, manager) -> None:
         post_id = section_post_ids.get(i)
 
         turn_result = await run_section_turn(
-            config, event_bus, manager, section, timestamp, i,
+            config,
+            event_bus,
+            manager,
+            section,
+            timestamp,
+            i,
         )
         response = turn_result["response"]
         ok = turn_result["is_ok"]
@@ -127,22 +141,26 @@ async def _run_heartbeat_to_channel(config, event_bus, manager) -> None:
         if http and post_id:
             try:
                 if ok and suppress_ok:
-                    await http.put(f"/posts/{post_id}/patch", json={
-                        "id": post_id,
-                        "message": f"\u2705 **{title}** \u2014 OK",
-                    })
+                    await http.put(
+                        f"/posts/{post_id}/patch",
+                        json={
+                            "id": post_id,
+                            "message": f"\u2705 **{title}** \u2014 OK",
+                        },
+                    )
                 else:
-                    await http.put(f"/posts/{post_id}/patch", json={
-                        "id": post_id,
-                        "message": f"**{title}**\n\n{response}",
-                    })
+                    await http.put(
+                        f"/posts/{post_id}/patch",
+                        json={
+                            "id": post_id,
+                            "message": f"**{title}**\n\n{response}",
+                        },
+                    )
             except Exception as e:
                 log.debug(f"Failed to update heartbeat section post: {e}")
 
     try:
-        await asyncio.gather(*[
-            run_section(i, section) for i, section in enumerate(sections)
-        ])
+        await asyncio.gather(*[run_section(i, section) for i, section in enumerate(sections)])
 
         all_ok = all(section_results) if section_results else True
 
@@ -150,10 +168,13 @@ async def _run_heartbeat_to_channel(config, event_bus, manager) -> None:
         if http and marker_id:
             status = "all OK" if all_ok else "done"
             try:
-                await http.put(f"/posts/{marker_id}/patch", json={
-                    "id": marker_id,
-                    "message": f"\u2764\ufe0f Heartbeat \u2014 {timestamp_str} \u2014 {status}",
-                })
+                await http.put(
+                    f"/posts/{marker_id}/patch",
+                    json={
+                        "id": marker_id,
+                        "message": f"\u2764\ufe0f Heartbeat \u2014 {timestamp_str} \u2014 {status}",
+                    },
+                )
             except Exception as e:
                 log.debug(f"Failed to update heartbeat marker: {e}")
 
@@ -187,8 +208,7 @@ async def _resolve_channel(http, config) -> str | None:
         me_resp.raise_for_status()
         bot_user_id = me_resp.json()["id"]
 
-        dm_resp = await http.post("/channels/direct",
-                                 json=[bot_user_id, config.heartbeat.user])
+        dm_resp = await http.post("/channels/direct", json=[bot_user_id, config.heartbeat.user])
         dm_resp.raise_for_status()
         return dm_resp.json()["id"]
 

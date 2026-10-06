@@ -108,6 +108,7 @@ class ComposerMode(enum.Enum):
     ``skip_vault_retrieval`` on the context is an independent flag that
     skips memory retrieval without affecting wiki injection or mode.
     """
+
     INTERACTIVE = "interactive"
     HEARTBEAT = "heartbeat"
     SCHEDULED = "scheduled"
@@ -120,6 +121,7 @@ class ComposerMode(enum.Enum):
 @dataclass
 class SourceEntry:
     """Diagnostic entry for a single context source."""
+
     source: str
     tokens_estimated: int
     items_included: int
@@ -133,6 +135,7 @@ class SourceEntry:
 @dataclass
 class ComposedContext:
     """The complete assembled context for an LLM call."""
+
     messages: list[dict]
     tools: list[dict]
     deferred_tools: list[dict]
@@ -154,6 +157,7 @@ class ComposerState:
     only one compose() call at a time per conversation. If delegate_task
     ever composes in parallel for the same conversation, this needs a lock.
     """
+
     last_sources: list[SourceEntry] = field(default_factory=list)
     last_total_tokens_estimated: int = 0
     last_prompt_tokens_actual: int = 0
@@ -283,14 +287,16 @@ def _expand_background_event(rec: dict) -> list[dict]:
     return [
         {
             "role": "assistant",
-            "tool_calls": [{
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": "shell_background_status",
-                    "arguments": args,
-                },
-            }],
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "shell_background_status",
+                        "arguments": args,
+                    },
+                }
+            ],
         },
         {
             "role": "tool",
@@ -350,9 +356,11 @@ class ContextComposer:
         """
         config = ctx.config
         from .llm import ensure_model_context_window
+
         await ensure_model_context_window(config, getattr(ctx, "active_model", ""))
         if config.agent.auto_refresh_skills:
             from .tools.skill_tools import rediscover_skills
+
             old_prompt = config.system_prompt
             await asyncio.to_thread(rediscover_skills, config)
             if config.system_prompt != old_prompt:
@@ -367,8 +375,7 @@ class ContextComposer:
         if max_len and len(user_message) > max_len:
             original_len = len(user_message)
             user_message = (
-                user_message[:max_len]
-                + f"\n\n[truncated at {max_len:,} chars, original was {original_len:,}]"
+                user_message[:max_len] + f"\n\n[truncated at {max_len:,} chars, original was {original_len:,}]"
             )
             log.warning(f"User message truncated: {original_len:,} -> {max_len:,} chars")
 
@@ -388,14 +395,18 @@ class ContextComposer:
             self.state.baseline_system_context = config.system_prompt
             system_update_msg = {
                 "role": "user",
-                "content": "[System Update: The system context or available tools have changed.]"
+                "content": "[System Update: The system context or available tools have changed.]",
             }
             to_archive.append(system_update_msg)
 
         # -- Wiki context (injected before user message in history) --
         # Explicit @[[Page]] references are fixed costs — always included.
         wiki_msgs, wiki_entry = self._compose_vault_references(
-            ctx, config, user_message, history, mode,
+            ctx,
+            config,
+            user_message,
+            history,
+            mode,
         )
         for wm in wiki_msgs:
             to_archive.append(wm)
@@ -406,11 +417,17 @@ class ContextComposer:
         # -- Mentions context (injected before user message in history) --
         # Explicit @file and @mcp references
         mention_msgs, mention_entry = await self._compose_mentions_references(
-            ctx, config, user_message, history, mode,
+            ctx,
+            config,
+            user_message,
+            history,
+            mode,
         )
         for mm in mention_msgs:
             to_archive.append(mm)
-            await ctx.publish("mention_references", text=mm["content"], ref=mm.get("workspace_file") or mm.get("mcp_resource"))
+            await ctx.publish(
+                "mention_references", text=mm["content"], ref=mm.get("workspace_file") or mm.get("mcp_resource")
+            )
         if mention_entry:
             sources.append(mention_entry)
 
@@ -428,7 +445,9 @@ class ContextComposer:
         # budget, separate from the dynamic semantic pool, so temporally
         # relevant context appears without depending on vocabulary overlap.
         recent_journal_msgs, recent_journal_entry = self._compose_recent_journal(
-            ctx, config, mode,
+            ctx,
+            config,
+            mode,
         )
         for rm in recent_journal_msgs:
             to_archive.append(rm)
@@ -439,7 +458,11 @@ class ContextComposer:
         # Runs before tool classification so matches promote into the active
         # set via the existing critical-tier mechanism.
         preempt_entry = self._compose_preempt_matches(
-            ctx, config, user_message, history, mode,
+            ctx,
+            config,
+            user_message,
+            history,
+            mode,
         )
         if preempt_entry is not None:
             sources.append(preempt_entry)
@@ -448,7 +471,11 @@ class ContextComposer:
         # Surfaces likely-relevant non-activated skills as a hint message so
         # the agent considers activate_skill without a failed tool call first.
         preempt_skill_entry, preempt_skill_text = self._compose_preempt_skill_matches(
-            ctx, config, user_message, history, mode,
+            ctx,
+            config,
+            user_message,
+            history,
+            mode,
         )
         if preempt_skill_entry is not None:
             sources.append(preempt_skill_entry)
@@ -488,10 +515,7 @@ class ContextComposer:
                 # LLM-visible count, so use ``len(expanded)`` — one
                 # archive record contributes two LLM messages here.
                 expanded = _expand_background_event(m)
-                history_tokens += sum(
-                    estimate_tokens(str(em.get("content", "")))
-                    for em in expanded
-                )
+                history_tokens += sum(estimate_tokens(str(em.get("content", ""))) for em in expanded)
                 history_msg_count += len(expanded)
             elif role in countable_roles:
                 history_tokens += estimate_tokens(str(m.get("content", "")))
@@ -535,7 +559,10 @@ class ContextComposer:
 
         # -- Memory context (injected before user message in history) --
         memory_msgs, retrieved_context_text, mc_results, memory_entry = await self._compose_vault_retrieval(
-            ctx, config, user_message, mode,
+            ctx,
+            config,
+            user_message,
+            mode,
             token_budget=memory_budget,
         )
         for mm in memory_msgs:
@@ -552,7 +579,11 @@ class ContextComposer:
         # recent journal → memory → system update → user message. The combined list is
         # what the LLM sees.
         combined = [
-            *history, *wiki_msgs, *mention_msgs, *notes_msgs, *recent_journal_msgs,
+            *history,
+            *wiki_msgs,
+            *mention_msgs,
+            *notes_msgs,
+            *recent_journal_msgs,
             *memory_msgs,
         ]
         if system_update_msg:
@@ -603,9 +634,7 @@ class ContextComposer:
 
         # -- Publish memory context event (after user message for UI ordering) --
         if mc_results and config.vault_retrieval.show_in_ui:
-            await ctx.publish("vault_retrieval",
-                              text=retrieved_context_text,
-                              results=mc_results)
+            await ctx.publish("vault_retrieval", text=retrieved_context_text, results=mc_results)
 
         # -- Total token estimate --
         total_tokens = sum(s.tokens_estimated for s in sources)
@@ -614,7 +643,9 @@ class ContextComposer:
         if config.agent.show_context_status:
             effective_window = self._get_context_window_size(config, ctx)
             status_line = self._build_context_status(
-                total_tokens, effective_window, history_msg_count,
+                total_tokens,
+                effective_window,
+                history_msg_count,
             )
             if status_line:
                 messages.append({"role": "system", "content": status_line})
@@ -675,7 +706,7 @@ class ContextComposer:
                 try:
                     mod_time = datetime.fromisoformat(modified_at)
                     hours = max(0.0, (now - mod_time).total_seconds() / 3600)
-                    recency = relevance.recency_decay_rate ** hours
+                    recency = relevance.recency_decay_rate**hours
                     recency = min(1.0, max(0.0, recency))
                 except (ValueError, TypeError):
                     recency = 0.5
@@ -695,7 +726,11 @@ class ContextComposer:
         return candidates
 
     async def _compose_vault_retrieval(
-        self, ctx, config, user_message: str, mode: ComposerMode,
+        self,
+        ctx,
+        config,
+        user_message: str,
+        mode: ComposerMode,
         token_budget: int | None = None,
     ) -> tuple[list[dict], str, list[dict], SourceEntry | None]:
         """Retrieve and format memory context for injection.
@@ -780,16 +815,22 @@ class ContextComposer:
 
             # Select by token budget (score order replaces similarity order)
             budget = token_budget if token_budget is not None else config.vault_retrieval.max_tokens
-            log.debug("Memory context: %d candidates, budget=%d tokens (%s, mode=%s)",
-                      total_candidates, budget,
-                      "dynamic" if token_budget is not None else "fixed",
-                      retrieval_mode)
+            log.debug(
+                "Memory context: %d candidates, budget=%d tokens (%s, mode=%s)",
+                total_candidates,
+                budget,
+                "dynamic" if token_budget is not None else "fixed",
+                retrieval_mode,
+            )
             results = _trim_to_token_budget(results, budget)
             if results:
-                log.debug("Memory context: selected %d/%d candidates (scores %.3f–%.3f)",
-                          len(results), total_candidates,
-                          results[0].get("composite_score", 0),
-                          results[-1].get("composite_score", 0))
+                log.debug(
+                    "Memory context: selected %d/%d candidates (scores %.3f–%.3f)",
+                    len(results),
+                    total_candidates,
+                    results[0].get("composite_score", 0),
+                    results[-1].get("composite_score", 0),
+                )
 
             # Retrieval-event telemetry (#197 Phase 0): publish the full
             # scored candidate list — not just what got injected — tagged
@@ -807,18 +848,22 @@ class ContextComposer:
                         drop_reason = "score"
                     else:
                         drop_reason = "budget"
-                    candidates_payload.append({
-                        "file_path": path,
-                        "source_type": c.get("source_type", ""),
-                        "similarity": c.get("similarity", 0.0),
-                        "recency": c.get("recency", 0.0),
-                        "importance": c.get("importance", 0.0),
-                        "composite_score": c.get("composite_score", 0.0),
-                        "included": included,
-                        "drop_reason": drop_reason,
-                    })
+                    candidates_payload.append(
+                        {
+                            "file_path": path,
+                            "source_type": c.get("source_type", ""),
+                            "similarity": c.get("similarity", 0.0),
+                            "recency": c.get("recency", 0.0),
+                            "importance": c.get("importance", 0.0),
+                            "composite_score": c.get("composite_score", 0.0),
+                            "included": included,
+                            "drop_reason": drop_reason,
+                        }
+                    )
                 await ctx.publish(
-                    "retrieval_event", conv_id=ctx.conv_id, candidates=candidates_payload,
+                    "retrieval_event",
+                    conv_id=ctx.conv_id,
+                    candidates=candidates_payload,
                 )
             except Exception as exc:
                 log.debug("Retrieval telemetry emit failed: %s", exc)
@@ -880,12 +925,18 @@ class ContextComposer:
         if raw in ("always", "headlines", "on_demand"):
             return raw
         log.warning(
-            "Unknown vault_retrieval.mode %r; falling back to 'always'", raw,
+            "Unknown vault_retrieval.mode %r; falling back to 'always'",
+            raw,
         )
         return "always"
 
     def _compose_vault_references(
-        self, ctx, config, user_message: str, history: list, mode: ComposerMode,
+        self,
+        ctx,
+        config,
+        user_message: str,
+        history: list,
+        mode: ComposerMode,
     ) -> tuple[list[dict], SourceEntry | None]:
         """Build wiki context messages for referenced/open pages.
 
@@ -918,11 +969,13 @@ class ContextComposer:
                 text = f"[Currently viewing wiki page: {ref['page']}]\n\n{content}"
             else:
                 text = f"[Referenced wiki page: {ref['page']}]\n\n{content}"
-            messages.append({
-                "role": "vault_references",
-                "content": text,
-                "wiki_page": ref["page"],
-            })
+            messages.append(
+                {
+                    "role": "vault_references",
+                    "content": text,
+                    "wiki_page": ref["page"],
+                }
+            )
 
         if not messages and skipped == 0:
             return [], None
@@ -937,7 +990,12 @@ class ContextComposer:
         return messages, entry
 
     async def _compose_mentions_references(
-        self, ctx, config, user_message: str, history: list, mode: ComposerMode,
+        self,
+        ctx,
+        config,
+        user_message: str,
+        history: list,
+        mode: ComposerMode,
     ) -> tuple[list[dict], SourceEntry | None]:
         """Build context messages for referenced workspace files and MCP resources.
 
@@ -994,11 +1052,13 @@ class ContextComposer:
                     except Exception as e:
                         text = f"[Error reading workspace file '{rel_path}': {e}]"
 
-                messages.append({
-                    "role": "workspace_references",
-                    "content": text,
-                    "workspace_file": rel_path,
-                })
+                messages.append(
+                    {
+                        "role": "workspace_references",
+                        "content": text,
+                        "workspace_file": rel_path,
+                    }
+                )
 
             elif ref["type"] == "mcp":
                 server_name = ref["server"]
@@ -1016,7 +1076,11 @@ class ContextComposer:
                     # Find matching resource by name, uri, or ending
                     target_res = None
                     for r in state.resources:
-                        if getattr(r, "name", "") == resource_name or str(getattr(r, "uri", "")) == resource_name or str(getattr(r, "uri", "")).endswith("/" + resource_name):
+                        if (
+                            getattr(r, "name", "") == resource_name
+                            or str(getattr(r, "uri", "")) == resource_name
+                            or str(getattr(r, "uri", "")).endswith("/" + resource_name)
+                        ):
                             target_res = r
                             break
 
@@ -1026,6 +1090,7 @@ class ContextComposer:
                         import asyncio
 
                         from pydantic import AnyUrl
+
                         try:
                             timeout_s = state.config.timeout / 1000
                             result = await asyncio.wait_for(
@@ -1043,11 +1108,13 @@ class ContextComposer:
                         except Exception as e:
                             text = f"[Error reading MCP resource '{resource_name}': {e}]"
 
-                messages.append({
-                    "role": "mcp_references",
-                    "content": text,
-                    "mcp_resource": raw_ref,
-                })
+                messages.append(
+                    {
+                        "role": "mcp_references",
+                        "content": text,
+                        "mcp_resource": raw_ref,
+                    }
+                )
 
         if not messages and skipped == 0:
             return [], None
@@ -1062,7 +1129,9 @@ class ContextComposer:
         return messages, entry
 
     def _compose_vault_guide(
-        self, config, mode: ComposerMode,
+        self,
+        config,
+        mode: ComposerMode,
     ) -> tuple[str, SourceEntry | None]:
         """Inject the vault's authored guide (default ``AGENTS.md``) as an
         always-loaded ``system`` section.
@@ -1079,23 +1148,23 @@ class ContextComposer:
         ``config.vault_guide.enabled`` is False. Returns (wrapped_text, entry).
         """
         skip_modes = {
-            ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT,
+            ComposerMode.HEARTBEAT,
+            ComposerMode.SCHEDULED,
+            ComposerMode.CHILD_AGENT,
         }
         if not config.vault_guide.enabled or mode in skip_modes:
             return "", None
 
         rel_path = config.vault_guide.path
         if ".." in rel_path or rel_path.startswith("/") or Path(rel_path).is_absolute():
-            log.debug(
-                "vault guide path %r is not vault-relative; skipping", rel_path)
+            log.debug("vault guide path %r is not vault-relative; skipping", rel_path)
             return "", None
 
         try:
             vault_root = config.vault_root.resolve()
             guide_path = (vault_root / rel_path).resolve()
             if not guide_path.is_relative_to(vault_root):
-                log.debug(
-                    "vault guide path %r escapes vault root; skipping", rel_path)
+                log.debug("vault guide path %r escapes vault root; skipping", rel_path)
                 return "", None
             if not guide_path.is_file():
                 return "", None
@@ -1124,7 +1193,9 @@ class ContextComposer:
             truncated = 1
             log.warning(
                 "vault guide %s exceeds max_tokens=%d; truncated from %d chars",
-                config.vault_guide.path, max_tokens, full_len,
+                config.vault_guide.path,
+                max_tokens,
+                full_len,
             )
 
         text = wrap_xml("vault_guide", content)
@@ -1138,7 +1209,10 @@ class ContextComposer:
         return text, entry
 
     def _compose_notes(
-        self, ctx, config, mode: ComposerMode,
+        self,
+        ctx,
+        config,
+        mode: ComposerMode,
     ) -> tuple[list[dict], SourceEntry | None]:
         """Auto-inject the per-conversation scratchpad (#299).
 
@@ -1156,7 +1230,8 @@ class ContextComposer:
 
         conv_id = ctx.conv_id or ctx.channel_id or "default"
         items = read_notes(
-            config, conv_id,
+            config,
+            conv_id,
             limit=config.notes.context_max_entries,
             max_chars=config.notes.context_max_chars,
         )
@@ -1174,7 +1249,10 @@ class ContextComposer:
         return [msg], entry
 
     def _compose_recent_journal(
-        self, ctx, config, mode: ComposerMode,
+        self,
+        ctx,
+        config,
+        mode: ComposerMode,
     ) -> tuple[list[dict], SourceEntry | None]:
         """Auto-surface recently written journal entries (#306).
 
@@ -1200,8 +1278,10 @@ class ContextComposer:
             return [], None
 
         entries = read_recent_journal_entries(
-            config, now=_now(),
-            max_hours=cfg.max_hours, max_entries=cfg.max_entries,
+            config,
+            now=_now(),
+            max_hours=cfg.max_hours,
+            max_entries=cfg.max_entries,
         )
         if not entries:
             return [], None
@@ -1236,7 +1316,11 @@ class ContextComposer:
         return [msg], entry
 
     def _compose_preempt_matches(
-        self, ctx, config, user_message: str, history: list,
+        self,
+        ctx,
+        config,
+        user_message: str,
+        history: list,
         mode: ComposerMode,
     ) -> SourceEntry | None:
         """Run pre-emptive keyword match, populate ``ctx.tools.preempt_matches``.
@@ -1280,10 +1364,7 @@ class ContextComposer:
         # Plus declared priority: "critical" on the tool def itself.
         already_critical: set[str] = get_critical_names(config)
         already_critical |= get_fetched_tools(ctx)
-        already_critical |= {
-            td.get("function", {}).get("name", "")
-            for td in ctx.tools.extra_definitions
-        }
+        already_critical |= {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions}
 
         all_defs = collect_all_tool_defs(ctx)
         # If the context restricts the usable tool set (eval runner,
@@ -1311,7 +1392,8 @@ class ContextComposer:
 
         log.info(
             "preemptive match: promoted %d tool(s) for conv %s: %s",
-            len(matches), (ctx.conv_id or ctx.context_id)[:12],
+            len(matches),
+            (ctx.conv_id or ctx.context_id)[:12],
             ", ".join(f"{m['name']}({m['score']})" for m in matches),
         )
 
@@ -1319,8 +1401,7 @@ class ContextComposer:
         # the promoted tool defs (not a true delta vs. the no-match
         # baseline — a true delta would require a second classification
         # pass, and this approximation is fine for the inspector).
-        promoted_defs = [td for td in all_defs
-                         if td.get("function", {}).get("name", "") in matched_names]
+        promoted_defs = [td for td in all_defs if td.get("function", {}).get("name", "") in matched_names]
         tokens_added = estimate_tool_tokens(promoted_defs)
         return SourceEntry(
             source="preempt_matches",
@@ -1334,7 +1415,11 @@ class ContextComposer:
         )
 
     def _compose_preempt_skill_matches(
-        self, ctx, config, user_message: str, history: list,
+        self,
+        ctx,
+        config,
+        user_message: str,
+        history: list,
         mode: ComposerMode,
     ) -> tuple[SourceEntry | None, str | None]:
         """Pre-emptive keyword match against the discovered skill catalog.
@@ -1365,10 +1450,7 @@ class ContextComposer:
             return None, None
 
         discovered = config.discovered_skills or []
-        candidates = [
-            s for s in discovered
-            if s.name and s.name not in ctx.skills.activated
-        ]
+        candidates = [s for s in discovered if s.name and s.name not in ctx.skills.activated]
         if not candidates:
             return None, None
 
@@ -1377,11 +1459,13 @@ class ContextComposer:
             skill_tokens = tokenize(f"{skill.name} {skill.description}")
             overlap = input_tokens & skill_tokens
             if overlap:
-                scored.append({
-                    "name": skill.name,
-                    "score": len(overlap),
-                    "matched_tokens": sorted(overlap),
-                })
+                scored.append(
+                    {
+                        "name": skill.name,
+                        "score": len(overlap),
+                        "matched_tokens": sorted(overlap),
+                    }
+                )
 
         if not scored:
             return None, None
@@ -1407,10 +1491,7 @@ class ContextComposer:
         # can't inject extra hint lines/directives, then html-escape so an
         # `</preempt_skill_hint>` (or other markup) can't break out of the
         # wrapper and inject prompt content.
-        safe_names = sorted(
-            html.escape(" ".join(name.split()), quote=False)
-            for name in hinted_names
-        )
+        safe_names = sorted(html.escape(" ".join(name.split()), quote=False) for name in hinted_names)
         bullets = "\n".join(f"- {n}" for n in safe_names)
         hint_text = (
             "<preempt_skill_hint>\n"
@@ -1422,11 +1503,10 @@ class ContextComposer:
 
         log.info(
             "preemptive skill match: promoted %d skill(s), hinted %d, for conv %s: %s",
-            len(top), len(hinted), (ctx.conv_id or ctx.context_id)[:12],
-            ", ".join(
-                f"{e['name']}({e['score']}{'*' if e['name'] in hinted_names else ''})"
-                for e in top
-            ),
+            len(top),
+            len(hinted),
+            (ctx.conv_id or ctx.context_id)[:12],
+            ", ".join(f"{e['name']}({e['score']}{'*' if e['name'] in hinted_names else ''})" for e in top),
         )
 
         entry = SourceEntry(
@@ -1435,8 +1515,8 @@ class ContextComposer:
             items_included=len(hinted),  # the entry represents the hint text
             details={
                 "input_tokens": sorted(input_tokens),
-                "matches": top,          # full promoted set (feeds tool promotion)
-                "hinted": hinted,        # subset actually named in the hint
+                "matches": top,  # full promoted set (feeds tool promotion)
+                "hinted": hinted,  # subset actually named in the hint
                 "promoted_count": len(top),
                 "hinted_count": len(hinted),
                 "max_matches": cfg.max_matches,
@@ -1453,22 +1533,19 @@ class ContextComposer:
         all_defs = collect_all_tool_defs(ctx)
         fetched = get_fetched_tools(ctx)
         # Skill tools (from activated skills) should never be deferred
-        skill_tool_names = {
-            td.get("function", {}).get("name", "")
-            for td in ctx.tools.extra_definitions
-        }
+        skill_tool_names = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions}
         active, deferred = classify_tools(
-            all_defs, config, fetched, skill_tool_names,
+            all_defs,
+            config,
+            fetched,
+            skill_tool_names,
             preempt_matches=ctx.tools.preempt_matches,
         )
 
         # Apply allowed_tools filter
         allowed = ctx.tools.allowed
         if allowed is not None:
-            active = [
-                t for t in active
-                if t.get("function", {}).get("name") in allowed
-            ]
+            active = [t for t in active if t.get("function", {}).get("name") in allowed]
 
         deferred_text = None
         if deferred:
@@ -1510,7 +1587,9 @@ class ContextComposer:
 
     @staticmethod
     def _build_context_status(
-        total_tokens: int, context_window: int, message_count: int,
+        total_tokens: int,
+        context_window: int,
+        message_count: int,
     ) -> str | None:
         """Build a one-line context usage note for the agent.
 
@@ -1522,13 +1601,9 @@ class ContextComposer:
         hint = ""
         if pct > 70:
             hint = " — consider being concise"
-        return (
-            f"[Context: ~{total_tokens:,} / {context_window:,} tokens"
-            f" ({pct:.0f}%), {message_count} messages{hint}]"
-        )
+        return f"[Context: ~{total_tokens:,} / {context_window:,} tokens ({pct:.0f}%), {message_count} messages{hint}]"
 
-    def record_actuals(self, prompt_tokens: int, completion_tokens: int,
-                       cached_prompt_tokens: int = 0) -> None:
+    def record_actuals(self, prompt_tokens: int, completion_tokens: int, cached_prompt_tokens: int = 0) -> None:
         """Record actual token usage from the LLM response."""
         self.state.last_prompt_tokens_actual = prompt_tokens
         self.state.last_completion_tokens_actual = completion_tokens
@@ -1554,13 +1629,15 @@ class ContextComposer:
 
         sources = []
         for s in composed.sources:
-            sources.append({
-                "source": s.source,
-                "tokens_estimated": s.tokens_estimated,
-                "items_included": s.items_included,
-                "items_truncated": s.items_truncated,
-                "details": s.details,
-            })
+            sources.append(
+                {
+                    "source": s.source,
+                    "tokens_estimated": s.tokens_estimated,
+                    "items_included": s.items_included,
+                    "items_truncated": s.items_truncated,
+                    "details": s.details,
+                }
+            )
 
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1568,9 +1645,9 @@ class ContextComposer:
             "total_tokens_actual": self.state.last_prompt_tokens_actual,
             "cached_prompt_tokens": self.state.last_cached_prompt_tokens_actual,
             "cache_hit_rate": (
-                round(self.state.last_cached_prompt_tokens_actual
-                      / self.state.last_prompt_tokens_actual, 4)
-                if self.state.last_prompt_tokens_actual else 0.0
+                round(self.state.last_cached_prompt_tokens_actual / self.state.last_prompt_tokens_actual, 4)
+                if self.state.last_prompt_tokens_actual
+                else 0.0
             ),
             "context_window_size": self._get_context_window_size(config),
             "compaction_threshold": config.compaction.max_tokens,

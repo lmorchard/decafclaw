@@ -32,8 +32,6 @@ def _text(result):
     return result.text if isinstance(result, ToolResult) else result
 
 
-
-
 def test_resolve_safe_normal(config):
     result = _resolve_safe(config, "test.txt")
     assert result is not None
@@ -243,10 +241,12 @@ def test_workspace_mkdir(ctx):
     assert "Created directory" in _text(result)
     assert ctx.config.workspace_path.joinpath("new_dir/nested").is_dir()
 
+
 def test_workspace_mkdir_exists(ctx):
     ctx.config.workspace_path.joinpath("existing_dir").mkdir(parents=True)
     result = tool_workspace_mkdir(ctx, "existing_dir")
     assert "already exists" in _text(result).lower()
+
 
 def test_workspace_mkdir_escape_blocked(ctx):
     result = tool_workspace_mkdir(ctx, "../../evil_dir")
@@ -263,10 +263,12 @@ def test_workspace_copy(ctx):
     assert ctx.config.workspace_path.joinpath("src.txt").read_text() == "copy me"
     assert ctx.config.workspace_path.joinpath("dest.txt").read_text() == "copy me"
 
+
 def test_workspace_copy_not_found(ctx):
     result = tool_workspace_copy(ctx, "nope.txt", "dest.txt")
     assert "error" in _text(result).lower()
     assert "not found" in _text(result).lower()
+
 
 def test_workspace_copy_destination_exists(ctx):
     tool_workspace_write(ctx, "src.txt", "src")
@@ -275,15 +277,18 @@ def test_workspace_copy_destination_exists(ctx):
     assert "error" in _text(result).lower()
     assert "already exists" in _text(result).lower()
 
+
 def test_workspace_copy_directory_blocked(ctx):
     ctx.config.workspace_path.joinpath("srcdir").mkdir(parents=True, exist_ok=True)
     result = tool_workspace_copy(ctx, "srcdir", "destdir")
     assert "error" in _text(result).lower()
     assert "is a directory" in _text(result).lower()
 
+
 def test_workspace_copy_escape_blocked_src(ctx):
     result = tool_workspace_copy(ctx, "../../evil.txt", "dest.txt")
     assert "outside" in _text(result).lower()
+
 
 def test_workspace_copy_escape_blocked_dst(ctx):
     tool_workspace_write(ctx, "ok.txt", "data")
@@ -365,6 +370,7 @@ def test_workspace_delete_directory(ctx):
     result = tool_workspace_delete(ctx, "mydir", recursive=True)
     assert "Deleted directory" in _text(result)
     assert not dir_path.exists()
+
 
 def test_delete_empty_directory_succeeds(ctx):
     dir_path = ctx.config.workspace_path.joinpath("emptydir")
@@ -776,6 +782,7 @@ def test_file_share_not_found(ctx):
 # workspace_preview_markdown tests
 # ---------------------------------------------------------------------------
 
+
 def _make_preview_ctx(config):
     ctx = MagicMock()
     ctx.config = config
@@ -845,6 +852,7 @@ def test_workspace_preview_markdown_accepts_markdown_extension(config, workspace
 def test_workspace_preview_markdown_caps_large_files(config, workspace_with_md):
     """Files over MAX_READ_LINES get truncated; widget shows notice + first N lines."""
     from decafclaw.tools.workspace_tools import MAX_READ_LINES
+
     workspace = config.workspace_path
     big_lines = [f"line {i}" for i in range(MAX_READ_LINES * 3)]
     (workspace / "big.md").write_text("# Big\n" + "\n".join(big_lines) + "\n")
@@ -870,9 +878,8 @@ def test_workspace_preview_markdown_caps_large_files(config, workspace_with_md):
 
 def test_write_notes_a_redundant_workspace_prefix(ctx):
     from decafclaw.tools.workspace_tools import tool_workspace_write
-    result = tool_workspace_write(
-        ctx, path="workspace/skills/foo/SKILL.md", content="x"
-    )
+
+    result = tool_workspace_write(ctx, path="workspace/skills/foo/SKILL.md", content="x")
     text = result if isinstance(result, str) else result.text
     # "skills/foo/SKILL.md" is a substring of the path itself, so assert on
     # the note and the suggested path specifically.
@@ -884,6 +891,7 @@ def test_write_notes_a_redundant_workspace_prefix(ctx):
 
 def test_write_does_not_note_ordinary_paths(ctx):
     from decafclaw.tools.workspace_tools import tool_workspace_write
+
     result = tool_workspace_write(ctx, path="skills/foo/SKILL.md", content="x")
     text = result if isinstance(result, str) else result.text
     assert "did you mean" not in text.lower()
@@ -892,6 +900,7 @@ def test_write_does_not_note_ordinary_paths(ctx):
 def test_write_does_not_note_a_nested_workspace_dir(ctx):
     """Only a *leading* 'workspace/' is suspicious."""
     from decafclaw.tools.workspace_tools import tool_workspace_write
+
     result = tool_workspace_write(ctx, path="notes/workspace/plan.md", content="x")
     text = result if isinstance(result, str) else result.text
     assert "did you mean" not in text.lower()

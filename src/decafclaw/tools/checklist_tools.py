@@ -50,8 +50,7 @@ def _progress_data_from_checklist(items: list[dict]) -> dict:
             step["note"] = item["note"]
         steps.append(step)
     total = len(items)
-    summary = f"{done_count}/{total} · {current_label}" if current_label \
-        else f"{done_count}/{total}"
+    summary = f"{done_count}/{total} · {current_label}" if current_label else f"{done_count}/{total}"
     return {"steps": steps, "title": "Checklist", "summary": summary}
 
 
@@ -62,23 +61,18 @@ async def _mirror_to_sticky(ctx: "Context", conv_id: str) -> None:
     done; otherwise pins a progress_tracker snapshot.
     """
     try:
-        items = await asyncio.to_thread(
-            checklist.checklist_status, ctx.config, conv_id)
+        items = await asyncio.to_thread(checklist.checklist_status, ctx.config, conv_id)
         if not items or all(i["done"] for i in items):
-            result = await sticky_mod.clear_sticky(
-                ctx.config, conv_id, emit=emit_for_ctx(ctx))
+            result = await sticky_mod.clear_sticky(ctx.config, conv_id, emit=emit_for_ctx(ctx))
             if result is not None and not result.ok:
                 log.warning("checklist sticky clear failed: %s", result.error)
             return
         data = _progress_data_from_checklist(items)
-        result = await sticky_mod.set_sticky(
-            ctx.config, conv_id, "progress_tracker", data,
-            emit=emit_for_ctx(ctx))
+        result = await sticky_mod.set_sticky(ctx.config, conv_id, "progress_tracker", data, emit=emit_for_ctx(ctx))
         if result is not None and not result.ok:
             log.warning("checklist sticky set failed: %s", result.error)
     except Exception:
-        log.warning("checklist sticky mirror failed for %s", conv_id,
-                    exc_info=True)
+        log.warning("checklist sticky mirror failed for %s", conv_id, exc_info=True)
 
 
 async def tool_checklist_create(ctx: "Context", steps: list[str]) -> ToolResult:
@@ -86,24 +80,19 @@ async def tool_checklist_create(ctx: "Context", steps: list[str]) -> ToolResult:
     conv_id = ctx.conv_id or "default"
     if not steps:
         return ToolResult(text="[error: steps list is empty]")
-    items = await asyncio.to_thread(
-        checklist.checklist_create, ctx.config, conv_id, steps)
+    items = await asyncio.to_thread(checklist.checklist_create, ctx.config, conv_id, steps)
     await _mirror_to_sticky(ctx, conv_id)
     first = items[0]["text"]
     return ToolResult(
-        text=f"Checklist created ({len(items)} steps). "
-             f"Do step 1 now: {first}\n\n"
-             f"When done, call checklist_step_done.",
+        text=f"Checklist created ({len(items)} steps). Do step 1 now: {first}\n\nWhen done, call checklist_step_done.",
     )
 
 
 async def tool_checklist_step_done(ctx: "Context", note: str = "") -> ToolResult:
     """Mark current step done and advance. end_turn=True only when all complete."""
     conv_id = ctx.conv_id or "default"
-    next_item = await asyncio.to_thread(
-        checklist.checklist_complete_current, ctx.config, conv_id, note)
-    items = await asyncio.to_thread(
-        checklist.checklist_status, ctx.config, conv_id)
+    next_item = await asyncio.to_thread(checklist.checklist_complete_current, ctx.config, conv_id, note)
+    items = await asyncio.to_thread(checklist.checklist_status, ctx.config, conv_id)
     if not items:
         # No active checklist — do not touch the sticky slot (avoid clobbering
         # a manually-pinned or project-owned widget).
@@ -117,16 +106,15 @@ async def tool_checklist_step_done(ctx: "Context", note: str = "") -> ToolResult
         )
     return ToolResult(
         text=f"Step {next_item['index'] - 1}/{next_item['total']} done. "
-             f"Do step {next_item['index']} now: {next_item['text']}\n\n"
-             f"When done, call checklist_step_done.",
+        f"Do step {next_item['index']} now: {next_item['text']}\n\n"
+        f"When done, call checklist_step_done.",
     )
 
 
 async def tool_checklist_abort(ctx: "Context", reason: str = "") -> ToolResult:
     """Abandon the current checklist."""
     conv_id = ctx.conv_id or "default"
-    items = await asyncio.to_thread(
-        checklist.checklist_status, ctx.config, conv_id)
+    items = await asyncio.to_thread(checklist.checklist_status, ctx.config, conv_id)
     if not items:
         return ToolResult(text="No active checklist to abort.")
     done = sum(1 for i in items if i["done"])
@@ -222,8 +210,7 @@ CHECKLIST_TOOL_DEFINITIONS = [
         "function": {
             "name": "checklist_abort",
             "description": (
-                "Abandon the current checklist. Use when the plan needs "
-                "rethinking or the task is no longer relevant."
+                "Abandon the current checklist. Use when the plan needs rethinking or the task is no longer relevant."
             ),
             "parameters": {
                 "type": "object",

@@ -4,6 +4,7 @@ Asks one question at a time, looping until the model says it has enough (or a
 cap), then synthesizes an artifact. The whole thing is plain Python — the
 only journaled boundary crossings are wf.user_input and wf.llm_call.
 """
+
 from ..registry import workflow
 
 MAX_Q = 6
@@ -13,18 +14,13 @@ _SYS_ASK = (
     "artifact. Ask ONE good next question at a time. Decide when you have "
     "enough to write something useful."
 )
-_SYS_SYNTH = (
-    "You synthesize an interview transcript into a clear, well-structured "
-    "written artifact."
-)
+_SYS_SYNTH = "You synthesize an interview transcript into a clear, well-structured written artifact."
 
 _DECISION_SCHEMA = {
     "type": "object",
     "properties": {
-        "done": {"type": "boolean",
-                 "description": "True when you have enough to synthesize."},
-        "question": {"type": "string",
-                     "description": "The next question (empty if done)."},
+        "done": {"type": "boolean", "description": "True when you have enough to synthesize."},
+        "question": {"type": "string", "description": "The next question (empty if done)."},
     },
     "required": ["done", "question"],
 }
@@ -65,14 +61,10 @@ async def interview(wf):
 
     answers: list[dict] = []
     while len(answers) < MAX_Q:
-        decision = await wf.llm_call(
-            prompt=_ask_prompt(topic, answers),
-            schema=_DECISION_SCHEMA, system=_SYS_ASK)
+        decision = await wf.llm_call(prompt=_ask_prompt(topic, answers), schema=_DECISION_SCHEMA, system=_SYS_ASK)
         if decision.get("done"):
             break
         reply = await wf.user_input(decision["question"])
         answers.append({"q": decision["question"], "a": reply})
 
-    return await wf.llm_call(
-        prompt=_synth_prompt(topic, answers),
-        schema=_ARTIFACT_SCHEMA, system=_SYS_SYNTH)
+    return await wf.llm_call(prompt=_synth_prompt(topic, answers), schema=_ARTIFACT_SCHEMA, system=_SYS_SYNTH)

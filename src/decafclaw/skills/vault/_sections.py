@@ -190,18 +190,12 @@ class Document:
         parts = [normalize_title(p) for p in path.split("/") if p.strip()]
         if not parts:
             return []
-        return [
-            _section_path(sec, self._sections, display=True)
-            for sec in _find_by_suffix(self._sections, parts)
-        ]
+        return [_section_path(sec, self._sections, display=True) for sec in _find_by_suffix(self._sections, parts)]
 
     def all_section_paths(self) -> list[str]:
         """Full slash path of every section, in document order, for display."""
         self._ensure_parsed()
-        return [
-            _section_path(sec, self._sections, display=True)
-            for _depth, sec in self.list_sections()
-        ]
+        return [_section_path(sec, self._sections, display=True) for _depth, sec in self.list_sections()]
 
     def list_sections(self, depth: int = 0) -> list[tuple[int, Section]]:
         self._ensure_parsed()
@@ -296,8 +290,11 @@ class Document:
         self._insert_lines(insert_at, new_lines)
 
     def replace_item(
-        self, section: Section, new_text: str,
-        match: str | None = None, index: int | None = None,
+        self,
+        section: Section,
+        new_text: str,
+        match: str | None = None,
+        index: int | None = None,
     ) -> bool:
         item = self._find_item(section, match, index)
         if not item:
@@ -317,8 +314,11 @@ class Document:
         return True
 
     def move_item(
-        self, from_section: Section, to_section: Section,
-        match: str | None = None, index: int | None = None,
+        self,
+        from_section: Section,
+        to_section: Section,
+        match: str | None = None,
+        index: int | None = None,
     ) -> bool:
         item = self._find_item(from_section, match, index)
         if not item:
@@ -387,8 +387,11 @@ class Document:
         return results
 
     def add_tag(
-        self, section: Section, tag: str,
-        match: str | None = None, index: int | None = None,
+        self,
+        section: Section,
+        tag: str,
+        match: str | None = None,
+        index: int | None = None,
     ) -> bool:
         tag = tag.lstrip("#")
         line_idx = self._find_content_line(section, match, index)
@@ -402,8 +405,11 @@ class Document:
         return True
 
     def remove_tag(
-        self, section: Section, tag: str,
-        match: str | None = None, index: int | None = None,
+        self,
+        section: Section,
+        tag: str,
+        match: str | None = None,
+        index: int | None = None,
     ) -> bool:
         tag = tag.lstrip("#")
         line_idx = self._find_content_line(section, match, index)
@@ -423,7 +429,10 @@ class Document:
         return True
 
     def _find_content_line(
-        self, section: Section, match: str | None, index: int | None,
+        self,
+        section: Section,
+        match: str | None,
+        index: int | None,
     ) -> int | None:
         if index is not None:
             item = self._find_item(section, match=None, index=index)
@@ -640,7 +649,7 @@ def _find_by_suffix(sections: list[Section], parts: list[str]) -> list[Section]:
     def _walk(secs: list[Section], trail: list[str]) -> None:
         for sec in secs:
             current = trail + [sec.normalized_title]
-            if current[-len(parts):] == parts:
+            if current[-len(parts) :] == parts:
                 matches.append(sec)
             _walk(sec.children, current)
 
@@ -648,16 +657,17 @@ def _find_by_suffix(sections: list[Section], parts: list[str]) -> list[Section]:
     return matches
 
 
-def _flatten_sections(
-    sections: list[Section], depth: int, result: list[tuple[int, Section]]
-) -> None:
+def _flatten_sections(sections: list[Section], depth: int, result: list[tuple[int, Section]]) -> None:
     for sec in sections:
         result.append((depth, sec))
         _flatten_sections(sec.children, depth + 1, result)
 
 
 def _section_path(
-    sec: Section, top_sections: list[Section], *, display: bool = False,
+    sec: Section,
+    top_sections: list[Section],
+    *,
+    display: bool = False,
 ) -> str:
     """Full slash path to ``sec``.
 
@@ -666,6 +676,7 @@ def _section_path(
     for re-resolution after a mutation. Both are valid input to
     ``find_section``, which normalizes whatever it is given.
     """
+
     def _find(sections: list[Section], target_line: int, prefix: str) -> str | None:
         for s in sections:
             name = s.title.strip() if display else s.normalized_title
@@ -676,6 +687,7 @@ def _section_path(
             if found:
                 return found
         return None
+
     fallback = sec.title.strip() if display else sec.normalized_title
     return _find(top_sections, sec.heading_line, "") or fallback
 
@@ -716,10 +728,7 @@ def describe_section_miss(doc: Document, path: str) -> str:
     if not known:
         return f"section not found: {path!r} (page has no sections)"
     listed = "\n  ".join(known[:_MAX_LISTED_PATHS])
-    more = (
-        "" if len(known) <= _MAX_LISTED_PATHS
-        else f"\n  … and {len(known) - _MAX_LISTED_PATHS} more"
-    )
+    more = "" if len(known) <= _MAX_LISTED_PATHS else f"\n  … and {len(known) - _MAX_LISTED_PATHS} more"
     return f"section not found: {path!r}. Known paths:\n  {listed}{more}"
 
 
@@ -738,8 +747,10 @@ def _find_first_list_item(lines: list[str], start: int, end: int) -> int | None:
 
 
 def _insert_into_doc(
-    doc: Document, lines_to_insert: list[str],
-    to_section: str | None, position: str,
+    doc: Document,
+    lines_to_insert: list[str],
+    to_section: str | None,
+    position: str,
 ) -> str | None:
     """Insert lines into a Document at the specified location.
 

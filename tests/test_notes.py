@@ -108,20 +108,16 @@ class TestAppendNote:
         oldest entries are dropped so the file stays bounded."""
         # Seed 5 entries.
         for i in range(5):
-            append_note(config, "c1", f"note-{i}",
-                        now=f"2026-01-{i+1:02d}T00:00:00Z")
+            append_note(config, "c1", f"note-{i}", now=f"2026-01-{i + 1:02d}T00:00:00Z")
         # Cap of 3 → after this append the file has 6 entries; trim to 3.
-        append_note(config, "c1", "newest", now="2026-02-01T00:00:00Z",
-                    max_total_entries=3)
+        append_note(config, "c1", "newest", now="2026-02-01T00:00:00Z", max_total_entries=3)
         notes = read_notes(config, "c1")
         assert [n.text for n in notes] == ["note-3", "note-4", "newest"]
 
     def test_max_total_entries_zero_disables_cap(self, config):
         """The default value of 0 means no cap (steady-state cheap append)."""
         for i in range(5):
-            append_note(config, "c1", f"n-{i}",
-                        now=f"2026-01-{i+1:02d}T00:00:00Z",
-                        max_total_entries=0)
+            append_note(config, "c1", f"n-{i}", now=f"2026-01-{i + 1:02d}T00:00:00Z", max_total_entries=0)
         assert len(read_notes(config, "c1")) == 5
 
     def test_max_total_entries_under_cap_uses_cheap_append(self, config, monkeypatch):
@@ -134,9 +130,11 @@ class TestAppendNote:
         # Watch for os.replace calls (which only happen on the trim path).
         replace_calls = []
         from decafclaw import notes as notes_mod
+
         original = notes_mod.os.replace
-        monkeypatch.setattr(notes_mod.os, "replace",
-                            lambda src, dst: replace_calls.append((src, dst)) or original(src, dst))
+        monkeypatch.setattr(
+            notes_mod.os, "replace", lambda src, dst: replace_calls.append((src, dst)) or original(src, dst)
+        )
 
         # Cap of 100, currently at 2 → +1 = 3, well under. Should be cheap append.
         append_note(config, "c1", "fresh", max_total_entries=100)
@@ -146,7 +144,7 @@ class TestAppendNote:
 class TestReadNotes:
     def _seed(self, config, *texts):
         for i, t in enumerate(texts):
-            append_note(config, "c1", t, now=f"2026-01-{i+1:02d}T00:00:00Z")
+            append_note(config, "c1", t, now=f"2026-01-{i + 1:02d}T00:00:00Z")
 
     def test_empty_returns_empty(self, config):
         assert read_notes(config, "missing") == []
@@ -170,7 +168,7 @@ class TestReadNotes:
     def test_max_chars_drops_oldest(self, config):
         # 5 entries, 4 chars each → 20 total. Cap at 12 → drop oldest until ≤ 12.
         for i, t in enumerate(["aaaa", "bbbb", "cccc", "dddd", "eeee"]):
-            append_note(config, "c1", t, now=f"2026-01-{i+1:02d}T00:00:00Z")
+            append_note(config, "c1", t, now=f"2026-01-{i + 1:02d}T00:00:00Z")
         notes = read_notes(config, "c1", max_chars=12)
         # Each is 4 chars; 12 chars allows 3 entries; oldest 2 dropped.
         assert [n.text for n in notes] == ["cccc", "dddd", "eeee"]

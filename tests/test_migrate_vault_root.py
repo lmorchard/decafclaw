@@ -23,12 +23,17 @@ def test_dry_run_reports_without_moving(tmp_path):
     old, new, config = _setup(tmp_path)
     r = subprocess.run(
         [
-            sys.executable, str(SCRIPT),
-            "--from", str(old),
-            "--to", str(new),
-            "--config", str(config),
+            sys.executable,
+            str(SCRIPT),
+            "--from",
+            str(old),
+            "--to",
+            str(new),
+            "--config",
+            str(config),
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0, r.stderr
     # Old content still there
@@ -41,13 +46,18 @@ def test_apply_moves_and_updates_config(tmp_path):
     old, new, config = _setup(tmp_path)
     r = subprocess.run(
         [
-            sys.executable, str(SCRIPT),
-            "--from", str(old),
-            "--to", str(new),
-            "--config", str(config),
+            sys.executable,
+            str(SCRIPT),
+            "--from",
+            str(old),
+            "--to",
+            str(new),
+            "--config",
+            str(config),
             "--apply",
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0, r.stderr
     assert (new / "agent" / "pages" / "note.md").exists()
@@ -61,13 +71,18 @@ def test_apply_refuses_if_target_agent_exists(tmp_path):
     (new / "agent").mkdir()
     r = subprocess.run(
         [
-            sys.executable, str(SCRIPT),
-            "--from", str(old),
-            "--to", str(new),
-            "--config", str(config),
+            sys.executable,
+            str(SCRIPT),
+            "--from",
+            str(old),
+            "--to",
+            str(new),
+            "--config",
+            str(config),
             "--apply",
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode != 0
     assert "already exists" in (r.stderr + r.stdout).lower()
@@ -79,12 +94,17 @@ def test_refuses_if_source_agent_missing(tmp_path):
     shutil.rmtree(old / "agent")
     r = subprocess.run(
         [
-            sys.executable, str(SCRIPT),
-            "--from", str(old),
-            "--to", str(new),
-            "--config", str(config),
+            sys.executable,
+            str(SCRIPT),
+            "--from",
+            str(old),
+            "--to",
+            str(new),
+            "--config",
+            str(config),
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode != 0
     assert "agent" in (r.stderr + r.stdout).lower()
@@ -96,12 +116,17 @@ def test_refuses_if_target_root_missing(tmp_path):
     new.rmdir()
     r = subprocess.run(
         [
-            sys.executable, str(SCRIPT),
-            "--from", str(old),
-            "--to", str(new),
-            "--config", str(config),
+            sys.executable,
+            str(SCRIPT),
+            "--from",
+            str(old),
+            "--to",
+            str(new),
+            "--config",
+            str(config),
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode != 0
     assert "not exist" in (r.stderr + r.stdout).lower()
@@ -112,12 +137,17 @@ def test_refuses_if_config_missing(tmp_path):
     config.unlink()
     r = subprocess.run(
         [
-            sys.executable, str(SCRIPT),
-            "--from", str(old),
-            "--to", str(new),
-            "--config", str(config),
+            sys.executable,
+            str(SCRIPT),
+            "--from",
+            str(old),
+            "--to",
+            str(new),
+            "--config",
+            str(config),
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode != 0
     assert "config" in (r.stderr + r.stdout).lower()
@@ -127,12 +157,17 @@ def test_dry_run_prints_what_would_happen(tmp_path):
     old, new, config = _setup(tmp_path)
     r = subprocess.run(
         [
-            sys.executable, str(SCRIPT),
-            "--from", str(old),
-            "--to", str(new),
-            "--config", str(config),
+            sys.executable,
+            str(SCRIPT),
+            "--from",
+            str(old),
+            "--to",
+            str(new),
+            "--config",
+            str(config),
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0, r.stderr
     output = r.stdout + r.stderr
@@ -159,13 +194,18 @@ def test_apply_config_is_readable_by_config_loader(tmp_path, monkeypatch):
 
     r = subprocess.run(
         [
-            sys.executable, str(SCRIPT),
-            "--from", str(old),
-            "--to", str(new),
-            "--config", str(config_path),
+            sys.executable,
+            str(SCRIPT),
+            "--from",
+            str(old),
+            "--to",
+            str(new),
+            "--config",
+            str(config_path),
             "--apply",
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0, r.stderr
 
@@ -176,5 +216,6 @@ def test_apply_config_is_readable_by_config_loader(tmp_path, monkeypatch):
     monkeypatch.delenv("VAULT_VAULT_PATH", raising=False)
 
     from decafclaw.config import load_config
+
     cfg = load_config()
     assert cfg.vault_root.resolve() == new.resolve()

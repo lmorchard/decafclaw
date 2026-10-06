@@ -104,16 +104,18 @@ def test_legacy_int_seq_upgrades_to_one_tuple(tmp_path):
     # Hand-build a legacy-format journal file (integer seq).
     workflow_dir(cfg, "convLegacy", create=True)
     path = workflow_path(cfg, "convLegacy")
-    path.write_text(json.dumps({
-        "workflow_name": "interview",
-        "status": "suspended",
-        "entries": [
-            {"seq": 0, "kind": "user_input",
-             "args_fingerprint": "fp0", "result": "topic"},
-            {"seq": 1, "kind": "llm_call",
-             "args_fingerprint": "fp1", "result": {"a": 1}},
-        ],
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "workflow_name": "interview",
+                "status": "suspended",
+                "entries": [
+                    {"seq": 0, "kind": "user_input", "args_fingerprint": "fp0", "result": "topic"},
+                    {"seq": 1, "kind": "llm_call", "args_fingerprint": "fp1", "result": {"a": 1}},
+                ],
+            }
+        )
+    )
 
     loaded = load_journal(cfg, "convLegacy")
     assert loaded is not None
@@ -168,16 +170,18 @@ def test_from_dict_rejects_duplicate_seq(tmp_path):
     cfg = _cfg(tmp_path)
     workflow_dir(cfg, "convDup", create=True)
     path = workflow_path(cfg, "convDup")
-    path.write_text(json.dumps({
-        "workflow_name": "interview",
-        "status": "running",
-        "entries": [
-            {"seq": 0, "kind": "user_input",
-             "args_fingerprint": "fp0", "result": "first"},
-            {"seq": "0", "kind": "user_input",
-             "args_fingerprint": "fp0", "result": "second"},
-        ],
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "workflow_name": "interview",
+                "status": "running",
+                "entries": [
+                    {"seq": 0, "kind": "user_input", "args_fingerprint": "fp0", "result": "first"},
+                    {"seq": "0", "kind": "user_input", "args_fingerprint": "fp0", "result": "second"},
+                ],
+            }
+        )
+    )
 
     with pytest.raises(ValueError, match="duplicate seq"):
         load_journal(cfg, "convDup")

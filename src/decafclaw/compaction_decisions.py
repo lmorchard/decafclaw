@@ -42,6 +42,7 @@ class DecisionEntry:
     ``merge_slice``, not via set/dict semantics on ``DecisionEntry``
     itself.)
     """
+
     text: str
     created_at: str  # ISO-8601 UTC
 
@@ -49,6 +50,7 @@ class DecisionEntry:
 @dataclass
 class DecisionSlice:
     """The forward-threaded structured slice for one conversation."""
+
     decisions: list[DecisionEntry] = field(default_factory=list)
     open_questions: list[DecisionEntry] = field(default_factory=list)
     artifacts: list[DecisionEntry] = field(default_factory=list)
@@ -202,7 +204,8 @@ def merge_slice(
         # within the kept set so the LLM's order is honored.
         if max_per_category > 0 and len(merged) > max_per_category:
             sorted_oldest_first = sorted(
-                merged, key=lambda e: e.created_at,
+                merged,
+                key=lambda e: e.created_at,
             )
             keep = set(id(e) for e in sorted_oldest_first[-max_per_category:])
             merged = [e for e in merged if id(e) in keep]

@@ -33,11 +33,7 @@ def test_append_creates_parent_directory(tmp_path: Path):
 
 def test_read_history_skips_corrupt_lines(tmp_path: Path):
     path = tmp_path / "history.jsonl"
-    path.write_text(
-        json.dumps({"a": 1}) + "\n"
-        "not valid json\n"
-        + json.dumps({"a": 2}) + "\n"
-    )
+    path.write_text(json.dumps({"a": 1}) + "\nnot valid json\n" + json.dumps({"a": 2}) + "\n")
     out = read_history(path)
     assert out == [{"a": 1}, {"a": 2}]
 
@@ -45,8 +41,8 @@ def test_read_history_skips_corrupt_lines(tmp_path: Path):
 def _make_yaml(path: Path, names: list[str]) -> None:
     """Write a YAML eval file with N synthetic test cases."""
     import yaml
-    cases = [{"name": n, "input": "x", "expect": {"response_contains": "x"}}
-             for n in names]
+
+    cases = [{"name": n, "input": "x", "expect": {"response_contains": "x"}} for n in names]
     path.write_text(yaml.safe_dump(cases))
 
 
@@ -132,11 +128,19 @@ def test_render_table_empty():
 
 
 def test_render_table_single_record_marks_delta_as_dashes():
-    out = render_table([
-        {"timestamp": "2026-05-16-1300", "model": "m1",
-         "passed": 10, "total": 12, "pass_rate": 0.833,
-         "duration_sec": 30, "total_tokens": 5000},
-    ])
+    out = render_table(
+        [
+            {
+                "timestamp": "2026-05-16-1300",
+                "model": "m1",
+                "passed": 10,
+                "total": 12,
+                "pass_rate": 0.833,
+                "duration_sec": 30,
+                "total_tokens": 5000,
+            },
+        ]
+    )
     assert "2026-05-16-1300" in out
     assert "m1" in out
     assert "10 /" in out
@@ -145,20 +149,43 @@ def test_render_table_single_record_marks_delta_as_dashes():
 
 
 def test_render_table_computes_delta_for_subsequent_rows():
-    out = render_table([
-        {"timestamp": "t1", "model": "m", "passed": 8, "total": 10,
-         "pass_rate": 0.80, "duration_sec": 30, "total_tokens": 5000},
-        {"timestamp": "t2", "model": "m", "passed": 9, "total": 10,
-         "pass_rate": 0.90, "duration_sec": 30, "total_tokens": 5000},
-    ])
+    out = render_table(
+        [
+            {
+                "timestamp": "t1",
+                "model": "m",
+                "passed": 8,
+                "total": 10,
+                "pass_rate": 0.80,
+                "duration_sec": 30,
+                "total_tokens": 5000,
+            },
+            {
+                "timestamp": "t2",
+                "model": "m",
+                "passed": 9,
+                "total": 10,
+                "pass_rate": 0.90,
+                "duration_sec": 30,
+                "total_tokens": 5000,
+            },
+        ]
+    )
     # Second row should have a positive delta
     assert "+10" in out  # "+10.0%"
 
 
 def test_render_table_respects_limit():
     records = [
-        {"timestamp": f"t{i}", "model": "m", "passed": 1, "total": 1,
-         "pass_rate": 1.0, "duration_sec": 1, "total_tokens": 1}
+        {
+            "timestamp": f"t{i}",
+            "model": "m",
+            "passed": 1,
+            "total": 1,
+            "pass_rate": 1.0,
+            "duration_sec": 1,
+            "total_tokens": 1,
+        }
         for i in range(10)
     ]
     out = render_table(records, limit=3)
@@ -170,8 +197,17 @@ def test_render_table_respects_limit():
 
 
 def test_render_table_formats_large_token_counts():
-    out = render_table([
-        {"timestamp": "t", "model": "m", "passed": 1, "total": 1,
-         "pass_rate": 1.0, "duration_sec": 1, "total_tokens": 1_234_567},
-    ])
+    out = render_table(
+        [
+            {
+                "timestamp": "t",
+                "model": "m",
+                "passed": 1,
+                "total": 1,
+                "pass_rate": 1.0,
+                "duration_sec": 1,
+                "total_tokens": 1_234_567,
+            },
+        ]
+    )
     assert "1.23M" in out

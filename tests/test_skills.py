@@ -211,8 +211,8 @@ def test_parse_command_frontmatter(tmp_path):
     _write_skill(
         skill_dir,
         'name: migrate-todos\ndescription: "Migrate todos"\n'
-        'allowed-tools: vault_read, vault_write, shell\n'
-        'context: fork\n'
+        "allowed-tools: vault_read, vault_write, shell\n"
+        "context: fork\n"
         'argument-hint: "[date]"',
         body="Do the migration. $ARGUMENTS",
     )
@@ -265,9 +265,7 @@ def test_parse_required_skills(tmp_path):
     skill_dir = tmp_path / "migrate"
     _write_skill(
         skill_dir,
-        'name: migrate\ndescription: "Migrate"\n'
-        'context: fork\n'
-        'required-skills:\n  - tabstack\n  - vault',
+        'name: migrate\ndescription: "Migrate"\ncontext: fork\nrequired-skills:\n  - tabstack\n  - vault',
     )
     info = parse_skill_md(skill_dir / "SKILL.md")
     assert info is not None
@@ -299,6 +297,7 @@ def test_parse_always_loaded_default(tmp_path):
 
 def test_find_command():
     from decafclaw.skills import find_command
+
     skills = [
         SkillInfo(name="weather", description="Weather", location=Path("."), user_invocable=True),
         SkillInfo(name="tabstack", description="Tabstack", location=Path("."), user_invocable=False),
@@ -312,6 +311,7 @@ def test_find_command():
 
 def test_list_commands():
     from decafclaw.skills import list_commands
+
     skills = [
         SkillInfo(name="weather", description="Weather", location=Path("."), user_invocable=True),
         SkillInfo(name="tabstack", description="Tabstack", location=Path("."), user_invocable=False),
@@ -424,12 +424,8 @@ def test_discover_honors_auto_approve_on_bundled(config):
     auto_approved = [s for s in skills if s.auto_approve]
     # The new background and mcp bundled skills both declare auto-approve.
     auto_names = {s.name for s in auto_approved}
-    assert "background" in auto_names, (
-        f"bundled `background` skill lost auto_approve flag; got {auto_names}"
-    )
-    assert "mcp" in auto_names, (
-        f"bundled `mcp` skill lost auto_approve flag; got {auto_names}"
-    )
+    assert "background" in auto_names, f"bundled `background` skill lost auto_approve flag; got {auto_names}"
+    assert "mcp" in auto_names, f"bundled `mcp` skill lost auto_approve flag; got {auto_names}"
 
 
 def test_discover_includes_skill_creator(config):
@@ -437,9 +433,7 @@ def test_discover_includes_skill_creator(config):
     and lazy (not always-loaded)."""
     skills = discover_skills(config)
     by_name = {s.name: s for s in skills}
-    assert "skill-creator" in by_name, (
-        f"bundled skill-creator not discovered; got {sorted(by_name)}"
-    )
+    assert "skill-creator" in by_name, f"bundled skill-creator not discovered; got {sorted(by_name)}"
     sc = by_name["skill-creator"]
     assert sc.has_native_tools is False, "skill-creator must be text-only (no tools.py)"
     assert sc.always_loaded is False, "skill-creator must stay lazy (not always-loaded)"
@@ -509,8 +503,7 @@ def test_skills_always_loaded_config_denied_for_workspace(config, caplog):
         skills = discover_skills(config)
     matching = [s for s in skills if s.name == "ws-promo"]
     assert matching[0].always_loaded is False
-    assert any("workspace skill" in r.message and "always-load" in r.message
-               for r in caplog.records)
+    assert any("workspace skill" in r.message and "always-load" in r.message for r in caplog.records)
 
 
 def test_discover_strips_always_loaded_from_workspace_skill(config, caplog):
@@ -623,16 +616,10 @@ def test_discover_extra_path_skipped_when_missing(tmp_path, config, caplog):
     """A non-existent extra path is silently skipped (no error)."""
     config.extra_skill_paths = [str(tmp_path / "does-not-exist")]
     discover_skills(config)  # must not raise
-    assert all(
-        "does-not-exist" not in r.message
-        for r in caplog.records
-        if r.levelname == "WARNING"
-    )
+    assert all("does-not-exist" not in r.message for r in caplog.records if r.levelname == "WARNING")
 
 
-def test_decafclaw_repo_auto_populated_when_unset(
-    tmp_path, config, monkeypatch
-):
+def test_decafclaw_repo_auto_populated_when_unset(tmp_path, config, monkeypatch):
     """`$DECAFCLAW_REPO` resolves against the auto-detected source root
     when the env var is unset — letting `extra_skill_paths` entries
     work without a manual `.env` setting."""
@@ -672,9 +659,7 @@ def test_contrib_shorthand_auto_populated(tmp_path, config, monkeypatch):
     assert any(s.name == "writing-clearly" for s in skills)
 
 
-def test_contrib_follows_explicit_decafclaw_repo(
-    tmp_path, config, monkeypatch
-):
+def test_contrib_follows_explicit_decafclaw_repo(tmp_path, config, monkeypatch):
     """When the user overrides `$DECAFCLAW_REPO`, the derived `$CONTRIB`
     follows — pointing at the new checkout's contrib/ rather than the
     auto-detected one."""
@@ -774,10 +759,8 @@ def test_build_catalog_text_formats_correctly(tmp_path):
     from decafclaw.skills import SkillInfo
 
     skills = [
-        SkillInfo(name="alpha", description="Does A.", location=tmp_path / "a",
-                  has_native_tools=True),
-        SkillInfo(name="beta", description="Does B.", location=tmp_path / "b",
-                  has_native_tools=True),
+        SkillInfo(name="alpha", description="Does A.", location=tmp_path / "a", has_native_tools=True),
+        SkillInfo(name="beta", description="Does B.", location=tmp_path / "b", has_native_tools=True),
     ]
     text = build_catalog_text(skills)
     assert "## Available Skills" in text
@@ -796,11 +779,16 @@ def test_build_catalog_text_includes_markdown_only_skills(tmp_path):
     the agent can activate them to load their instructions — even when
     they also have a !command trigger or a cron schedule."""
     skills = [
-        SkillInfo(name="command-only", description="Command skill.",
-                  location=tmp_path / "c", has_native_tools=False,
-                  user_invocable=True),
-        SkillInfo(name="scheduled-only", description="Scheduled skill.",
-                  location=tmp_path / "s", has_native_tools=False),
+        SkillInfo(
+            name="command-only",
+            description="Command skill.",
+            location=tmp_path / "c",
+            has_native_tools=False,
+            user_invocable=True,
+        ),
+        SkillInfo(
+            name="scheduled-only", description="Scheduled skill.", location=tmp_path / "s", has_native_tools=False
+        ),
     ]
     text = build_catalog_text(skills)
     assert "- **command-only**: Command skill." in text
@@ -835,14 +823,17 @@ def test_save_permission_preserves_existing(config):
 # -- activation tests --
 
 
-def _make_skill_info(tmp_path, name="test-skill", body="Instructions here.",
-                     has_native_tools=False, trust_tier="bundled"):
+def _make_skill_info(
+    tmp_path, name="test-skill", body="Instructions here.", has_native_tools=False, trust_tier="bundled"
+):
     """Create a SkillInfo for testing."""
     location = tmp_path / name
     location.mkdir(parents=True, exist_ok=True)
     return SkillInfo(
-        name=name, description=f"{name} description",
-        location=location, body=body,
+        name=name,
+        description=f"{name} description",
+        location=location,
+        body=body,
         has_native_tools=has_native_tools,
         trust_tier=trust_tier,
     )
@@ -956,7 +947,9 @@ async def test_deny_still_wins_over_trust_tier(ctx, tmp_path):
 
 @pytest.mark.asyncio
 async def test_workspace_skill_still_requires_confirmation(
-    ctx, tmp_path, monkeypatch,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """Workspace-tier skill activation routes through the confirmation flow
     even when no permission record exists. (Test mocks the confirmation
@@ -1036,8 +1029,10 @@ async def test_activate_native_skill(ctx, tmp_path):
         "    _init_called = True\n"
     )
     skill = SkillInfo(
-        name="native-skill", description="Native test.",
-        location=skill_dir, body="Native instructions.",
+        name="native-skill",
+        description="Native test.",
+        location=skill_dir,
+        body="Native instructions.",
         has_native_tools=True,
     )
     ctx.config.discovered_skills = [skill]
@@ -1063,8 +1058,11 @@ def _native_skill(skill_dir, name="editable", tools_py="", body="Body."):
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "tools.py").write_text(tools_py)
     return SkillInfo(
-        name=name, description="Editable test.", location=skill_dir,
-        body=body, has_native_tools=True,
+        name=name,
+        description="Editable test.",
+        location=skill_dir,
+        body=body,
+        has_native_tools=True,
     )
 
 
@@ -1075,9 +1073,7 @@ async def test_reactivate_reloads_edited_tools(ctx, tmp_path):
     skill = _native_skill(
         skill_dir,
         tools_py=(
-            "TOOLS = {'v1': lambda ctx: 'one'}\n"
-            "TOOL_DEFINITIONS = [{'type': 'function', "
-            "'function': {'name': 'v1'}}]\n"
+            "TOOLS = {'v1': lambda ctx: 'one'}\nTOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'v1'}}]\n"
         ),
     )
     ctx.config.discovered_skills = [skill]
@@ -1088,8 +1084,7 @@ async def test_reactivate_reloads_edited_tools(ctx, tmp_path):
 
     # The author fixes their tool and renames it.
     (skill_dir / "tools.py").write_text(
-        "TOOLS = {'v2': lambda ctx: 'two'}\n"
-        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'v2'}}]\n"
+        "TOOLS = {'v2': lambda ctx: 'two'}\nTOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'v2'}}]\n"
     )
 
     result = await tool_activate_skill(ctx, name="editable")
@@ -1097,9 +1092,7 @@ async def test_reactivate_reloads_edited_tools(ctx, tmp_path):
     # The replaced tool must not linger — a stale name in ctx.tools.extra is
     # advertised to the LLM and calls dead code.
     assert "v1" not in ctx.tools.extra, "stale tool survived the reload"
-    names = [
-        td.get("function", {}).get("name") for td in ctx.tools.extra_definitions
-    ]
+    names = [td.get("function", {}).get("name") for td in ctx.tools.extra_definitions]
     assert names == ["v2"]
     assert "reload" in _text(result).lower()
 
@@ -1109,7 +1102,8 @@ async def test_reactivate_reloads_changed_tool_body(ctx, tmp_path):
     """Same tool name, changed implementation — the new body must run."""
     skill_dir = tmp_path / "samename"
     skill = _native_skill(
-        skill_dir, name="samename",
+        skill_dir,
+        name="samename",
         tools_py=(
             "def go(ctx):\n    return 'before'\n\n"
             "TOOLS = {'go': go}\n"
@@ -1137,7 +1131,8 @@ async def test_reactivate_updates_dynamic_provider(ctx, tmp_path):
     """A skill exporting get_tools re-registers its provider on reload."""
     skill_dir = tmp_path / "dyn"
     skill = _native_skill(
-        skill_dir, name="dyn",
+        skill_dir,
+        name="dyn",
         tools_py=(
             "TOOLS = {'d1': lambda ctx: 'x'}\n"
             "TOOL_DEFINITIONS = [{'type': 'function', "
@@ -1167,7 +1162,8 @@ async def test_reactivate_broken_edit_keeps_working_tools(ctx, tmp_path):
     previously-working tools in place rather than half-unloading them."""
     skill_dir = tmp_path / "breakable"
     skill = _native_skill(
-        skill_dir, name="breakable",
+        skill_dir,
+        name="breakable",
         tools_py=(
             "TOOLS = {'ok': lambda ctx: 'fine'}\n"
             "TOOL_DEFINITIONS = [{'type': 'function', "
@@ -1218,7 +1214,8 @@ async def test_activation_writes_no_pycache_into_the_skill_dir(ctx, tmp_path):
     remove a __pycache__ directory with workspace_delete."""
     skill_dir = tmp_path / "clean"
     skill = _native_skill(
-        skill_dir, name="clean",
+        skill_dir,
+        name="clean",
         tools_py="TOOLS = {'c': lambda ctx: 'x'}\nTOOL_DEFINITIONS = []\n",
     )
     ctx.config.discovered_skills = [skill]
@@ -1231,7 +1228,9 @@ async def test_activation_writes_no_pycache_into_the_skill_dir(ctx, tmp_path):
 def test_skill_validate_sees_same_size_edit(ctx):
     """The validator must not report a SyntaxError the author already fixed."""
     d = _write_ws_skill(
-        ctx, "fixme", "name: fixme\ndescription: Being fixed.",
+        ctx,
+        "fixme",
+        "name: fixme\ndescription: Being fixed.",
         tools_py="def get_tools(ctx)\n    return {}, []\n",  # missing colon
     )
     first = tool_skill_validate(ctx, path="skills/fixme")
@@ -1247,8 +1246,11 @@ def test_skill_validate_sees_same_size_edit(ctx):
 async def test_reactivate_text_only_skill_is_idempotent(ctx, tmp_path):
     """A skill with no tools.py still reports already-active without error."""
     skill = SkillInfo(
-        name="texty", description="No tools.", location=tmp_path / "texty",
-        body="Just prose.", has_native_tools=False,
+        name="texty",
+        description="No tools.",
+        location=tmp_path / "texty",
+        body="Just prose.",
+        has_native_tools=False,
     )
     ctx.config.discovered_skills = [skill]
     _save_permission(ctx.config, "texty", {"status": "always", "hash": _compute_skill_hash(skill)})
@@ -1351,7 +1353,8 @@ async def test_activate_always_loaded_runs_each_skill_once(ctx, tmp_path, monkey
         ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     await activate_always_loaded(ctx)
@@ -1362,13 +1365,17 @@ async def test_activate_always_loaded_runs_each_skill_once(ctx, tmp_path, monkey
 
 @pytest.mark.asyncio
 async def test_activate_always_loaded_skips_workspace_tier(
-    ctx, tmp_path, monkeypatch,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """Workspace-tier skills are skipped even if `always_loaded` is True."""
     bundled = _make_skill_info(tmp_path, name="bundled-skill", trust_tier="bundled")
     bundled.always_loaded = True
     workspace = _make_skill_info(
-        tmp_path, name="workspace-skill", trust_tier="workspace",
+        tmp_path,
+        name="workspace-skill",
+        trust_tier="workspace",
     )
     workspace.always_loaded = True  # defense-in-depth: should still be skipped
     ctx.config.discovered_skills = [bundled, workspace]
@@ -1380,7 +1387,8 @@ async def test_activate_always_loaded_skips_workspace_tier(
         ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     await activate_always_loaded(ctx)
@@ -1391,7 +1399,9 @@ async def test_activate_always_loaded_skips_workspace_tier(
 
 @pytest.mark.asyncio
 async def test_activate_always_loaded_skips_already_activated(
-    ctx, tmp_path, monkeypatch,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """Already-activated skills are not re-activated (idempotent)."""
     skill = _make_skill_info(tmp_path, name="already-active", trust_tier="bundled")
@@ -1405,7 +1415,8 @@ async def test_activate_always_loaded_skips_already_activated(
         calls.append(info.name)
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     await activate_always_loaded(ctx)
@@ -1415,7 +1426,10 @@ async def test_activate_always_loaded_skips_already_activated(
 
 @pytest.mark.asyncio
 async def test_activate_always_loaded_fails_soft(
-    ctx, tmp_path, monkeypatch, caplog,
+    ctx,
+    tmp_path,
+    monkeypatch,
+    caplog,
 ):
     """A failed activation logs but does not block subsequent skills."""
     skill_a = _make_skill_info(tmp_path, name="boomer", trust_tier="bundled")
@@ -1430,7 +1444,8 @@ async def test_activate_always_loaded_fails_soft(
         ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     with caplog.at_level("ERROR", logger="decafclaw.skills"):
@@ -1438,10 +1453,7 @@ async def test_activate_always_loaded_fails_soft(
 
     assert "survivor" in ctx.skills.activated
     assert "boomer" not in ctx.skills.activated
-    error_records = [
-        r for r in caplog.records
-        if r.levelname == "ERROR" and "boomer" in r.getMessage()
-    ]
+    error_records = [r for r in caplog.records if r.levelname == "ERROR" and "boomer" in r.getMessage()]
     assert len(error_records) == 1
 
 
@@ -1462,7 +1474,8 @@ async def test_activate_skills_for_workflow_succeeds(ctx, tmp_path, monkeypatch)
         ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     await activate_skills_for_workflow(ctx, ["alpha", "beta"])
@@ -1475,7 +1488,9 @@ async def test_activate_skills_for_workflow_succeeds(ctx, tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_activate_skills_for_workflow_unknown_skill_raises(
-    ctx, tmp_path, monkeypatch,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """Unknown skill name raises WorkflowSkillActivationFailed."""
     ctx.config.discovered_skills = []
@@ -1484,7 +1499,8 @@ async def test_activate_skills_for_workflow_unknown_skill_raises(
         raise AssertionError("should not be called")
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     with pytest.raises(WorkflowSkillActivationFailed) as exc_info:
@@ -1496,7 +1512,9 @@ async def test_activate_skills_for_workflow_unknown_skill_raises(
 
 @pytest.mark.asyncio
 async def test_activate_skills_for_workflow_tool_load_failure_raises(
-    ctx, tmp_path, monkeypatch,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """When activate_skill_internal returns a ToolResult instead of
     raising (its tool-load failure path — see skill_tools.py:228-230),
@@ -1504,16 +1522,16 @@ async def test_activate_skills_for_workflow_tool_load_failure_raises(
     this guard, the workflow would proceed with the required skill
     silently missing."""
     skill = _make_skill_info(
-        tmp_path, name="broken-tools-skill", trust_tier="bundled",
+        tmp_path,
+        name="broken-tools-skill",
+        trust_tier="bundled",
     )
     ctx.config.discovered_skills = [skill]
 
     async def fake_activate(ctx_arg, info_arg):
         # Mirror skill_tools.py:228-230 — returns a ToolResult and
         # does NOT add to ctx.skills.activated.
-        return ToolResult(
-            text="[error: failed to load skill 'broken-tools-skill': "
-                 "ImportError(...)]")
+        return ToolResult(text="[error: failed to load skill 'broken-tools-skill': ImportError(...)]")
 
     monkeypatch.setattr(
         "decafclaw.tools.skill_tools.activate_skill_internal",
@@ -1533,7 +1551,9 @@ async def test_activate_skills_for_workflow_tool_load_failure_raises(
 
 @pytest.mark.asyncio
 async def test_activate_skills_for_workflow_init_failure_raises(
-    ctx, tmp_path, monkeypatch,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """A skill whose init() raises surfaces WorkflowSkillActivationFailed."""
     skill = _make_skill_info(tmp_path, name="exploder", trust_tier="bundled")
@@ -1545,7 +1565,8 @@ async def test_activate_skills_for_workflow_init_failure_raises(
         raise original
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     with pytest.raises(WorkflowSkillActivationFailed) as exc_info:
@@ -1559,7 +1580,9 @@ async def test_activate_skills_for_workflow_init_failure_raises(
 
 @pytest.mark.asyncio
 async def test_activate_skills_for_workflow_idempotent(
-    ctx, tmp_path, monkeypatch,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """Already-activated skills are skipped — the activator is not invoked."""
     skill = _make_skill_info(tmp_path, name="already-active", trust_tier="bundled")
@@ -1570,7 +1593,8 @@ async def test_activate_skills_for_workflow_idempotent(
         raise AssertionError("should not be called")
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", sabotage,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        sabotage,
     )
 
     await activate_skills_for_workflow(ctx, ["already-active"])
@@ -1580,11 +1604,15 @@ async def test_activate_skills_for_workflow_idempotent(
 
 @pytest.mark.asyncio
 async def test_activate_skills_for_workflow_permits_workspace_tier(
-    ctx, tmp_path, monkeypatch,
+    ctx,
+    tmp_path,
+    monkeypatch,
 ):
     """Workspace-tier skills ARE permitted when the workflow opts in by name."""
     workspace = _make_skill_info(
-        tmp_path, name="workspace-skill", trust_tier="workspace",
+        tmp_path,
+        name="workspace-skill",
+        trust_tier="workspace",
     )
     ctx.config.discovered_skills = [workspace]
 
@@ -1595,7 +1623,8 @@ async def test_activate_skills_for_workflow_permits_workspace_tier(
         ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
-        "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
+        "decafclaw.tools.skill_tools.activate_skill_internal",
+        fake_activate,
     )
 
     await activate_skills_for_workflow(ctx, ["workspace-skill"])
@@ -1707,7 +1736,9 @@ def test_skill_validate_valid_text_only(ctx):
 
 def test_skill_validate_valid_with_tools(ctx):
     _write_ws_skill(
-        ctx, "withtools", "name: withtools\ndescription: Has tools.",
+        ctx,
+        "withtools",
+        "name: withtools\ndescription: Has tools.",
         tools_py="def get_tools(ctx):\n    return {}, []\n",
     )
     result = tool_skill_validate(ctx, path="skills/withtools")
@@ -1718,7 +1749,9 @@ def test_skill_validate_valid_with_tools(ctx):
 
 def test_skill_validate_tools_syntax_error(ctx):
     _write_ws_skill(
-        ctx, "broken", "name: broken\ndescription: Bad tools.",
+        ctx,
+        "broken",
+        "name: broken\ndescription: Bad tools.",
         tools_py="def get_tools(ctx)\n    return {}, []\n",  # missing colon
     )
     result = tool_skill_validate(ctx, path="skills/broken")
@@ -1730,7 +1763,9 @@ def test_skill_validate_tools_syntax_error(ctx):
 
 def test_skill_validate_tools_undefined_name(ctx):
     _write_ws_skill(
-        ctx, "phantom", "name: phantom\ndescription: Phantom api.",
+        ctx,
+        "phantom",
+        "name: phantom\ndescription: Phantom api.",
         tools_py="TOOLS = {'x': default_api.shell}\n",  # NameError at import
     )
     result = tool_skill_validate(ctx, path="skills/phantom")
@@ -1742,7 +1777,9 @@ def test_skill_validate_tools_undefined_name(ctx):
 
 def test_skill_validate_get_tools_no_ctx(ctx):
     _write_ws_skill(
-        ctx, "noctx", "name: noctx\ndescription: Bad signature.",
+        ctx,
+        "noctx",
+        "name: noctx\ndescription: Bad signature.",
         tools_py="def get_tools():\n    return {}, []\n",  # missing ctx
     )
     result = tool_skill_validate(ctx, path="skills/noctx")
@@ -1781,9 +1818,7 @@ def test_skill_validate_rejects_redundant_workspace_prefix(ctx):
     'workspace/skills/<name>' path lands the skill one level too deep."""
     d = ctx.config.workspace_path / "workspace" / "skills" / "blog-tools"
     d.mkdir(parents=True)
-    (d / "SKILL.md").write_text(
-        "---\nname: blog-tools\ndescription: Blog helpers.\n---\nBody.\n"
-    )
+    (d / "SKILL.md").write_text("---\nname: blog-tools\ndescription: Blog helpers.\n---\nBody.\n")
     result = tool_skill_validate(ctx, path="workspace/skills/blog-tools")
     assert result.data["ok"] is False
     check = next(c for c in result.data["checks"] if c["name"] == "discoverable")
@@ -1797,9 +1832,7 @@ def test_skill_validate_rejects_nested_subdirectory(ctx):
     any deeper is invisible no matter how valid its SKILL.md is."""
     d = ctx.config.workspace_path / "skills" / "group" / "nested"
     d.mkdir(parents=True)
-    (d / "SKILL.md").write_text(
-        "---\nname: nested\ndescription: Too deep.\n---\nBody.\n"
-    )
+    (d / "SKILL.md").write_text("---\nname: nested\ndescription: Too deep.\n---\nBody.\n")
     result = tool_skill_validate(ctx, path="skills/group/nested")
     check = next(c for c in result.data["checks"] if c["name"] == "discoverable")
     assert check["passed"] is False
@@ -1832,7 +1865,9 @@ def test_skill_validate_discoverable_accepts_skill_md_path(ctx):
 def test_skill_validate_rejects_tools_as_list(ctx):
     """TOOLS = [fn] imports cleanly but breaks ctx.tools.extra.update()."""
     _write_ws_skill(
-        ctx, "toolslist", "name: toolslist\ndescription: Wrong TOOLS shape.",
+        ctx,
+        "toolslist",
+        "name: toolslist\ndescription: Wrong TOOLS shape.",
         tools_py="def hello():\n    return 'hi'\n\nTOOLS = [hello]\n",
     )
     result = tool_skill_validate(ctx, path="skills/toolslist")
@@ -1848,11 +1883,11 @@ def test_skill_validate_rejects_tool_definitions_as_dict(ctx):
     """TOOL_DEFINITIONS = {name: fn} imports cleanly but breaks every
     consumer that iterates it as a list of schema dicts."""
     _write_ws_skill(
-        ctx, "defsdict", "name: defsdict\ndescription: Wrong defs shape.",
+        ctx,
+        "defsdict",
+        "name: defsdict\ndescription: Wrong defs shape.",
         tools_py=(
-            "def hello(ctx):\n    return 'hi'\n\n"
-            "TOOLS = {'hello': hello}\n"
-            "TOOL_DEFINITIONS = {'hello': hello}\n"
+            "def hello(ctx):\n    return 'hi'\n\nTOOLS = {'hello': hello}\nTOOL_DEFINITIONS = {'hello': hello}\n"
         ),
     )
     result = tool_skill_validate(ctx, path="skills/defsdict")
@@ -1865,7 +1900,9 @@ def test_skill_validate_rejects_tool_definitions_as_dict(ctx):
 
 def test_skill_validate_rejects_non_callable_tool_value(ctx):
     _write_ws_skill(
-        ctx, "notcallable", "name: notcallable\ndescription: Bad value.",
+        ctx,
+        "notcallable",
+        "name: notcallable\ndescription: Bad value.",
         tools_py="TOOLS = {'hello': 'not a function'}\n",
     )
     result = tool_skill_validate(ctx, path="skills/notcallable")
@@ -1877,7 +1914,9 @@ def test_skill_validate_rejects_non_callable_tool_value(ctx):
 
 def test_skill_validate_rejects_definition_without_function_name(ctx):
     _write_ws_skill(
-        ctx, "nofname", "name: nofname\ndescription: Missing name.",
+        ctx,
+        "nofname",
+        "name: nofname\ndescription: Missing name.",
         tools_py=(
             "def hello(ctx):\n    return 'hi'\n\n"
             "TOOLS = {'hello': hello}\n"
@@ -1894,7 +1933,9 @@ def test_skill_validate_rejects_definition_without_function_name(ctx):
 def test_skill_validate_accepts_correct_tools_shape(ctx):
     """The happy path still passes, and reports the shape check explicitly."""
     _write_ws_skill(
-        ctx, "goodshape", "name: goodshape\ndescription: Correct shape.",
+        ctx,
+        "goodshape",
+        "name: goodshape\ndescription: Correct shape.",
         tools_py=(
             "def hello(ctx):\n    return 'hi'\n\n"
             "TOOLS = {'hello': hello}\n"
@@ -1917,8 +1958,7 @@ def test_load_native_tools_rejects_wrong_shape_with_actionable_error(tmp_path):
     d = tmp_path / "badshape"
     d.mkdir()
     (d / "tools.py").write_text("def hello():\n    return 'hi'\n\nTOOLS = [hello]\n")
-    info = SkillInfo(name="badshape", description="d", location=d,
-                     has_native_tools=True)
+    info = SkillInfo(name="badshape", description="d", location=d, has_native_tools=True)
     with pytest.raises(SkillContractError) as exc:
         _load_native_tools(info)
     assert "TOOLS" in str(exc.value)
@@ -1959,11 +1999,11 @@ def test_refresh_skills_survives_malformed_workspace_skill(ctx):
     """refresh_skills must report the broken skill rather than erroring out
     of the tool entirely."""
     _write_ws_skill(
-        ctx, "badrefresh", "name: badrefresh\ndescription: Bad shape.",
+        ctx,
+        "badrefresh",
+        "name: badrefresh\ndescription: Bad shape.",
         tools_py=(
-            "def hello(ctx):\n    return 'hi'\n\n"
-            "TOOLS = {'hello': hello}\n"
-            "TOOL_DEFINITIONS = {'hello': hello}\n"
+            "def hello(ctx):\n    return 'hi'\n\nTOOLS = {'hello': hello}\nTOOL_DEFINITIONS = {'hello': hello}\n"
         ),
     )
     text = _text(tool_refresh_skills(ctx))  # must not raise
@@ -1978,8 +2018,7 @@ async def test_activate_skill_rediscovers_when_missing_from_catalog(ctx):
     rather than emitting a nondeterministic contradiction."""
     from decafclaw.tools.skill_tools import _save_permission, tool_activate_skill
 
-    _write_ws_skill(ctx, "latecomer", "name: latecomer\ndescription: New skill.",
-                    body="Latecomer body.")
+    _write_ws_skill(ctx, "latecomer", "name: latecomer\ndescription: New skill.", body="Latecomer body.")
     # Pre-approve: this test is about the catalog miss, not the workspace-tier
     # confirmation gate that would otherwise block activation.
     _save_permission(ctx.config, "latecomer", {"status": "always", "hash": ""})
@@ -2018,7 +2057,9 @@ async def test_activation_warns_when_skill_tool_shadows_core_tool(ctx):
     assert "debug_context" in {td["function"]["name"] for td in TOOL_DEFINITIONS}
 
     _write_ws_skill(
-        ctx, "shadower", "name: shadower\ndescription: Shadows a core tool.",
+        ctx,
+        "shadower",
+        "name: shadower\ndescription: Shadows a core tool.",
         tools_py=(
             "def debug_context(ctx):\n    return 'mine'\n\n"
             "TOOLS = {'debug_context': debug_context}\n"
@@ -2027,7 +2068,11 @@ async def test_activation_warns_when_skill_tool_shadows_core_tool(ctx):
         ),
     )
     ctx.config.discovered_skills = discover_skills(ctx.config)
-    _save_permission(ctx.config, "shadower", {"status": "always", "hash": _compute_skill_hash(_find_skill(ctx.config.discovered_skills, "shadower"))})
+    _save_permission(
+        ctx.config,
+        "shadower",
+        {"status": "always", "hash": _compute_skill_hash(_find_skill(ctx.config.discovered_skills, "shadower"))},
+    )
 
     result = _text(await tool_activate_skill(ctx, name="shadower"))
 
@@ -2045,7 +2090,8 @@ async def test_shadow_warnings_are_ordered_deterministically(ctx):
     from decafclaw.tools.skill_tools import _save_permission, tool_activate_skill
 
     _write_ws_skill(
-        ctx, "multishadow",
+        ctx,
+        "multishadow",
         "name: multishadow\ndescription: Shadows two core tools.",
         tools_py=(
             "def debug_context(ctx):\n    return 'mine'\n\n"
@@ -2058,7 +2104,11 @@ async def test_shadow_warnings_are_ordered_deterministically(ctx):
         ),
     )
     ctx.config.discovered_skills = discover_skills(ctx.config)
-    _save_permission(ctx.config, "multishadow", {"status": "always", "hash": _compute_skill_hash(_find_skill(ctx.config.discovered_skills, "multishadow"))})
+    _save_permission(
+        ctx.config,
+        "multishadow",
+        {"status": "always", "hash": _compute_skill_hash(_find_skill(ctx.config.discovered_skills, "multishadow"))},
+    )
 
     result = _text(await tool_activate_skill(ctx, name="multishadow"))
 
@@ -2079,9 +2129,7 @@ async def test_shadow_warnings_are_ordered_deterministically(ctx):
 def test_refresh_skills_hints_at_redundant_workspace_prefix(ctx):
     d = ctx.config.workspace_path / "workspace" / "skills" / "blog-tools"
     d.mkdir(parents=True)
-    (d / "SKILL.md").write_text(
-        "---\nname: blog-tools\ndescription: Blog.\n---\nBody.\n"
-    )
+    (d / "SKILL.md").write_text("---\nname: blog-tools\ndescription: Blog.\n---\nBody.\n")
     text = _text(tool_refresh_skills(ctx))
     assert "workspace/skills/blog-tools" in text
     assert "skills/blog-tools" in text  # the suggested corrected path
@@ -2090,9 +2138,7 @@ def test_refresh_skills_hints_at_redundant_workspace_prefix(ctx):
 def test_refresh_skills_hints_at_overly_nested_skill(ctx):
     d = ctx.config.workspace_path / "skills" / "group" / "nested"
     d.mkdir(parents=True)
-    (d / "SKILL.md").write_text(
-        "---\nname: nested\ndescription: Too deep.\n---\nBody.\n"
-    )
+    (d / "SKILL.md").write_text("---\nname: nested\ndescription: Too deep.\n---\nBody.\n")
     text = _text(tool_refresh_skills(ctx))
     assert "skills/group/nested" in text
 
@@ -2189,7 +2235,10 @@ def _validate_tools_py(ctx, name, source):
     # test_phantom_check_sees_bundled_skill_tools covers the real wiring.
     ctx.config.skill_tool_owners = {"shell_background_start": "background"}
     _write_ws_skill(
-        ctx, name, f"name: {name}\ndescription: Phantom probe.", tools_py=source,
+        ctx,
+        name,
+        f"name: {name}\ndescription: Phantom probe.",
+        tools_py=source,
     )
     return tool_skill_validate(ctx, path=f"skills/{name}")
 
@@ -2198,6 +2247,7 @@ def test_phantom_check_sees_bundled_skill_tools(config):
     """Discovery must actually put shell_background_start in the catalog the
     check consults — otherwise the check silently passes everything."""
     from decafclaw.tools.skill_tools import _known_tool_names, rediscover_skills
+
     rediscover_skills(config)
     names = _known_tool_names(config)
     assert "shell_background_start" in names, "the most-wrapped tool must be known"
@@ -2212,56 +2262,76 @@ def _phantom_check(result):
 
 
 def test_skill_validate_rejects_default_api(ctx):
-    result = _validate_tools_py(ctx, "pdefault", (
-        "def go(ctx):\n"
-        "    return default_api.shell_background_start(command='npm start')\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "pdefault",
+        (
+            "def go(ctx):\n"
+            "    return default_api.shell_background_start(command='npm start')\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is False
     assert "default_api" in _phantom_check(result)["message"]
 
 
 def test_skill_validate_rejects_ctx_tool_call(ctx):
-    result = _validate_tools_py(ctx, "pctx", (
-        "def go(ctx):\n"
-        "    return ctx.shell_background_start(command='npm start')\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "pctx",
+        (
+            "def go(ctx):\n"
+            "    return ctx.shell_background_start(command='npm start')\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is False
     assert "shell_background_start" in _phantom_check(result)["message"]
 
 
 def test_skill_validate_rejects_ctx_tools_namespace_call(ctx):
     """The variant the eval actually produced."""
-    result = _validate_tools_py(ctx, "pctxtools", (
-        "def go(ctx):\n"
-        "    return ctx.tools.shell_background_start(command='npm start')\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "pctxtools",
+        (
+            "def go(ctx):\n"
+            "    return ctx.tools.shell_background_start(command='npm start')\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is False
     assert "shell_background_start" in _phantom_check(result)["message"]
 
 
 def test_skill_validate_allows_legitimate_ctx_use(ctx):
     """ctx.publish / ctx.config are real. Only decaf *tool* names are phantom."""
-    result = _validate_tools_py(ctx, "goodctx", (
-        "def go(ctx):\n"
-        "    ctx.publish('tool_status', {'text': 'hi'})\n"
-        "    return str(ctx.config.workspace_path)\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "goodctx",
+        (
+            "def go(ctx):\n"
+            "    ctx.publish('tool_status', {'text': 'hi'})\n"
+            "    return str(ctx.config.workspace_path)\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is True
     assert _phantom_check(result)["passed"] is True
 
 
 def test_skill_validate_allows_subprocess(ctx):
     """The documented way to run a command from inside a tool."""
-    result = _validate_tools_py(ctx, "subproc", (
-        "import subprocess\n"
-        "def go(ctx):\n"
-        "    return subprocess.run(['npm', 'start'], capture_output=True).stdout\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "subproc",
+        (
+            "import subprocess\n"
+            "def go(ctx):\n"
+            "    return subprocess.run(['npm', 'start'], capture_output=True).stdout\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is True
 
 
@@ -2297,9 +2367,7 @@ async def test_reactivate_does_not_duplicate_mismatched_definition_names(ctx, tm
     await tool_activate_skill(ctx, name="mismatch")
     await tool_activate_skill(ctx, name="mismatch")  # reload, same source
 
-    names = [
-        td.get("function", {}).get("name") for td in ctx.tools.extra_definitions
-    ]
+    names = [td.get("function", {}).get("name") for td in ctx.tools.extra_definitions]
     assert names.count("weather_fetch") == 1, f"duplicate declaration: {names}"
 
 
@@ -2330,8 +2398,12 @@ def _tiered_skill(skill_dir, name, tools_py, tier):
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "tools.py").write_text(tools_py)
     return SkillInfo(
-        name=name, description="Tier probe.", location=skill_dir,
-        body="Body.", has_native_tools=True, trust_tier=tier,
+        name=name,
+        description="Tier probe.",
+        location=skill_dir,
+        body="Body.",
+        has_native_tools=True,
+        trust_tier=tier,
     )
 
 
@@ -2351,11 +2423,7 @@ async def test_activation_blocked_for_workspace_skill_with_phantom_call(ctx, tmp
 
 @pytest.mark.asyncio
 async def test_activation_blocked_for_default_api(ctx, tmp_path):
-    src = (
-        "def go(ctx):\n"
-        "    return default_api.workspace_read(path='x')\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    )
+    src = "def go(ctx):\n    return default_api.workspace_read(path='x')\nTOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
     skill = _tiered_skill(tmp_path / "da", "da", src, "workspace")
     ctx.config.discovered_skills = [skill]
     _save_permission(ctx.config, "da", {"status": "always", "hash": _compute_skill_hash(skill)})
@@ -2433,44 +2501,60 @@ async def test_reload_into_a_phantom_call_keeps_working_tools(ctx, tmp_path):
 
 
 def test_skill_validate_rejects_subscript_tool_call(ctx):
-    result = _validate_tools_py(ctx, "psub", (
-        "def get_tools(context):\n"
-        "    def go():\n"
-        "        return context['shell_background_start'](command='npm start')\n"
-        "    return {'go': go}, []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "psub",
+        (
+            "def get_tools(context):\n"
+            "    def go():\n"
+            "        return context['shell_background_start'](command='npm start')\n"
+            "    return {'go': go}, []\n"
+        ),
+    )
     assert result.data["ok"] is False
     assert "shell_background_start" in _phantom_check(result)["message"]
 
 
 def test_skill_validate_rejects_tool_call_on_renamed_receiver(ctx):
-    result = _validate_tools_py(ctx, "prenamed", (
-        "def go(context):\n"
-        "    return context.shell_background_start(command='npm start')\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "prenamed",
+        (
+            "def go(context):\n"
+            "    return context.shell_background_start(command='npm start')\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is False
     assert "shell_background_start" in _phantom_check(result)["message"]
 
 
 def test_skill_validate_rejects_self_tool_call(ctx):
-    result = _validate_tools_py(ctx, "pself", (
-        "class Helper:\n"
-        "    def run(self):\n"
-        "        return self.shell_background_start(command='npm start')\n"
-        "TOOLS = {}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "pself",
+        (
+            "class Helper:\n"
+            "    def run(self):\n"
+            "        return self.shell_background_start(command='npm start')\n"
+            "TOOLS = {}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is False
 
 
 def test_skill_validate_allows_same_named_local_variable(ctx):
     """A dict lookup that isn't a call is not a phantom tool call."""
-    result = _validate_tools_py(ctx, "plocal", (
-        "def go(ctx):\n"
-        "    labels = {'shell_background_start': 'Start server'}\n"
-        "    return labels['shell_background_start']\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "plocal",
+        (
+            "def go(ctx):\n"
+            "    labels = {'shell_background_start': 'Start server'}\n"
+            "    return labels['shell_background_start']\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is True
 
 
@@ -2482,36 +2566,48 @@ def test_skill_validate_allows_same_named_local_variable(ctx):
 
 
 def test_skill_validate_allows_wait_on_a_real_object(ctx):
-    result = _validate_tools_py(ctx, "pwait", (
-        "import asyncio\n"
-        "async def go(ctx):\n"
-        "    ev = asyncio.Event()\n"
-        "    await ev.wait()\n"
-        "    return 'done'\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "pwait",
+        (
+            "import asyncio\n"
+            "async def go(ctx):\n"
+            "    ev = asyncio.Event()\n"
+            "    await ev.wait()\n"
+            "    return 'done'\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is True, _phantom_check(result)
 
 
 def test_skill_validate_allows_ctx_cancelled_wait(ctx):
     """A real idiom in this codebase — the receiver check must stay shallow."""
-    result = _validate_tools_py(ctx, "pcancel", (
-        "async def go(ctx):\n"
-        "    await ctx.cancelled.wait()\n"
-        "    return 'done'\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "pcancel",
+        (
+            "async def go(ctx):\n"
+            "    await ctx.cancelled.wait()\n"
+            "    return 'done'\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is True, _phantom_check(result)
 
 
 def test_skill_validate_allows_subprocess_wait(ctx):
-    result = _validate_tools_py(ctx, "psubwait", (
-        "import subprocess\n"
-        "def go(ctx):\n"
-        "    p = subprocess.Popen(['npm', 'start'])\n"
-        "    return p.wait()\n"
-        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-    ))
+    result = _validate_tools_py(
+        ctx,
+        "psubwait",
+        (
+            "import subprocess\n"
+            "def go(ctx):\n"
+            "    p = subprocess.Popen(['npm', 'start'])\n"
+            "    return p.wait()\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
     assert result.data["ok"] is True, _phantom_check(result)
 
 
@@ -2519,12 +2615,10 @@ def test_skill_validate_rejects_bare_tool_name_on_ctx(ctx):
     """`ctx.shell(...)` is still the mistake, bare name notwithstanding."""
     ctx.config.skill_tool_owners = {"shell": "core"}
     _write_ws_skill(
-        ctx, "pbare", "name: pbare\ndescription: Bare.",
-        tools_py=(
-            "def go(ctx):\n"
-            "    return ctx.shell(command='ls')\n"
-            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
-        ),
+        ctx,
+        "pbare",
+        "name: pbare\ndescription: Bare.",
+        tools_py=("def go(ctx):\n    return ctx.shell(command='ls')\nTOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"),
     )
     result = tool_skill_validate(ctx, path="skills/pbare")
     assert result.data["ok"] is False
@@ -2549,12 +2643,12 @@ def _two_tool_skill(skill_dir, name, tool_name, body_ret):
         f"'function': {{'name': {tool_name!r}}}}}]\n"
     )
     return SkillInfo(
-        name=name, description="Shadow probe.", location=skill_dir,
-        body="Body.", has_native_tools=True,
+        name=name,
+        description="Shadow probe.",
+        location=skill_dir,
+        body="Body.",
+        has_native_tools=True,
     )
-
-
-
 
 
 @pytest.mark.asyncio
@@ -2658,7 +2752,6 @@ def test_skill_loader_failed_reload_preserves_previous_module(tmp_path):
     assert sys.modules.get(mod_name).VALID_VAR == "original"
 
 
-
 @pytest.mark.asyncio
 async def test_skill_invocation_flags_enforced(ctx, tmp_path):
     # 1. user_invocable=False -> find_command should return None
@@ -2670,6 +2763,7 @@ async def test_skill_invocation_flags_enforced(ctx, tmp_path):
     _write_skill(skill_dir2, "name: hidden_from_model\ndescription: desc\ndisable-model-invocation: true")
 
     from decafclaw.skills import find_command, parse_skill_md
+
     info1 = parse_skill_md(skill_dir1 / "SKILL.md")
     info2 = parse_skill_md(skill_dir2 / "SKILL.md")
 
@@ -2680,9 +2774,15 @@ async def test_skill_invocation_flags_enforced(ctx, tmp_path):
 
     # Model invocation enforcement
     from decafclaw.tools.skill_tools import tool_activate_skill
+
     result = await tool_activate_skill(ctx, "hidden_from_model")
     assert isinstance(result, ToolResult)
-    assert "not allowed" in result.text.lower() or "disabled" in result.text.lower() or "cannot be activated" in result.text.lower()
+    assert (
+        "not allowed" in result.text.lower()
+        or "disabled" in result.text.lower()
+        or "cannot be activated" in result.text.lower()
+    )
+
 
 @pytest.mark.asyncio
 async def test_skill_allowed_tools_enforced(ctx, tmp_path):
@@ -2698,16 +2798,19 @@ TOOL_DEFINITIONS = [
 ]
 """)
     from decafclaw.skills import parse_skill_md
+
     info = parse_skill_md(skill_dir / "SKILL.md")
     ctx.config.discovered_skills = [info]
 
     from decafclaw.tool_definitions import build_tool_list
     from decafclaw.tools.skill_tools import activate_skill_internal
+
     await activate_skill_internal(ctx, info)
     tools, text = build_tool_list(ctx)
     tool_names = [t["function"]["name"] for t in tools]
     assert "my_tool1" in tool_names
     assert "my_tool2" not in tool_names
+
 
 @pytest.mark.asyncio
 async def test_skill_tool_conflict_resolution(ctx, tmp_path):
@@ -2728,16 +2831,19 @@ TOOL_DEFINITIONS = [{"function": {"name": "my_tool", "description": "2"}}]
 """)
 
     from decafclaw.skills import parse_skill_md
+
     info1 = parse_skill_md(skill1_dir / "SKILL.md")
     info2 = parse_skill_md(skill2_dir / "SKILL.md")
 
     ctx.config.discovered_skills = [info1, info2]
 
     from decafclaw.tools.skill_tools import activate_skill_internal
+
     await activate_skill_internal(ctx, info1)
     await activate_skill_internal(ctx, info2)
 
     from decafclaw.tool_definitions import build_tool_list
+
     tools, text = build_tool_list(ctx)
 
     my_tools = [t for t in tools if "my_tool" in t["function"]["name"]]
@@ -2750,6 +2856,7 @@ TOOL_DEFINITIONS = [{"function": {"name": "my_tool", "description": "2"}}]
     # We must mock execute_single_tool's use of asyncio.Semaphore
     # But wait, we can just call execute_tool directly.
     from decafclaw.tools import execute_tool
+
     res1 = await execute_tool(ctx, "my_tool", {})
     assert res1.text == "skill1"
 

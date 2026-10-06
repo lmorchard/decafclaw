@@ -59,18 +59,23 @@ async def run_interactive(ctx: "Context"):
 
     if config.audit_log.enabled:
         from .audit_log import make_audit_log_subscriber
+
         ctx.event_bus.subscribe(make_audit_log_subscriber(config))
     if config.telemetry.tool_usage_enabled:
         from .tool_telemetry import make_tool_telemetry_subscriber
+
         ctx.event_bus.subscribe(make_tool_telemetry_subscriber(config))
     if config.telemetry.reflection_metrics_enabled:
         from .reflection_metrics import make_reflection_metrics_subscriber
+
         ctx.event_bus.subscribe(make_reflection_metrics_subscriber(config))
     if config.telemetry.loop_breaker_enabled:
         from .loop_breaker_telemetry import make_loop_breaker_subscriber
+
         ctx.event_bus.subscribe(make_loop_breaker_subscriber(config))
     if config.telemetry.retrieval_enabled:
         from .retrieval_telemetry import make_retrieval_telemetry_subscriber
+
         ctx.event_bus.subscribe(make_retrieval_telemetry_subscriber(config))
 
     await init_mcp(config, event_bus=ctx.event_bus)
@@ -78,6 +83,7 @@ async def run_interactive(ctx: "Context"):
 
     # Create conversation manager
     from .widget_input import register_widget_handler
+
     manager = ConversationManager(config, ctx.event_bus)
     register_widget_handler(manager.confirmation_registry)
 
@@ -139,8 +145,7 @@ async def run_interactive(ctx: "Context"):
 
             print(f"\n  \U0001f6a8 Confirm ({action_type}): {command}")
             if suggested_pattern and action_type == "run_shell_command":
-                prompt = (f"  Approve? [y]es / [n]o / [a]lways / "
-                          f"[p]attern ({suggested_pattern}): ")
+                prompt = f"  Approve? [y]es / [n]o / [a]lways / [p]attern ({suggested_pattern}): "
             else:
                 prompt = "  Approve? [y]es / [n]o / [a]lways: "
 
@@ -151,8 +156,11 @@ async def run_interactive(ctx: "Context"):
             add_pattern = choice in ("p", "pattern")
 
             await manager.respond_to_confirmation(
-                conv_id, confirmation_id,
-                approved=approved, always=always, add_pattern=add_pattern,
+                conv_id,
+                confirmation_id,
+                approved=approved,
+                always=always,
+                add_pattern=add_pattern,
             )
 
         elif event_type == "message_complete":
@@ -184,6 +192,7 @@ async def run_interactive(ctx: "Context"):
 
     async def interactive_heartbeat_reporter(results):
         from datetime import datetime
+
         has_alerts = any(not r["is_ok"] for r in results)
         if not has_alerts and suppress_ok:
             return
@@ -196,7 +205,10 @@ async def run_interactive(ctx: "Context"):
 
     heartbeat_task = asyncio.create_task(
         run_heartbeat_timer(
-            config, ctx.event_bus, manager, shutdown_event,
+            config,
+            ctx.event_bus,
+            manager,
+            shutdown_event,
             on_results=interactive_heartbeat_reporter,
         )
     )
@@ -218,7 +230,8 @@ async def run_interactive(ctx: "Context"):
             last_response_text["text"] = ""
 
             await manager.send_message(
-                conv_id, user_input,
+                conv_id,
+                user_input,
                 user_id=ctx.user_id,
                 context_setup=terminal_context_setup,
             )

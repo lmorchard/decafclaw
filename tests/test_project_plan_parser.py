@@ -126,7 +126,9 @@ class TestNextActionable:
 
     def test_in_progress_parent_pending_child(self):
         parent = Step(
-            "1", "Parent", status="in_progress",
+            "1",
+            "Parent",
+            status="in_progress",
             children=[
                 Step("1.1", "Done child", status="done"),
                 Step("1.2", "Pending child", status="pending"),
@@ -139,7 +141,9 @@ class TestNextActionable:
     def test_in_progress_parent_all_children_done(self):
         """Parent should be returned when all children are done."""
         parent = Step(
-            "1", "Parent", status="in_progress",
+            "1",
+            "Parent",
+            status="in_progress",
             children=[
                 Step("1.1", "Done", status="done"),
                 Step("1.2", "Done", status="done"),

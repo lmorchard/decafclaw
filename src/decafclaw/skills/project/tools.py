@@ -74,10 +74,7 @@ def _resolve_project(ctx: "Context", project: str = "") -> str:
     current = _get_current_project(ctx)
     if current:
         return current
-    raise ValueError(
-        "no project specified and no current project set. "
-        "Use project_create first."
-    )
+    raise ValueError("no project specified and no current project set. Use project_create first.")
 
 
 def _load_or_error(config, project: str) -> ProjectInfo | ToolResult:
@@ -117,8 +114,7 @@ def _progress_data_from_plan(info: ProjectInfo, steps: list[Step]) -> dict:
         widget_steps.append(step)
     done, total = plan_progress(steps)
     nxt = next_actionable(steps)
-    summary = f"{done}/{total} · {nxt.number}. {nxt.description}" if nxt \
-        else f"{done}/{total}"
+    summary = f"{done}/{total} · {nxt.number}. {nxt.description}" if nxt else f"{done}/{total}"
     return {"steps": widget_steps, "title": info.description, "summary": summary}
 
 
@@ -127,19 +123,14 @@ async def _emit_project_progress(ctx: "Context", info: ProjectInfo) -> None:
     if info.status != ProjectState.EXECUTING:
         return
     try:
-        content = (
-            await asyncio.to_thread(info.plan_path.read_text)
-            if info.plan_path.exists() else ""
-        )
+        content = await asyncio.to_thread(info.plan_path.read_text) if info.plan_path.exists() else ""
         if not content.strip():
             return
         _, steps, _ = parse_plan(content)
         if not steps:
             return
         data = _progress_data_from_plan(info, steps)
-        result = await sticky_mod.set_sticky(
-            ctx.config, ctx.conv_id, "progress_tracker", data,
-            emit=emit_for_ctx(ctx))
+        result = await sticky_mod.set_sticky(ctx.config, ctx.conv_id, "progress_tracker", data, emit=emit_for_ctx(ctx))
         if result is not None and not result.ok:
             log.warning("project sticky set failed: %s", result.error)
     except Exception:
@@ -149,8 +140,7 @@ async def _emit_project_progress(ctx: "Context", info: ProjectInfo) -> None:
 async def _clear_project_progress(ctx: "Context") -> None:
     """Clear the sticky slot for a project. Fail-open."""
     try:
-        result = await sticky_mod.clear_sticky(
-            ctx.config, ctx.conv_id, emit=emit_for_ctx(ctx))
+        result = await sticky_mod.clear_sticky(ctx.config, ctx.conv_id, emit=emit_for_ctx(ctx))
         if result is not None and not result.ok:
             log.warning("project sticky clear failed: %s", result.error)
     except Exception:
@@ -160,6 +150,7 @@ async def _clear_project_progress(ctx: "Context") -> None:
 # ---------------------------------------------------------------------------
 # Tool implementations
 # ---------------------------------------------------------------------------
+
 
 async def tool_project_create(ctx: "Context", description: str, slug: str = "") -> str | ToolResult:
     """Create a new structured project."""
@@ -260,10 +251,7 @@ async def tool_project_task_done(ctx: "Context") -> str | ToolResult:
     if info.status in (ProjectState.BRAINSTORMING, ProjectState.SPEC_REVIEW):
         spec_content = info.spec_path.read_text().strip() if info.spec_path.exists() else ""
         if not spec_content:
-            return ToolResult(
-                text="[error: write the spec with project_update_spec before "
-                "calling project_task_done]"
-            )
+            return ToolResult(text="[error: write the spec with project_update_spec before calling project_task_done]")
         info.status = ProjectState.SPEC_REVIEW
         save_project(info)
 
@@ -293,10 +281,7 @@ async def tool_project_task_done(ctx: "Context") -> str | ToolResult:
     elif info.status in (ProjectState.PLANNING, ProjectState.PLAN_REVIEW):
         plan_content = info.plan_path.read_text().strip() if info.plan_path.exists() else ""
         if not plan_content:
-            return ToolResult(
-                text="[error: write the plan with project_update_plan before "
-                "calling project_task_done]"
-            )
+            return ToolResult(text="[error: write the plan with project_update_plan before calling project_task_done]")
         _, steps, _ = parse_plan(plan_content)
         _, total = plan_progress(steps)
         if total == 0:
@@ -332,8 +317,7 @@ async def tool_project_task_done(ctx: "Context") -> str | ToolResult:
         _, steps, _ = parse_plan(content)
         if next_actionable(steps) is not None:
             return ToolResult(
-                text="[error: there are still incomplete steps. Finish them "
-                "before calling project_task_done.]"
+                text="[error: there are still incomplete steps. Finish them before calling project_task_done.]"
             )
         info.status = ProjectState.DONE
         await asyncio.to_thread(save_project, info)
@@ -367,15 +351,19 @@ def _next_execution_step(info: ProjectInfo) -> str:
     if nxt.status == "in_progress":
         return _load_prompt(
             "executing_continue",
-            done=done, total=total,
-            number=nxt.number, description=nxt.description,
+            done=done,
+            total=total,
+            number=nxt.number,
+            description=nxt.description,
             directory=info.directory,
         )
     else:
         return _load_prompt(
             "executing_next",
-            done=done, total=total,
-            number=nxt.number, description=nxt.description,
+            done=done,
+            total=total,
+            number=nxt.number,
+            description=nxt.description,
             directory=info.directory,
         )
 
@@ -438,10 +426,7 @@ async def tool_project_switch(ctx: "Context", project: str) -> str | ToolResult:
     _set_current_project(ctx, info.slug)
     # The switched-to project's own phase governs the next turn, so the hint
     # has to come from that phase rather than being fixed text (#727).
-    return (
-        f"Switched to project '{info.slug}' ({info.status.value}). "
-        f"{_next_action_hint(info.status)}"
-    )
+    return f"Switched to project '{info.slug}' ({info.status.value}). {_next_action_hint(info.status)}"
 
 
 async def tool_project_update_spec(ctx: "Context", spec_text: str) -> str | ToolResult:
@@ -454,8 +439,7 @@ async def tool_project_update_spec(ctx: "Context", spec_text: str) -> str | Tool
 
     if info.status not in (ProjectState.BRAINSTORMING, ProjectState.SPEC_REVIEW):
         return ToolResult(
-            text=f"[error: can only update spec during brainstorming or spec_review, "
-            f"not {info.status.value}]"
+            text=f"[error: can only update spec during brainstorming or spec_review, not {info.status.value}]"
         )
 
     info.spec_path.write_text(spec_text)
@@ -471,8 +455,7 @@ async def tool_project_update_spec(ctx: "Context", spec_text: str) -> str | Tool
         save_project(info)
 
     return ToolResult(
-        text=f"Spec updated ({len(spec_text)} chars). "
-        f"Present the spec to the user.\n\n---\n{spec_text}\n---",
+        text=f"Spec updated ({len(spec_text)} chars). Present the spec to the user.\n\n---\n{spec_text}\n---",
         end_turn=EndTurnConfirm(
             message=(
                 f"**Spec review for '{info.slug}'**\n\n"
@@ -496,21 +479,14 @@ async def tool_project_update_plan(ctx: "Context", plan_text: str) -> str | Tool
     info = result
 
     if info.status not in (ProjectState.PLANNING, ProjectState.PLAN_REVIEW):
-        return ToolResult(
-            text=f"[error: can only update plan during planning or plan_review, "
-            f"not {info.status.value}]"
-        )
+        return ToolResult(text=f"[error: can only update plan during planning or plan_review, not {info.status.value}]")
 
     overview, steps, tail = parse_plan(plan_text)
     _, total = plan_progress(steps)
 
     if plan_text.strip() and total == 0:
         return ToolResult(
-            text=(
-                "[error: no steps parsed. Use checkbox format:\n"
-                "  - [ ] 1. First step\n"
-                "  - [ ] 2. Second step]"
-            )
+            text=("[error: no steps parsed. Use checkbox format:\n  - [ ] 1. First step\n  - [ ] 2. Second step]")
         )
 
     rendered = render_plan(overview, steps, tail)
@@ -527,8 +503,7 @@ async def tool_project_update_plan(ctx: "Context", plan_text: str) -> str | Tool
         save_project(info)
 
     return ToolResult(
-        text=f"Plan updated ({total} steps). "
-        f"Present the plan to the user.\n\n---\n{rendered}\n---",
+        text=f"Plan updated ({total} steps). Present the plan to the user.\n\n---\n{rendered}\n---",
         end_turn=EndTurnConfirm(
             message=(
                 f"**Plan review for '{info.slug}'**\n\n"
@@ -543,9 +518,7 @@ async def tool_project_update_plan(ctx: "Context", plan_text: str) -> str | Tool
     )
 
 
-async def tool_project_update_step(
-    ctx, step: str, status: str, note: str = ""
-) -> str | ToolResult:
+async def tool_project_update_step(ctx, step: str, status: str, note: str = "") -> str | ToolResult:
     """Update a plan step's status."""
 
     result = _load_current(ctx)
@@ -576,9 +549,7 @@ async def tool_project_update_step(
     return msg
 
 
-async def tool_project_add_steps(
-    ctx, after_step: str, steps: list[str]
-) -> str | ToolResult:
+async def tool_project_add_steps(ctx, after_step: str, steps: list[str]) -> str | ToolResult:
     """Insert new steps after a given step."""
 
     result = _load_current(ctx)
@@ -626,11 +597,9 @@ async def tool_project_advance(ctx: "Context", target_status: str = "") -> str |
 
     if not validate_transition(info.status, target):
         from decafclaw.skills.project.state import TRANSITIONS
+
         valid = ", ".join(s.value for s in TRANSITIONS.get(info.status, set()))
-        return ToolResult(
-            text=f"[error: cannot go from '{info.status.value}' to '{target.value}'. "
-            f"Valid: {valid}]"
-        )
+        return ToolResult(text=f"[error: cannot go from '{info.status.value}' to '{target.value}'. Valid: {valid}]")
 
     was_executing = info.status == ProjectState.EXECUTING
     info.status = target
@@ -806,7 +775,10 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_status": {"type": "string", "description": "Target state (e.g. 'planning', 'brainstorming')"},
+                    "target_status": {
+                        "type": "string",
+                        "description": "Target state (e.g. 'planning', 'brainstorming')",
+                    },
                 },
             },
         },
@@ -829,33 +801,49 @@ TOOL_DEFINITIONS = [
 
 # Build lookup dicts for get_tools to select subsets
 _TOOLS_BY_NAME = TOOLS
-_DEFS_BY_NAME = {
-    td["function"]["name"]: td for td in TOOL_DEFINITIONS
-}
+_DEFS_BY_NAME = {td["function"]["name"]: td for td in TOOL_DEFINITIONS}
 
 # Phase-to-tool-names mapping
 _PHASE_TOOLS: dict[ProjectState | None, list[str]] = {
     None: ["project_create", "project_list", "project_switch"],
     ProjectState.BRAINSTORMING: [
-        "project_next_task", "project_update_spec", "project_task_done",
-        "project_note", "project_status",
+        "project_next_task",
+        "project_update_spec",
+        "project_task_done",
+        "project_note",
+        "project_status",
     ],
     ProjectState.SPEC_REVIEW: [
-        "project_task_done", "project_update_spec", "project_status",
+        "project_task_done",
+        "project_update_spec",
+        "project_status",
     ],
     ProjectState.PLANNING: [
-        "project_next_task", "project_update_plan", "project_task_done",
-        "project_note", "project_status",
+        "project_next_task",
+        "project_update_plan",
+        "project_task_done",
+        "project_note",
+        "project_status",
     ],
     ProjectState.PLAN_REVIEW: [
-        "project_task_done", "project_update_plan", "project_status",
+        "project_task_done",
+        "project_update_plan",
+        "project_status",
     ],
     ProjectState.EXECUTING: [
-        "project_next_task", "project_task_done", "project_update_step",
-        "project_add_steps", "project_advance", "project_note", "project_status",
+        "project_next_task",
+        "project_task_done",
+        "project_update_step",
+        "project_add_steps",
+        "project_advance",
+        "project_note",
+        "project_status",
     ],
     ProjectState.DONE: [
-        "project_status", "project_list", "project_switch", "project_note",
+        "project_status",
+        "project_list",
+        "project_switch",
+        "project_note",
     ],
 }
 
@@ -864,8 +852,7 @@ _PHASE_TOOLS: dict[ProjectState | None, list[str]] = {
 # being offered, so no rung can name a tool the reading phase lacks.
 _NEXT_ACTION_HINTS: list[tuple[str, str]] = [
     ("project_next_task", "Call project_next_task."),
-    ("project_task_done",
-     "Call project_status to review, then project_task_done when it looks right."),
+    ("project_task_done", "Call project_status to review, then project_task_done when it looks right."),
     ("project_status", "Call project_status to see where the project stands."),
     ("project_list", "Call project_list to see available projects."),
 ]

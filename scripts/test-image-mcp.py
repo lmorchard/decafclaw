@@ -59,103 +59,121 @@ def main():
         msg_id = msg.get("id")
 
         if method == "initialize":
-            send({
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}, "resources": {}},
-                    "serverInfo": {"name": "test-image-mcp", "version": "0.1.0"},
-                },
-            })
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {}, "resources": {}},
+                        "serverInfo": {"name": "test-image-mcp", "version": "0.1.0"},
+                    },
+                }
+            )
         elif method == "notifications/initialized":
             pass  # no response needed
         elif method == "resources/list":
-            send({
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": {
-                    "resources": [
-                        {
-                            "uri": "test://gradient.png",
-                            "name": "Test gradient image",
-                            "description": "A 200x200 red-blue gradient PNG for testing",
-                            "mimeType": "image/png",
-                        },
-                    ],
-                },
-            })
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "resources": [
+                            {
+                                "uri": "test://gradient.png",
+                                "name": "Test gradient image",
+                                "description": "A 200x200 red-blue gradient PNG for testing",
+                                "mimeType": "image/png",
+                            },
+                        ],
+                    },
+                }
+            )
         elif method == "resources/templates/list":
-            send({
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": {"resourceTemplates": []},
-            })
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"resourceTemplates": []},
+                }
+            )
         elif method == "resources/read":
             uri = msg.get("params", {}).get("uri", "")
             if uri == "test://gradient.png":
-                send({
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": {
+                            "contents": [
+                                {
+                                    "uri": "test://gradient.png",
+                                    "mimeType": "image/png",
+                                    "blob": TEST_PNG,
+                                },
+                            ],
+                        },
+                    }
+                )
+            else:
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "error": {"code": -32602, "message": f"Unknown resource: {uri}"},
+                    }
+                )
+        elif method == "tools/list":
+            send(
+                {
                     "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": {
-                        "contents": [
+                        "tools": [
                             {
-                                "uri": "test://gradient.png",
-                                "mimeType": "image/png",
-                                "blob": TEST_PNG,
+                                "name": "generate_test_image",
+                                "description": "Generate a test image (a tiny red pixel PNG). Use this to test image attachments.",
+                                "inputSchema": {
+                                    "type": "object",
+                                    "properties": {},
+                                },
                             },
                         ],
                     },
-                })
-            else:
-                send({
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "error": {"code": -32602, "message": f"Unknown resource: {uri}"},
-                })
-        elif method == "tools/list":
-            send({
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": {
-                    "tools": [
-                        {
-                            "name": "generate_test_image",
-                            "description": "Generate a test image (a tiny red pixel PNG). Use this to test image attachments.",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {},
-                            },
-                        },
-                    ],
-                },
-            })
+                }
+            )
         elif method == "tools/call":
             tool_name = msg.get("params", {}).get("name", "")
             if tool_name == "generate_test_image":
-                send({
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {
-                        "content": [
-                            {"type": "text", "text": "Here's a test image (200x200 red-blue gradient):"},
-                            {"type": "image", "data": TEST_PNG, "mimeType": "image/png"},
-                        ],
-                    },
-                })
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": {
+                            "content": [
+                                {"type": "text", "text": "Here's a test image (200x200 red-blue gradient):"},
+                                {"type": "image", "data": TEST_PNG, "mimeType": "image/png"},
+                            ],
+                        },
+                    }
+                )
             else:
-                send({
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "error": {"code": -32602, "message": f"Unknown tool: {tool_name}"},
-                })
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "error": {"code": -32602, "message": f"Unknown tool: {tool_name}"},
+                    }
+                )
         else:
             if msg_id is not None:
-                send({
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "error": {"code": -32601, "message": f"Unknown method: {method}"},
-                })
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "error": {"code": -32601, "message": f"Unknown method: {method}"},
+                    }
+                )
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from .util import estimate_tokens
 log = logging.getLogger(__name__)
 
 # Matches [[PageName]] and [[PageName|display text]] in vault page content
-_WIKI_LINK_RE = re.compile(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]')
+_WIKI_LINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 
 # Source type labels for display
 SOURCE_LABELS = {
@@ -44,9 +44,7 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
 
         # Search all source types, fetch extra to allow for threshold filtering.
         # Over-fetch to allow for deduplication and token budget filtering.
-        results = search_similar_sync(
-            config, query_embedding, top_k=mc.max_results * 2
-        )
+        results = search_similar_sync(config, query_embedding, top_k=mc.max_results * 2)
 
         # Exclude legacy conversation embeddings — they add noise (see #133)
         results = [r for r in results if r.get("source_type") != "conversation"]
@@ -55,7 +53,7 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
         results = [r for r in results if r["similarity"] >= mc.similarity_threshold]
 
         # Trim to max_results
-        results = results[:mc.max_results]
+        results = results[: mc.max_results]
 
         # Enrich with file metadata for relevance scoring
         results = _enrich_results(config, results)
@@ -64,7 +62,8 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
         relevance = config.relevance
         if relevance and relevance.graph_expansion_enabled:
             results = _expand_graph_links(
-                config, results,
+                config,
+                results,
                 similarity_discount=relevance.graph_expansion_similarity_discount,
             )
 
@@ -128,20 +127,23 @@ def _enrich_results(config, results: list[dict]) -> list[dict]:
                         metadata, _ = parse_frontmatter(text)
                         if metadata:
                             result["importance"] = get_frontmatter_field(
-                                metadata, "importance", 0.5,
+                                metadata,
+                                "importance",
+                                0.5,
                             )
                             summary = get_frontmatter_field(metadata, "summary", "")
                             if summary:
                                 result["summary"] = str(summary)
         except Exception:
-            log.warning("Failed to enrich result %s", result.get("file_path", "?"),
-                        exc_info=True)
+            log.warning("Failed to enrich result %s", result.get("file_path", "?"), exc_info=True)
 
     return results
 
 
 def _expand_graph_links(
-    config, results: list[dict], similarity_discount: float = 0.7,
+    config,
+    results: list[dict],
+    similarity_discount: float = 0.7,
 ) -> list[dict]:
     """Expand retrieval results by following [[wiki-links]] one hop.
 
@@ -218,23 +220,28 @@ def _expand_graph_links(
                 modified_at = ""
                 entry_text = linked_text
 
-            expanded.append({
-                "entry_text": entry_text,
-                "file_path": rel_path,
-                "similarity": parent_similarity * similarity_discount,
-                "source_type": "graph_expansion",
-                "linked_from": parent_page,
-                "importance": importance,
-                "modified_at": modified_at,
-            })
+            expanded.append(
+                {
+                    "entry_text": entry_text,
+                    "file_path": rel_path,
+                    "similarity": parent_similarity * similarity_discount,
+                    "source_type": "graph_expansion",
+                    "linked_from": parent_page,
+                    "importance": importance,
+                    "modified_at": modified_at,
+                }
+            )
             added_count += 1
 
         if added_count:
             log.debug("Graph expansion from '%s': added %d new candidates", file_path, added_count)
 
     if expanded:
-        log.info("Graph expansion: %d candidates added from %d source pages",
-                 len(expanded), sum(1 for r in results if r.get("file_path")))
+        log.info(
+            "Graph expansion: %d candidates added from %d source pages",
+            len(expanded),
+            sum(1 for r in results if r.get("file_path")),
+        )
     return results + expanded
 
 
@@ -267,14 +274,14 @@ def format_memory_headlines(
     if not results:
         return ""
     lines = [
-        "[Automatically retrieved headlines — call vault_read to "
-        "pull full bodies for any of these]\n",
+        "[Automatically retrieved headlines — call vault_read to pull full bodies for any of these]\n",
     ]
     for r in results:
         label = SOURCE_LABELS.get(r.get("source_type", ""), r.get("source_type", "?"))
         path = r.get("file_path", "")
         summary = r.get("summary") or _excerpt_for_headline(
-            r.get("entry_text", ""), max_summary_chars,
+            r.get("entry_text", ""),
+            max_summary_chars,
         )
         if max_summary_chars > 0 and len(summary) > max_summary_chars:
             summary = summary[:max_summary_chars].rstrip() + "…"
@@ -295,7 +302,7 @@ def _excerpt_for_headline(text: str, max_chars: int) -> str:
     if text.startswith("---"):
         end = text.find("\n---", 3)
         if end > 0:
-            text = text[end + 4:]
+            text = text[end + 4 :]
     # Collapse internal whitespace so the headline is one tidy line.
     cleaned = " ".join(text.split())
     return cleaned[:max_chars] if max_chars > 0 else cleaned
@@ -306,11 +313,11 @@ def _excerpt_for_headline(text: str, max_chars: int) -> str:
 # Matches @[[PageName]] (and @[[PageName|display]]) mentions in user messages.
 # Distinct from _WIKI_LINK_RE above which matches bare [[PageName]] links
 # inside vault page bodies.
-_WIKI_MENTION_RE = re.compile(r'@\[\[([^\]]+)\]\]')
+_WIKI_MENTION_RE = re.compile(r"@\[\[([^\]]+)\]\]")
 
 
 # Matches @ followed by word/path-like characters. Does NOT match @[[Page]].
-_MENTION_RE = re.compile(r'(?<!\w)@([a-zA-Z0-9_./+-]+)')
+_MENTION_RE = re.compile(r"(?<!\w)@([a-zA-Z0-9_./+-]+)")
 
 
 def parse_bare_mentions(user_message: str) -> list[dict]:
@@ -331,23 +338,28 @@ def parse_bare_mentions(user_message: str) -> list[dict]:
         if val.startswith("mcp/"):
             parts = val.split("/", 2)
             if len(parts) >= 3:
-                results.append({
-                    "type": "mcp",
-                    "server": parts[1],
-                    "resource": parts[2],
-                    "raw": val,
-                })
+                results.append(
+                    {
+                        "type": "mcp",
+                        "server": parts[1],
+                        "resource": parts[2],
+                        "raw": val,
+                    }
+                )
         else:
-            results.append({
-                "type": "file",
-                "path": val,
-                "raw": val,
-            })
+            results.append(
+                {
+                    "type": "file",
+                    "path": val,
+                    "raw": val,
+                }
+            )
     return results
 
 
 def parse_wiki_references(
-    user_message: str, wiki_page: str | None = None,
+    user_message: str,
+    wiki_page: str | None = None,
 ) -> list[dict]:
     """Parse @[[PageName]] mentions and optional open wiki page.
 
@@ -384,8 +396,7 @@ def read_wiki_page(config, page_name: str) -> str | None:
     try:
         return resolved.read_text()
     except (OSError, UnicodeError):
-        log.warning("Failed to read wiki page %s at %s", page_name, resolved,
-                    exc_info=True)
+        log.warning("Failed to read wiki page %s at %s", page_name, resolved, exc_info=True)
         return None
 
 

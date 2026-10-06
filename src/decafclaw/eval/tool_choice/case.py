@@ -14,9 +14,10 @@ class Case:
 
     See docs/eval-loop.md for authoring guidance.
     """
+
     name: str
-    scenario: str           # the user message the model sees
-    expected: str           # the single tool name asserted to be correct
+    scenario: str  # the user message the model sees
+    expected: str  # the single tool name asserted to be correct
     near_miss: list[str] = field(default_factory=list)  # ≥1 tool to compare against
     notes: str = ""
 
@@ -27,15 +28,10 @@ _REQUIRED_FIELDS = ("name", "scenario", "expected", "near_miss")
 def _parse_one(raw: dict, source: Path) -> Case:
     missing = [f for f in _REQUIRED_FIELDS if f not in raw or not raw[f]]
     if missing:
-        raise ValueError(
-            f"{source}: case missing required field(s) {missing}: {raw!r}"
-        )
+        raise ValueError(f"{source}: case missing required field(s) {missing}: {raw!r}")
     near_miss = raw["near_miss"]
     if not isinstance(near_miss, list) or not near_miss:
-        raise ValueError(
-            f"{source}: 'near_miss' must be a non-empty list of tool names "
-            f"(got {near_miss!r})"
-        )
+        raise ValueError(f"{source}: 'near_miss' must be a non-empty list of tool names (got {near_miss!r})")
     return Case(
         name=str(raw["name"]),
         scenario=str(raw["scenario"]),
@@ -65,9 +61,7 @@ def load_cases(path: Path) -> list[Case]:
         if raw is None:
             continue
         if not isinstance(raw, list):
-            raise ValueError(
-                f"{file}: top-level YAML must be a list of cases (got {type(raw).__name__})"
-            )
+            raise ValueError(f"{file}: top-level YAML must be a list of cases (got {type(raw).__name__})")
         for item in raw:
             if not isinstance(item, dict):
                 raise ValueError(f"{file}: case entries must be mappings, got {item!r}")
