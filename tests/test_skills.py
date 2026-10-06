@@ -452,6 +452,7 @@ def test_discover_shadowed_skill_with_config_only_env_alias(config, monkeypatch)
     assert tabstack.has_native_tools is True
     assert tabstack.tools_location != admin_skills / "tabstack"
 
+
 def test_discover_strips_auto_approve_from_workspace_skill(config, caplog):
     """auto-approve on a workspace skill is ignored with a warning."""
     skills_dir = config.workspace_path / "skills"
