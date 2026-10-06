@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -337,7 +338,16 @@ def render_doc(data: dict) -> str:
 
 def main() -> int:
     data = load_manifest()
-    PY_OUT.write_text(render_python(data) + render_python_typed(data), encoding="utf-8")
+    # Emit ruff-formatted Python so `make fmt-check` and this drift check agree.
+    py_src = render_python(data) + render_python_typed(data)
+    py_src = subprocess.run(
+        ["ruff", "format", "--stdin-filename", str(PY_OUT), "-"],
+        input=py_src,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    PY_OUT.write_text(py_src, encoding="utf-8")
     JS_OUT.write_text(render_js(data), encoding="utf-8")
     DOC_OUT.write_text(render_doc(data), encoding="utf-8")
     TS_OUT.write_text(render_typescript(data), encoding="utf-8")
