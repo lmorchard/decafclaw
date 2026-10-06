@@ -18,9 +18,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _THIS_DIR = Path(__file__).parent
-_tools_spec = importlib.util.spec_from_file_location(
-    "decafclaw_contrib_kindle_tools", _THIS_DIR / "tools.py"
-)
+_tools_spec = importlib.util.spec_from_file_location("decafclaw_contrib_kindle_tools", _THIS_DIR / "tools.py")
 assert _tools_spec is not None and _tools_spec.loader is not None
 kindle_tools = importlib.util.module_from_spec(_tools_spec)
 # Register under a stable name so monkeypatch.setattr(kindle_tools, ...) and
@@ -269,17 +267,13 @@ def test_parse_highlights_no_note():
 
     # The first annotation in the fixture has no note (aok-hidden empty span).
     first_id_prefix = "QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDoyNDg0"
-    no_note = next(
-        (e for e in entries if e.annotation_id.startswith(first_id_prefix)), None
-    )
+    no_note = next((e for e in entries if e.annotation_id.startswith(first_id_prefix)), None)
     assert no_note is not None, "Could not find first annotation in parsed entries"
     assert no_note.note == "", f"Expected empty note, got {no_note.note!r}"
 
     # The sixth annotation has a note — verify it was extracted.
     note_id_prefix = "QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDozNzQx"
-    with_note = next(
-        (e for e in entries if e.annotation_id.startswith(note_id_prefix)), None
-    )
+    with_note = next((e for e in entries if e.annotation_id.startswith(note_id_prefix)), None)
     assert with_note is not None, "Could not find annotated highlight in parsed entries"
     assert with_note.note == "Sample note 1."
 
@@ -431,7 +425,7 @@ def test_upsert_preserves_existing_archived_date():
     result = _upsert_book_page(page_v2, [h1], _make_book(), _NOW, archive_deleted=True)
     metadata, body = parse_frontmatter(result)
 
-    archived_section = body[body.find("## Archived"):]
+    archived_section = body[body.find("## Archived") :]
     assert "archived 2026-01-01" in archived_section
     assert f"archived {_TODAY}" not in archived_section  # should NOT re-archive with today's date
 
@@ -555,7 +549,8 @@ async def test_kindle_list_books_happy_path(ctx, tmp_path, monkeypatch):
     init(ctx.config, skill_config)
 
     monkeypatch.setattr(
-        kindle_tools, "_make_session",
+        kindle_tools,
+        "_make_session",
         lambda jar, ua: _make_mock_session(fixture_html),
     )
 
@@ -603,7 +598,8 @@ async def test_kindle_list_books_warns_old_cookies(ctx, tmp_path, monkeypatch):
     init(ctx.config, skill_config)
 
     monkeypatch.setattr(
-        kindle_tools, "_make_session",
+        kindle_tools,
+        "_make_session",
         lambda jar, ua: _make_mock_session(fixture_html),
     )
 
@@ -626,7 +622,8 @@ async def test_kindle_fetch_highlights_happy_path(ctx, tmp_path, monkeypatch):
     init(ctx.config, skill_config)
 
     monkeypatch.setattr(
-        kindle_tools, "_make_session",
+        kindle_tools,
+        "_make_session",
         lambda jar, ua: _make_mock_session(fixture_html),
     )
 
@@ -666,7 +663,8 @@ async def test_kindle_fetch_highlights_http_error(ctx, tmp_path, monkeypatch):
     failing_cm.__aexit__ = AsyncMock(return_value=None)
 
     monkeypatch.setattr(
-        kindle_tools, "_make_session",
+        kindle_tools,
+        "_make_session",
         lambda jar, ua: failing_cm,
     )
 
@@ -1039,9 +1037,9 @@ async def test_kindle_sync_book_no_double_archive_count(ctx, tmp_path, monkeypat
     monkeypatch.setattr(kindle_tools, "_make_session", _mock_session_factory_3)
     result3 = await kindle_tools.kindle_sync_book(ctx, asin=asin)
     assert not result3.text.startswith("[error:")
-    assert (
-        result3.data["archived_count"] == 0
-    ), f"Run 3: expected 0 archived (no new deletions), but got {result3.data['archived_count']}"
+    assert result3.data["archived_count"] == 0, (
+        f"Run 3: expected 0 archived (no new deletions), but got {result3.data['archived_count']}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1115,9 +1113,7 @@ def test_upsert_archived_section_order_is_deterministic():
 
 
 @pytest.mark.asyncio
-async def test_kindle_sync_book_archive_disabled_tool_result_archived_count_zero(
-    ctx, tmp_path, monkeypatch
-):
+async def test_kindle_sync_book_archive_disabled_tool_result_archived_count_zero(ctx, tmp_path, monkeypatch):
     """With archive_deleted=False, the tool-result archived_count must be 0.
 
     Even if Amazon deleted a highlight (it would appear in existing_ids - fresh_ids),
@@ -1240,6 +1236,7 @@ async def test_kindle_sync_all_session_count_n_plus_1(ctx, tmp_path, monkeypatch
 
 # HTML helpers for multi-book sync tests
 
+
 def _make_multi_book_list_html(books: list[tuple[str, str, str]]) -> str:
     """Build a books-list HTML with multiple book entries.
 
@@ -1322,7 +1319,8 @@ async def test_kindle_sync_all_happy_path(ctx, tmp_path, monkeypatch):
     responses = [list_html] * 4  # 1 initial + 1 highlights per book × 3 books
 
     monkeypatch.setattr(
-        kindle_tools, "_make_session",
+        kindle_tools,
+        "_make_session",
         _make_session_sequence(responses),
     )
     monkeypatch.setattr(asyncio, "sleep", AsyncMock())
@@ -1341,13 +1339,7 @@ async def test_kindle_sync_all_happy_path(ctx, tmp_path, monkeypatch):
     from datetime import date
 
     today = date.today()
-    journal_path = (
-        ctx.config.vault_root
-        / "agent"
-        / "journal"
-        / str(today.year)
-        / f"{today}.md"
-    )
+    journal_path = ctx.config.vault_root / "agent" / "journal" / str(today.year) / f"{today}.md"
     assert journal_path.exists(), f"Expected journal at {journal_path}"
     journal_content = journal_path.read_text()
     assert "Kindle sync run" in journal_content
@@ -1416,7 +1408,8 @@ async def test_kindle_sync_all_partial_failure(ctx, tmp_path, monkeypatch):
         return cm
 
     monkeypatch.setattr(
-        kindle_tools, "_make_session",
+        kindle_tools,
+        "_make_session",
         _failing_factory,
     )
     monkeypatch.setattr(asyncio, "sleep", AsyncMock())
@@ -1435,13 +1428,7 @@ async def test_kindle_sync_all_partial_failure(ctx, tmp_path, monkeypatch):
     from datetime import date
 
     today = date.today()
-    journal_path = (
-        ctx.config.vault_root
-        / "agent"
-        / "journal"
-        / str(today.year)
-        / f"{today}.md"
-    )
+    journal_path = ctx.config.vault_root / "agent" / "journal" / str(today.year) / f"{today}.md"
     assert journal_path.exists(), f"Expected journal at {journal_path}"
     journal_content = journal_path.read_text()
     assert "Failures: 1" in journal_content
@@ -1472,7 +1459,8 @@ async def test_kindle_sync_all_rate_limit(ctx, tmp_path, monkeypatch):
     responses = [list_html] * 4  # N+1 after Fix 3: 1 initial list + 1 highlights per book
 
     monkeypatch.setattr(
-        kindle_tools, "_make_session",
+        kindle_tools,
+        "_make_session",
         _make_session_sequence(responses),
     )
     sleep_mock = AsyncMock()
@@ -1546,7 +1534,8 @@ async def test_kindle_sync_all_scheduled_gate_enabled_proceeds(ctx, tmp_path, mo
     # Mock the session to return empty book list (no network call)
     empty_list_html = '<div class="kp-notebook-library-each-book"></div>'
     monkeypatch.setattr(
-        kindle_tools, "_make_session",
+        kindle_tools,
+        "_make_session",
         _make_session_sequence([empty_list_html]),
     )
     monkeypatch.setattr(asyncio, "sleep", AsyncMock())
@@ -1584,7 +1573,8 @@ async def test_kindle_sync_all_user_invocable_gate_bypassed(ctx, tmp_path, monke
     # Mock the session to return empty book list
     empty_list_html = '<div class="kp-notebook-library-each-book"></div>'
     monkeypatch.setattr(
-        kindle_tools, "_make_session",
+        kindle_tools,
+        "_make_session",
         _make_session_sequence([empty_list_html]),
     )
     monkeypatch.setattr(asyncio, "sleep", AsyncMock())
@@ -1616,9 +1606,15 @@ def test_skill_md_frontmatter_parses():
     assert info.user_invocable is True
     # Allowed-tools should contain all 4 kindle tools + the vault read/write/list/journal ones + current_time
     for required in (
-        "kindle_list_books", "kindle_fetch_highlights",
-        "kindle_sync_book", "kindle_sync_all",
-        "vault_read", "vault_write", "vault_list", "vault_journal_append", "current_time",
+        "kindle_list_books",
+        "kindle_fetch_highlights",
+        "kindle_sync_book",
+        "kindle_sync_all",
+        "vault_read",
+        "vault_write",
+        "vault_list",
+        "vault_journal_append",
+        "current_time",
     ):
         assert required in info.allowed_tools, f"missing {required} in allowed_tools: {info.allowed_tools}"
 
@@ -1633,9 +1629,15 @@ def test_schedule_md_parses():
     assert task.schedule == "0 5 * * *"
     # Allowed-tools should contain all required tools
     for required in (
-        "kindle_list_books", "kindle_fetch_highlights",
-        "kindle_sync_book", "kindle_sync_all",
-        "vault_read", "vault_write", "vault_list", "vault_journal_append", "current_time",
+        "kindle_list_books",
+        "kindle_fetch_highlights",
+        "kindle_sync_book",
+        "kindle_sync_all",
+        "vault_read",
+        "vault_write",
+        "vault_list",
+        "vault_journal_append",
+        "current_time",
     ):
         assert required in task.allowed_tools, f"missing {required} in allowed_tools: {task.allowed_tools}"
 

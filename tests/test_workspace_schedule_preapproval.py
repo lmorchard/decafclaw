@@ -63,11 +63,11 @@ async def _ctx_for(config, task):
 
     async def fake_run(ctx, user_message, history, **kwargs):
         from decafclaw.media import ToolResult
+
         seen["ctx"] = ctx
         return ToolResult(text="Done.")
 
-    with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run), \
-            patch("decafclaw.notifications.notify"):
+    with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run), patch("decafclaw.notifications.notify"):
         await run_schedule_task(config, EventBus(), manager, task)
     return seen["ctx"]
 

@@ -69,13 +69,15 @@ class TestFormatMemoryHeadlines:
         assert format_memory_headlines([]) == ""
 
     def test_uses_summary_when_available(self):
-        results = [{
-            "file_path": "agent/pages/decafclaw.md",
-            "source_type": "page",
-            "summary": "An agent testbed for exploring patterns",
-            "entry_text": "Full body unused when summary present",
-            "composite_score": 0.81,
-        }]
+        results = [
+            {
+                "file_path": "agent/pages/decafclaw.md",
+                "source_type": "page",
+                "summary": "An agent testbed for exploring patterns",
+                "entry_text": "Full body unused when summary present",
+                "composite_score": 0.81,
+            }
+        ]
         out = format_memory_headlines(results)
         assert "[Automatically retrieved headlines" in out
         assert "agent/pages/decafclaw.md" in out
@@ -85,45 +87,53 @@ class TestFormatMemoryHeadlines:
         assert "Full body unused when summary present" not in out
 
     def test_falls_back_to_body_when_no_summary(self):
-        results = [{
-            "file_path": "x.md",
-            "source_type": "page",
-            "entry_text": "First body sentence. Second sentence we don't need.",
-            "composite_score": 0.5,
-        }]
+        results = [
+            {
+                "file_path": "x.md",
+                "source_type": "page",
+                "entry_text": "First body sentence. Second sentence we don't need.",
+                "composite_score": 0.5,
+            }
+        ]
         out = format_memory_headlines(results, max_summary_chars=20)
         # Summary is the body excerpt, truncated to 20 chars (+ ellipsis).
         assert "First body sentence." in out or "First body sentenc" in out
         assert "score 0.50" in out
 
     def test_truncates_long_summary(self):
-        results = [{
-            "file_path": "x.md",
-            "source_type": "page",
-            "summary": "x" * 500,
-            "composite_score": 0.5,
-        }]
+        results = [
+            {
+                "file_path": "x.md",
+                "source_type": "page",
+                "summary": "x" * 500,
+                "composite_score": 0.5,
+            }
+        ]
         out = format_memory_headlines(results, max_summary_chars=20)
         # Body line includes the truncated summary plus an ellipsis.
         assert "xxxxxxxxxxxxxxxxxxxx…" in out
 
     def test_falls_back_to_similarity_when_no_composite(self):
-        results = [{
-            "file_path": "x.md",
-            "source_type": "page",
-            "summary": "the summary",
-            "similarity": 0.42,
-        }]
+        results = [
+            {
+                "file_path": "x.md",
+                "source_type": "page",
+                "summary": "the summary",
+                "similarity": 0.42,
+            }
+        ]
         out = format_memory_headlines(results)
         assert "score 0.42" in out
 
     def test_handles_unknown_source_type(self):
-        results = [{
-            "file_path": "x.md",
-            "source_type": "weird-source",
-            "summary": "anything",
-            "composite_score": 0.5,
-        }]
+        results = [
+            {
+                "file_path": "x.md",
+                "source_type": "weird-source",
+                "summary": "anything",
+                "composite_score": 0.5,
+            }
+        ]
         out = format_memory_headlines(results)
         # Falls back to the source_type itself rather than crashing.
         assert "weird-source" in out
@@ -155,6 +165,7 @@ class TestRetrieveMemoryContext:
     @pytest.mark.asyncio
     async def test_disabled(self, config):
         from dataclasses import replace
+
         cfg = replace(config, vault_retrieval=VaultRetrievalConfig(enabled=False))
         results = await retrieve_memory_context(cfg, "hello")
         assert results == []
@@ -164,6 +175,7 @@ class TestRetrieveMemoryContext:
         from dataclasses import replace
 
         from decafclaw.config_types import EmbeddingConfig
+
         cfg = replace(config, embedding=EmbeddingConfig(model=""))
         results = await retrieve_memory_context(cfg, "hello")
         assert results == []
@@ -181,8 +193,10 @@ class TestRetrieveMemoryContext:
             _make_result(text="high", similarity=0.8),
             _make_result(text="low", similarity=0.1),
         ]
-        with patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding), \
-             patch("decafclaw.memory_context.search_similar_sync", return_value=search_results):
+        with (
+            patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding),
+            patch("decafclaw.memory_context.search_similar_sync", return_value=search_results),
+        ):
             results = await retrieve_memory_context(config, "hello")
             assert len(results) == 1
             assert results[0]["entry_text"] == "high"
@@ -190,11 +204,14 @@ class TestRetrieveMemoryContext:
     @pytest.mark.asyncio
     async def test_respects_max_results(self, config):
         from dataclasses import replace
+
         cfg = replace(config, vault_retrieval=VaultRetrievalConfig(max_results=2))
         fake_embedding = [1.0] * 768
         search_results = [_make_result(similarity=0.8) for _ in range(5)]
-        with patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding), \
-             patch("decafclaw.memory_context.search_similar_sync", return_value=search_results):
+        with (
+            patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding),
+            patch("decafclaw.memory_context.search_similar_sync", return_value=search_results),
+        ):
             results = await retrieve_memory_context(cfg, "hello")
             assert len(results) == 2
 
@@ -208,6 +225,7 @@ class TestRetrieveMemoryContext:
     async def test_returns_all_candidates_for_composer(self, config):
         """retrieve_memory_context returns all candidates — the composer handles budget trimming."""
         from dataclasses import replace
+
         cfg = replace(config, vault_retrieval=VaultRetrievalConfig(max_tokens=100))
         fake_embedding = [1.0] * 768
         # Each entry is 400 chars = 100 tokens; all 3 should be returned
@@ -216,8 +234,10 @@ class TestRetrieveMemoryContext:
             _make_result(text="b" * 400, similarity=0.7),
             _make_result(text="c" * 400, similarity=0.6),
         ]
-        with patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding), \
-             patch("decafclaw.memory_context.search_similar_sync", return_value=search_results):
+        with (
+            patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding),
+            patch("decafclaw.memory_context.search_similar_sync", return_value=search_results),
+        ):
             results = await retrieve_memory_context(cfg, "hello")
             assert len(results) == 3
 
@@ -261,14 +281,12 @@ class TestEnrichResults:
         page = vault_dir / "test.md"
         page.write_text("---\nimportance: 0.9\n---\n# Test")
         config.vault.vault_path = str(vault_dir)
-        results = [{"entry_text": "test", "source_type": "page", "similarity": 0.8,
-                     "file_path": "test.md"}]
+        results = [{"entry_text": "test", "source_type": "page", "similarity": 0.8, "file_path": "test.md"}]
         enriched = _enrich_results(config, results)
         assert enriched[0]["importance"] == 0.9
 
     def test_fail_open_on_missing_file(self, config):
-        results = [{"entry_text": "entry", "source_type": "page", "similarity": 0.5,
-                     "file_path": "nonexistent.md"}]
+        results = [{"entry_text": "entry", "source_type": "page", "similarity": 0.5, "file_path": "nonexistent.md"}]
         enriched = _enrich_results(config, results)
         assert enriched[0]["importance"] == 0.5  # default
 
@@ -287,8 +305,7 @@ class TestExpandGraphLinks:
         linked = vault_dir / "linked.md"
         linked.write_text("# Linked\nContent here.")
         config.vault.vault_path = str(vault_dir)
-        results = [{"entry_text": "source content", "file_path": "source.md",
-                     "similarity": 0.8, "source_type": "page"}]
+        results = [{"entry_text": "source content", "file_path": "source.md", "similarity": 0.8, "source_type": "page"}]
         expanded = _expand_graph_links(config, results, similarity_discount=0.7)
         assert len(expanded) == 2  # original + linked
         linked_result = [r for r in expanded if r.get("source_type") == "graph_expansion"]
@@ -310,8 +327,7 @@ class TestExpandGraphLinks:
         linked.write_text("# Linked page")
         # Set vault_path as a relative-looking string (not pre-resolved)
         config.vault.vault_path = str(vault_dir)
-        results = [{"entry_text": "source", "file_path": "source.md",
-                     "similarity": 0.8, "source_type": "page"}]
+        results = [{"entry_text": "source", "file_path": "source.md", "similarity": 0.8, "source_type": "page"}]
         expanded = _expand_graph_links(config, results)
         graph_results = [r for r in expanded if r.get("source_type") == "graph_expansion"]
         assert len(graph_results) == 1, "linked page should be found despite unresolved vault_root"
@@ -342,8 +358,7 @@ class TestExpandGraphLinks:
         source = vault_dir / "source.md"
         source.write_text("See [[nonexistent]]")
         config.vault.vault_path = str(vault_dir)
-        results = [{"entry_text": "source", "file_path": "source.md",
-                     "similarity": 0.8, "source_type": "page"}]
+        results = [{"entry_text": "source", "file_path": "source.md", "similarity": 0.8, "source_type": "page"}]
         expanded = _expand_graph_links(config, results)
         assert len(expanded) == 1  # only the original, no expansion
 

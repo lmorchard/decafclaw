@@ -64,6 +64,7 @@ def append_record(config, record: dict) -> None:
 
 def make_retrieval_telemetry_subscriber(config) -> Callable[[dict], Awaitable[None]]:
     """EventBus subscriber: records each ``retrieval_event`` event. Fail-open."""
+
     async def handle(event: dict) -> None:
         try:
             if event.get("type") != "retrieval_event":
@@ -214,8 +215,7 @@ def format_report(stats: dict[str, dict], health: dict) -> str:
     lines.append(f"Total candidate appearances: {total} across {len(stats)} pages")
     lines.append("")
     lines.append(
-        f"{'file_path':<40} {'retrieved':>9} {'included':>9} {'inc%':>6} "
-        f"{'drop-score':>10} {'drop-budget':>11}"
+        f"{'file_path':<40} {'retrieved':>9} {'included':>9} {'inc%':>6} {'drop-score':>10} {'drop-budget':>11}"
     )
     lines.append("-" * 90)
     for path, s in sorted(stats.items(), key=lambda kv: kv[1]["retrieval_count"], reverse=True):
@@ -226,10 +226,7 @@ def format_report(stats: dict[str, dict], health: dict) -> str:
     lines.append("")
     lines.append("## Vault health")
     lines.append(f"  Pages: {health['total_pages']}")
-    lines.append(
-        f"  With importance frontmatter: {health['with_importance']} "
-        f"({health['coverage_pct']:.0f}%)"
-    )
+    lines.append(f"  With importance frontmatter: {health['with_importance']} ({health['coverage_pct']:.0f}%)")
     lines.append(f"  Missing importance frontmatter: {health['missing_importance']}")
     lines.append(f"  Graph orphans (zero inbound links): {health['graph_orphans']}")
     return "\n".join(lines)
@@ -244,6 +241,7 @@ def build_report(config) -> str:
 
 def main() -> None:
     from .config import load_config
+
     config = load_config()
     print(build_report(config))
 

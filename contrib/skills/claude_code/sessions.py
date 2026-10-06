@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class Session:
     """A Claude Code session tied to a working directory."""
+
     session_id: str
     cwd: str
     description: str = ""
@@ -35,9 +36,14 @@ class SessionManager:
         self.budget_default = budget_default
         self.budget_max = budget_max
 
-    def create(self, cwd: str, description: str = "",
-               model: str | None = None, budget_usd: float | None = None,
-               instructions: str = "") -> Session:
+    def create(
+        self,
+        cwd: str,
+        description: str = "",
+        model: str | None = None,
+        budget_usd: float | None = None,
+        instructions: str = "",
+    ) -> Session:
         """Create a new session. Raises ValueError if cwd already has an active session."""
         # Resolve and normalize path
         cwd = str(cwd).rstrip("/")
@@ -103,10 +109,7 @@ class SessionManager:
     def list_active(self) -> list[Session]:
         """Return all non-expired sessions."""
         now = time.monotonic()
-        expired = [
-            sid for sid, s in self.sessions.items()
-            if now - s.last_active > self.timeout_sec
-        ]
+        expired = [sid for sid, s in self.sessions.items() if now - s.last_active > self.timeout_sec]
         for sid in expired:
             self._remove(sid)
         return list(self.sessions.values())

@@ -38,8 +38,7 @@ def test_classify_source_skill():
 def test_classify_source_mcp():
     cfg = Config()
     cfg.skill_tool_owners = {}
-    assert tool_telemetry.classify_source(
-        "mcp__fastmail__send_email", cfg) == ("mcp", "fastmail")
+    assert tool_telemetry.classify_source("mcp__fastmail__send_email", cfg) == ("mcp", "fastmail")
 
 
 # -- outcome inference ---------------------------------------------------------
@@ -59,14 +58,16 @@ def test_infer_outcome():
 async def test_subscriber_writes_record(tmp_path):
     cfg = _config(tmp_path)
     handle = tool_telemetry.make_tool_telemetry_subscriber(cfg)
-    await handle({
-        "type": "tool_end",
-        "tool": "vault_write",
-        "conv_id": "conv-1",
-        "result_text": "wrote page",
-        "duration_ms": 12.5,
-        "input_bytes": 40,
-    })
+    await handle(
+        {
+            "type": "tool_end",
+            "tool": "vault_write",
+            "conv_id": "conv-1",
+            "result_text": "wrote page",
+            "duration_ms": 12.5,
+            "input_bytes": 40,
+        }
+    )
     path = cfg.workspace_path / cfg.telemetry.tool_usage_path
     records = [json.loads(line) for line in path.read_text().splitlines()]
     assert len(records) == 1
@@ -127,12 +128,12 @@ def test_build_report_flags_unused(tmp_path, monkeypatch):
     # One record for a known skill tool; the other known tools are unused.
     path = cfg.workspace_path / cfg.telemetry.tool_usage_path
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
-        "tool": "vault_write", "conv_id": "c1", "outcome": "success",
-        "timestamp": "2026-07-23T10:00:00Z"}) + "\n")
+    path.write_text(
+        json.dumps({"tool": "vault_write", "conv_id": "c1", "outcome": "success", "timestamp": "2026-07-23T10:00:00Z"})
+        + "\n"
+    )
     # Pretend the full known-tool set is exactly these two skill tools.
-    monkeypatch.setattr(tool_telemetry, "known_tool_names",
-                        lambda c: {"vault_write", "dream_now"})
+    monkeypatch.setattr(tool_telemetry, "known_tool_names", lambda c: {"vault_write", "dream_now"})
     report = tool_telemetry.build_report(cfg)
     assert "vault_write" in report
     assert "dream_now" in report  # unused → listed

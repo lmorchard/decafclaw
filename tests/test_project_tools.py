@@ -44,8 +44,7 @@ def ctx(tmp_path):
         current_call_id=None,
     )
     skills = SimpleNamespace(data={})
-    return SimpleNamespace(config=config, tools=tools, skills=skills,
-                           conv_id="proj-conv", manager=None)
+    return SimpleNamespace(config=config, tools=tools, skills=skills, conv_id="proj-conv", manager=None)
 
 
 def _approve(result):
@@ -297,9 +296,7 @@ class TestProjectManagement:
     @pytest.mark.asyncio
     async def test_add_steps(self, ctx):
         await _advance_to_executing(ctx, slug="add-steps")
-        result = await tool_project_add_steps(
-            ctx, after_step="2", steps=["New step A", "New step B"]
-        )
+        result = await tool_project_add_steps(ctx, after_step="2", steps=["New step A", "New step B"])
         assert "Added 2 step(s)" in result
 
     @pytest.mark.asyncio
@@ -313,16 +310,15 @@ class TestZeroStepWarning:
     @pytest.mark.asyncio
     async def test_plan_with_no_steps_returns_error(self, ctx):
         await _advance_to_planning(ctx, slug="no-steps")
-        result = await tool_project_update_plan(
-            ctx, plan_text="# Plan\n\nJust text, no steps."
-        )
+        result = await tool_project_update_plan(ctx, plan_text="# Plan\n\nJust text, no steps.")
         assert "error" in result.text
 
     @pytest.mark.asyncio
     async def test_plan_with_unnumbered_steps_works(self, ctx):
         await _advance_to_planning(ctx, slug="unnumbered")
         result = await tool_project_update_plan(
-            ctx, plan_text="# Plan\n\n## Steps\n\n- [ ] Do thing one\n- [ ] Do thing two\n",
+            ctx,
+            plan_text="# Plan\n\n## Steps\n\n- [ ] Do thing one\n- [ ] Do thing two\n",
         )
         assert "2 steps" in _text(result)
 
@@ -415,6 +411,7 @@ class TestProgressTrackerEmit:
     @pytest.mark.asyncio
     async def test_update_step_emits_during_executing(self, ctx, monkeypatch):
         from unittest.mock import AsyncMock
+
         set_mock = AsyncMock()
         monkeypatch.setattr("decafclaw.sticky.set_sticky", set_mock)
         monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock())
@@ -430,6 +427,7 @@ class TestProgressTrackerEmit:
     @pytest.mark.asyncio
     async def test_done_clears_sticky(self, ctx, monkeypatch):
         from unittest.mock import AsyncMock
+
         clear_mock = AsyncMock()
         monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
         monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
@@ -443,6 +441,7 @@ class TestProgressTrackerEmit:
     @pytest.mark.asyncio
     async def test_no_emit_outside_executing(self, ctx, monkeypatch):
         from unittest.mock import AsyncMock
+
         set_mock = AsyncMock()
         monkeypatch.setattr("decafclaw.sticky.set_sticky", set_mock)
         monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock())
@@ -454,10 +453,9 @@ class TestProgressTrackerEmit:
     @pytest.mark.asyncio
     async def test_emit_failure_is_fail_open(self, ctx, monkeypatch):
         from unittest.mock import AsyncMock
-        monkeypatch.setattr("decafclaw.sticky.set_sticky",
-                            AsyncMock(side_effect=RuntimeError("boom")))
-        monkeypatch.setattr("decafclaw.sticky.clear_sticky",
-                            AsyncMock(side_effect=RuntimeError("boom")))
+
+        monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock(side_effect=RuntimeError("boom")))
+        monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock(side_effect=RuntimeError("boom")))
         await _advance_to_executing(ctx, slug="pt-failopen")
         # Must not raise.
         result = await tool_project_update_step(ctx, step="1.1", status="done")
@@ -466,6 +464,7 @@ class TestProgressTrackerEmit:
     @pytest.mark.asyncio
     async def test_add_steps_during_planning_does_not_emit(self, ctx, monkeypatch):
         from unittest.mock import AsyncMock
+
         set_mock = AsyncMock()
         monkeypatch.setattr("decafclaw.sticky.set_sticky", set_mock)
         monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock())
@@ -479,6 +478,7 @@ class TestProgressTrackerEmit:
     @pytest.mark.asyncio
     async def test_advance_out_of_executing_clears(self, ctx, monkeypatch):
         from unittest.mock import AsyncMock
+
         clear_mock = AsyncMock()
         monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
         monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
@@ -492,6 +492,7 @@ class TestProgressTrackerEmit:
     async def test_switch_away_from_executing_clears(self, ctx, monkeypatch):
         """C1: Switching to another project while current is EXECUTING clears its tracker."""
         from unittest.mock import AsyncMock
+
         clear_mock = AsyncMock()
         monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
         monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
@@ -513,6 +514,7 @@ class TestProgressTrackerEmit:
     async def test_create_while_executing_clears(self, ctx, monkeypatch):
         """C2: Creating a new project while current is EXECUTING clears the tracker."""
         from unittest.mock import AsyncMock
+
         clear_mock = AsyncMock()
         monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
         monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
@@ -563,13 +565,8 @@ class TestPhaseInstructionConsistency:
             updated_at="2026-01-01T00:00:00+00:00",
             directory=ctx.config.workspace_path,
         )
-        assert not no_plan_info.plan_path.exists(), (
-            "fixture error: this ProjectInfo must hit the missing-plan branch"
-        )
-        sites.append(
-            ("_next_execution_step", _next_execution_step(no_plan_info),
-             ProjectState.EXECUTING)
-        )
+        assert not no_plan_info.plan_path.exists(), "fixture error: this ProjectInfo must hit the missing-plan branch"
+        sites.append(("_next_execution_step", _next_execution_step(no_plan_info), ProjectState.EXECUTING))
 
         # 2. tool_project_switch. The switched-to project's own status governs
         #    the next turn, so produce the text once per phase, with the target
@@ -591,9 +588,7 @@ class TestPhaseInstructionConsistency:
         # 3. tool_project_advance success. The target phase reads it on the next
         #    turn, so produce the text once per reachable target — including the
         #    forward transition to DONE, which is the case #727 was filed for.
-        for i, target in enumerate(
-            sorted(TRANSITIONS[ProjectState.EXECUTING], key=lambda s: s.value)
-        ):
+        for i, target in enumerate(sorted(TRANSITIONS[ProjectState.EXECUTING], key=lambda s: s.value)):
             slug = f"pic-advance-{i}"
             await tool_project_create(ctx, f"Advance source {i}", slug=slug)
             info = load_project(ctx.config, slug)
@@ -602,10 +597,7 @@ class TestPhaseInstructionConsistency:
             save_project(info)
             await tool_project_switch(ctx, project=slug)
             text = _text(await tool_project_advance(ctx, target_status=target.value))
-            assert target.value in text, (
-                f"fixture error: advance to '{target.value}' did not succeed; "
-                f"got {text!r}"
-            )
+            assert target.value in text, f"fixture error: advance to '{target.value}' did not succeed; got {text!r}"
             sites.append(("tool_project_advance", text, target))
 
         # 4. plan_no_steps.md. Returned from the PLANNING/PLAN_REVIEW branch of
@@ -631,10 +623,7 @@ class TestPhaseInstructionConsistency:
                     f"{', '.join(undispatchable)}; dispatchable there: "
                     f"{', '.join(sorted(dispatchable))}"
                 )
-        assert not problems, (
-            f"{len(problems)} instruction/phase mismatch(es):\n  "
-            + "\n  ".join(problems)
-        )
+        assert not problems, f"{len(problems)} instruction/phase mismatch(es):\n  " + "\n  ".join(problems)
 
     @pytest.mark.asyncio
     async def test_every_instruction_names_a_dispatchable_tool(self, ctx):
@@ -650,9 +639,8 @@ class TestPhaseInstructionConsistency:
                     f"none of which is dispatchable there; dispatchable: "
                     f"{', '.join(sorted(dispatchable))}"
                 )
-        assert not problems, (
-            f"{len(problems)} instruction(s) leave the agent with no next "
-            f"action:\n  " + "\n  ".join(problems)
+        assert not problems, f"{len(problems)} instruction(s) leave the agent with no next action:\n  " + "\n  ".join(
+            problems
         )
 
     def test_guard_phase_tools_exclusions_preserved(self):
@@ -662,9 +650,7 @@ class TestPhaseInstructionConsistency:
             ProjectState.PLAN_REVIEW,
             ProjectState.DONE,
         ):
-            assert "project_next_task" not in _PHASE_TOOLS[phase], (
-                f"'{phase.value}' must not gain project_next_task"
-            )
+            assert "project_next_task" not in _PHASE_TOOLS[phase], f"'{phase.value}' must not gain project_next_task"
         assert "project_update_plan" not in _PHASE_TOOLS[ProjectState.EXECUTING], (
             "'executing' must not gain project_update_plan"
         )
@@ -675,10 +661,7 @@ class TestPhaseInstructionConsistency:
             if not isinstance(phase, ProjectState):
                 continue
             withheld = set(TOOLS) - set(names)
-            assert withheld, (
-                f"'{phase.value}' exposes every tool in TOOLS; phase gating "
-                f"must stay real"
-            )
+            assert withheld, f"'{phase.value}' exposes every tool in TOOLS; phase gating must stay real"
 
     def test_guard_transitions_unchanged(self):
         """The states reachable from EXECUTING define who reads advance's text."""

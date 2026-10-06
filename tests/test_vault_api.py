@@ -126,9 +126,7 @@ async def test_vault_read_page(client, http_config):
 @pytest.mark.asyncio
 async def test_vault_read_splits_frontmatter(client, http_config):
     pages_dir = http_config.vault_agent_pages_dir
-    (pages_dir / "Split.md").write_text(
-        "---\nimportance: 0.7\ntags:\n- a\n---\n# Split\n\nBody text.\n"
-    )
+    (pages_dir / "Split.md").write_text("---\nimportance: 0.7\ntags:\n- a\n---\n# Split\n\nBody text.\n")
     resp = await client.get("/api/vault/agent/pages/Split")
     assert resp.status_code == 200
     data = resp.json()
@@ -180,9 +178,7 @@ async def test_vault_read_date_frontmatter_serializes(client, http_config):
     view with a 500 rather than degrading. Dates come back as ISO strings.
     """
     pages_dir = http_config.vault_agent_pages_dir
-    (pages_dir / "Dated.md").write_text(
-        "---\ndate: 2026-06-22\nweek: 2026-W26\ntags:\n- blog\n---\nBody.\n"
-    )
+    (pages_dir / "Dated.md").write_text("---\ndate: 2026-06-22\nweek: 2026-W26\ntags:\n- blog\n---\nBody.\n")
     resp = await client.get("/api/vault/agent/pages/Dated")
     assert resp.status_code == 200
     data = resp.json()
@@ -201,9 +197,7 @@ async def test_vault_read_date_frontmatter_serializes(client, http_config):
 async def test_vault_read_nested_date_serializes(client, http_config):
     """Dates nested under a mapping/sequence are coerced too, not just top level."""
     pages_dir = http_config.vault_agent_pages_dir
-    (pages_dir / "Nested.md").write_text(
-        "---\nreview:\n  due: 2026-07-01\nseen:\n- 2026-01-01\n---\nBody.\n"
-    )
+    (pages_dir / "Nested.md").write_text("---\nreview:\n  due: 2026-07-01\nseen:\n- 2026-01-01\n---\nBody.\n")
     resp = await client.get("/api/vault/agent/pages/Nested")
     assert resp.status_code == 200
     assert resp.json()["frontmatter"] == {
@@ -273,13 +267,7 @@ async def test_vault_write_body_only_preserves_frontmatter(client, http_config):
     back over the file on save.
     """
     path = http_config.vault_agent_pages_dir / "Fm.md"
-    original_block = (
-        "---\n"
-        "importance: 0.7\n"
-        "tags:\n"
-        "- 0din\n"
-        "---\n"
-    )
+    original_block = "---\nimportance: 0.7\ntags:\n- 0din\n---\n"
     path.write_text(original_block + "# 0din\n\nOld body.\n")
 
     resp = await client.put(
@@ -295,7 +283,8 @@ async def test_vault_write_body_only_preserves_frontmatter(client, http_config):
 
 @pytest.mark.asyncio
 async def test_vault_write_body_only_preserves_malformed_frontmatter(
-    client, http_config,
+    client,
+    http_config,
 ):
     """Malformed YAML must survive a body write untouched.
 
@@ -316,7 +305,8 @@ async def test_vault_write_body_only_preserves_malformed_frontmatter(
 
 @pytest.mark.asyncio
 async def test_vault_write_body_only_preserves_key_order_and_comments(
-    client, http_config,
+    client,
+    http_config,
 ):
     """Hand-authored formatting must survive a body write.
 
@@ -324,14 +314,7 @@ async def test_vault_write_body_only_preserves_key_order_and_comments(
     catches a regression back to reserializing on the body path.
     """
     path = http_config.vault_agent_pages_dir / "Hand.md"
-    original_block = (
-        "---\n"
-        "# why this matters\n"
-        "tags:\n"
-        "- zeta\n"
-        "importance: 0.4\n"
-        "---\n"
-    )
+    original_block = "---\n# why this matters\ntags:\n- zeta\nimportance: 0.4\n---\n"
     path.write_text(original_block + "Body.\n")
 
     resp = await client.put(
@@ -356,6 +339,7 @@ async def test_vault_write_frontmatter_patch_merges(client, http_config):
     assert resp.json()["frontmatter_raw"] == "importance: 0.4\nsummary: A summary.\ntags:\n- keep"
 
     from decafclaw.frontmatter import parse_frontmatter
+
     meta, body = parse_frontmatter(path.read_text())
     assert meta == {
         "importance": 0.4,
@@ -404,7 +388,8 @@ async def test_vault_write_frontmatter_null_removes_key(client, http_config):
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_patch_leaves_body_alone(
-    client, http_config,
+    client,
+    http_config,
 ):
     path = http_config.vault_agent_pages_dir / "BodySafe.md"
     path.write_text("---\nimportance: 0.4\n---\n# Head\n\nExact body.\n")
@@ -418,7 +403,8 @@ async def test_vault_write_frontmatter_patch_leaves_body_alone(
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_patch_on_malformed_is_rejected(
-    client, http_config,
+    client,
+    http_config,
 ):
     """Merging into an unparseable block would silently discard it."""
     path = http_config.vault_agent_pages_dir / "BadPatch.md"
@@ -450,7 +436,8 @@ async def test_vault_write_frontmatter_and_body_one_write(client, http_config):
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_stale_modified_conflicts(
-    client, http_config,
+    client,
+    http_config,
 ):
     """A merge against a stale read would resurrect a just-deleted key."""
     path = http_config.vault_agent_pages_dir / "Stale.md"
@@ -724,9 +711,7 @@ async def test_vault_tags_sorted_by_count_desc(client, http_config):
 @pytest.mark.asyncio
 async def test_vault_list_includes_summary(client, http_config):
     pages_dir = http_config.vault_agent_pages_dir
-    (pages_dir / "WithFm.md").write_text(
-        "---\nsummary: A short summary.\n---\n# Body\n"
-    )
+    (pages_dir / "WithFm.md").write_text("---\nsummary: A short summary.\n---\n# Body\n")
     (pages_dir / "NoFm.md").write_text("# Body only\n")
     resp = await client.get("/api/vault?folder=agent/pages")
     assert resp.status_code == 200
@@ -737,7 +722,8 @@ async def test_vault_list_includes_summary(client, http_config):
 
 @pytest.mark.asyncio
 async def test_vault_list_summary_survives_malformed_frontmatter(
-    client, http_config,
+    client,
+    http_config,
 ):
     """A broken page must not break the whole listing."""
     pages_dir = http_config.vault_agent_pages_dir
@@ -832,7 +818,9 @@ async def test_rest_vault_write_new_page_publishes_create(client, bus):
 
 @pytest.mark.asyncio
 async def test_rest_vault_write_existing_page_publishes_update(
-    client, http_config, bus,
+    client,
+    http_config,
+    bus,
 ):
     pages_dir = http_config.vault_agent_pages_dir
     (pages_dir / "EventUpdate.md").write_text("# Old")
@@ -849,7 +837,9 @@ async def test_rest_vault_write_existing_page_publishes_update(
 
 @pytest.mark.asyncio
 async def test_rest_vault_rename_publishes_vault_changed(
-    client, http_config, bus,
+    client,
+    http_config,
+    bus,
 ):
     pages_dir = http_config.vault_agent_pages_dir
     (pages_dir / "RenameMe.md").write_text("# Old")
@@ -867,7 +857,9 @@ async def test_rest_vault_rename_publishes_vault_changed(
 
 @pytest.mark.asyncio
 async def test_rest_vault_delete_publishes_vault_changed(
-    client, http_config, bus,
+    client,
+    http_config,
+    bus,
 ):
     pages_dir = http_config.vault_agent_pages_dir
     (pages_dir / "DeleteMe.md").write_text("# Bye")
@@ -903,7 +895,8 @@ async def test_vault_write_frontmatter_raw_replaces(client, http_config):
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_raw_preserves_user_text(
-    client, http_config,
+    client,
+    http_config,
 ):
     """Stored verbatim, so hand-written comments and key order survive."""
     path = http_config.vault_agent_pages_dir / "RawVerbatim.md"
@@ -914,14 +907,13 @@ async def test_vault_write_frontmatter_raw_preserves_user_text(
         json={"frontmatter_raw": "# a note\nzeta: 1\nalpha: 2\n"},
     )
     assert resp.status_code == 200
-    assert path.read_text() == (
-        "---\n# a note\nzeta: 1\nalpha: 2\n---\nBody.\n"
-    )
+    assert path.read_text() == ("---\n# a note\nzeta: 1\nalpha: 2\n---\nBody.\n")
 
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_raw_empty_removes_block(
-    client, http_config,
+    client,
+    http_config,
 ):
     path = http_config.vault_agent_pages_dir / "RawEmpty.md"
     path.write_text("---\nimportance: 0.4\n---\nBody.\n")
@@ -936,7 +928,8 @@ async def test_vault_write_frontmatter_raw_empty_removes_block(
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_patch_emptying_removes_block(
-    client, http_config,
+    client,
+    http_config,
 ):
     """Nulling every key drops the block entirely, not `{}` or bare delimiters.
 
@@ -958,7 +951,8 @@ async def test_vault_write_frontmatter_patch_emptying_removes_block(
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_raw_malformed_is_rejected(
-    client, http_config,
+    client,
+    http_config,
 ):
     path = http_config.vault_agent_pages_dir / "RawBad.md"
     original = "---\nimportance: 0.4\n---\nBody.\n"
@@ -974,7 +968,8 @@ async def test_vault_write_frontmatter_raw_malformed_is_rejected(
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_raw_non_mapping_is_rejected(
-    client, http_config,
+    client,
+    http_config,
 ):
     path = http_config.vault_agent_pages_dir / "RawList.md"
     original = "---\nimportance: 0.4\n---\nBody.\n"
@@ -990,7 +985,8 @@ async def test_vault_write_frontmatter_raw_non_mapping_is_rejected(
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_raw_with_delimiter_is_rejected(
-    client, http_config,
+    client,
+    http_config,
 ):
     """A bare `---` line inside the block would split the file in two."""
     path = http_config.vault_agent_pages_dir / "RawDelim.md"
@@ -1007,7 +1003,8 @@ async def test_vault_write_frontmatter_raw_with_delimiter_is_rejected(
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_both_shapes_rejected(
-    client, http_config,
+    client,
+    http_config,
 ):
     """Patch and replace cannot be reconciled in one write."""
     path = http_config.vault_agent_pages_dir / "RawBoth.md"
@@ -1024,7 +1021,8 @@ async def test_vault_write_frontmatter_both_shapes_rejected(
 
 @pytest.mark.asyncio
 async def test_vault_write_empty_payload_names_every_accepted_key(
-    client, http_config,
+    client,
+    http_config,
 ):
     """A payload with no writable key must name all three shapes, not just body."""
     path = http_config.vault_agent_pages_dir / "Empty.md"
@@ -1063,7 +1061,8 @@ async def test_vault_rename_rejects_combined_write_payloads(client, http_config)
 
 @pytest.mark.asyncio
 async def test_vault_write_patch_preserves_pre_existing_bare_key(
-    client, http_config,
+    client,
+    http_config,
 ):
     """A typed patch must only delete the keys *it* nulled.
 
@@ -1091,7 +1090,8 @@ async def test_vault_write_patch_preserves_pre_existing_bare_key(
 
 @pytest.mark.asyncio
 async def test_vault_write_frontmatter_raw_allows_indented_delimiter(
-    client, http_config,
+    client,
+    http_config,
 ):
     """Only a column-0 `---` terminates the block, so an indented one is fine.
 
@@ -1118,7 +1118,8 @@ async def test_vault_write_frontmatter_raw_allows_indented_delimiter(
 
 @pytest.mark.asyncio
 async def test_vault_write_body_only_reports_frontmatter_error(
-    client, http_config,
+    client,
+    http_config,
 ):
     """A body write over malformed YAML succeeds by splicing it back verbatim.
 
@@ -1154,7 +1155,8 @@ async def test_vault_write_frontmatter_patch_reports_no_error(client, http_confi
 
 @pytest.mark.asyncio
 async def test_vault_write_bad_body_type_names_the_field_sent(
-    client, http_config,
+    client,
+    http_config,
 ):
     """`content` is an alias for `body`; the error must name what was sent."""
     resp = await client.put(
@@ -1174,6 +1176,7 @@ async def test_vault_write_bad_body_type_names_the_field_sent(
 
 def test_resolve_frontmatter_helper():
     from decafclaw.http_server import _resolve_frontmatter
+
     # 1. No changes (neither fm_raw nor fm_patch provided)
     new_raw, err = _resolve_frontmatter("title: Test", {"title": "Test"}, None, None, None)
     assert new_raw == "title: Test"
@@ -1197,13 +1200,17 @@ def test_resolve_frontmatter_helper():
     assert "mapping" in err["error"]
 
     # 5. Patch update with existing metadata
-    new_raw, err = _resolve_frontmatter("title: Test\nimportance: 0.5", {"title": "Test", "importance": 0.5}, None, None, {"importance": 0.8})
+    new_raw, err = _resolve_frontmatter(
+        "title: Test\nimportance: 0.5", {"title": "Test", "importance": 0.5}, None, None, {"importance": 0.8}
+    )
     assert new_raw is not None
     assert "importance: 0.8" in new_raw
     assert err is None
 
     # 6. Patch explicit-null deletion
-    new_raw, err = _resolve_frontmatter("title: Test\nimportance: 0.5", {"title": "Test", "importance": 0.5}, None, None, {"importance": None})
+    new_raw, err = _resolve_frontmatter(
+        "title: Test\nimportance: 0.5", {"title": "Test", "importance": 0.5}, None, None, {"importance": None}
+    )
     assert new_raw is not None
     assert "importance" not in new_raw
     assert err is None
@@ -1213,4 +1220,3 @@ def test_resolve_frontmatter_helper():
     assert new_raw is None
     assert err["status_code"] == 400
     assert "malformed" in err["error"]
-

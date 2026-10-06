@@ -27,9 +27,10 @@ def test_tool_result_text_only():
 
 
 def test_tool_result_with_media():
-    r = ToolResult(text="image attached", media=[
-        {"type": "file", "filename": "test.png", "data": b"png", "content_type": "image/png"}
-    ])
+    r = ToolResult(
+        text="image attached",
+        media=[{"type": "file", "filename": "test.png", "data": b"png", "content_type": "image/png"}],
+    )
     assert len(r.media) == 1
     assert r.media[0]["filename"] == "test.png"
 
@@ -54,8 +55,7 @@ def test_tool_result_widget_default_none():
 
 
 def test_tool_result_with_widget():
-    req = WidgetRequest(widget_type="data_table",
-                        data={"columns": [], "rows": []})
+    req = WidgetRequest(widget_type="data_table", data={"columns": [], "rows": []})
     r = ToolResult(text="table rendered", widget=req)
     assert r.widget is req
     assert r.widget.widget_type == "data_table"
@@ -65,19 +65,17 @@ def test_tool_result_with_widget():
 
 
 def test_widget_request_canvas_target():
-    req = WidgetRequest(widget_type="markdown_document",
-                        data={"content": "# Summary"},
-                        target="canvas")
+    req = WidgetRequest(widget_type="markdown_document", data={"content": "# Summary"}, target="canvas")
     assert req.target == "canvas"
 
 
 def test_widget_request_with_on_response():
     def _cb(_payload):
         return None
-    req = WidgetRequest(widget_type="multiple_choice",
-                        data={"options": []},
-                        on_response=_cb,
-                        response_message="Pick one")
+
+    req = WidgetRequest(
+        widget_type="multiple_choice", data={"options": []}, on_response=_cb, response_message="Pick one"
+    )
     assert req.on_response is _cb
     assert req.response_message == "Pick one"
 
@@ -147,8 +145,7 @@ def test_media_save_result_defaults():
 
 
 def test_media_save_result_workspace():
-    r = MediaSaveResult(workspace_ref="workspace://path/file.png",
-                        saved_filename="file-20260327.png")
+    r = MediaSaveResult(workspace_ref="workspace://path/file.png", saved_filename="file-20260327.png")
     assert r.workspace_ref == "workspace://path/file.png"
     assert r.saved_filename == "file-20260327.png"
 

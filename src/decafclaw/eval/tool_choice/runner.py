@@ -30,7 +30,7 @@ NO_TOOL = "<no_tool>"
 class CaseResult:
     case: Case
     model: str
-    picked: str            # first tool name, or NO_TOOL
+    picked: str  # first tool name, or NO_TOOL
     all_picks: list[str] = field(default_factory=list)
     passed: bool = False
     pass_count: int = 0
@@ -88,6 +88,7 @@ async def run_case(
         active_names = {t.get("function", {}).get("name") for t in active}
         if "tool_search" not in active_names:
             from ...tools.search_tools import SEARCH_TOOL_DEFINITIONS
+
             tool_loadout.extend(SEARCH_TOOL_DEFINITIONS)
 
         deferred_text = build_deferred_list_text(deferred)
@@ -100,10 +101,13 @@ async def run_case(
     ]
 
     async def _do_rep(i: int):
-        async with (sem if sem else nullcontext()):
+        async with sem if sem else nullcontext():
             try:
                 response = await call_llm(
-                    config, messages, tools=tool_loadout, model_name=model,
+                    config,
+                    messages,
+                    tools=tool_loadout,
+                    model_name=model,
                 )
                 return _extract_picks(response.get("tool_calls"))
             except Exception as exc:
@@ -155,7 +159,17 @@ async def run_cases(
     """Run a list of cases against a single model with bounded concurrency."""
     sem = asyncio.Semaphore(max(1, concurrency))
 
-    return await asyncio.gather(*(
-        run_case(c, model=model, config=config, tool_loadout=tool_loadout, reps=reps, sem=sem, production_mode=production_mode)
-        for c in cases
-    ))
+    return await asyncio.gather(
+        *(
+            run_case(
+                c,
+                model=model,
+                config=config,
+                tool_loadout=tool_loadout,
+                reps=reps,
+                sem=sem,
+                production_mode=production_mode,
+            )
+            for c in cases
+        )
+    )

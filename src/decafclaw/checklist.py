@@ -33,16 +33,14 @@ def _read_items(config, conv_id: str) -> list[dict]:
     for line in path.read_text().splitlines():
         line = line.strip()
         if line.startswith(_CHECKED):
-            raw = line[len(_CHECKED):]
+            raw = line[len(_CHECKED) :]
             m = _DONE_NOTE_RE.match(raw)
             if m:
-                items.append({"text": m.group(1), "done": True,
-                              "note": m.group(2)})
+                items.append({"text": m.group(1), "done": True, "note": m.group(2)})
             else:
                 items.append({"text": raw, "done": True, "note": ""})
         elif line.startswith(_UNCHECKED):
-            items.append({"text": line[len(_UNCHECKED):], "done": False,
-                          "note": ""})
+            items.append({"text": line[len(_UNCHECKED) :], "done": False, "note": ""})
     return items
 
 
@@ -88,8 +86,7 @@ def checklist_get_current(config, conv_id: str) -> dict | None:
     return None
 
 
-def checklist_complete_current(config, conv_id: str,
-                               note: str = "") -> dict | None:
+def checklist_complete_current(config, conv_id: str, note: str = "") -> dict | None:
     """Mark the current (first unchecked) step as done.
 
     Returns the next unchecked item, or None if all steps are complete.
@@ -100,10 +97,9 @@ def checklist_complete_current(config, conv_id: str,
             item["done"] = True
             item["note"] = note
             _write_items(config, conv_id, items)
-            log.info("[checklist:done] step %d/%d: %s",
-                     i + 1, len(items), item["text"][:60])
+            log.info("[checklist:done] step %d/%d: %s", i + 1, len(items), item["text"][:60])
             # Return next unchecked item
-            for j, next_item in enumerate(items[i + 1:], i + 2):
+            for j, next_item in enumerate(items[i + 1 :], i + 2):
                 if not next_item["done"]:
                     return {"index": j, "total": len(items), **next_item}
             return None  # all done

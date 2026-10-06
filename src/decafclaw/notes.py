@@ -97,7 +97,7 @@ def append_note(
             f.write(note.to_line() + "\n")
         return note
 
-    keep = existing_lines[-(max_total_entries - 1):]
+    keep = existing_lines[-(max_total_entries - 1) :]
     keep.append(note.to_line())
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
@@ -111,12 +111,12 @@ def _parse_line(line: str) -> Note | None:
     raw = line.rstrip("\n")
     if not raw.startswith(_LINE_PREFIX):
         return None
-    body = raw[len(_LINE_PREFIX):]
+    body = raw[len(_LINE_PREFIX) :]
     sep_idx = body.find(_SEPARATOR)
     if sep_idx < 0:
         return None
     timestamp = body[:sep_idx]
-    text = body[sep_idx + len(_SEPARATOR):]
+    text = body[sep_idx + len(_SEPARATOR) :]
     if not timestamp or not text:
         return None
     return Note(timestamp=timestamp, text=text)

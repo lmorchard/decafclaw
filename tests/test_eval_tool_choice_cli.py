@@ -31,10 +31,12 @@ def _patch_runtime(monkeypatch, *, picked_tool: str):
         default_model = "fake-model"
 
     monkeypatch.setattr(
-        "decafclaw.eval.tool_choice.__main__.load_config", lambda: StubConfig(),
+        "decafclaw.eval.tool_choice.__main__.load_config",
+        lambda: StubConfig(),
     )
     monkeypatch.setattr(
-        "decafclaw.eval.tool_choice.__main__.init_providers", lambda config: None,
+        "decafclaw.eval.tool_choice.__main__.init_providers",
+        lambda config: None,
     )
     # Skip the real loadout assembly — we don't need it for the integration
     # test, and we want to avoid the heavy skill discovery here.
@@ -55,14 +57,14 @@ def _patch_runtime(monkeypatch, *, picked_tool: str):
     async def fake_call_llm(config, messages, tools=None, model_name=None):
         return {
             "content": None,
-            "tool_calls": [
-                {"id": "c0", "function": {"name": picked_tool, "arguments": "{}"}}
-            ],
+            "tool_calls": [{"id": "c0", "function": {"name": picked_tool, "arguments": "{}"}}],
             "role": "assistant",
             "usage": {},
         }
+
     monkeypatch.setattr(
-        "decafclaw.eval.tool_choice.runner.call_llm", fake_call_llm,
+        "decafclaw.eval.tool_choice.runner.call_llm",
+        fake_call_llm,
     )
 
 

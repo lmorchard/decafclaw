@@ -13,7 +13,6 @@ import sqlite_vec
 log = logging.getLogger(__name__)
 
 
-
 # Source type boosts for semantic search: curated pages > user pages > journal
 _SOURCE_BOOSTS = {
     "page": 1.3,
@@ -119,7 +118,6 @@ def _open_db(config):
         conn.close()
 
 
-
 def _entry_hash(text: str) -> str:
     """SHA256 hash of entry text for deduplication."""
     return hashlib.sha256(text.encode()).hexdigest()[:16]
@@ -140,6 +138,7 @@ async def embed_text(config, text: str, max_retries: int = 3) -> list[float] | N
 
     if provider_name and provider_name in config.providers:
         from .llm import get_provider
+
         try:
             provider = get_provider(provider_name)
             return await provider.embed(ec.model, text)
@@ -165,9 +164,8 @@ async def embed_text(config, text: str, max_retries: int = 3) -> list[float] | N
             async with httpx.AsyncClient() as client:
                 resp = await client.post(resolved.url, json=body, headers=headers, timeout=30)
             if resp.status_code == 429 and attempt < max_retries:
-                delay = 2 ** attempt  # 1s, 2s, 4s
-                log.warning(f"Embedding API rate limited, retrying in {delay}s "
-                            f"(attempt {attempt + 1}/{max_retries})")
+                delay = 2**attempt  # 1s, 2s, 4s
+                log.warning(f"Embedding API rate limited, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
                 await _asyncio.sleep(delay)
                 continue
             resp.raise_for_status()
@@ -186,14 +184,18 @@ def _check_model(config, conn):
     """Verify the DB was built with the same embedding model/dimensions. Warns on mismatch."""
     row = conn.execute("SELECT value FROM metadata WHERE key='embedding_model'").fetchone()
     if row and row[0] != config.embedding.model:
-        log.warning(f"Embedding model mismatch: DB was built with '{row[0]}', "
-                    f"config uses '{config.embedding.model}'. "
-                    f"Run 'decafclaw-reindex' to rebuild.")
+        log.warning(
+            f"Embedding model mismatch: DB was built with '{row[0]}', "
+            f"config uses '{config.embedding.model}'. "
+            f"Run 'decafclaw-reindex' to rebuild."
+        )
     row = conn.execute("SELECT value FROM metadata WHERE key='embedding_dimensions'").fetchone()
     if row and int(row[0]) != config.embedding.dimensions:
-        log.warning(f"Embedding dimensions mismatch: DB was built with {row[0]}, "
-                    f"config uses {config.embedding.dimensions}. "
-                    f"Run 'decafclaw-reindex' to rebuild.")
+        log.warning(
+            f"Embedding dimensions mismatch: DB was built with {row[0]}, "
+            f"config uses {config.embedding.dimensions}. "
+            f"Run 'decafclaw-reindex' to rebuild."
+        )
 
 
 def _set_model(config, conn):
@@ -208,8 +210,7 @@ def _set_model(config, conn):
     )
 
 
-def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[float],
-                     source_type: str = "memory"):
+def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[float], source_type: str = "memory"):
     """Store an entry and its embedding in the index (sync)."""
     with _open_db(config) as conn:
         _set_model(config, conn)
@@ -221,7 +222,7 @@ def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[fl
                 """INSERT OR IGNORE INTO memory_embeddings
                    (file_path, entry_hash, entry_text, embedding, source_type, created_at)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (file_path, entry_hash, entry_text, b'', source_type, now),
+                (file_path, entry_hash, entry_text, b"", source_type, now),
             )
         else:
             # Clean schema: no embedding column
@@ -246,19 +247,25 @@ def delete_entries(config, file_path: str, source_type: str | None = None) -> in
     """
     with _open_db(config) as conn:
         if source_type:
-            ids = [r[0] for r in conn.execute(
-                "SELECT id FROM memory_embeddings WHERE file_path = ? AND source_type = ?",
-                (file_path, source_type),
-            ).fetchall()]
+            ids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT id FROM memory_embeddings WHERE file_path = ? AND source_type = ?",
+                    (file_path, source_type),
+                ).fetchall()
+            ]
             conn.execute(
                 "DELETE FROM memory_embeddings WHERE file_path = ? AND source_type = ?",
                 (file_path, source_type),
             )
         else:
-            ids = [r[0] for r in conn.execute(
-                "SELECT id FROM memory_embeddings WHERE file_path = ?",
-                (file_path,),
-            ).fetchall()]
+            ids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT id FROM memory_embeddings WHERE file_path = ?",
+                    (file_path,),
+                ).fetchall()
+            ]
             conn.execute(
                 "DELETE FROM memory_embeddings WHERE file_path = ?",
                 (file_path,),
@@ -274,10 +281,13 @@ def delete_by_source_type(config, source_type: str) -> int:
     Returns the number of rows deleted.
     """
     with _open_db(config) as conn:
-        ids = [r[0] for r in conn.execute(
-            "SELECT id FROM memory_embeddings WHERE source_type = ?",
-            (source_type,),
-        ).fetchall()]
+        ids = [
+            r[0]
+            for r in conn.execute(
+                "SELECT id FROM memory_embeddings WHERE source_type = ?",
+                (source_type,),
+            ).fetchall()
+        ]
         conn.execute(
             "DELETE FROM memory_embeddings WHERE source_type = ?",
             (source_type,),
@@ -287,8 +297,9 @@ def delete_by_source_type(config, source_type: str) -> int:
         return len(ids)
 
 
-def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
-                        source_type: str | None = None) -> list[dict]:
+def search_similar_sync(
+    config, query_embedding: list[float], top_k: int = 5, source_type: str | None = None
+) -> list[dict]:
     """Find the top K most similar entries by cosine similarity (sync).
 
     If source_type is specified, only search that type. Otherwise search all.
@@ -302,7 +313,8 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
         # Over-fetch to allow for threshold filtering and wiki boost reranking
         fetch_k = top_k * 3
 
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT m.entry_text, m.file_path, m.source_type, m.created_at, v.distance
             FROM (
                 SELECT rowid, distance
@@ -312,7 +324,9 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
                 LIMIT ?
             ) v
             JOIN memory_embeddings m ON m.id = v.rowid
-        """, (query_vec, fetch_k)).fetchall()
+        """,
+            (query_vec, fetch_k),
+        ).fetchall()
 
     if not rows:
         return []
@@ -323,13 +337,15 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
             continue
         similarity = 1.0 - distance
         similarity *= _SOURCE_BOOSTS.get(row_source_type, 1.0)
-        results.append({
-            "entry_text": entry_text,
-            "file_path": file_path,
-            "similarity": similarity,
-            "source_type": row_source_type,
-            "created_at": created_at,
-        })
+        results.append(
+            {
+                "entry_text": entry_text,
+                "file_path": file_path,
+                "similarity": similarity,
+                "source_type": row_source_type,
+                "created_at": created_at,
+            }
+        )
 
     results.sort(key=lambda x: x["similarity"], reverse=True)
     return results[:top_k]
@@ -343,8 +359,7 @@ async def index_entry(config, file_path: str, entry_text: str, source_type: str 
         log.debug(f"Indexed {source_type} entry from {file_path}")
 
 
-async def search_similar(config, query: str, top_k: int = 5,
-                         source_type: str | None = None) -> list[dict]:
+async def search_similar(config, query: str, top_k: int = 5, source_type: str | None = None) -> list[dict]:
     """Embed a query and find similar entries (async).
 
     If source_type is specified, only search that type.
@@ -358,9 +373,7 @@ async def search_similar(config, query: str, top_k: int = 5,
                 (source_type,),
             ).fetchone()[0]
         else:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM memory_embeddings"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0]
     if count == 0:
         log.info("Embedding index is empty, reindexing vault...")
         await reindex_vault(config)
@@ -397,10 +410,7 @@ async def _reindex_entries(entries, label, config, concurrency: int = 4):
         if done % 10 == 0 or done == total:
             print(f"  {label}: {done}/{total}")
 
-    tasks = [
-        asyncio.create_task(_embed_one(src_id, text, st))
-        for src_id, text, st, _meta in all_entries
-    ]
+    tasks = [asyncio.create_task(_embed_one(src_id, text, st)) for src_id, text, st, _meta in all_entries]
     await asyncio.gather(*tasks)
     if total % 10 != 0:
         print(f"  {label}: {done}/{total}")
@@ -424,7 +434,6 @@ def _iter_journal_entries(config):
             entry = "## " + part if not part.startswith("## ") else part
             rel_path = str(filepath.relative_to(config.vault_root))
             yield rel_path, entry, "journal", {}
-
 
 
 def _source_type_for_vault_path(config, filepath):
@@ -551,9 +560,7 @@ def prune_stale_embeddings(config) -> dict[str, int]:
     unknown_types_logged: set[str] = set()
 
     with _open_db(config) as conn:
-        rows = conn.execute(
-            "SELECT id, file_path, source_type FROM memory_embeddings"
-        ).fetchall()
+        rows = conn.execute("SELECT id, file_path, source_type FROM memory_embeddings").fetchall()
 
     for row_id, file_path, source_type in rows:
         counts["checked"] += 1
@@ -602,11 +609,10 @@ def prune_embeddings_cli():
 
     parser = argparse.ArgumentParser(
         description="Drop stale rows from the DecafClaw embedding index "
-                    "(missing source files + legacy excluded source types). "
-                    "See #305.",
+        "(missing source files + legacy excluded source types). "
+        "See #305.",
     )
-    parser.add_argument("--quiet", action="store_true",
-                        help="Print only the summary counts (no per-row logs)")
+    parser.add_argument("--quiet", action="store_true", help="Print only the summary counts (no per-row logs)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -687,8 +693,9 @@ def search_cli():
 
     parser = argparse.ArgumentParser(description="Search DecafClaw embeddings")
     parser.add_argument("query", help="Search query")
-    parser.add_argument("--type", choices=["memory", "conversation", "all"], default="all",
-                        help="Source type to search (default: all)")
+    parser.add_argument(
+        "--type", choices=["memory", "conversation", "all"], default="all", help="Source type to search (default: all)"
+    )
     parser.add_argument("--top-k", type=int, default=5, help="Number of results (default: 5)")
     args = parser.parse_args()
 
@@ -698,8 +705,7 @@ def search_cli():
     source_type = args.type if args.type != "all" else None
 
     async def _search():
-        return await search_similar(config, args.query, top_k=args.top_k,
-                                     source_type=source_type)
+        return await search_similar(config, args.query, top_k=args.top_k, source_type=source_type)
 
     results = asyncio.run(_search())
 
@@ -710,6 +716,6 @@ def search_cli():
     print(f"\n{len(results)} results for '{args.query}' (type={args.type}):\n")
     for i, r in enumerate(results):
         sim = f"{r['similarity']:.3f}"
-        preview = r['entry_text'][:120].replace('\n', ' ')
-        print(f"  {i+1}. [{sim}] ({r['file_path']}) {preview}...")
+        preview = r["entry_text"][:120].replace("\n", " ")
+        print(f"  {i + 1}. [{sim}] ({r['file_path']}) {preview}...")
     print()

@@ -52,12 +52,7 @@ async def main():
 
         for i, fact in enumerate(facts):
             # Format like a real memory entry so embeddings match the same space
-            entry = (
-                f"## 2026-01-01 00:00\n\n"
-                f"- **channel:** fixture (fixture)\n"
-                f"- **tags:** cat, animal, fact\n\n"
-                f"{fact}"
-            )
+            entry = f"## 2026-01-01 00:00\n\n- **channel:** fixture (fixture)\n- **tags:** cat, animal, fact\n\n{fact}"
             await index_entry(build_config, "cat-facts.txt", entry)
             if (i + 1) % 10 == 0:
                 print(f"  {i + 1}/{len(facts)}")

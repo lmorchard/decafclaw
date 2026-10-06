@@ -8,13 +8,17 @@ from decafclaw.context import Context
 @pytest.mark.asyncio
 async def test_aux_llm_client_selection():
     config = Config()
-    config.model_configs = {"primary": ModelConfig(provider="p", model="m"), "aux": ModelConfig(provider="p", model="m")}
+    config.model_configs = {
+        "primary": ModelConfig(provider="p", model="m"),
+        "aux": ModelConfig(provider="p", model="m"),
+    }
     config.default_model = "primary"
     config.auxiliary_model = "aux"
 
     ctx = Context(config=config, event_bus=None)
     client = ctx.aux_llm()
     assert client.model_name == "aux"
+
 
 @pytest.mark.asyncio
 async def test_aux_llm_fallback():

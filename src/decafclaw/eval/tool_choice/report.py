@@ -16,11 +16,12 @@ from .runner import CaseResult
 @dataclass(frozen=True)
 class PairOverlap:
     """Aggregated overlap stats for one (expected, near_miss) pair."""
+
     expected: str
     near_miss: str
-    swapped: int            # cases where the model picked near_miss instead
-    total: int              # cases that contributed to this pair
-    pct: float              # swapped / total in [0.0, 100.0]
+    swapped: int  # cases where the model picked near_miss instead
+    total: int  # cases that contributed to this pair
+    pct: float  # swapped / total in [0.0, 100.0]
 
 
 def format_case_lines(results: list[CaseResult]) -> list[str]:
@@ -32,10 +33,7 @@ def format_case_lines(results: list[CaseResult]) -> list[str]:
             lines.append(f"PASS  {r.case.name}{rate_str}")
         else:
             picks_str = r.picked if r.reps == 1 else ", ".join(sorted(set(r.rep_picks)))
-            lines.append(
-                f"FAIL  {r.case.name}{rate_str}    "
-                f"picked {picks_str}; expected {r.case.expected}"
-            )
+            lines.append(f"FAIL  {r.case.name}{rate_str}    picked {picks_str}; expected {r.case.expected}")
     return lines
 
 
@@ -58,9 +56,7 @@ def compute_pair_overlap(results: list[CaseResult]) -> list[PairOverlap]:
     ``expected=A`` and ``near_miss`` containing ``B``). Sorted by overlap pct
     descending, ties broken by ``expected`` then ``near_miss`` for stable output.
     """
-    counters: dict[tuple[str, str], dict[str, int]] = defaultdict(
-        lambda: {"swapped": 0, "total": 0}
-    )
+    counters: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: {"swapped": 0, "total": 0})
     for r in results:
         picks_to_count = r.rep_picks if r.rep_picks else [r.picked]
         for pick in picks_to_count:
@@ -75,10 +71,15 @@ def compute_pair_overlap(results: list[CaseResult]) -> list[PairOverlap]:
         total = c["total"]
         swapped = c["swapped"]
         pct = (swapped / total * 100) if total else 0.0
-        rows.append(PairOverlap(
-            expected=expected, near_miss=nm,
-            swapped=swapped, total=total, pct=pct,
-        ))
+        rows.append(
+            PairOverlap(
+                expected=expected,
+                near_miss=nm,
+                swapped=swapped,
+                total=total,
+                pct=pct,
+            )
+        )
 
     rows.sort(key=lambda r: (-r.pct, r.expected, r.near_miss))
     return rows
@@ -95,9 +96,7 @@ def format_pair_overlap(rows: list[PairOverlap]) -> list[str]:
     width = max(len(p) for p in pairs)
     for pair, r in zip(pairs, rows, strict=False):
         marker = "  \u2190 tighten" if r.pct >= 50 else ""
-        lines.append(
-            f"  {pair.ljust(width)}  {r.swapped}/{r.total} swapped ({r.pct:.0f}%){marker}"
-        )
+        lines.append(f"  {pair.ljust(width)}  {r.swapped}/{r.total} swapped ({r.pct:.0f}%){marker}")
     return lines
 
 
@@ -134,13 +133,8 @@ def format_confusion_matrix(
             continue
         any_off_diagonal = True
         on_diag = picks.get(expected, 0)
-        off_str = ", ".join(
-            f"picked {p} ({n})"
-            for p, n in sorted(off.items(), key=lambda kv: -kv[1])
-        )
-        lines.append(
-            f"  {expected}: correct ({on_diag}) — {off_str}"
-        )
+        off_str = ", ".join(f"picked {p} ({n})" for p, n in sorted(off.items(), key=lambda kv: -kv[1]))
+        lines.append(f"  {expected}: correct ({on_diag}) — {off_str}")
     if not any_off_diagonal:
         lines.append("  (no off-diagonal picks — all cases hit their expected tool)")
     return lines

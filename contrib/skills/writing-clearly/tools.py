@@ -147,23 +147,17 @@ async def _apply_plan(
                 await publish(
                     "tool_status",
                     tool=_TOOL_NAME,
-                    message=(
-                        f"Skipped: {rule} — \"{_truncate(before)}\" not found "
-                        f"in current text"
-                    ),
+                    message=(f'Skipped: {rule} — "{_truncate(before)}" not found in current text'),
                 )
             continue
 
-        working = working[:idx] + after + working[idx + len(before):]
+        working = working[:idx] + after + working[idx + len(before) :]
         applied.append(entry)
         if publish is not None:
             await publish(
                 "tool_status",
                 tool=_TOOL_NAME,
-                message=(
-                    f"Applied {rule}: \"{_truncate(before)}\" "
-                    f"→ \"{_truncate(after)}\""
-                ),
+                message=(f'Applied {rule}: "{_truncate(before)}" → "{_truncate(after)}"'),
             )
 
     return working, applied, skipped
@@ -213,14 +207,16 @@ async def tool_edit_with_strunk(
 
     model = _skill_config.model if _skill_config and _skill_config.model else ""
     planner_result = await tool_delegate_task(
-        ctx, task=task, model=model, return_schema=_RETURN_SCHEMA,
+        ctx,
+        task=task,
+        model=model,
+        return_schema=_RETURN_SCHEMA,
     )
 
     plan = planner_result.data
     if not isinstance(plan, dict):
         log.debug(
-            "edit_with_strunk: planner did not return parseable JSON; "
-            "falling back to prose-only output (v1 behavior)"
+            "edit_with_strunk: planner did not return parseable JSON; falling back to prose-only output (v1 behavior)"
         )
         if publish is not None:
             await publish(
@@ -262,9 +258,7 @@ async def tool_edit_with_strunk(
         await publish(
             "tool_status",
             tool=_TOOL_NAME,
-            message=(
-                f"Done: {len(applied)} applied, {len(skipped)} skipped"
-            ),
+            message=(f"Done: {len(applied)} applied, {len(skipped)} skipped"),
         )
 
     return ToolResult(

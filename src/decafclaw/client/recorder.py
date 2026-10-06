@@ -85,13 +85,15 @@ class TurnRecorder:
             rec.result_text = event.get("result_text", "") or rec.result_text
 
         elif etype == "confirm_request":
-            self.summary.confirmations.append(ConfirmationRecord(
-                confirmation_id=event.get("confirmation_id", ""),
-                action_type=event.get("action_type", ""),
-                tool=event.get("tool", ""),
-                command=event.get("command", ""),
-                message=event.get("message", ""),
-            ))
+            self.summary.confirmations.append(
+                ConfirmationRecord(
+                    confirmation_id=event.get("confirmation_id", ""),
+                    action_type=event.get("action_type", ""),
+                    tool=event.get("tool", ""),
+                    command=event.get("command", ""),
+                    message=event.get("message", ""),
+                )
+            )
 
         elif etype == "error":
             msg = event.get("message", "")
@@ -109,8 +111,7 @@ class TurnRecorder:
             self.summary.model = event.get("model", "") or self.summary.model
 
     def finalize(self, stop_reason: str) -> TurnSummary:
-        self.summary.assistant_text = "\n\n".join(
-            p for p in self._assistant_parts if p)
+        self.summary.assistant_text = "\n\n".join(p for p in self._assistant_parts if p)
         self.summary.status = _status_for(stop_reason, self.summary.errors)
         return self.summary
 

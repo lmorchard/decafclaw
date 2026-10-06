@@ -24,6 +24,7 @@ _REQUEST_TIMEOUT = 30
 
 # -- Allowlist ----------------------------------------------------------------
 
+
 def _allow_patterns_path(config) -> Path:
     """Path to the HTTP allow patterns file (admin-managed)."""
     return config.agent_path / "http_allow_patterns.json"
@@ -83,18 +84,21 @@ def _suggest_pattern(url: str) -> str:
 
 # -- Tool function ------------------------------------------------------------
 
-async def tool_http_request(ctx: "Context", url: str, method: str = "GET",
-                            headers: dict | None = None,
-                            body: str = "",
-                            max_response_size: int = _DEFAULT_MAX_RESPONSE_SIZE,
-                            ) -> ToolResult:
+
+async def tool_http_request(
+    ctx: "Context",
+    url: str,
+    method: str = "GET",
+    headers: dict | None = None,
+    body: str = "",
+    max_response_size: int = _DEFAULT_MAX_RESPONSE_SIZE,
+) -> ToolResult:
     """Make an HTTP request and return the response."""
     method = method.upper()
     if method not in _VALID_METHODS:
         return ToolResult(
             text=f"[error: invalid method '{method}'. Use: {', '.join(sorted(_VALID_METHODS))}]",
-            data={"status_code": None, "error": f"invalid method: {method}",
-                  "method": method, "url": url},
+            data={"status_code": None, "error": f"invalid method: {method}", "method": method, "url": url},
         )
 
     log.info(f"[tool:http_request] {method} {url}")
@@ -104,7 +108,8 @@ async def tool_http_request(ctx: "Context", url: str, method: str = "GET",
     if not _url_matches_pattern(url, patterns):
         suggested_pattern = _suggest_pattern(url)
         result = await request_confirmation(
-            ctx, tool_name="http_request",
+            ctx,
+            tool_name="http_request",
             command=f"{method} {url}",
             message=f"HTTP request: `{method} {url}`",
             suggested_pattern=suggested_pattern,
@@ -112,8 +117,7 @@ async def tool_http_request(ctx: "Context", url: str, method: str = "GET",
         if not result.get("approved"):
             return ToolResult(
                 text="[error: HTTP request was denied by user]",
-                data={"status_code": None, "error": "denied",
-                      "method": method, "url": url},
+                data={"status_code": None, "error": "denied", "method": method, "url": url},
             )
         if result.get("add_pattern"):
             _save_allow_pattern(ctx.config, suggested_pattern)
@@ -122,10 +126,12 @@ async def tool_http_request(ctx: "Context", url: str, method: str = "GET",
     start = time.monotonic()
     try:
         async with httpx.AsyncClient(
-            follow_redirects=True, timeout=_REQUEST_TIMEOUT,
+            follow_redirects=True,
+            timeout=_REQUEST_TIMEOUT,
         ) as client:
             resp = await client.request(
-                method, url,
+                method,
+                url,
                 headers=headers,
                 content=body if body else None,
             )
@@ -133,8 +139,7 @@ async def tool_http_request(ctx: "Context", url: str, method: str = "GET",
         elapsed_ms = int((time.monotonic() - start) * 1000)
         return ToolResult(
             text=f"[error: HTTP request failed: {e}]",
-            data={"status_code": None, "error": str(e),
-                  "method": method, "url": url, "elapsed_ms": elapsed_ms},
+            data={"status_code": None, "error": str(e), "method": method, "url": url, "elapsed_ms": elapsed_ms},
         )
 
     elapsed_ms = int((time.monotonic() - start) * 1000)

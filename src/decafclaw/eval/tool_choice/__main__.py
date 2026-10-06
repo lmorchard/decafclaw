@@ -34,44 +34,53 @@ from .runner import run_cases
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Tool-choice disambiguation eval — measures which tool the "
-                    "model picks given engineered ambiguity scenarios.",
+        "model picks given engineered ambiguity scenarios.",
     )
     p.add_argument(
-        "--production-loadout", action="store_true",
+        "--production-loadout",
+        action="store_true",
         help="Run in production mode: use classify_tools to split loadout, offer tool_search, and add deferred block",
     )
     p.add_argument("path", help="YAML file or directory of YAMLs")
     grp = p.add_mutually_exclusive_group()
     grp.add_argument(
-        "--model", help="Single model name (default: config.default_model)",
+        "--model",
+        help="Single model name (default: config.default_model)",
     )
     grp.add_argument(
         "--models",
         help="Comma-separated list of model names for a sweep run",
     )
     p.add_argument(
-        "--include-mcp", action="store_true",
-        help="Include MCP server tools in the loadout (off by default — "
-             "deployment-specific noise)",
+        "--include-mcp",
+        action="store_true",
+        help="Include MCP server tools in the loadout (off by default — deployment-specific noise)",
     )
     p.add_argument(
-        "--matrix", action="store_true",
+        "--matrix",
+        action="store_true",
         help="Print full confusion matrix in addition to pair overlap",
     )
     p.add_argument(
-        "--verbose", action="store_true",
+        "--verbose",
+        action="store_true",
         help="Print full tool_calls list per case (when more than one was emitted)",
     )
     p.add_argument(
-        "--concurrency", type=int, default=4,
+        "--concurrency",
+        type=int,
+        default=4,
         help="Max concurrent cases per model (default: 4)",
     )
     p.add_argument(
-        "--reps", type=int, default=1,
+        "--reps",
+        type=int,
+        default=1,
         help="Number of times to run each case (default: 1)",
     )
     p.add_argument(
-        "--filter", type=str,
+        "--filter",
+        type=str,
         help="Only run cases whose name contains this substring",
     )
     return p
@@ -84,14 +93,19 @@ def _resolve_models(args, config) -> list[str]:
         return [args.model]
     if not config.default_model:
         raise SystemExit(
-            "No model specified and config.default_model is empty — "
-            "pass --model or --models, or configure a default."
+            "No model specified and config.default_model is empty — pass --model or --models, or configure a default."
         )
     return [config.default_model]
 
 
 async def _run_for_model(
-    model: str, cases, *, config, tool_loadout, args, sweep: bool,
+    model: str,
+    cases,
+    *,
+    config,
+    tool_loadout,
+    args,
+    sweep: bool,
 ) -> bool:
     """Run a single model's pass and print its block. Returns True on
     pass, False on any failure."""
@@ -161,16 +175,20 @@ def main(argv: list[str] | None = None) -> int:
     sweep = len(models) > 1
     tool_loadout = build_full_tool_loadout(config, include_mcp=args.include_mcp)
 
-    print(f"tool-choice eval — {len(cases)} case(s), "
-          f"{len(tool_loadout)} tool(s) loaded, "
-          f"models: {', '.join(models)}")
+    print(f"tool-choice eval — {len(cases)} case(s), {len(tool_loadout)} tool(s) loaded, models: {', '.join(models)}")
 
     all_passed = True
     for m in models:
-        passed = asyncio.run(_run_for_model(
-            m, cases, config=config, tool_loadout=tool_loadout,
-            args=args, sweep=sweep,
-        ))
+        passed = asyncio.run(
+            _run_for_model(
+                m,
+                cases,
+                config=config,
+                tool_loadout=tool_loadout,
+                args=args,
+                sweep=sweep,
+            )
+        )
         all_passed = all_passed and passed
 
     return 0 if all_passed else 1

@@ -40,9 +40,12 @@ async def test_config_routes_require_authentication(app):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         assert (await client.get("/api/config/files")).status_code == 401
         assert (await client.get("/api/config/files/AGENT.md")).status_code == 401
-        assert (await client.put(
-            "/api/config/files/AGENT.md", json={"content": "denied"},
-        )).status_code == 401
+        assert (
+            await client.put(
+                "/api/config/files/AGENT.md",
+                json={"content": "denied"},
+            )
+        ).status_code == 401
 
 
 @pytest.mark.asyncio
@@ -75,7 +78,8 @@ async def test_read_falls_back_to_bundled_default(client):
 
 @pytest.mark.asyncio
 async def test_encoded_schedule_path_round_trips_and_force_save_omits_modified(
-    client, http_config,
+    client,
+    http_config,
 ):
     relative = "workspace/schedules/Daily #1.md"
     target = http_config.workspace_path / "schedules" / "Daily #1.md"
@@ -115,13 +119,15 @@ async def test_write_keeps_conflict_and_legacy_400_responses(client, http_config
     assert target.read_text() == "old"
 
     invalid_body = await client.put(
-        "/api/config/files/USER.md", json={"content": 7},
+        "/api/config/files/USER.md",
+        json={"content": 7},
     )
     assert invalid_body.status_code == 400
     assert invalid_body.json() == {"error": "content (string) required"}
 
     invalid_path = await client.put(
-        "/api/config/files/not-allowed.md", json={"content": "no"},
+        "/api/config/files/not-allowed.md",
+        json={"content": "no"},
     )
     assert invalid_path.status_code == 400
     assert invalid_path.json() == {"error": "invalid config path"}

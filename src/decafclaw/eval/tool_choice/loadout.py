@@ -50,21 +50,21 @@ def build_full_tool_loadout(config, *, include_mcp: bool = False) -> list[dict]:
             defs.extend(tool_defs)
         except Exception as exc:
             log.warning(
-                "Failed to load tools for skill '%s': %s", skill.name, exc,
+                "Failed to load tools for skill '%s': %s",
+                skill.name,
+                exc,
             )
 
     if include_mcp:
         from ...mcp_client import get_registry
+
         registry = get_registry()
         if registry is not None:
             defs.extend(registry.get_tool_definitions())
     else:
         # Defensive filter — current core/skill TOOL_DEFINITIONS shouldn't
         # contain mcp__ entries, but a future skill could re-export them.
-        defs = [
-            d for d in defs
-            if not d.get("function", {}).get("name", "").startswith("mcp__")
-        ]
+        defs = [d for d in defs if not d.get("function", {}).get("name", "").startswith("mcp__")]
 
     return defs
 
@@ -76,5 +76,6 @@ def build_production_loadout(config, *, include_mcp: bool = False) -> tuple[list
     full loadout exactly as the agent would at runtime.
     """
     from ...tools.tool_registry import classify_tools
+
     full_loadout = build_full_tool_loadout(config, include_mcp=include_mcp)
     return classify_tools(full_loadout, config)

@@ -58,6 +58,7 @@ log = logging.getLogger(__name__)
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_bool(value: str, default: bool = False) -> bool:
     """Parse a string to boolean. Returns default if empty/None."""
     if not value:
@@ -98,6 +99,7 @@ def _coerce(value: str, field_type) -> object:
 # Generic sub-config loader
 # ---------------------------------------------------------------------------
 
+
 def load_sub_config(
     dc_class: type,
     json_data: dict,
@@ -117,6 +119,7 @@ def load_sub_config(
 
     # Resolve type hints (may be strings due to __future__.annotations)
     import typing
+
     hints = typing.get_type_hints(dc_class)
 
     for f in dc_fields(dc_class):
@@ -140,13 +143,12 @@ def load_sub_config(
             json_val = json_data[f.name]
             # Nested dataclass: recurse to build it from a dict, preserving
             # systematic env var lookup via a derived prefix.
-            if (hasattr(field_type, "__dataclass_fields__")
-                    and isinstance(json_val, dict)):
-                nested_env_prefix = (
-                    f"{env_prefix}_{f.name.upper()}" if env_prefix else ""
-                )
+            if hasattr(field_type, "__dataclass_fields__") and isinstance(json_val, dict):
+                nested_env_prefix = f"{env_prefix}_{f.name.upper()}" if env_prefix else ""
                 kwargs[f.name] = load_sub_config(
-                    field_type, json_val, nested_env_prefix,
+                    field_type,
+                    json_val,
+                    nested_env_prefix,
                 )
             # JSON already has correct types for most things
             elif isinstance(json_val, str) and field_type not in (str, "str"):
@@ -161,6 +163,7 @@ def load_sub_config(
 # ---------------------------------------------------------------------------
 # Top-level Config
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Config:
@@ -275,7 +278,6 @@ class Config:
         return self.compaction.llm_max_tokens or self.compaction.max_tokens
 
 
-
 # ---------------------------------------------------------------------------
 # Effort level resolution
 # ---------------------------------------------------------------------------
@@ -284,8 +286,10 @@ class Config:
 # Model resolution (new provider-based system)
 # ---------------------------------------------------------------------------
 
+
 def resolve_model(
-    config: Config, name: str = "",
+    config: Config,
+    name: str = "",
 ) -> tuple[ProviderConfig, ModelConfig]:
     """Resolve a named model config to its provider + model config.
 
@@ -298,17 +302,12 @@ def resolve_model(
 
     if model_name not in config.model_configs:
         available = ", ".join(sorted(config.model_configs.keys())) or "(none)"
-        raise KeyError(
-            f"Unknown model config '{model_name}'. Available: {available}"
-        )
+        raise KeyError(f"Unknown model config '{model_name}'. Available: {available}")
 
     mc = config.model_configs[model_name]
     if mc.provider not in config.providers:
         available = ", ".join(sorted(config.providers.keys())) or "(none)"
-        raise KeyError(
-            f"Model '{model_name}' references unknown provider '{mc.provider}'. "
-            f"Available: {available}"
-        )
+        raise KeyError(f"Model '{model_name}' references unknown provider '{mc.provider}'. Available: {available}")
 
     return config.providers[mc.provider], mc
 
@@ -328,17 +327,16 @@ def resolve_streaming(config: "Config", active_model: str = "") -> bool:
 # Loader
 # ---------------------------------------------------------------------------
 
+
 def _load_providers(raw: dict) -> dict[str, ProviderConfig]:
     """Parse providers section from config.json into ProviderConfig instances."""
     if not isinstance(raw, dict):
-        log.warning("Invalid 'providers' section: expected object, got %s",
-                    type(raw).__name__)
+        log.warning("Invalid 'providers' section: expected object, got %s", type(raw).__name__)
         return {}
     result: dict[str, ProviderConfig] = {}
     for name, entry in raw.items():
         if not isinstance(entry, dict):
-            log.warning("Invalid provider '%s': expected object, got %s",
-                        name, type(entry).__name__)
+            log.warning("Invalid provider '%s': expected object, got %s", name, type(entry).__name__)
             continue
         result[name] = ProviderConfig(
             type=entry.get("type", ""),
@@ -354,14 +352,12 @@ def _load_providers(raw: dict) -> dict[str, ProviderConfig]:
 def _load_model_configs(raw: dict) -> dict[str, ModelConfig]:
     """Parse model_configs section from config.json into ModelConfig instances."""
     if not isinstance(raw, dict):
-        log.warning("Invalid 'model_configs' section: expected object, got %s",
-                    type(raw).__name__)
+        log.warning("Invalid 'model_configs' section: expected object, got %s", type(raw).__name__)
         return {}
     result: dict[str, ModelConfig] = {}
     for name, entry in raw.items():
         if not isinstance(entry, dict):
-            log.warning("Invalid model config '%s': expected object, got %s",
-                        name, type(entry).__name__)
+            log.warning("Invalid model config '%s': expected object, got %s", name, type(entry).__name__)
             continue
         result[name] = ModelConfig(
             provider=entry.get("provider", ""),
@@ -391,49 +387,52 @@ def load_config() -> Config:
             log.warning("Failed to load %s: %s", config_path, exc)
 
     # Build each sub-config
-    llm = load_sub_config(
-        LlmConfig, file_data.get("llm", {}), "LLM")
+    llm = load_sub_config(LlmConfig, file_data.get("llm", {}), "LLM")
 
     mattermost = load_sub_config(
-        MattermostConfig, file_data.get("mattermost", {}), "MATTERMOST",
-        env_aliases={"stream_throttle_ms": "LLM_STREAM_THROTTLE_MS"})
+        MattermostConfig,
+        file_data.get("mattermost", {}),
+        "MATTERMOST",
+        env_aliases={"stream_throttle_ms": "LLM_STREAM_THROTTLE_MS"},
+    )
 
     compaction = load_sub_config(
-        CompactionConfig, file_data.get("compaction", {}), "COMPACTION",
+        CompactionConfig,
+        file_data.get("compaction", {}),
+        "COMPACTION",
         env_aliases={
             "url": "COMPACTION_LLM_URL",
             "model": "COMPACTION_LLM_MODEL",
             "api_key": "COMPACTION_LLM_API_KEY",
             "llm_max_tokens": "COMPACTION_LLM_MAX_TOKENS",
-        })
+        },
+    )
 
-    cleanup = load_sub_config(
-        CleanupConfig, file_data.get("cleanup", {}), "CLEANUP")
+    cleanup = load_sub_config(CleanupConfig, file_data.get("cleanup", {}), "CLEANUP")
 
-    notes = load_sub_config(
-        NotesConfig, file_data.get("notes", {}), "NOTES")
+    notes = load_sub_config(NotesConfig, file_data.get("notes", {}), "NOTES")
 
-    recent_journal = load_sub_config(
-        RecentJournalConfig, file_data.get("recent_journal", {}), "RECENT_JOURNAL")
+    recent_journal = load_sub_config(RecentJournalConfig, file_data.get("recent_journal", {}), "RECENT_JOURNAL")
 
     embedding = load_sub_config(
-        EmbeddingConfig, file_data.get("embedding", {}), "EMBEDDING",
-        env_aliases={"search_strategy": "MEMORY_SEARCH_STRATEGY"})
+        EmbeddingConfig,
+        file_data.get("embedding", {}),
+        "EMBEDDING",
+        env_aliases={"search_strategy": "MEMORY_SEARCH_STRATEGY"},
+    )
 
-    heartbeat = load_sub_config(
-        HeartbeatConfig, file_data.get("heartbeat", {}), "HEARTBEAT")
+    heartbeat = load_sub_config(HeartbeatConfig, file_data.get("heartbeat", {}), "HEARTBEAT")
 
-    http = load_sub_config(
-        HttpConfig, file_data.get("http", {}), "HTTP")
+    http = load_sub_config(HttpConfig, file_data.get("http", {}), "HTTP")
 
-    terminal = load_sub_config(
-        TerminalConfig, file_data.get("terminal", {}), "TERMINAL")
+    terminal = load_sub_config(TerminalConfig, file_data.get("terminal", {}), "TERMINAL")
 
-    shell = load_sub_config(
-        ShellConfig, file_data.get("shell", {}), "SHELL")
+    shell = load_sub_config(ShellConfig, file_data.get("shell", {}), "SHELL")
 
     agent = load_sub_config(
-        AgentConfig, file_data.get("agent", {}), "",
+        AgentConfig,
+        file_data.get("agent", {}),
+        "",
         env_aliases={
             "data_home": "DATA_HOME",
             "id": "AGENT_ID",
@@ -448,7 +447,8 @@ def load_config() -> Config:
             "child_timeout_sec": "CHILD_TIMEOUT_SEC",
             "tool_timeout_sec": "TOOL_TIMEOUT_SEC",
             "turn_on_new_message": "AGENT_TURN_ON_NEW_MESSAGE",
-        })
+        },
+    )
 
     # Force bootstrap values — these determine the config file location,
     # so the JSON file must not override them
@@ -459,55 +459,40 @@ def load_config() -> Config:
     raw_skills = file_data.get("skills", {})
     if not isinstance(raw_skills, dict):
         log.warning(
-            "Invalid 'skills' section in config.json: expected an object, "
-            "got %s; defaulting to empty dict.",
+            "Invalid 'skills' section in config.json: expected an object, got %s; defaulting to empty dict.",
             type(raw_skills).__name__,
         )
         skills: dict[str, dict[str, Any]] = {}
     else:
         skills = raw_skills
 
-    reflection = load_sub_config(
-        ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
+    reflection = load_sub_config(ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
 
-    vault_retrieval = load_sub_config(
-        VaultRetrievalConfig, file_data.get("vault_retrieval", {}), "MEMORY_CONTEXT")
+    vault_retrieval = load_sub_config(VaultRetrievalConfig, file_data.get("vault_retrieval", {}), "MEMORY_CONTEXT")
 
-    relevance = load_sub_config(
-        RelevanceConfig, file_data.get("relevance", {}), "RELEVANCE")
+    relevance = load_sub_config(RelevanceConfig, file_data.get("relevance", {}), "RELEVANCE")
 
-    importance = load_sub_config(
-        ImportanceConfig, file_data.get("importance", {}), "IMPORTANCE")
+    importance = load_sub_config(ImportanceConfig, file_data.get("importance", {}), "IMPORTANCE")
 
-    vault = load_sub_config(
-        VaultConfig, file_data.get("vault", {}), "VAULT")
+    vault = load_sub_config(VaultConfig, file_data.get("vault", {}), "VAULT")
 
-    vault_guide = load_sub_config(
-        VaultGuideConfig, file_data.get("vault_guide", {}), "VAULT_GUIDE")
+    vault_guide = load_sub_config(VaultGuideConfig, file_data.get("vault_guide", {}), "VAULT_GUIDE")
 
-    notifications = load_sub_config(
-        NotificationsConfig, file_data.get("notifications", {}), "NOTIFICATIONS")
+    notifications = load_sub_config(NotificationsConfig, file_data.get("notifications", {}), "NOTIFICATIONS")
 
-    audit_log = load_sub_config(
-        AuditLogConfig, file_data.get("audit_log", {}), "AUDIT_LOG")
+    audit_log = load_sub_config(AuditLogConfig, file_data.get("audit_log", {}), "AUDIT_LOG")
 
-    email = load_sub_config(
-        EmailConfig, file_data.get("email", {}), "EMAIL")
+    email = load_sub_config(EmailConfig, file_data.get("email", {}), "EMAIL")
 
-    background = load_sub_config(
-        BackgroundConfig, file_data.get("background", {}), "BACKGROUND")
+    background = load_sub_config(BackgroundConfig, file_data.get("background", {}), "BACKGROUND")
 
-    workflow = load_sub_config(
-        WorkflowConfig, file_data.get("workflow", {}), "WORKFLOW")
+    workflow = load_sub_config(WorkflowConfig, file_data.get("workflow", {}), "WORKFLOW")
 
-    loop_breaker = load_sub_config(
-        LoopBreakerConfig, file_data.get("loop_breaker", {}), "LOOP_BREAKER")
+    loop_breaker = load_sub_config(LoopBreakerConfig, file_data.get("loop_breaker", {}), "LOOP_BREAKER")
 
-    pre_script = load_sub_config(
-        PreScriptConfig, file_data.get("pre_script", {}), "PRE_SCRIPT")
+    pre_script = load_sub_config(PreScriptConfig, file_data.get("pre_script", {}), "PRE_SCRIPT")
 
-    telemetry = load_sub_config(
-        TelemetryConfig, file_data.get("telemetry", {}), "TELEMETRY")
+    telemetry = load_sub_config(TelemetryConfig, file_data.get("telemetry", {}), "TELEMETRY")
 
     # Build the doubly-nested widgets.map leaf explicitly so its systematic
     # env vars (WIDGETS_MAP_*) resolve. load_sub_config only recurses into a
@@ -533,26 +518,24 @@ def load_config() -> Config:
         extra_skill_paths = _parse_list(env_extra)
     else:
         raw_extra = file_data.get("extra_skill_paths", [])
-        extra_skill_paths = (
-            [str(p) for p in raw_extra] if isinstance(raw_extra, list) else []
-        )
+        extra_skill_paths = [str(p) for p in raw_extra] if isinstance(raw_extra, list) else []
 
     env_always_loaded = os.getenv("SKILLS_ALWAYS_LOADED", "")
     if env_always_loaded:
         skills_always_loaded = _parse_list(env_always_loaded)
     else:
         raw_always_loaded = file_data.get("skills_always_loaded", [])
-        skills_always_loaded = (
-            [str(s) for s in raw_always_loaded]
-            if isinstance(raw_always_loaded, list) else []
-        )
+        skills_always_loaded = [str(s) for s in raw_always_loaded] if isinstance(raw_always_loaded, list) else []
 
     # Migration: if no providers/model_configs but old-style llm config exists,
     # auto-generate a "default" openai-compat provider + model config
     from .llm.types import PROVIDER_OPENAI_COMPAT
+
     if not providers and llm.url:
         providers["default"] = ProviderConfig(
-            type=PROVIDER_OPENAI_COMPAT, url=llm.url, api_key=llm.api_key,
+            type=PROVIDER_OPENAI_COMPAT,
+            url=llm.url,
+            api_key=llm.api_key,
         )
         model_configs["default"] = ModelConfig(
             provider="default",
@@ -565,9 +548,7 @@ def load_config() -> Config:
             default_model = "default"
 
     # Custom env vars from config file
-    env_vars: dict[str, str] = {
-        str(k): str(v) for k, v in file_data.get("env", {}).items()
-    }
+    env_vars: dict[str, str] = {str(k): str(v) for k, v in file_data.get("env", {}).items()}
 
     # Runtime-only field
     system_prompt = os.getenv("SYSTEM_PROMPT", "")
@@ -636,5 +617,3 @@ def load_config() -> Config:
         config.terminal = dataclasses.replace(config.terminal, allowed_cwd_roots=[])
 
     return config
-
-

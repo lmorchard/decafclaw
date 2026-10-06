@@ -13,6 +13,7 @@ from decafclaw.tools.core import (
 
 # ------------- field normalization -------------
 
+
 def test_normalize_bare_strings_title_cases_label():
     out = _normalize_text_input_fields(["name", "email_address"])
     assert out == [
@@ -22,16 +23,30 @@ def test_normalize_bare_strings_title_cases_label():
 
 
 def test_normalize_dicts_with_optionals():
-    out = _normalize_text_input_fields([
-        {"key": "bio", "label": "Bio", "multiline": True,
-         "max_length": 500, "required": False, "placeholder": "tell me",
-         "default": "x"},
-    ])
-    assert out == [{
-        "key": "bio", "label": "Bio", "multiline": True,
-        "max_length": 500, "required": False,
-        "placeholder": "tell me", "default": "x",
-    }]
+    out = _normalize_text_input_fields(
+        [
+            {
+                "key": "bio",
+                "label": "Bio",
+                "multiline": True,
+                "max_length": 500,
+                "required": False,
+                "placeholder": "tell me",
+                "default": "x",
+            },
+        ]
+    )
+    assert out == [
+        {
+            "key": "bio",
+            "label": "Bio",
+            "multiline": True,
+            "max_length": 500,
+            "required": False,
+            "placeholder": "tell me",
+            "default": "x",
+        }
+    ]
 
 
 def test_normalize_dict_missing_key_or_label_is_rejected():
@@ -40,30 +55,46 @@ def test_normalize_dict_missing_key_or_label_is_rejected():
 
 
 def test_normalize_duplicate_keys_rejected():
-    assert _normalize_text_input_fields([
-        {"key": "v", "label": "A"}, {"key": "v", "label": "B"},
-    ]) is None
+    assert (
+        _normalize_text_input_fields(
+            [
+                {"key": "v", "label": "A"},
+                {"key": "v", "label": "B"},
+            ]
+        )
+        is None
+    )
 
 
 def test_normalize_duplicate_keys_after_str_coercion_rejected():
     """Catch the bug where dedup happened on the raw value before
     coercing to str: int 1 vs str "1" must collide once normalized."""
-    assert _normalize_text_input_fields([
-        {"key": 1, "label": "A"}, {"key": "1", "label": "B"},
-    ]) is None
+    assert (
+        _normalize_text_input_fields(
+            [
+                {"key": 1, "label": "A"},
+                {"key": "1", "label": "B"},
+            ]
+        )
+        is None
+    )
 
 
 def test_normalize_strips_whitespace_from_dict_key():
-    out = _normalize_text_input_fields([
-        {"key": "  v  ", "label": "V"},
-    ])
+    out = _normalize_text_input_fields(
+        [
+            {"key": "  v  ", "label": "V"},
+        ]
+    )
     assert out == [{"key": "v", "label": "V"}]
 
 
 def test_normalize_bad_max_length_dropped():
-    out = _normalize_text_input_fields([
-        {"key": "v", "label": "V", "max_length": 0},
-    ])
+    out = _normalize_text_input_fields(
+        [
+            {"key": "v", "label": "V", "max_length": 0},
+        ]
+    )
     assert out == [{"key": "v", "label": "V"}]
 
 
@@ -76,6 +107,7 @@ def test_normalize_bad_entry_returns_None():
 
 
 # ------------- default on_response -------------
+
 
 def test_default_callback_single_returns_bare_value():
     cb = _default_text_input_callback(["value"])
@@ -97,14 +129,13 @@ def test_default_callback_multi_returns_json():
     cb = _default_text_input_callback(["name", "email"])
     out = cb({"name": "Les", "email": "x@y"})
     assert out.startswith("User responded: ")
-    assert json.loads(out[len("User responded: "):]) == {
-        "name": "Les", "email": "x@y"}
+    assert json.loads(out[len("User responded: ") :]) == {"name": "Les", "email": "x@y"}
 
 
 def test_default_callback_multi_preserves_field_order():
     cb = _default_text_input_callback(["b", "a"])
     out = cb({"a": "first", "b": "second"})
-    body = out[len("User responded: "):]
+    body = out[len("User responded: ") :]
     assert body.index('"b"') < body.index('"a"')
 
 
@@ -114,6 +145,7 @@ def test_default_callback_multi_all_empty_says_no_response():
 
 
 # ------------- tool integration -------------
+
 
 @pytest.mark.asyncio
 async def test_tool_happy_single_field_default():
@@ -133,7 +165,8 @@ async def test_tool_happy_single_field_default():
 async def test_tool_multi_field():
     ctx = object()
     result = await tool_ask_user_text(
-        ctx, prompt="Contact info?",
+        ctx,
+        prompt="Contact info?",
         fields=[
             {"key": "name", "label": "Name"},
             {"key": "email", "label": "Email", "required": False},
@@ -143,8 +176,7 @@ async def test_tool_multi_field():
     assert result.widget.data["submit_label"] == "Send"
     assert len(result.widget.data["fields"]) == 2
     inject = result.widget.on_response({"name": "Les", "email": "x@y"})
-    assert json.loads(inject[len("User responded: "):]) == {
-        "name": "Les", "email": "x@y"}
+    assert json.loads(inject[len("User responded: ") :]) == {"name": "Les", "email": "x@y"}
 
 
 @pytest.mark.asyncio
@@ -158,8 +190,7 @@ async def test_tool_blank_prompt_returns_error():
 @pytest.mark.asyncio
 async def test_tool_bad_fields_returns_error():
     ctx = object()
-    result = await tool_ask_user_text(
-        ctx, prompt="?", fields=[{"label": "no key"}])
+    result = await tool_ask_user_text(ctx, prompt="?", fields=[{"label": "no key"}])
     assert result.widget is None
     assert "error" in result.text.lower()
 
@@ -167,7 +198,6 @@ async def test_tool_bad_fields_returns_error():
 @pytest.mark.asyncio
 async def test_tool_default_callback_wired():
     ctx = object()
-    result = await tool_ask_user_text(
-        ctx, prompt="?", fields=["color"])
+    result = await tool_ask_user_text(ctx, prompt="?", fields=["color"])
     inject = result.widget.on_response({"color": "blue"})
     assert inject == "User responded: blue"

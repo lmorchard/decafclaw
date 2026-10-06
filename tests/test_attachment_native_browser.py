@@ -41,17 +41,17 @@ def test_browser_upload_image_and_download_use_native_authenticated_routes(confi
     @app.middleware("http")
     async def record_native_requests(request, call_next):
         if request.url.path.startswith(("/api/upload/", "/api/workspace/")):
-            requests.append((
-                request.method,
-                request.scope["raw_path"].decode(),
-                request.headers.get("content-type"),
-                bool(request.cookies),
-            ))
+            requests.append(
+                (
+                    request.method,
+                    request.scope["raw_path"].decode(),
+                    request.headers.get("content-type"),
+                    bool(request.cookies),
+                )
+            )
         response = await call_next(request)
         if request.url.path.startswith("/api/workspace/"):
-            dispositions[request.scope["raw_path"].decode()] = (
-                response.headers.get("content-disposition")
-            )
+            dispositions[request.scope["raw_path"].decode()] = response.headers.get("content-disposition")
         return response
 
     sock = socket.socket()
@@ -74,23 +74,36 @@ def test_browser_upload_image_and_download_use_native_authenticated_routes(confi
             try:
                 page = browser.new_page()
                 page.goto(base + "/static/lib/auth-client.js")
-                page.evaluate("""async token => {
+                page.evaluate(
+                    """async token => {
                     const { AuthClient } = await import('/static/lib/auth-client.js');
                     await new AuthClient().login(token);
-                }""", token)
-                page.add_script_tag(type="importmap", content=json.dumps({"imports": {
-                    "lit": "/static/vendor/bundle/lit.js",
-                    "marked": "/static/vendor/bundle/marked.js",
-                    "dompurify": "/static/vendor/bundle/dompurify.js",
-                    "codemirror": "/static/vendor/bundle/codemirror.js",
-                    "diff": "/static/vendor/bundle/diff.js",
-                }}))
+                }""",
+                    token,
+                )
+                page.add_script_tag(
+                    type="importmap",
+                    content=json.dumps(
+                        {
+                            "imports": {
+                                "lit": "/static/vendor/bundle/lit.js",
+                                "marked": "/static/vendor/bundle/marked.js",
+                                "dompurify": "/static/vendor/bundle/dompurify.js",
+                                "codemirror": "/static/vendor/bundle/codemirror.js",
+                                "diff": "/static/vendor/bundle/diff.js",
+                            }
+                        }
+                    ),
+                )
 
-                uploaded = page.evaluate("""async convId => {
+                uploaded = page.evaluate(
+                    """async convId => {
                     const { uploadFile } = await import('/static/lib/upload-client.js');
                     return uploadFile(convId, new File(
                         ['browser upload bytes'], 'browser 日本語.txt', {type: 'text/plain'}));
-                }""", conv_id)
+                }""",
+                    conv_id,
+                )
                 assert uploaded["mime_type"] == "text/plain"
                 assert uploaded["filename"].startswith("browser 日本語-")
                 assert (config.workspace_path / uploaded["path"]).read_bytes() == b"browser upload bytes"
@@ -98,7 +111,8 @@ def test_browser_upload_image_and_download_use_native_authenticated_routes(confi
                 with page.expect_response(
                     lambda response: "/api/workspace/native%20files/safe%20" in response.url
                 ) as image_response_info:
-                    urls = page.evaluate("""async ({imagePath, downloadPath, unicodeDownloadPath}) => {
+                    urls = page.evaluate(
+                        """async ({imagePath, downloadPath, unicodeDownloadPath}) => {
                         await Promise.all([
                             import('/static/components/file-page.js'),
                             import('/static/components/messages/user-message.js'),
@@ -138,27 +152,22 @@ def test_browser_upload_image_and_download_use_native_authenticated_routes(confi
                             unicodeDownload:
                                 unicodeDownloadPage.querySelector('a').getAttribute('href'),
                         };
-                    }""", {
-                        "imagePath": image_rel,
-                        "downloadPath": download_rel,
-                        "unicodeDownloadPath": unicode_download_rel,
-                    })
+                    }""",
+                        {
+                            "imagePath": image_rel,
+                            "downloadPath": download_rel,
+                            "unicodeDownloadPath": unicode_download_rel,
+                        },
+                    )
 
-                encoded_image = (
-                    "/api/workspace/native%20files/safe%20"
-                    "%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F.png"
-                )
+                encoded_image = "/api/workspace/native%20files/safe%20%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F.png"
                 assert urls == {
                     "image": encoded_image,
                     "messageImage": encoded_image,
                     "download": "/api/workspace/native%20files/report.txt",
-                    "unicodeDownload": (
-                        "/api/workspace/native%20files/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt"
-                    ),
+                    "unicodeDownload": ("/api/workspace/native%20files/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt"),
                 }
-                page.wait_for_function(
-                    "document.querySelector('#native-image-page img').naturalWidth === 1"
-                )
+                page.wait_for_function("document.querySelector('#native-image-page img').naturalWidth === 1")
                 image_response = image_response_info.value
                 assert image_response.status == 200
                 assert image_response.headers["content-type"] == "image/png"
@@ -175,9 +184,7 @@ def test_browser_upload_image_and_download_use_native_authenticated_routes(confi
 
                 # #895: a non-Latin filename must survive the browser download.
                 with page.expect_download() as unicode_download_info:
-                    page.locator(
-                        "#native-unicode-download-page .file-download-link"
-                    ).click()
+                    page.locator("#native-unicode-download-page .file-download-link").click()
                 unicode_download = unicode_download_info.value
                 assert unicode_download.suggested_filename == "日本語.txt"
                 assert unicode_download.path().read_bytes() == unicode_download_bytes
@@ -199,9 +206,7 @@ def test_browser_upload_image_and_download_use_native_authenticated_routes(confi
     assert any(raw_path.endswith("/native%20files/report.txt") for _, raw_path, _, _ in workspace_requests)
     # The bare `download` attribute lets Chromium fall back to the URL's last
     # segment, so also check the header that the server sent to the browser.
-    assert dispositions["/api/workspace/native%20files/report.txt"] == (
-        'attachment; filename="report.txt"'
-    )
+    assert dispositions["/api/workspace/native%20files/report.txt"] == ('attachment; filename="report.txt"')
     assert dispositions["/api/workspace/native%20files/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt"] == (
         "attachment; filename*=utf-8''%E6%97%A5%E6%9C%AC%E8%AA%9E.txt"
     )

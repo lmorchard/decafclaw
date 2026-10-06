@@ -218,9 +218,7 @@ async def test_mcp_prefix_skipped_by_generic_wrapper(ctx, monkeypatch):
         def get_tools(self):
             return {"mcp__foo__bar": fake_mcp_tool}
 
-    monkeypatch.setattr(
-        "decafclaw.mcp_client.get_registry", lambda: FakeRegistry()
-    )
+    monkeypatch.setattr("decafclaw.mcp_client.get_registry", lambda: FakeRegistry())
     # Global default of 1s would cut off a 10s sleep, but our fake returns
     # instantly — the assertion is that we get its return value, not a
     # timeout error (i.e. the MCP branch was used, not the generic wrapper).
@@ -237,14 +235,8 @@ def test_tabstack_research_has_configured_timeout():
     drops the override, this test flags it before /research silently
     regresses to timing out again."""
     entry = next(
-        (
-            d
-            for d in TABSTACK_TOOL_DEFINITIONS
-            if (d.get("function") or {}).get("name") == "tabstack_research"
-        ),
+        (d for d in TABSTACK_TOOL_DEFINITIONS if (d.get("function") or {}).get("name") == "tabstack_research"),
         None,
     )
     assert entry is not None, "tabstack_research not in TOOL_DEFINITIONS"
-    assert entry.get("timeout") == 600, (
-        f"expected timeout=600, got {entry.get('timeout')!r}"
-    )
+    assert entry.get("timeout") == 600, f"expected timeout=600, got {entry.get('timeout')!r}"

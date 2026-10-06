@@ -44,19 +44,27 @@ async def test_llm_call_latency_recorded():
 @pytest.mark.asyncio
 async def test_tool_usage_metrics_recorded():
     subscriber = make_metrics_subscriber()
-    await subscriber({
-        "type": "tool_end", "tool": "vault_write",
-        "result_text": "wrote page", "duration_ms": 50.0,
-    })
+    await subscriber(
+        {
+            "type": "tool_end",
+            "tool": "vault_write",
+            "result_text": "wrote page",
+            "duration_ms": 50.0,
+        }
+    )
 
     prom_out = format_prometheus_metrics()
     assert 'tool_calls_total{outcome="success",tool="vault_write"} 1.0' in prom_out
     assert 'tool_duration_ms_sum{outcome="success",tool="vault_write"} 50.0' in prom_out
 
-    await subscriber({
-        "type": "tool_end", "tool": "bash",
-        "result_text": "[error: exit code 1]", "duration_ms": 10.0,
-    })
+    await subscriber(
+        {
+            "type": "tool_end",
+            "tool": "bash",
+            "result_text": "[error: exit code 1]",
+            "duration_ms": 10.0,
+        }
+    )
 
     prom_out = format_prometheus_metrics()
     assert 'tool_calls_total{outcome="error",tool="bash"} 1.0' in prom_out
@@ -67,6 +75,7 @@ def test_metrics_endpoint_or_query(config):
     app = create_app(config, Mock())
 
     from fastapi.testclient import TestClient
+
     client = TestClient(app)
 
     subscriber = make_metrics_subscriber()
@@ -83,8 +92,7 @@ def test_metrics_endpoint_or_query(config):
 
 def _config_with_streaming(tmp_path, streaming: bool, **kwargs):
     config = Config(agent=AgentConfig(data_home=str(tmp_path), id="t"), **kwargs)
-    return dataclasses.replace(
-        config, llm=dataclasses.replace(config.llm, streaming=streaming))
+    return dataclasses.replace(config, llm=dataclasses.replace(config.llm, streaming=streaming))
 
 
 async def _publish_llm_end(config, stub_llm, **call_kwargs) -> dict:
@@ -159,8 +167,8 @@ def test_metrics_module_does_no_io():
     import decafclaw.metrics as metrics_mod
 
     assert not inspect.signature(make_metrics_subscriber).parameters, (
-        "make_metrics_subscriber must take no config — that is what makes a "
-        "durable write impossible to add by accident")
+        "make_metrics_subscriber must take no config — that is what makes a durable write impossible to add by accident"
+    )
 
     source = Path(metrics_mod.__file__).read_text()
     body = source.split('"""', 2)[-1]  # skip the module docstring
@@ -191,5 +199,6 @@ def test_telemetry_config_exposes_metrics_flag():
     cfg = TelemetryConfig()
     assert cfg.metrics_enabled is True
     # No path fields: the subscriber keeps no sidecar.
-    assert not any(f.name.startswith("metrics_") and f.name != "metrics_enabled"
-                   for f in dataclasses.fields(TelemetryConfig))
+    assert not any(
+        f.name.startswith("metrics_") and f.name != "metrics_enabled" for f in dataclasses.fields(TelemetryConfig)
+    )

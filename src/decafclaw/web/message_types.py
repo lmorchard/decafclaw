@@ -53,57 +53,63 @@ class WSMessageType(StrEnum):
 
 KNOWN_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(WSMessageType)
 
-S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset({
-    WSMessageType.BACKGROUND_EVENT,
-    WSMessageType.CANVAS_UPDATE,
-    WSMessageType.CHUNK,
-    WSMessageType.COMMAND_ACK,
-    WSMessageType.COMMAND_LIST,
-    WSMessageType.COMPACTION_DONE,
-    WSMessageType.CONFIRM_REQUEST,
-    WSMessageType.CONFIRMATION_RESPONSE,
-    WSMessageType.CONV_HISTORY,
-    WSMessageType.CONV_SELECTED,
-    WSMessageType.ERROR,
-    WSMessageType.MESSAGE_COMPLETE,
-    WSMessageType.MODEL_CHANGED,
-    WSMessageType.MODELS_AVAILABLE,
-    WSMessageType.NOTIFICATION_CREATED,
-    WSMessageType.NOTIFICATION_READ,
-    WSMessageType.REFLECTION_RESULT,
-    WSMessageType.SHELL_APPROVAL,
-    WSMessageType.STICKY_CLEAR,
-    WSMessageType.STICKY_SET,
-    WSMessageType.TOOL_END,
-    WSMessageType.TOOL_START,
-    WSMessageType.TOOL_STATUS,
-    WSMessageType.TURN_COMPLETE,
-    WSMessageType.TURN_START,
-    WSMessageType.USER_MESSAGE,
-    WSMessageType.VAULT_CHANGED,
-})
+S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
+    {
+        WSMessageType.BACKGROUND_EVENT,
+        WSMessageType.CANVAS_UPDATE,
+        WSMessageType.CHUNK,
+        WSMessageType.COMMAND_ACK,
+        WSMessageType.COMMAND_LIST,
+        WSMessageType.COMPACTION_DONE,
+        WSMessageType.CONFIRM_REQUEST,
+        WSMessageType.CONFIRMATION_RESPONSE,
+        WSMessageType.CONV_HISTORY,
+        WSMessageType.CONV_SELECTED,
+        WSMessageType.ERROR,
+        WSMessageType.MESSAGE_COMPLETE,
+        WSMessageType.MODEL_CHANGED,
+        WSMessageType.MODELS_AVAILABLE,
+        WSMessageType.NOTIFICATION_CREATED,
+        WSMessageType.NOTIFICATION_READ,
+        WSMessageType.REFLECTION_RESULT,
+        WSMessageType.SHELL_APPROVAL,
+        WSMessageType.STICKY_CLEAR,
+        WSMessageType.STICKY_SET,
+        WSMessageType.TOOL_END,
+        WSMessageType.TOOL_START,
+        WSMessageType.TOOL_STATUS,
+        WSMessageType.TURN_COMPLETE,
+        WSMessageType.TURN_START,
+        WSMessageType.USER_MESSAGE,
+        WSMessageType.VAULT_CHANGED,
+    }
+)
 
-C2S_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset({
-    WSMessageType.CANCEL_TURN,
-    WSMessageType.CONFIRM_RESPONSE,
-    WSMessageType.LIST_COMMANDS,
-    WSMessageType.LOAD_HISTORY,
-    WSMessageType.SELECT_CONV,
-    WSMessageType.SEND,
-    WSMessageType.SET_EFFORT,
-    WSMessageType.SET_MODEL,
-    WSMessageType.WIDGET_RESPONSE,
-})
+C2S_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
+    {
+        WSMessageType.CANCEL_TURN,
+        WSMessageType.CONFIRM_RESPONSE,
+        WSMessageType.LIST_COMMANDS,
+        WSMessageType.LOAD_HISTORY,
+        WSMessageType.SELECT_CONV,
+        WSMessageType.SEND,
+        WSMessageType.SET_EFFORT,
+        WSMessageType.SET_MODEL,
+        WSMessageType.WIDGET_RESPONSE,
+    }
+)
 
 BIDIRECTIONAL_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset()
 
 
 # -- TypedDicts (one per wire message) --
 
+
 class SrvBackgroundEvent(TypedDict):
     type: Literal[WSMessageType.BACKGROUND_EVENT]
     conv_id: str
     record: dict[str, object]
+
 
 class SrvCanvasUpdate(TypedDict):
     type: Literal[WSMessageType.CANVAS_UPDATE]
@@ -113,10 +119,12 @@ class SrvCanvasUpdate(TypedDict):
     tab: dict[str, object] | None
     closed_tab_id: NotRequired[str]
 
+
 class SrvChunk(TypedDict):
     type: Literal[WSMessageType.CHUNK]
     conv_id: str
     text: str
+
 
 class SrvCommandAck(TypedDict):
     type: Literal[WSMessageType.COMMAND_ACK]
@@ -124,15 +132,18 @@ class SrvCommandAck(TypedDict):
     command: str
     skill: NotRequired[str]
 
+
 class SrvCommandList(TypedDict):
     type: Literal[WSMessageType.COMMAND_LIST]
     commands: list[dict[str, object]]
+
 
 class SrvCompactionDone(TypedDict):
     type: Literal[WSMessageType.COMPACTION_DONE]
     conv_id: str
     before_messages: int
     after_messages: int
+
 
 class SrvConfirmRequest(TypedDict):
     type: Literal[WSMessageType.CONFIRM_REQUEST]
@@ -148,12 +159,14 @@ class SrvConfirmRequest(TypedDict):
     tool_call_id: str
     action_data: dict[str, object]
 
+
 class SrvConfirmationResponse(TypedDict):
     type: Literal[WSMessageType.CONFIRMATION_RESPONSE]
     conv_id: str
     confirmation_id: str
     approved: bool
     data: NotRequired[dict[str, object]]
+
 
 class SrvConvHistory(TypedDict):
     type: Literal[WSMessageType.CONV_HISTORY]
@@ -169,16 +182,19 @@ class SrvConvHistory(TypedDict):
     turn_active: NotRequired[bool]
     pending_confirmation: NotRequired[dict[str, object]]
 
+
 class SrvConvSelected(TypedDict):
     type: Literal[WSMessageType.CONV_SELECTED]
     conv_id: str
     read_only: NotRequired[bool]
     pending_confirmation: NotRequired[dict[str, object]]
 
+
 class SrvError(TypedDict):
     type: Literal[WSMessageType.ERROR]
     message: str
     conv_id: NotRequired[str]
+
 
 class SrvMessageComplete(TypedDict):
     type: Literal[WSMessageType.MESSAGE_COMPLETE]
@@ -189,25 +205,30 @@ class SrvMessageComplete(TypedDict):
     usage: NotRequired[dict[str, object]]
     context_limit: NotRequired[int]
 
+
 class SrvModelChanged(TypedDict):
     type: Literal[WSMessageType.MODEL_CHANGED]
     conv_id: str
     model: str
+
 
 class SrvModelsAvailable(TypedDict):
     type: Literal[WSMessageType.MODELS_AVAILABLE]
     available_models: list[str]
     default_model: str
 
+
 class SrvNotificationCreated(TypedDict):
     type: Literal[WSMessageType.NOTIFICATION_CREATED]
     record: dict[str, object]
     unread_count: int
 
+
 class SrvNotificationRead(TypedDict):
     type: Literal[WSMessageType.NOTIFICATION_READ]
     ids: list[str]
     unread_count: int
+
 
 class SrvReflectionResult(TypedDict):
     type: Literal[WSMessageType.REFLECTION_RESULT]
@@ -218,6 +239,7 @@ class SrvReflectionResult(TypedDict):
     raw_response: str
     error: str
 
+
 class SrvShellApproval(TypedDict):
     type: Literal[WSMessageType.SHELL_APPROVAL]
     conv_id: str
@@ -226,15 +248,18 @@ class SrvShellApproval(TypedDict):
     reason: str
     approved: bool
 
+
 class SrvStickyClear(TypedDict):
     type: Literal[WSMessageType.STICKY_CLEAR]
     conv_id: str
+
 
 class SrvStickySet(TypedDict):
     type: Literal[WSMessageType.STICKY_SET]
     conv_id: str
     widget_type: str
     data: dict[str, object]
+
 
 class SrvToolEnd(TypedDict):
     type: Literal[WSMessageType.TOOL_END]
@@ -245,11 +270,13 @@ class SrvToolEnd(TypedDict):
     display_short_text: NotRequired[str]
     widget: NotRequired[dict[str, object]]
 
+
 class SrvToolStart(TypedDict):
     type: Literal[WSMessageType.TOOL_START]
     conv_id: str
     tool: str
     tool_call_id: str
+
 
 class SrvToolStatus(TypedDict):
     type: Literal[WSMessageType.TOOL_STATUS]
@@ -258,27 +285,33 @@ class SrvToolStatus(TypedDict):
     tool_call_id: str
     message: str
 
+
 class SrvTurnComplete(TypedDict):
     type: Literal[WSMessageType.TURN_COMPLETE]
     conv_id: str
 
+
 class SrvTurnStart(TypedDict):
     type: Literal[WSMessageType.TURN_START]
     conv_id: str
+
 
 class SrvUserMessage(TypedDict):
     type: Literal[WSMessageType.USER_MESSAGE]
     conv_id: str
     text: str
 
+
 class SrvVaultChanged(TypedDict):
     type: Literal[WSMessageType.VAULT_CHANGED]
     path: str
     kind: str
 
+
 class CliCancelTurn(TypedDict):
     type: Literal[WSMessageType.CANCEL_TURN]
     conv_id: str
+
 
 class CliConfirmResponse(TypedDict):
     type: Literal[WSMessageType.CONFIRM_RESPONSE]
@@ -289,8 +322,10 @@ class CliConfirmResponse(TypedDict):
     add_pattern: bool
     data: NotRequired[dict[str, object]]
 
+
 class CliListCommands(TypedDict):
     type: Literal[WSMessageType.LIST_COMMANDS]
+
 
 class CliLoadHistory(TypedDict):
     type: Literal[WSMessageType.LOAD_HISTORY]
@@ -298,9 +333,11 @@ class CliLoadHistory(TypedDict):
     limit: int
     before: str | None
 
+
 class CliSelectConv(TypedDict):
     type: Literal[WSMessageType.SELECT_CONV]
     conv_id: str
+
 
 class CliSend(TypedDict):
     type: Literal[WSMessageType.SEND]
@@ -308,15 +345,18 @@ class CliSend(TypedDict):
     text: str
     attachments: list[dict[str, object]]
 
+
 class CliSetEffort(TypedDict):
     type: Literal[WSMessageType.SET_EFFORT]
     conv_id: str
     model: str
 
+
 class CliSetModel(TypedDict):
     type: Literal[WSMessageType.SET_MODEL]
     conv_id: str
     model: str
+
 
 class CliWidgetResponse(TypedDict):
     type: Literal[WSMessageType.WIDGET_RESPONSE]
@@ -327,9 +367,47 @@ class CliWidgetResponse(TypedDict):
 
 # -- Discriminated unions --
 
-ServerMessage = SrvBackgroundEvent | SrvCanvasUpdate | SrvChunk | SrvCommandAck | SrvCommandList | SrvCompactionDone | SrvConfirmRequest | SrvConfirmationResponse | SrvConvHistory | SrvConvSelected | SrvError | SrvMessageComplete | SrvModelChanged | SrvModelsAvailable | SrvNotificationCreated | SrvNotificationRead | SrvReflectionResult | SrvShellApproval | SrvStickyClear | SrvStickySet | SrvToolEnd | SrvToolStart | SrvToolStatus | SrvTurnComplete | SrvTurnStart | SrvUserMessage | SrvVaultChanged
+ServerMessage = (
+    SrvBackgroundEvent
+    | SrvCanvasUpdate
+    | SrvChunk
+    | SrvCommandAck
+    | SrvCommandList
+    | SrvCompactionDone
+    | SrvConfirmRequest
+    | SrvConfirmationResponse
+    | SrvConvHistory
+    | SrvConvSelected
+    | SrvError
+    | SrvMessageComplete
+    | SrvModelChanged
+    | SrvModelsAvailable
+    | SrvNotificationCreated
+    | SrvNotificationRead
+    | SrvReflectionResult
+    | SrvShellApproval
+    | SrvStickyClear
+    | SrvStickySet
+    | SrvToolEnd
+    | SrvToolStart
+    | SrvToolStatus
+    | SrvTurnComplete
+    | SrvTurnStart
+    | SrvUserMessage
+    | SrvVaultChanged
+)
 
-ClientMessage = CliCancelTurn | CliConfirmResponse | CliListCommands | CliLoadHistory | CliSelectConv | CliSend | CliSetEffort | CliSetModel | CliWidgetResponse
+ClientMessage = (
+    CliCancelTurn
+    | CliConfirmResponse
+    | CliListCommands
+    | CliLoadHistory
+    | CliSelectConv
+    | CliSend
+    | CliSetEffort
+    | CliSetModel
+    | CliWidgetResponse
+)
 
 
 # -- Callable alias for ws_send and friends --

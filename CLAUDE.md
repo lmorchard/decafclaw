@@ -126,7 +126,7 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
 
 - **Sync with `origin/main` before starting any significant task.** `git fetch origin && git log --oneline main..origin/main`. Stale local main → ghost references and missing docs in audits — every session that skipped this ended with conflicts or rework.
 - **A gate that exists can still run nowhere.** `make check` is *composed* from
-  `install-js check-message-types lint typecheck check-js check-browser-assets` — never give it (or CI) its
+  `install-js check-message-types fmt-check lint typecheck check-js check-browser-assets` — never give it (or CI) its
   own copy of those commands. A
   duplicated command means widening one copy silently gates nothing: that is how
   `check-message-types` and `check-js` ran nowhere for months (#854), how `tui/`'s
@@ -138,6 +138,7 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
   `pyrightconfig.json` makes it report without failing.
 - **Bug fix = test first.** Reproduce with a failing test, then fix.
 - **Commit after each logical step.** Lint and test before committing.
+- **Run `make fmt` before you commit or open a PR.** `make check` (and so CI) runs `make fmt-check`, which fails on any file that `ruff format` would change. The tree was formatted in one mechanical commit (#857); it is listed in `.git-blame-ignore-revs`, so run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone to skip it in `git blame`.
 - **Iterative changes go in a branch.** Don't push rapid-fire fixes directly to main — regressions compound (especially in UX-sensitive code like streaming/placeholder logic).
 - **Always favor opening a PR.** Push the branch and open a PR as the default way to integrate work — reserve local merge for when a PR is absolutely infeasible. A PR is the review gate (Les reviews before merge) and the record; even solo/small changes go through one. When `superpowers:finishing-a-development-branch` presents its three-option menu, that skill is deliberately project-agnostic and lists "merge locally" first — say which option this repo defaults to instead of presenting the three as equally weighted. The integration decision is still Les's; the recommendation just has to be visible at the moment he makes it.
 - **All work happens in a worktree.** Not just long-running or risky work — everything, including one-file doc changes. The main clone stays on whatever branch it's on and is never the place edits get made. The reason is concurrency: multiple sessions (and multiple agents) work this repo at once, and a shared checkout has no way to keep them apart. Observed failure: two sessions on the same branch, `HEAD` moved mid-session while a second session was mid-task, and a 1259-line `plan.md` was one `Write` away from being silently overwritten by an agent that had read the directory listing before the file existed. Nothing about that is detectable after the fact. A worktree per unit of work makes it structurally impossible.
@@ -239,7 +240,9 @@ make run-pro      # gemini-2.5-pro
 make lint         # ruff check over src/ tests/ scripts/ contrib/
 make typecheck    # Pyright
 make check-js     # Generate API client + tsc --checkJs
-make check        # Full gate: install-js + check-message-types + lint + typecheck + check-js + check-browser-assets
+make fmt          # ruff format over src/ tests/ scripts/ contrib/ (writes files)
+make fmt-check    # ruff format --check over the same paths (no writes)
+make check        # Full gate: install-js + check-message-types + fmt-check + lint + typecheck + check-js + check-browser-assets
 make test-js      # vitest (JS unit tests, web/static)
 make check-tui    # tsc --noEmit for tui/ (separate from `make check`)
 make test-tui     # vitest (tui/)

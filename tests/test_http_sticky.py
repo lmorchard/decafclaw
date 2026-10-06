@@ -54,6 +54,7 @@ def md_doc_registry(monkeypatch):
     reg = _Reg()
     monkeypatch.setattr(widgets_module, "_registry", reg)
     from decafclaw import sticky as sticky_mod
+
     monkeypatch.setattr(sticky_mod, "get_widget_registry", lambda: reg)
     return reg
 
@@ -75,6 +76,7 @@ def app(http_config, manager_mock, md_doc_registry):
 def owned_conv(http_config):
     """Create a conversation owned by testuser. Returns conv_id."""
     from decafclaw.web.conversations import ConversationIndex
+
     index = ConversationIndex(http_config)
     return index.create("testuser", title="Test").conv_id
 
@@ -83,6 +85,7 @@ def owned_conv(http_config):
 def other_user_conv(http_config):
     """Create a conversation owned by a different user. Returns conv_id."""
     from decafclaw.web.conversations import ConversationIndex
+
     index = ConversationIndex(http_config)
     return index.create("otheruser", title="Other").conv_id
 
@@ -109,7 +112,10 @@ async def test_get_sticky_state_pinned(authed_client, http_config, owned_conv):
     from decafclaw import sticky as sticky_mod
 
     result = await sticky_mod.set_sticky(
-        http_config, owned_conv, "markdown_document", {"content": "# Doc"},
+        http_config,
+        owned_conv,
+        "markdown_document",
+        {"content": "# Doc"},
     )
     assert result.ok, result.error
 

@@ -25,14 +25,29 @@ from decafclaw.retrieval_telemetry import (
 
 def _event():
     return {
-        "type": "retrieval_event", "conv_id": "c1",
+        "type": "retrieval_event",
+        "conv_id": "c1",
         "candidates": [
-            {"file_path": "pages/a.md", "source_type": "page", "similarity": 0.9,
-             "recency": 0.8, "importance": 0.5, "composite_score": 0.77,
-             "included": True, "drop_reason": None},
-            {"file_path": "pages/b.md", "source_type": "page", "similarity": 0.2,
-             "recency": 0.5, "importance": 0.5, "composite_score": 0.3,
-             "included": False, "drop_reason": "score"},
+            {
+                "file_path": "pages/a.md",
+                "source_type": "page",
+                "similarity": 0.9,
+                "recency": 0.8,
+                "importance": 0.5,
+                "composite_score": 0.77,
+                "included": True,
+                "drop_reason": None,
+            },
+            {
+                "file_path": "pages/b.md",
+                "source_type": "page",
+                "similarity": 0.2,
+                "recency": 0.5,
+                "importance": 0.5,
+                "composite_score": 0.3,
+                "included": False,
+                "drop_reason": "score",
+            },
         ],
     }
 
@@ -86,17 +101,14 @@ def test_aggregate_counts_retrieval_include_and_drop():
         {
             "conv_id": "c1",
             "candidates": [
-                {"file_path": "pages/a.md", "source_type": "page",
-                 "included": True, "drop_reason": None},
-                {"file_path": "pages/b.md", "source_type": "page",
-                 "included": False, "drop_reason": "score"},
+                {"file_path": "pages/a.md", "source_type": "page", "included": True, "drop_reason": None},
+                {"file_path": "pages/b.md", "source_type": "page", "included": False, "drop_reason": "score"},
             ],
         },
         {
             "conv_id": "c2",
             "candidates": [
-                {"file_path": "pages/a.md", "source_type": "page",
-                 "included": False, "drop_reason": "budget"},
+                {"file_path": "pages/a.md", "source_type": "page", "included": False, "drop_reason": "budget"},
             ],
         },
     ]
@@ -118,13 +130,20 @@ def test_aggregate_counts_retrieval_include_and_drop():
 def test_format_report_lists_pages_and_health():
     stats = {
         "pages/a.md": {
-            "retrieval_count": 2, "include_count": 1, "include_rate": 0.5,
-            "drop_score": 0, "drop_budget": 1, "source_type": "page",
+            "retrieval_count": 2,
+            "include_count": 1,
+            "include_rate": 0.5,
+            "drop_score": 0,
+            "drop_budget": 1,
+            "source_type": "page",
         },
     }
     health = {
-        "total_pages": 4, "with_importance": 2, "coverage_pct": 50.0,
-        "missing_importance": 2, "graph_orphans": 1,
+        "total_pages": 4,
+        "with_importance": 2,
+        "coverage_pct": 50.0,
+        "missing_importance": 2,
+        "graph_orphans": 1,
     }
     report = format_report(stats, health)
     assert "pages/a.md" in report
@@ -140,8 +159,11 @@ def test_vault_health_not_a_dir_returns_zeros(config):
     # vault_root doesn't exist in a fresh tmp config — short-circuit path.
     health = vault_health(config)
     assert health == {
-        "total_pages": 0, "with_importance": 0, "coverage_pct": 0.0,
-        "missing_importance": 0, "graph_orphans": 0,
+        "total_pages": 0,
+        "with_importance": 0,
+        "coverage_pct": 0.0,
+        "missing_importance": 0,
+        "graph_orphans": 0,
     }
 
 
@@ -149,7 +171,8 @@ def test_vault_health_counts_pages_with_and_without_importance(config):
     pages_dir = config.vault_agent_pages_dir
     pages_dir.mkdir(parents=True, exist_ok=True)
     (pages_dir / "with_importance.md").write_text(
-        "---\nimportance: 0.5\n---\nBody.\n", encoding="utf-8",
+        "---\nimportance: 0.5\n---\nBody.\n",
+        encoding="utf-8",
     )
     (pages_dir / "without_importance.md").write_text("Body only.\n", encoding="utf-8")
 
@@ -188,13 +211,17 @@ def test_vault_health_graph_orphans_excludes_linked_pages(config):
 def test_build_report_end_to_end(config):
     path = _retrieval_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({
-        "conv_id": "c1",
-        "candidates": [
-            {"file_path": "pages/a.md", "source_type": "page",
-             "included": True, "drop_reason": None},
-        ],
-    }) + "\n")
+    path.write_text(
+        json.dumps(
+            {
+                "conv_id": "c1",
+                "candidates": [
+                    {"file_path": "pages/a.md", "source_type": "page", "included": True, "drop_reason": None},
+                ],
+            }
+        )
+        + "\n"
+    )
     report = build_report(config)
     assert "pages/a.md" in report
     assert "Vault health" in report

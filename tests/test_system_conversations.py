@@ -59,11 +59,11 @@ class TestListSystemConversations:
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
         # Create a schedule archive
-        _write_archive(conv_dir, "schedule-dream-20260324-125204",
-                       json.dumps({"role": "user", "content": "test"}) + "\n")
+        _write_archive(
+            conv_dir, "schedule-dream-20260324-125204", json.dumps({"role": "user", "content": "test"}) + "\n"
+        )
         # Create a web archive (should be excluded)
-        _write_archive(conv_dir, "web-user-abc123",
-                       json.dumps({"role": "user", "content": "test"}) + "\n")
+        _write_archive(conv_dir, "web-user-abc123", json.dumps({"role": "user", "content": "test"}) + "\n")
 
         results = list_system_conversations(config)
         conv_ids = [r["conv_id"] for r in results]
@@ -76,13 +76,11 @@ class TestListSystemConversations:
         # Dir-layout schedule conv (should be discovered).
         sched = conv_dir / "schedule-garden-20260324-130000"
         sched.mkdir(parents=True, exist_ok=True)
-        (sched / "archive.jsonl").write_text(
-            json.dumps({"role": "user", "content": "x"}) + "\n")
+        (sched / "archive.jsonl").write_text(json.dumps({"role": "user", "content": "x"}) + "\n")
         # Dir-layout web conv (should be excluded by the web- filter).
         web = conv_dir / "web-user-xyz789"
         web.mkdir(parents=True, exist_ok=True)
-        (web / "archive.jsonl").write_text(
-            json.dumps({"role": "user", "content": "x"}) + "\n")
+        (web / "archive.jsonl").write_text(json.dumps({"role": "user", "content": "x"}) + "\n")
 
         results = list_system_conversations(config)
         conv_ids = [r["conv_id"] for r in results]
@@ -111,6 +109,7 @@ class TestListSystemConversations:
 
     def test_sorted_newest_first(self, config):
         import os
+
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
         _write_archive(conv_dir, "schedule-old-20260101-120000", "{}\n")
@@ -176,13 +175,12 @@ class TestSystemConvAccess:
         config = ws_state["config"]
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
-        _write_archive(conv_dir, "schedule-test-20260324-120000",
-                       json.dumps({"role": "user", "content": "hello"}) + "\n")
+        _write_archive(
+            conv_dir, "schedule-test-20260324-120000", json.dumps({"role": "user", "content": "hello"}) + "\n"
+        )
 
         ws_send = AsyncMock()
-        await _handle_select_conv(ws_send, index, "testuser",
-                                  {"conv_id": "schedule-test-20260324-120000"},
-                                  ws_state)
+        await _handle_select_conv(ws_send, index, "testuser", {"conv_id": "schedule-test-20260324-120000"}, ws_state)
 
         msg = ws_send.call_args[0][0]
         assert msg["type"] == "conv_selected"
@@ -192,13 +190,10 @@ class TestSystemConvAccess:
     async def test_load_system_conv_history(self, ws_state, index):
         """Loading history for a system conversation should work (read-only)."""
         config = ws_state["config"]
-        append_message(config, "schedule-test-20260324-120000",
-                       {"role": "user", "content": "scheduled task output"})
+        append_message(config, "schedule-test-20260324-120000", {"role": "user", "content": "scheduled task output"})
 
         ws_send = AsyncMock()
-        await _handle_load_history(ws_send, index, "testuser",
-                                   {"conv_id": "schedule-test-20260324-120000"},
-                                   ws_state)
+        await _handle_load_history(ws_send, index, "testuser", {"conv_id": "schedule-test-20260324-120000"}, ws_state)
 
         msg = ws_send.call_args[0][0]
         assert msg["type"] == "conv_history"
@@ -209,8 +204,7 @@ class TestSystemConvAccess:
     async def test_select_nonexistent_conv_fails(self, ws_state, index):
         """Selecting a conversation that doesn't exist should error."""
         ws_send = AsyncMock()
-        await _handle_select_conv(ws_send, index, "testuser",
-                                  {"conv_id": "does-not-exist"}, ws_state)
+        await _handle_select_conv(ws_send, index, "testuser", {"conv_id": "does-not-exist"}, ws_state)
 
         msg = ws_send.call_args[0][0]
         assert msg["type"] == "error"
@@ -219,8 +213,7 @@ class TestSystemConvAccess:
     async def test_rejects_path_traversal_select(self, ws_state, index):
         """conv_id with path traversal should be rejected."""
         ws_send = AsyncMock()
-        await _handle_select_conv(ws_send, index, "testuser",
-                                  {"conv_id": "../../../etc/passwd"}, ws_state)
+        await _handle_select_conv(ws_send, index, "testuser", {"conv_id": "../../../etc/passwd"}, ws_state)
         msg = ws_send.call_args[0][0]
         assert msg["type"] == "error"
 
@@ -228,8 +221,7 @@ class TestSystemConvAccess:
     async def test_rejects_path_traversal_history(self, ws_state, index):
         """conv_id with path traversal should be rejected in load_history."""
         ws_send = AsyncMock()
-        await _handle_load_history(ws_send, index, "testuser",
-                                   {"conv_id": "../../secrets"}, ws_state)
+        await _handle_load_history(ws_send, index, "testuser", {"conv_id": "../../secrets"}, ws_state)
         msg = ws_send.call_args[0][0]
         assert msg["type"] == "error"
 
@@ -241,11 +233,10 @@ class TestSystemConvAccess:
         other_conv = index.create("otheruser", title="Secret")
         # Create the archive file
         from decafclaw.archive import append_message
-        append_message(config, other_conv.conv_id,
-                       {"role": "user", "content": "secret"})
+
+        append_message(config, other_conv.conv_id, {"role": "user", "content": "secret"})
 
         ws_send = AsyncMock()
-        await _handle_select_conv(ws_send, index, "testuser",
-                                  {"conv_id": other_conv.conv_id}, ws_state)
+        await _handle_select_conv(ws_send, index, "testuser", {"conv_id": other_conv.conv_id}, ws_state)
         msg = ws_send.call_args[0][0]
         assert msg["type"] == "error"

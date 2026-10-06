@@ -65,10 +65,9 @@ def _workspace_file_candidates(workspace: Path) -> list[str]:
     for dirpath, dirnames, filenames in os.walk(workspace):
         is_root = Path(dirpath) == workspace
         dirnames[:] = sorted(
-            d for d in dirnames
-            if not d.startswith(".")
-            and d != "node_modules"
-            and not (is_root and d in _SUGGESTION_PRUNE_ROOT_DIRS)
+            d
+            for d in dirnames
+            if not d.startswith(".") and d != "node_modules" and not (is_root and d in _SUGGESTION_PRUNE_ROOT_DIRS)
         )
         for fname in sorted(filenames):
             if fname.startswith("."):

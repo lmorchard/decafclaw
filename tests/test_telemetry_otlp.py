@@ -26,6 +26,7 @@ def memory_exporter():
     exporter.clear()
     trace._TRACER_PROVIDER = None
 
+
 @pytest.mark.asyncio
 async def test_otlp_spans_started_on_core_pathways(memory_exporter):
     ctx = Context(config=Config(), event_bus=None)
@@ -57,6 +58,7 @@ async def test_otlp_spans_started_on_core_pathways(memory_exporter):
     assert "execute_single_tool" in span_names
     assert "TurnRunner._run_iteration" in span_names
 
+
 @pytest.mark.asyncio
 async def test_llm_client_emits_span(memory_exporter):
     config = Config()
@@ -70,7 +72,12 @@ async def test_llm_client_emits_span(memory_exporter):
     spans = memory_exporter.get_finished_spans()
     span_names = [span.name for span in spans]
 
-    assert "call_llm" in span_names or "llm_provider.complete" in span_names or "OpenAICompatProvider.complete" in span_names
+    assert (
+        "call_llm" in span_names
+        or "llm_provider.complete" in span_names
+        or "OpenAICompatProvider.complete" in span_names
+    )
+
 
 @pytest.mark.asyncio
 async def test_no_otlp_exporter_configured(monkeypatch):
@@ -93,4 +100,3 @@ async def test_no_otlp_exporter_configured(monkeypatch):
 
     spans = exporter.get_finished_spans()
     assert len(spans) == 0
-

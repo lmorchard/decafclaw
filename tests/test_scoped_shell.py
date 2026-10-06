@@ -20,9 +20,7 @@ def test_parse_bare_shell():
 
 def test_parse_scoped_shell():
     """shell(pattern) extracts the glob pattern."""
-    tools, patterns = _parse_allowed_tools(
-        "shell($SKILL_DIR/fetch.sh), wiki_read"
-    )
+    tools, patterns = _parse_allowed_tools("shell($SKILL_DIR/fetch.sh), wiki_read")
     assert "wiki_read" in tools
     assert "shell" not in tools
     assert patterns == ["$SKILL_DIR/fetch.sh"]
@@ -30,18 +28,14 @@ def test_parse_scoped_shell():
 
 def test_parse_multiple_scoped_patterns():
     """Multiple shell(pattern) entries are all captured."""
-    tools, patterns = _parse_allowed_tools(
-        "shell($SKILL_DIR/fetch.sh), shell(make build), wiki_read"
-    )
+    tools, patterns = _parse_allowed_tools("shell($SKILL_DIR/fetch.sh), shell(make build), wiki_read")
     assert tools == ["wiki_read"]
     assert patterns == ["$SKILL_DIR/fetch.sh", "make build"]
 
 
 def test_parse_mixed_bare_and_scoped():
     """Bare shell and scoped shell can coexist (bare = blanket approval)."""
-    tools, patterns = _parse_allowed_tools(
-        "shell, shell($SKILL_DIR/fetch.sh), wiki_read"
-    )
+    tools, patterns = _parse_allowed_tools("shell, shell($SKILL_DIR/fetch.sh), wiki_read")
     assert "shell" in tools
     assert "wiki_read" in tools
     assert patterns == ["$SKILL_DIR/fetch.sh"]
@@ -94,12 +88,7 @@ def test_skill_md_bare_shell_no_patterns(tmp_path):
     skill_dir = tmp_path / "basic"
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text(
-        "---\n"
-        "name: basic\n"
-        "description: Basic\n"
-        "allowed-tools: shell, wiki_read\n"
-        "---\n"
-        "Body.\n"
+        "---\nname: basic\ndescription: Basic\nallowed-tools: shell, wiki_read\n---\nBody.\n"
     )
     info = parse_skill_md(skill_dir / "SKILL.md")
     assert info is not None

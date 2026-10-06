@@ -42,7 +42,8 @@ def test_assistant_message_becomes_model():
     ]
     body = _build_request_body(messages)
     assert body["contents"][1] == {
-        "role": "model", "parts": [{"text": "Hello!"}],
+        "role": "model",
+        "parts": [{"text": "Hello!"}],
     }
 
 
@@ -53,22 +54,26 @@ def test_tool_call_translation():
         {
             "role": "assistant",
             "content": None,
-            "tool_calls": [{
-                "id": "call_123",
-                "type": "function",
-                "function": {
-                    "name": "search",
-                    "arguments": '{"query": "cats"}',
-                },
-            }],
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "arguments": '{"query": "cats"}',
+                    },
+                }
+            ],
         },
     ]
     body = _build_request_body(messages)
     model_msg = body["contents"][1]
     assert model_msg["role"] == "model"
-    assert model_msg["parts"] == [{
-        "functionCall": {"name": "search", "args": {"query": "cats"}},
-    }]
+    assert model_msg["parts"] == [
+        {
+            "functionCall": {"name": "search", "args": {"query": "cats"}},
+        }
+    ]
 
 
 def test_tool_response_translation():
@@ -79,12 +84,14 @@ def test_tool_response_translation():
     body = _build_request_body(messages)
     user_msg = body["contents"][0]
     assert user_msg["role"] == "user"
-    assert user_msg["parts"] == [{
-        "functionResponse": {
-            "name": "search",
-            "response": {"results": ["cat1"]},
-        },
-    }]
+    assert user_msg["parts"] == [
+        {
+            "functionResponse": {
+                "name": "search",
+                "response": {"results": ["cat1"]},
+            },
+        }
+    ]
 
 
 def test_parallel_tool_responses_merged():
@@ -95,10 +102,8 @@ def test_parallel_tool_responses_merged():
             "role": "assistant",
             "content": None,
             "tool_calls": [
-                {"id": "call_1", "type": "function",
-                 "function": {"name": "search", "arguments": '{"q":"a"}'}},
-                {"id": "call_2", "type": "function",
-                 "function": {"name": "lookup", "arguments": '{"id":1}'}},
+                {"id": "call_1", "type": "function", "function": {"name": "search", "arguments": '{"q":"a"}'}},
+                {"id": "call_2", "type": "function", "function": {"name": "lookup", "arguments": '{"id":1}'}},
             ],
         },
         {"role": "tool", "tool_call_id": "call_1", "content": "result A"},
@@ -108,12 +113,9 @@ def test_parallel_tool_responses_merged():
     # The two tool responses should be merged into a single user message
     # with 2 functionResponse parts
     tool_response_msgs = [
-        c for c in body["contents"]
-        if c["role"] == "user" and any("functionResponse" in p for p in c["parts"])
+        c for c in body["contents"] if c["role"] == "user" and any("functionResponse" in p for p in c["parts"])
     ]
-    assert len(tool_response_msgs) == 1, (
-        f"Expected 1 merged user message, got {len(tool_response_msgs)}"
-    )
+    assert len(tool_response_msgs) == 1, f"Expected 1 merged user message, got {len(tool_response_msgs)}"
     parts = tool_response_msgs[0]["parts"]
     assert len(parts) == 2
     assert parts[0]["functionResponse"]["name"] == "search"
@@ -137,11 +139,13 @@ def test_tool_response_name_from_tool_call_id():
         {
             "role": "assistant",
             "content": None,
-            "tool_calls": [{
-                "id": "call_abc",
-                "type": "function",
-                "function": {"name": "activate_skill", "arguments": '{"name": "tabstack"}'},
-            }],
+            "tool_calls": [
+                {
+                    "id": "call_abc",
+                    "type": "function",
+                    "function": {"name": "activate_skill", "arguments": '{"name": "tabstack"}'},
+                }
+            ],
         },
         {
             "role": "tool",
@@ -157,18 +161,20 @@ def test_tool_response_name_from_tool_call_id():
 
 def test_tool_definitions_translation():
     """OpenAI tool format → Gemini functionDeclarations."""
-    tools = [{
-        "type": "function",
-        "function": {
-            "name": "search",
-            "description": "Search things",
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string"}},
-                "required": ["query"],
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "search",
+                "description": "Search things",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
             },
-        },
-    }]
+        }
+    ]
     body = _build_request_body([], tools=tools)
     decls = body["tools"][0]["functionDeclarations"]
     assert len(decls) == 1
@@ -190,43 +196,45 @@ def test_tool_schema_strips_all_unsupported_keywords():
     """
     from decafclaw.llm.providers.vertex import _VERTEX_UNSUPPORTED_KEYS
 
-    tools = [{
-        "type": "function",
-        "function": {
-            "name": "exhaustive_unsupported_keys",
-            "description": "Exercises every key in _VERTEX_UNSUPPORTED_KEYS",
-            "parameters": {
-                "type": "object",
-                # Schema-metadata family.
-                "$schema": "http://json-schema.org/draft-07/schema#",
-                "$id": "https://example.com/schemas/foo",
-                "$defs": {"Foo": {"type": "string"}},
-                "definitions": {"Bar": {"type": "string"}},
-                "$ref": "#/$defs/Foo",
-                "properties": {
-                    "kw": {
-                        "type": "object",
-                        "propertyNames": {"pattern": "^[a-z]+$"},
-                        "patternProperties": {"^x_": {"type": "string"}},
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "exhaustive_unsupported_keys",
+                "description": "Exercises every key in _VERTEX_UNSUPPORTED_KEYS",
+                "parameters": {
+                    "type": "object",
+                    # Schema-metadata family.
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "$id": "https://example.com/schemas/foo",
+                    "$defs": {"Foo": {"type": "string"}},
+                    "definitions": {"Bar": {"type": "string"}},
+                    "$ref": "#/$defs/Foo",
+                    "properties": {
+                        "kw": {
+                            "type": "object",
+                            "propertyNames": {"pattern": "^[a-z]+$"},
+                            "patternProperties": {"^x_": {"type": "string"}},
+                        },
+                        "n": {"type": "number", "multipleOf": 5},
+                        "branches": {
+                            "type": "object",
+                            "if": {"required": ["a"]},
+                            "then": {"properties": {"b": {"type": "string"}}},
+                            "else": {"properties": {"c": {"type": "string"}}},
+                        },
+                        "deps": {
+                            "type": "object",
+                            "dependentRequired": {"a": ["b"]},
+                            "dependentSchemas": {"a": {"required": ["b"]}},
+                            "dependencies": {"x": ["y"]},
+                        },
                     },
-                    "n": {"type": "number", "multipleOf": 5},
-                    "branches": {
-                        "type": "object",
-                        "if": {"required": ["a"]},
-                        "then": {"properties": {"b": {"type": "string"}}},
-                        "else": {"properties": {"c": {"type": "string"}}},
-                    },
-                    "deps": {
-                        "type": "object",
-                        "dependentRequired": {"a": ["b"]},
-                        "dependentSchemas": {"a": {"required": ["b"]}},
-                        "dependencies": {"x": ["y"]},
-                    },
+                    "required": ["kw"],
                 },
-                "required": ["kw"],
             },
-        },
-    }]
+        }
+    ]
     body = _build_request_body([], tools=tools)
     decls = body["tools"][0]["functionDeclarations"]
     params = decls[0]["parameters"]
@@ -274,44 +282,46 @@ def test_tool_schema_scrubs_unsupported_keys_inside_combinator_branches():
     walks the tree and rejects on the first match. Specific guarantee for
     the combinator-recursion path added alongside the strip list.
     """
-    tools = [{
-        "type": "function",
-        "function": {
-            "name": "combinator_branches",
-            "description": "Tool whose schema buries unsupported keys in combinator branches",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "value": {
-                        "oneOf": [
-                            # Branch A: propertyNames inside oneOf
-                            {
-                                "type": "object",
-                                "propertyNames": {"pattern": "^a_"},
-                            },
-                            # Branch B: anyOf nested inside oneOf, with
-                            # patternProperties at one more level down.
-                            {
-                                "anyOf": [
-                                    {"type": "string"},
-                                    {
-                                        "type": "object",
-                                        "patternProperties": {"^b_": {"type": "string"}},
-                                    },
-                                ],
-                            },
-                            # Branch C: allOf carrying $defs (metadata key)
-                            {
-                                "allOf": [
-                                    {"$defs": {"Z": {"type": "string"}}, "type": "object"},
-                                ],
-                            },
-                        ],
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "combinator_branches",
+                "description": "Tool whose schema buries unsupported keys in combinator branches",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "value": {
+                            "oneOf": [
+                                # Branch A: propertyNames inside oneOf
+                                {
+                                    "type": "object",
+                                    "propertyNames": {"pattern": "^a_"},
+                                },
+                                # Branch B: anyOf nested inside oneOf, with
+                                # patternProperties at one more level down.
+                                {
+                                    "anyOf": [
+                                        {"type": "string"},
+                                        {
+                                            "type": "object",
+                                            "patternProperties": {"^b_": {"type": "string"}},
+                                        },
+                                    ],
+                                },
+                                # Branch C: allOf carrying $defs (metadata key)
+                                {
+                                    "allOf": [
+                                        {"$defs": {"Z": {"type": "string"}}, "type": "object"},
+                                    ],
+                                },
+                            ],
+                        },
                     },
                 },
             },
-        },
-    }]
+        }
+    ]
     body = _build_request_body([], tools=tools)
     one_of = body["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["value"]["oneOf"]
 
@@ -344,15 +354,19 @@ def test_multiple_system_messages_concatenated():
 
 def test_mixed_text_and_tool_calls():
     """Assistant with both text and tool calls."""
-    messages = [{
-        "role": "assistant",
-        "content": "Let me search that.",
-        "tool_calls": [{
-            "id": "call_1",
-            "type": "function",
-            "function": {"name": "search", "arguments": "{}"},
-        }],
-    }]
+    messages = [
+        {
+            "role": "assistant",
+            "content": "Let me search that.",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }
+            ],
+        }
+    ]
     body = _build_request_body(messages)
     parts = body["contents"][0]["parts"]
     assert parts[0] == {"text": "Let me search that."}
@@ -364,10 +378,12 @@ def test_mixed_text_and_tool_calls():
 
 def test_parse_text_response():
     data = {
-        "candidates": [{
-            "content": {"role": "model", "parts": [{"text": "Hello!"}]},
-            "finishReason": "STOP",
-        }],
+        "candidates": [
+            {
+                "content": {"role": "model", "parts": [{"text": "Hello!"}]},
+                "finishReason": "STOP",
+            }
+        ],
         "usageMetadata": {
             "promptTokenCount": 10,
             "candidatesTokenCount": 5,
@@ -384,18 +400,22 @@ def test_parse_text_response():
 
 def test_parse_function_call_response():
     data = {
-        "candidates": [{
-            "content": {
-                "role": "model",
-                "parts": [{
-                    "functionCall": {
-                        "name": "search",
-                        "args": {"query": "cats"},
-                    },
-                }],
-            },
-            "finishReason": "STOP",
-        }],
+        "candidates": [
+            {
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "search",
+                                "args": {"query": "cats"},
+                            },
+                        }
+                    ],
+                },
+                "finishReason": "STOP",
+            }
+        ],
         "usageMetadata": {
             "promptTokenCount": 20,
             "candidatesTokenCount": 10,
@@ -413,15 +433,17 @@ def test_parse_function_call_response():
 
 def test_parse_multiple_function_calls():
     data = {
-        "candidates": [{
-            "content": {
-                "role": "model",
-                "parts": [
-                    {"functionCall": {"name": "search", "args": {"q": "a"}}},
-                    {"functionCall": {"name": "lookup", "args": {"id": 1}}},
-                ],
-            },
-        }],
+        "candidates": [
+            {
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {"functionCall": {"name": "search", "args": {"q": "a"}}},
+                        {"functionCall": {"name": "lookup", "args": {"id": 1}}},
+                    ],
+                },
+            }
+        ],
     }
     result = _parse_response(data)
     assert len(result["tool_calls"]) == 2
@@ -462,16 +484,18 @@ def test_parse_usage_missing():
 
 def test_user_message_with_image_attachment():
     """Multimodal user content (from resolve_attachments) → Vertex inlineData."""
-    messages = [{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "What's in this image?"},
-            {
-                "type": "image_url",
-                "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
-            },
-        ],
-    }]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What's in this image?"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                },
+            ],
+        }
+    ]
     body = _build_request_body(messages)
     parts = body["contents"][0]["parts"]
     assert len(parts) == 2
@@ -483,15 +507,17 @@ def test_user_message_with_image_attachment():
 
 def test_user_message_with_image_only():
     """Multimodal content with no text, just an image."""
-    messages = [{
-        "role": "user",
-        "content": [
-            {
-                "type": "image_url",
-                "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQ="},
-            },
-        ],
-    }]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQ="},
+                },
+            ],
+        }
+    ]
     body = _build_request_body(messages)
     parts = body["contents"][0]["parts"]
     assert len(parts) == 1
@@ -502,20 +528,22 @@ def test_user_message_with_image_only():
 
 def test_user_message_with_multiple_images():
     """Multiple images in one message."""
-    messages = [{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "Compare these:"},
-            {
-                "type": "image_url",
-                "image_url": {"url": "data:image/png;base64,AAAA"},
-            },
-            {
-                "type": "image_url",
-                "image_url": {"url": "data:image/png;base64,BBBB"},
-            },
-        ],
-    }]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Compare these:"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AAAA"},
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,BBBB"},
+                },
+            ],
+        }
+    ]
     body = _build_request_body(messages)
     parts = body["contents"][0]["parts"]
     assert len(parts) == 3
@@ -526,18 +554,22 @@ def test_user_message_with_multiple_images():
 
 def test_parse_response_preserves_thought_signature():
     data = {
-        "candidates": [{
-            "content": {
-                "role": "model",
-                "parts": [{
-                    "functionCall": {
-                        "name": "vault_search",
-                        "args": {"query": "test"},
-                    },
-                    "thoughtSignature": "sig_abc123",
-                }],
-            },
-        }],
+        "candidates": [
+            {
+                "content": {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "vault_search",
+                                "args": {"query": "test"},
+                            },
+                            "thoughtSignature": "sig_abc123",
+                        }
+                    ],
+                },
+            }
+        ],
     }
     result = _parse_response(data)
     tc = result["tool_calls"][0]
@@ -549,15 +581,17 @@ def test_build_request_body_preserves_thought_signature():
         {
             "role": "assistant",
             "content": None,
-            "tool_calls": [{
-                "id": "call_1",
-                "type": "function",
-                "function": {
-                    "name": "vault_search",
-                    "arguments": '{"query": "test"}',
-                },
-                "thought_signature": "sig_abc123",
-            }],
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "vault_search",
+                        "arguments": '{"query": "test"}',
+                    },
+                    "thought_signature": "sig_abc123",
+                }
+            ],
         },
     ]
     body = _build_request_body(messages)
@@ -568,5 +602,3 @@ def test_build_request_body_preserves_thought_signature():
     assert part["thoughtSignature"] == "sig_abc123"
     assert "thoughtSignature" not in part["functionCall"]
     assert "thought_signature" not in part["functionCall"]
-
-

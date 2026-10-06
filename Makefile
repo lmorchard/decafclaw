@@ -102,7 +102,7 @@ test-tui: install-tui
 # `check` used to carry its own `ruff check src/ tests/` line, so widening the
 # `lint` target did not widen what CI actually gates — the same duplication
 # that let check-message-types and check-js run nowhere before #854.
-check: install-js check-message-types lint typecheck check-js check-browser-assets
+check: install-js check-message-types fmt-check lint typecheck check-js check-browser-assets
 
 # Regenerate the WebSocket message-type enum/JS/docs from the manifest
 gen-message-types:
@@ -120,6 +120,10 @@ lint-fix:
 # Format with ruff
 fmt:
 	uv run ruff format src/ tests/ scripts/ contrib/
+
+# Verify formatting without writing (part of `check`, so CI gates it). Fix with `make fmt`.
+fmt-check:
+	uv run ruff format --check src/ tests/ scripts/ contrib/
 
 # Run tests (pytest, excludes integration tests by default — see pyproject.toml addopts).
 # Includes contrib/skills/ so contrib-skill tests don't bit-rot.

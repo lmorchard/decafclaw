@@ -24,8 +24,7 @@ def uploads_dir(config, conv_id: str) -> Path:
     return conversation_dir(config, conv_id) / "uploads"
 
 
-def save_attachment(config, conv_id: str, filename: str, data: bytes,
-                    content_type: str) -> dict:
+def save_attachment(config, conv_id: str, filename: str, data: bytes, content_type: str) -> dict:
     """Save a file, returning attachment metadata."""
     dest_dir = uploads_dir(config, conv_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -88,12 +87,14 @@ def list_conversation_attachments(config, conv_id: str) -> list[dict]:
         if f.is_file():
             mime = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
             rel_path = str(f.relative_to(config.workspace_path))
-            results.append({
-                "filename": f.name,
-                "path": rel_path,
-                "mime_type": mime,
-                "size_bytes": f.stat().st_size,
-            })
+            results.append(
+                {
+                    "filename": f.name,
+                    "path": rel_path,
+                    "mime_type": mime,
+                    "size_bytes": f.stat().st_size,
+                }
+            )
     return results
 
 
@@ -115,27 +116,33 @@ def resolve_attachments(config, message: dict) -> dict:
     for att in atts:
         b64_data = read_attachment_base64(config, att)
         if b64_data is None:
-            content_parts.append({
-                "type": "text",
-                "text": f"[attachment missing: {att.get('filename', '?')}]",
-            })
+            content_parts.append(
+                {
+                    "type": "text",
+                    "text": f"[attachment missing: {att.get('filename', '?')}]",
+                }
+            )
             continue
 
         mime = att.get("mime_type", "application/octet-stream")
         # TODO(#137): MIME type is client-supplied — validate with magic bytes
         # server-side to prevent non-images from being base64-embedded
         if mime.startswith("image/"):
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64_data}"},
-            })
+            content_parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64_data}"},
+                }
+            )
         else:
             # Non-image: represent as a textual placeholder only
             # (binary data is not sent to the LLM)
-            content_parts.append({
-                "type": "text",
-                "text": f"[file: {att.get('filename', '?')} ({mime})]",
-            })
+            content_parts.append(
+                {
+                    "type": "text",
+                    "text": f"[file: {att.get('filename', '?')} ({mime})]",
+                }
+            )
 
     # Return message with multimodal content, stripping attachments key
     result = {k: v for k, v in message.items() if k != "attachments"}

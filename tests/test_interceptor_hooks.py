@@ -32,15 +32,13 @@ async def test_before_llm_call_hook_mutates_messages(ctx, config, monkeypatch):
     await runner.run()
 
     # Verify the mutation happened.
-    assert any(
-        msg.get("role") == "system" and msg.get("content") == "mutated_by_hook"
-        for msg in called_messages
-    )
+    assert any(msg.get("role") == "system" and msg.get("content") == "mutated_by_hook" for msg in called_messages)
 
 
 @pytest.mark.asyncio
 async def test_interceptors_execute_in_order(ctx, config, monkeypatch):
     """Test that multiple hooks execute in the order they were registered."""
+
     async def mock_call_llm(ctx, config, messages, tools, **kwargs):
         return {"content": "OK", "usage": {}}
 

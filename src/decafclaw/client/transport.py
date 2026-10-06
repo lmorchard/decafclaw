@@ -35,8 +35,7 @@ class WSTransport:
         try:
             self._ws = await websockets.connect(
                 self._ws_url,
-                additional_headers={
-                    "Cookie": f"decafclaw_session={self._token}"},
+                additional_headers={"Cookie": f"decafclaw_session={self._token}"},
             )
         except Exception as exc:
             raise TransportError(f"WebSocket connect failed: {exc}") from exc
@@ -46,13 +45,11 @@ class WSTransport:
         cookies = {"decafclaw_session": self._token}
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.post(url, json={"title": title},
-                                         cookies=cookies, timeout=30.0)
+                resp = await client.post(url, json={"title": title}, cookies=cookies, timeout=30.0)
         except Exception as exc:
             raise TransportError(f"create conversation failed: {exc}") from exc
         if resp.status_code != 201:
-            raise TransportError(
-                f"create conversation: HTTP {resp.status_code} {resp.text}")
+            raise TransportError(f"create conversation: HTTP {resp.status_code} {resp.text}")
         conv_id = resp.json().get("conv_id", "")
         if not conv_id:
             raise TransportError("create conversation: no conv_id in response")

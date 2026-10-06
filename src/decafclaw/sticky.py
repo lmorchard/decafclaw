@@ -43,8 +43,7 @@ def read_sticky_state(config, conv_id: str) -> dict:
     try:
         return json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
-        log.warning("Failed to read sticky state for %s; treating as empty",
-                    conv_id, exc_info=True)
+        log.warning("Failed to read sticky state for %s; treating as empty", conv_id, exc_info=True)
         return empty_sticky_state()
 
 
@@ -70,6 +69,7 @@ def write_sticky_state(config, conv_id: str, state: dict) -> bool:
 @dataclass
 class StickyOpResult:
     """Outcome of a sticky state operation."""
+
     ok: bool
     text: str = ""
     error: str = ""
@@ -106,8 +106,7 @@ async def _emit_sticky(emit: EmitFn | None, conv_id: str, payload: dict) -> None
         log.warning("sticky emit failed for %s", conv_id, exc_info=True)
 
 
-async def set_sticky(config, conv_id: str, widget_type: str, data: dict,
-                     emit: EmitFn | None = None) -> StickyOpResult:
+async def set_sticky(config, conv_id: str, widget_type: str, data: dict, emit: EmitFn | None = None) -> StickyOpResult:
     """Pin a widget into the sticky slot, replacing any previous occupant."""
     err = _validate_widget_for_sticky(widget_type, data)
     if err:
@@ -118,16 +117,19 @@ async def set_sticky(config, conv_id: str, widget_type: str, data: dict,
     state = {"schema_version": 1, "widget_type": widget_type, "data": data}
     if not write_sticky_state(config, conv_id, state):
         return StickyOpResult(ok=False, error="failed to write sticky state to disk")
-    await _emit_sticky(emit, conv_id, {
-        "type": "sticky_set",
-        "widget_type": widget_type,
-        "data": data,
-    })
+    await _emit_sticky(
+        emit,
+        conv_id,
+        {
+            "type": "sticky_set",
+            "widget_type": widget_type,
+            "data": data,
+        },
+    )
     return StickyOpResult(ok=True, text="sticky widget pinned")
 
 
-async def clear_sticky(config, conv_id: str,
-                       emit: EmitFn | None = None) -> StickyOpResult:
+async def clear_sticky(config, conv_id: str, emit: EmitFn | None = None) -> StickyOpResult:
     """Clear the sticky slot; hides it."""
     if not write_sticky_state(config, conv_id, empty_sticky_state()):
         return StickyOpResult(ok=False, error="failed to write sticky state to disk")

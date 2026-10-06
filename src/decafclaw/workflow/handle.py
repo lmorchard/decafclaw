@@ -16,6 +16,7 @@ Replay invariants the orchestrator author must respect:
   * Any per-call `model=` override passed to `llm_call` must be deterministic
     (it is not part of the journal fingerprint).
 """
+
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
@@ -42,9 +43,9 @@ async def _default_llm_call(ctx: "Context", **kw):
 
 
 class WorkflowHandle:
-    def __init__(self, ctx, journal, *, llm_caller=None,
-                 model: str = "vertex-gemini-flash",
-                 _key_prefix: tuple[int, ...] = ()):
+    def __init__(
+        self, ctx, journal, *, llm_caller=None, model: str = "vertex-gemini-flash", _key_prefix: tuple[int, ...] = ()
+    ):
         # `_key_prefix` is engine-internal: leading underscore signals it's
         # not for orchestrator authors. The top-level handle uses the default
         # `()`; sub-handles (Phase 2+) supply a path-shaped prefix so their
@@ -67,8 +68,7 @@ class WorkflowHandle:
         self._cursor += 1
         return seq
 
-    def _make_subhandle_at(self, outer_seq: tuple[int, ...],
-                           idx: int) -> "WorkflowHandle":
+    def _make_subhandle_at(self, outer_seq: tuple[int, ...], idx: int) -> "WorkflowHandle":
         """Create a sub-handle whose journal-key prefix is `outer_seq + (idx,)`.
 
         Used by Phase 5/6 primitives (`parallel`, `pipeline`) to give each
@@ -85,10 +85,9 @@ class WorkflowHandle:
         the parent; each starts with `_cursor = 0`.
         """
         sub_prefix = outer_seq + (idx,)
-        return WorkflowHandle(self.ctx, self.journal,
-                              llm_caller=self._llm_caller,
-                              model=self._model,
-                              _key_prefix=sub_prefix)
+        return WorkflowHandle(
+            self.ctx, self.journal, llm_caller=self._llm_caller, model=self._model, _key_prefix=sub_prefix
+        )
 
     def _check_or_none(self, seq: tuple[int, ...], kind: str, fp: str):
         """Return (cached_result, True) for an already-journaled call at seq,
@@ -98,12 +97,12 @@ class WorkflowHandle:
         if existing is None:
             return None, False
         if existing.kind != kind or existing.args_fingerprint != fp:
-            raise WorkflowNonDeterministic(
-                seq, existing.kind, existing.args_fingerprint, kind, fp)
+            raise WorkflowNonDeterministic(seq, existing.kind, existing.args_fingerprint, kind, fp)
         return existing.result, True
 
-    async def llm_call(self, *, prompt: str, schema: dict, system: str = "",
-                       tool_name: str = "submit", model: str | None = None):
+    async def llm_call(
+        self, *, prompt: str, schema: dict, system: str = "", tool_name: str = "submit", model: str | None = None
+    ):
         seq = self._next_seq()
         # tool_name and the per-call `model` override are intentionally NOT
         # part of the fingerprint: tool_name is a cosmetic label for the single
@@ -113,14 +112,13 @@ class WorkflowHandle:
         # replays — computing it from nondeterministic state would let replay
         # reuse a result produced under a different model without the
         # determinism guard firing. (v1 orchestrators pass no per-call model.)
-        fp = fingerprint("llm_call",
-                         {"prompt": prompt, "schema": schema, "system": system})
+        fp = fingerprint("llm_call", {"prompt": prompt, "schema": schema, "system": system})
         cached, hit = self._check_or_none(seq, "llm_call", fp)
         if hit:
             return cached
         result = await self._llm_caller(
-            self.ctx, system=system, user_msg=prompt, schema=schema,
-            tool_name=tool_name, model=model or self._model)
+            self.ctx, system=system, user_msg=prompt, schema=schema, tool_name=tool_name, model=model or self._model
+        )
         self.journal.append(seq, "llm_call", fp, result)
         save_journal(self.ctx.config, self.ctx.conv_id, self.journal)
         return result
@@ -149,12 +147,10 @@ class WorkflowHandle:
         # orchestrator catches `WorkflowToolNotAllowed` and continues.
         allowed = self.ctx.tools.allowed
         if allowed is not None and name not in allowed:
-            raise WorkflowToolNotAllowed(
-                f"tool {name!r} not in workflow's tool allowlist")
+            raise WorkflowToolNotAllowed(f"tool {name!r} not in workflow's tool allowlist")
         disallowed = self.ctx.tools.disallowed or set()
         if name in disallowed:
-            raise WorkflowToolNotAllowed(
-                f"tool {name!r} is explicitly blocked by workflow's tool blocklist")
+            raise WorkflowToolNotAllowed(f"tool {name!r} is explicitly blocked by workflow's tool blocklist")
         seq = self._next_seq()
         fp = fingerprint("tool_call", {"name": name, "args": args})
         cached, hit = self._check_or_none(seq, "tool_call", fp)
@@ -169,12 +165,16 @@ class WorkflowHandle:
         save_journal(self.ctx.config, self.ctx.conv_id, self.journal)
         return serialized
 
-    async def subagent(self, prompt: str, *,
-                       schema: dict | None = None,
-                       allowed_tools: list[str] | None = None,
-                       allow_vault_retrieval: bool = False,
-                       allow_vault_read: bool = False,
-                       model: str | None = None) -> dict | str:
+    async def subagent(
+        self,
+        prompt: str,
+        *,
+        schema: dict | None = None,
+        allowed_tools: list[str] | None = None,
+        allow_vault_retrieval: bool = False,
+        allow_vault_read: bool = False,
+        model: str | None = None,
+    ) -> dict | str:
         """Dispatch a child agent loop as a journaled boundary crossing.
 
         Reuses the existing `delegate.run_child_turn` infrastructure: the
@@ -193,13 +193,16 @@ class WorkflowHandle:
         callers may swap models between runs without busting the cache.
         """
         seq = self._next_seq()
-        fp = fingerprint("subagent", {
-            "prompt": prompt,
-            "schema": schema,
-            "allowed_tools": sorted(allowed_tools) if allowed_tools else None,
-            "allow_vault_retrieval": allow_vault_retrieval,
-            "allow_vault_read": allow_vault_read,
-        })
+        fp = fingerprint(
+            "subagent",
+            {
+                "prompt": prompt,
+                "schema": schema,
+                "allowed_tools": sorted(allowed_tools) if allowed_tools else None,
+                "allow_vault_retrieval": allow_vault_retrieval,
+                "allow_vault_read": allow_vault_read,
+            },
+        )
         cached, hit = self._check_or_none(seq, "subagent", fp)
         if hit:
             # On replay, the cache is whatever the live path journaled: a
@@ -255,12 +258,8 @@ class WorkflowHandle:
             assert isinstance(cached, list)
             return cached
 
-        sub_handles = [self._make_subhandle_at(seq, idx)
-                       for idx in range(len(thunks))]
-        tasks: list[asyncio.Task] = [
-            asyncio.create_task(thunks[i](sub_handles[i]))
-            for i in range(len(thunks))
-        ]
+        sub_handles = [self._make_subhandle_at(seq, idx) for idx in range(len(thunks))]
+        tasks: list[asyncio.Task] = [asyncio.create_task(thunks[i](sub_handles[i])) for i in range(len(thunks))]
 
         # Cancel watcher: if ctx.cancelled fires, race it against the fan-out
         # so we can preemptively cancel in-flight thunks. `ctx.cancelled is
@@ -321,8 +320,7 @@ class WorkflowHandle:
                 if cancel_watcher is not None:
                     wait_set.append(cancel_watcher)
 
-                done, _ = await asyncio.wait(
-                    wait_set, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
 
                 cancel_fired = (
                     cancel_watcher is not None
@@ -342,9 +340,7 @@ class WorkflowHandle:
                     except asyncio.CancelledError:
                         pass  # expected: we just cancelled it
                     except Exception as exc:  # noqa: BLE001
-                        log.debug(
-                            "parallel gather cleanup error on cancel: %r",
-                            exc)
+                        log.debug("parallel gather cleanup error on cancel: %r", exc)
                     raise asyncio.CancelledError()
 
                 # FIRST_COMPLETED with two futures in the wait_set guarantees
@@ -354,8 +350,7 @@ class WorkflowHandle:
                 # an asyncio invariant violation; raise loudly rather than
                 # silently miscount.
                 if gather_future not in done:
-                    raise RuntimeError(
-                        "wf.parallel: wait returned with no completed future")
+                    raise RuntimeError("wf.parallel: wait returned with no completed future")
 
                 # gather_future is done — either every task succeeded
                 # (.result() returns the results list) or one raised
@@ -391,8 +386,7 @@ class WorkflowHandle:
                     except asyncio.CancelledError:
                         pass  # expected: we just cancelled it
                     except Exception as exc:  # noqa: BLE001
-                        log.debug(
-                            "parallel cancel-watcher cleanup error: %r", exc)
+                        log.debug("parallel cancel-watcher cleanup error: %r", exc)
                 else:
                     # Watcher already done — retrieve its exception (the
                     # _CancelSignal sentinel) so asyncio doesn't log a
@@ -431,8 +425,7 @@ class WorkflowHandle:
         raised.
         """
         seq = self._next_seq()
-        fp = fingerprint(
-            "pipeline", {"items": items, "stage_count": len(stages)})
+        fp = fingerprint("pipeline", {"items": items, "stage_count": len(stages)})
         cached, hit = self._check_or_none(seq, "pipeline", fp)
         if hit:
             assert isinstance(cached, list)
@@ -451,10 +444,7 @@ class WorkflowHandle:
                 prev = await stage(prev, item, idx, sub)
             return prev
 
-        tasks: list[asyncio.Task] = [
-            asyncio.create_task(_run_one(items[i], i))
-            for i in range(len(items))
-        ]
+        tasks: list[asyncio.Task] = [asyncio.create_task(_run_one(items[i], i)) for i in range(len(items))]
 
         # Cancel watcher mirrors `parallel`'s pattern. The watcher raises a
         # private sentinel (not CancelledError) so we can distinguish "cancel
@@ -505,8 +495,7 @@ class WorkflowHandle:
             if cancel_watcher is not None:
                 wait_set.append(cancel_watcher)
 
-            done, _ = await asyncio.wait(
-                wait_set, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
 
             cancel_fired = (
                 cancel_watcher is not None
@@ -526,9 +515,7 @@ class WorkflowHandle:
                 except asyncio.CancelledError:
                     pass  # expected: we just cancelled it
                 except Exception as exc:  # noqa: BLE001
-                    log.debug(
-                        "pipeline gather cleanup error on cancel: %r",
-                        exc)
+                    log.debug("pipeline gather cleanup error on cancel: %r", exc)
                 raise asyncio.CancelledError()
 
             # FIRST_COMPLETED with two futures in the wait_set guarantees
@@ -538,8 +525,7 @@ class WorkflowHandle:
             # an asyncio invariant violation; raise loudly rather than
             # silently miscount.
             if gather_future not in done:
-                raise RuntimeError(
-                    "wf.pipeline: wait returned with no completed future")
+                raise RuntimeError("wf.pipeline: wait returned with no completed future")
 
             # gather_future is done — either every item succeeded
             # (.result() returns the results list) or one raised
@@ -573,8 +559,7 @@ class WorkflowHandle:
                     except asyncio.CancelledError:
                         pass  # expected: we just cancelled it
                     except Exception as exc:  # noqa: BLE001
-                        log.debug(
-                            "pipeline cancel-watcher cleanup error: %r", exc)
+                        log.debug("pipeline cancel-watcher cleanup error: %r", exc)
                 else:
                     # Watcher already done — retrieve its exception (the
                     # _CancelSignal sentinel) so asyncio doesn't log a
@@ -595,5 +580,4 @@ class WorkflowHandle:
         # New, unanswered → suspend. The journal (entries prior to seq) is
         # already persisted by the preceding live call (or empty on a fresh
         # start).
-        raise WorkflowSuspended(seq=seq, args_fingerprint=fp, prompt=prompt,
-                                choices=choices)
+        raise WorkflowSuspended(seq=seq, args_fingerprint=fp, prompt=prompt, choices=choices)

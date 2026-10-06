@@ -37,12 +37,7 @@ def _escape_label_value(value: str) -> str:
     oddly-named model config would silently drop every metric, not just its
     own. Backslash first, or the escapes introduced below get re-escaped.
     """
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-    )
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def _format_labels(labels: dict[str, str]) -> str:
@@ -75,6 +70,7 @@ def make_metrics_subscriber() -> Callable[[dict], Awaitable[None]]:
     """EventBus subscriber: turns ``llm_end`` / ``tool_end`` / ``loop_breaker``
     into metrics. Fail-open.
     """
+
     async def handle(event: dict) -> None:
         try:
             event_type = event.get("type")
@@ -94,8 +90,7 @@ def make_metrics_subscriber() -> Callable[[dict], Awaitable[None]]:
                 record_metric("tool_duration_ms", labels, duration_ms, "histogram")
                 record_metric("tool_calls_total", labels, 1, "counter")
                 if outcome == "error":
-                    record_metric(
-                        "errors_total", {"component": "tool", "name": tool}, 1, "counter")
+                    record_metric("errors_total", {"component": "tool", "name": tool}, 1, "counter")
 
             elif event_type == "loop_breaker":
                 action = event.get("action") or ""

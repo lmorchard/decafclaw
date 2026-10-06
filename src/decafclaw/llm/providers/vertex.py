@@ -23,8 +23,7 @@ class VertexProvider:
     Uses native Gemini REST API (not OpenAI-compat). ADC auth via google-auth.
     """
 
-    def __init__(self, project: str, region: str = "us-central1",
-                 service_account_file: str = ""):
+    def __init__(self, project: str, region: str = "us-central1", service_account_file: str = ""):
         self.project = project
         self.region = region
         self._service_account_file = service_account_file
@@ -45,6 +44,7 @@ class VertexProvider:
         if self._credentials is None:
             if self._service_account_file:
                 from google.oauth2 import service_account
+
                 self._credentials = service_account.Credentials.from_service_account_file(
                     self._service_account_file,
                     scopes=["https://www.googleapis.com/auth/cloud-platform"],
@@ -63,15 +63,8 @@ class VertexProvider:
     def _base_url(self, model: str) -> str:
         # "global" is a location, not a regional host prefix — there is no
         # global-aiplatform.googleapis.com. Google serves it from the bare host.
-        host = (
-            "aiplatform.googleapis.com" if self.region == "global"
-            else f"{self.region}-aiplatform.googleapis.com"
-        )
-        return (
-            f"https://{host}/v1/"
-            f"projects/{self.project}/locations/{self.region}/"
-            f"publishers/google/models/{model}"
-        )
+        host = "aiplatform.googleapis.com" if self.region == "global" else f"{self.region}-aiplatform.googleapis.com"
+        return f"https://{host}/v1/projects/{self.project}/locations/{self.region}/publishers/google/models/{model}"
 
     async def _headers(self) -> dict[str, str]:
         return {
@@ -93,26 +86,40 @@ class VertexProvider:
     ) -> dict:
         if streaming:
             return await self._complete_streaming(
-                model, messages, tools=tools, on_chunk=on_chunk,
-                cancel_event=cancel_event, timeout=timeout,
+                model,
+                messages,
+                tools=tools,
+                on_chunk=on_chunk,
+                cancel_event=cancel_event,
+                timeout=timeout,
             )
         return await self._complete_nonstreaming(
-            model, messages, tools=tools, timeout=timeout,
+            model,
+            messages,
+            tools=tools,
+            timeout=timeout,
         )
 
     async def _complete_nonstreaming(
-        self, model, messages, *, tools=None, timeout=300,
+        self,
+        model,
+        messages,
+        *,
+        tools=None,
+        timeout=300,
     ) -> dict:
         url = f"{self._base_url(model)}:generateContent"
         body = _build_request_body(messages, tools)
 
-        log.debug("Vertex request: model=%s, messages=%d, tools=%d",
-                  model, len(messages), len(tools) if tools else 0)
+        log.debug("Vertex request: model=%s, messages=%d, tools=%d", model, len(messages), len(tools) if tools else 0)
         log.debug("Vertex request body: %s", json.dumps(body)[:2000])
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                url, json=body, headers=await self._headers(), timeout=timeout,
+                url,
+                json=body,
+                headers=await self._headers(),
+                timeout=timeout,
             )
         resp.raise_for_status()
         data = resp.json()
@@ -121,14 +128,24 @@ class VertexProvider:
         return _parse_response(data)
 
     async def _complete_streaming(
-        self, model, messages, *, tools=None, on_chunk=None,
-        cancel_event=None, timeout=300,
+        self,
+        model,
+        messages,
+        *,
+        tools=None,
+        on_chunk=None,
+        cancel_event=None,
+        timeout=300,
     ) -> dict:
         url = f"{self._base_url(model)}:streamGenerateContent?alt=sse"
         body = _build_request_body(messages, tools)
 
-        log.debug("Vertex streaming request: model=%s, messages=%d, tools=%d",
-                  model, len(messages), len(tools) if tools else 0)
+        log.debug(
+            "Vertex streaming request: model=%s, messages=%d, tools=%d",
+            model,
+            len(messages),
+            len(tools) if tools else 0,
+        )
         log.debug("Vertex request body: %s", json.dumps(body)[:2000])
 
         state = _VertexStreamState(on_chunk)
@@ -136,20 +153,27 @@ class VertexProvider:
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 await self._stream_one_attempt(
-                    url, body, timeout, cancel_event, state,
+                    url,
+                    body,
+                    timeout,
+                    cancel_event,
+                    state,
                 )
                 break  # Success
             except _RetryableError as e:
                 if attempt >= _MAX_RETRIES:
                     raise Exception(
-                        f"Vertex failed after {_MAX_RETRIES} retries "
-                        f"(status {e.status}): {e.body[:200]}"
+                        f"Vertex failed after {_MAX_RETRIES} retries (status {e.status}): {e.body[:200]}"
                     ) from e
-                delay = min(int(e.retry_after or 2 ** attempt), 30)
+                delay = min(int(e.retry_after or 2**attempt), 30)
                 log.warning(
                     "Vertex %s (%d), retrying in %ds (attempt %d/%d): %s",
                     "rate limited" if e.status == 429 else "server error",
-                    e.status, delay, attempt + 1, _MAX_RETRIES, e.body[:200],
+                    e.status,
+                    delay,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    e.body[:200],
                 )
                 await _cancellable_sleep(delay, cancel_event)
             except Exception as e:
@@ -166,7 +190,10 @@ class VertexProvider:
 
         async with httpx.AsyncClient() as client:
             async with aconnect_sse(
-                client, "POST", url, json=body,
+                client,
+                "POST",
+                url,
+                json=body,
                 headers=await self._headers(),
                 timeout=httpx.Timeout(timeout),
             ) as event_source:
@@ -215,14 +242,18 @@ class VertexProvider:
             try:
                 async with httpx.AsyncClient() as client:
                     resp = await client.post(
-                        url, json=body, headers=await self._headers(),
+                        url,
+                        json=body,
+                        headers=await self._headers(),
                         timeout=timeout,
                     )
                 if resp.status_code == 429 and attempt < max_retries:
-                    delay = 2 ** attempt
+                    delay = 2**attempt
                     log.warning(
-                        "Vertex embedding rate limited, retrying in %ds "
-                        "(attempt %d/%d)", delay, attempt + 1, max_retries,
+                        "Vertex embedding rate limited, retrying in %ds (attempt %d/%d)",
+                        delay,
+                        attempt + 1,
+                        max_retries,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -248,7 +279,9 @@ class VertexProvider:
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
-                    url, headers=await self._headers(), timeout=timeout,
+                    url,
+                    headers=await self._headers(),
+                    timeout=timeout,
                 )
             if resp.status_code == 200:
                 return resp.json()
@@ -393,18 +426,29 @@ class _VertexStreamState:
 # Message format translation
 # ---------------------------------------------------------------------------
 
-_VERTEX_UNSUPPORTED_KEYS = frozenset({
-    # Schema metadata Vertex doesn't process.
-    "$schema", "$id", "$defs", "definitions", "$ref",
-    # JSON Schema keywords for property-name / pattern-shape constraints —
-    # not in the OpenAPI 3 subset Vertex accepts.
-    "propertyNames", "patternProperties", "dependencies", "dependentRequired",
-    "dependentSchemas",
-    # Conditional schema branches.
-    "if", "then", "else",
-    # Numeric constraint Vertex rejects on some schema versions.
-    "multipleOf",
-})
+_VERTEX_UNSUPPORTED_KEYS = frozenset(
+    {
+        # Schema metadata Vertex doesn't process.
+        "$schema",
+        "$id",
+        "$defs",
+        "definitions",
+        "$ref",
+        # JSON Schema keywords for property-name / pattern-shape constraints —
+        # not in the OpenAPI 3 subset Vertex accepts.
+        "propertyNames",
+        "patternProperties",
+        "dependencies",
+        "dependentRequired",
+        "dependentSchemas",
+        # Conditional schema branches.
+        "if",
+        "then",
+        "else",
+        # Numeric constraint Vertex rejects on some schema versions.
+        "multipleOf",
+    }
+)
 
 
 def _clean_schema(schema: dict) -> dict:
@@ -420,13 +464,11 @@ def _clean_schema(schema: dict) -> dict:
     constraints (``minLength``, ``enum``, etc.) that Vertex accepts. Add
     keys here as new rejection cases surface.
     """
-    cleaned = {k: v for k, v in schema.items()
-               if k not in _VERTEX_UNSUPPORTED_KEYS}
+    cleaned = {k: v for k, v in schema.items() if k not in _VERTEX_UNSUPPORTED_KEYS}
     # Recurse into nested schemas (properties, items, etc.)
     if "properties" in cleaned:
         cleaned["properties"] = {
-            k: _clean_schema(v) if isinstance(v, dict) else v
-            for k, v in cleaned["properties"].items()
+            k: _clean_schema(v) if isinstance(v, dict) else v for k, v in cleaned["properties"].items()
         }
     for key in ("items", "additionalProperties"):
         if key in cleaned and isinstance(cleaned[key], dict):
@@ -436,10 +478,7 @@ def _clean_schema(schema: dict) -> dict:
     # contents).
     for key in ("oneOf", "anyOf", "allOf"):
         if key in cleaned and isinstance(cleaned[key], list):
-            cleaned[key] = [
-                _clean_schema(s) if isinstance(s, dict) else s
-                for s in cleaned[key]
-            ]
+            cleaned[key] = [_clean_schema(s) if isinstance(s, dict) else s for s in cleaned[key]]
     return cleaned
 
 
@@ -466,17 +505,20 @@ def _content_to_parts(content) -> list[dict]:
             # Parse data:mime;base64,payload
             if data_url.startswith("data:") and ";base64," in data_url:
                 header, payload = data_url.split(";base64,", 1)
-                mime_type = header[len("data:"):]
-                parts.append({
-                    "inlineData": {"mimeType": mime_type, "data": payload},
-                })
+                mime_type = header[len("data:") :]
+                parts.append(
+                    {
+                        "inlineData": {"mimeType": mime_type, "data": payload},
+                    }
+                )
             else:
                 log.warning("Unsupported image_url format (not a data URI), skipping")
     return parts
 
 
 def _build_request_body(
-    messages: list[dict], tools: list[dict] | None = None,
+    messages: list[dict],
+    tools: list[dict] | None = None,
 ) -> dict:
     """Translate OpenAI-format messages to Gemini request body."""
     contents = []
@@ -550,9 +592,12 @@ def _build_request_body(
             }
 
             # Merge into previous user message if it has functionResponse parts
-            if (contents and contents[-1].get("role") == "user"
-                    and contents[-1]["parts"]
-                    and "functionResponse" in contents[-1]["parts"][0]):
+            if (
+                contents
+                and contents[-1].get("role") == "user"
+                and contents[-1]["parts"]
+                and "functionResponse" in contents[-1]["parts"][0]
+            ):
                 contents[-1]["parts"].append(fr_part)
             else:
                 contents.append({"role": "user", "parts": [fr_part]})

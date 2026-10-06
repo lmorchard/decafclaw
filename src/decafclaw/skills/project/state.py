@@ -99,9 +99,7 @@ def _slugify(text: str, max_len: int = 30) -> str:
     return slug
 
 
-def create_project(
-    config, description: str, slug: str = ""
-) -> ProjectInfo:
+def create_project(config, description: str, slug: str = "") -> ProjectInfo:
     """Create a new project directory and initialize metadata."""
     if not slug:
         slug = _slugify(description)

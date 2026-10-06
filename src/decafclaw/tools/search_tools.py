@@ -75,9 +75,7 @@ def tool_search(ctx: "Context", query: str, max_results: int = 10) -> ToolResult
     # name → (description, score)
     matched_skills: dict[str, tuple[str, tuple[int, int]]] = {}
 
-    def _record_skill(
-        skill_name: str, description: str, score: tuple[int, int]
-    ) -> None:
+    def _record_skill(skill_name: str, description: str, score: tuple[int, int]) -> None:
         existing = matched_skills.get(skill_name)
         if existing is None or score > existing[1]:
             matched_skills[skill_name] = (description, score)
@@ -112,9 +110,7 @@ def tool_search(ctx: "Context", query: str, max_results: int = 10) -> ToolResult
 
     # Order both result sets by score (descending), highest-signal first.
     # sorted() is stable, so ties keep skill-discovery / pool order.
-    ranked_skills = sorted(
-        matched_skills.items(), key=lambda kv: kv[1][1], reverse=True
-    )
+    ranked_skills = sorted(matched_skills.items(), key=lambda kv: kv[1][1], reverse=True)
     ranked_tools = sorted(scored_tool_defs, key=lambda st: st[0], reverse=True)
 
     # Bound keyword-mode results across the combined output. Exact
@@ -125,9 +121,9 @@ def tool_search(ctx: "Context", query: str, max_results: int = 10) -> ToolResult
     # pointers the agent chooses to activate. Rendering still groups skills
     # then tools; only which matches survive the budget is combined.
     if not is_select and len(ranked_skills) + len(ranked_tools) > max_results:
-        candidates = [
-            (score, 0, ("skill", name)) for name, (_desc, score) in ranked_skills
-        ] + [(score, 1, ("tool", i)) for i, (score, _td) in enumerate(ranked_tools)]
+        candidates = [(score, 0, ("skill", name)) for name, (_desc, score) in ranked_skills] + [
+            (score, 1, ("tool", i)) for i, (score, _td) in enumerate(ranked_tools)
+        ]
         candidates.sort(key=lambda c: c[1])  # tiebreak: skills before tools
         candidates.sort(key=lambda c: c[0], reverse=True)  # primary: score desc
         kept = {ref for _score, _kind, ref in candidates[:max_results]}
@@ -139,9 +135,7 @@ def tool_search(ctx: "Context", query: str, max_results: int = 10) -> ToolResult
 
     missing: set[str] = set()
     if is_select:
-        found = set(matched_skills.keys()) | {
-            td["function"]["name"] for td in fetched_tool_defs
-        }
+        found = set(matched_skills.keys()) | {td["function"]["name"] for td in fetched_tool_defs}
         missing = requested_names - found
 
     if not matched_skills and not fetched_tool_defs:
@@ -161,17 +155,13 @@ def tool_search(ctx: "Context", query: str, max_results: int = 10) -> ToolResult
 
     if matched_skills:
         parts.append(
-            f"{len(matched_skills)} skill(s) matched. Call "
-            "activate_skill(name) to load a skill's body and tools."
+            f"{len(matched_skills)} skill(s) matched. Call activate_skill(name) to load a skill's body and tools."
         )
         for skill_name, (description, _score_) in ranked_skills:
             parts.append(f"- **{skill_name}**: {description}")
 
     if fetched_tool_defs:
-        parts.append(
-            f"{len(fetched_tool_defs)} tool(s) loaded. "
-            "These tools are now available to call."
-        )
+        parts.append(f"{len(fetched_tool_defs)} tool(s) loaded. These tools are now available to call.")
         for td in fetched_tool_defs:
             parts.append(json.dumps(td, indent=2))
 
@@ -207,16 +197,12 @@ SEARCH_TOOL_DEFINITIONS = [
                     "query": {
                         "type": "string",
                         "description": (
-                            "Keyword search term, or 'select:name1,name2' "
-                            "for exact selection by skill or tool name"
+                            "Keyword search term, or 'select:name1,name2' for exact selection by skill or tool name"
                         ),
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": (
-                            "Max combined skill+tool matches for keyword "
-                            "search (default 10)"
-                        ),
+                        "description": ("Max combined skill+tool matches for keyword search (default 10)"),
                     },
                 },
                 "required": ["query"],

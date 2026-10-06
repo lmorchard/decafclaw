@@ -24,6 +24,7 @@ _STOP_GRACE_PERIOD = 2  # seconds between SIGTERM and SIGKILL
 @dataclass
 class BackgroundJob:
     """A background process tracked by the job manager."""
+
     job_id: str
     command: str
     process: asyncio.subprocess.Process
@@ -103,8 +104,7 @@ def _close_transport(job: BackgroundJob) -> None:
     try:
         transport.close()
     except Exception as exc:
-        log.debug("closing subprocess transport for %s failed: %s",
-                  job.job_id, exc)
+        log.debug("closing subprocess transport for %s failed: %s", job.job_id, exc)
 
 
 async def _notify_job_exit(job: BackgroundJob) -> None:
@@ -112,8 +112,8 @@ async def _notify_job_exit(job: BackgroundJob) -> None:
     if job.config is None:
         return
     from decafclaw import notifications
-    title = ("Background job completed" if job.exit_code == 0
-             else "Background job failed")
+
+    title = "Background job completed" if job.exit_code == 0 else "Background job failed"
     priority = "normal" if job.exit_code == 0 else "high"
     cmd_preview = job.command[:80] + ("..." if len(job.command) > 80 else "")
     body = f"{cmd_preview} (exit {job.exit_code})"
@@ -122,9 +122,13 @@ async def _notify_job_exit(job: BackgroundJob) -> None:
         body += f" — {last_stderr[:120]}"
     try:
         await notifications.notify(
-            job.config, job.event_bus,
-            category="background", title=title, body=body,
-            priority=priority, conv_id=job.conv_id or None,
+            job.config,
+            job.event_bus,
+            category="background",
+            title=title,
+            body=body,
+            priority=priority,
+            conv_id=job.conv_id or None,
         )
     except Exception as e:
         log.warning(f"Failed to emit background-job notification: {e}")
@@ -139,6 +143,7 @@ async def _enqueue_wake(job: BackgroundJob) -> None:
         return
     # Import here to avoid top-level circular dependency.
     from decafclaw.conversation_manager import TurnKind
+
     nudge = (
         "A background job you started has completed. Its status and output "
         "are in your history above. Review the result and take any follow-up "
@@ -184,6 +189,7 @@ async def _finalize_job(job: BackgroundJob) -> None:
     # 1. Append background_event to conversation archive.
     try:
         from decafclaw.archive import append_message
+
         elapsed_ms = int((time.monotonic() - job.started_at) * 1000)
         rec = build_background_event_record(
             job_id=job.job_id,
@@ -201,10 +207,13 @@ async def _finalize_job(job: BackgroundJob) -> None:
             # see the completion immediately when the record is appended.
             if job.manager is not None:
                 try:
-                    await job.manager.emit(job.conv_id, {
-                        "type": "background_event",
-                        "record": rec,
-                    })
+                    await job.manager.emit(
+                        job.conv_id,
+                        {
+                            "type": "background_event",
+                            "record": rec,
+                        },
+                    )
                 except Exception as emit_e:
                     log.warning(f"Failed to emit background_event event for {job.job_id}: {emit_e}")
     except Exception as e:
@@ -322,13 +331,17 @@ class BackgroundJobManager:
     def __init__(self):
         self.jobs: dict[str, BackgroundJob] = {}
 
-    async def start(self, command: str, cwd: str,
-                    max_lifetime: float = _DEFAULT_MAX_LIFETIME,
-                    config: Any = None,
-                    conv_id: str = "",
-                    event_bus: Any = None,
-                    completion_tail_lines: int = 50,
-                    manager: Any = None) -> BackgroundJob:
+    async def start(
+        self,
+        command: str,
+        cwd: str,
+        max_lifetime: float = _DEFAULT_MAX_LIFETIME,
+        config: Any = None,
+        conv_id: str = "",
+        event_bus: Any = None,
+        completion_tail_lines: int = 50,
+        manager: Any = None,
+    ) -> BackgroundJob:
         """Start a background process. Returns immediately.
 
         ``config``, ``conv_id``, ``event_bus``, and ``manager`` are carried
@@ -336,8 +349,10 @@ class BackgroundJobManager:
         out to channel adapters) and enqueue a WAKE turn when the process exits.
         """
         process = await asyncio.create_subprocess_shell(
-            command, cwd=cwd,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            command,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
 
@@ -457,15 +472,19 @@ def _get_job_manager(ctx: "Context") -> BackgroundJobManager:
 
 # -- Tool functions -----------------------------------------------------------
 
-async def tool_shell_background_start(ctx: "Context", command: str,
-                                      completion_tail_lines: int | None = None) -> ToolResult:
+
+async def tool_shell_background_start(
+    ctx: "Context", command: str, completion_tail_lines: int | None = None
+) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
 
     from decafclaw.tools.shell_tools import check_shell_approval
 
     result = await check_shell_approval(
-        ctx, command, tool_name="shell_background_start",
+        ctx,
+        command,
+        tool_name="shell_background_start",
         message=f"Background process: `{command}`",
     )
     if not result.get("approved"):
@@ -476,9 +495,7 @@ async def tool_shell_background_start(ctx: "Context", command: str,
         )
 
     tail_lines: int = (
-        ctx.config.background.default_completion_tail_lines
-        if completion_tail_lines is None
-        else completion_tail_lines
+        ctx.config.background.default_completion_tail_lines if completion_tail_lines is None else completion_tail_lines
     )
     clamped_tail_lines = max(0, min(tail_lines, _OUTPUT_BUFFER_SIZE))
 
@@ -488,8 +505,10 @@ async def tool_shell_background_start(ctx: "Context", command: str,
 
     try:
         job = await manager.start(
-            command, str(ctx.config.workspace_path),
-            config=ctx.config, conv_id=ctx.conv_id,
+            command,
+            str(ctx.config.workspace_path),
+            config=ctx.config,
+            conv_id=ctx.conv_id,
             event_bus=ctx.event_bus,
             completion_tail_lines=clamped_tail_lines,
             manager=conv_manager,
@@ -501,13 +520,14 @@ async def tool_shell_background_start(ctx: "Context", command: str,
         )
 
     return ToolResult(
-        text=(f"Background process started.\n"
-              f"- **Job ID:** `{job.job_id}`\n"
-              f"- **PID:** {job.pid}\n"
-              f"- **Command:** `{command}`\n"
-              f"- **Max lifetime:** {job.max_lifetime:.0f}s"),
-        data={"job_id": job.job_id, "status": "running",
-              "command": command, "pid": job.pid},
+        text=(
+            f"Background process started.\n"
+            f"- **Job ID:** `{job.job_id}`\n"
+            f"- **PID:** {job.pid}\n"
+            f"- **Command:** `{command}`\n"
+            f"- **Max lifetime:** {job.max_lifetime:.0f}s"
+        ),
+        data={"job_id": job.job_id, "status": "running", "command": command, "pid": job.pid},
     )
 
 
@@ -579,9 +599,7 @@ async def tool_shell_background_stop(ctx: "Context", job_id: str) -> ToolResult:
     stderr = "\n".join(job.stderr_buffer)
 
     return ToolResult(
-        text=(f"Background job `{job_id}` stopped.\n"
-              f"- **Status:** {job.status}\n"
-              f"- **Exit code:** {job.exit_code}"),
+        text=(f"Background job `{job_id}` stopped.\n- **Status:** {job.status}\n- **Exit code:** {job.exit_code}"),
         data={
             "status": job.status,
             "exit_code": job.exit_code,
@@ -609,18 +627,16 @@ async def tool_shell_background_list(ctx: "Context") -> ToolResult:
     job_list = []
     for job in jobs:
         elapsed = now - job.started_at
-        lines.append(
-            f"- `{job.job_id}` — {job.status} | "
-            f"`{job.command[:50]}` | pid={job.pid} | "
-            f"elapsed={elapsed:.0f}s"
+        lines.append(f"- `{job.job_id}` — {job.status} | `{job.command[:50]}` | pid={job.pid} | elapsed={elapsed:.0f}s")
+        job_list.append(
+            {
+                "job_id": job.job_id,
+                "command": job.command,
+                "status": job.status,
+                "pid": job.pid,
+                "elapsed_ms": int(elapsed * 1000),
+            }
         )
-        job_list.append({
-            "job_id": job.job_id,
-            "command": job.command,
-            "status": job.status,
-            "pid": job.pid,
-            "elapsed_ms": int(elapsed * 1000),
-        })
 
     return ToolResult(
         text="\n".join(lines),

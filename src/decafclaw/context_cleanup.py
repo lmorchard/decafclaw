@@ -24,6 +24,7 @@ class ClearStats:
     """Counts of what got cleared. Per-call deltas; the agent loop
     accumulates these onto ``ctx.composer.cleanup_cleared_count`` and
     ``ctx.composer.cleanup_cleared_bytes``."""
+
     cleared_count: int = 0
     cleared_bytes: int = 0
 
@@ -146,7 +147,9 @@ def clear_old_tool_results(history: list[dict], config) -> ClearStats:
         stats.cleared_bytes += reclaimed
         log.debug(
             "Cleared tool message at history[%d] (tool=%s, %d bytes)",
-            i, tool_name or "?", content_bytes,
+            i,
+            tool_name or "?",
+            content_bytes,
         )
 
     return stats

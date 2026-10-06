@@ -28,8 +28,7 @@ class TestConfirmationRequestArchive:
             confirmation_id="conf_abc",
             timestamp="2026-04-25T00:00:00",
         )
-        roundtripped = ConfirmationRequest.from_archive_message(
-            req.to_archive_message())
+        roundtripped = ConfirmationRequest.from_archive_message(req.to_archive_message())
         assert roundtripped == req
 
     def test_to_archive_emits_all_dataclass_fields(self):
@@ -57,12 +56,14 @@ class TestConfirmationRequestArchive:
     def test_from_archive_ignores_unknown_keys(self):
         """Forward compat: future agent versions may write keys this build
         doesn't recognize yet."""
-        req = ConfirmationRequest.from_archive_message({
-            "role": "confirmation_request",
-            "action_type": "run_shell_command",
-            "confirmation_id": "x",
-            "future_field": "ignored",
-        })
+        req = ConfirmationRequest.from_archive_message(
+            {
+                "role": "confirmation_request",
+                "action_type": "run_shell_command",
+                "confirmation_id": "x",
+                "future_field": "ignored",
+            }
+        )
         assert req.action_type is ConfirmationAction.RUN_SHELL_COMMAND
         assert req.confirmation_id == "x"
 
@@ -76,8 +77,7 @@ class TestConfirmationResponseArchive:
             add_pattern=True,
             timestamp="2026-04-25T00:00:00",
         )
-        roundtripped = ConfirmationResponse.from_archive_message(
-            resp.to_archive_message())
+        roundtripped = ConfirmationResponse.from_archive_message(resp.to_archive_message())
         assert roundtripped == resp
 
     def test_falsy_optional_flags_dropped_from_archive(self):
@@ -118,16 +118,21 @@ class TestConfirmationResponseArchive:
 async def test_approved_confirmation(ctx):
     async def approve_after_delay():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "test_tool",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "test_tool",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(approve_after_delay())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
     )
     assert result["approved"] is True
 
@@ -136,16 +141,21 @@ async def test_approved_confirmation(ctx):
 async def test_denied_confirmation(ctx):
     async def deny_after_delay():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "test_tool",
-            "approved": False,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "test_tool",
+                "approved": False,
+            }
+        )
 
     asyncio.create_task(deny_after_delay())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
     )
     assert result["approved"] is False
 
@@ -153,7 +163,10 @@ async def test_denied_confirmation(ctx):
 @pytest.mark.asyncio
 async def test_timeout_returns_not_approved(ctx):
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
         timeout=0.1,
     )
     assert result["approved"] is False
@@ -163,18 +176,23 @@ async def test_timeout_returns_not_approved(ctx):
 async def test_extra_fields_passed_through(ctx):
     async def approve_with_extras():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "test_tool",
-            "approved": True,
-            "always": True,
-            "add_pattern": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "test_tool",
+                "approved": True,
+                "always": True,
+                "add_pattern": True,
+            }
+        )
 
     asyncio.create_task(approve_with_extras())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
     )
     assert result["approved"] is True
     assert result["always"] is True
@@ -186,16 +204,21 @@ async def test_ignores_wrong_context_id(ctx):
     async def wrong_context():
         await asyncio.sleep(0.05)
         # Wrong context_id — should be ignored
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": "wrong-id",
-            "tool": "test_tool",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": "wrong-id",
+                "tool": "test_tool",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(wrong_context())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
         timeout=0.2,
     )
     assert result["approved"] is False  # timed out
@@ -205,16 +228,21 @@ async def test_ignores_wrong_context_id(ctx):
 async def test_ignores_wrong_tool_name(ctx):
     async def wrong_tool():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "wrong_tool",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "wrong_tool",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(wrong_tool())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
         timeout=0.2,
     )
     assert result["approved"] is False  # timed out
@@ -226,16 +254,21 @@ async def test_subscriber_cleaned_up_after_completion(ctx):
 
     async def approve():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "test_tool",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "test_tool",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(approve())
     await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
     )
     assert len(ctx.event_bus._subscribers) == before_count
 
@@ -244,7 +277,10 @@ async def test_subscriber_cleaned_up_after_completion(ctx):
 async def test_subscriber_cleaned_up_after_timeout(ctx):
     before_count = len(ctx.event_bus._subscribers)
     await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
         timeout=0.1,
     )
     assert len(ctx.event_bus._subscribers) == before_count
@@ -260,17 +296,22 @@ async def test_tool_call_id_both_match(ctx):
 
     async def approve():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "test_tool",
-            "tool_call_id": "call_abc",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "test_tool",
+                "tool_call_id": "call_abc",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(approve())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
     )
     assert result["approved"] is True
 
@@ -282,17 +323,22 @@ async def test_tool_call_id_both_mismatch(ctx):
 
     async def approve_wrong_id():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "test_tool",
-            "tool_call_id": "call_xyz",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "test_tool",
+                "tool_call_id": "call_xyz",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(approve_wrong_id())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
         timeout=0.2,
     )
     assert result["approved"] is False  # timed out — wrong ID ignored
@@ -305,17 +351,22 @@ async def test_tool_call_id_response_omits(ctx):
 
     async def approve_no_id():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "test_tool",
-            "approved": True,
-            # no tool_call_id
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "test_tool",
+                "approved": True,
+                # no tool_call_id
+            }
+        )
 
     asyncio.create_task(approve_no_id())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
     )
     assert result["approved"] is True
 
@@ -327,17 +378,22 @@ async def test_tool_call_id_request_omits(ctx):
 
     async def approve_with_id():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "test_tool",
-            "tool_call_id": "call_xyz",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "test_tool",
+                "tool_call_id": "call_xyz",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(approve_with_id())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
     )
     assert result["approved"] is True
 
@@ -350,16 +406,21 @@ async def test_event_context_id_used_for_matching(ctx):
 
     async def approve_with_parent_id():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": "parent-ctx-id",  # matches event_context_id
-            "tool": "test_tool",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": "parent-ctx-id",  # matches event_context_id
+                "tool": "test_tool",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(approve_with_parent_id())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
     )
     assert result["approved"] is True
 
@@ -371,16 +432,21 @@ async def test_event_context_id_rejects_child_id(ctx):
 
     async def approve_with_child_id():
         await asyncio.sleep(0.05)
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,  # child's own ID, not event_context_id
-            "tool": "test_tool",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,  # child's own ID, not event_context_id
+                "tool": "test_tool",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(approve_with_child_id())
     result = await request_confirmation(
-        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
         timeout=0.2,
     )
     assert result["approved"] is False  # timed out
@@ -394,21 +460,26 @@ async def test_concurrent_confirmations_independent(ctx):
     async def run_confirm(tool_call_id):
         fork = ctx.fork_for_tool_call(tool_call_id)
         r = await request_confirmation(
-            fork, tool_name="shell", command=f"cmd-{tool_call_id}",
-            message="Confirm?", timeout=0.2,
+            fork,
+            tool_name="shell",
+            command=f"cmd-{tool_call_id}",
+            message="Confirm?",
+            timeout=0.2,
         )
         results[tool_call_id] = r["approved"]
 
     async def approve_second_only():
         await asyncio.sleep(0.05)
         # Only approve call_2
-        await ctx.event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": ctx.context_id,
-            "tool": "shell",
-            "tool_call_id": "call_2",
-            "approved": True,
-        })
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "shell",
+                "tool_call_id": "call_2",
+                "approved": True,
+            }
+        )
 
     asyncio.create_task(approve_second_only())
     # Run two confirmations concurrently

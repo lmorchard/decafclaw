@@ -46,8 +46,7 @@ def _format_body(record: NotificationRecord, base_url: str) -> str:
 
 
 def _resolve_link(record: NotificationRecord, base_url: str) -> str | None:
-    if record.link and (record.link.startswith("http://")
-                        or record.link.startswith("https://")):
+    if record.link and (record.link.startswith("http://") or record.link.startswith("https://")):
         return record.link
     if base_url and record.conv_id:
         return f"{base_url.rstrip('/')}/#conv={record.conv_id}"
@@ -76,22 +75,27 @@ def make_email_adapter(
     still require a restart — there's no file-reload mechanism today.
     """
 
-    async def _deliver(record: NotificationRecord,
-                       recipients: list[str], base_url: str) -> None:
+    async def _deliver(record: NotificationRecord, recipients: list[str], base_url: str) -> None:
         """Background-task delivery — fire-and-forget from the handler."""
         from decafclaw.mail import send_mail
+
         body = _format_body(record, base_url)
         subject = _format_subject(config.agent.id, record)
         try:
             await send_mail(
-                config, to=recipients, subject=subject, body=body,
+                config,
+                to=recipients,
+                subject=subject,
+                body=body,
             )
         except Exception as exc:
             log.warning(
-                "Email notification delivery failed (recipients=%s "
-                "category=%s priority=%s conv=%s): %s",
-                recipients, record.category, record.priority,
-                record.conv_id or "-", exc,
+                "Email notification delivery failed (recipients=%s category=%s priority=%s conv=%s): %s",
+                recipients,
+                record.category,
+                record.priority,
+                record.conv_id or "-",
+                exc,
             )
 
     async def handle(event: dict) -> None:
@@ -102,15 +106,14 @@ def make_email_adapter(
         # config doesn't produce phantom entries.
         channel_cfg = config.notifications.channels.email
         email_cfg = config.email
-        recipients = [
-            r.strip() for r in channel_cfg.recipient_addresses
-            if r and r.strip()
-        ]
-        if (not channel_cfg.enabled
-                or not recipients
-                or not email_cfg.enabled
-                or not email_cfg.smtp_host
-                or not (email_cfg.sender_address or "").strip()):
+        recipients = [r.strip() for r in channel_cfg.recipient_addresses if r and r.strip()]
+        if (
+            not channel_cfg.enabled
+            or not recipients
+            or not email_cfg.enabled
+            or not email_cfg.smtp_host
+            or not (email_cfg.sender_address or "").strip()
+        ):
             return
         record = NotificationRecord.from_dict(event["record"])
         if not meets_priority(record.priority, channel_cfg.min_priority):

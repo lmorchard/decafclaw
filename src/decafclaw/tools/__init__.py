@@ -35,27 +35,42 @@ log = logging.getLogger(__name__)
 # Combined registry. External MCP server tools are registered via
 # decafclaw.mcp_client. The `background` and `mcp` skills carry their
 # own tools — loaded on activation.
-TOOLS = {**CORE_TOOLS, **CHECKLIST_TOOLS,
-         **CONVERSATION_TOOLS, **WORKSPACE_TOOLS, **SHELL_TOOLS,
-         **HTTP_TOOLS,
-         **SKILL_TOOLS,
-         **HEARTBEAT_TOOLS, **HEALTH_TOOLS,
-         **DELEGATE_TOOLS, **ATTACHMENT_TOOLS, **EMAIL_TOOLS,
-         **NOTIFICATION_TOOLS, **CANVAS_TOOLS, **NOTES_TOOLS,
-         **STICKY_TOOLS}
-TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
-                    + CHECKLIST_TOOL_DEFINITIONS
-                    + CONVERSATION_TOOL_DEFINITIONS + WORKSPACE_TOOL_DEFINITIONS
-                    + SHELL_TOOL_DEFINITIONS
-                    + HTTP_TOOL_DEFINITIONS + SKILL_TOOL_DEFINITIONS
-                    + HEARTBEAT_TOOL_DEFINITIONS
-                    + HEALTH_TOOL_DEFINITIONS
-                    + DELEGATE_TOOL_DEFINITIONS + ATTACHMENT_TOOL_DEFINITIONS
-                    + EMAIL_TOOL_DEFINITIONS
-                    + NOTIFICATION_TOOL_DEFINITIONS
-                    + CANVAS_TOOL_DEFINITIONS
-                    + NOTES_TOOL_DEFINITIONS
-                    + STICKY_TOOL_DEFINITIONS)
+TOOLS = {
+    **CORE_TOOLS,
+    **CHECKLIST_TOOLS,
+    **CONVERSATION_TOOLS,
+    **WORKSPACE_TOOLS,
+    **SHELL_TOOLS,
+    **HTTP_TOOLS,
+    **SKILL_TOOLS,
+    **HEARTBEAT_TOOLS,
+    **HEALTH_TOOLS,
+    **DELEGATE_TOOLS,
+    **ATTACHMENT_TOOLS,
+    **EMAIL_TOOLS,
+    **NOTIFICATION_TOOLS,
+    **CANVAS_TOOLS,
+    **NOTES_TOOLS,
+    **STICKY_TOOLS,
+}
+TOOL_DEFINITIONS = (
+    CORE_TOOL_DEFINITIONS
+    + CHECKLIST_TOOL_DEFINITIONS
+    + CONVERSATION_TOOL_DEFINITIONS
+    + WORKSPACE_TOOL_DEFINITIONS
+    + SHELL_TOOL_DEFINITIONS
+    + HTTP_TOOL_DEFINITIONS
+    + SKILL_TOOL_DEFINITIONS
+    + HEARTBEAT_TOOL_DEFINITIONS
+    + HEALTH_TOOL_DEFINITIONS
+    + DELEGATE_TOOL_DEFINITIONS
+    + ATTACHMENT_TOOL_DEFINITIONS
+    + EMAIL_TOOL_DEFINITIONS
+    + NOTIFICATION_TOOL_DEFINITIONS
+    + CANVAS_TOOL_DEFINITIONS
+    + NOTES_TOOL_DEFINITIONS
+    + STICKY_TOOL_DEFINITIONS
+)
 
 
 async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name=""):
@@ -84,9 +99,7 @@ async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name=""):
         timer_task = asyncio.create_task(asyncio.sleep(timeout_sec))
         aux_tasks.append(timer_task)
 
-    done, _pending = await asyncio.wait(
-        [tool_task, *aux_tasks], return_when=asyncio.FIRST_COMPLETED
-    )
+    done, _pending = await asyncio.wait([tool_task, *aux_tasks], return_when=asyncio.FIRST_COMPLETED)
 
     # Cancel leftover auxiliary tasks regardless of outcome.
     for t in aux_tasks:
@@ -108,9 +121,7 @@ async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name=""):
             await tool_task
         except (asyncio.CancelledError, Exception):
             pass
-        return tool_task, ToolResult(
-            text=f"[error: tool {tool_name} timed out after {timeout_sec}s]"
-        )
+        return tool_task, ToolResult(text=f"[error: tool {tool_name} timed out after {timeout_sec}s]")
 
     return tool_task, None
 
@@ -242,10 +253,7 @@ def _typeerror_result(ctx: "Context", name: str, fn, arguments: dict, exc: TypeE
         sig.bind(ctx, **arguments)
     except TypeError:
         params = [p for p in sig.parameters if p != "ctx"]
-        return ToolResult(
-            text=f"[error executing {name}: {exc}. "
-                 f"Expected parameters: {', '.join(params)}]"
-        )
+        return ToolResult(text=f"[error executing {name}: {exc}. Expected parameters: {', '.join(params)}]")
 
     owner = ctx.config.skill_tool_owners.get(name)
     where = f" of skill '{owner}'" if owner else ""
@@ -279,6 +287,7 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
     # Route MCP tools to the MCP registry (different call signature — no ctx)
     if name.startswith("mcp__"):
         from ..mcp_client import get_registry
+
         registry = get_registry()
         mcp_tools = registry.get_tools() if registry else {}
         fn = mcp_tools.get(name)
@@ -296,9 +305,7 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
         suggestions = _suggest_tool_names(name, set(mcp_tools.keys()))
         hint = _format_suggestions(suggestions)
         if not mcp_tools:
-            return ToolResult(
-                text=f"[error: MCP tool '{name}' not found; no MCP servers are connected.]"
-            )
+            return ToolResult(text=f"[error: MCP tool '{name}' not found; no MCP servers are connected.]")
         return ToolResult(
             text=(
                 f"[error: MCP tool '{name}' not found.{hint} "
@@ -326,6 +333,7 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
         if name in deferred_names and not is_skill_tool:
             log.debug(f"Auto-fetching deferred tool: {name}")
             from .tool_registry import add_fetched_tools
+
             add_fetched_tools(ctx, {name})
             fn = extra_tools.get(name) or TOOLS.get(name)
         if fn is None:
@@ -337,6 +345,7 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
                 owning_skill = skill_tool_owners[name]
                 # Determine the skill's status for a tailored message.
                 from ..tools.skill_tools import _load_permissions
+
                 perms = _load_permissions(ctx.config)
                 if perms.get(owning_skill) == "deny":
                     return ToolResult(
@@ -378,6 +387,7 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
             candidates.update(deferred_names)
             try:
                 from ..mcp_client import get_registry
+
                 reg = get_registry()
                 if reg:
                     candidates.update(reg.get_tools().keys())
@@ -396,9 +406,7 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
     timeout_sec = _resolve_tool_timeout(ctx, name)
     try:
         coro = fn(ctx, **arguments) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, ctx, **arguments)
-        tool_task, interrupted = await _run_with_cancel(
-            coro, cancel_event, timeout_sec=timeout_sec, tool_name=name
-        )
+        tool_task, interrupted = await _run_with_cancel(coro, cancel_event, timeout_sec=timeout_sec, tool_name=name)
         if interrupted:
             return interrupted
         return _to_tool_result(tool_task.result())

@@ -23,10 +23,8 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class SkillConfig:
-    api_key: str = field(
-        default="", metadata={"secret": True, "env_alias": "TABSTACK_API_KEY"})
-    api_url: str = field(
-        default="", metadata={"env_alias": "TABSTACK_API_URL"})
+    api_key: str = field(default="", metadata={"secret": True, "env_alias": "TABSTACK_API_KEY"})
+    api_url: str = field(default="", metadata={"env_alias": "TABSTACK_API_URL"})
 
 
 # Initialized once via init(config, skill_config) on skill activation
@@ -51,6 +49,7 @@ def _get_client() -> AsyncTabstack:
 
 
 # -- Read / extract tools ---------------------------------------------------
+
 
 async def tool_tabstack_extract_markdown(ctx: "Context", url: str) -> ToolResult:
     """Extract clean Markdown from a web page or PDF."""
@@ -84,9 +83,7 @@ async def tool_tabstack_generate(ctx: "Context", url: str, json_schema: dict, in
     log.info(f"[tool:tabstack_generate] {url}")
     try:
         # SDK >= 2.6: generate.json returns the parsed object directly (a dict).
-        result = await _get_client().generate.json(
-            url=url, json_schema=json_schema, instructions=instructions
-        )
+        result = await _get_client().generate.json(url=url, json_schema=json_schema, instructions=instructions)
         return json.dumps(result, indent=2)
     except Exception as e:
         return f"[error: {e}]"
@@ -95,12 +92,8 @@ async def tool_tabstack_generate(ctx: "Context", url: str, json_schema: dict, in
 # -- Automate (with optional interactive form-fill) -------------------------
 
 # Events whose payload carries a `final_answer` (alias finalAnswer).
-_AUTOMATE_FINAL_EVENTS = frozenset(
-    {"complete", "task:completed", "task:validated", "task:aborted"}
-)
-_AUTOMATE_FORM_EVENTS = frozenset(
-    {"interactive:form_data:request", "interactive:form_data:error"}
-)
+_AUTOMATE_FINAL_EVENTS = frozenset({"complete", "task:completed", "task:validated", "task:aborted"})
+_AUTOMATE_FORM_EVENTS = frozenset({"interactive:form_data:request", "interactive:form_data:error"})
 
 
 async def tool_tabstack_automate(
@@ -120,7 +113,10 @@ async def tool_tabstack_automate(
     """
     log.info(
         "[tool:tabstack_automate] task=%s url=%s interactive=%s data_keys=%s",
-        task, url, interactive, sorted((data or {}).keys()),
+        task,
+        url,
+        interactive,
+        sorted((data or {}).keys()),
     )
     try:
         client = _get_client()
@@ -254,7 +250,9 @@ def _automate_error_text(event) -> str | None:
 
 
 def _compose_automate_result(
-    final_answer: str | None, error_message: str | None, form_notes: list[str],
+    final_answer: str | None,
+    error_message: str | None,
+    form_notes: list[str],
 ) -> str:
     parts: list[str] = []
     if final_answer:
@@ -285,7 +283,8 @@ async def _handle_form_request(ctx: "Context", client, event, data: dict) -> str
     # Narrate the form, never the values being entered.
     label_list = ", ".join(getattr(f, "label", "?") for f in fields) or "(no fields)"
     await ctx.publish(
-        "tool_status", tool="tabstack_automate",
+        "tool_status",
+        tool="tabstack_automate",
         message=_truncate(f"form on {page_url}: {label_list}"),
     )
 
@@ -337,7 +336,10 @@ def _match_fields(fields, data: dict) -> tuple[list[dict], list[str]]:
 
 
 def _format_form_confirmation(
-    form_description: str, page_url: str, fields, matched: list[dict],
+    form_description: str,
+    page_url: str,
+    fields,
+    matched: list[dict],
 ) -> str:
     """Render the confirmation body shown before submitting form data."""
     # Map ref -> field for label/type lookup when rendering submitted values.
@@ -379,6 +381,7 @@ async def _safe_input(client, request_id, *, fields=None, cancelled=False) -> No
 
 # -- Research ---------------------------------------------------------------
 
+
 async def tool_tabstack_research(ctx: "Context", query: str, mode: str = "balanced") -> ToolResult:
     """Search the web, analyze multiple sources, and synthesize an answer."""
     log.info(f"[tool:tabstack_research] query={query} mode={mode}")
@@ -404,9 +407,7 @@ async def tool_tabstack_research(ctx: "Context", query: str, mode: str = "balanc
                 # Research-failed event carries a human-readable message plus a
                 # nested data.error.message; prefer the top-level one.
                 err = getattr(data, "error", None)
-                error_message = (
-                    msg or (getattr(err, "message", None) if err else None) or error_message
-                )
+                error_message = msg or (getattr(err, "message", None) if err else None) or error_message
 
         if not final_answer:
             if error_message:
@@ -501,7 +502,7 @@ TOOL_DEFINITIONS = [
         "timeout": 300,
         "function": {
             "name": "tabstack_automate",
-            "description": "Automate web tasks using natural language. Has its own built-in web search — great for quick lookups like addresses, hours, prices, or simple facts. Also handles browser interactions: clicking, navigating, filling forms. Prefer this over tabstack_research for simple questions that just need a quick search. Takes 30-120 seconds.\n\nINTERACTIVE FORM-FILL: To let the browser agent fill a form with personal data, set interactive=true and pass the values in `data` (keys should match the form field labels, e.g. {\"Email\": \"a@b.com\", \"Full name\": \"Ada\"}). Each submission is shown to the user for confirmation before personal data is sent. If a required field is missing from `data`, the request is cancelled and the missing field names are reported back — gather them and re-run.",
+            "description": 'Automate web tasks using natural language. Has its own built-in web search — great for quick lookups like addresses, hours, prices, or simple facts. Also handles browser interactions: clicking, navigating, filling forms. Prefer this over tabstack_research for simple questions that just need a quick search. Takes 30-120 seconds.\n\nINTERACTIVE FORM-FILL: To let the browser agent fill a form with personal data, set interactive=true and pass the values in `data` (keys should match the form field labels, e.g. {"Email": "a@b.com", "Full name": "Ada"}). Each submission is shown to the user for confirmation before personal data is sent. If a required field is missing from `data`, the request is cancelled and the missing field names are reported back — gather them and re-run.',
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -515,7 +516,7 @@ TOOL_DEFINITIONS = [
                     },
                     "data": {
                         "type": "object",
-                        "description": "Personal/contextual values for form filling, keyed by field label (e.g. {\"Email\": \"a@b.com\"}). Only used when interactive=true.",
+                        "description": 'Personal/contextual values for form filling, keyed by field label (e.g. {"Email": "a@b.com"}). Only used when interactive=true.',
                     },
                     "interactive": {
                         "type": "boolean",

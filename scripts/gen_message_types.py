@@ -4,10 +4,12 @@
 Source of truth: src/decafclaw/web/message_types.json
 Run via: make gen-message-types
 """
+
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -54,11 +56,11 @@ def sorted_messages(data: dict) -> list[tuple[str, dict]]:
 
 
 _SCALAR_TYPES = {
-    "string":  ("str", "string"),
-    "number":  ("int", "number"),
+    "string": ("str", "string"),
+    "number": ("int", "number"),
     "boolean": ("bool", "boolean"),
-    "object":  ("dict[str, object]", "Record<string, unknown>"),
-    "null":    ("None", "null"),
+    "object": ("dict[str, object]", "Record<string, unknown>"),
+    "null": ("None", "null"),
 }
 
 
@@ -83,10 +85,7 @@ def _interface_name(message_name: str, direction: str) -> str:
     elif direction == "client_to_server":
         prefix = "Cli"
     else:
-        raise ValueError(
-            f"_interface_name: unsupported direction {direction!r} for "
-            f"message {message_name!r}"
-        )
+        raise ValueError(f"_interface_name: unsupported direction {direction!r} for message {message_name!r}")
     return prefix + "".join(parts)
 
 
@@ -108,7 +107,7 @@ def parse_field_type(s: str) -> tuple[str, str, bool]:
         s = s[:-1]
 
     if s.startswith("array of "):
-        elem = s[len("array of "):]
+        elem = s[len("array of ") :]
         # Array element types are explicit (not derived from _SCALAR_TYPES) —
         # current manifest only uses arrays of string and object. Add new
         # element types here AND to _SCALAR_TYPES if scalar support is needed.
@@ -198,7 +197,7 @@ def render_python_typed(data: dict) -> str:
         # correctly. Pyright treats StrEnum members as enum-member literals,
         # not as `str` literals, so the latter would force every call site
         # to be rewritten with bare strings.
-        out.append(f'    type: Literal[WSMessageType.{name.upper()}]')
+        out.append(f"    type: Literal[WSMessageType.{name.upper()}]")
         for fname, ftype in entry["fields"].items():
             py_base, _, required = parse_field_type(ftype)
             if required:
@@ -314,9 +313,7 @@ def render_doc(data: dict) -> str:
         ("Bidirectional", "bidirectional"),
     )
     for heading, direction in sections:
-        in_dir = sorted(
-            (n, e) for n, e in data["messages"].items() if e["direction"] == direction
-        )
+        in_dir = sorted((n, e) for n, e in data["messages"].items() if e["direction"] == direction)
         if not in_dir:
             continue
         out.append(f"## {heading}")
@@ -341,7 +338,16 @@ def render_doc(data: dict) -> str:
 
 def main() -> int:
     data = load_manifest()
-    PY_OUT.write_text(render_python(data) + render_python_typed(data), encoding="utf-8")
+    # Emit ruff-formatted Python so `make fmt-check` and this drift check agree.
+    py_src = render_python(data) + render_python_typed(data)
+    py_src = subprocess.run(
+        ["ruff", "format", "--stdin-filename", str(PY_OUT), "-"],
+        input=py_src,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    PY_OUT.write_text(py_src, encoding="utf-8")
     JS_OUT.write_text(render_js(data), encoding="utf-8")
     DOC_OUT.write_text(render_doc(data), encoding="utf-8")
     TS_OUT.write_text(render_typescript(data), encoding="utf-8")

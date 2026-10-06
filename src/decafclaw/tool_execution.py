@@ -71,9 +71,7 @@ def _check_cancelled(ctx: "Context", history):
 @functools.lru_cache(maxsize=128)
 def _media_placeholder_pattern(filename: str) -> _re.Pattern:
     """Build a regex to find the placeholder for a given filename."""
-    return _re.compile(
-        r"\[file attached: " + _re.escape(filename) + r"[^\]]*\]"
-    )
+    return _re.compile(r"\[file attached: " + _re.escape(filename) + r"[^\]]*\]")
 
 
 async def process_tool_media(ctx: "Context", result: ToolResult) -> list[str]:
@@ -127,8 +125,7 @@ async def process_tool_media(ctx: "Context", result: ToolResult) -> list[str]:
     return file_ids
 
 
-def resolve_widget(fn_name: str, result: ToolResult,
-                   tool_call_id: str = "") -> dict | None:
+def resolve_widget(fn_name: str, result: ToolResult, tool_call_id: str = "") -> dict | None:
     """Validate result.widget against the registry and return a
     serializable payload, or None if no widget / validation fails.
 
@@ -147,33 +144,31 @@ def resolve_widget(fn_name: str, result: ToolResult,
     if widget is None:
         return None
     from .widgets import get_widget_registry
+
     registry = get_widget_registry()
     if registry is None:
-        log.warning(
-            "tool %s returned a widget but widget registry is not "
-            "initialized; stripping", fn_name)
+        log.warning("tool %s returned a widget but widget registry is not initialized; stripping", fn_name)
         result.widget = None
         return None
     ok, err = registry.validate(widget.widget_type, widget.data)
     if not ok:
-        log.warning(
-            "tool %s widget %r failed validation: %s — stripping",
-            fn_name, widget.widget_type, err)
+        log.warning("tool %s widget %r failed validation: %s — stripping", fn_name, widget.widget_type, err)
         result.widget = None
         return None
     desc = registry.get(widget.widget_type)
     target = widget.target
     if target not in ("inline", "canvas"):
-        log.warning(
-            "tool %s widget %r has unknown target %r — stripping",
-            fn_name, widget.widget_type, target)
+        log.warning("tool %s widget %r has unknown target %r — stripping", fn_name, widget.widget_type, target)
         result.widget = None
         return None
     if desc is not None and target not in desc.modes:
         log.warning(
-            "tool %s widget %r used target %r not in declared modes %r"
-            " — stripping",
-            fn_name, widget.widget_type, target, desc.modes)
+            "tool %s widget %r used target %r not in declared modes %r — stripping",
+            fn_name,
+            widget.widget_type,
+            target,
+            desc.modes,
+        )
         result.widget = None
         return None
     # Apply per-widget server-side normalization (e.g. iframe_sandbox CSP
@@ -193,19 +188,23 @@ def resolve_widget(fn_name: str, result: ToolResult,
         # EndTurnConfirm; widget-pause wins over EndTurnConfirm).
         if not result.end_turn:
             log.warning(
-                "tool %s emitted input widget %r without end_turn=True "
-                "— stripping (input widgets must pause the turn)",
-                fn_name, widget.widget_type)
+                "tool %s emitted input widget %r without end_turn=True — stripping (input widgets must pause the turn)",
+                fn_name,
+                widget.widget_type,
+            )
             result.widget = None
             return None
         if isinstance(result.end_turn, EndTurnConfirm):
             log.warning(
                 "tool %s emitted input widget %r alongside EndTurnConfirm "
                 "— dropping EndTurnConfirm (widget-pause takes priority)",
-                fn_name, widget.widget_type)
+                fn_name,
+                widget.widget_type,
+            )
         # Register the callback for live-path pickup.
         if widget.on_response is not None and tool_call_id:
             from .widget_input import pending_callbacks
+
             pending_callbacks[tool_call_id] = widget.on_response
         # Promote end_turn to the pause sentinel.
         result.end_turn = WidgetInputPause(
@@ -220,6 +219,7 @@ async def execute_single_tool(call_ctx, tc, semaphore):
     with _tracer.start_as_current_span("execute_single_tool") as span:
         span.set_attribute("tool.name", tc["function"]["name"])
         return await _execute_single_tool_impl(call_ctx, tc, semaphore)
+
 
 async def _execute_single_tool_impl(call_ctx, tc, semaphore):
     """Execute one tool call. Returns (tool_msg dict, end_turn flag).
@@ -242,19 +242,18 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
     async with semaphore:
         started = time.perf_counter()
         try:
-            await call_ctx.publish("tool_start", tool=fn_name, args=fn_args,
-                                   tool_call_id=tool_call_id,
-                                   conv_id=call_ctx.conv_id)
+            await call_ctx.publish(
+                "tool_start", tool=fn_name, args=fn_args, tool_call_id=tool_call_id, conv_id=call_ctx.conv_id
+            )
             result = await execute_tool(call_ctx, fn_name, fn_args)
             log.debug(f"Tool result [{fn_name}]: {result.text[:200]}...")
 
             # Process media per-tool-call (save/upload, replace placeholders)
             file_ids = await process_tool_media(call_ctx, result)
             if file_ids:
-                await call_ctx.publish("tool_media_uploaded",
-                                       tool=fn_name,
-                                       file_ids=file_ids,
-                                       tool_call_id=tool_call_id)
+                await call_ctx.publish(
+                    "tool_media_uploaded", tool=fn_name, file_ids=file_ids, tool_call_id=tool_call_id
+                )
         except asyncio.CancelledError:
             result = ToolResult(text=f"[cancelled: {fn_name}]")
         except Exception as e:
@@ -271,8 +270,7 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
                 "args": fn_args,
                 "result_text": result.text,
                 "display_text": getattr(result, "display_text", None),
-                "display_short_text": getattr(
-                    result, "display_short_text", None),
+                "display_short_text": getattr(result, "display_short_text", None),
                 "media": result.media or [],
                 "tool_call_id": tool_call_id,
                 "conv_id": call_ctx.conv_id,
@@ -393,8 +391,7 @@ async def execute_tool_calls(ctx: "Context", tool_calls, history, messages):
             elif isinstance(end_turn, EndTurnConfirm):
                 if not isinstance(end_turn_signal, WidgetInputPause):
                     end_turn_signal = end_turn
-            elif end_turn and not isinstance(
-                    end_turn_signal, (EndTurnConfirm, WidgetInputPause)):
+            elif end_turn and not isinstance(end_turn_signal, (EndTurnConfirm, WidgetInputPause)):
                 end_turn_signal = True
             history.append(tool_msg)
             messages.append(tool_msg)

@@ -4,6 +4,7 @@ scripts/ is not a package, so we load the module by path via
 importlib.util.spec_from_file_location (mirroring tests/test_message_types.py)
 and exercise the config-free core function migrate_sidecars directly against
 a tmp_path conversations dir."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -29,14 +30,14 @@ def test_basic_sidecars_moved(tmp_path):
     conv.mkdir()
     (conv / "abc.jsonl").write_text("archive-body")
     (conv / "abc.notes.md").write_text("notes-body")
-    (conv / "abc.context.json").write_text("{\"ctx\": 1}")
+    (conv / "abc.context.json").write_text('{"ctx": 1}')
 
     moved = migrate_sidecars(conv, dry_run=False)
 
     assert moved == 3
     assert (conv / "abc" / "archive.jsonl").read_text() == "archive-body"
     assert (conv / "abc" / "notes.md").read_text() == "notes-body"
-    assert (conv / "abc" / "context.json").read_text() == "{\"ctx\": 1}"
+    assert (conv / "abc" / "context.json").read_text() == '{"ctx": 1}'
     # Originals gone.
     assert not (conv / "abc.jsonl").exists()
     assert not (conv / "abc.notes.md").exists()

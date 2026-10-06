@@ -13,14 +13,18 @@ from decafclaw.llm.providers.vertex import VertexProvider
 @pytest.mark.asyncio
 async def test_unstubbed_agent_call_llm_raises(config):
     """Calling agent.call_llm without stub_llm or live_llm raises RuntimeError."""
-    with pytest.raises(RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"):
+    with pytest.raises(
+        RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"
+    ):
         await agent.call_llm(config, [{"role": "user", "content": "hello"}])
 
 
 @pytest.mark.asyncio
 async def test_unstubbed_streaming_call_raises(config):
     """Calling llm.call_llm_streaming without stub_llm or live_llm raises RuntimeError."""
-    with pytest.raises(RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"):
+    with pytest.raises(
+        RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"
+    ):
         await llm.call_llm_streaming(config, [{"role": "user", "content": "hello"}])
 
 
@@ -28,7 +32,9 @@ async def test_unstubbed_streaming_call_raises(config):
 async def test_unstubbed_provider_complete_raises():
     """Calling OpenAICompatProvider.complete without stub_llm or live_llm raises RuntimeError."""
     provider = OpenAICompatProvider(url="http://test-endpoint")
-    with pytest.raises(RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"):
+    with pytest.raises(
+        RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"
+    ):
         await provider.complete("dummy-model", [{"role": "user", "content": "hello"}])
 
 
@@ -36,14 +42,18 @@ async def test_unstubbed_provider_complete_raises():
 async def test_unstubbed_vertex_complete_raises():
     """Calling VertexProvider.complete without stub_llm or live_llm raises RuntimeError."""
     provider = VertexProvider(project="test-project")
-    with pytest.raises(RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"):
+    with pytest.raises(
+        RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"
+    ):
         await provider.complete("gemini-2.5-flash", [{"role": "user", "content": "hello"}])
 
 
 @pytest.mark.asyncio
 async def test_unstubbed_llm_call_llm_raises(config):
     """Calling decafclaw.llm.call_llm routes to provider and raises RuntimeError."""
-    with pytest.raises(RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"):
+    with pytest.raises(
+        RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"
+    ):
         await llm.call_llm(config, [{"role": "user", "content": "hello"}])
 
 

@@ -12,41 +12,48 @@ from decafclaw.media import ToolResult
 @pytest.fixture
 def config():
     c = load_config()
-    c.agent.turn_on_new_message = "ignore" # Default behavior for testing
-    c.reflection.enabled = False # disable reflection to avoid extra LLM calls
-    c.llm.streaming = False # use call_llm mock instead of call_llm_streaming
+    c.agent.turn_on_new_message = "ignore"  # Default behavior for testing
+    c.reflection.enabled = False  # disable reflection to avoid extra LLM calls
+    c.llm.streaming = False  # use call_llm mock instead of call_llm_streaming
     for m in c.model_configs.values():
         m.streaming = False
     return c
 
+
 @pytest.fixture
 def event_bus():
     from decafclaw.events import EventBus
+
     return EventBus()
+
 
 @pytest.fixture
 def manager(config, event_bus):
     return ConversationManager(config, event_bus)
+
 
 def _mock_llm_response(content, tool_calls=None):
     return {
         "role": "assistant",
         "content": content,
         "tool_calls": tool_calls,
-        "usage": {"prompt_tokens": 10, "completion_tokens": 10}
+        "usage": {"prompt_tokens": 10, "completion_tokens": 10},
     }
+
 
 @pytest.mark.asyncio
 async def test_steering_interrupts_after_tool_call(manager):
     tool_call_response = _mock_llm_response(
         content=None,
-        tool_calls=[{
-            "id": "tc1",
-            "function": {
-                "name": "notes_read",
-                "arguments": json.dumps({"limit": 1}),
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "notes_read",
+                    "arguments": json.dumps({"limit": 1}),
+                },
+            }
+        ],
     )
     final_response = _mock_llm_response("Here are your memories.")
 
@@ -63,6 +70,7 @@ async def test_steering_interrupts_after_tool_call(manager):
             mock_llm.side_effect = [tool_call_response, final_response, final_response]
 
             import uuid
+
             conv_id = f"c1_{uuid.uuid4().hex}"
             with patch("decafclaw.agent.execute_tool_calls", side_effect=slow_execute_tool_calls):
                 first_future = await manager.enqueue_turn(
@@ -84,7 +92,7 @@ async def test_steering_interrupts_after_tool_call(manager):
                     kind=TurnKind.USER,
                     prompt="ACTUALLY stop and do something else",
                     user_id="u",
-                    metadata={"steering": True}
+                    metadata={"steering": True},
                 )
 
                 tool_resume.set()
@@ -101,17 +109,20 @@ async def test_steering_interrupts_after_tool_call(manager):
                 assert state.history[3]["role"] == "user"
                 assert state.history[3]["content"] == "ACTUALLY stop and do something else"
 
+
 @pytest.mark.asyncio
 async def test_follow_up_message_queued(manager):
     tool_call_response = _mock_llm_response(
         content=None,
-        tool_calls=[{
-            "id": "tc1",
-            "function": {
-                "name": "notes_read",
-                "arguments": json.dumps({"limit": 1}),
-            },
-        }],
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "notes_read",
+                    "arguments": json.dumps({"limit": 1}),
+                },
+            }
+        ],
     )
     final_response = _mock_llm_response("Here are your memories.")
     steer_response = _mock_llm_response("Got the follow up.")
@@ -129,6 +140,7 @@ async def test_follow_up_message_queued(manager):
             mock_llm.side_effect = [tool_call_response, final_response, steer_response]
 
             import uuid
+
             conv_id = f"c2_{uuid.uuid4().hex}"
             with patch("decafclaw.agent.execute_tool_calls", side_effect=slow_execute_tool_calls):
                 first_future = await manager.enqueue_turn(

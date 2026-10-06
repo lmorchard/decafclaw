@@ -61,8 +61,8 @@ def test_overlaps_catches_entries_above_and_below_the_target():
     test — a guard that silently stops guarding is worse than none."""
     data_dir = (REPO_ROOT / "data").resolve()
     assert _overlaps("data", data_dir)
-    assert _overlaps("data/decafclaw", data_dir)   # below — plain containment misses
-    assert _overlaps(".", data_dir)                # above — a name check misses
+    assert _overlaps("data/decafclaw", data_dir)  # below — plain containment misses
+    assert _overlaps(".", data_dir)  # above — a name check misses
     assert _overlaps("./", data_dir)
     assert not _overlaps("tests", data_dir)
     assert not _overlaps("contrib", data_dir)
@@ -92,20 +92,19 @@ def test_every_tracked_test_file_is_still_collected():
     # non-checkout (source zip, sdist) fails with a bare CalledProcessError
     # that says nothing about the requirement.
     assert (REPO_ROOT / ".git").exists(), (
-        "this guard needs git metadata to tell tracked tests from "
-        "agent-authored files; run it from a checkout"
+        "this guard needs git metadata to tell tracked tests from agent-authored files; run it from a checkout"
     )
     tracked = subprocess.run(
-        ["git", "ls-files", "test_*.py", "*/test_*.py", "**/test_*.py",
-         "*_test.py", "*/*_test.py", "**/*_test.py"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        ["git", "ls-files", "test_*.py", "*/test_*.py", "**/test_*.py", "*_test.py", "*/*_test.py", "**/*_test.py"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.split()
     assert tracked, "expected to find tracked test files"
 
-    roots = tuple(f"{pathlib.PurePosixPath(p).as_posix().rstrip('/')}/"
-                  for p in _testpaths())
+    roots = tuple(f"{pathlib.PurePosixPath(p).as_posix().rstrip('/')}/" for p in _testpaths())
     orphaned = [f for f in tracked if not f.startswith(roots)]
     assert not orphaned, (
-        f"these tracked test files fall outside testpaths {list(roots)} and "
-        f"would no longer run: {orphaned}"
+        f"these tracked test files fall outside testpaths {list(roots)} and would no longer run: {orphaned}"
     )

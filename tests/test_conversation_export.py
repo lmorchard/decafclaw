@@ -55,9 +55,7 @@ def test_tool_result_uses_name_from_preceding_tool_call():
         {
             "role": "assistant",
             "content": "",
-            "tool_calls": [
-                {"id": "call_x", "function": {"name": "tabstack_list", "arguments": "{}"}}
-            ],
+            "tool_calls": [{"id": "call_x", "function": {"name": "tabstack_list", "arguments": "{}"}}],
         },
         {"role": "tool", "tool_call_id": "call_x", "content": "[tab data]"},
     ]
@@ -185,9 +183,7 @@ def test_triple_backtick_body_uses_longer_fence():
         {
             "role": "assistant",
             "content": "",
-            "tool_calls": [
-                {"id": "c", "function": {"name": "shell_exec", "arguments": "{}"}}
-            ],
+            "tool_calls": [{"id": "c", "function": {"name": "shell_exec", "arguments": "{}"}}],
         },
         {"role": "tool", "tool_call_id": "c", "content": body},
     ]
@@ -204,9 +200,7 @@ def test_oversize_body_truncated_with_marker():
         {
             "role": "assistant",
             "content": "",
-            "tool_calls": [
-                {"id": "c", "function": {"name": "x", "arguments": "{}"}}
-            ],
+            "tool_calls": [{"id": "c", "function": {"name": "x", "arguments": "{}"}}],
         },
         {"role": "tool", "tool_call_id": "c", "content": huge},
     ]
@@ -221,9 +215,7 @@ def test_tool_result_uses_data_when_text_missing():
         {
             "role": "assistant",
             "content": "",
-            "tool_calls": [
-                {"id": "c", "function": {"name": "foo", "arguments": "{}"}}
-            ],
+            "tool_calls": [{"id": "c", "function": {"name": "foo", "arguments": "{}"}}],
         },
         {"role": "tool", "tool_call_id": "c", "content": "", "data": {"k": "v"}},
     ]

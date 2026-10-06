@@ -45,11 +45,13 @@ class _CollectingHandler:
         self.messages: list[dict] = []
 
     async def handle_DATA(self, server, session, envelope):
-        self.messages.append({
-            "mail_from": envelope.mail_from,
-            "rcpt_tos": list(envelope.rcpt_tos),
-            "content": envelope.content.decode("utf-8", errors="replace"),
-        })
+        self.messages.append(
+            {
+                "mail_from": envelope.mail_from,
+                "rcpt_tos": list(envelope.rcpt_tos),
+                "content": envelope.content.decode("utf-8", errors="replace"),
+            }
+        )
         return "250 Message accepted for delivery"
 
 
@@ -67,7 +69,7 @@ async def fake_smtp(config):
         config.email.smtp_port = controller.port
         config.email.smtp_username = ""  # no AUTH on the fake
         config.email.smtp_password = ""
-        config.email.use_tls = False     # aiosmtpd default is plain
+        config.email.use_tls = False  # aiosmtpd default is plain
         config.email.sender_address = "bot@example.com"
         yield handler, config
     finally:
@@ -80,8 +82,10 @@ async def fake_smtp(config):
 async def test_end_to_end_plain(fake_smtp):
     handler, config = fake_smtp
     await send_mail(
-        config, to="alice@example.com",
-        subject="hi", body="hello from the test",
+        config,
+        to="alice@example.com",
+        subject="hi",
+        body="hello from the test",
     )
     assert len(handler.messages) == 1
     msg = handler.messages[0]
@@ -97,8 +101,10 @@ async def test_end_to_end_with_attachment(fake_smtp, tmp_path):
     attachment = tmp_path / "note.txt"
     attachment.write_text("attached contents")
     await send_mail(
-        config, to="alice@example.com",
-        subject="with attachment", body="see attached",
+        config,
+        to="alice@example.com",
+        subject="with attachment",
+        body="see attached",
         attachments=[str(attachment)],
     )
     assert len(handler.messages) == 1
@@ -113,11 +119,14 @@ async def test_end_to_end_with_attachment(fake_smtp, tmp_path):
 async def test_end_to_end_multiple_recipients(fake_smtp):
     handler, config = fake_smtp
     await send_mail(
-        config, to=["a@example.com", "b@example.com"],
-        subject="hi", body="to both",
+        config,
+        to=["a@example.com", "b@example.com"],
+        subject="hi",
+        body="to both",
     )
     assert handler.messages[0]["rcpt_tos"] == [
-        "a@example.com", "b@example.com",
+        "a@example.com",
+        "b@example.com",
     ]
 
 
@@ -125,8 +134,10 @@ async def test_end_to_end_multiple_recipients(fake_smtp):
 async def test_end_to_end_multipart_alternative(fake_smtp):
     handler, config = fake_smtp
     await send_mail(
-        config, to="alice@example.com",
-        subject="rich", body="plain version",
+        config,
+        to="alice@example.com",
+        subject="rich",
+        body="plain version",
         html_body="<p>html <b>version</b></p>",
     )
     content = handler.messages[0]["content"]

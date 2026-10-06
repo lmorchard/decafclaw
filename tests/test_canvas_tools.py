@@ -30,9 +30,7 @@ def md_doc_registry(monkeypatch):
 
     class _Reg:
         _d = {
-            "markdown_document": SimpleNamespace(
-                modes=["inline", "canvas"], required=["content"]
-            ),
+            "markdown_document": SimpleNamespace(modes=["inline", "canvas"], required=["content"]),
         }
 
         def get(self, name):
@@ -64,7 +62,9 @@ def manager_mock():
 async def test_canvas_new_tab_returns_tab_id(config, md_doc_registry, manager_mock):
     ctx = _make_ctx(config, manager_mock)
     result = await canvas_tools.tool_canvas_new_tab(
-        ctx, "markdown_document", {"content": "# Hi"},
+        ctx,
+        "markdown_document",
+        {"content": "# Hi"},
     )
     assert isinstance(result, ToolResult)
     assert result.data["tab_id"] == "canvas_1"
@@ -76,7 +76,9 @@ async def test_canvas_new_tab_returns_tab_id(config, md_doc_registry, manager_mo
 async def test_canvas_new_tab_unknown_widget(config, md_doc_registry):
     ctx = _make_ctx(config, MagicMock(emit=AsyncMock()))
     result = await canvas_tools.tool_canvas_new_tab(
-        ctx, "no_such", {"content": "x"},
+        ctx,
+        "no_such",
+        {"content": "x"},
     )
     assert result.text.startswith("[error: ")
     assert "not registered" in result.text
@@ -86,7 +88,9 @@ async def test_canvas_new_tab_unknown_widget(config, md_doc_registry):
 async def test_canvas_update_targets_explicit_id(config, md_doc_registry, manager_mock):
     ctx = _make_ctx(config, manager_mock)
     r1 = await canvas_tools.tool_canvas_new_tab(
-        ctx, "markdown_document", {"content": "v1"},
+        ctx,
+        "markdown_document",
+        {"content": "v1"},
     )
     tab_id = r1.data["tab_id"]
     result = await canvas_tools.tool_canvas_update(ctx, tab_id, {"content": "v2"})
@@ -154,10 +158,16 @@ async def test_canvas_read_empty(config, md_doc_registry):
 async def test_canvas_read_full_state(config, md_doc_registry):
     ctx = _make_ctx(config, MagicMock(emit=AsyncMock()))
     await canvas_tools.tool_canvas_new_tab(
-        ctx, "markdown_document", {"content": "a"}, label="A",
+        ctx,
+        "markdown_document",
+        {"content": "a"},
+        label="A",
     )
     await canvas_tools.tool_canvas_new_tab(
-        ctx, "markdown_document", {"content": "b"}, label="B",
+        ctx,
+        "markdown_document",
+        {"content": "b"},
+        label="B",
     )
     result = await canvas_tools.tool_canvas_read(ctx)
     assert result.data["active_tab"] == "canvas_2"
@@ -168,12 +178,11 @@ async def test_canvas_read_full_state(config, md_doc_registry):
 
 def test_tools_registered_as_always_loaded():
     from decafclaw.tools import TOOL_DEFINITIONS, TOOLS
-    expected = {"canvas_new_tab", "canvas_update", "canvas_close_tab",
-                "canvas_clear", "canvas_read"}
+
+    expected = {"canvas_new_tab", "canvas_update", "canvas_close_tab", "canvas_clear", "canvas_read"}
     for name in expected:
         assert name in TOOLS, f"{name} missing from TOOLS"
-    names = {d["function"]["name"] for d in TOOL_DEFINITIONS
-             if d.get("type") == "function"}
+    names = {d["function"]["name"] for d in TOOL_DEFINITIONS if d.get("type") == "function"}
     assert expected.issubset(names)
     # Old Phase 3 tool removed
     assert "canvas_set" not in TOOLS
@@ -184,7 +193,9 @@ async def test_canvas_new_tab_url_uses_explicit_form(config, md_doc_registry, ma
     """Returned URL uses /canvas/{conv}/{tab_id} not bare /canvas/{conv}."""
     ctx = _make_ctx(config, manager_mock)
     result = await canvas_tools.tool_canvas_new_tab(
-        ctx, "markdown_document", {"content": "x"},
+        ctx,
+        "markdown_document",
+        {"content": "x"},
     )
     assert f"/canvas/conv1/{result.data['tab_id']}" in result.text
 
@@ -192,6 +203,7 @@ async def test_canvas_new_tab_url_uses_explicit_form(config, md_doc_registry, ma
 # ---------------------------------------------------------------------------
 # C2 — closing a terminal tab through the agent tool kills its PTY
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_canvas_close_tab_passes_registry(config, md_doc_registry, monkeypatch):
@@ -204,7 +216,9 @@ async def test_canvas_close_tab_passes_registry(config, md_doc_registry, monkeyp
 
     # Create a tab to close
     await canvas_tools.tool_canvas_new_tab(
-        ctx, "markdown_document", {"content": "x"},
+        ctx,
+        "markdown_document",
+        {"content": "x"},
     )
 
     # Spy on canvas.close_tab to capture kwargs
@@ -222,7 +236,5 @@ async def test_canvas_close_tab_passes_registry(config, md_doc_registry, monkeyp
     await canvas_tools.tool_canvas_close_tab(ctx, "canvas_1")
 
     # Assert registry was passed and matches sentinel
-    assert "registry" in captured_kwargs, \
-        "tool_canvas_close_tab must pass 'registry' to canvas.close_tab"
-    assert captured_kwargs["registry"] is sentinel, \
-        "passed registry must match ctx.terminal_registry"
+    assert "registry" in captured_kwargs, "tool_canvas_close_tab must pass 'registry' to canvas.close_tab"
+    assert captured_kwargs["registry"] is sentinel, "passed registry must match ctx.terminal_registry"

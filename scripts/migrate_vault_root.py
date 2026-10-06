@@ -5,6 +5,7 @@ Typical use: unifying the agent's vault with the user's Obsidian vault.
 
 Dry-run by default. Pass --apply to execute.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,20 +18,28 @@ from pathlib import Path
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--from", dest="src", required=True, type=Path,
+        "--from",
+        dest="src",
+        required=True,
+        type=Path,
         help="Current vault root (contains agent/)",
     )
     parser.add_argument(
-        "--to", dest="dst", required=True, type=Path,
+        "--to",
+        dest="dst",
+        required=True,
+        type=Path,
         help="New vault root (must already exist, must not contain agent/)",
     )
     parser.add_argument(
-        "--config", type=Path,
+        "--config",
+        type=Path,
         default=Path("data/decafclaw/config.json"),
         help="Path to config.json to update (default: %(default)s)",
     )
     parser.add_argument(
-        "--apply", action="store_true",
+        "--apply",
+        action="store_true",
         help="Actually perform the migration (default: dry-run)",
     )
     args = parser.parse_args(argv)

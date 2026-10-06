@@ -38,8 +38,7 @@ def _write_skill(skill_dir: Path, name: str, marker: Path) -> None:
     skill_dir.mkdir(parents=True, exist_ok=True)
     marker.parent.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(
-        f"---\nname: {name}\ndescription: Test skill for the tools.py tier gate.\n"
-        f"---\n\nBody of {name}.\n"
+        f"---\nname: {name}\ndescription: Test skill for the tools.py tier gate.\n---\n\nBody of {name}.\n"
     )
     # A valid TOOLS / TOOL_DEFINITIONS pair so `check_tools_contract` passes and
     # the skill is rejected (if at all) for its TIER, not its shape.
@@ -149,8 +148,7 @@ def test_collect_all_tool_defs_omits_unactivated_workspace_tool(config):
     _skill_def_cache.clear()
 
     defs = collect_all_tool_defs(_ctx(config))
-    names = {d.get("function", {}).get("name")
-             for d in defs if isinstance(d, dict)}
+    names = {d.get("function", {}).get("name") for d in defs if isinstance(d, dict)}
 
     assert "probe_tool" not in names
 

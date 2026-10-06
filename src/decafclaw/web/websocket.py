@@ -60,7 +60,8 @@ def _project_tool_end(event: dict, conv_id: str) -> SrvToolEnd:
     compact.
     """
     payload: SrvToolEnd = {
-        "type": WSMessageType.TOOL_END, "conv_id": conv_id,
+        "type": WSMessageType.TOOL_END,
+        "conv_id": conv_id,
         "tool": event.get("tool", ""),
         "result_text": event.get("result_text", ""),
         "tool_call_id": event.get("tool_call_id", ""),
@@ -168,29 +169,25 @@ async def _handle_select_conv(ws_send: WSSendCallable, index, username, msg, sta
         if manager:
             conv_state = manager.get_state(conv_id)
             if conv_state and conv_state.pending_confirmation:
-                response["pending_confirmation"] = _confirmation_to_dict(
-                    conv_state.pending_confirmation)
+                response["pending_confirmation"] = _confirmation_to_dict(conv_state.pending_confirmation)
         await ws_send(response)
         _subscribe_to_conv(state, conv_id)
     else:
         # Check if it's a system conversation (archive exists on disk)
         # Reject other users' web conversations
         if conv_id.startswith("web-") and "--child-" not in conv_id:
-            await ws_send({"type": WSMessageType.ERROR,
-                           "message": f"Conversation not found: {conv_id}"})
+            await ws_send({"type": WSMessageType.ERROR, "message": f"Conversation not found: {conv_id}"})
             return
         from ..archive import archive_path
+
         if archive_path(state["config"], conv_id).exists():
-            await ws_send({"type": WSMessageType.CONV_SELECTED, "conv_id": conv_id,
-                           "read_only": True})
+            await ws_send({"type": WSMessageType.CONV_SELECTED, "conv_id": conv_id, "read_only": True})
             _subscribe_to_conv(state, conv_id)
         else:
-            await ws_send({"type": WSMessageType.ERROR,
-                           "message": f"Conversation not found: {conv_id}"})
+            await ws_send({"type": WSMessageType.ERROR, "message": f"Conversation not found: {conv_id}"})
 
 
-def _annotate_widget_responses(messages: list[dict],
-                               hidden_roles: set[str]) -> list[dict]:
+def _annotate_widget_responses(messages: list[dict], hidden_roles: set[str]) -> list[dict]:
     """Pair resolved widget confirmations with their tool records.
 
     Walks the messages looking for a confirmation_request whose
@@ -204,8 +201,7 @@ def _annotate_widget_responses(messages: list[dict],
     pending_widget_ids: dict[str, str] = {}  # confirmation_id -> tool_call_id
     for m in messages:
         role = m.get("role", "")
-        if role == "confirmation_request" and \
-                m.get("action_type") == "widget_response":
+        if role == "confirmation_request" and m.get("action_type") == "widget_response":
             cid = m.get("confirmation_id", "")
             tcid = m.get("tool_call_id", "")
             if cid and tcid:
@@ -218,8 +214,7 @@ def _annotate_widget_responses(messages: list[dict],
                 # "submitted" signal — data may legitimately be empty
                 # for widgets where the submit itself is the answer.
                 raw = m.get("data")
-                widget_responses_by_tool[tcid] = raw if isinstance(
-                    raw, dict) else {}
+                widget_responses_by_tool[tcid] = raw if isinstance(raw, dict) else {}
 
     visible: list[dict] = []
     for m in messages:
@@ -243,6 +238,7 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         await ws_send({"type": WSMessageType.ERROR, "message": "Invalid conversation ID"})
         return
     from .conversations import can_read_conversation
+
     conv = index.get(conv_id)
     is_owner = bool(conv and conv.user_id == username)
     if not can_read_conversation(config, index, conv_id, username):
@@ -254,8 +250,7 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         limit = 50
     before = msg.get("before", "")
     # Metadata roles that should not be rendered as chat messages
-    _HIDDEN_ROLES = {"effort", "model", "confirmation_request", "confirmation_response",
-                     "wake_trigger"}
+    _HIDDEN_ROLES = {"effort", "model", "confirmation_request", "confirmation_response", "wake_trigger"}
 
     # Read archive once and reuse for history, token estimation, and model scan
     from ..archive import read_archive as _read_archive
@@ -278,6 +273,7 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     current_model = None
     if not before:
         from ..compaction import estimate_tokens, flatten_messages
+
         working = read_compacted_history(config, conv_id) or all_msgs
         if working:
             estimated_tokens = estimate_tokens(flatten_messages(working))
@@ -291,8 +287,10 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
                     break
 
     response: SrvConvHistory = {
-        "type": WSMessageType.CONV_HISTORY, "conv_id": conv_id,
-        "messages": messages, "has_more": has_more,
+        "type": WSMessageType.CONV_HISTORY,
+        "conv_id": conv_id,
+        "messages": messages,
+        "has_more": has_more,
         "context_limit": config.compaction.max_tokens,
     }
     if not is_owner:
@@ -314,8 +312,7 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
             response["turn_active"] = True
         # Include pending confirmation if any
         if conv_state and conv_state.pending_confirmation:
-            response["pending_confirmation"] = _confirmation_to_dict(
-                conv_state.pending_confirmation)
+            response["pending_confirmation"] = _confirmation_to_dict(conv_state.pending_confirmation)
 
     # Subscribe this WebSocket as a viewer for live events
     _subscribe_to_conv(state, conv_id)
@@ -345,32 +342,44 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
     # -- Workflow-command interception (#255): workflows are first-class, not
     # skills, so intercept /<name> before skill command dispatch.
     from decafclaw.workflow.registry import workflow_commands
+
     wf_trigger = None
     if text.startswith("/"):
         name = text[1:].split()[0] if len(text) > 1 else ""
         if name in workflow_commands():
             wf_trigger = name
     if wf_trigger:
+
         def context_setup(ctx: "Context"):
             from ..media import LocalFileMediaHandler
+
             ctx.media_handler = LocalFileMediaHandler(state["config"])
             ctx.channel_name = "web"
             ctx.thread_id = ""
+
         _subscribe_to_conv(state, conv_id)
         # Persist the user's invocation so a conversation reload renders
         # the typed command (the WORKFLOW turn path bypasses the agent
         # loop's normal user-message archive write).
         from ..archive import append_message
-        append_message(state["config"], conv_id,
-                       {"role": "user", "content": text})
-        await ws_send({
-            "type": WSMessageType.COMMAND_ACK, "conv_id": conv_id,
-            "command": f"/{wf_trigger}", "skill": wf_trigger,
-        })
+
+        append_message(state["config"], conv_id, {"role": "user", "content": text})
+        await ws_send(
+            {
+                "type": WSMessageType.COMMAND_ACK,
+                "conv_id": conv_id,
+                "command": f"/{wf_trigger}",
+                "skill": wf_trigger,
+            }
+        )
         await manager.enqueue_turn(
-            conv_id, kind=TurnKind.WORKFLOW, prompt="",
-            user_id=username, context_setup=context_setup,
-            metadata={"workflow_name": wf_trigger, "resume": False})
+            conv_id,
+            kind=TurnKind.WORKFLOW,
+            prompt="",
+            user_id=username,
+            context_setup=context_setup,
+            metadata={"workflow_name": wf_trigger, "resume": False},
+        )
         return
 
     # -- /terminal side-effect command (#442): spawn a PTY + canvas tab with
@@ -390,17 +399,27 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
     cmd_result = await dispatch_command(cmd_ctx, text)
 
     if cmd_result.mode in ("help", "unknown", "error"):
-        await ws_send({
-            "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": conv_id,
-            "role": "assistant", "text": cmd_result.text, "final": True,
-        })
+        await ws_send(
+            {
+                "type": WSMessageType.MESSAGE_COMPLETE,
+                "conv_id": conv_id,
+                "role": "assistant",
+                "text": cmd_result.text,
+                "final": True,
+            }
+        )
         return
 
     if cmd_result.mode == "fork":
-        await ws_send({
-            "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": conv_id,
-            "role": "assistant", "text": cmd_result.text, "final": True,
-        })
+        await ws_send(
+            {
+                "type": WSMessageType.MESSAGE_COMPLETE,
+                "conv_id": conv_id,
+                "role": "assistant",
+                "text": cmd_result.text,
+                "final": True,
+            }
+        )
         return
 
     command_ctx = None
@@ -415,11 +434,14 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
             manager.set_flag(conv_id, "skip_vault_retrieval", True)
         # Acknowledge the command so the user sees it was recognized
         skill_name = cmd_result.skill.name if cmd_result.skill else "unknown"
-        await ws_send({
-            "type": WSMessageType.COMMAND_ACK, "conv_id": conv_id,
-            "command": cmd_result.display_text,
-            "skill": skill_name,
-        })
+        await ws_send(
+            {
+                "type": WSMessageType.COMMAND_ACK,
+                "conv_id": conv_id,
+                "command": cmd_result.display_text,
+                "skill": skill_name,
+            }
+        )
 
     # Ensure we're subscribed to this conversation's events
     _subscribe_to_conv(state, conv_id)
@@ -427,13 +449,15 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
     # Transport-specific context setup
     def context_setup(ctx: "Context"):
         from ..media import LocalFileMediaHandler
+
         ctx.media_handler = LocalFileMediaHandler(state["config"])
         ctx.channel_name = "web"
         ctx.thread_id = ""
 
     # Send message through the manager — it handles queueing and turn lifecycle
     await manager.send_message(
-        conv_id, text,
+        conv_id,
+        text,
         user_id=username,
         context_setup=context_setup,
         archive_text=archive_text,
@@ -472,16 +496,21 @@ async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, usern
     tcfg = config.terminal
 
     async def _msg(body: str) -> None:
-        await ws_send({
-            "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": conv_id,
-            "role": "assistant", "text": body, "final": True,
-        })
+        await ws_send(
+            {
+                "type": WSMessageType.MESSAGE_COMPLETE,
+                "conv_id": conv_id,
+                "role": "assistant",
+                "text": body,
+                "final": True,
+            }
+        )
 
     if not tcfg.enabled:
         await _msg("Terminals are disabled on this server.")
         return
 
-    arg = text[len("/terminal"):].strip()
+    arg = text[len("/terminal") :].strip()
     default_cwd = tcfg.default_cwd or str(config.workspace_path)
     cwd = str(Path(arg).expanduser()) if arg else default_cwd
 
@@ -501,7 +530,9 @@ async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, usern
     manager = state.get("manager")
     emit = manager.emit if manager else None
     result = await canvas.new_tab(
-        config, conv_id, "terminal",
+        config,
+        conv_id,
+        "terminal",
         {"session_id": session_id, "cwd": str(resolved), "shell": shell},
         emit=emit,
         enforce_agent_createable=False,
@@ -554,6 +585,7 @@ async def _handle_set_model(ws_send: WSSendCallable, index, username, msg, state
 
     # Record model change in archive
     from ..archive import append_message
+
     append_message(config, conv_id, {"role": "model", "content": model_name})
 
     # Update manager's conversation state
@@ -561,10 +593,13 @@ async def _handle_set_model(ws_send: WSSendCallable, index, username, msg, state
     if manager:
         manager.set_flag(conv_id, "active_model", model_name)
 
-    await ws_send({
-        "type": WSMessageType.MODEL_CHANGED, "conv_id": conv_id,
-        "model": model_name,
-    })
+    await ws_send(
+        {
+            "type": WSMessageType.MODEL_CHANGED,
+            "conv_id": conv_id,
+            "model": model_name,
+        }
+    )
 
 
 async def _handle_list_commands(ws_send: WSSendCallable, index, username, msg, state) -> None:
@@ -576,10 +611,12 @@ async def _handle_list_commands(ws_send: WSSendCallable, index, username, msg, s
     server that connected after startup shows up on the next request.
     """
     config = state["config"]
-    await ws_send({
-        "type": WSMessageType.COMMAND_LIST,
-        "commands": list_invokable_commands(config.discovered_skills),
-    })
+    await ws_send(
+        {
+            "type": WSMessageType.COMMAND_LIST,
+            "commands": list_invokable_commands(config.discovered_skills),
+        }
+    )
 
 
 async def _handle_widget_response(ws_send: WSSendCallable, index, username, msg, state) -> None:
@@ -598,18 +635,12 @@ async def _handle_widget_response(ws_send: WSSendCallable, index, username, msg,
     raw_data = msg.get("data")
     data = raw_data if isinstance(raw_data, dict) else {}
     if raw_data is not None and not isinstance(raw_data, dict):
-        log.warning(
-            "widget_response data is not a dict (got %s); coercing to {}",
-            type(raw_data).__name__)
+        log.warning("widget_response data is not a dict (got %s); coercing to {}", type(raw_data).__name__)
 
     if manager and conv_id and confirmation_id:
-        await manager.respond_to_confirmation(
-            conv_id, confirmation_id,
-            approved=True, data=data)
+        await manager.respond_to_confirmation(conv_id, confirmation_id, approved=True, data=data)
     else:
-        log.warning(
-            "widget_response missing manager / conv_id / confirmation_id; "
-            "dropping (msg=%s)", msg)
+        log.warning("widget_response missing manager / conv_id / confirmation_id; dropping (msg=%s)", msg)
 
 
 async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg, state) -> None:
@@ -633,15 +664,17 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
     else:
         # Legacy fallback: publish to event bus for non-manager confirmations
         tool_call_id = msg.get("tool_call_id", "")
-        await state["event_bus"].publish({
-            "type": "tool_confirm_response",
-            "context_id": msg.get("context_id", ""),
-            "tool": msg.get("tool", ""),
-            "approved": msg.get("approved", False),
-            **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-            **({"always": True} if msg.get("always") else {}),
-            **({"add_pattern": True} if msg.get("add_pattern") else {}),
-        })
+        await state["event_bus"].publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": msg.get("context_id", ""),
+                "tool": msg.get("tool", ""),
+                "approved": msg.get("approved", False),
+                **({"tool_call_id": tool_call_id} if tool_call_id else {}),
+                **({"always": True} if msg.get("always") else {}),
+                **({"add_pattern": True} if msg.get("add_pattern") else {}),
+            }
+        )
 
 
 def _subscribe_to_conv(state, conv_id):
@@ -677,17 +710,23 @@ def _subscribe_to_conv(state, conv_id):
             # Multi-tab sync: show user messages from other tabs.
             # Sent as distinct type so the client can deduplicate
             # (the originating tab already has the message locally).
-            await ws_send({
-                "type": WSMessageType.USER_MESSAGE, "conv_id": event_conv_id,
-                "text": event.get("text", ""),
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.USER_MESSAGE,
+                    "conv_id": event_conv_id,
+                    "text": event.get("text", ""),
+                }
+            )
 
         elif event_type == "chunk":
             streaming_buffer["text"] += event.get("text", "")
-            await ws_send({
-                "type": WSMessageType.CHUNK, "conv_id": event_conv_id,
-                "text": event.get("text", ""),
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.CHUNK,
+                    "conv_id": event_conv_id,
+                    "text": event.get("text", ""),
+                }
+            )
 
         elif event_type == "stream_done":
             pass  # buffer finalized by llm_start or message_complete
@@ -695,35 +734,49 @@ def _subscribe_to_conv(state, conv_id):
         elif event_type == "llm_start":
             iteration = event.get("iteration", 1)
             if iteration > 1 and streaming_buffer["text"]:
-                await ws_send({
-                    "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": event_conv_id,
-                    "role": "assistant", "text": streaming_buffer["text"],
-                })
+                await ws_send(
+                    {
+                        "type": WSMessageType.MESSAGE_COMPLETE,
+                        "conv_id": event_conv_id,
+                        "role": "assistant",
+                        "text": streaming_buffer["text"],
+                    }
+                )
                 streaming_buffer["text"] = ""
 
         elif event_type == "text_before_tools":
             text = streaming_buffer["text"] or event.get("text", "")
             if text:
-                await ws_send({
-                    "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": event_conv_id,
-                    "role": "assistant", "text": text,
-                })
+                await ws_send(
+                    {
+                        "type": WSMessageType.MESSAGE_COMPLETE,
+                        "conv_id": event_conv_id,
+                        "role": "assistant",
+                        "text": text,
+                    }
+                )
                 streaming_buffer["text"] = ""
 
         elif event_type == "tool_start":
-            await ws_send({
-                "type": WSMessageType.TOOL_START, "conv_id": event_conv_id,
-                "tool": event.get("tool", ""),
-                "tool_call_id": event.get("tool_call_id", ""),
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.TOOL_START,
+                    "conv_id": event_conv_id,
+                    "tool": event.get("tool", ""),
+                    "tool_call_id": event.get("tool_call_id", ""),
+                }
+            )
 
         elif event_type == "tool_status":
-            await ws_send({
-                "type": WSMessageType.TOOL_STATUS, "conv_id": event_conv_id,
-                "tool": event.get("tool", ""),
-                "message": event.get("message", ""),
-                "tool_call_id": event.get("tool_call_id", ""),
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.TOOL_STATUS,
+                    "conv_id": event_conv_id,
+                    "tool": event.get("tool", ""),
+                    "message": event.get("message", ""),
+                    "tool_call_id": event.get("tool_call_id", ""),
+                }
+            )
 
         elif event_type == "tool_end":
             await ws_send(_project_tool_end(event, event_conv_id))
@@ -762,52 +815,67 @@ def _subscribe_to_conv(state, conv_id):
         elif event_type == "vault_retrieval":
             text = event.get("text", "")
             if text:
-                await ws_send({
-                    "type": WSMessageType.TOOL_STATUS, "conv_id": event_conv_id,
-                    "tool": "vault_retrieval",
-                    "message": text, "tool_call_id": "",
-                })
+                await ws_send(
+                    {
+                        "type": WSMessageType.TOOL_STATUS,
+                        "conv_id": event_conv_id,
+                        "tool": "vault_retrieval",
+                        "message": text,
+                        "tool_call_id": "",
+                    }
+                )
 
         elif event_type == "vault_references":
             text = event.get("text", "")
             if text:
-                await ws_send({
-                    "type": WSMessageType.TOOL_STATUS, "conv_id": event_conv_id,
-                    "tool": "vault_references",
-                    "message": text, "tool_call_id": "",
-                })
+                await ws_send(
+                    {
+                        "type": WSMessageType.TOOL_STATUS,
+                        "conv_id": event_conv_id,
+                        "tool": "vault_references",
+                        "message": text,
+                        "tool_call_id": "",
+                    }
+                )
 
         elif event_type == "confirmation_request":
             # Flush any pending streamed text
             if streaming_buffer["text"]:
-                await ws_send({
-                    "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": event_conv_id,
-                    "role": "assistant", "text": streaming_buffer["text"],
-                })
+                await ws_send(
+                    {
+                        "type": WSMessageType.MESSAGE_COMPLETE,
+                        "conv_id": event_conv_id,
+                        "role": "assistant",
+                        "text": streaming_buffer["text"],
+                    }
+                )
                 streaming_buffer["text"] = ""
             action_type = event.get("action_type", "")
             action_data = event.get("action_data", {})
-            log.info("Forwarding confirm request to web UI: %s",
-                     action_type)
-            await ws_send({
-                "type": WSMessageType.CONFIRM_REQUEST, "conv_id": event_conv_id,
-                "confirmation_id": event.get("confirmation_id", ""),
-                "action_type": action_type,
-                # Provide tool/command for backward compat with confirm-view
-                "tool": _legacy_tool_name(action_type),
-                "command": action_data.get("command", event.get("message", "")),
-                "suggested_pattern": action_data.get("suggested_pattern", ""),
-                "message": event.get("message", ""),
-                "approve_label": event.get("approve_label", ""),
-                "deny_label": event.get("deny_label", ""),
-                "tool_call_id": event.get("tool_call_id", ""),
-                "action_data": action_data,
-            })
+            log.info("Forwarding confirm request to web UI: %s", action_type)
+            await ws_send(
+                {
+                    "type": WSMessageType.CONFIRM_REQUEST,
+                    "conv_id": event_conv_id,
+                    "confirmation_id": event.get("confirmation_id", ""),
+                    "action_type": action_type,
+                    # Provide tool/command for backward compat with confirm-view
+                    "tool": _legacy_tool_name(action_type),
+                    "command": action_data.get("command", event.get("message", "")),
+                    "suggested_pattern": action_data.get("suggested_pattern", ""),
+                    "message": event.get("message", ""),
+                    "approve_label": event.get("approve_label", ""),
+                    "deny_label": event.get("deny_label", ""),
+                    "tool_call_id": event.get("tool_call_id", ""),
+                    "action_data": action_data,
+                }
+            )
 
         elif event_type == "confirmation_response":
             # Forward to all tabs so non-originating tabs clear the widget
             confirm_resp: SrvConfirmationResponse = {
-                "type": WSMessageType.CONFIRMATION_RESPONSE, "conv_id": event_conv_id,
+                "type": WSMessageType.CONFIRMATION_RESPONSE,
+                "conv_id": event_conv_id,
                 "confirmation_id": event.get("confirmation_id", ""),
                 "approved": event.get("approved", False),
             }
@@ -846,19 +914,25 @@ def _subscribe_to_conv(state, conv_id):
             await ws_send({"type": WSMessageType.TURN_COMPLETE, "conv_id": event_conv_id})
 
         elif event_type == "error":
-            await ws_send({
-                "type": WSMessageType.ERROR, "conv_id": event_conv_id,
-                "message": event.get("message", ""),
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.ERROR,
+                    "conv_id": event_conv_id,
+                    "message": event.get("message", ""),
+                }
+            )
 
         elif event_type == "shell_approval":
-            await ws_send({
-                "type": WSMessageType.SHELL_APPROVAL, "conv_id": event_conv_id,
-                "command": event.get("command", ""),
-                "risk": event.get("risk", ""),
-                "reason": event.get("reason", ""),
-                "approved": event.get("approved", False),
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.SHELL_APPROVAL,
+                    "conv_id": event_conv_id,
+                    "command": event.get("command", ""),
+                    "risk": event.get("risk", ""),
+                    "reason": event.get("reason", ""),
+                    "approved": event.get("approved", False),
+                }
+            )
 
         elif event_type == "reflection_result":
             visibility = config.reflection.visibility
@@ -868,30 +942,36 @@ def _subscribe_to_conv(state, conv_id):
             elif visibility == "visible" and passed:
                 pass
             else:
-                await ws_send({
-                    "type": WSMessageType.REFLECTION_RESULT, "conv_id": event_conv_id,
-                    "passed": passed,
-                    "critique": event.get("critique", ""),
-                    "retry_number": event.get("retry_number", 0),
-                    "raw_response": (
-                        event.get("raw_response", "")
-                        if visibility == "debug" else ""
-                    ),
-                    "error": event.get("error", ""),
-                })
+                await ws_send(
+                    {
+                        "type": WSMessageType.REFLECTION_RESULT,
+                        "conv_id": event_conv_id,
+                        "passed": passed,
+                        "critique": event.get("critique", ""),
+                        "retry_number": event.get("retry_number", 0),
+                        "raw_response": (event.get("raw_response", "") if visibility == "debug" else ""),
+                        "error": event.get("error", ""),
+                    }
+                )
 
         elif event_type == "background_event":
-            await ws_send({
-                "type": WSMessageType.BACKGROUND_EVENT, "conv_id": event_conv_id,
-                "record": event.get("record", {}),
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.BACKGROUND_EVENT,
+                    "conv_id": event_conv_id,
+                    "record": event.get("record", {}),
+                }
+            )
 
         elif event_type == "compaction_end":
-            await ws_send({
-                "type": WSMessageType.COMPACTION_DONE, "conv_id": event_conv_id,
-                "before_messages": event.get("before_messages", 0),
-                "after_messages": event.get("after_messages", 0),
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.COMPACTION_DONE,
+                    "conv_id": event_conv_id,
+                    "before_messages": event.get("before_messages", 0),
+                    "after_messages": event.get("after_messages", 0),
+                }
+            )
 
     sub_id = manager.subscribe(conv_id, on_conv_event)
     subscriptions[conv_id] = sub_id
@@ -932,20 +1012,26 @@ def _make_notification_forwarder(ws_send: WSSendCallable):
     filters by ``event["type"]`` and copies the fields the frontend
     needs. Other event types are ignored.
     """
+
     async def _forward(event: dict):
         t = event.get("type")
         if t == "notification_created":
-            await ws_send({
-                "type": WSMessageType.NOTIFICATION_CREATED,
-                "record": event["record"],
-                "unread_count": event["unread_count"],
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.NOTIFICATION_CREATED,
+                    "record": event["record"],
+                    "unread_count": event["unread_count"],
+                }
+            )
         elif t == "notification_read":
-            await ws_send({
-                "type": WSMessageType.NOTIFICATION_READ,
-                "ids": event["ids"],
-                "unread_count": event["unread_count"],
-            })
+            await ws_send(
+                {
+                    "type": WSMessageType.NOTIFICATION_READ,
+                    "ids": event["ids"],
+                    "unread_count": event["unread_count"],
+                }
+            )
+
     return _forward
 
 
@@ -956,25 +1042,28 @@ def _make_vault_change_forwarder(ws_send: WSSendCallable):
     matching wire shape to the client. The bus dispatches every event to
     every subscriber, so per-event filtering is required.
     """
+
     async def _forward(event: dict):
         if event.get("type") != VAULT_CHANGED_EVENT_TYPE:
             return
         # `... or ""` (not `, ""` default) coerces both missing keys AND
         # explicit None values to empty string, keeping the wire contract
         # stable even if a publisher sends a JSON null.
-        await ws_send({
-            "type": WSMessageType.VAULT_CHANGED,
-            "path": event.get("path") or "",
-            "kind": event.get("kind") or "",
-        })
+        await ws_send(
+            {
+                "type": WSMessageType.VAULT_CHANGED,
+                "path": event.get("path") or "",
+                "kind": event.get("kind") or "",
+            }
+        )
+
     return _forward
 
 
 # -- Main WebSocket handler ----------------------------------------------------
 
 
-async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
-                         manager=None, terminal_registry=None):
+async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manager=None, terminal_registry=None):
     """Handle a WebSocket chat connection."""
     from .auth import get_current_user
     from .conversations import ConversationIndex
@@ -996,11 +1085,13 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
     # Send available models immediately so the picker is visible before
     # any conversation is selected
     if config.model_configs:
-        await ws_send({
-            "type": WSMessageType.MODELS_AVAILABLE,
-            "available_models": sorted(config.model_configs.keys()),
-            "default_model": config.default_model,
-        })
+        await ws_send(
+            {
+                "type": WSMessageType.MODELS_AVAILABLE,
+                "available_models": sorted(config.model_configs.keys()),
+                "default_model": config.default_model,
+            }
+        )
 
     index = ConversationIndex(config)
     state = {
@@ -1074,8 +1165,7 @@ async def websocket_terminal(websocket: WebSocket, config, registry) -> None:
         # registry is in-memory only, so a server restart leaves every
         # terminal tab pointing at nothing. reason="no_session" tells the
         # widget this is a tombstone to close, not a shell that just exited.
-        await websocket.send_json({"type": "session_ended",
-                                   "reason": "no_session", "exit_status": None})
+        await websocket.send_json({"type": "session_ended", "reason": "no_session", "exit_status": None})
         await websocket.close()
         return
 

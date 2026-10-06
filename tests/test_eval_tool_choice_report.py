@@ -123,10 +123,12 @@ class TestComputePairOverlap:
 
 class TestFormatPairOverlap:
     def test_emits_table_with_tighten_marker(self):
-        rows = compute_pair_overlap([
-            _result("a", "vault_search", ["conv_search"], "conv_search"),
-            _result("b", "vault_search", ["conv_search"], "conv_search"),
-        ])
+        rows = compute_pair_overlap(
+            [
+                _result("a", "vault_search", ["conv_search"], "conv_search"),
+                _result("b", "vault_search", ["conv_search"], "conv_search"),
+            ]
+        )
         out = format_pair_overlap(rows)
         joined = "\n".join(out)
         assert "Pair overlap" in joined
@@ -136,11 +138,13 @@ class TestFormatPairOverlap:
         assert "tighten" in joined
 
     def test_no_tighten_when_under_50(self):
-        rows = compute_pair_overlap([
-            _result("a", "X", ["Y"], "X"),
-            _result("b", "X", ["Y"], "Y"),
-            _result("c", "X", ["Y"], "X"),
-        ])
+        rows = compute_pair_overlap(
+            [
+                _result("a", "X", ["Y"], "X"),
+                _result("b", "X", ["Y"], "Y"),
+                _result("c", "X", ["Y"], "X"),
+            ]
+        )
         out = format_pair_overlap(rows)
         joined = "\n".join(out)
         assert "tighten" not in joined  # 1/3 = 33% < 50%

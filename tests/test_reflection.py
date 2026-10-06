@@ -28,6 +28,7 @@ from decafclaw.reflection import (
 # build_tool_summary
 # ---------------------------------------------------------------------------
 
+
 class TestBuildToolSummary:
     def test_no_tools(self):
         history = [
@@ -39,12 +40,19 @@ class TestBuildToolSummary:
     def test_with_tools(self):
         history = [
             {"role": "user", "content": "search for cats"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc1", "function": {
-                    "name": "memory_search",
-                    "arguments": json.dumps({"query": "cats"}),
-                }},
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc1",
+                        "function": {
+                            "name": "memory_search",
+                            "arguments": json.dumps({"query": "cats"}),
+                        },
+                    },
+                ],
+            },
             {"role": "tool", "content": "Found: cat facts document"},
             {"role": "assistant", "content": "Here are some cat facts."},
         ]
@@ -59,17 +67,21 @@ class TestBuildToolSummary:
         actually answered the question the agent asked."""
         history = [
             {"role": "user", "content": "ask me a question"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc1", "function": {
-                    "name": "ask_user_multiple_choice",
-                    "arguments": json.dumps(
-                        {"prompt": "Pick one", "options": ["a", "b"]}),
-                }},
-            ]},
-            {"role": "tool",
-             "content": "[awaiting user response: Pick one]"},
-            {"role": "user", "source": "widget_response",
-             "content": "User selected: a"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc1",
+                        "function": {
+                            "name": "ask_user_multiple_choice",
+                            "arguments": json.dumps({"prompt": "Pick one", "options": ["a", "b"]}),
+                        },
+                    },
+                ],
+            },
+            {"role": "tool", "content": "[awaiting user response: Pick one]"},
+            {"role": "user", "source": "widget_response", "content": "User selected: a"},
             {"role": "assistant", "content": "You picked A."},
         ]
         result = build_tool_summary(history, 0)
@@ -82,17 +94,24 @@ class TestBuildToolSummary:
         responses when finding turn starts — they're mid-turn, not
         new turns."""
         from decafclaw.reflection import build_prior_turn_summary
+
         history = [
             {"role": "user", "content": "first turn"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc1", "function": {
-                    "name": "ask_user_multiple_choice",
-                    "arguments": json.dumps({"prompt": "x", "options": []}),
-                }},
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc1",
+                        "function": {
+                            "name": "ask_user_multiple_choice",
+                            "arguments": json.dumps({"prompt": "x", "options": []}),
+                        },
+                    },
+                ],
+            },
             {"role": "tool", "content": "[awaiting]"},
-            {"role": "user", "source": "widget_response",
-             "content": "User selected: a"},
+            {"role": "user", "source": "widget_response", "content": "User selected: a"},
             {"role": "assistant", "content": "ok"},
             # Current turn starts here:
             {"role": "user", "content": "second turn"},
@@ -112,12 +131,19 @@ class TestBuildToolSummary:
         long_result = "x" * 3000
         history = [
             {"role": "user", "content": "test"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc1", "function": {
-                    "name": "workspace_read",
-                    "arguments": json.dumps({"path": "big.txt"}),
-                }},
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc1",
+                        "function": {
+                            "name": "workspace_read",
+                            "arguments": json.dumps({"path": "big.txt"}),
+                        },
+                    },
+                ],
+            },
             {"role": "tool", "content": long_result},
         ]
         result = build_tool_summary(history, 0)
@@ -128,12 +154,19 @@ class TestBuildToolSummary:
         long_result = "x" * 500
         history = [
             {"role": "user", "content": "test"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc1", "function": {
-                    "name": "workspace_read",
-                    "arguments": json.dumps({"path": "big.txt"}),
-                }},
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc1",
+                        "function": {
+                            "name": "workspace_read",
+                            "arguments": json.dumps({"path": "big.txt"}),
+                        },
+                    },
+                ],
+            },
             {"role": "tool", "content": long_result},
         ]
         result = build_tool_summary(history, 0, max_result_len=100)
@@ -148,11 +181,19 @@ class TestBuildToolSummary:
         history = [
             # Previous turn
             {"role": "user", "content": "old question"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc0", "function": {
-                    "name": "old_tool", "arguments": "{}",
-                }},
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc0",
+                        "function": {
+                            "name": "old_tool",
+                            "arguments": "{}",
+                        },
+                    },
+                ],
+            },
             {"role": "tool", "content": "old result"},
             {"role": "assistant", "content": "old answer"},
             # Current turn starts at index 4
@@ -163,7 +204,6 @@ class TestBuildToolSummary:
         assert result == ""  # no tools in current turn
         result_old = build_tool_summary(history, 0)
         assert "old_tool" in result_old
-
 
 
 class TestSummarizeToolResult:
@@ -182,12 +222,7 @@ class TestSummarizeToolResult:
         assert "Important summary" in result
 
     def test_preserves_result_separators(self):
-        content = (
-            "--- Result 1 ---\n# Page A\nfoo\n"
-            + "x" * 5000 + "\n"
-            "--- Result 2 ---\n# Page B\nbar\n"
-            + "y" * 5000
-        )
+        content = "--- Result 1 ---\n# Page A\nfoo\n" + "x" * 5000 + "\n--- Result 2 ---\n# Page B\nbar\n" + "y" * 5000
         result = _summarize_tool_result(content, 500)
         assert "Result 1" in result
         assert "Result 2" in result
@@ -235,24 +270,33 @@ class TestBuildToolSummaryVaultSearch:
         # and tl;dr that the agent references in its response. With raw truncation
         # at 2000 chars, only the first result's partial text would be visible.
         result_content = "Found 5 result(s):\n\n"
-        for i, title in enumerate([
-            "Comparison of Short Stories",
-            "There was no minimum safe size",
-            "Rays of a Distant Sun",
-            "When the Halloween invite",
-            "Les Orchard",
-        ]):
-            result_content += f"--- Result {i+1} ---\n# {title}\n\n> tl;dr: Summary of {title}.\n\n"
+        for i, title in enumerate(
+            [
+                "Comparison of Short Stories",
+                "There was no minimum safe size",
+                "Rays of a Distant Sun",
+                "When the Halloween invite",
+                "Les Orchard",
+            ]
+        ):
+            result_content += f"--- Result {i + 1} ---\n# {title}\n\n> tl;dr: Summary of {title}.\n\n"
             result_content += f"{'x' * 3000}\n\n"  # bulk content that makes it large
 
         history = [
             {"role": "user", "content": "What do you know about my stories?"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc1", "function": {
-                    "name": "vault_search",
-                    "arguments": json.dumps({"query": "stories"}),
-                }},
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc1",
+                        "function": {
+                            "name": "vault_search",
+                            "arguments": json.dumps({"query": "stories"}),
+                        },
+                    },
+                ],
+            },
             {"role": "tool", "content": result_content},
             {"role": "assistant", "content": "You have written three stories..."},
         ]
@@ -268,19 +312,24 @@ class TestBuildToolSummaryVaultSearch:
         """tl;dr lines from vault_search results should survive summarization."""
         result_content = (
             "Found 2 result(s):\n\n"
-            "--- Result 1 ---\n# Page One\n\n> tl;dr: A story about robots.\n\n"
-            + "x" * 5000 + "\n\n"
-            "--- Result 2 ---\n# Page Two\n\n> tl;dr: A poem about cats.\n\n"
-            + "y" * 5000
+            "--- Result 1 ---\n# Page One\n\n> tl;dr: A story about robots.\n\n" + "x" * 5000 + "\n\n"
+            "--- Result 2 ---\n# Page Two\n\n> tl;dr: A poem about cats.\n\n" + "y" * 5000
         )
         history = [
             {"role": "user", "content": "search"},
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "tc1", "function": {
-                    "name": "vault_search",
-                    "arguments": json.dumps({"query": "writing"}),
-                }},
-            ]},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc1",
+                        "function": {
+                            "name": "vault_search",
+                            "arguments": json.dumps({"query": "writing"}),
+                        },
+                    },
+                ],
+            },
             {"role": "tool", "content": result_content},
         ]
         summary = build_tool_summary(history, 0, max_result_len=2000)
@@ -292,16 +341,24 @@ class TestBuildToolSummaryVaultSearch:
 # build_prior_turn_summary
 # ---------------------------------------------------------------------------
 
+
 def _make_tool_turn(user_msg: str, tool_name: str, tool_args: str, tool_result: str) -> list:
     """Helper: build a complete turn with user msg, tool call, result, and reply."""
     return [
         {"role": "user", "content": user_msg},
-        {"role": "assistant", "content": None, "tool_calls": [
-            {"id": "tc", "function": {
-                "name": tool_name,
-                "arguments": json.dumps({"query": tool_args}),
-            }},
-        ]},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "tc",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps({"query": tool_args}),
+                    },
+                },
+            ],
+        },
         {"role": "tool", "content": tool_result},
         {"role": "assistant", "content": f"Answer about {tool_name}"},
     ]
@@ -383,6 +440,7 @@ class TestBuildPriorTurnSummary:
 # _parse_verdict
 # ---------------------------------------------------------------------------
 
+
 class TestParseVerdict:
     def test_clean_json(self):
         passed, critique = _parse_verdict('{"pass": true, "critique": ""}')
@@ -390,8 +448,7 @@ class TestParseVerdict:
         assert critique == ""
 
     def test_fail_with_critique(self):
-        passed, critique = _parse_verdict(
-            '{"pass": false, "critique": "You missed the point"}')
+        passed, critique = _parse_verdict('{"pass": false, "critique": "You missed the point"}')
         assert passed is False
         assert critique == "You missed the point"
 
@@ -436,6 +493,7 @@ class TestParseVerdict:
 # load_reflection_prompt
 # ---------------------------------------------------------------------------
 
+
 class TestLoadReflectionPrompt:
     def test_default(self, tmp_path):
         config = Config(agent=AgentConfig(data_home=str(tmp_path), id="test"))
@@ -457,21 +515,20 @@ class TestLoadReflectionPrompt:
 # evaluate_response
 # ---------------------------------------------------------------------------
 
+
 class TestEvaluateResponse:
     @pytest.fixture
     def config(self, tmp_path):
         return Config(
             agent=AgentConfig(data_home=str(tmp_path), id="test"),
-            llm=LlmConfig(url="http://test/v1/chat/completions",
-                           model="test-model", api_key="test-key"),
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="test-model", api_key="test-key"),
             reflection=ReflectionConfig(enabled=True),
         )
 
     @pytest.mark.asyncio
     async def test_pass(self, config):
         mock_response = {"content": '{"pass": true, "critique": ""}'}
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                    return_value=mock_response):
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response):
             result = await evaluate_response(config, "hello", "Hi there!", "")
         assert result.passed is True
         assert result.critique == ""
@@ -479,11 +536,8 @@ class TestEvaluateResponse:
 
     @pytest.mark.asyncio
     async def test_fail_with_critique(self, config):
-        mock_response = {
-            "content": '{"pass": false, "critique": "Did not greet the user"}'
-        }
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                    return_value=mock_response):
+        mock_response = {"content": '{"pass": false, "critique": "Did not greet the user"}'}
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response):
             result = await evaluate_response(config, "hello", "The weather is nice", "")
         assert result.passed is False
         assert result.critique == "Did not greet the user"
@@ -491,16 +545,14 @@ class TestEvaluateResponse:
     @pytest.mark.asyncio
     async def test_unparseable_treated_as_pass(self, config):
         mock_response = {"content": "I can't decide, this is fine I guess"}
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                    return_value=mock_response):
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response):
             result = await evaluate_response(config, "hello", "Hi!", "")
         assert result.passed is True
         assert "unparseable" in result.error
 
     @pytest.mark.asyncio
     async def test_network_error_treated_as_pass(self, config):
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                    side_effect=ConnectionError("timeout")):
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, side_effect=ConnectionError("timeout")):
             result = await evaluate_response(config, "hello", "Hi!", "")
         assert result.passed is True
         assert "timeout" in result.error
@@ -509,8 +561,7 @@ class TestEvaluateResponse:
     async def test_uses_reflection_model(self, config):
         config.reflection.model = "cheap-judge-model"
         mock_response = {"content": '{"pass": true, "critique": ""}'}
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                    return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config, "hello", "Hi!", "")
         # Check that the judge model was used
         _, kwargs = mock_call.call_args
@@ -518,12 +569,14 @@ class TestEvaluateResponse:
 
     @pytest.mark.asyncio
     async def test_prior_turn_summary_in_prompt(self, config):
-        prior = "Tools used in prior turns:\nTool: wiki_read(page=\"Therapy\")"
+        prior = 'Tools used in prior turns:\nTool: wiki_read(page="Therapy")'
         mock_response = {"content": '{"pass": true, "critique": ""}'}
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                    return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(
-                config, "summarize therapy", "Here is the summary.", "",
+                config,
+                "summarize therapy",
+                "Here is the summary.",
+                "",
                 prior_turn_summary=prior,
             )
         prompt = mock_call.call_args[0][1][0]["content"]
@@ -533,8 +586,7 @@ class TestEvaluateResponse:
     @pytest.mark.asyncio
     async def test_empty_prior_turn_summary(self, config):
         mock_response = {"content": '{"pass": true, "critique": ""}'}
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                    return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config, "hello", "Hi!", "")
         prompt = mock_call.call_args[0][1][0]["content"]
         assert "Tools used in prior turns:" not in prompt
@@ -548,22 +600,17 @@ class TestEvaluateResponse:
         url/model/api_key override."""
         config = Config(
             agent=AgentConfig(data_home=str(tmp_path), id="test"),
-            llm=LlmConfig(url="http://test/v1/chat/completions",
-                          model="legacy-model", api_key="test-key"),
-            providers={"p": ProviderConfig(type="openai-compat",
-                                           url="http://test/v1",
-                                           api_key="test-key")},
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat", url="http://test/v1", api_key="test-key")},
             model_configs={
                 "author": ModelConfig(provider="p", model="author-model"),
                 "judge": ModelConfig(provider="p", model="judge-model"),
             },
             default_model="author",
-            reflection=ReflectionConfig(enabled=True, model="",
-                                        verifier_model="judge"),
+            reflection=ReflectionConfig(enabled=True, model="", verifier_model="judge"),
         )
         mock_response = {"content": '{"pass": true, "critique": ""}'}
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config, "hello", "Hi!", "")
         # Equality (not membership) so a stray llm_url/llm_model/llm_api_key
         # override alongside model_name still fails.
@@ -574,9 +621,7 @@ class TestEvaluateResponse:
         """WHEN reflection.verifier_model is empty, resolution SHALL be
         unchanged: reflection.model (if in model_configs) -> default_model ->
         legacy reflection.resolved(config)."""
-        providers = {"p": ProviderConfig(type="openai-compat",
-                                         url="http://test/v1",
-                                         api_key="test-key")}
+        providers = {"p": ProviderConfig(type="openai-compat", url="http://test/v1", api_key="test-key")}
         model_configs = {
             "author": ModelConfig(provider="p", model="author-model"),
             "judge": ModelConfig(provider="p", model="judge-model"),
@@ -586,48 +631,38 @@ class TestEvaluateResponse:
         # (a) reflection.model names a key in model_configs -> wins
         config_a = Config(
             agent=AgentConfig(data_home=str(tmp_path), id="test"),
-            llm=LlmConfig(url="http://test/v1/chat/completions",
-                          model="legacy-model", api_key="test-key"),
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="legacy-model", api_key="test-key"),
             providers=providers,
             model_configs=model_configs,
             default_model="author",
-            reflection=ReflectionConfig(enabled=True, model="judge",
-                                        verifier_model=""),
+            reflection=ReflectionConfig(enabled=True, model="judge", verifier_model=""),
         )
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config_a, "hello", "Hi!", "")
         assert mock_call.call_args.kwargs == {"model_name": "judge"}
 
         # (b) reflection.model empty -> default_model
         config_b = Config(
             agent=AgentConfig(data_home=str(tmp_path), id="test"),
-            llm=LlmConfig(url="http://test/v1/chat/completions",
-                          model="legacy-model", api_key="test-key"),
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="legacy-model", api_key="test-key"),
             providers=providers,
             model_configs=model_configs,
             default_model="author",
-            reflection=ReflectionConfig(enabled=True, model="",
-                                        verifier_model=""),
+            reflection=ReflectionConfig(enabled=True, model="", verifier_model=""),
         )
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config_b, "hello", "Hi!", "")
         assert mock_call.call_args.kwargs == {"model_name": "author"}
 
         # (c) no model_configs, no default_model -> legacy resolved() override
         config_c = Config(
             agent=AgentConfig(data_home=str(tmp_path), id="test"),
-            llm=LlmConfig(url="http://test/v1/chat/completions",
-                          model="legacy-model", api_key="test-key"),
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="legacy-model", api_key="test-key"),
             model_configs={},
             default_model="",
-            reflection=ReflectionConfig(enabled=True,
-                                        model="cheap-judge-model",
-                                        verifier_model=""),
+            reflection=ReflectionConfig(enabled=True, model="cheap-judge-model", verifier_model=""),
         )
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config_c, "hello", "Hi!", "")
         kwargs_c = mock_call.call_args.kwargs
         assert kwargs_c["llm_model"] == "cheap-judge-model"
@@ -640,21 +675,16 @@ class TestEvaluateResponse:
         unknown name as model_name."""
         config = Config(
             agent=AgentConfig(data_home=str(tmp_path), id="test"),
-            llm=LlmConfig(url="http://test/v1/chat/completions",
-                          model="legacy-model", api_key="test-key"),
-            providers={"p": ProviderConfig(type="openai-compat",
-                                           url="http://test/v1",
-                                           api_key="test-key")},
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat", url="http://test/v1", api_key="test-key")},
             model_configs={
                 "author": ModelConfig(provider="p", model="author-model"),
             },
             default_model="author",
-            reflection=ReflectionConfig(enabled=True, model="",
-                                        verifier_model="no-such-model"),
+            reflection=ReflectionConfig(enabled=True, model="", verifier_model="no-such-model"),
         )
         mock_response = {"content": '{"pass": true, "critique": ""}'}
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config, "hello", "Hi!", "")
         # Concrete fallback destination: default_model, via the normal chain.
         assert mock_call.call_args.kwargs == {"model_name": "author"}
@@ -668,22 +698,16 @@ class TestEvaluateResponse:
         via the legacy resolved() url/model/api_key rung — NOT default_model."""
         config = Config(
             agent=AgentConfig(data_home=str(tmp_path), id="test"),
-            llm=LlmConfig(url="http://test/v1/chat/completions",
-                          model="legacy-model", api_key="test-key"),
-            providers={"p": ProviderConfig(type="openai-compat",
-                                           url="http://test/v1",
-                                           api_key="test-key")},
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat", url="http://test/v1", api_key="test-key")},
             model_configs={
                 "author": ModelConfig(provider="p", model="author-model"),
             },
             default_model="author",
-            reflection=ReflectionConfig(enabled=True,
-                                        model="cheap-judge-model",
-                                        verifier_model=""),
+            reflection=ReflectionConfig(enabled=True, model="cheap-judge-model", verifier_model=""),
         )
         mock_response = {"content": '{"pass": true, "critique": ""}'}
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config, "hello", "Hi!", "")
         # call_args is the LAST call, so pin the count too: judging once on
         # default_model and again on the reflection model would still bill the
@@ -704,23 +728,21 @@ class TestEvaluateResponse:
         # not: routing must carry the judge's own endpoint and key.
         config_distinct = Config(
             agent=AgentConfig(data_home=str(tmp_path), id="test"),
-            llm=LlmConfig(url="http://test/v1/chat/completions",
-                          model="legacy-model", api_key="test-key"),
-            providers={"p": ProviderConfig(type="openai-compat",
-                                           url="http://test/v1",
-                                           api_key="test-key")},
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat", url="http://test/v1", api_key="test-key")},
             model_configs={
                 "author": ModelConfig(provider="p", model="author-model"),
             },
             default_model="author",
-            reflection=ReflectionConfig(enabled=True,
-                                        url="http://judge/v1/chat/completions",
-                                        model="cheap-judge-model",
-                                        api_key="judge-key",
-                                        verifier_model=""),
+            reflection=ReflectionConfig(
+                enabled=True,
+                url="http://judge/v1/chat/completions",
+                model="cheap-judge-model",
+                api_key="judge-key",
+                verifier_model="",
+            ),
         )
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config_distinct, "hello", "Hi!", "")
         assert mock_call.call_count == 1
         assert mock_call.call_args.kwargs == {
@@ -737,23 +759,17 @@ class TestEvaluateResponse:
         hoist the reflection.model branch above the verifier_model branch."""
         config = Config(
             agent=AgentConfig(data_home=str(tmp_path), id="test"),
-            llm=LlmConfig(url="http://test/v1/chat/completions",
-                          model="legacy-model", api_key="test-key"),
-            providers={"p": ProviderConfig(type="openai-compat",
-                                           url="http://test/v1",
-                                           api_key="test-key")},
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat", url="http://test/v1", api_key="test-key")},
             model_configs={
                 "author": ModelConfig(provider="p", model="author-model"),
                 "judge": ModelConfig(provider="p", model="judge-model"),
             },
             default_model="author",
-            reflection=ReflectionConfig(enabled=True,
-                                        model="cheap-judge-model",
-                                        verifier_model="judge"),
+            reflection=ReflectionConfig(enabled=True, model="cheap-judge-model", verifier_model="judge"),
         )
         mock_response = {"content": '{"pass": true, "critique": ""}'}
-        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
-                   return_value=mock_response) as mock_call:
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
             await evaluate_response(config, "hello", "Hi!", "")
         assert mock_call.call_count == 1
         assert mock_call.call_args.kwargs == {"model_name": "judge"}
@@ -774,11 +790,16 @@ class TestReflectionPromptStructure:
     def test_all_expected_tags_present(self):
         out = self._filled()
         for tag in (
-            "<user_request>", "</user_request>",
-            "<assistant_response>", "</assistant_response>",
-            "<tool_results>", "</tool_results>",
-            "<prior_turn_tools>", "</prior_turn_tools>",
-            "<retrieved_context>", "</retrieved_context>",
+            "<user_request>",
+            "</user_request>",
+            "<assistant_response>",
+            "</assistant_response>",
+            "<tool_results>",
+            "</tool_results>",
+            "<prior_turn_tools>",
+            "</prior_turn_tools>",
+            "<retrieved_context>",
+            "</retrieved_context>",
         ):
             assert tag in out, f"missing {tag}"
 

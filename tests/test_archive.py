@@ -31,9 +31,13 @@ def test_archive_roundtrip_new_layout(config):
 
 def test_compacted_roundtrip_new_layout(config):
     conv_id = "compacted-dir"
-    write_compacted_history(config, conv_id, [
-        {"role": "user", "content": "summary"},
-    ])
+    write_compacted_history(
+        config,
+        conv_id,
+        [
+            {"role": "user", "content": "summary"},
+        ],
+    )
     assert (conversations_root(config) / conv_id / "compacted.jsonl").exists()
     restored = read_compacted_history(config, conv_id)
     assert restored is not None
