@@ -27,7 +27,8 @@ See [Installation & Setup](docs/installation.md) for provider configuration, Mat
 ```bash
 make dev       # Auto-restart on file changes
 make test      # Run pytest
-make check     # Lint + type check (Python + JS)
+make fmt       # Format Python with ruff (run before opening a PR)
+make check     # Format check + lint + type check (Python + JS)
 make vendor    # Rebuild web UI vendor bundle
 make config    # Show resolved config values
 ```
