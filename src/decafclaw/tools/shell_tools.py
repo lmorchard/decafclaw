@@ -153,7 +153,7 @@ def _suggest_aux_approval_pattern(command: str, has_guidance: bool) -> str:
 
     safe_wildcard_prefixes = (
         "pytest",
-        "ruff",
+        "ruff check",
         "vitest",
         "npm test",
         "npm run test",
@@ -162,8 +162,6 @@ def _suggest_aux_approval_pattern(command: str, has_guidance: bool) -> str:
         "git diff",
         "git log",
         "git show",
-        "ls",
-        "cat",
     )
     cmd_stripped = command.strip()
     first_part = cmd_stripped.split()[0] if cmd_stripped.split() else ""
