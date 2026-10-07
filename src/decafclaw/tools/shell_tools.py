@@ -66,10 +66,28 @@ def _save_allow_pattern(config, pattern: str) -> None:
 # Note this covers command *chaining* only. Redirection (`>`, `<`) is not
 # blocked: it cannot introduce a second command, and rejecting it would break
 _SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
-_SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "eval"}
-_SHELL_WRAPPERS = {"env", "sudo", "nohup"}
+_UNWILDCARDABLE_COMMANDS = {
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "csh",
+    "tcsh",
+    # Shell execution builtins
+    "eval",
+    "exec",
+    "command",
+    "builtin",
+    # Privilege escalation & execution wrappers
+    "sudo",
+    "su",
+    "doas",
+    "env",
+    "nohup",
+    "xargs",
+}
 _VAR_ASSIGN_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*=.*$")
-
 # fnmatch wildcards. A pattern containing any of these matches a *class* of
 # commands rather than one literal command.
 _GLOB_CHARS = ("*", "?", "[")
@@ -143,22 +161,21 @@ def _has_shell_metacharacters(command: str) -> bool:
     return False
 
 
-def _get_command_executable(command_or_pattern: str) -> str | None:
-    """Extract the base executable name from a command or pattern, skipping env wrappers."""
-    tokens = command_or_pattern.strip().split()
+def _get_first_command_token(command_or_pattern: str) -> str | None:
+    """Extract the first command executable name, skipping leading env assignments and quotes."""
+    try:
+        tokens = shlex.split(command_or_pattern, posix=True)
+    except ValueError:
+        tokens = command_or_pattern.strip().split()
+
     if not tokens:
         return None
-    idx = 0
-    while idx < len(tokens):
-        token = tokens[idx]
+
+    for token in tokens:
         if _VAR_ASSIGN_RE.match(token):
-            idx += 1
             continue
-        base = Path(token).name
-        if base in _SHELL_WRAPPERS:
-            idx += 1
-            continue
-        return base
+        return Path(token).name
+
     return None
 
 
@@ -170,15 +187,15 @@ def _is_glob_pattern(pattern: str) -> bool:
 def _is_ineligible_wildcard_pattern(pattern: str) -> bool:
     """Check if a wildcard pattern is too dangerous to allow class matching (#966).
 
-    Wildcard patterns targeting shell interpreters or eval (sh, bash, zsh, eval,
-    etc.) are categorically ineligible: arbitrary commands should never be
-    auto-approved via wildcards. Exact literal patterns (without *, ?, [)
-    remain eligible for specific vetted scripts.
+    Wildcard patterns targeting shell interpreters, execution primitives, or
+    privilege wrappers (sh, bash, eval, sudo, env, etc.) are categorically
+    ineligible: arbitrary commands must never be auto-approved via wildcards.
+    Exact literal patterns (without *, ?, [) remain eligible for specific vetted scripts.
     """
     if not _is_glob_pattern(pattern):
         return False
-    exe = _get_command_executable(pattern)
-    return exe in _SHELL_INTERPRETERS
+    exe = _get_first_command_token(pattern)
+    return exe in _UNWILDCARDABLE_COMMANDS
 
 
 def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
@@ -267,11 +284,10 @@ def _suggest_pattern(command: str) -> str:
     Preserves raw token substrings so quotes are not stripped in the suggested pattern.
     Shell interpreters and eval are never wildcarded (#966).
     """
-    exe = _get_command_executable(command)
-    # Shell interpreters and eval are never wildcarded — keep exact command
-    if exe in _SHELL_INTERPRETERS:
+    exe = _get_first_command_token(command)
+    # Never wildcard interpreters, execution primitives, or wrappers — keep exact command
+    if exe in _UNWILDCARDABLE_COMMANDS:
         return command
-
     raw_tokens = _split_raw_tokens(command, max_tokens=3)
     if not raw_tokens:
         return command
