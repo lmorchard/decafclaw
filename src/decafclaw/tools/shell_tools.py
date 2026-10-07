@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from decafclaw.security_monitor import SecurityStatus, evaluate_command_llm
+from decafclaw.security_monitor import SecurityStatus, evaluate_command, evaluate_command_llm
 
 from ..media import ToolResult
 from .confirmation import request_confirmation
@@ -26,15 +26,17 @@ def _allow_patterns_path(config) -> Path:
 
 def _load_allow_patterns(config) -> list[str]:
     """Load shell allow patterns from disk. Returns [] if missing or corrupt."""
-    path = _allow_patterns_path(config)
-    if not path.exists():
-        return []
     try:
+        path = _allow_patterns_path(config)
+        if not path.exists():
+            return []
         data = json.loads(path.read_text())
         if isinstance(data, list):
             return data
-        return data.get("patterns", [])
-    except (json.JSONDecodeError, OSError) as e:
+        if isinstance(data, dict):
+            return data.get("patterns", [])
+        return []
+    except (json.JSONDecodeError, OSError, TypeError, AttributeError) as e:
         log.warning(f"Could not read shell allow patterns: {e}")
         return []
 
@@ -70,8 +72,71 @@ _GLOB_CHARS = ("*", "?", "[")
 
 
 def _has_shell_metacharacters(command: str) -> bool:
-    """Check if a command contains shell chaining/injection tokens."""
-    return any(tok in command for tok in _SHELL_CHAIN_TOKENS)
+    """Check if a command contains shell chaining/injection tokens.
+
+    Detects command chaining operators (;, &&, ||, |, &, newline) and command
+    substitutions (backticks, $()) outside quotes. Newlines and statement
+    separators embedded inside quoted arguments ("..." or '...') are treated as
+    literal data, not chaining tokens. Command substitution (`...` or $(...))
+    inside double quotes is still detected since the shell evaluates it.
+    """
+    state = "normal"
+    i = 0
+    n = len(command)
+
+    while i < n:
+        ch = command[i]
+
+        if state == "single":
+            if ch == "'":
+                state = "normal"
+            i += 1
+            continue
+
+        if state == "double":
+            if ch == "\\":
+                if i + 1 >= n:
+                    return True
+                i += 2
+                continue
+            if ch == '"':
+                state = "normal"
+                i += 1
+                continue
+            if ch == "`":
+                return True
+            if ch == "$" and i + 1 < n and command[i + 1] == "(":
+                return True
+            i += 1
+            continue
+
+        if ch == "\\":
+            if i + 1 >= n:
+                return True
+            i += 2
+            continue
+
+        if ch == "'":
+            state = "single"
+            i += 1
+            continue
+
+        if ch == '"':
+            state = "double"
+            i += 1
+            continue
+
+        if ch in (";", "&", "|", "`", "\n"):
+            return True
+        if ch == "$" and i + 1 < n and command[i + 1] == "(":
+            return True
+
+        i += 1
+
+    if state != "normal":
+        return True
+
+    return False
 
 
 def _is_glob_pattern(pattern: str) -> bool:
@@ -415,6 +480,30 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
 
     Returns {"approved": True} if auto-approved, or the user's confirmation result.
     """
+    # 1. Tier 1 fast path: Immediately block catastrophically dangerous commands
+    tier1 = evaluate_command(
+        command,
+        workspace_path=ctx.config.workspace_path,
+        is_autonomous=ctx.is_unattended,
+    )
+    if tier1.status == SecurityStatus.BLOCK:
+        log.warning(f"[{tool_name}] blocked by security monitor: {command} (reason: {tier1.reason})")
+        return {
+            "approved": False,
+            "reason": f"Blocked by security monitor: {tier1.reason}",
+        }
+
+    # 2. Explicit allow patterns take precedence and bypass Tier 2 LLM latency (#966)
+    if _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns):
+        log.info(f"[{tool_name}] pre-approved by scoped pattern: {command}")
+        return {"approved": True}
+
+    patterns = _load_allow_patterns(ctx.config)
+    if _command_matches_pattern(command, patterns):
+        log.info(f"[{tool_name}] auto-approved by pattern: {command}")
+        return {"approved": True}
+
+    # 3. Security monitor evaluation (Tier 1 sensitive patterns + Tier 2 LLM classification)
     decision = await evaluate_command_llm(
         command,
         ctx=ctx,
@@ -450,19 +539,10 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
             _save_allow_pattern(ctx.config, suggested_pattern)
         return result
 
+    # 4. Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns)
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
         log.info(f"[{tool_name}] pre-approved by command: {command}")
         return {"approved": True}
-
-    if _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns):
-        log.info(f"[{tool_name}] pre-approved by scoped pattern: {command}")
-        return {"approved": True}
-
-    patterns = _load_allow_patterns(ctx.config)
-    if _command_matches_pattern(command, patterns):
-        log.info(f"[{tool_name}] auto-approved by pattern: {command}")
-        return {"approved": True}
-
     if ctx.config.shell.aux_approval_enabled:
         if _command_matches_pattern(command, ctx.tools.llm_approved_shell_patterns):
             log.info(f"[{tool_name}] auto-approved by session aux-LLM memory: {command}")
