@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -2958,3 +2959,60 @@ TOOL_DEFINITIONS = [{"function": {"name": "my_tool", "description": "2"}}]
 
     res2 = await execute_tool(ctx, "skill2__my_tool", {})
     assert res2.text == "skill2"
+
+
+@pytest.mark.asyncio
+async def test_unattended_turn_records_activation_denial(ctx, tmp_path):
+    """When a skill activation is denied on an unattended turn, activation_denials is recorded."""
+    skill = _make_skill_info(tmp_path, trust_tier="workspace", name="ws-denied-skill")
+    ctx.config.discovered_skills = [skill]
+    ctx.task_mode = "scheduled"
+
+    result = await tool_activate_skill(ctx, name="ws-denied-skill")
+    assert "denied by user" in (result.text if hasattr(result, "text") else str(result))
+    assert "ws-denied-skill" in ctx.skills.activation_denials
+
+
+@pytest.mark.asyncio
+async def test_scheduled_task_fails_when_required_skill_denied(config, tmp_path):
+    """Scheduled task fails loudly with is_ok=False when required skill activation fails or is skipped."""
+    from decafclaw.conversation_manager import ConversationManager
+    from decafclaw.events import EventBus
+    from decafclaw.schedules import ScheduleTask, run_schedule_task
+
+    ws_skill_dir = config.workspace_path / "skills" / "ws-required"
+    _write_skill(ws_skill_dir, "name: ws-required\ndescription: Workspace required.", tools_py=True)
+    config.discovered_skills = discover_skills(config)
+
+    task = ScheduleTask(
+        name="test-newsletter",
+        schedule="* * * * *",
+        body="HEARTBEAT_OK — all quiet.",
+        source="admin",
+        path=Path("/fake/SCHEDULE.md"),
+        required_skills=["ws-required"],
+    )
+
+    manager = ConversationManager(config, EventBus())
+
+    # Stub run_agent_turn to return HEARTBEAT_OK text
+    async def fake_run(turn_ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+
+        # Turn completes with HEARTBEAT_OK
+        return ToolResult(
+            text="HEARTBEAT_OK — nothing to report.",
+            termination_reason="skill_activation_failed" if turn_ctx.skills.activation_denials else None,
+        )
+
+    with (
+        patch("decafclaw.agent.run_agent_turn", side_effect=fake_run),
+        patch("decafclaw.notifications.notify") as mock_notify,
+    ):
+        result = await run_schedule_task(config, EventBus(), manager, task)
+
+    assert result["is_ok"] is False
+    assert mock_notify.called
+    kwargs = mock_notify.call_args.kwargs
+    assert kwargs["priority"] == "high"
+    assert "alert" in kwargs["title"].lower()
