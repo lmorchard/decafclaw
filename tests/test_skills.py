@@ -2979,6 +2979,7 @@ async def test_scheduled_task_fails_when_required_skill_denied(config, tmp_path)
     from decafclaw.conversation_manager import ConversationManager
     from decafclaw.events import EventBus
     from decafclaw.schedules import ScheduleTask, run_schedule_task
+
     ws_skill_dir = config.workspace_path / "skills" / "ws-required"
     _write_skill(ws_skill_dir, "name: ws-required\ndescription: Workspace required.", tools_py=True)
     config.discovered_skills = discover_skills(config)
