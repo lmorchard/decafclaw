@@ -89,11 +89,30 @@ def _resolve_admin_path(config, path_str: str, *, allow_root: bool = False) -> t
     if not target.is_relative_to(agent_dir):
         return None, f"[error: path '{path_str}' is outside the agent directory]"
 
+    if target == agent_dir and not allow_root:
+        return None, f"[error: path '{path_str}' refers to the agent directory root, not a file]"
+
     workspace_dir = config.workspace_path.resolve()
     if target == workspace_dir or target.is_relative_to(workspace_dir):
         return None, f"[error: path '{path_str}' is inside the workspace; use workspace_* tools instead]"
 
     return target, None
+
+
+def _dir_manifest(dir_path: Path) -> dict[str, tuple[int, int]]:
+    """Generate a manifest of relative paths and their (size, mtime_ns) for directory trees."""
+    manifest = {}
+    try:
+        for p in sorted(dir_path.rglob("*")):
+            try:
+                st = p.stat()
+                rel = str(p.relative_to(dir_path))
+                manifest[rel] = (st.st_size if p.is_file() else -1, st.st_mtime_ns)
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return manifest
 
 
 @dataclass
@@ -104,6 +123,7 @@ class _AdminFileSnapshot:
     content: str | None = None
     size: int | None = None
     mtime_ns: int | None = None
+    dir_manifest: dict[str, tuple[int, int]] | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -113,6 +133,7 @@ class _AdminFileSnapshot:
             "content": self.content,
             "size": self.size,
             "mtime_ns": self.mtime_ns,
+            "dir_manifest": self.dir_manifest,
         }
 
     @classmethod
@@ -126,6 +147,7 @@ class _AdminFileSnapshot:
             content=data.get("content"),
             size=data.get("size"),
             mtime_ns=data.get("mtime_ns"),
+            dir_manifest=data.get("dir_manifest"),
         )
 
 
@@ -136,6 +158,7 @@ def _capture_snapshot(resolved: Path) -> tuple[_AdminFileSnapshot | None, ToolRe
     content = None
     size = None
     mtime_ns = None
+    dir_manifest = None
     if exists:
         try:
             stat = resolved.stat()
@@ -143,6 +166,8 @@ def _capture_snapshot(resolved: Path) -> tuple[_AdminFileSnapshot | None, ToolRe
             mtime_ns = stat.st_mtime_ns
             if not is_dir:
                 content = resolved.read_text(encoding="utf-8")
+            else:
+                dir_manifest = _dir_manifest(resolved)
         except (UnicodeDecodeError, PermissionError) as e:
             return None, _file_error(e, str(resolved))
     return (
@@ -153,6 +178,7 @@ def _capture_snapshot(resolved: Path) -> tuple[_AdminFileSnapshot | None, ToolRe
             content=content,
             size=size,
             mtime_ns=mtime_ns,
+            dir_manifest=dir_manifest,
         ),
         None,
     )
@@ -215,6 +241,15 @@ async def _revalidate_snapshot(
             return None, ToolResult(
                 text=(
                     f"[error: file '{path}' was modified on disk while confirmation was pending; "
+                    "aborting. A fresh confirmation is required.]"
+                )
+            )
+    else:
+        current_manifest = await asyncio.to_thread(_dir_manifest, re_resolved)
+        if current_manifest != (snapshot.dir_manifest or {}):
+            return None, ToolResult(
+                text=(
+                    f"[error: directory '{path}' was modified on disk while confirmation was pending; "
                     "aborting. A fresh confirmation is required.]"
                 )
             )
@@ -395,10 +430,8 @@ async def tool_admin_write(ctx: "Context", path: str, content: str) -> str | Too
         diff = _mini_diff(existing, content, path)
         preview = diff if diff else "(no changes)"
     else:
-        diff = ""
-        preview = f"(new file, {len(content)} characters)\n\n" + (
-            content[:500] + ("\n..." if len(content) > 500 else "")
-        )
+        diff = _mini_diff("", content, path)
+        preview = f"(new file, {len(content)} characters)\n\n" + (diff if diff else content)
 
     gate = await _confirm_admin_mutation(
         ctx,
@@ -728,7 +761,7 @@ class AdminMutationHandler:
     async def _apply_mutation(
         self, ctx: Any, tool_name: str, path: str, payload: dict, snapshot_data: dict
     ) -> str | ToolResult:
-        resolved, err = _resolve_admin_path(ctx.config, path, allow_root=(tool_name == "admin_delete"))
+        resolved, err = _resolve_admin_path(ctx.config, path, allow_root=False)
         if err:
             return ToolResult(text=err)
         assert resolved is not None
@@ -736,9 +769,7 @@ class AdminMutationHandler:
         snapshot = _AdminFileSnapshot.from_dict(snapshot_data, default_path=resolved)
 
         async with file_lock(resolved):
-            re_resolved, err_res = await _revalidate_snapshot(
-                ctx.config, path, snapshot, allow_root=(tool_name == "admin_delete")
-            )
+            re_resolved, err_res = await _revalidate_snapshot(ctx.config, path, snapshot, allow_root=False)
             if err_res:
                 return err_res
             assert re_resolved is not None
