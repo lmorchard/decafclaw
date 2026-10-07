@@ -40,18 +40,10 @@ jobs:
         run: uv run playwright install --with-deps chromium
 
       - name: Test
-        # Fast path on PRs: skip slow disposable-tree codegen tests if no API or web files changed.
-        # On main branch pushes (or when relevant files are modified), the full suite runs.
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin ${{ github.base_ref }} --depth=1
-            if ! git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '^(src/decafclaw/http_server\.py|src/decafclaw/web/|scripts/gen_api_client\.py|scripts/sticky_api_request\.ts|tests/test_api_codegen\.py)'; then
-              echo "No API server, client, or codegen files modified in PR. Running fast test suite..."
-              uv run pytest tests/ contrib/skills/ --ignore=tests/test_api_codegen.py
-              exit 0
-            fi
-          fi
-          uv run pytest tests/ contrib/skills/
+        # Parallelism is configured in pyproject.toml (addopts = "-n auto
+        # --dist=worksteal"). `-v` is omitted because worker output
+        # interleaves and the dots-style progress is more readable.
+        run: uv run pytest tests/ contrib/skills/
 
   js-test:
     runs-on: ubuntu-latest
