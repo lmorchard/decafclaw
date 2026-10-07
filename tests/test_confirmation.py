@@ -173,6 +173,45 @@ async def test_timeout_returns_not_approved(ctx):
 
 
 @pytest.mark.asyncio
+async def test_timeout_disabled_by_default(ctx):
+    """When confirmation_timeout_sec is None, request_confirmation waits indefinitely."""
+    ctx.config.agent.confirmation_timeout_sec = None
+
+    async def approve_after_delay():
+        await asyncio.sleep(0.05)
+        await ctx.event_bus.publish(
+            {
+                "type": "tool_confirm_response",
+                "context_id": ctx.context_id,
+                "tool": "test_tool",
+                "approved": True,
+            }
+        )
+
+    asyncio.create_task(approve_after_delay())
+    result = await request_confirmation(
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
+    )
+    assert result["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_timeout_read_from_config(ctx):
+    """When confirmation_timeout_sec is set in config, it is used."""
+    ctx.config.agent.confirmation_timeout_sec = 0.1
+    result = await request_confirmation(
+        ctx,
+        tool_name="test_tool",
+        command="do thing",
+        message="Confirm?",
+    )
+    assert result["approved"] is False
+
+
+@pytest.mark.asyncio
 async def test_extra_fields_passed_through(ctx):
     async def approve_with_extras():
         await asyncio.sleep(0.05)

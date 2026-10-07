@@ -61,4 +61,39 @@ describe('confirm-view dialog semantics', () => {
     expectDialog(card);
     expect(card.getAttribute('aria-label')).toBe('Pick one');
   });
+
+  it('renders countdown badge when timeout is configured', async () => {
+    const el = await mount([{
+      context_id: 'ctx', tool: 'shell', tool_call_id: 'tc4', command: 'git status',
+      timeout: 60, timestamp: new Date().toISOString(),
+    }]);
+
+    const badge = el.querySelector('.confirm-timeout');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toMatch(/⏱ \d+s/);
+  });
+
+  it('renders no timeout badge when timeout is disabled', async () => {
+    const el = await mount([{
+      context_id: 'ctx', tool: 'shell', tool_call_id: 'tc5', command: 'git status',
+      timeout: null,
+    }]);
+
+    const badge = el.querySelector('.confirm-timeout');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toBe('⏱ No timeout');
+  });
+
+  it('renders timeout badge in free-text workflow input card', async () => {
+    const el = await mount([{
+      context_id: 'ctx', tool: 'workflow', tool_call_id: 'tc6',
+      confirmation_id: 'c6', action_type: 'workflow_user_input',
+      message: 'Enter branch name', action_data: {},
+      timeout: null,
+    }]);
+
+    const badge = el.querySelector('.confirm-timeout');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toBe('⏱ No timeout');
+  });
 });

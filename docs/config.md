@@ -405,8 +405,12 @@ Agent identity, loop limits, tool loading, and delegation.
 | `preemptive_search.max_matches` | int | `10` | *(no env var)* |
 | `child_max_tool_iterations` | int | `10` | `CHILD_MAX_TOOL_ITERATIONS` |
 | `child_timeout_sec` | int | `300` | `CHILD_TIMEOUT_SEC` |
+| `tool_timeout_sec` | int | `180` | `TOOL_TIMEOUT_SEC` |
+| `confirmation_timeout_sec` | int \| None | `null` | `CONFIRMATION_TIMEOUT_SEC` |
 | `max_parallel_delegates` | int | `3` | `MAX_PARALLEL_DELEGATES` |
 | `max_tasks_per_delegate_call` | int | `10` | `MAX_TASKS_PER_DELEGATE_CALL` |
+
+`confirmation_timeout_sec` sets the wall-clock timeout in seconds for user confirmation prompts. Set to `null` (default) or `<= 0` to disable the timeout completely so the agent waits indefinitely for approval.
 
 `data_home` and `id` are resolved from env vars only (not from the config file) since they determine where the config file lives.
 

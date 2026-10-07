@@ -204,7 +204,23 @@ export class ToolStatusStore {
           deny_label: msg.deny_label || '',
           action_type: msg.action_type || '',
           action_data: msg.action_data || {},
+          timeout: msg.timeout != null ? msg.timeout : null,
+          timestamp: msg.timestamp || new Date().toISOString(),
         }];
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+          try {
+            const title = msg.tool ? `DecafClaw: Approval for ${msg.tool}` : 'DecafClaw: Approval needed';
+            const notif = new Notification(title, {
+              body: msg.message || msg.command || 'Approval requested by agent.',
+            });
+            notif.onclick = () => {
+              window.focus();
+              notif.close();
+            };
+          } catch (_) {
+            // Best-effort notification
+          }
+        }
         return true;
       }
 

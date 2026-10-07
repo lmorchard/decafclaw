@@ -92,4 +92,78 @@ describe('ToolStatusStore', () => {
         expect(store.pendingConfirms.length).toBe(0);
         expect(onChangeCalled).toBe(true);
     });
+
+    describe('browser notification for confirm_request', () => {
+        it('triggers desktop notification when permission is granted and sets onclick handler', () => {
+            const originalNotification = globalThis.Notification;
+            const notificationInstances = [];
+            const mockNotification = vi.fn(function(title, options) {
+                this.title = title;
+                this.options = options;
+                this.close = vi.fn();
+                notificationInstances.push(this);
+            });
+            mockNotification.permission = 'granted';
+            globalThis.Notification = /** @type {any} */ (mockNotification);
+
+            const originalFocus = globalThis.window.focus;
+            globalThis.window.focus = vi.fn();
+
+            try {
+                const store = new ToolStatusStore(() => {}, {}, {});
+                store.handleMessage({
+                    type: MESSAGE_TYPES.CONFIRM_REQUEST,
+                    conv_id: '1',
+                    confirmation_id: 'c1',
+                    tool: 'shell',
+                    command: 'git status',
+                    message: 'Run git status?',
+                }, '1');
+
+                expect(mockNotification).toHaveBeenCalledTimes(1);
+                expect(mockNotification).toHaveBeenCalledWith('DecafClaw: Approval for shell', {
+                    body: 'Run git status?',
+                });
+                expect(notificationInstances.length).toBe(1);
+
+                // Test click handler
+                notificationInstances[0].onclick();
+                expect(globalThis.window.focus).toHaveBeenCalledTimes(1);
+                expect(notificationInstances[0].close).toHaveBeenCalledTimes(1);
+
+                // Deduplicate check: duplicate message must not trigger another notification
+                store.handleMessage({
+                    type: MESSAGE_TYPES.CONFIRM_REQUEST,
+                    conv_id: '1',
+                    confirmation_id: 'c1',
+                    tool: 'shell',
+                }, '1');
+                expect(mockNotification).toHaveBeenCalledTimes(1);
+            } finally {
+                globalThis.Notification = originalNotification;
+                globalThis.window.focus = originalFocus;
+            }
+        });
+
+        it('does not trigger notification when permission is denied', () => {
+            const originalNotification = globalThis.Notification;
+            const mockNotification = vi.fn();
+            mockNotification.permission = 'denied';
+            globalThis.Notification = /** @type {any} */ (mockNotification);
+
+            try {
+                const store = new ToolStatusStore(() => {}, {}, {});
+                store.handleMessage({
+                    type: MESSAGE_TYPES.CONFIRM_REQUEST,
+                    conv_id: '1',
+                    confirmation_id: 'c1',
+                    tool: 'shell',
+                }, '1');
+
+                expect(mockNotification).not.toHaveBeenCalled();
+            } finally {
+                globalThis.Notification = originalNotification;
+            }
+        });
+    });
 });

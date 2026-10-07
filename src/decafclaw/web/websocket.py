@@ -23,6 +23,7 @@ from decafclaw.web.message_types import (
     ServerMessage,
     SrvCanvasUpdate,
     SrvConfirmationResponse,
+    SrvConfirmRequest,
     SrvConvHistory,
     SrvConvSelected,
     SrvMessageComplete,
@@ -139,7 +140,7 @@ def _confirmation_to_dict(req) -> dict:
     """Convert a ConfirmationRequest to the dict shape the client expects."""
     action_data = req.action_data or {}
     action_type = req.action_type.value
-    return {
+    res = {
         "confirmation_id": req.confirmation_id,
         "action_type": action_type,
         "tool": _legacy_tool_name(action_type),
@@ -150,7 +151,11 @@ def _confirmation_to_dict(req) -> dict:
         "deny_label": req.deny_label,
         "tool_call_id": req.tool_call_id,
         "action_data": action_data,
+        "timestamp": getattr(req, "timestamp", ""),
     }
+    if getattr(req, "timeout", None) is not None:
+        res["timeout"] = req.timeout
+    return res
 
 
 # -- WebSocket message handlers ------------------------------------------------
@@ -892,23 +897,26 @@ def _subscribe_to_conv(state, conv_id):
             action_type = event.get("action_type", "")
             action_data = event.get("action_data", {})
             log.info("Forwarding confirm request to web UI: %s", action_type)
-            await ws_send(
-                {
-                    "type": WSMessageType.CONFIRM_REQUEST,
-                    "conv_id": event_conv_id,
-                    "confirmation_id": event.get("confirmation_id", ""),
-                    "action_type": action_type,
-                    # Provide tool/command for backward compat with confirm-view
-                    "tool": _legacy_tool_name(action_type),
-                    "command": action_data.get("command", event.get("message", "")),
-                    "suggested_pattern": action_data.get("suggested_pattern", ""),
-                    "message": event.get("message", ""),
-                    "approve_label": event.get("approve_label", ""),
-                    "deny_label": event.get("deny_label", ""),
-                    "tool_call_id": event.get("tool_call_id", ""),
-                    "action_data": action_data,
-                }
-            )
+            confirm_req: SrvConfirmRequest = {
+                "type": WSMessageType.CONFIRM_REQUEST,
+                "conv_id": event_conv_id,
+                "confirmation_id": event.get("confirmation_id", ""),
+                "action_type": action_type,
+                # Provide tool/command for backward compat with confirm-view
+                "tool": _legacy_tool_name(action_type),
+                "command": action_data.get("command", event.get("message", "")),
+                "suggested_pattern": action_data.get("suggested_pattern", ""),
+                "message": event.get("message", ""),
+                "approve_label": event.get("approve_label", ""),
+                "deny_label": event.get("deny_label", ""),
+                "tool_call_id": event.get("tool_call_id", ""),
+                "action_data": action_data,
+            }
+            if event.get("timeout") is not None:
+                confirm_req["timeout"] = event.get("timeout")
+            if event.get("timestamp"):
+                confirm_req["timestamp"] = event.get("timestamp")
+            await ws_send(confirm_req)
 
         elif event_type == "confirmation_response":
             # Forward to all tabs so non-originating tabs clear the widget

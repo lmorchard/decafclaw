@@ -828,3 +828,22 @@ class TestDefaultModelInference:
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         cfg = load_config()
         assert cfg.default_model == "gemini-flash"
+
+
+class TestConfirmationTimeoutConfig:
+    """Confirmation timeout settings in AgentConfig and env coercion."""
+
+    def test_confirmation_timeout_default(self):
+        cfg = load_config()
+        assert cfg.agent.confirmation_timeout_sec is None
+
+    def test_confirmation_timeout_env_int(self, monkeypatch):
+        monkeypatch.setenv("CONFIRMATION_TIMEOUT_SEC", "120")
+        cfg = load_config()
+        assert cfg.agent.confirmation_timeout_sec == 120
+        assert isinstance(cfg.agent.confirmation_timeout_sec, int)
+
+    def test_confirmation_timeout_env_null(self, monkeypatch):
+        monkeypatch.setenv("CONFIRMATION_TIMEOUT_SEC", "null")
+        cfg = load_config()
+        assert cfg.agent.confirmation_timeout_sec is None
