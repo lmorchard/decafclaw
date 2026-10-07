@@ -149,6 +149,10 @@ class PersistedTurnState:
     activated_skills: set = field(default_factory=set)
     skip_vault_retrieval: bool = False
     active_model: str = ""
+    active_aux_approval_presets: list = field(default_factory=list)
+    disabled_aux_approval_presets: list = field(default_factory=list)
+    aux_approval_guidance: list = field(default_factory=list)
+    llm_approved_shell_patterns: list = field(default_factory=list)
 
 
 # Per-field reader/writer bindings between PersistedTurnState and the
@@ -178,6 +182,22 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
         lambda ctx: ctx.active_model,
         lambda ctx, v: setattr(ctx, "active_model", v),
     ),
+    "active_aux_approval_presets": (
+        lambda ctx: ctx.tools.active_aux_approval_presets,
+        lambda ctx, v: setattr(ctx.tools, "active_aux_approval_presets", list(v)),
+    ),
+    "disabled_aux_approval_presets": (
+        lambda ctx: ctx.tools.disabled_aux_approval_presets,
+        lambda ctx, v: setattr(ctx.tools, "disabled_aux_approval_presets", list(v)),
+    ),
+    "aux_approval_guidance": (
+        lambda ctx: ctx.tools.aux_approval_guidance,
+        lambda ctx, v: setattr(ctx.tools, "aux_approval_guidance", list(v)),
+    ),
+    "llm_approved_shell_patterns": (
+        lambda ctx: ctx.tools.llm_approved_shell_patterns,
+        lambda ctx, v: setattr(ctx.tools, "llm_approved_shell_patterns", list(v)),
+    ),
 }
 
 
@@ -190,9 +210,12 @@ _CTX_DRIVEN_FIELDS: frozenset[str] = frozenset(
         "extra_tool_definitions",
         "activated_skills",
         "skip_vault_retrieval",
+        "active_aux_approval_presets",
+        "disabled_aux_approval_presets",
+        "aux_approval_guidance",
+        "llm_approved_shell_patterns",
     }
 )
-
 
 # All declared PersistedTurnState field names — precomputed once at
 # module load so hot paths like ``set_flag`` don't reflect on every
