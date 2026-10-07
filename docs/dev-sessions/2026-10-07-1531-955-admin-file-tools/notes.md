@@ -33,7 +33,7 @@
    - Updated `CLAUDE.md` / `AGENTS.md` key tools mapping.
 
 ## Verification & Testing
-- 29 unit tests authored in `tests/test_admin_tools.py` covering path containment, workspace exclusion, read/list, write/replace/edit/delete mutations with approval and denial, unattended blocking, child agent blocking, and delegation isolation.
+- Comprehensive unit test suite in `tests/test_admin_tools.py` covering path containment, workspace exclusion, read/list, write/replace/edit/delete mutations with approval and denial, unattended blocking, child agent blocking, delegation isolation, TOCTOU revalidation, and recovery handling.
 - `ruff check`, `ruff format`, and `pyright` passed with 0 errors and 0 warnings.
 
 ## Addressing PR Review Comments
@@ -42,9 +42,20 @@
 2. **Cross-Transport Label & "Always" Suppression (Mattermost)**:
    - Extended `mattermost.py`, `mattermost_display.py`, and `mattermost_ui.py` to honor `approve_label` and `deny_label`.
    - Suppresses the "Always" button and emoji reaction instructions when custom confirmation labels are present.
-   - Added unit test `test_buttons_custom_labels_suppresses_always` in `tests/test_http_server.py`.
+   - Added unit test `test_buttons_custom_labels_suppresses_always` and `test_poll_confirmation_manager_ignores_always_when_disallowed` in `tests/test_http_server.py`.
 3. **Tool-Routing Evals**:
    - Added `admin_files` support to `src/decafclaw/eval/runner.py`, documented in `docs/eval-loop.md`, validated in `tests/test_eval_setup_overrides.py`.
    - Added bounded eval cases to `evals/tool_routing.yaml` testing routing to `admin_read` vs `workspace_read`.
 4. **Configuration File Naming**:
-   - Replaced all references to `config.yaml` with `config.json` in `admin_tools.py`, `docs/tools.md`, and test suites.
+   - Replaced all references to `config.yaml` with `config.json` in `admin_tools.py`, `docs/tools.md`, `spec.md`, and test suites.
+5. **TOCTOU Revalidation & Root Containment**:
+   - Normalized path validation now verifies `target == agent_dir and not allow_root`, rejecting aliases like `skills/..` from root deletion.
+   - Captured full pre-confirmation snapshot (`_AdminFileSnapshot`) including recursive directory manifest (`_dir_manifest`).
+   - Generates full new-file diff in confirmation preview instead of truncating at 500 characters.
+   - Revalidates path and snapshot post-confirmation under async file lock, aborting if files or directory trees change.
+6. **Recovery & Offline Restarts**:
+   - Dedicated `ConfirmationAction.ADMIN_MUTATION` and `AdminMutationHandler` for recovering pending mutations across server restarts.
+   - Enforces `allow_root=False` during recovery to prevent deleting the agent root.
+7. **Delegation Isolation & Mattermost UI**:
+   - Fixed `fake_enqueue_turn` in delegation test to return an awaitable Future.
+   - Mattermost confirmation posts display the concrete tool name (`admin_write`, `admin_delete`) instead of the generic action type.

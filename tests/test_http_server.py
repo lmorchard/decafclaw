@@ -325,6 +325,50 @@ def test_buttons_create_tokens_in_registry(http_config):
     assert len(registry) == before + 3
 
 
+@pytest.mark.asyncio
+async def test_poll_confirmation_manager_ignores_always_when_disallowed():
+    from unittest.mock import AsyncMock, MagicMock
+    from decafclaw.mattermost import MattermostClient
+
+    client = MattermostClient.__new__(MattermostClient)
+    client.bot_user_id = "bot-1"
+    client._http = MagicMock()
+    client.edit_message = AsyncMock()
+
+    # Reactions include white_check_mark (always) and thumbsup (+1)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = [
+        {"emoji_name": "white_check_mark", "user_id": "user-1"},
+        {"emoji_name": "thumbsup", "user_id": "user-1"},
+    ]
+    mock_resp.raise_for_status = MagicMock()
+    client._http.get = AsyncMock(return_value=mock_resp)
+
+    manager = MagicMock()
+    manager.respond_to_confirmation = AsyncMock()
+
+    # When allow_always=False, white_check_mark is ignored and thumbsup resolves regular approval
+    await client._poll_confirmation_manager(
+        post_id="p1",
+        manager=manager,
+        conv_id="c1",
+        confirmation_id="conf-1",
+        action_type="admin_mutation",
+        timeout=1,
+        poll_interval=0.01,
+        allow_always=False,
+    )
+
+    manager.respond_to_confirmation.assert_called_once_with(
+        "c1",
+        "conf-1",
+        approved=True,
+        always=False,
+        add_pattern=False,
+    )
+
+
 # -- Server shutdown --------------------------------------------------------
 
 
