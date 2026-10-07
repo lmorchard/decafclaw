@@ -958,3 +958,105 @@ async def test_publish_vault_folder_absolute_blocked(ctx, tmp_path):
     result = await newsletter_publish(ctx, markdown="# bad\n\nevil content")
     assert "vault_page" not in result.data["delivered_targets"]
     assert not (tmp_path / "evil").exists()
+
+
+# ---------------------------------------------------------------------------
+# HTML email rendering and wiki-link resolution tests
+# ---------------------------------------------------------------------------
+
+
+def test_render_newsletter_email_external_link(ctx, tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    ctx.config.vault.vault_path = str(vault)
+
+    # Vault page with external source URL in frontmatter
+    page_file = vault / "agent" / "pages" / "My Article.md"
+    page_file.parent.mkdir(parents=True)
+    page_file.write_text(
+        "---\nurl: https://example.com/article\ntitle: My Article\n---\nArticle content here.",
+        encoding="utf-8",
+    )
+
+    from decafclaw.skills.newsletter.tools import render_newsletter_email
+
+    md = "Check out [[My Article]] for details."
+    plain, html = render_newsletter_email(md, ctx.config, base_url="http://decafclaw:18880")
+
+    assert "My Article (https://example.com/article)" in plain
+    assert '<a href="https://example.com/article">My Article</a>' in html
+
+
+def test_render_newsletter_email_internal_deep_link(ctx, tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    ctx.config.vault.vault_path = str(vault)
+
+    # Vault page with no external URL
+    page_file = vault / "agent" / "pages" / "Internal Project.md"
+    page_file.parent.mkdir(parents=True)
+    page_file.write_text("# Internal Project\n\nNotes here.", encoding="utf-8")
+
+    from decafclaw.skills.newsletter.tools import render_newsletter_email
+
+    md = "See [[Internal Project]] or [[Internal Project|Project Alias]]."
+    plain, html = render_newsletter_email(md, ctx.config, base_url="http://decafclaw:18880")
+
+    expected_url = "http://decafclaw:18880/?vault=agent%2Fpages%2FInternal%20Project"
+    assert f"Internal Project ({expected_url})" in plain
+    assert f"Project Alias ({expected_url})" in plain
+    assert f'<a href="{expected_url}">Internal Project</a>' in html
+    assert f'<a href="{expected_url}">Project Alias</a>' in html
+
+
+def test_render_newsletter_email_missing_page_fallback(ctx, tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    ctx.config.vault.vault_path = str(vault)
+
+    from decafclaw.skills.newsletter.tools import render_newsletter_email
+
+    md = "Refer to [[Nonexistent Page]] here."
+    plain, html = render_newsletter_email(md, ctx.config, base_url="http://decafclaw:18880")
+
+    assert plain == "Refer to Nonexistent Page here."
+    assert "#Nonexistent Page" in html
+    assert "<a href=" not in html
+
+
+@pytest.mark.asyncio
+async def test_publish_scheduled_sends_html_body(ctx, tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    ctx.config.vault.vault_path = str(vault)
+
+    page_file = vault / "agent" / "pages" / "Note.md"
+    page_file.parent.mkdir(parents=True)
+    page_file.write_text("---\nurl: https://example.com/note\n---\nNote content", encoding="utf-8")
+
+    ctx.task_mode = "scheduled"
+
+    from decafclaw.skills.newsletter import tools as m
+
+    m._skill_config = SkillConfig(
+        email_enabled=True,
+        email_recipients=["reader@example.com"],
+        vault_page_enabled=False,
+        web_base_url="http://decafclaw:18880",
+    )
+
+    calls = []
+
+    async def fake_send_mail(config, *, to, subject, body, html_body=None, **kwargs):
+        calls.append({"to": to, "subject": subject, "body": body, "html_body": html_body})
+
+    monkeypatch.setattr(m, "send_mail", fake_send_mail)
+
+    result = await newsletter_publish(ctx, markdown="# Hello\n\nCheck [[Note]].", subject_hint="issue 1")
+
+    assert len(calls) == 1
+    assert calls[0]["to"] == ["reader@example.com"]
+    assert "Note (https://example.com/note)" in calls[0]["body"]
+    assert calls[0]["html_body"] is not None
+    assert '<a href="https://example.com/note">Note</a>' in calls[0]["html_body"]
+    assert "email" in result.data["delivered_targets"]
