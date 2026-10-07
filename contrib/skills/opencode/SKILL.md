@@ -206,6 +206,15 @@ Sessions expire after 30 minutes of inactivity. If a session expires, start a ne
 
 If the cwd isn't already a git repo, consider running `opencode_exec` with `git init && git add -A && git commit -m "initial"` before sending coding tasks.
 
+## Development Setup & Shell Auto-Approval
+
+When working on code development and testing tasks in the workspace, enable the `developer` and `github` shell auto-approval presets to avoid confirmation friction on routine git operations, test runs (`uv run pytest`), and formatting/linting checks:
+
+```python
+shell_guidance(action="enable_preset", preset="developer")
+shell_guidance(action="enable_preset", preset="github")
+```
+
 ## Cost Awareness
 
 Each OpenCode interaction costs money (Anthropic API usage). The structured result after each `opencode_send` includes the cost. Be mindful of:

@@ -15,3 +15,8 @@
   - Added Development Workflow Setup section in `skills/decafclaw/SKILL.md`.
   - Added Shell Auto-Approval guidance in `skills/github/SKILL.md`.
 - 2026-10-07 15:58: Added test assertions and type annotations in `tests/test_shell_approval_guidance.py`. Ran full suite (22 passed) and verified `ruff check`, `ruff format`, `pyright` (all 0 errors).
+- 2026-10-07 16:15: Addressed review feedback on PR #985:
+  - Scoped runner approval in `developer` preset to executing repository development tasks (e.g. `uv run <task>`, `poetry run <task>`, `npm run <script>`, `cargo test/check/build`) and explicitly disallowed package installations and publication.
+  - Added Development Setup & Shell Auto-Approval section to `contrib/skills/opencode/SKILL.md` and documented presets in `docs/tools.md`.
+  - Added proactive routing eval case in `evals/tool_routing.yaml` exercising `shell_guidance` invocation for session kickoff.
+  - Corrected test file path reference (`tests/test_shell_approval_guidance.py`) and removed nonexistent `gh pr watch` mention in spec/plan.
