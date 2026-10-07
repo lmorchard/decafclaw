@@ -1305,6 +1305,43 @@ async def test_respond_to_recovered_confirmation(manager):
     assert state.pending_confirmation is None
 
 
+async def test_respond_to_recovered_admin_mutation(manager):
+    """Recovering an admin mutation applies changes and clears pending confirmation."""
+    from decafclaw.archive import append_message
+
+    conv_id = "conv-recover-admin-mutation"
+    manager.config.agent_path.mkdir(parents=True, exist_ok=True)
+    target = manager.config.agent_path / "test_recovered_mgr.txt"
+    target.write_text("before recovery")
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.ADMIN_MUTATION,
+        action_data={
+            "tool_name": "admin_write",
+            "path": "test_recovered_mgr.txt",
+            "payload": {"content": "after recovery"},
+            "snapshot": {
+                "resolved": str(target.resolve()),
+                "exists": True,
+                "is_dir": False,
+                "content": "before recovery",
+            },
+        },
+        message="Approve write?",
+    )
+    append_message(manager.config, conv_id, request.to_archive_message())
+
+    await manager.startup_scan()
+
+    state = manager.get_state(conv_id)
+    assert state.pending_confirmation is not None
+
+    await manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True)
+
+    assert state.pending_confirmation is None
+    assert target.read_text() == "after recovery"
+
+
 # -- Per-kind policy matrix ----------------------------------------------------
 
 

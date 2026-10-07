@@ -537,9 +537,11 @@ class MattermostClient:
                     )
                     return
 
-                # Create confirmation post with buttons/emoji (no legacy polling)
+                approve_label = event.get("approve_label", "")
+                deny_label = event.get("deny_label", "")
+                display_tool = action_data.get("tool_name", action_type)
                 confirm_post_id = await cd.on_confirm_request(
-                    action_type,
+                    display_tool,
                     command,
                     suggested_pattern,
                     app_ctx.event_bus,
@@ -547,6 +549,8 @@ class MattermostClient:
                     tool_call_id=event.get("tool_call_id", ""),
                     conv_id=conv_id,
                     confirmation_id=confirmation_id,
+                    approve_label=approve_label,
+                    deny_label=deny_label,
                 )
 
                 # Start emoji polling routed through the manager
@@ -558,6 +562,7 @@ class MattermostClient:
                             conv_id,
                             confirmation_id,
                             action_type,
+                            allow_always=not bool(approve_label),
                         )
                     )
 
@@ -767,7 +772,15 @@ class MattermostClient:
     # -- Confirmation polling (manager-based) ----------------------------------
 
     async def _poll_confirmation_manager(
-        self, post_id, manager, conv_id, confirmation_id, action_type, timeout=60, poll_interval=2
+        self,
+        post_id,
+        manager,
+        conv_id,
+        confirmation_id,
+        action_type,
+        timeout=60,
+        poll_interval=2,
+        allow_always=True,
     ):
         """Poll a post for reactions to resolve a confirmation via the manager."""
 
@@ -801,7 +814,11 @@ class MattermostClient:
                         log.info(f"Tool approved with pattern by {user_id}")
                         await _resolve(True, add_pattern=True, label="\U0001f4d3 approved + pattern added")
                         return
-                    elif emoji in ("white_check_mark", "heavy_check_mark") and action_type != "run_shell_command":
+                    elif (
+                        emoji in ("white_check_mark", "heavy_check_mark")
+                        and action_type != "run_shell_command"
+                        and allow_always
+                    ):
                         log.info(f"Tool always-approved by {user_id}")
                         await _resolve(True, always=True, label="\u2705 always approved")
                         return

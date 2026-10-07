@@ -283,6 +283,25 @@ def test_other_tool_buttons_approve_deny_always(http_config):
     assert "add_pattern" not in action_ids
 
 
+def test_buttons_custom_labels_suppresses_always(http_config):
+    result = build_confirm_buttons(
+        http_config,
+        "admin_write",
+        "admin_write 'config.json'",
+        "",
+        "ctx-1",
+        "msg",
+        approve_label="Approve Write",
+        deny_label="Reject",
+    )
+    actions = result[0]["actions"]
+    action_ids = [a["id"] for a in actions]
+    assert action_ids == ["approve", "deny"]
+    assert "always" not in action_ids
+    assert actions[0]["name"] == "Approve Write"
+    assert actions[1]["name"] == "Reject"
+
+
 def test_buttons_context_includes_required_fields(http_config):
     result = build_confirm_buttons(http_config, "shell", "ls", "ls *", "ctx-abc", "original msg")
     ctx = result[0]["actions"][0]["integration"]["context"]
@@ -304,6 +323,51 @@ def test_buttons_create_tokens_in_registry(http_config):
     build_confirm_buttons(http_config, "shell", "ls", "ls *", "ctx-1", "msg")
     # One token per button (3 for shell: approve, deny, add_pattern)
     assert len(registry) == before + 3
+
+
+@pytest.mark.asyncio
+async def test_poll_confirmation_manager_ignores_always_when_disallowed():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from decafclaw.mattermost import MattermostClient
+
+    client = MattermostClient.__new__(MattermostClient)
+    client.bot_user_id = "bot-1"
+    client._http = MagicMock()
+    client.edit_message = AsyncMock()
+
+    # Reactions include white_check_mark (always) and thumbsup (+1)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = [
+        {"emoji_name": "white_check_mark", "user_id": "user-1"},
+        {"emoji_name": "thumbsup", "user_id": "user-1"},
+    ]
+    mock_resp.raise_for_status = MagicMock()
+    client._http.get = AsyncMock(return_value=mock_resp)
+
+    manager = MagicMock()
+    manager.respond_to_confirmation = AsyncMock()
+
+    # When allow_always=False, white_check_mark is ignored and thumbsup resolves regular approval
+    await client._poll_confirmation_manager(
+        post_id="p1",
+        manager=manager,
+        conv_id="c1",
+        confirmation_id="conf-1",
+        action_type="admin_mutation",
+        timeout=1,
+        poll_interval=0.01,
+        allow_always=False,
+    )
+
+    manager.respond_to_confirmation.assert_called_once_with(
+        "c1",
+        "conf-1",
+        approved=True,
+        always=False,
+        add_pattern=False,
+    )
 
 
 # -- Server shutdown --------------------------------------------------------

@@ -259,6 +259,8 @@ class ConversationDisplay:
         tool_call_id="",
         conv_id="",
         confirmation_id="",
+        approve_label="",
+        deny_label="",
     ) -> str:
         """Tool needs confirmation — show prompt with buttons and/or emoji.
 
@@ -280,7 +282,9 @@ class ConversationDisplay:
         # Add emoji instructions (unless disabled)
         show_emoji = not config or config.mattermost.enable_emoji_confirms
         if show_emoji:
-            if tool_name == "shell" and suggested_pattern:
+            if approve_label:
+                msg += f"\nReact: \U0001f44d {approve_label.lower()} | \U0001f44e {deny_label.lower() if deny_label else 'deny'}"
+            elif tool_name == "shell" and suggested_pattern:
                 msg += f"\nReact: \U0001f44d approve | \U0001f44e deny | \U0001f4d3 allow `{suggested_pattern}`"
             else:
                 msg += "\nReact: \U0001f44d approve | \U0001f44e deny | \u2705 always"
@@ -298,6 +302,8 @@ class ConversationDisplay:
                 tool_call_id=tool_call_id,
                 conv_id=conv_id,
                 confirmation_id=confirmation_id,
+                approve_label=approve_label,
+                deny_label=deny_label,
             )
             if attachments:
                 import json as _json

@@ -54,6 +54,15 @@ _VAULT_WRITE_TOOLS = frozenset(
     }
 )
 
+_ADMIN_WRITE_TOOLS = frozenset(
+    {
+        "admin_write",
+        "admin_replace_lines",
+        "admin_edit",
+        "admin_delete",
+    }
+)
+
 # Structured-return addendum (#395). Appended to the child system
 # prompt when `delegate_task` is called with a `return_schema` hint.
 # The schema is rendered as a JSON example; the child is instructed
@@ -232,9 +241,9 @@ async def run_child_turn(
         # If an explicit `allowed_tools` was passed (workflow callers),
         # that narrows further.
         excluded = {"delegate_task", "activate_skill", "refresh_skills", "tool_search"}
-        # Vault policy (#396): writes are categorically blocked for
-        # children regardless of flags; reads require explicit opt-in.
-        excluded |= _VAULT_WRITE_TOOLS
+        # Vault and admin policy (#396, #955): writes are categorically
+        # blocked for children; reads require explicit opt-in for vault.
+        excluded |= _VAULT_WRITE_TOOLS | _ADMIN_WRITE_TOOLS
         if not allow_vault_read:
             excluded |= _VAULT_READ_TOOLS
         all_tools = set(TOOLS) | set(parent_ctx.tools.extra)

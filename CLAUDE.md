@@ -204,7 +204,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 ### Tools
 - `tools/tool_registry.py` — Priority-based classification, deferred catalog
 - `tools/search_tools.py` — `tool_search`
-- `tools/{core,workspace_tools,conversation_tools,checklist_tools,notes_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools,sticky_tools}.py`
+- `tools/{core,admin_tools,workspace_tools,conversation_tools,checklist_tools,notes_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools,sticky_tools}.py`
 - `preempt_search.py` — Keyword-match for pre-emptive tool promotion
 
 ### Skills (bundled)

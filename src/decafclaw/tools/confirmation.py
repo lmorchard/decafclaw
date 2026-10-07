@@ -30,6 +30,10 @@ def _get_tool_action_map():
             "shell_background_start": ConfirmationAction.RUN_SHELL_COMMAND,
             "activate_skill": ConfirmationAction.ACTIVATE_SKILL,
             "end_turn_confirm": ConfirmationAction.CONTINUE_TURN,
+            "admin_write": ConfirmationAction.ADMIN_MUTATION,
+            "admin_replace_lines": ConfirmationAction.ADMIN_MUTATION,
+            "admin_edit": ConfirmationAction.ADMIN_MUTATION,
+            "admin_delete": ConfirmationAction.ADMIN_MUTATION,
         }
     return _TOOL_ACTION_MAP
 
@@ -46,6 +50,8 @@ async def _request_via_manager(ctx: "Context", tool_name, command, message, time
     for key in ("suggested_pattern", "skill_name"):
         if key in extra_event_fields:
             action_data[key] = extra_event_fields[key]
+    if "action_data" in extra_event_fields and isinstance(extra_event_fields["action_data"], dict):
+        action_data.update(extra_event_fields["action_data"])
 
     request = ConfirmationRequest(
         action_type=action_type,
