@@ -149,10 +149,10 @@ class PersistedTurnState:
     activated_skills: set = field(default_factory=set)
     skip_vault_retrieval: bool = False
     active_model: str = ""
-    active_aux_approval_presets: list = field(default_factory=list)
-    disabled_aux_approval_presets: list = field(default_factory=list)
-    aux_approval_guidance: list = field(default_factory=list)
-    llm_approved_shell_patterns: list = field(default_factory=list)
+    active_aux_approval_presets: list = field(default_factory=list, metadata={"replaceable": True})
+    disabled_aux_approval_presets: list = field(default_factory=list, metadata={"replaceable": True})
+    aux_approval_guidance: list = field(default_factory=list, metadata={"replaceable": True})
+    llm_approved_shell_patterns: list = field(default_factory=list, metadata={"replaceable": True})
 
 
 # Per-field reader/writer bindings between PersistedTurnState and the
@@ -217,17 +217,10 @@ _CTX_DRIVEN_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-# Fields that represent user-mutable collections where empty values
-# (e.g. after removing all rules or clearing disabled presets) must be
-# preserved on save and restored on the next turn, rather than treated
-# as 'skip write/restore' sticky-once-set flags.
+# Derive collection fields where replacement semantics apply from field metadata
+# so adding a new user-mutable collection to PersistedTurnState cannot drift.
 _REPLACEABLE_COLLECTION_FIELDS: frozenset[str] = frozenset(
-    {
-        "active_aux_approval_presets",
-        "disabled_aux_approval_presets",
-        "aux_approval_guidance",
-        "llm_approved_shell_patterns",
-    }
+    f.name for f in dc_fields(PersistedTurnState) if f.metadata.get("replaceable", False)
 )
 # All declared PersistedTurnState field names — precomputed once at
 # module load so hot paths like ``set_flag`` don't reflect on every
