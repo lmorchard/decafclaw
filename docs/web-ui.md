@@ -696,24 +696,13 @@ warning, refresh, or UI-state behavior. Browser coverage verifies the real
 backend routes, request bodies, 202 run responses, filesystem writes and reset,
 editor remount, and model fallback without live credentials.
 
-The isolated tests in `tests/test_api_codegen.py` delete generated output,
-change backend identifier, listing query, PATCH body, and response contracts, and load the client in Chromium through
-`/static` against a test server. They use temporary data and require no live
-credentials. Listing mutation tests isolate each operation, require a passing baseline,
-and require a type diagnostic at the unchanged store call or response read.
-PATCH mutation tests independently change the identifier, title, folder, and
-returned title type. Each starts with passing checks and requires a relevant
-type diagnostic at the unchanged store call or rename merge.
-The browser test checks session cookies, decoded folder queries, and PATCH paths
-and JSON bodies at the test server. Folder tests also check decoded nested
-paths, cookies, and success shapes in Chromium. Folder contract mutations
-change the shared body path and each route path type independently; each must
-fail at the unchanged store callers. The actual store runtime tests cover
-success, HTTP/network failures, malformed error JSON, and unused success bodies.
-Lifecycle mutations change each creation body field used by the store, a consumed
-metadata field, and each lifecycle identifier. Each requires the expected TypeScript
-error at the unchanged store caller. Chromium exercises these store methods against
-the isolated backend and checks received bodies, paths, cookies, and deletion.
+The browser integration tests in `tests/test_web_browser_scenarios.py` exercise
+the generated client in real Chromium instances through `/static` against isolated
+test servers with temporary data. They test session cookies, decoded folder queries,
+PATCH paths, JSON bodies, conversation lifecycle, canvas tabs, vault editors, and
+notifications. Static contract guards in `tests/test_api_client_contracts.py` enforce
+that all backend API routes are represented in the generated client and that no
+frontend files bypass the generated client with raw `fetch()` calls.
 Route tests cover defaults, coercions, authentication, ownership, and lifecycle storage.
 Before running `make test`, run `make install-js` and install the
 browser with `uv run playwright install chromium`. CI installs its system dependencies with
