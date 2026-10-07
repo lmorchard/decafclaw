@@ -4,11 +4,13 @@ import fnmatch
 import json
 import logging
 import os
+import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from decafclaw.security_monitor import SecurityStatus, evaluate_command_llm
+from decafclaw.security_monitor import SecurityStatus, evaluate_command, evaluate_command_llm
 
 from ..media import ToolResult
 from .confirmation import request_confirmation
@@ -26,15 +28,19 @@ def _allow_patterns_path(config) -> Path:
 
 def _load_allow_patterns(config) -> list[str]:
     """Load shell allow patterns from disk. Returns [] if missing or corrupt."""
-    path = _allow_patterns_path(config)
-    if not path.exists():
-        return []
     try:
+        path = _allow_patterns_path(config)
+        if not path.exists():
+            return []
         data = json.loads(path.read_text())
         if isinstance(data, list):
-            return data
-        return data.get("patterns", [])
-    except (json.JSONDecodeError, OSError) as e:
+            return [p for p in data if isinstance(p, str)]
+        if isinstance(data, dict):
+            raw = data.get("patterns")
+            if isinstance(raw, list):
+                return [p for p in raw if isinstance(p, str)]
+        return []
+    except (json.JSONDecodeError, OSError, TypeError, AttributeError) as e:
         log.warning(f"Could not read shell allow patterns: {e}")
         return []
 
@@ -58,25 +64,142 @@ def _save_allow_pattern(config, pattern: str) -> None:
 #   "|"   pipe, and covers "||"
 #   "`"   command substitution (legacy)
 #   "$("  command substitution
+#   "<("  process substitution (input)
+#   ">("  process substitution (output)
 #   "\n"  newline as a statement separator
-# Note this covers command *chaining* only. Redirection (`>`, `<`) is not
-# blocked: it cannot introduce a second command, and rejecting it would break
-# too many legitimate invocations.
-_SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
-
+# Note this covers command *chaining* and execution only. Plain file redirection (`>`, `<`)
+# is not blocked: it cannot introduce a command, and rejecting it would break common pipelines.
+_SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "<(", ">(", "\n")
+_UNWILDCARDABLE_COMMANDS = {
+    "sh",
+    "bash",
+    "zsh",
+    "dash",
+    "ksh",
+    "csh",
+    "tcsh",
+    # Shell execution builtins
+    "eval",
+    "exec",
+    "command",
+    "builtin",
+    # Privilege escalation & execution wrappers
+    "sudo",
+    "su",
+    "doas",
+    "env",
+    "nohup",
+    "xargs",
+}
+_VAR_ASSIGN_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*=.*$")
 # fnmatch wildcards. A pattern containing any of these matches a *class* of
 # commands rather than one literal command.
 _GLOB_CHARS = ("*", "?", "[")
 
 
 def _has_shell_metacharacters(command: str) -> bool:
-    """Check if a command contains shell chaining/injection tokens."""
-    return any(tok in command for tok in _SHELL_CHAIN_TOKENS)
+    """Check if a command contains shell chaining/injection tokens.
+
+    Detects command chaining operators (;, &&, ||, |, &, newline) and command
+    substitutions (backticks, $()) outside quotes. Newlines and statement
+    separators embedded inside quoted arguments ("..." or '...') are treated as
+    literal data, not chaining tokens. Command substitution (`...` or $(...))
+    inside double quotes is still detected since the shell evaluates it.
+    """
+    state = "normal"
+    i = 0
+    n = len(command)
+
+    while i < n:
+        ch = command[i]
+
+        if state == "single":
+            if ch == "'":
+                state = "normal"
+            i += 1
+            continue
+
+        if state == "double":
+            if ch == "\\":
+                if i + 1 >= n:
+                    return True
+                i += 2
+                continue
+            if ch == '"':
+                state = "normal"
+                i += 1
+                continue
+            if ch == "`":
+                return True
+            if ch in ("$", "<", ">") and i + 1 < n and command[i + 1] == "(":
+                return True
+            i += 1
+            continue
+
+        if ch == "\\":
+            if i + 1 >= n:
+                return True
+            i += 2
+            continue
+
+        if ch == "'":
+            state = "single"
+            i += 1
+            continue
+
+        if ch == '"':
+            state = "double"
+            i += 1
+            continue
+
+        if ch in (";", "&", "|", "`", "\n"):
+            return True
+        if ch in ("$", "<", ">") and i + 1 < n and command[i + 1] == "(":
+            return True
+
+        i += 1
+
+    if state != "normal":
+        return True
+
+    return False
+
+
+def _get_first_command_token(command_or_pattern: str) -> str | None:
+    """Extract the first command executable name, skipping leading env assignments and quotes."""
+    try:
+        tokens = shlex.split(command_or_pattern, posix=True)
+    except ValueError:
+        tokens = command_or_pattern.strip().split()
+
+    if not tokens:
+        return None
+
+    for token in tokens:
+        if _VAR_ASSIGN_RE.match(token):
+            continue
+        return Path(token).name
+
+    return None
 
 
 def _is_glob_pattern(pattern: str) -> bool:
     """Check if a pattern contains fnmatch wildcards."""
     return any(ch in pattern for ch in _GLOB_CHARS)
+
+
+def _is_ineligible_wildcard_pattern(pattern: str) -> bool:
+    """Check if a wildcard pattern is too dangerous to allow class matching (#966).
+
+    Wildcard patterns targeting shell interpreters, execution primitives, or
+    privilege wrappers (sh, bash, eval, sudo, env, etc.) are categorically
+    ineligible: arbitrary commands must never be auto-approved via wildcards.
+    Exact literal patterns (without *, ?, [) remain eligible for specific vetted scripts.
+    """
+    if not _is_glob_pattern(pattern):
+        return False
+    exe = _get_first_command_token(pattern)
+    return exe in _UNWILDCARDABLE_COMMANDS
 
 
 def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
@@ -99,6 +222,8 @@ def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
     """
     chained = _has_shell_metacharacters(command)
     for pattern in patterns:
+        if _is_ineligible_wildcard_pattern(pattern):
+            continue
         if chained and _is_glob_pattern(pattern):
             continue
         if fnmatch.fnmatch(command, pattern):
@@ -106,35 +231,84 @@ def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
     return False
 
 
+def _split_raw_tokens(command: str, max_tokens: int = 3) -> list[str]:
+    """Split command into up to max_tokens raw token substrings, preserving quotes."""
+    tokens = []
+    i = 0
+    n = len(command)
+    while i < n and len(tokens) < max_tokens:
+        while i < n and command[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if len(tokens) == max_tokens - 1:
+            tokens.append(command[i:].strip())
+            break
+        start = i
+        state = "normal"
+        while i < n:
+            ch = command[i]
+            if state == "single":
+                if ch == "'":
+                    state = "normal"
+                i += 1
+                continue
+            if state == "double":
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == '"':
+                    state = "normal"
+                    i += 1
+                    continue
+                i += 1
+                continue
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == "'":
+                state = "single"
+                i += 1
+                continue
+            if ch == '"':
+                state = "double"
+                i += 1
+                continue
+            if ch.isspace():
+                break
+            i += 1
+        tokens.append(command[start:i])
+    return tokens
+
+
 def _suggest_pattern(command: str) -> str:
     """Generate a suggested allow pattern from a command.
 
     Heuristic: keep the executable and script/subcommand path, wildcard the args.
+    Preserves raw token substrings so quotes are not stripped in the suggested pattern.
+    Shell interpreters and eval are never wildcarded (#966).
     """
-    parts = command.strip().split()
-    if not parts:
+    exe = _get_first_command_token(command)
+    # Never wildcard interpreters, execution primitives, or wrappers — keep exact command
+    if exe in _UNWILDCARDABLE_COMMANDS:
+        return command
+    raw_tokens = _split_raw_tokens(command, max_tokens=3)
+    if not raw_tokens:
         return command
 
-    # For commands like "python script.py --args", keep "python script.py *"
-    # For commands like "git status", keep "git status"
-    # For commands like "make test", keep "make test"
-
-    exe = parts[0]
+    first = raw_tokens[0]
 
     # If second part looks like a file path or subcommand, keep it
-    if len(parts) >= 2:
-        second = parts[1]
+    if len(raw_tokens) >= 2:
+        second = raw_tokens[1]
         # Keep the second part if it looks like a path or known subcommand
         if "/" in second or "." in second:
-            # Executable + script path + wildcard
-            if len(parts) > 2:
-                return f"{exe} {second} *"
-            return f"{exe} {second}"
-        # For commands like "git status", "make test" — keep as-is if short
-        if len(parts) <= 2:
+            if len(raw_tokens) > 2:
+                return f"{first} {second} *"
+            return f"{first} {second}"
+        if len(raw_tokens) <= 2:
             return command
-        # For "git diff HEAD~1" etc — keep subcommand, wildcard rest
-        return f"{exe} {second} *"
+        return f"{first} {second} *"
 
     return command
 
@@ -415,6 +589,30 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
 
     Returns {"approved": True} if auto-approved, or the user's confirmation result.
     """
+    # 1. Tier 1 fast path: Immediately block catastrophically dangerous commands
+    tier1 = evaluate_command(
+        command,
+        workspace_path=ctx.config.workspace_path,
+        is_autonomous=ctx.is_unattended,
+    )
+    if tier1.status == SecurityStatus.BLOCK:
+        log.warning(f"[{tool_name}] blocked by security monitor: {command} (reason: {tier1.reason})")
+        return {
+            "approved": False,
+            "reason": f"Blocked by security monitor: {tier1.reason}",
+        }
+
+    # 2. Explicit allow patterns take precedence and bypass Tier 2 LLM latency (#966)
+    if _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns):
+        log.info(f"[{tool_name}] pre-approved by scoped pattern: {command}")
+        return {"approved": True}
+
+    patterns = _load_allow_patterns(ctx.config)
+    if _command_matches_pattern(command, patterns):
+        log.info(f"[{tool_name}] auto-approved by pattern: {command}")
+        return {"approved": True}
+
+    # 3. Security monitor evaluation (Tier 1 sensitive patterns + Tier 2 LLM classification)
     decision = await evaluate_command_llm(
         command,
         ctx=ctx,
@@ -450,19 +648,10 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
             _save_allow_pattern(ctx.config, suggested_pattern)
         return result
 
+    # 4. Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns)
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
         log.info(f"[{tool_name}] pre-approved by command: {command}")
         return {"approved": True}
-
-    if _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns):
-        log.info(f"[{tool_name}] pre-approved by scoped pattern: {command}")
-        return {"approved": True}
-
-    patterns = _load_allow_patterns(ctx.config)
-    if _command_matches_pattern(command, patterns):
-        log.info(f"[{tool_name}] auto-approved by pattern: {command}")
-        return {"approved": True}
-
     if ctx.config.shell.aux_approval_enabled:
         if _command_matches_pattern(command, ctx.tools.llm_approved_shell_patterns):
             log.info(f"[{tool_name}] auto-approved by session aux-LLM memory: {command}")
