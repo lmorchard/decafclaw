@@ -54,6 +54,8 @@ export interface SrvConfirmRequest {
   deny_label: string;
   tool_call_id: string;
   action_data: Record<string, unknown>;
+  timeout?: number;
+  timestamp?: string;
 }
 
 export interface SrvConfirmationResponse {

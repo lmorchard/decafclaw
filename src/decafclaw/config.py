@@ -10,10 +10,11 @@ import dataclasses
 import json
 import logging
 import os
+import types
 from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
 from pathlib import Path
-from typing import Any, get_origin
+from typing import Any, Union, get_args, get_origin
 
 from dotenv import load_dotenv
 
@@ -97,6 +98,12 @@ def _parse_dict(value: str) -> dict:
 def _coerce(value: str, field_type) -> object:
     """Coerce a string value to the target field type."""
     origin = get_origin(field_type)
+    if origin is Union or (hasattr(types, "UnionType") and origin is types.UnionType):
+        if not value or value.strip().lower() in ("none", "null"):
+            return None
+        args = [a for a in get_args(field_type) if a is not type(None)]
+        if len(args) == 1:
+            return _coerce(value, args[0])
     if origin is list:
         return _parse_list(value)
     if origin is dict or field_type is dict:
@@ -461,6 +468,7 @@ def load_config() -> Config:
             "child_max_tool_iterations": "CHILD_MAX_TOOL_ITERATIONS",
             "child_timeout_sec": "CHILD_TIMEOUT_SEC",
             "tool_timeout_sec": "TOOL_TIMEOUT_SEC",
+            "confirmation_timeout_sec": "CONFIRMATION_TIMEOUT_SEC",
             "turn_on_new_message": "AGENT_TURN_ON_NEW_MESSAGE",
         },
     )

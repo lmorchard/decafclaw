@@ -158,6 +158,8 @@ class SrvConfirmRequest(TypedDict):
     deny_label: str
     tool_call_id: str
     action_data: dict[str, object]
+    timeout: NotRequired[int]
+    timestamp: NotRequired[str]
 
 
 class SrvConfirmationResponse(TypedDict):

@@ -98,7 +98,10 @@ async def _request_via_event_bus(ctx: "Context", tool_name, command, message, ti
             **extra_event_fields,
         )
         try:
-            await asyncio.wait_for(confirm_event.wait(), timeout=timeout)
+            if timeout is not None and timeout > 0:
+                await asyncio.wait_for(confirm_event.wait(), timeout=timeout)
+            else:
+                await confirm_event.wait()
         except asyncio.TimeoutError:
             log.info(f"Confirmation timed out for {tool_name}: {command}")
             return {"approved": False}
@@ -113,7 +116,7 @@ async def request_confirmation(
     tool_name: str,
     command: str,
     message: str,
-    timeout: float = 60,
+    timeout: float | None = None,
     force: bool = False,
     **extra_event_fields,
 ) -> dict:
@@ -130,6 +133,15 @@ async def request_confirmation(
     Returns a dict with at least ``"approved"`` (bool). May also contain
     ``"always"``, ``"add_pattern"``, etc.
     """
+    if timeout is None and getattr(ctx, "config", None) and getattr(ctx.config, "agent", None):
+        cfg_timeout = ctx.config.agent.confirmation_timeout_sec
+        if cfg_timeout is not None and cfg_timeout > 0:
+            timeout = float(cfg_timeout)
+        else:
+            timeout = None
+    elif timeout is not None and timeout <= 0:
+        timeout = None
+
     # Check command pre-approval before prompting (unless force=True)
     if not force and tool_name in ctx.tools.preapproved:
         log.info(f"Confirmation pre-approved for {tool_name}")
