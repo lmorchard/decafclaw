@@ -1,5 +1,6 @@
 """Newsletter bundled skill — composes and delivers periodic activity digests."""
 
+import html
 import json
 import logging
 import re
@@ -152,12 +153,20 @@ def _resolve_page_link(config, page_name: str, display_text: str | None, base_ur
 
 def render_newsletter_email(markdown: str, config, base_url: str = "http://decafclaw:18880") -> tuple[str, str]:
     """Convert raw newsletter markdown into (plain_text, html_body) with resolved links."""
+    # Cache resolved links across substitutions to avoid duplicate vault I/O
+    link_cache: dict[tuple[str, str | None], tuple[str, str]] = {}
+
+    def _get_resolved(target: str, display: str | None) -> tuple[str, str]:
+        key = (target.strip(), display.strip() if display else None)
+        if key not in link_cache:
+            link_cache[key] = _resolve_page_link(config, key[0], key[1], base_url)
+        return link_cache[key]
 
     # 1. Transform [[wiki-links]] for plain text
     def _plain_sub(match: re.Match) -> str:
         target = match.group(1)
         display = match.group(2)
-        label, url = _resolve_page_link(config, target, display, base_url)
+        label, url = _get_resolved(target, display)
         if url:
             if label != url:
                 return f"{label} ({url})"
@@ -170,23 +179,28 @@ def render_newsletter_email(markdown: str, config, base_url: str = "http://decaf
     def _html_sub(match: re.Match) -> str:
         target = match.group(1)
         display = match.group(2)
-        label, url = _resolve_page_link(config, target, display, base_url)
+        label, url = _get_resolved(target, display)
         if url:
-            return f"[{label}]({url})"
-        # Fallback to tag/pill representation
-        return f'<span style="display:inline-block;padding:1px 6px;margin:0 1px;border-radius:4px;background-color:#e2e8f0;color:#334155;font-size:0.9em;font-weight:500;">#{label}</span>'
+            escaped_label = label.replace("[", r"\[").replace("]", r"\]")
+            return f"[{escaped_label}]({url})"
+        # Fallback to tag/pill representation with properly escaped text
+        escaped_label = html.escape(label)
+        return (
+            '<span style="display:inline-block;padding:1px 6px;margin:0 1px;border-radius:4px;'
+            'background-color:#e2e8f0;color:#334155;font-size:0.9em;font-weight:500;">'
+            f"#{escaped_label}</span>"
+        )
 
     html_markdown = _WIKILINK_RE.sub(_html_sub, markdown)
 
     try:
         from markdown_it import MarkdownIt
 
-        md = MarkdownIt("commonmark", {"html": True})
+        # Disable raw HTML so agent/vault-generated HTML cannot inject arbitrary tags/scripts
+        md = MarkdownIt("commonmark", {"html": False})
         content_html = md.render(html_markdown)
     except Exception as exc:
         log.warning("Failed to render markdown to HTML with markdown-it: %s", exc)
-        import html
-
         content_html = f"<pre>{html.escape(plain_text)}</pre>"
 
     email_html = f"""<!DOCTYPE html>

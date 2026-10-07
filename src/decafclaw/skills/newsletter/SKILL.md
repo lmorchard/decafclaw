@@ -4,7 +4,7 @@ description: Compose and deliver a detailed narrative newsletter summarizing aut
 user-invocable: true
 context: inline
 argument-hint: "[send] [window] e.g. `7d`, `send`, `send 48h`"
-allowed-tools: newsletter_list_scheduled_activity, newsletter_list_vault_changes, newsletter_publish, current_time
+allowed-tools: newsletter_list_scheduled_activity, newsletter_list_vault_changes, newsletter_publish, current_time, vault_read
 required-skills: [newsletter]
 ---
 

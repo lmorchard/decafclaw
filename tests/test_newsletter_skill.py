@@ -1060,3 +1060,20 @@ async def test_publish_scheduled_sends_html_body(ctx, tmp_path, monkeypatch):
     assert calls[0]["html_body"] is not None
     assert '<a href="https://example.com/note">Note</a>' in calls[0]["html_body"]
     assert "email" in result.data["delivered_targets"]
+
+
+def test_render_newsletter_email_escapes_fallback_and_disables_raw_html(ctx, tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    ctx.config.vault.vault_path = str(vault)
+
+    from decafclaw.skills.newsletter.tools import render_newsletter_email
+
+    md = 'Check [[<script>alert("xss")</script>]] and raw <img src="x" onerror="alert(1)">.'
+    plain, html = render_newsletter_email(md, ctx.config, base_url="http://decafclaw:18880")
+
+    # Raw script in fallback should be escaped
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    # Raw HTML image tag should NOT be rendered as an HTML element
+    assert '<img src="x"' not in html
