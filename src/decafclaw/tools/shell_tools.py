@@ -65,9 +65,8 @@ def _save_allow_pattern(config, pattern: str) -> None:
 #   "\n"  newline as a statement separator
 # Note this covers command *chaining* only. Redirection (`>`, `<`) is not
 # blocked: it cannot introduce a second command, and rejecting it would break
-# too many legitimate invocations.
 _SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
-_SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh"}
+_SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "eval"}
 _SHELL_WRAPPERS = {"env", "sudo", "nohup"}
 _VAR_ASSIGN_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*=.*$")
 
@@ -84,11 +83,6 @@ def _has_shell_metacharacters(command: str) -> bool:
     separators embedded inside quoted arguments ("..." or '...') are treated as
     literal data, not chaining tokens. Command substitution (`...` or $(...))
     inside double quotes is still detected since the shell evaluates it.
-
-    Additionally, if the command invokes an interpreter or eval (e.g. sh -c,
-    bash -c, eval), script arguments undergo a second parsing pass by the shell.
-    Those script arguments are checked recursively so quoted chaining operators
-    cannot bypass confirmation (#966).
     """
     state = "normal"
     i = 0
@@ -146,119 +140,25 @@ def _has_shell_metacharacters(command: str) -> bool:
     if state != "normal":
         return True
 
-    # Check for nested evaluation in subshells or eval
-    try:
-        argv = shlex.split(command, posix=True)
-    except ValueError:
-        return True
-
-    if not argv:
-        return False
-
-    nested_script = _extract_subshell_script(argv)
-    if nested_script is not None and _has_shell_metacharacters(nested_script):
-        return True
-
     return False
 
 
-def _parse_effective_command(argv: list[str]) -> tuple[str, list[str]] | None:
-    """Extract effective command and its argument list, skipping wrappers and env vars.
-
-    Handles wrappers (env, sudo, nohup), env options (including env -S), and
-    NAME=value variable assignments preceding commands (#966 review).
-    """
-    if not argv:
+def _get_command_executable(command_or_pattern: str) -> str | None:
+    """Extract the base executable name from a command or pattern, skipping env wrappers."""
+    tokens = command_or_pattern.strip().split()
+    if not tokens:
         return None
-
-    tokens = list(argv)
     idx = 0
-
     while idx < len(tokens):
         token = tokens[idx]
-
-        # Skip shell environment variable assignments (e.g. FOO=bar)
         if _VAR_ASSIGN_RE.match(token):
             idx += 1
             continue
-
         base = Path(token).name
         if base in _SHELL_WRAPPERS:
             idx += 1
-            if base == "env":
-                while idx < len(tokens):
-                    arg = tokens[idx]
-                    if arg in ("-u", "--unset", "-C", "--chdir") and idx + 1 < len(tokens):
-                        idx += 2
-                    elif arg.startswith("-S") or arg.startswith("--split-string"):
-                        if arg in ("-S", "--split-string"):
-                            if idx + 1 < len(tokens):
-                                split_str = tokens[idx + 1]
-                                idx += 2
-                                try:
-                                    sub_tokens = shlex.split(split_str, posix=True)
-                                    tokens = tokens[:idx] + sub_tokens + tokens[idx:]
-                                except ValueError:
-                                    pass
-                        else:
-                            split_val = arg[2:] if arg.startswith("-S") else arg.split("=", 1)[1]
-                            idx += 1
-                            try:
-                                sub_tokens = shlex.split(split_val, posix=True)
-                                tokens = tokens[:idx] + sub_tokens + tokens[idx:]
-                            except ValueError:
-                                pass
-                    elif arg.startswith("-"):
-                        idx += 1
-                    elif _VAR_ASSIGN_RE.match(arg):
-                        idx += 1
-                    else:
-                        break
-            elif base == "sudo":
-                while idx < len(tokens):
-                    arg = tokens[idx]
-                    if arg in ("-u", "-g", "-p", "-h", "-c", "-C") and idx + 1 < len(tokens):
-                        idx += 2
-                    elif arg.startswith("-"):
-                        idx += 1
-                    else:
-                        break
-            elif base == "nohup":
-                while idx < len(tokens) and tokens[idx].startswith("-"):
-                    idx += 1
             continue
-
-        return base, tokens[idx + 1 :]
-
-    return None
-
-
-def _extract_subshell_script(argv: list[str]) -> str | None:
-    """Extract nested script argument if command invokes eval or a shell interpreter with -c.
-
-    Normalizes execution wrappers (env, sudo, nohup) and recognizes bundled shell flags
-    like -lc or -ec (#966 review). Returns the script string if found, or None.
-    """
-    parsed = _parse_effective_command(argv)
-    if parsed is None:
-        return None
-    cmd_name, args = parsed
-
-    if cmd_name == "eval":
-        return " ".join(args) if args else None
-
-    if cmd_name in _SHELL_INTERPRETERS:
-        for idx, arg in enumerate(args):
-            if arg.startswith("-") and not arg.startswith("--"):
-                if "c" in arg:
-                    if idx + 1 < len(args):
-                        return args[idx + 1]
-                    return None
-            elif arg == "--":
-                break
-            elif not arg.startswith("-"):
-                break
-
+        return base
     return None
 
 
@@ -268,28 +168,17 @@ def _is_glob_pattern(pattern: str) -> bool:
 
 
 def _is_ineligible_wildcard_pattern(pattern: str) -> bool:
-    """Check if a wildcard pattern is too dangerous to allow class matching (#966)."""
+    """Check if a wildcard pattern is too dangerous to allow class matching (#966).
+
+    Wildcard patterns targeting shell interpreters or eval (sh, bash, zsh, eval,
+    etc.) are categorically ineligible: arbitrary commands should never be
+    auto-approved via wildcards. Exact literal patterns (without *, ?, [)
+    remain eligible for specific vetted scripts.
+    """
     if not _is_glob_pattern(pattern):
         return False
-    try:
-        parts = shlex.split(pattern, posix=True)
-    except ValueError:
-        parts = pattern.strip().split()
-    if not parts:
-        return False
-
-    parsed = _parse_effective_command(parts)
-    if parsed is None:
-        return False
-    cmd_name, args = parsed
-
-    if cmd_name == "eval":
-        return True
-    if cmd_name in _SHELL_INTERPRETERS:
-        for opt in args:
-            if opt.startswith("-") and not opt.startswith("--") and "c" in opt:
-                return True
-    return False
+    exe = _get_command_executable(pattern)
+    return exe in _SHELL_INTERPRETERS
 
 
 def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
@@ -375,22 +264,19 @@ def _suggest_pattern(command: str) -> str:
     """Generate a suggested allow pattern from a command.
 
     Heuristic: keep the executable and script/subcommand path, wildcard the args.
-    Preserves raw token substrings so quotes are not stripped in the suggested pattern (#966 review).
+    Preserves raw token substrings so quotes are not stripped in the suggested pattern.
+    Shell interpreters and eval are never wildcarded (#966).
     """
-    try:
-        argv = shlex.split(command, posix=True)
-    except ValueError:
-        argv = command.strip().split()
-
-    # Never wildcard interpreter/eval commands (#966 review)
-    if _extract_subshell_script(argv) is not None:
+    exe = _get_command_executable(command)
+    # Shell interpreters and eval are never wildcarded — keep exact command
+    if exe in _SHELL_INTERPRETERS:
         return command
 
     raw_tokens = _split_raw_tokens(command, max_tokens=3)
     if not raw_tokens:
         return command
 
-    exe = raw_tokens[0]
+    first = raw_tokens[0]
 
     # If second part looks like a file path or subcommand, keep it
     if len(raw_tokens) >= 2:
@@ -398,11 +284,11 @@ def _suggest_pattern(command: str) -> str:
         # Keep the second part if it looks like a path or known subcommand
         if "/" in second or "." in second:
             if len(raw_tokens) > 2:
-                return f"{exe} {second} *"
-            return f"{exe} {second}"
+                return f"{first} {second} *"
+            return f"{first} {second}"
         if len(raw_tokens) <= 2:
             return command
-        return f"{exe} {second} *"
+        return f"{first} {second} *"
 
     return command
 
