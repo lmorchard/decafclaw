@@ -411,6 +411,10 @@ class ConversationManager:
 
         self.confirmation_registry.register(ConfirmationAction.WORKFLOW_USER_INPUT, WorkflowUserInputHandler(self))
 
+        from .tools.admin_tools import AdminMutationHandler
+
+        self.confirmation_registry.register(ConfirmationAction.ADMIN_MUTATION, AdminMutationHandler())
+
         self._conversations: dict[str, ConversationState] = {}
 
         # Circuit breaker config (from Mattermost config for now —

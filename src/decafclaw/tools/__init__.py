@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..media import ToolResult
+from .admin_tools import ADMIN_TOOL_DEFINITIONS, ADMIN_TOOLS
 from .attachment_tools import ATTACHMENT_TOOL_DEFINITIONS, ATTACHMENT_TOOLS
 from .canvas_tools import CANVAS_TOOL_DEFINITIONS, CANVAS_TOOLS
 from .checklist_tools import CHECKLIST_TOOL_DEFINITIONS, CHECKLIST_TOOLS
@@ -37,6 +38,7 @@ log = logging.getLogger(__name__)
 # own tools — loaded on activation.
 TOOLS = {
     **CORE_TOOLS,
+    **ADMIN_TOOLS,
     **CHECKLIST_TOOLS,
     **CONVERSATION_TOOLS,
     **WORKSPACE_TOOLS,
@@ -55,6 +57,7 @@ TOOLS = {
 }
 TOOL_DEFINITIONS = (
     CORE_TOOL_DEFINITIONS
+    + ADMIN_TOOL_DEFINITIONS
     + CHECKLIST_TOOL_DEFINITIONS
     + CONVERSATION_TOOL_DEFINITIONS
     + WORKSPACE_TOOL_DEFINITIONS

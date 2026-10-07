@@ -14,7 +14,11 @@ from pathlib import PurePosixPath
 CANONICAL_AXES: frozenset[str] = frozenset({"retrieval", "routing", "answer_quality", "workflow_discipline"})
 
 # Read-shaped tool calls whose named arg identifies the file/page read.
-READ_TOOL_ARGS: dict[str, str] = {"vault_read": "page", "workspace_read": "path"}
+READ_TOOL_ARGS: dict[str, str] = {
+    "vault_read": "page",
+    "workspace_read": "path",
+    "admin_read": "path",
+}
 
 _WIKI_RE = re.compile(r"\[\[([^\]]+)\]\]")
 

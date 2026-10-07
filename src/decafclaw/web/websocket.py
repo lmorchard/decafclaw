@@ -143,7 +143,7 @@ def _confirmation_to_dict(req) -> dict:
     res = {
         "confirmation_id": req.confirmation_id,
         "action_type": action_type,
-        "tool": _legacy_tool_name(action_type),
+        "tool": action_data.get("tool_name", _legacy_tool_name(action_type)),
         "command": action_data.get("command", req.message),
         "suggested_pattern": action_data.get("suggested_pattern", ""),
         "message": req.message,
@@ -903,7 +903,7 @@ def _subscribe_to_conv(state, conv_id):
                 "confirmation_id": event.get("confirmation_id", ""),
                 "action_type": action_type,
                 # Provide tool/command for backward compat with confirm-view
-                "tool": _legacy_tool_name(action_type),
+                "tool": action_data.get("tool_name", _legacy_tool_name(action_type)),
                 "command": action_data.get("command", event.get("message", "")),
                 "suggested_pattern": action_data.get("suggested_pattern", ""),
                 "message": event.get("message", ""),

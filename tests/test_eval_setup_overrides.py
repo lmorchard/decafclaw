@@ -397,6 +397,7 @@ def test_all_known_keys_accepted(tmp_path):
         "skills": [],
         "memories": [],
         "workspace_files": {},
+        "admin_files": {},
         "conversation_history": [],
         "embeddings_fixture": "",
         "auto_confirm": True,
