@@ -4,6 +4,7 @@ import fnmatch
 import json
 import logging
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -65,6 +66,7 @@ def _save_allow_pattern(config, pattern: str) -> None:
 # blocked: it cannot introduce a second command, and rejecting it would break
 # too many legitimate invocations.
 _SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
+_SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh"}
 
 # fnmatch wildcards. A pattern containing any of these matches a *class* of
 # commands rather than one literal command.
@@ -79,6 +81,11 @@ def _has_shell_metacharacters(command: str) -> bool:
     separators embedded inside quoted arguments ("..." or '...') are treated as
     literal data, not chaining tokens. Command substitution (`...` or $(...))
     inside double quotes is still detected since the shell evaluates it.
+
+    Additionally, if the command invokes an interpreter or eval (e.g. sh -c,
+    bash -c, eval), script arguments undergo a second parsing pass by the shell.
+    Those script arguments are checked recursively so quoted chaining operators
+    cannot bypass confirmation (#966).
     """
     state = "normal"
     i = 0
@@ -136,12 +143,51 @@ def _has_shell_metacharacters(command: str) -> bool:
     if state != "normal":
         return True
 
+    # Check for nested evaluation in subshells or eval
+    try:
+        argv = shlex.split(command, posix=True)
+    except ValueError:
+        return True
+
+    if not argv:
+        return False
+
+    if argv[0] == "eval" or (len(argv) > 1 and argv[0] in ("sudo", "env") and argv[1] == "eval"):
+        eval_args = argv[1:] if argv[0] == "eval" else argv[2:]
+        if eval_args:
+            eval_script = " ".join(eval_args)
+            if _has_shell_metacharacters(eval_script):
+                return True
+
+    for idx, arg in enumerate(argv):
+        base_cmd = Path(arg).name
+        if base_cmd in _SHELL_INTERPRETERS and idx + 1 < len(argv) and argv[idx + 1] == "-c":
+            if idx + 2 < len(argv):
+                nested_script = argv[idx + 2]
+                if _has_shell_metacharacters(nested_script):
+                    return True
+
     return False
 
 
 def _is_glob_pattern(pattern: str) -> bool:
     """Check if a pattern contains fnmatch wildcards."""
     return any(ch in pattern for ch in _GLOB_CHARS)
+
+
+def _is_ineligible_wildcard_pattern(pattern: str) -> bool:
+    """Check if a wildcard pattern is too dangerous to allow class matching (#966)."""
+    if not _is_glob_pattern(pattern):
+        return False
+    parts = pattern.strip().split()
+    if not parts:
+        return False
+    exe = Path(parts[0]).name
+    if exe == "eval":
+        return True
+    if exe in _SHELL_INTERPRETERS and len(parts) > 1 and parts[1] == "-c":
+        return True
+    return False
 
 
 def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
@@ -164,6 +210,8 @@ def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
     """
     chained = _has_shell_metacharacters(command)
     for pattern in patterns:
+        if _is_ineligible_wildcard_pattern(pattern):
+            continue
         if chained and _is_glob_pattern(pattern):
             continue
         if fnmatch.fnmatch(command, pattern):
@@ -180,11 +228,12 @@ def _suggest_pattern(command: str) -> str:
     if not parts:
         return command
 
-    # For commands like "python script.py --args", keep "python script.py *"
-    # For commands like "git status", keep "git status"
-    # For commands like "make test", keep "make test"
-
     exe = parts[0]
+    base_exe = Path(exe).name
+
+    # Never wildcard interpreter/eval commands (#966 review)
+    if base_exe == "eval" or (base_exe in _SHELL_INTERPRETERS and len(parts) > 1 and parts[1] == "-c"):
+        return command
 
     # If second part looks like a file path or subcommand, keep it
     if len(parts) >= 2:

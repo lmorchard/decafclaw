@@ -8,6 +8,7 @@ import pytest
 from decafclaw.tools.shell_tools import (
     _command_matches_pattern,
     _has_shell_metacharacters,
+    _is_ineligible_wildcard_pattern,
     _load_allow_patterns,
     _save_allow_pattern,
     _suggest_pattern,
@@ -377,3 +378,33 @@ async def test_security_monitor_still_blocks_dangerous_even_with_wildcard(ctx):
     result = await check_shell_approval(ctx, "rm -rf /")
     assert result["approved"] is False
     assert "Blocked by security monitor" in result["reason"]
+
+
+def test_interpreter_nested_scripts_detect_metacharacters():
+    """Commands invoking sh -c or eval recursively check nested script arguments (#966 review)."""
+    assert _has_shell_metacharacters("sh -c 'printf safe; rm -rf ./tmp'") is True
+    assert _has_shell_metacharacters('bash -c "printf safe && rm -rf ./tmp"') is True
+    assert _has_shell_metacharacters('eval "echo ok; rm -rf ./tmp"') is True
+    assert _has_shell_metacharacters("sh -c 'echo safe'") is False
+    assert _has_shell_metacharacters('eval "echo safe"') is False
+
+
+def test_ineligible_wildcard_patterns_for_interpreters():
+    """Wildcard patterns for sh -c and eval are ineligible for matching (#966 review)."""
+    assert _is_ineligible_wildcard_pattern("sh -c *") is True
+    assert _is_ineligible_wildcard_pattern("bash -c *") is True
+    assert _is_ineligible_wildcard_pattern("eval *") is True
+    assert _is_ineligible_wildcard_pattern("git commit *") is False
+    assert _is_ineligible_wildcard_pattern("sh -c 'echo 1'") is False
+
+    # A pattern like "sh -c *" must not match even clean sh -c commands
+    assert _command_matches_pattern("sh -c 'echo safe'", ["sh -c *"]) is False
+    # But an exact literal pattern is allowed
+    assert _command_matches_pattern("sh -c 'echo safe'", ["sh -c 'echo safe'"]) is True
+
+
+def test_suggest_pattern_does_not_wildcard_interpreters():
+    """Pattern suggestions for sh -c and eval keep exact commands rather than wildcarding (#966 review)."""
+    assert _suggest_pattern("sh -c 'echo safe'") == "sh -c 'echo safe'"
+    assert _suggest_pattern('bash -c "make build"') == 'bash -c "make build"'
+    assert _suggest_pattern("eval 'echo safe'") == "eval 'echo safe'"
