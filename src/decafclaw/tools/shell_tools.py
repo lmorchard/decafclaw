@@ -351,15 +351,17 @@ DEFAULT_AUX_APPROVAL_PRESETS: dict[str, str] = {
     "developer": (
         "Auto-approve standard software development commands within active workspace repositories, "
         "including running test suites (e.g. pytest, npm test, vitest), linters and formatters (e.g. ruff, black, eslint, prettier), "
-        "build commands, and non-destructive local git operations (e.g. git status, git diff, git log, git add, git commit, git branch, "
-        "git checkout, git switch). "
-        "Do not auto-approve destructive operations (e.g. git reset --hard, deleting uncommitted work), "
-        "or commands operating outside the workspace."
+        "typecheckers (e.g. pyright, mypy, tsc), build commands, package/environment runners (e.g. uv run, uv, poetry run, npm run, npx, cargo), "
+        "non-destructive local git operations (e.g. git status, git diff, git log, git add, git commit, git branch, git checkout, git switch), "
+        "non-destructive remote git operations (e.g. git fetch, git pull, and pushing to new or existing feature branches matching feat/*, fix/*, or test/*), "
+        "and safe sequential command chains (&&) between approved development commands. "
+        "Do not auto-approve destructive operations (e.g. git reset --hard, deleting uncommitted work, force-pushing, pushing directly to main/master, "
+        "or deleting branches/repositories), or commands operating outside the workspace."
     ),
     "github": (
-        "Auto-approve GitHub CLI (gh) commands for issue/PR inspection and safe workflow management "
-        "(e.g. gh issue list/view, gh pr list/view/diff/checkout/create, gh run list/view). "
-        "Do not auto-approve destructive operations (such as repository deletion or deleting releases/tags)."
+        "Auto-approve GitHub CLI (gh) commands for issue/PR inspection, creation, and safe workflow management "
+        "(e.g. gh issue list/view/create, gh pr list/view/diff/checkout/create/checks, gh run list/view/watch). "
+        "Do not auto-approve destructive operations (such as repository deletion, deleting releases/tags, or closing/deleting issues without context)."
     ),
 }
 
@@ -1057,6 +1059,7 @@ SHELL_TOOL_DEFINITIONS = [
             "name": "shell_guidance",
             "description": (
                 "Manage aux-LLM shell auto-approval prompt guidance and situational presets. "
+                "Call at the start of software development, testing, or GitHub workflows to reduce approval friction on routine commands. "
                 "Use 'list' to view available presets and active rules. "
                 "Use 'enable_preset' or 'disable_preset' with preset='name' to toggle situational presets (e.g. 'developer', 'github'). "
                 "Use 'add_rule' or 'remove_rule' with rule='text' to add or remove custom auto-approval prompt guidelines. "

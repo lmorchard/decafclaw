@@ -57,6 +57,10 @@ def test_build_prompt_builtin_developer_preset(tmp_path: Path):
     assert "Additional Approval Guidelines:" in prompt
     assert "- Auto-approve standard software development commands" in prompt
     assert "pytest" in prompt
+    assert "uv run" in prompt
+    assert "pyright" in prompt
+    assert "git fetch" in prompt
+    assert "&&" in prompt
     assert "unless explicitly permitted by the additional approval guidelines below" in prompt
 
 
@@ -71,6 +75,7 @@ def test_build_prompt_builtin_github_preset(tmp_path: Path):
     prompt = build_aux_approval_prompt(ctx, "gh issue list")
     assert "Additional Approval Guidelines:" in prompt
     assert "- Auto-approve GitHub CLI (gh) commands" in prompt
+    assert "gh pr list/view/diff/checkout/create/checks" in prompt
 
 
 def test_build_prompt_custom_and_overridden_presets(tmp_path: Path):
@@ -205,6 +210,7 @@ async def test_tool_shell_guidance_enable_and_disable_preset_session(tmp_path: P
 
         # Enable
         res = await tool_shell_guidance(ctx, action="enable_preset", preset="developer")
+        assert isinstance(res, str)
         assert "Enabled shell auto-approval preset `developer` for this conversation" in res
         assert "developer" in ctx.tools.active_aux_approval_presets
 
@@ -215,6 +221,7 @@ async def test_tool_shell_guidance_enable_and_disable_preset_session(tmp_path: P
         # Disable
         ctx.tools.llm_approved_shell_patterns = ["pytest *"]
         res_dis = await tool_shell_guidance(ctx, action="disable_preset", preset="developer")
+        assert isinstance(res_dis, str)
         assert "Disabled shell auto-approval preset `developer` for this conversation" in res_dis
         assert "developer" not in ctx.tools.active_aux_approval_presets
         assert "developer" in ctx.tools.disabled_aux_approval_presets
@@ -246,6 +253,7 @@ async def test_tool_shell_guidance_persistent_preset(tmp_path: Path):
         mock_confirm.return_value = {"approved": True}
 
         res = await tool_shell_guidance(ctx, action="enable_preset", preset="developer", persistent=True)
+        assert isinstance(res, str)
         assert "persistently (across all conversations)" in res
 
         # Check persistent file exists
@@ -258,6 +266,7 @@ async def test_tool_shell_guidance_persistent_preset(tmp_path: Path):
 
         # Disable persistent
         res_dis = await tool_shell_guidance(ctx, action="disable_preset", preset="developer", persistent=True)
+        assert isinstance(res_dis, str)
         assert "Disabled" in res_dis
         data_after = json.loads(p_file.read_text())
         assert "developer" not in data_after["active_presets"]
@@ -272,15 +281,18 @@ async def test_tool_shell_guidance_add_and_remove_rule(tmp_path: Path):
 
         # Session rule
         res = await tool_shell_guidance(ctx, action="add_rule", rule="Auto-approve pytest tests/")
+        assert isinstance(res, str)
         assert "Added shell auto-approval rule for this conversation" in res
         assert "Auto-approve pytest tests/" in ctx.tools.aux_approval_guidance
         ctx.tools.llm_approved_shell_patterns = ["pytest *"]
         res_rem = await tool_shell_guidance(ctx, action="remove_rule", rule="Auto-approve pytest tests/")
+        assert isinstance(res_rem, str)
         assert "Removed shell auto-approval rule for this conversation" in res_rem
         assert "Auto-approve pytest tests/" not in ctx.tools.aux_approval_guidance
         assert ctx.tools.llm_approved_shell_patterns == []
         # Persistent rule
         res_p = await tool_shell_guidance(ctx, action="add_rule", rule="Persistent rule 1", persistent=True)
+        assert isinstance(res_p, str)
         assert "persistently" in res_p
         p_file = ctx.config.agent_path / "shell_approval_guidance.json"
         import json
@@ -289,6 +301,7 @@ async def test_tool_shell_guidance_add_and_remove_rule(tmp_path: Path):
         assert "Persistent rule 1" in data["rules"]
 
         res_p_rem = await tool_shell_guidance(ctx, action="remove_rule", rule="Persistent rule 1", persistent=True)
+        assert isinstance(res_p_rem, str)
         assert "Removed" in res_p_rem
         data_after = json.loads(p_file.read_text())
         assert "Persistent rule 1" not in data_after["rules"]
@@ -422,6 +435,7 @@ async def test_tool_shell_guidance_persistent_disable_config_preset(tmp_path: Pa
 
         # Persistently disable developer preset
         res = await tool_shell_guidance(ctx, action="disable_preset", preset="developer", persistent=True)
+        assert isinstance(res, str)
         assert "Disabled shell auto-approval preset `developer` persistently" in res
 
     # Verify that in a fresh context with developer in config, it is now masked out by persistent disable
