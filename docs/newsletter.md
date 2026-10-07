@@ -25,6 +25,12 @@ Under `config.skills.newsletter` (or via `NEWSLETTER_*` env vars):
 | `email_subject_prefix` | `"[decafclaw newsletter]"` | Prepended to the subject line |
 | `vault_page_enabled` | `true` | Write a dated page under the vault |
 | `vault_folder` | `"agent/journal/newsletters"` | Relative to vault root |
+| `web_base_url` | `"http://decafclaw:18880"` | Base URL for DecafClaw web UI deep links in email |
+
+Email delivery sends `multipart/alternative` messages containing both a plain-text fallback and responsive inline-styled HTML. Vault `[[wiki-links]]` are automatically resolved before sending:
+- Pages with external URLs in their YAML frontmatter (`url`, `source_url`, `link`, `external_url`) link directly to the external source.
+- Internal vault pages link to the agent's web UI at `{web_base_url}/?vault={encoded_path}`.
+- Unresolvable or missing pages fall back to styled text tags (`#PageName`).
 
 Email uses `mail.py` directly (bypasses the `send_email` tool's confirmation gate) — the `email_recipients` list is the trust boundary.
 

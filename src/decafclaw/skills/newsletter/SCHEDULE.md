@@ -1,6 +1,6 @@
 ---
 schedule: "0 7 * * *"
-allowed-tools: newsletter_list_scheduled_activity, newsletter_list_vault_changes, newsletter_publish, current_time
+allowed-tools: newsletter_list_scheduled_activity, newsletter_list_vault_changes, newsletter_publish, current_time, vault_read
 required-skills:
   - newsletter
 ---

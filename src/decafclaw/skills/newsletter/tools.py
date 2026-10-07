@@ -1,8 +1,10 @@
 """Newsletter bundled skill — composes and delivers periodic activity digests."""
 
+import html
 import json
 import logging
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,7 +13,7 @@ from typing import TYPE_CHECKING
 from decafclaw.conversation_paths import iter_conversation_archives
 from decafclaw.mail import send_mail
 from decafclaw.media import ToolResult
-from decafclaw.skills.vault.tools import collect_recent_pages
+from decafclaw.skills.vault.tools import collect_recent_pages, resolve_page
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -38,6 +40,10 @@ class SkillConfig:
     vault_folder: str = field(
         default="agent/journal/newsletters",
         metadata={"env_alias": "NEWSLETTER_VAULT_FOLDER"},
+    )
+    web_base_url: str = field(
+        default="http://decafclaw:18880",
+        metadata={"env_alias": "NEWSLETTER_WEB_BASE_URL"},
     )
 
 
@@ -96,6 +102,219 @@ def _is_status_token(content: str) -> bool:
     if "\n" in stripped:
         return False
     return bool(_STATUS_TOKEN_RE.match(stripped))
+
+
+_WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
+
+
+def _resolve_page_link(config, page_name: str, display_text: str | None, base_url: str) -> tuple[str, str]:
+    """Resolve a wiki-link target into (label, url_or_text).
+
+    Returns (label, url) if a link can be constructed, or (label, "") if it should
+    be rendered as unlinked text / styled pill.
+    """
+    clean_target = page_name.strip()
+    label = (display_text or clean_target).strip()
+
+    resolved_path = resolve_page(config, clean_target)
+    if resolved_path is None or not resolved_path.exists():
+        # Target not in vault — return label with empty url
+        return label, ""
+
+    # Check for external source URL in frontmatter
+    try:
+        from decafclaw.frontmatter import parse_frontmatter
+
+        content = resolved_path.read_text(encoding="utf-8")
+        metadata, _ = parse_frontmatter(content)
+        for key in ("url", "source_url", "link", "external_url"):
+            val = metadata.get(key)
+            if isinstance(val, str) and (val.startswith("http://") or val.startswith("https://")):
+                return label, val
+    except Exception as exc:
+        log.debug("Failed reading frontmatter for %s: %s", resolved_path, exc)
+
+    # DecafClaw web UI deep link
+    if base_url:
+        vault_root = config.vault_root.resolve()
+        try:
+            rel_path = str(resolved_path.resolve().relative_to(vault_root))
+            if rel_path.endswith(".md"):
+                rel_path = rel_path[:-3]
+        except ValueError:
+            rel_path = clean_target
+
+        encoded_path = urllib.parse.quote(rel_path, safe="")
+        base = base_url.rstrip("/")
+        return label, f"{base}/?vault={encoded_path}"
+
+    return label, ""
+
+
+def render_newsletter_email(markdown: str, config, base_url: str = "http://decafclaw:18880") -> tuple[str, str]:
+    """Convert raw newsletter markdown into (plain_text, html_body) with resolved links."""
+    # Cache resolved links across substitutions to avoid duplicate vault I/O
+    link_cache: dict[tuple[str, str | None], tuple[str, str]] = {}
+
+    def _get_resolved(target: str, display: str | None) -> tuple[str, str]:
+        key = (target.strip(), display.strip() if display else None)
+        if key not in link_cache:
+            link_cache[key] = _resolve_page_link(config, key[0], key[1], base_url)
+        return link_cache[key]
+
+    # 1. Transform [[wiki-links]] for plain text
+    def _plain_sub(match: re.Match) -> str:
+        target = match.group(1)
+        display = match.group(2)
+        label, url = _get_resolved(target, display)
+        if url:
+            if label != url:
+                return f"{label} ({url})"
+            return url
+        return label
+
+    plain_text = _WIKILINK_RE.sub(_plain_sub, markdown)
+
+    # 2. Transform [[wiki-links]] for HTML markdown conversion
+    def _html_sub(match: re.Match) -> str:
+        target = match.group(1)
+        display = match.group(2)
+        label, url = _get_resolved(target, display)
+        if url:
+            escaped_label = label.replace("[", r"\[").replace("]", r"\]")
+            return f"[{escaped_label}]({url})"
+        # Fallback to tag/pill representation with properly escaped text
+        escaped_label = html.escape(label)
+        return (
+            '<span style="display:inline-block;padding:1px 6px;margin:0 1px;border-radius:4px;'
+            'background-color:#e2e8f0;color:#334155;font-size:0.9em;font-weight:500;">'
+            f"#{escaped_label}</span>"
+        )
+
+    html_markdown = _WIKILINK_RE.sub(_html_sub, markdown)
+
+    try:
+        from markdown_it import MarkdownIt
+
+        # Disable raw HTML so agent/vault-generated HTML cannot inject arbitrary tags/scripts
+        md = MarkdownIt("commonmark", {"html": False})
+        content_html = md.render(html_markdown)
+    except Exception as exc:
+        log.warning("Failed to render markdown to HTML with markdown-it: %s", exc)
+        content_html = f"<pre>{html.escape(plain_text)}</pre>"
+
+    email_html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {{
+      margin: 0;
+      padding: 0;
+      background-color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #1e293b;
+      line-height: 1.6;
+    }}
+    .container {{
+      max-width: 640px;
+      margin: 20px auto;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }}
+    .header {{
+      background: #0f172a;
+      color: #ffffff;
+      padding: 24px 32px;
+    }}
+    .header h1 {{
+      margin: 0;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }}
+    .content {{
+      padding: 32px;
+      font-size: 15px;
+    }}
+    .content h1, .content h2, .content h3, .content h4 {{
+      color: #0f172a;
+      margin-top: 24px;
+      margin-bottom: 12px;
+      font-weight: 600;
+      line-height: 1.3;
+    }}
+    .content h1 {{ font-size: 22px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }}
+    .content h2 {{ font-size: 18px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px; }}
+    .content h3 {{ font-size: 16px; }}
+    .content p {{ margin: 0 0 16px 0; }}
+    .content ul, .content ol {{ margin: 0 0 16px 0; padding-left: 24px; }}
+    .content li {{ margin-bottom: 6px; }}
+    .content a {{ color: #2563eb; text-decoration: none; }}
+    .content a:hover {{ text-decoration: underline; }}
+    .content blockquote {{
+      margin: 16px 0;
+      padding: 12px 16px;
+      border-left: 4px solid #cbd5e1;
+      background: #f8fafc;
+      color: #475569;
+      font-style: italic;
+    }}
+    .content code {{
+      background: #f1f5f9;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }}
+    .content pre {{
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 13px;
+    }}
+    .content pre code {{
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }}
+    .content hr {{
+      border: 0;
+      border-top: 1px solid #e2e8f0;
+      margin: 24px 0;
+    }}
+    .footer {{
+      border-top: 1px solid #e2e8f0;
+      padding: 20px 32px;
+      font-size: 12px;
+      color: #64748b;
+      background: #f8fafc;
+      text-align: center;
+    }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>☕ DecafClaw Newsletter</h1>
+    </div>
+    <div class="content">
+      {content_html}
+    </div>
+    <div class="footer">
+      Sent autonomously by DecafClaw
+    </div>
+  </div>
+</body>
+</html>
+"""
+    return plain_text, email_html
 
 
 def _parse_conv_id(conv_id: str) -> tuple[str, datetime] | None:
@@ -321,17 +540,22 @@ async def newsletter_publish(
         if _skill_config.email_enabled and _skill_config.email_recipients:
             subject_suffix = subject_hint or now.strftime("%Y-%m-%d")
             subject = f"{_skill_config.email_subject_prefix} {subject_suffix}".strip()
+            plain_body, html_body = render_newsletter_email(
+                markdown,
+                ctx.config,
+                base_url=_skill_config.web_base_url,
+            )
             try:
                 await send_mail(
                     ctx.config,
                     to=list(_skill_config.email_recipients),
                     subject=subject,
-                    body=markdown,
+                    body=plain_body,
+                    html_body=html_body,
                 )
                 delivered_targets.append("email")
             except Exception as exc:  # noqa: BLE001 — isolation boundary
                 log.warning("Newsletter email delivery failed: %s", exc)
-
         # Vault page delivery
         if _skill_config.vault_page_enabled:
             vault_root_path = ctx.config.vault_root
