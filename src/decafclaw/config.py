@@ -81,11 +81,26 @@ def _parse_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _parse_dict(value: str) -> dict:
+    """Parse a JSON object string into a string-keyed dictionary."""
+    value = value.strip()
+    if value.startswith("{") and value.endswith("}"):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                return {str(k): str(v) for k, v in parsed.items()}
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
 def _coerce(value: str, field_type) -> object:
     """Coerce a string value to the target field type."""
     origin = get_origin(field_type)
     if origin is list:
         return _parse_list(value)
+    if origin is dict or field_type is dict:
+        return _parse_dict(value)
     if field_type is bool:
         return _parse_bool(value)
     if field_type is int:
