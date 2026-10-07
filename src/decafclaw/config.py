@@ -562,6 +562,11 @@ def load_config() -> Config:
         if not default_model:
             default_model = "default"
 
+    if not default_model and llm.model in model_configs:
+        default_model = llm.model
+    elif not default_model and model_configs:
+        default_model = next(iter(model_configs))
+
     # Custom env vars from config file
     env_vars: dict[str, str] = {str(k): str(v) for k, v in file_data.get("env", {}).items()}
 
