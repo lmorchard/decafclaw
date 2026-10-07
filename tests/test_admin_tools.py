@@ -5,6 +5,7 @@ mandatory confirmation with diff preview, and categorical blocking on
 unattended runs and child agents.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -680,4 +681,3 @@ async def test_admin_mutation_recovery_rejects_root_delete(config):
     result = await handler.on_approve(mock_ctx, req, resp)
     assert "error" in result
     assert "agent directory root" in result["error"]
-
