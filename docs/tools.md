@@ -34,6 +34,19 @@ Sandboxed file operations inside `data/{agent_id}/workspace/`. See [Data Layout]
 | `workspace_diff` | | Unified diff between two files |
 | `file_share` | | Share a workspace file as a Mattermost attachment |
 
+## Admin Files (`tools/admin_tools.py`)
+
+Dedicated file tools for the agent's administrative directory (`config.agent_path`). Used to manage admin skills (`skills/`), prompts (`prompts/`), schedules (`schedules/`), and agent configuration (`config.yaml`). Strictly excludes the workspace (`config.workspace_path` — use `workspace_*` tools instead). All mutations require interactive user confirmation with a unified diff preview, and are categorically blocked on unattended runs and child agents.
+
+| Tool | Always | What it does |
+|------|:------:|--------------|
+| `admin_read` | | Read an administrative file (supports line ranges) |
+| `admin_list` | | List files and directories under `config.agent_path` |
+| `admin_write` | | Create or overwrite an admin file (requires confirmation) |
+| `admin_replace_lines` | | Replace or delete a range of lines (requires confirmation) |
+| `admin_edit` | | Exact string replacement in an admin file (requires confirmation) |
+| `admin_delete` | | Delete an admin file or directory (requires confirmation) |
+
 ## Vault (`skills/vault/tools.py`)
 
 Always-activated skill for the unified knowledge base. See [Vault](vault.md).
