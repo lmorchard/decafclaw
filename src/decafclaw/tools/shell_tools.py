@@ -34,9 +34,11 @@ def _load_allow_patterns(config) -> list[str]:
             return []
         data = json.loads(path.read_text())
         if isinstance(data, list):
-            return data
+            return [p for p in data if isinstance(p, str)]
         if isinstance(data, dict):
-            return data.get("patterns", [])
+            raw = data.get("patterns")
+            if isinstance(raw, list):
+                return [p for p in raw if isinstance(p, str)]
         return []
     except (json.JSONDecodeError, OSError, TypeError, AttributeError) as e:
         log.warning(f"Could not read shell allow patterns: {e}")
@@ -62,10 +64,12 @@ def _save_allow_pattern(config, pattern: str) -> None:
 #   "|"   pipe, and covers "||"
 #   "`"   command substitution (legacy)
 #   "$("  command substitution
+#   "<("  process substitution (input)
+#   ">("  process substitution (output)
 #   "\n"  newline as a statement separator
-# Note this covers command *chaining* only. Redirection (`>`, `<`) is not
-# blocked: it cannot introduce a second command, and rejecting it would break
-_SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
+# Note this covers command *chaining* and execution only. Plain file redirection (`>`, `<`)
+# is not blocked: it cannot introduce a command, and rejecting it would break common pipelines.
+_SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "<(", ">(", "\n")
 _UNWILDCARDABLE_COMMANDS = {
     "sh",
     "bash",
@@ -127,7 +131,7 @@ def _has_shell_metacharacters(command: str) -> bool:
                 continue
             if ch == "`":
                 return True
-            if ch == "$" and i + 1 < n and command[i + 1] == "(":
+            if ch in ("$", "<", ">") and i + 1 < n and command[i + 1] == "(":
                 return True
             i += 1
             continue
@@ -150,7 +154,7 @@ def _has_shell_metacharacters(command: str) -> bool:
 
         if ch in (";", "&", "|", "`", "\n"):
             return True
-        if ch == "$" and i + 1 < n and command[i + 1] == "(":
+        if ch in ("$", "<", ">") and i + 1 < n and command[i + 1] == "(":
             return True
 
         i += 1

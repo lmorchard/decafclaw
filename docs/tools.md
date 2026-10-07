@@ -119,19 +119,20 @@ The chaining tokens (`_SHELL_CHAIN_TOKENS`) are a minimal covering set — each 
 | `\|` | pipe, and `\|\|` |
 | `` ` `` | command substitution (legacy) |
 | `$(` | command substitution |
+| `<(` | process substitution (input) |
+| `>(` | process substitution (output) |
 | `\n` | newline as statement separator |
 
 Don't add `&&` or `||` back as separate entries — they're already covered, and the redundancy invites the mistake of thinking `&&` is handled while bare `&` isn't. That exact gap shipped once: `&` was missing while `&&` was present, so `python foo.py --a & rm -rf ~` backgrounded the approved command and ran an unapproved one.
 
-#### Quote-aware token scanning and nested interpreter handling (#966)
+#### Quote-aware token scanning and interpreter handling (#966)
 
 The chaining token scanner is quote-aware:
 - Newlines, semicolons, and pipes embedded within quoted strings (`"..."` or `'...'`) are treated as literal argument data rather than statement separators. This enables multi-line commit messages (`git commit -m "title\n\nbody"`) and multi-line issue bodies (`gh issue create --body "line 1\nline 2"`) to match wildcard allow patterns.
-- Command substitutions (`$()`, `` ` ``) inside double quotes remain active in shell execution and are always detected as chaining.
-- If a command invokes nested script execution (e.g. `sh -c`, `bash -c`, or `eval`), the script arguments are recursively inspected for chaining tokens, ensuring that second-pass script parsing cannot smuggle unvetted operators inside outer quotes.
-- Wildcard patterns for interpreters (`sh -c *`, `bash -c *`, `eval *`) are ineligible for class matching; `_suggest_pattern()` never wildcards them, requiring explicit literal approvals for specific scripts.
+- Command substitutions (`$()`, `` ` ``) and process substitutions (`<()`, `>()`) remain active in shell execution and are always detected as chaining/execution tokens, even inside double quotes.
+- Wildcard patterns targeting shell interpreters, execution primitives, or privilege wrappers (`sh`, `bash`, `zsh`, `dash`, `ksh`, `eval`, `exec`, `command`, `sudo`, `env`, etc.) are categorically ineligible for wildcard pattern matching; `_suggest_pattern()` never wildcards them, requiring explicit literal approvals for specific scripts.
 
-This covers command *chaining* only. Redirection (`>`, `<`) is deliberately not blocked — it can't introduce a second command, and rejecting it would break too many legitimate invocations. A wildcard pattern therefore still permits redirection in its arguments.
+This covers command *chaining* and execution only. Plain file redirection (`>`, `<`) is deliberately not blocked — it can't introduce a command, and rejecting it would break common pipeline invocations. A wildcard pattern therefore still permits plain file redirection in its arguments (while process substitution `<(...)` / `>(...)` is blocked).
 
 Literal patterns are exempt — they pin the command end to end, so there's no wildcard for an unapproved suffix to slip through. A user who allowlists `git log | head -20` gets exactly that command and nothing else.
 
