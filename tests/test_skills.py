@@ -2,10 +2,9 @@
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-
-from unittest.mock import patch
 
 from decafclaw.media import ToolResult
 from decafclaw.skills import (
@@ -2977,10 +2976,9 @@ async def test_unattended_turn_records_activation_denial(ctx, tmp_path):
 @pytest.mark.asyncio
 async def test_scheduled_task_fails_when_required_skill_denied(config, tmp_path):
     """Scheduled task fails loudly with is_ok=False when required skill activation fails or is skipped."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.events import EventBus
     from decafclaw.schedules import ScheduleTask, run_schedule_task
-    from decafclaw.conversation_manager import ConversationManager
-
     ws_skill_dir = config.workspace_path / "skills" / "ws-required"
     _write_skill(ws_skill_dir, "name: ws-required\ndescription: Workspace required.", tools_py=True)
     config.discovered_skills = discover_skills(config)
