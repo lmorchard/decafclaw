@@ -122,3 +122,38 @@
     response_contains: "amtool silence add"
     max_tool_calls: 4
     max_tool_errors: 0
+
+- name: "routes to admin_read for an administrative config file"
+  tests: routing
+  setup:
+    config_overrides: {reflection.enabled: false}
+    admin_files:
+      "config.json": |
+        {"agent": {"name": "TestClaw", "id": "test"}}
+  input: "Read config.json from our agent configuration directory and tell me the agent name."
+  expect:
+    expect_tool: admin_read
+    expect_no_tool: workspace_read
+    response_contains: "TestClaw"
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "routes to workspace_read for a project file over an admin distractor"
+  tests: routing
+  setup:
+    config_overrides: {reflection.enabled: false}
+    admin_files:
+      "prompts/review-prompt.md": |
+        # Admin Prompt
+        Review prompt guidelines: verify linting and tests before signoff.
+    workspace_files:
+      "prompts/review-prompt.md": |
+        # Workspace Prompt
+        Project-specific review guidelines: verify staging deployment before signoff.
+  input: "Read prompts/review-prompt.md in our workspace project files and tell me the workspace verification step."
+  expect:
+    expect_tool: workspace_read
+    expect_no_tool: admin_read
+    response_contains: "staging deployment"
+    max_tool_calls: 4
+    max_tool_errors: 0

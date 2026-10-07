@@ -35,3 +35,16 @@
 ## Verification & Testing
 - 29 unit tests authored in `tests/test_admin_tools.py` covering path containment, workspace exclusion, read/list, write/replace/edit/delete mutations with approval and denial, unattended blocking, child agent blocking, and delegation isolation.
 - `ruff check`, `ruff format`, and `pyright` passed with 0 errors and 0 warnings.
+
+## Addressing PR Review Comments
+1. **Force Confirmation (`force=True`)**:
+   - `_confirm_admin_mutation` now passes `force=True` to `request_confirmation`, ensuring pre-approved contexts cannot bypass interactive review for admin mutations. Added `test_admin_write_prompts_even_if_preapproved`.
+2. **Cross-Transport Label & "Always" Suppression (Mattermost)**:
+   - Extended `mattermost.py`, `mattermost_display.py`, and `mattermost_ui.py` to honor `approve_label` and `deny_label`.
+   - Suppresses the "Always" button and emoji reaction instructions when custom confirmation labels are present.
+   - Added unit test `test_buttons_custom_labels_suppresses_always` in `tests/test_http_server.py`.
+3. **Tool-Routing Evals**:
+   - Added `admin_files` support to `src/decafclaw/eval/runner.py`, documented in `docs/eval-loop.md`, validated in `tests/test_eval_setup_overrides.py`.
+   - Added bounded eval cases to `evals/tool_routing.yaml` testing routing to `admin_read` vs `workspace_read`.
+4. **Configuration File Naming**:
+   - Replaced all references to `config.yaml` with `config.json` in `admin_tools.py`, `docs/tools.md`, and test suites.

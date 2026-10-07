@@ -122,6 +122,7 @@ async def _confirm_admin_mutation(
         tool_name=tool_name,
         command=command,
         message=preview,
+        force=True,
         approve_label="Approve",
         deny_label="Deny",
     )
@@ -460,7 +461,7 @@ ADMIN_TOOL_DEFINITIONS = [
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path within the agent admin directory (e.g. 'skills/my-skill/SKILL.md', 'config.yaml')",
+                        "description": "Relative path within the agent admin directory (e.g. 'skills/my-skill/SKILL.md', 'config.json')",
                     },
                     "start_line": {
                         "type": "integer",
@@ -503,7 +504,7 @@ ADMIN_TOOL_DEFINITIONS = [
             "name": "admin_write",
             "description": (
                 "Create or overwrite a file in the agent's administrative directory (config.agent_path) — "
-                "e.g. admin skills ('skills/...'), prompts ('prompts/...'), or configuration ('config.yaml'). "
+                "e.g. admin skills ('skills/...'), prompts ('prompts/...'), or configuration ('config.json'). "
                 "REQUIRES INTERACTIVE USER CONFIRMATION showing a unified diff preview. "
                 "Blocked on unattended turns and child agents. NOT for workspace files (use workspace_write)."
             ),

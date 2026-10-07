@@ -283,6 +283,25 @@ def test_other_tool_buttons_approve_deny_always(http_config):
     assert "add_pattern" not in action_ids
 
 
+def test_buttons_custom_labels_suppresses_always(http_config):
+    result = build_confirm_buttons(
+        http_config,
+        "admin_write",
+        "admin_write 'config.json'",
+        "",
+        "ctx-1",
+        "msg",
+        approve_label="Approve Write",
+        deny_label="Reject",
+    )
+    actions = result[0]["actions"]
+    action_ids = [a["id"] for a in actions]
+    assert action_ids == ["approve", "deny"]
+    assert "always" not in action_ids
+    assert actions[0]["name"] == "Approve Write"
+    assert actions[1]["name"] == "Reject"
+
+
 def test_buttons_context_includes_required_fields(http_config):
     result = build_confirm_buttons(http_config, "shell", "ls", "ls *", "ctx-abc", "original msg")
     ctx = result[0]["actions"][0]["integration"]["context"]
