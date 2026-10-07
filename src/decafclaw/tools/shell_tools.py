@@ -351,11 +351,13 @@ DEFAULT_AUX_APPROVAL_PRESETS: dict[str, str] = {
     "developer": (
         "Auto-approve standard software development commands within active workspace repositories, "
         "including running test suites (e.g. pytest, npm test, vitest), linters and formatters (e.g. ruff, black, eslint, prettier), "
-        "typecheckers (e.g. pyright, mypy, tsc), build commands, package/environment runners (e.g. uv run, uv, poetry run, npm run, npx, cargo), "
+        "typecheckers (e.g. pyright, mypy, tsc), build commands, executing repository development tasks via environment runners "
+        "(e.g. uv run <task>, poetry run <task>, npm run <script>, cargo test/check/build), "
         "non-destructive local git operations (e.g. git status, git diff, git log, git add, git commit, git branch, git checkout, git switch), "
         "non-destructive remote git operations (e.g. git fetch, git pull, and pushing to new or existing feature branches matching feat/*, fix/*, or test/*), "
         "and safe sequential command chains (&&) between approved development commands. "
-        "Do not auto-approve destructive operations (e.g. git reset --hard, deleting uncommitted work, force-pushing, pushing directly to main/master, "
+        "Do not auto-approve package installations (e.g. pip install, uv add, npm install), package publication, "
+        "destructive operations (e.g. git reset --hard, deleting uncommitted work, force-pushing, pushing directly to main/master, "
         "or deleting branches/repositories), or commands operating outside the workspace."
     ),
     "github": (
