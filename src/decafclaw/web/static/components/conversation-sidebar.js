@@ -113,6 +113,15 @@ export class ConversationSidebar extends LitElement {
     // the desktop session left _collapsed=true.
     this.toggleAttribute('collapsed', this._collapsed && !this._mobileOpen);
     this.toggleAttribute('mobile-open', this._mobileOpen);
+
+    // Sync model selector value if present
+    const modelSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#model-select'));
+    if (modelSelect) {
+      const target = this._activeModel || this._defaultModel;
+      if (target && modelSelect.value !== target) {
+        modelSelect.value = target;
+      }
+    }
   }
 
   /** @param {string} tab */
@@ -236,7 +245,8 @@ export class ConversationSidebar extends LitElement {
   #handleNew() {
     // Create in current folder (only in active section)
     const folder = this._chatSection === '' ? this._chatFolder : '';
-    this.store?.createConversation('', '', folder);
+    const model = this._activeModel || this._defaultModel;
+    this.store?.createConversation('', model, folder);
   }
 
   async #createChatFolder() {
@@ -606,11 +616,17 @@ export class ConversationSidebar extends LitElement {
                 @change=${(e) => this.#handleModelChange(e)}>
           ${(() => {
             const target = this._activeModel || this._defaultModel;
-            return this._availableModels.map(m => html`
-              <option value="${m}" ?selected=${m === target}>
-                ${m}${m === this._defaultModel ? ' (default)' : ''}
-              </option>
-            `);
+            const unconfigured = target && !this._availableModels.includes(target);
+            return html`
+              ${unconfigured ? html`
+                <option value="${target}" selected>⚠ ${target} (not configured)</option>
+              ` : nothing}
+              ${this._availableModels.map(m => html`
+                <option value="${m}" ?selected=${m === target} .selected=${m === target}>
+                  ${m}${m === this._defaultModel ? ' (default)' : ''}
+                </option>
+              `)}
+            `;
           })()}
         </select>
       </div>
