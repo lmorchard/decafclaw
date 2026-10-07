@@ -302,6 +302,8 @@ def test_suggest_aux_approval_pattern_no_destructive_wildcards():
     assert _suggest_aux_approval_pattern("git add path/to/file.py", has_guidance=True) == "git add path/to/file.py"
     assert _suggest_aux_approval_pattern("git commit -m 'feat'", has_guidance=True) == "git commit -m 'feat'"
     assert _suggest_aux_approval_pattern("find . -name '*.tmp'", has_guidance=True) == "find . -name '*.tmp'"
+    assert _suggest_aux_approval_pattern("ruff format file.py", has_guidance=True) == "ruff format file.py"
+    assert _suggest_aux_approval_pattern("ruff check src/foo.py -v", has_guidance=True) == "ruff check *"
 
     # Safe read-only / test commands are still allowed to wildcard
     assert (
