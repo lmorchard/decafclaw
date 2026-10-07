@@ -149,6 +149,10 @@ class PersistedTurnState:
     activated_skills: set = field(default_factory=set)
     skip_vault_retrieval: bool = False
     active_model: str = ""
+    active_aux_approval_presets: list = field(default_factory=list, metadata={"replaceable": True})
+    disabled_aux_approval_presets: list = field(default_factory=list, metadata={"replaceable": True})
+    aux_approval_guidance: list = field(default_factory=list, metadata={"replaceable": True})
+    llm_approved_shell_patterns: list = field(default_factory=list, metadata={"replaceable": True})
 
 
 # Per-field reader/writer bindings between PersistedTurnState and the
@@ -178,6 +182,22 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
         lambda ctx: ctx.active_model,
         lambda ctx, v: setattr(ctx, "active_model", v),
     ),
+    "active_aux_approval_presets": (
+        lambda ctx: ctx.tools.active_aux_approval_presets,
+        lambda ctx, v: setattr(ctx.tools, "active_aux_approval_presets", list(v)),
+    ),
+    "disabled_aux_approval_presets": (
+        lambda ctx: ctx.tools.disabled_aux_approval_presets,
+        lambda ctx, v: setattr(ctx.tools, "disabled_aux_approval_presets", list(v)),
+    ),
+    "aux_approval_guidance": (
+        lambda ctx: ctx.tools.aux_approval_guidance,
+        lambda ctx, v: setattr(ctx.tools, "aux_approval_guidance", list(v)),
+    ),
+    "llm_approved_shell_patterns": (
+        lambda ctx: ctx.tools.llm_approved_shell_patterns,
+        lambda ctx, v: setattr(ctx.tools, "llm_approved_shell_patterns", list(v)),
+    ),
 }
 
 
@@ -190,10 +210,18 @@ _CTX_DRIVEN_FIELDS: frozenset[str] = frozenset(
         "extra_tool_definitions",
         "activated_skills",
         "skip_vault_retrieval",
+        "active_aux_approval_presets",
+        "disabled_aux_approval_presets",
+        "aux_approval_guidance",
+        "llm_approved_shell_patterns",
     }
 )
 
-
+# Derive collection fields where replacement semantics apply from field metadata
+# so adding a new user-mutable collection to PersistedTurnState cannot drift.
+_REPLACEABLE_COLLECTION_FIELDS: frozenset[str] = frozenset(
+    f.name for f in dc_fields(PersistedTurnState) if f.metadata.get("replaceable", False)
+)
 # All declared PersistedTurnState field names — precomputed once at
 # module load so hot paths like ``set_flag`` don't reflect on every
 # call. Stays in sync with the dataclass automatically.
@@ -1775,9 +1803,12 @@ class ConversationManager:
         for f in dc_fields(PersistedTurnState):
             _, writer = _PERSISTED_BINDINGS[f.name]
             value = getattr(persisted, f.name)
-            if not value:
+            if f.name in _REPLACEABLE_COLLECTION_FIELDS:
+                writer(ctx, list(value) if value is not None else [])
+            elif not value:
                 continue
-            writer(ctx, value)
+            else:
+                writer(ctx, value)
 
     def _save_conversation_state(self, state: ConversationState, ctx) -> None:
         """Persist ctx-driven state into ``state.persisted``.
@@ -1797,7 +1828,9 @@ class ConversationManager:
                 continue
             reader, _ = _PERSISTED_BINDINGS[f.name]
             value = reader(ctx)
-            if value:
+            if f.name in _REPLACEABLE_COLLECTION_FIELDS:
+                setattr(persisted, f.name, list(value) if value is not None else [])
+            elif value:
                 setattr(persisted, f.name, value)
 
     async def _drain_pending(self, state: ConversationState) -> None:

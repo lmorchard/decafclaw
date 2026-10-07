@@ -329,3 +329,31 @@
     caller-supplied number; it derives every page's score from retrieval/
     inbound-link telemetry and would silently overwrite the requested 0.9
     with whatever the formula computes, which isn't what was asked.
+
+# -- shell_guidance vs shell_patterns / shell ---------------------------------
+# (#954)
+
+- name: shell-guidance-vs-patterns-enable-preset
+  scenario: "Enable the developer auto-approval preset so routine git commands and pytest don't require confirmation during this coding session."
+  expected: shell_guidance
+  near_miss: [shell_patterns, shell]
+  notes: |
+    Enabling a situational auto-approval preset / LLM prompt guidance rule is
+    shell_guidance (action='enable_preset'). shell_patterns manages static glob
+    allow patterns (e.g. 'pytest *'), not semantic LLM approval presets/guidance.
+
+- name: shell-patterns-vs-guidance-glob-pattern
+  scenario: "Add a glob allow pattern 'pytest tests/*.py *' to automatically approve matching shell commands."
+  expected: shell_patterns
+  near_miss: [shell_guidance, shell]
+  notes: |
+    Adding a static glob allow pattern for shell commands without aux-LLM
+    evaluation is shell_patterns (action='add', pattern='...').
+
+- name: shell-guidance-vs-shell-list-active
+  scenario: "Show me what shell auto-approval presets and prompt guidelines are currently active."
+  expected: shell_guidance
+  near_miss: [shell_patterns, shell]
+  notes: |
+    Inspecting the active auto-approval prompt guidance rules and presets
+    is shell_guidance with action='list'.
