@@ -139,6 +139,126 @@ def _suggest_pattern(command: str) -> str:
     return command
 
 
+DEFAULT_AUX_APPROVAL_PRESETS: dict[str, str] = {
+    "developer": (
+        "Auto-approve standard software development commands within active workspace repositories, "
+        "including running test suites (e.g. pytest, npm test, vitest), linters and formatters (e.g. ruff, black, eslint, prettier), "
+        "build commands, and non-destructive git operations (e.g. git status, git diff, git log, git add, git commit, git branch, "
+        "git checkout, git switch, and git push to non-main/feature branches). "
+        "Do not auto-approve destructive operations (e.g. git push --force, git reset --hard, deleting uncommitted work), "
+        "or commands operating outside the workspace."
+    ),
+    "github": (
+        "Auto-approve GitHub CLI (gh) commands for issue/PR inspection and safe workflow management "
+        "(e.g. gh issue list/view, gh pr list/view/diff/checkout/create, gh run list/view). "
+        "Do not auto-approve destructive operations (such as repository deletion or deleting releases/tags)."
+    ),
+}
+
+
+def _load_guidance_text(ctx: "Context", raw: str) -> str:
+    """Resolve guidance text, reading from a file if raw is an existing path."""
+    text = raw.strip()
+    if not text:
+        return ""
+    if "\n" not in text and len(text) < 512:
+        candidate_paths = [
+            Path(text),
+            ctx.config.agent_path / text,
+            ctx.config.workspace_path / text,
+        ]
+        for p in candidate_paths:
+            try:
+                if p.is_file():
+                    return p.read_text().strip()
+            except OSError:
+                pass
+    return text
+
+
+def resolve_aux_approval_guidance(ctx: "Context") -> list[str]:
+    """Collect active aux-LLM approval guidance from presets, config, and session state."""
+    guidelines: list[str] = []
+
+    # 1. Resolve presets (config + session)
+    active_preset_names: list[str] = []
+    config_active = getattr(ctx.config.shell, "active_aux_approval_presets", [])
+    if isinstance(config_active, str):
+        active_preset_names.extend(p.strip() for p in config_active.split(",") if p.strip())
+    elif isinstance(config_active, (list, tuple, set)):
+        active_preset_names.extend(str(p).strip() for p in config_active if str(p).strip())
+
+    session_active = getattr(ctx.tools, "active_aux_approval_presets", [])
+    if isinstance(session_active, str):
+        active_preset_names.extend(p.strip() for p in session_active.split(",") if p.strip())
+    elif isinstance(session_active, (list, tuple, set)):
+        active_preset_names.extend(str(p).strip() for p in session_active if str(p).strip())
+
+    all_presets = {**DEFAULT_AUX_APPROVAL_PRESETS, **getattr(ctx.config.shell, "aux_approval_presets", {})}
+
+    seen_presets = set()
+    for name in active_preset_names:
+        if name in seen_presets:
+            continue
+        seen_presets.add(name)
+        if name in all_presets:
+            preset_text = all_presets[name].strip()
+            if preset_text:
+                guidelines.append(preset_text)
+        else:
+            log.warning(f"Unknown shell aux approval preset: {name}")
+
+    # 2. Configured guidance string / file
+    raw_guidance = getattr(ctx.config.shell, "aux_approval_guidance", "")
+    if raw_guidance:
+        loaded = _load_guidance_text(ctx, raw_guidance)
+        if loaded and loaded not in guidelines:
+            guidelines.append(loaded)
+
+    # 3. Session-scoped guidance
+    session_guidance = getattr(ctx.tools, "aux_approval_guidance", [])
+    if isinstance(session_guidance, str):
+        session_guidance = [session_guidance]
+    for item in session_guidance:
+        item_text = str(item).strip()
+        if item_text and item_text not in guidelines:
+            guidelines.append(item_text)
+
+    return guidelines
+
+
+def build_aux_approval_prompt(ctx: "Context", command: str) -> str:
+    """Build the aux-LLM evaluation prompt for shell command auto-approval."""
+    guidelines = resolve_aux_approval_guidance(ctx)
+
+    base = (
+        "You are evaluating a shell command for execution.\n"
+        f"Command: {command}\n"
+        f"Working Directory: {ctx.config.workspace_path}\n"
+        "Determine if this is a low-risk command that should be auto-approved, or if it requires user confirmation.\n"
+        'Return a JSON object: {"auto_approve": bool, "reason": "<string>", "risk": "low" | "medium" | "high"}\n'
+    )
+
+    if not guidelines:
+        policy = (
+            "Only auto-approve low risk read-only or harmless commands (like ls, git status, cat). "
+            "Do not auto-approve anything that modifies state, installs software, makes network requests, etc."
+        )
+        return f"{base}{policy}"
+
+    guidelines_formatted = "\n".join(f"- {g}" for g in guidelines)
+    policy = (
+        "Default policy: Only auto-approve low risk read-only or harmless commands (like ls, git status, cat). "
+        "Do not auto-approve anything that modifies state, installs software, makes network requests, etc., "
+        "unless explicitly permitted by the additional approval guidelines below.\n\n"
+        "Additional Approval Guidelines:\n"
+        f"{guidelines_formatted}\n\n"
+        "You may auto-approve commands that match these guidelines, provided they remain within the stated bounds "
+        "and do not pose unexpected risk or escape the workspace."
+    )
+    return f"{base}{policy}"
+
+
 async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "shell", message: str = "") -> dict:
     """Check whether a shell command is approved (shared by shell + background tools).
 
@@ -198,15 +318,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
             return {"approved": True}
 
         try:
-            prompt = (
-                "You are evaluating a shell command for execution.\n"
-                f"Command: {command}\n"
-                f"Working Directory: {ctx.config.workspace_path}\n"
-                "Determine if this is a low-risk command that should be auto-approved, or if it requires user confirmation.\n"
-                'Return a JSON object: {"auto_approve": bool, "reason": "<string>", "risk": "low" | "medium" | "high"}\n'
-                "Only auto-approve low risk read-only or harmless commands (like ls, git status, cat). "
-                "Do not auto-approve anything that modifies state, installs software, makes network requests, etc."
-            )
+            prompt = build_aux_approval_prompt(ctx, command)
             messages = [{"role": "user", "content": prompt}]
             response = await ctx.aux_llm()(messages)
             raw_text = response.get("content", "").strip()
