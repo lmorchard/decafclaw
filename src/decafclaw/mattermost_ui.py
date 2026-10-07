@@ -65,6 +65,8 @@ def build_confirm_buttons(
     tool_call_id: str = "",
     conv_id: str = "",
     confirmation_id: str = "",
+    approve_label: str = "",
+    deny_label: str = "",
 ) -> list[dict]:
     """Build Mattermost attachment with interactive action buttons.
 
@@ -94,7 +96,29 @@ def build_confirm_buttons(
         **({"tool_call_id": tool_call_id} if tool_call_id else {}),
     }
 
-    if tool_name == "shell" and suggested_pattern:
+    if approve_label:
+        # Custom label suppresses "Always" action (per-turn confirmation required)
+        actions = [
+            {
+                "id": "approve",
+                "name": approve_label,
+                "style": "primary",
+                "integration": {
+                    "url": f"{base_url}?token={_make_token('approve')}",
+                    "context": {**base_context, "action": "approve"},
+                },
+            },
+            {
+                "id": "deny",
+                "name": deny_label or "Deny",
+                "style": "danger",
+                "integration": {
+                    "url": f"{base_url}?token={_make_token('deny')}",
+                    "context": {**base_context, "action": "deny"},
+                },
+            },
+        ]
+    elif tool_name == "shell" and suggested_pattern:
         # Shell tool: Approve / Deny / Allow Pattern (no Always)
         # NOTE: button IDs must not contain underscores — Mattermost
         # silently drops callbacks for buttons with underscores in the ID.

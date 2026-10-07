@@ -155,13 +155,13 @@ def test_admin_read_rejects_workspace(ctx):
 def test_admin_list(ctx):
     (ctx.config.agent_path / "skills").mkdir(parents=True, exist_ok=True)
     (ctx.config.agent_path / "prompts").mkdir(parents=True, exist_ok=True)
-    (ctx.config.agent_path / "config.yaml").write_text("agent: test")
+    (ctx.config.agent_path / "config.json").write_text('{"agent": "test"}')
 
     result = tool_admin_list(ctx, ".")
     text = _text(result)
     assert "skills/" in text
     assert "prompts/" in text
-    assert "config.yaml" in text
+    assert "config.json" in text
 
 
 def test_admin_list_subdir(ctx):
@@ -202,17 +202,29 @@ async def test_admin_write_approved(ctx):
 
 @pytest.mark.asyncio
 async def test_admin_write_existing_diff(ctx):
-    target = ctx.config.agent_path / "config.yaml"
-    target.write_text("old_key: old_value\n")
+    target = ctx.config.agent_path / "config.json"
+    target.write_text('{"old_key": "old_value"}\n')
 
     confirm_mock = _mock_confirm(approved=True)
     ctx.request_confirmation = confirm_mock
 
-    result = await tool_admin_write(ctx, "config.yaml", "old_key: new_value\n")
+    result = await tool_admin_write(ctx, "config.json", '{"old_key": "new_value"}\n')
     text = _text(result)
     assert "Wrote" in text
-    assert "-old_key: old_value" in text
-    assert "+old_key: new_value" in text
+    assert '-{"old_key": "old_value"}' in text
+    assert '+{"old_key": "new_value"}' in text
+
+
+@pytest.mark.asyncio
+async def test_admin_write_prompts_even_if_preapproved(ctx):
+    """Admin mutations must force confirmation even when in ctx.tools.preapproved."""
+    ctx.tools.preapproved.add("admin_write")
+    confirm_mock = _mock_confirm(approved=True)
+    ctx.request_confirmation = confirm_mock
+
+    result = await tool_admin_write(ctx, "skills/test/SKILL.md", "content")
+    assert confirm_mock.call_count == 1
+    assert "Wrote" in _text(result)
 
 
 @pytest.mark.asyncio

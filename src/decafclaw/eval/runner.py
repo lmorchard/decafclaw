@@ -183,6 +183,19 @@ async def _setup_workspace(config, test_case: dict):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
 
+    # Seed arbitrary admin files (path → content) under config.agent_path.
+    admin_files = setup.get("admin_files", {})
+    agent_root = config.agent_path.resolve()
+    for rel_path, content in admin_files.items():
+        rel = Path(rel_path)
+        if rel.is_absolute():
+            raise ValueError(f"admin_files path must be relative: {rel_path}")
+        dest = (config.agent_path / rel).resolve()
+        if not dest.is_relative_to(agent_root):
+            raise ValueError(f"admin_files path escapes agent directory: {rel_path}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+
     # Save journal entries (replaces memories)
     memories = setup.get("memories", [])
     if memories:
@@ -477,6 +490,7 @@ _KNOWN_SETUP_KEYS = frozenset(
         "skills",
         "memories",
         "workspace_files",
+        "admin_files",
         "conversation_history",
         "embeddings_fixture",
         "auto_confirm",

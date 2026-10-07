@@ -36,7 +36,7 @@ Sandboxed file operations inside `data/{agent_id}/workspace/`. See [Data Layout]
 
 ## Admin Files (`tools/admin_tools.py`)
 
-Dedicated file tools for the agent's administrative directory (`config.agent_path`). Used to manage admin skills (`skills/`), prompts (`prompts/`), schedules (`schedules/`), and agent configuration (`config.yaml`). Strictly excludes the workspace (`config.workspace_path` — use `workspace_*` tools instead). All mutations require interactive user confirmation with a unified diff preview, and are categorically blocked on unattended runs and child agents.
+Dedicated file tools for the agent's administrative directory (`config.agent_path`). Used to manage admin skills (`skills/`), prompts (`prompts/`), schedules (`schedules/`), and agent configuration (`config.json`). Strictly excludes the workspace (`config.workspace_path` — use `workspace_*` tools instead). All mutations require interactive user confirmation with a unified diff preview, and are categorically blocked on unattended runs and child agents.
 
 | Tool | Always | What it does |
 |------|:------:|--------------|
