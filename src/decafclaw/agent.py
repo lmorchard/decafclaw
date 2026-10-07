@@ -1468,6 +1468,11 @@ class TurnRunner:
         in-place. Returns ToolResult with media when extraction applies,
         otherwise just text.
         """
+        termination_reason = (
+            "skill_activation_failed"
+            if self.ctx.skills.activation_denials and self.ctx.is_unattended
+            else None
+        )
         handler = self.ctx.media_handler
         should_extract = handler is None or handler.strips_workspace_refs
         if should_extract:
@@ -1476,8 +1481,12 @@ class TurnRunner:
                 self.config.workspace_path,
             )
             if workspace_media:
-                return ToolResult(text=cleaned_text, media=workspace_media)
-        return ToolResult(text=content or "")
+                return ToolResult(
+                    text=cleaned_text,
+                    media=workspace_media,
+                    termination_reason=termination_reason,
+                )
+        return ToolResult(text=content or "", termination_reason=termination_reason)
 
     async def _write_diagnostics(self) -> None:
         """Persist context diagnostics + skill state on any turn-exit path.

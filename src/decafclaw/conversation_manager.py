@@ -1645,6 +1645,8 @@ class ConversationManager:
                     )
 
                 response_text = result.text if hasattr(result, "text") else str(result)
+                if ctx.skills.activation_denials and hasattr(result, "termination_reason") and result.termination_reason is None:
+                    result.termination_reason = "skill_activation_failed"
                 result_holder.append(result)
                 response_media = result.media if hasattr(result, "media") else []
                 # If cancel was observed cleanly inside the agent loop
