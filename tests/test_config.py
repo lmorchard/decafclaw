@@ -788,3 +788,43 @@ class TestLoopBreakerConfig:
         cfg = load_config()
         assert cfg.loop_breaker.enabled is False
         assert cfg.loop_breaker.repeat_threshold == 2
+
+
+class TestDefaultModelInference:
+    """When default_model is omitted from config.json, it should be inferred."""
+
+    def test_default_model_inferred_from_llm_model(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "providers": {"vertex": {"type": "vertex", "project": "test"}},
+                    "model_configs": {
+                        "gemini-flash": {"provider": "vertex", "model": "gemini-2.5-flash"},
+                        "gemini-pro": {"provider": "vertex", "model": "gemini-2.5-pro"},
+                    },
+                    "llm": {"model": "gemini-pro"},
+                }
+            )
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        cfg = load_config()
+        assert cfg.default_model == "gemini-pro"
+
+    def test_default_model_inferred_from_first_model_config(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "providers": {"vertex": {"type": "vertex", "project": "test"}},
+                    "model_configs": {
+                        "gemini-flash": {"provider": "vertex", "model": "gemini-2.5-flash"},
+                    },
+                }
+            )
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        cfg = load_config()
+        assert cfg.default_model == "gemini-flash"

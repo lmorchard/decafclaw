@@ -313,6 +313,13 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
                     current_model = name
                     break
 
+        if current_model is None:
+            manager = state.get("manager")
+            if manager:
+                conv_state = manager.get_state(conv_id)
+                if conv_state and conv_state.persisted.active_model:
+                    current_model = conv_state.persisted.active_model
+
     response: SrvConvHistory = {
         "type": WSMessageType.CONV_HISTORY,
         "conv_id": conv_id,

@@ -156,3 +156,21 @@ class TestLoadHistoryModel:
 
         msg = ws_send.call_args[0][0]
         assert msg["active_model"] == "gemini-pro"
+
+    @pytest.mark.asyncio
+    async def test_model_from_manager_when_no_archive_message(self, ws_state, index, conv_id):
+        """When archive has no model message, load_history should check manager state."""
+        manager = MagicMock()
+        conv_state = MagicMock()
+        conv_state.persisted.active_model = "gemini-pro"
+        conv_state.busy = False
+        conv_state.pending_confirmation = None
+        manager.get_state.return_value = conv_state
+        ws_state["manager"] = manager
+
+        ws_send = AsyncMock()
+        ws_state["ws_send"] = ws_send
+        await _handle_load_history(ws_send, index, "testuser", {"conv_id": conv_id}, ws_state)
+
+        msg = ws_send.call_args[0][0]
+        assert msg["active_model"] == "gemini-pro"
