@@ -17,6 +17,7 @@
 - 2026-10-07 15:58: Added test assertions and type annotations in `tests/test_shell_approval_guidance.py`. Ran full suite (22 passed) and verified `ruff check`, `ruff format`, `pyright` (all 0 errors).
 - 2026-10-07 16:15: Addressed review feedback on PR #985:
   - Scoped runner approval in `developer` preset to executing repository development tasks (e.g. `uv run <task>`, `poetry run <task>`, `npm run <script>`, `cargo test/check/build`) and explicitly disallowed package installations and publication.
-  - Added Development Setup & Shell Auto-Approval section to `contrib/skills/opencode/SKILL.md` and documented presets in `docs/tools.md`.
-  - Added proactive routing eval case in `evals/tool_routing.yaml` exercising `shell_guidance` invocation for session kickoff.
+  - Narrowed `git push` in `src/decafclaw/security_monitor.py` so only pushes to `main`/`master`, force-pushes, and remote branch deletions are flagged as sensitive (`ASK`), enabling feature branch pushes to reach the aux-LLM auto-approval pipeline. Added unit tests in `tests/test_security_monitor.py` and end-to-end tests in `tests/test_shell_approval_guidance.py`.
+  - Added proactive routing eval case in `evals/tool_routing.yaml` with `expect_tool_args` asserting `action="enable_preset"` and `preset="developer"`.
+  - Documented presets in `docs/tools.md`.
   - Corrected test file path reference (`tests/test_shell_approval_guidance.py`) and removed nonexistent `gh pr watch` mention in spec/plan.

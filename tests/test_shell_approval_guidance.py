@@ -27,6 +27,7 @@ def _make_mock_ctx(tmp_path: Path):
     ctx.config.agent_path = tmp_path / "agent"
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
     ctx.config.agent_path.mkdir(parents=True, exist_ok=True)
+    ctx.config.agent.confirmation_timeout_sec = 60
     ctx.config.shell = ShellConfig(aux_approval_enabled=True)
     ctx.tools = ToolState()
     ctx.skills = SkillState()
@@ -485,3 +486,36 @@ def test_conversation_manager_clearing_and_reenabling_across_turns(tmp_path: Pat
     cm._restore_per_conv_state(state, ctx4)
     assert ctx4.tools.active_aux_approval_presets == ["developer"]
     assert ctx4.tools.disabled_aux_approval_presets == []
+
+
+@pytest.mark.asyncio
+async def test_check_shell_approval_feature_branch_push_with_developer_preset(tmp_path: Path):
+    from decafclaw.tools.shell_tools import check_shell_approval
+
+    ctx = _make_mock_ctx(tmp_path)
+    ctx.config.shell.aux_approval_enabled = True
+    ctx.config.shell.active_aux_approval_presets = ["developer"]
+
+    mock_llm = AsyncMock(
+        return_value={"content": '{"auto_approve": true, "risk": "low", "reason": "pushing to feature branch"}'}
+    )
+    ctx.aux_llm = MagicMock(return_value=mock_llm)
+
+    res = await check_shell_approval(ctx, "git push -u origin feat/my-new-feature")
+    assert res.get("approved") is True
+    assert mock_llm.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_check_shell_approval_main_push_requires_confirmation(tmp_path: Path):
+    from decafclaw.tools.shell_tools import check_shell_approval
+
+    ctx = _make_mock_ctx(tmp_path)
+    ctx.config.shell.aux_approval_enabled = True
+    ctx.config.shell.active_aux_approval_presets = ["developer"]
+
+    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
+        mock_confirm.return_value = {"approved": False}
+        res = await check_shell_approval(ctx, "git push origin main")
+        assert res.get("approved") is False
+        assert mock_confirm.call_count == 1
