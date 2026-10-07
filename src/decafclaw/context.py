@@ -98,6 +98,7 @@ class SkillState:
     # Track authorization errors / security denials (e.g. workspace skill denied on unattended turn)
     activation_denials: list[str] = field(default_factory=list)
 
+
 class BoundLlmClient:
     """An LLM client bound to a specific config and model name."""
 

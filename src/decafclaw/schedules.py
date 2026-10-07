@@ -848,6 +848,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv
                     except Exception as e:
                         log.error(f"Failed to activate skill '{skill_name}' for task '{task.name}': {e}")
                         ctx.skills.activation_denials.append(skill_name)
+
     from .commands import substitute_body
     from .polling import build_task_preamble
 
