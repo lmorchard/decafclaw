@@ -22,6 +22,37 @@ export class ConfirmView extends LitElement {
     this.confirms = [];
     /** @type {Object<string,string>} Map of confirmation_id -> current text value */
     this._inputValues = {};
+    /** @type {any} */
+    this._timer = null;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this._timer = setInterval(() => {
+      if (this.confirms?.some(c => c.timeout > 0)) {
+        this.requestUpdate();
+      }
+    }, 1000);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._timer) {
+      clearInterval(this._timer);
+      this._timer = null;
+    }
+  }
+
+  /**
+   * @param {object} c
+   * @returns {number | null}
+   */
+  #formatRemainingTime(c) {
+    if (!c.timeout || c.timeout <= 0) return null;
+    const start = c.timestamp ? new Date(c.timestamp).getTime() : Date.now();
+    const elapsed = Math.floor((Date.now() - start) / 1000);
+    const remaining = Math.max(0, Math.ceil(c.timeout - elapsed));
+    return remaining;
   }
 
   /**
@@ -58,7 +89,16 @@ export class ConfirmView extends LitElement {
         <div class="confirm-card" role="dialog"
           aria-label=${c.message}>
           <div class="confirm-header">
-            <strong>${c.message}</strong>
+            <div class="confirm-header-top">
+              <strong>${c.message}</strong>
+              ${(() => {
+                const rem = this.#formatRemainingTime(c);
+                if (rem !== null) {
+                  return html`<span class="confirm-timeout ${rem <= 10 ? 'warn' : ''}">⏱ ${rem}s</span>`;
+                }
+                return html`<span class="confirm-timeout indefinite">⏱ No timeout</span>`;
+              })()}
+            </div>
           </div>
           <div class="confirm-buttons">
             ${choices.map(choice => html`
@@ -93,7 +133,16 @@ export class ConfirmView extends LitElement {
       <div class="confirm-card" role="dialog"
         aria-label=${c.message}>
         <div class="confirm-header">
-          <strong>${c.message}</strong>
+          <div class="confirm-header-top">
+            <strong>${c.message}</strong>
+            ${(() => {
+              const rem = this.#formatRemainingTime(c);
+              if (rem !== null) {
+                return html`<span class="confirm-timeout ${rem <= 10 ? 'warn' : ''}">⏱ ${rem}s</span>`;
+              }
+              return html`<span class="confirm-timeout indefinite">⏱ No timeout</span>`;
+            })()}
+          </div>
         </div>
         <div class="confirm-input">
           <input
@@ -139,7 +188,16 @@ export class ConfirmView extends LitElement {
         <div class="confirm-card" role="dialog"
           aria-label="Confirm ${c.tool}">
           <div class="confirm-header">
-            <strong>Confirm ${c.tool}:</strong>
+            <div class="confirm-header-top">
+              <strong>Confirm ${c.tool}:</strong>
+              ${(() => {
+                const rem = this.#formatRemainingTime(c);
+                if (rem !== null) {
+                  return html`<span class="confirm-timeout ${rem <= 10 ? 'warn' : ''}">⏱ ${rem}s</span>`;
+                }
+                return html`<span class="confirm-timeout indefinite">⏱ No timeout</span>`;
+              })()}
+            </div>
             <pre class="confirm-command">${c.command}</pre>
           </div>
           <div class="confirm-buttons">

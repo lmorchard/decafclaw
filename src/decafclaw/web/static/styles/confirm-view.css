@@ -16,11 +16,38 @@
   margin-bottom: 0.5rem;
 }
 
+.confirm-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+  gap: 0.5rem;
+}
+
 .confirm-header strong {
   display: block;
-  margin-bottom: 0.25rem;
   font-size: 0.85rem;
   color: var(--pico-muted-color);
+}
+
+.confirm-timeout {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.confirm-timeout.warn {
+  background: #f59e0b;
+  color: #000;
+  font-weight: bold;
+}
+
+.confirm-timeout.indefinite {
+  opacity: 0.85;
 }
 
 /* Long shell commands must wrap or scroll inside the card so they

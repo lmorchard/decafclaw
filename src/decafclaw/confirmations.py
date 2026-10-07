@@ -3,7 +3,7 @@
 import dataclasses
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Protocol
 from uuid import uuid4
@@ -40,9 +40,9 @@ class ConfirmationRequest:
     approve_label: str = ""
     deny_label: str = ""
     tool_call_id: str = ""
-    timeout: float | None = 300.0
+    timeout: float | None = None
     confirmation_id: str = field(default_factory=lambda: uuid4().hex[:12])
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_archive_message(self) -> dict:
         """Serialize to a dict suitable for JSONL archive."""
