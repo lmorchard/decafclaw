@@ -45,6 +45,7 @@ class ToolState:
     preapproved_shell_patterns: list[str] = field(default_factory=list)
     llm_approved_shell_patterns: list[str] = field(default_factory=list)
     active_aux_approval_presets: list[str] = field(default_factory=list)
+    disabled_aux_approval_presets: list[str] = field(default_factory=list)
     aux_approval_guidance: list[str] = field(default_factory=list)
     # Scheduled-task overlay: addresses + `@domain.com` suffix patterns
     # that bypass confirmation for the `send_email` tool. Merged with

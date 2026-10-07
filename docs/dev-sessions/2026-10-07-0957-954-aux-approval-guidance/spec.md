@@ -17,10 +17,10 @@ Under this policy, the evaluator declines normal development commands—such as 
   - `aux_approval_presets`: Named preset mappings for situational approval rules.
   - `active_aux_approval_presets`: List of preset names enabled by default.
 - Provide standard built-in presets (e.g. `developer`, `github`).
-- Support runtime/conversation-scoped additions via `ToolState` (`ctx.tools.active_aux_approval_presets`, `ctx.tools.aux_approval_guidance`).
+- Support runtime/conversation-scoped additions via `ToolState` (`ctx.tools.active_aux_approval_presets`, `ctx.tools.disabled_aux_approval_presets`, `ctx.tools.aux_approval_guidance`).
+- Provide `shell_guidance` tool for the agent to inspect (`list`), enable/disable situational presets, and add/remove prompt guidelines with user approval (`request_confirmation`), supporting both session-level and persistent (`persistent=True`) changes.
 - Build an extensible prompt composer in `shell_tools.py` that formats the base prompt and merges all active guidance.
 - Maintain full backward compatibility for setups where no extra guidance or presets are configured.
-
 ### Non-Goals
 - In-conversation confirmation UI widgets ("Approve & remember exception" button) - deferred to a follow-up phase.
 - Modifying security monitor hard blocks (`evaluate_command_llm` BLOCK decisions remain supreme and cannot be overridden by aux-LLM guidance).
