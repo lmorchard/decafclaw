@@ -285,23 +285,31 @@ def _remove_persistent_rule(config, rule: str) -> None:
 
 
 def _load_guidance_text(ctx: "Context", raw: str) -> str:
-    """Resolve guidance text, reading from a file if raw is an existing path."""
+    """Resolve guidance text, reading from a file if raw is an existing path.
+
+    Guidance files must reside in admin-controlled locations (agent_path).
+    Resolving inside workspace_path is forbidden because workspace files
+    are agent-writable and would allow bypassing confirmation-gated policy.
+    """
     text = raw.strip()
     if not text:
         return ""
     if "\n" not in text and len(text) < 512:
         p = Path(text)
+        candidate: Path | None = None
         if p.is_absolute():
-            candidate_paths = [p]
-        else:
-            candidate_paths = [
-                ctx.config.agent_path / text,
-                ctx.config.workspace_path / text,
-            ]
-        for candidate in candidate_paths:
             try:
-                if candidate.is_file():
-                    return candidate.read_text().strip()
+                p.resolve().relative_to(ctx.config.workspace_path.resolve())
+                log.warning(f"Rejecting shell guidance file inside workspace: {text}")
+                return text
+            except ValueError:
+                candidate = p
+        else:
+            candidate = ctx.config.agent_path / text
+
+        if candidate and candidate.is_file():
+            try:
+                return candidate.read_text().strip()
             except OSError:
                 pass
     return text
@@ -461,6 +469,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
             return {"approved": True}
 
         try:
+            had_guidance = bool(resolve_aux_approval_guidance(ctx))
             prompt = build_aux_approval_prompt(ctx, command)
             messages = [{"role": "user", "content": prompt}]
             response = await ctx.aux_llm()(messages)
@@ -480,9 +489,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 log.info(
                     f"[{tool_name}] auto-approved by aux LLM (risk: {data.get('risk')}): {command} - {data.get('reason')}"
                 )
-                suggested_pattern = _suggest_aux_approval_pattern(
-                    command, has_guidance=bool(resolve_aux_approval_guidance(ctx))
-                )
+                suggested_pattern = _suggest_aux_approval_pattern(command, has_guidance=had_guidance)
                 ctx.tools.llm_approved_shell_patterns.append(suggested_pattern)
 
                 msg_content = f"Command: {command}\nRisk: {data.get('risk')}\nReason: {data.get('reason')}"
@@ -763,8 +770,10 @@ async def tool_shell_guidance(
         if preset not in ctx.tools.disabled_aux_approval_presets:
             ctx.tools.disabled_aux_approval_presets.append(preset)
 
-        return f"Disabled shell auto-approval preset `{preset}` {scope_desc}."
+        # Invalidate aux-approval session cache when policy is narrowed
+        ctx.tools.llm_approved_shell_patterns.clear()
 
+        return f"Disabled shell auto-approval preset `{preset}` {scope_desc}."
     elif action == "add_rule":
         if not rule:
             return ToolResult(text="[error: 'rule' is required for action 'add_rule']")
@@ -809,8 +818,10 @@ async def tool_shell_guidance(
         if rule in ctx.tools.aux_approval_guidance:
             ctx.tools.aux_approval_guidance.remove(rule)
 
-        return f"Removed shell auto-approval rule {scope_desc}: '{rule}'"
+        # Invalidate aux-approval session cache when policy is narrowed
+        ctx.tools.llm_approved_shell_patterns.clear()
 
+        return f"Removed shell auto-approval rule {scope_desc}: '{rule}'"
     return ToolResult(
         text="[error: invalid action. Use 'list', 'enable_preset', 'disable_preset', 'add_rule', or 'remove_rule'.]"
     )
