@@ -427,3 +427,41 @@ def test_suggest_pattern_preserves_quoted_arguments():
     suggested = _suggest_pattern(cmd)
     assert suggested == 'python "scripts/my script.py" *'
     assert _command_matches_pattern(cmd, [suggested]) is True
+
+
+def test_process_substitution_detected_as_chaining():
+    """Process substitution (<(...) and >(...)) executes commands and must be flagged (#966)."""
+    assert _has_shell_metacharacters("git commit -F <(touch /tmp/pwned)") is True
+    assert _has_shell_metacharacters("cat <(echo secret)") is True
+    assert _has_shell_metacharacters("tee >(wc -l)") is True
+    assert _has_shell_metacharacters('echo "<(cat /etc/passwd)"') is True
+    assert _has_shell_metacharacters("echo '<(safe literal)'") is False
+
+    # Wildcard allow pattern must NOT match command containing process substitution
+    assert _command_matches_pattern("git commit -F <(touch /tmp/pwned)", ["git commit *"]) is False
+
+
+def test_load_allow_patterns_malformed_values(tmp_path, monkeypatch):
+    """Corrupt or malformed allow patterns file must satisfy list[str] contract (#966)."""
+    from decafclaw.config import Config
+    from decafclaw.tools.shell_tools import _allow_patterns_path
+
+    cfg = Config()
+    cfg.agent.data_home = str(tmp_path)
+    path = _allow_patterns_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Case 1: patterns key is null
+    path.write_text(json.dumps({"patterns": None}))
+    assert _load_allow_patterns(cfg) == []
+    assert _command_matches_pattern("git status", _load_allow_patterns(cfg)) is False
+
+    # Case 2: patterns key contains non-strings
+    path.write_text(json.dumps({"patterns": [123, None, "git *", True]}))
+    assert _load_allow_patterns(cfg) == ["git *"]
+    assert _command_matches_pattern("git status", _load_allow_patterns(cfg)) is True
+
+    # Case 3: root is a list containing non-strings
+    path.write_text(json.dumps([None, 456, "ls *"]))
+    assert _load_allow_patterns(cfg) == ["ls *"]
+    assert _command_matches_pattern("ls -la", _load_allow_patterns(cfg)) is True
