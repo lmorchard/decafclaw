@@ -4,6 +4,7 @@ import fnmatch
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -68,6 +69,7 @@ def _save_allow_pattern(config, pattern: str) -> None:
 _SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
 _SHELL_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh"}
 _SHELL_WRAPPERS = {"env", "sudo", "nohup"}
+_VAR_ASSIGN_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*=.*$")
 
 # fnmatch wildcards. A pattern containing any of these matches a *class* of
 # commands rather than one literal command.
@@ -160,50 +162,102 @@ def _has_shell_metacharacters(command: str) -> bool:
     return False
 
 
+def _parse_effective_command(argv: list[str]) -> tuple[str, list[str]] | None:
+    """Extract effective command and its argument list, skipping wrappers and env vars.
+
+    Handles wrappers (env, sudo, nohup), env options (including env -S), and
+    NAME=value variable assignments preceding commands (#966 review).
+    """
+    if not argv:
+        return None
+
+    tokens = list(argv)
+    idx = 0
+
+    while idx < len(tokens):
+        token = tokens[idx]
+
+        # Skip shell environment variable assignments (e.g. FOO=bar)
+        if _VAR_ASSIGN_RE.match(token):
+            idx += 1
+            continue
+
+        base = Path(token).name
+        if base in _SHELL_WRAPPERS:
+            idx += 1
+            if base == "env":
+                while idx < len(tokens):
+                    arg = tokens[idx]
+                    if arg in ("-u", "--unset", "-C", "--chdir") and idx + 1 < len(tokens):
+                        idx += 2
+                    elif arg.startswith("-S") or arg.startswith("--split-string"):
+                        if arg in ("-S", "--split-string"):
+                            if idx + 1 < len(tokens):
+                                split_str = tokens[idx + 1]
+                                idx += 2
+                                try:
+                                    sub_tokens = shlex.split(split_str, posix=True)
+                                    tokens = tokens[:idx] + sub_tokens + tokens[idx:]
+                                except ValueError:
+                                    pass
+                        else:
+                            split_val = arg[2:] if arg.startswith("-S") else arg.split("=", 1)[1]
+                            idx += 1
+                            try:
+                                sub_tokens = shlex.split(split_val, posix=True)
+                                tokens = tokens[:idx] + sub_tokens + tokens[idx:]
+                            except ValueError:
+                                pass
+                    elif arg.startswith("-"):
+                        idx += 1
+                    elif _VAR_ASSIGN_RE.match(arg):
+                        idx += 1
+                    else:
+                        break
+            elif base == "sudo":
+                while idx < len(tokens):
+                    arg = tokens[idx]
+                    if arg in ("-u", "-g", "-p", "-h", "-c", "-C") and idx + 1 < len(tokens):
+                        idx += 2
+                    elif arg.startswith("-"):
+                        idx += 1
+                    else:
+                        break
+            elif base == "nohup":
+                while idx < len(tokens) and tokens[idx].startswith("-"):
+                    idx += 1
+            continue
+
+        return base, tokens[idx + 1 :]
+
+    return None
+
+
 def _extract_subshell_script(argv: list[str]) -> str | None:
     """Extract nested script argument if command invokes eval or a shell interpreter with -c.
 
     Normalizes execution wrappers (env, sudo, nohup) and recognizes bundled shell flags
     like -lc or -ec (#966 review). Returns the script string if found, or None.
     """
-    if not argv:
+    parsed = _parse_effective_command(argv)
+    if parsed is None:
         return None
+    cmd_name, args = parsed
 
-    idx = 0
-    # Skip wrapper commands (e.g. env, sudo, nohup) and their option flags
-    while idx < len(argv) and Path(argv[idx]).name in _SHELL_WRAPPERS:
-        idx += 1
-        while idx < len(argv) and argv[idx].startswith("-"):
-            if argv[idx] in ("-u", "-g", "-C", "-S") and idx + 1 < len(argv):
-                idx += 2
-            else:
-                idx += 1
-
-    if idx >= len(argv):
-        return None
-
-    cmd_name = Path(argv[idx]).name
-
-    # eval evaluates all following arguments joined by space
     if cmd_name == "eval":
-        eval_args = argv[idx + 1 :]
-        return " ".join(eval_args) if eval_args else None
+        return " ".join(args) if args else None
 
-    # Shell interpreters (sh, bash, zsh, dash, ksh, etc.)
     if cmd_name in _SHELL_INTERPRETERS:
-        idx += 1
-        while idx < len(argv):
-            arg = argv[idx]
+        for idx, arg in enumerate(args):
             if arg.startswith("-") and not arg.startswith("--"):
                 if "c" in arg:
-                    if idx + 1 < len(argv):
-                        return argv[idx + 1]
+                    if idx + 1 < len(args):
+                        return args[idx + 1]
                     return None
             elif arg == "--":
                 break
             elif not arg.startswith("-"):
                 break
-            idx += 1
 
     return None
 
@@ -224,23 +278,15 @@ def _is_ineligible_wildcard_pattern(pattern: str) -> bool:
     if not parts:
         return False
 
-    idx = 0
-    while idx < len(parts) and Path(parts[idx]).name in _SHELL_WRAPPERS:
-        idx += 1
-        while idx < len(parts) and parts[idx].startswith("-"):
-            if parts[idx] in ("-u", "-g", "-C", "-S") and idx + 1 < len(parts):
-                idx += 2
-            else:
-                idx += 1
-
-    if idx >= len(parts):
+    parsed = _parse_effective_command(parts)
+    if parsed is None:
         return False
+    cmd_name, args = parsed
 
-    cmd_name = Path(parts[idx]).name
     if cmd_name == "eval":
         return True
     if cmd_name in _SHELL_INTERPRETERS:
-        for opt in parts[idx + 1 :]:
+        for opt in args:
             if opt.startswith("-") and not opt.startswith("--") and "c" in opt:
                 return True
     return False
@@ -275,37 +321,87 @@ def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
     return False
 
 
+def _split_raw_tokens(command: str, max_tokens: int = 3) -> list[str]:
+    """Split command into up to max_tokens raw token substrings, preserving quotes."""
+    tokens = []
+    i = 0
+    n = len(command)
+    while i < n and len(tokens) < max_tokens:
+        while i < n and command[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if len(tokens) == max_tokens - 1:
+            tokens.append(command[i:].strip())
+            break
+        start = i
+        state = "normal"
+        while i < n:
+            ch = command[i]
+            if state == "single":
+                if ch == "'":
+                    state = "normal"
+                i += 1
+                continue
+            if state == "double":
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == '"':
+                    state = "normal"
+                    i += 1
+                    continue
+                i += 1
+                continue
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == "'":
+                state = "single"
+                i += 1
+                continue
+            if ch == '"':
+                state = "double"
+                i += 1
+                continue
+            if ch.isspace():
+                break
+            i += 1
+        tokens.append(command[start:i])
+    return tokens
+
+
 def _suggest_pattern(command: str) -> str:
     """Generate a suggested allow pattern from a command.
 
     Heuristic: keep the executable and script/subcommand path, wildcard the args.
+    Preserves raw token substrings so quotes are not stripped in the suggested pattern (#966 review).
     """
     try:
-        parts = shlex.split(command, posix=True)
+        argv = shlex.split(command, posix=True)
     except ValueError:
-        parts = command.strip().split()
-    if not parts:
-        return command
+        argv = command.strip().split()
 
     # Never wildcard interpreter/eval commands (#966 review)
-    if _extract_subshell_script(parts) is not None:
+    if _extract_subshell_script(argv) is not None:
         return command
 
-    exe = parts[0]
+    raw_tokens = _split_raw_tokens(command, max_tokens=3)
+    if not raw_tokens:
+        return command
+
+    exe = raw_tokens[0]
 
     # If second part looks like a file path or subcommand, keep it
-    if len(parts) >= 2:
-        second = parts[1]
+    if len(raw_tokens) >= 2:
+        second = raw_tokens[1]
         # Keep the second part if it looks like a path or known subcommand
         if "/" in second or "." in second:
-            # Executable + script path + wildcard
-            if len(parts) > 2:
+            if len(raw_tokens) > 2:
                 return f"{exe} {second} *"
             return f"{exe} {second}"
-        # For commands like "git status", "make test" — keep as-is if short
-        if len(parts) <= 2:
+        if len(raw_tokens) <= 2:
             return command
-        # For "git diff HEAD~1" etc — keep subcommand, wildcard rest
         return f"{exe} {second} *"
 
     return command
