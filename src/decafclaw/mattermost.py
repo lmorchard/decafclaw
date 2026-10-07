@@ -539,8 +539,9 @@ class MattermostClient:
 
                 approve_label = event.get("approve_label", "")
                 deny_label = event.get("deny_label", "")
+                display_tool = action_data.get("tool_name", action_type)
                 confirm_post_id = await cd.on_confirm_request(
-                    action_type,
+                    display_tool,
                     command,
                     suggested_pattern,
                     app_ctx.event_bus,

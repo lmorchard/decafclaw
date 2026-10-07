@@ -424,8 +424,9 @@ async def test_delegate_excludes_admin_write_tools(ctx):
         child = Context(config=parent_ctx.config, event_bus=parent_ctx.event_bus)
         context_setup(child)
         captured_child_ctx = child
-        fut = AsyncMock()
-        fut.return_value = "done"
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        fut.set_result("done")
         return fut
 
     mock_mgr = MagicMock()
