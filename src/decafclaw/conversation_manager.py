@@ -495,9 +495,11 @@ class ConversationManager:
                 )
 
             import uuid
+            from datetime import datetime, timezone
 
             from .inbox import _append_inbox
 
+            now_iso = datetime.now(timezone.utc).isoformat()
             turn_id = uuid.uuid4().hex
             _append_inbox(
                 self.config,
@@ -511,6 +513,8 @@ class ConversationManager:
                     "wiki_page": wiki_page,
                     "task_mode": task_mode,
                     "metadata": metadata,
+                    "attachments": attachments,
+                    "timestamp": now_iso,
                 },
             )
             state.inmemory_turn_data[turn_id] = {
@@ -1857,7 +1861,7 @@ class ConversationManager:
                 for i, q in enumerate(run):
                     tid = q.get("turn_id")
                     inmem = state.inmemory_turn_data.pop(tid, {})
-                    att = inmem.get("attachments")
+                    att = inmem.get("attachments") or q.get("attachments")
                     if att:
                         all_attachments.extend(att)
                     fut = inmem.get("future")
