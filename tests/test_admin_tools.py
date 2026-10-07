@@ -52,10 +52,11 @@ def test_resolve_admin_path_normal(config):
 
 def test_resolve_admin_path_root(config):
     # allow_root=False
-    path, err = _resolve_admin_path(config, ".", allow_root=False)
-    assert path is None
-    assert err is not None
-    assert "refers to the agent directory root" in err
+    for root_alias in (".", "skills/..", "prompts/../", "./."):
+        path, err = _resolve_admin_path(config, root_alias, allow_root=False)
+        assert path is None
+        assert err is not None
+        assert "refers to the agent directory root" in err
 
     # allow_root=True
     path, err = _resolve_admin_path(config, ".", allow_root=True)
@@ -196,6 +197,7 @@ async def test_admin_write_approved(ctx):
     req = confirm_mock.call_args[0][0]
     assert "admin_write" in req.action_data["command"]
     assert "new file" in req.action_data["command"]
+    assert "+# New Skill" in req.action_data["command"]
     assert req.approve_label == "Approve"
     assert req.deny_label == "Deny"
 
@@ -628,3 +630,54 @@ async def test_admin_mutation_handler_recovery_deny(config):
 
     result = await handler.on_deny(mock_ctx, req, resp)
     assert "denied by user" in result["inject_message"]
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_rejects_normalized_root(ctx):
+    ctx.request_confirmation = _mock_confirm(approved=True)
+    result = await tool_admin_delete(ctx, "skills/..", recursive=True)
+    assert "refers to the agent directory root" in _text(result)
+    assert ctx.request_confirmation.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_dir_recursive_aborts_if_tree_modified_during_confirmation(ctx):
+    sub = ctx.config.agent_path / "skills" / "race_tree"
+    sub.mkdir(parents=True, exist_ok=True)
+    (sub / "original.txt").write_text("initial")
+
+    async def fake_confirm(req):
+        # Concurrently add a file to the directory tree
+        (sub / "added_during_confirm.txt").write_text("new file")
+        return ConfirmationResponse(confirmation_id="c1", approved=True)
+
+    ctx.request_confirmation = AsyncMock(side_effect=fake_confirm)
+    result = await tool_admin_delete(ctx, "skills/race_tree", recursive=True)
+    assert "directory 'skills/race_tree' was modified on disk while confirmation was pending" in _text(result)
+    assert sub.exists()
+    assert (sub / "added_during_confirm.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_admin_mutation_recovery_rejects_root_delete(config):
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.tools.admin_tools import AdminMutationHandler
+
+    handler = AdminMutationHandler()
+    mock_ctx = MagicMock()
+    mock_ctx.config = config
+    mock_ctx.conv_id = "test-conv"
+
+    req = ConfirmationRequest(
+        action_type=ConfirmationAction.ADMIN_MUTATION,
+        action_data={
+            "tool_name": "admin_delete",
+            "path": ".",
+            "payload": {"recursive": True},
+        },
+    )
+    resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
+    result = await handler.on_approve(mock_ctx, req, resp)
+    assert "error" in result
+    assert "agent directory root" in result["error"]
+
