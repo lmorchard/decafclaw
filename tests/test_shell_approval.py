@@ -386,12 +386,15 @@ def test_interpreter_nested_scripts_detect_metacharacters():
     assert _has_shell_metacharacters('bash -c "printf safe && rm -rf ./tmp"') is True
     assert _has_shell_metacharacters("bash -lc 'echo ok; rm -rf ./tmp'") is True
     assert _has_shell_metacharacters("env bash -c 'printf safe; rm -rf ./tmp'") is True
+    assert _has_shell_metacharacters("env FOO=bar sh -c 'echo safe; echo chained'") is True
+    assert _has_shell_metacharacters("env -S \"bash -c 'echo safe; echo chained'\"") is True
     assert _has_shell_metacharacters("/usr/bin/env sh -ec 'printf safe; rm -rf ./tmp'") is True
     assert _has_shell_metacharacters("sudo -u user bash -c 'echo 1; rm -rf ~'") is True
     assert _has_shell_metacharacters('eval "echo ok; rm -rf ./tmp"') is True
     assert _has_shell_metacharacters("sh -c 'echo safe'") is False
     assert _has_shell_metacharacters("bash -lc 'echo safe'") is False
     assert _has_shell_metacharacters("env bash -c 'echo safe'") is False
+    assert _has_shell_metacharacters("env FOO=bar sh -c 'echo safe'") is False
     assert _has_shell_metacharacters('eval "echo safe"') is False
 
 
@@ -401,6 +404,8 @@ def test_ineligible_wildcard_patterns_for_interpreters():
     assert _is_ineligible_wildcard_pattern("bash -c *") is True
     assert _is_ineligible_wildcard_pattern("bash -lc *") is True
     assert _is_ineligible_wildcard_pattern("env bash -c *") is True
+    assert _is_ineligible_wildcard_pattern("env FOO=bar sh -c *") is True
+    assert _is_ineligible_wildcard_pattern("env -S 'bash -c *'") is True
     assert _is_ineligible_wildcard_pattern("/usr/bin/env sh -ec *") is True
     assert _is_ineligible_wildcard_pattern("eval *") is True
     assert _is_ineligible_wildcard_pattern("git commit *") is False
@@ -411,6 +416,7 @@ def test_ineligible_wildcard_patterns_for_interpreters():
     assert _command_matches_pattern("sh -c 'echo safe'", ["sh -c *"]) is False
     assert _command_matches_pattern("bash -lc 'echo safe'", ["bash -lc *"]) is False
     assert _command_matches_pattern("env bash -c 'echo safe'", ["env bash -c *"]) is False
+    assert _command_matches_pattern("env FOO=bar sh -c 'echo safe'", ["env FOO=bar sh -c *"]) is False
     # But exact literal patterns are allowed
     assert _command_matches_pattern("sh -c 'echo safe'", ["sh -c 'echo safe'"]) is True
     assert _command_matches_pattern("bash -lc 'echo safe'", ["bash -lc 'echo safe'"]) is True
@@ -421,4 +427,13 @@ def test_suggest_pattern_does_not_wildcard_interpreters():
     assert _suggest_pattern("sh -c 'echo safe'") == "sh -c 'echo safe'"
     assert _suggest_pattern('bash -lc "make build"') == 'bash -lc "make build"'
     assert _suggest_pattern("env bash -c 'make build'") == "env bash -c 'make build'"
+    assert _suggest_pattern("env FOO=bar sh -c 'echo safe'") == "env FOO=bar sh -c 'echo safe'"
     assert _suggest_pattern("eval 'echo safe'") == "eval 'echo safe'"
+
+
+def test_suggest_pattern_preserves_quoted_arguments():
+    """Suggested patterns must preserve quotes around paths with spaces (#966 review)."""
+    cmd = 'python "scripts/my script.py" --flag'
+    suggested = _suggest_pattern(cmd)
+    assert suggested == 'python "scripts/my script.py" *'
+    assert _command_matches_pattern(cmd, [suggested]) is True
