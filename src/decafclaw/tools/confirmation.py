@@ -114,6 +114,7 @@ async def request_confirmation(
     command: str,
     message: str,
     timeout: float = 60,
+    force: bool = False,
     **extra_event_fields,
 ) -> dict:
     """Request user confirmation.
@@ -122,14 +123,17 @@ async def request_confirmation(
     per-conversation scoped). Falls back to the legacy event-bus pattern
     for transports not yet migrated.
 
+    When ``force=True``, bypass through ``ctx.tools.preapproved`` is prohibited;
+    the request always prompts the user. Use for trust-boundary mutations
+    (e.g. modifying shell auto-approval guidance or allow patterns).
+
     Returns a dict with at least ``"approved"`` (bool). May also contain
     ``"always"``, ``"add_pattern"``, etc.
     """
-    # Check command pre-approval before prompting
-    if tool_name in ctx.tools.preapproved:
+    # Check command pre-approval before prompting (unless force=True)
+    if not force and tool_name in ctx.tools.preapproved:
         log.info(f"Confirmation pre-approved for {tool_name}")
         return {"approved": True}
-
     # Route through manager
     if ctx.request_confirmation is not None:
         return await _request_via_manager(ctx, tool_name, command, message, timeout, **extra_event_fields)

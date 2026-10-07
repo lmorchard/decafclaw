@@ -75,6 +75,7 @@ Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.
 |------|:------:|--------------|
 | `shell` | ✓ | Run a shell command (requires confirmation) |
 | `shell_patterns` | | Manage the approved shell command allow list |
+| `shell_guidance` | | Manage aux-LLM auto-approval prompt guidance and presets |
 
 Background process management (`shell_background_start/status/stop/list`) lives in the bundled `background` skill (auto-activates) — see [Skills](skills.md).
 
@@ -85,8 +86,7 @@ Background process management (`shell_background_start/status/stop/list`) lives 
 1. `shell` (or the calling tool name) is in `ctx.tools.preapproved` — blanket approval from a command's `allowed-tools`.
 2. The command matches a **scoped pattern** from a skill's `allowed-tools: shell(...)` (see [Skills](skills.md#environment-for-shell-based-skills)).
 3. The command matches a **persisted pattern** in `data/{agent_id}/shell_allow_patterns.json`.
-4. (If `config.shell.aux_approval_enabled` is true) The **auxiliary LLM** analyzes the command and its risk, returning `auto_approve: true` for low-risk read-only commands (e.g. `ls`, `git status`). The pattern is then cached in `ctx.tools.llm_approved_shell_patterns` for the duration of the conversation.
-
+4. (If `config.shell.aux_approval_enabled` is true) The **auxiliary LLM** analyzes the command and its risk against the default policy and any active situational presets or prompt guidance (configured via `config.shell`, stored persistently in `shell_approval_guidance.json`, or activated with user confirmation via `shell_guidance`). Approved commands are cached in `ctx.tools.llm_approved_shell_patterns` for the conversation.
 Otherwise it falls through to a user confirmation, which offers to save a suggested pattern.
 
 **Unattended turns get the same allowlist and no prompt (#649).** Heartbeat and scheduled turns

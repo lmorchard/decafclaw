@@ -174,9 +174,11 @@ class HttpConfig:
 
 
 @dataclass
-@dataclass
 class ShellConfig:
     aux_approval_enabled: bool = False
+    aux_approval_guidance: str = ""
+    aux_approval_presets: dict[str, str] = field(default_factory=dict)
+    active_aux_approval_presets: list[str] = field(default_factory=list)
 
 
 @dataclass
