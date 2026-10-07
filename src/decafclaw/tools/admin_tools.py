@@ -8,17 +8,20 @@ Categorically blocked on unattended runs and child agents.
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import logging
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..media import ToolResult
 from .confirmation import request_confirmation
 from .file_locks import file_lock
 
 if TYPE_CHECKING:
+    from decafclaw.confirmations import ConfirmationRequest, ConfirmationResponse
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
@@ -93,11 +96,140 @@ def _resolve_admin_path(config, path_str: str, *, allow_root: bool = False) -> t
     return target, None
 
 
+@dataclass
+class _AdminFileSnapshot:
+    resolved: Path
+    exists: bool
+    is_dir: bool
+    content: str | None = None
+    size: int | None = None
+    mtime_ns: int | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "resolved": str(self.resolved),
+            "exists": self.exists,
+            "is_dir": self.is_dir,
+            "content": self.content,
+            "size": self.size,
+            "mtime_ns": self.mtime_ns,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, default_path: Path | None = None) -> "_AdminFileSnapshot":
+        resolved_str = data.get("resolved")
+        resolved = Path(resolved_str) if resolved_str else (default_path or Path())
+        return cls(
+            resolved=resolved,
+            exists=data.get("exists", False),
+            is_dir=data.get("is_dir", False),
+            content=data.get("content"),
+            size=data.get("size"),
+            mtime_ns=data.get("mtime_ns"),
+        )
+
+
+def _capture_snapshot(resolved: Path) -> tuple[_AdminFileSnapshot | None, ToolResult | None]:
+    """Capture a snapshot of the file's current on-disk state prior to confirmation."""
+    exists = resolved.exists()
+    is_dir = resolved.is_dir() if exists else False
+    content = None
+    size = None
+    mtime_ns = None
+    if exists:
+        try:
+            stat = resolved.stat()
+            size = stat.st_size
+            mtime_ns = stat.st_mtime_ns
+            if not is_dir:
+                content = resolved.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, PermissionError) as e:
+            return None, _file_error(e, str(resolved))
+    return (
+        _AdminFileSnapshot(
+            resolved=resolved,
+            exists=exists,
+            is_dir=is_dir,
+            content=content,
+            size=size,
+            mtime_ns=mtime_ns,
+        ),
+        None,
+    )
+
+
+async def _revalidate_snapshot(
+    config,
+    path: str,
+    snapshot: _AdminFileSnapshot,
+    *,
+    allow_root: bool = False,
+) -> tuple[Path | None, ToolResult | None]:
+    """Re-resolve path and verify that on-disk state matches pre-confirmation snapshot."""
+    re_resolved, err = _resolve_admin_path(config, path, allow_root=allow_root)
+    if err:
+        return None, ToolResult(
+            text=f"[error: target path '{path}' became invalid while confirmation was pending: {err}]"
+        )
+    assert re_resolved is not None
+    if re_resolved != snapshot.resolved:
+        return None, ToolResult(
+            text=(
+                f"[error: target path '{path}' changed destination while confirmation was pending; "
+                "aborting. A fresh confirmation is required.]"
+            )
+        )
+
+    if not snapshot.exists:
+        if re_resolved.exists():
+            return None, ToolResult(
+                text=(
+                    f"[error: file '{path}' was created on disk while confirmation was pending; "
+                    "aborting. A fresh confirmation is required.]"
+                )
+            )
+        return re_resolved, None
+
+    if not re_resolved.exists():
+        return None, ToolResult(
+            text=(
+                f"[error: target '{path}' was deleted while confirmation was pending; "
+                "aborting. A fresh confirmation is required.]"
+            )
+        )
+
+    if re_resolved.is_dir() != snapshot.is_dir:
+        return None, ToolResult(
+            text=(
+                f"[error: target '{path}' changed type while confirmation was pending; "
+                "aborting. A fresh confirmation is required.]"
+            )
+        )
+
+    if not snapshot.is_dir:
+        try:
+            current_content = await asyncio.to_thread(re_resolved.read_text, encoding="utf-8")
+        except (UnicodeDecodeError, PermissionError) as e:
+            return None, _file_error(e, path)
+        if current_content != snapshot.content:
+            return None, ToolResult(
+                text=(
+                    f"[error: file '{path}' was modified on disk while confirmation was pending; "
+                    "aborting. A fresh confirmation is required.]"
+                )
+            )
+
+    return re_resolved, None
+
+
 async def _confirm_admin_mutation(
     ctx: "Context",
     tool_name: str,
     path_str: str,
     preview: str,
+    *,
+    payload: dict | None = None,
+    snapshot: _AdminFileSnapshot | None = None,
 ) -> ToolResult | None:
     """Run interactive confirmation for an admin mutation.
 
@@ -117,6 +249,13 @@ async def _confirm_admin_mutation(
         )
 
     command = f"{tool_name} '{path_str}'\n\n{preview}"
+    action_data = {
+        "tool_name": tool_name,
+        "path": path_str,
+        "command": command,
+        "payload": payload or {},
+        "snapshot": snapshot.to_dict() if snapshot else {},
+    }
     approval = await request_confirmation(
         ctx,
         tool_name=tool_name,
@@ -125,6 +264,7 @@ async def _confirm_admin_mutation(
         force=True,
         approve_label="Approve",
         deny_label="Deny",
+        action_data=action_data,
     )
     if not approval.get("approved"):
         return ToolResult(text=f"[error: {tool_name} for '{path_str}' was denied by user]")
@@ -245,34 +385,46 @@ async def tool_admin_write(ctx: "Context", path: str, content: str) -> str | Too
     if resolved.is_dir():
         return ToolResult(text=f"[error: '{path}' is a directory, not a file]")
 
-    existing = ""
-    exists = resolved.exists()
-    if exists:
-        try:
-            existing = resolved.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, PermissionError) as e:
-            return _file_error(e, path)
+    snapshot, snap_err = _capture_snapshot(resolved)
+    if snap_err:
+        return snap_err
+    assert snapshot is not None
 
-    if exists:
+    if snapshot.exists:
+        existing = snapshot.content or ""
         diff = _mini_diff(existing, content, path)
         preview = diff if diff else "(no changes)"
     else:
+        diff = ""
         preview = f"(new file, {len(content)} characters)\n\n" + (
             content[:500] + ("\n..." if len(content) > 500 else "")
         )
 
-    gate = await _confirm_admin_mutation(ctx, "admin_write", path, preview)
+    gate = await _confirm_admin_mutation(
+        ctx,
+        "admin_write",
+        path,
+        preview,
+        payload={"content": content},
+        snapshot=snapshot,
+    )
     if gate is not None:
         return gate
 
-    with file_lock(resolved):
+    async with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
+
+        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path, snapshot)
+        if reval_err:
+            return reval_err
+        assert re_resolved is not None
+
         try:
-            resolved.parent.mkdir(parents=True, exist_ok=True)
-            resolved.write_text(content, encoding="utf-8")
+            await asyncio.to_thread(re_resolved.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(re_resolved.write_text, content, encoding="utf-8")
             summary = f"Wrote {len(content)} characters to admin file '{path}'"
-            if exists and diff:
+            if snapshot.exists and diff:
                 return f"{summary}\n\n{diff}"
             return summary
         except PermissionError as e:
@@ -294,10 +446,11 @@ async def tool_admin_replace_lines(
     if resolved.is_dir():
         return ToolResult(text=f"[error: '{path}' is a directory, not a file]")
 
-    try:
-        existing = resolved.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, PermissionError) as e:
-        return _file_error(e, path)
+    snapshot, snap_err = _capture_snapshot(resolved)
+    if snap_err:
+        return snap_err
+    assert snapshot is not None
+    existing = snapshot.content or ""
 
     lines = existing.splitlines(keepends=True)
     if start_line < 1 or end_line < start_line or end_line > len(lines):
@@ -315,15 +468,35 @@ async def tool_admin_replace_lines(
     new_content = "".join(new_lines)
     diff = _mini_diff(existing, new_content, path)
 
-    gate = await _confirm_admin_mutation(ctx, "admin_replace_lines", path, diff or "(no changes)")
+    payload = {
+        "new_content": new_content,
+        "start_line": start_line,
+        "end_line": end_line,
+        "replacement_count": len(replacement),
+    }
+
+    gate = await _confirm_admin_mutation(
+        ctx,
+        "admin_replace_lines",
+        path,
+        diff or "(no changes)",
+        payload=payload,
+        snapshot=snapshot,
+    )
     if gate is not None:
         return gate
 
-    with file_lock(resolved):
+    async with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
+
+        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path, snapshot)
+        if reval_err:
+            return reval_err
+        assert re_resolved is not None
+
         try:
-            resolved.write_text(new_content, encoding="utf-8")
+            await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
             if not content:
                 summary = f"Deleted lines {start_line}-{end_line} from admin file '{path}'"
             else:
@@ -352,10 +525,11 @@ async def tool_admin_edit(
     if resolved.is_dir():
         return ToolResult(text=f"[error: '{path}' is a directory, not a file]")
 
-    try:
-        content = resolved.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, PermissionError) as e:
-        return _file_error(e, path)
+    snapshot, snap_err = _capture_snapshot(resolved)
+    if snap_err:
+        return snap_err
+    assert snapshot is not None
+    content = snapshot.content or ""
 
     count = content.count(old_text)
     if count == 0:
@@ -376,15 +550,34 @@ async def tool_admin_edit(
         new_content = content.replace(old_text, new_text, 1)
 
     diff = _mini_diff(content, new_content, path)
-    gate = await _confirm_admin_mutation(ctx, "admin_edit", path, diff or "(no changes)")
+
+    payload = {
+        "new_content": new_content,
+        "count": count,
+    }
+
+    gate = await _confirm_admin_mutation(
+        ctx,
+        "admin_edit",
+        path,
+        diff or "(no changes)",
+        payload=payload,
+        snapshot=snapshot,
+    )
     if gate is not None:
         return gate
 
-    with file_lock(resolved):
+    async with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
+
+        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path, snapshot)
+        if reval_err:
+            return reval_err
+        assert re_resolved is not None
+
         try:
-            resolved.write_text(new_content, encoding="utf-8")
+            await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
             summary = f"Edited admin file '{path}': replaced {count} occurrence(s)"
             if diff:
                 return f"{summary}\n\n{diff}"
@@ -404,7 +597,12 @@ async def tool_admin_delete(ctx: "Context", path: str, recursive: bool = False) 
     if not resolved.exists():
         return ToolResult(text=f"[error: file not found: {path}]")
 
-    if resolved.is_dir():
+    snapshot, snap_err = _capture_snapshot(resolved)
+    if snap_err:
+        return snap_err
+    assert snapshot is not None
+
+    if snapshot.is_dir:
         is_empty = not any(resolved.iterdir())
         if not is_empty and not recursive:
             return ToolResult(
@@ -412,27 +610,174 @@ async def tool_admin_delete(ctx: "Context", path: str, recursive: bool = False) 
             )
         preview = f"Delete directory: {path} (recursive={recursive})"
     else:
-        preview = f"Delete file: {path} ({resolved.stat().st_size} bytes)"
+        preview = f"Delete file: {path} ({snapshot.size} bytes)"
 
-    gate = await _confirm_admin_mutation(ctx, "admin_delete", path, preview)
+    payload = {
+        "recursive": recursive,
+    }
+
+    gate = await _confirm_admin_mutation(
+        ctx,
+        "admin_delete",
+        path,
+        preview,
+        payload=payload,
+        snapshot=snapshot,
+    )
     if gate is not None:
         return gate
 
-    with file_lock(resolved):
+    async with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
+
+        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path, snapshot)
+        if reval_err:
+            return reval_err
+        assert re_resolved is not None
+
         try:
-            if resolved.is_dir():
+            if re_resolved.is_dir():
                 if recursive:
-                    shutil.rmtree(resolved)
+                    await asyncio.to_thread(shutil.rmtree, re_resolved)
                 else:
-                    resolved.rmdir()
+                    await asyncio.to_thread(re_resolved.rmdir)
                 return f"Deleted admin directory '{path}'"
             else:
-                resolved.unlink()
+                await asyncio.to_thread(re_resolved.unlink)
                 return f"Deleted admin file '{path}'"
         except PermissionError as e:
             return _file_error(e, path)
+
+
+class AdminMutationHandler:
+    """Confirmation handler for ``ADMIN_MUTATION`` actions.
+
+    Invoked only by the recovery path (when a pending confirmation is resolved
+    after server restart or when no agent loop is running).
+    """
+
+    async def on_approve(self, ctx: Any, request: "ConfirmationRequest", response: "ConfirmationResponse") -> dict:
+        action_data = request.action_data or {}
+        tool_name = action_data.get("tool_name")
+        path = action_data.get("path")
+        payload = action_data.get("payload") or {}
+        snapshot_data = action_data.get("snapshot") or {}
+
+        if not tool_name or not path:
+            return await self._cancel(ctx, path or "unknown", "missing mutation payload")
+
+        # Attempt to apply the mutation safely with snapshot revalidation
+        try:
+            result = await self._apply_mutation(ctx, tool_name, path, payload, snapshot_data)
+        except Exception as exc:
+            log.exception("Error executing recovered admin mutation for %s: %s", path, exc)
+            return await self._cancel(ctx, path, str(exc))
+
+        if isinstance(result, ToolResult):
+            # Revalidation failed or file error occurred
+            return await self._cancel(ctx, path, result.text)
+
+        # Success: write synthetic assistant message documenting the recovery mutation
+        if ctx is not None and getattr(ctx, "conv_id", None):
+            from ..archive import append_message
+
+            append_message(
+                ctx.config,
+                ctx.conv_id,
+                {
+                    "role": "assistant",
+                    "content": f"[Admin operation completed on recovery: {result}]",
+                },
+            )
+        return {"inject_message": str(result), "continue_loop": False}
+
+    async def on_deny(self, ctx: Any, request: "ConfirmationRequest", response: "ConfirmationResponse") -> dict:
+        action_data = request.action_data or {}
+        path = action_data.get("path", "file")
+        tool_name = action_data.get("tool_name", "admin mutation")
+        msg = f"[{tool_name} for '{path}' was denied by user]"
+        if ctx is not None and getattr(ctx, "conv_id", None):
+            from ..archive import append_message
+
+            append_message(
+                ctx.config,
+                ctx.conv_id,
+                {
+                    "role": "assistant",
+                    "content": msg,
+                },
+            )
+        return {"inject_message": msg, "continue_loop": False}
+
+    async def _cancel(self, ctx: Any, path: str, reason: str) -> dict:
+        msg = f"[Admin operation cancelled: {reason}. The requested mutation was not applied. Please retry.]"
+        if ctx is not None and getattr(ctx, "conv_id", None):
+            from ..archive import append_message
+
+            append_message(
+                ctx.config,
+                ctx.conv_id,
+                {
+                    "role": "assistant",
+                    "content": msg,
+                },
+            )
+        return {"error": reason, "continue_loop": False}
+
+    async def _apply_mutation(
+        self, ctx: Any, tool_name: str, path: str, payload: dict, snapshot_data: dict
+    ) -> str | ToolResult:
+        resolved, err = _resolve_admin_path(ctx.config, path, allow_root=(tool_name == "admin_delete"))
+        if err:
+            return ToolResult(text=err)
+        assert resolved is not None
+
+        snapshot = _AdminFileSnapshot.from_dict(snapshot_data, default_path=resolved)
+
+        async with file_lock(resolved):
+            re_resolved, err_res = await _revalidate_snapshot(
+                ctx.config, path, snapshot, allow_root=(tool_name == "admin_delete")
+            )
+            if err_res:
+                return err_res
+            assert re_resolved is not None
+
+            if tool_name == "admin_write":
+                content = payload.get("content", "")
+                await asyncio.to_thread(re_resolved.parent.mkdir, parents=True, exist_ok=True)
+                await asyncio.to_thread(re_resolved.write_text, content, encoding="utf-8")
+                return f"Wrote {len(content)} characters to admin file '{path}'"
+
+            elif tool_name == "admin_replace_lines":
+                new_content = payload.get("new_content", "")
+                start_line = payload.get("start_line", 1)
+                end_line = payload.get("end_line", 1)
+                replacement_count = payload.get("replacement_count", 0)
+                await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
+                if replacement_count == 0:
+                    return f"Deleted lines {start_line}-{end_line} from admin file '{path}'"
+                return f"Replaced lines {start_line}-{end_line} with {replacement_count} line(s) in admin file '{path}'"
+
+            elif tool_name == "admin_edit":
+                new_content = payload.get("new_content", "")
+                count = payload.get("count", 1)
+                await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
+                return f"Edited admin file '{path}': replaced {count} occurrence(s)"
+
+            elif tool_name == "admin_delete":
+                recursive = payload.get("recursive", False)
+                if re_resolved.is_dir():
+                    if recursive:
+                        await asyncio.to_thread(shutil.rmtree, re_resolved)
+                    else:
+                        await asyncio.to_thread(re_resolved.rmdir)
+                    return f"Deleted admin directory '{path}'"
+                else:
+                    await asyncio.to_thread(re_resolved.unlink)
+                    return f"Deleted admin file '{path}'"
+
+            return ToolResult(text=f"[error: unknown admin mutation tool '{tool_name}']")
 
 
 ADMIN_TOOLS = {

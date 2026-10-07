@@ -20,6 +20,7 @@ class ConfirmationAction(str, Enum):
     ADVANCE_PROJECT_PHASE = "advance_project_phase"
     WIDGET_RESPONSE = "widget_response"
     WORKFLOW_USER_INPUT = "workflow_user_input"
+    ADMIN_MUTATION = "admin_mutation"
 
 
 @dataclass

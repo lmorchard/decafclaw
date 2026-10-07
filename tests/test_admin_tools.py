@@ -228,6 +228,42 @@ async def test_admin_write_prompts_even_if_preapproved(ctx):
 
 
 @pytest.mark.asyncio
+async def test_admin_write_aborts_if_modified_during_confirmation(ctx):
+    target = ctx.config.agent_path / "skills" / "racy" / "SKILL.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("initial content\n")
+
+    async def fake_confirm(req):
+        target.write_text("concurrent edit by user\n")
+        return ConfirmationResponse(confirmation_id="c1", approved=True)
+
+    ctx.request_confirmation = AsyncMock(side_effect=fake_confirm)
+
+    result = await tool_admin_write(ctx, "skills/racy/SKILL.md", "new content\n")
+    text = _text(result)
+    assert "modified on disk while confirmation was pending" in text
+    assert target.read_text() == "concurrent edit by user\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_aborts_if_modified_during_confirmation(ctx):
+    target = ctx.config.agent_path / "prompts" / "racy.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("hello foo\n")
+
+    async def fake_confirm(req):
+        target.write_text("hello bar concurrent\n")
+        return ConfirmationResponse(confirmation_id="c1", approved=True)
+
+    ctx.request_confirmation = AsyncMock(side_effect=fake_confirm)
+
+    result = await tool_admin_edit(ctx, "prompts/racy.txt", "foo", "baz")
+    text = _text(result)
+    assert "modified on disk while confirmation was pending" in text
+    assert target.read_text() == "hello bar concurrent\n"
+
+
+@pytest.mark.asyncio
 async def test_admin_write_denied(ctx):
     confirm_mock = _mock_confirm(approved=False)
     ctx.request_confirmation = confirm_mock
@@ -408,3 +444,186 @@ async def test_delegate_excludes_admin_write_tools(ctx):
     # admin_read and admin_list are allowed
     assert "admin_read" in child_allowed
     assert "admin_list" in child_allowed
+
+
+# ---------------------------------------------------------------------------
+# Revalidation & race prevention tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_write_aborts_if_file_created_during_confirmation(ctx):
+    target = ctx.config.agent_path / "race_new.txt"
+    assert not target.exists()
+
+    async def fake_confirm(req):
+        # User created the file while reviewing confirmation prompt
+        target.write_text("concurrently created")
+        return ConfirmationResponse(confirmation_id="c1", approved=True)
+
+    ctx.request_confirmation = AsyncMock(side_effect=fake_confirm)
+    result = await tool_admin_write(ctx, "race_new.txt", "my new content")
+    assert "created on disk while confirmation was pending" in _text(result)
+    assert target.read_text() == "concurrently created"
+
+
+@pytest.mark.asyncio
+async def test_admin_write_aborts_if_file_modified_during_confirmation(ctx):
+    target = ctx.config.agent_path / "race_edit.txt"
+    target.write_text("original content")
+
+    async def fake_confirm(req):
+        # File modified while reviewing prompt
+        target.write_text("concurrent edit by user")
+        return ConfirmationResponse(confirmation_id="c1", approved=True)
+
+    ctx.request_confirmation = AsyncMock(side_effect=fake_confirm)
+    result = await tool_admin_write(ctx, "race_edit.txt", "overwritten content")
+    assert "modified on disk while confirmation was pending" in _text(result)
+    assert target.read_text() == "concurrent edit by user"
+
+
+@pytest.mark.asyncio
+async def test_admin_replace_lines_aborts_if_file_modified_during_confirmation(ctx):
+    target = ctx.config.agent_path / "prompts" / "replace_race.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("1\n2\n3\n4\n")
+
+    async def fake_confirm(req):
+        target.write_text("1\n2\nchanged\n4\n")
+        return ConfirmationResponse(confirmation_id="c1", approved=True)
+
+    ctx.request_confirmation = AsyncMock(side_effect=fake_confirm)
+    result = await tool_admin_replace_lines(ctx, "prompts/replace_race.txt", 2, 3, "X\n")
+    assert "modified on disk while confirmation was pending" in _text(result)
+    assert target.read_text() == "1\n2\nchanged\n4\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_aborts_if_file_modified_during_confirmation(ctx):
+    target = ctx.config.agent_path / "prompts" / "edit_race.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("hello foo world\n")
+
+    async def fake_confirm(req):
+        target.write_text("hello foo changed world\n")
+        return ConfirmationResponse(confirmation_id="c1", approved=True)
+
+    ctx.request_confirmation = AsyncMock(side_effect=fake_confirm)
+    result = await tool_admin_edit(ctx, "prompts/edit_race.txt", "foo", "bar")
+    assert "modified on disk while confirmation was pending" in _text(result)
+    assert target.read_text() == "hello foo changed world\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_aborts_if_file_modified_during_confirmation(ctx):
+    target = ctx.config.agent_path / "prompts" / "delete_race.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("original to delete")
+
+    async def fake_confirm(req):
+        # File modified during prompt wait
+        target.write_text("modified to keep! different length and mtime")
+        return ConfirmationResponse(confirmation_id="c1", approved=True)
+
+    ctx.request_confirmation = AsyncMock(side_effect=fake_confirm)
+    result = await tool_admin_delete(ctx, "prompts/delete_race.txt")
+    assert "modified on disk while confirmation was pending" in _text(result)
+    assert target.exists()
+
+
+# ---------------------------------------------------------------------------
+# Recovery handler tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_mutation_handler_recovery_approve_success(config, tmp_path):
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.tools.admin_tools import AdminMutationHandler
+
+    handler = AdminMutationHandler()
+    target = config.agent_path / "recovered.txt"
+    target.write_text("before")
+
+    mock_ctx = MagicMock()
+    mock_ctx.config = config
+    mock_ctx.conv_id = "test-conv"
+
+    req = ConfirmationRequest(
+        action_type=ConfirmationAction.ADMIN_MUTATION,
+        action_data={
+            "tool_name": "admin_write",
+            "path": "recovered.txt",
+            "payload": {"content": "after"},
+            "snapshot": {
+                "resolved": str(target.resolve()),
+                "exists": True,
+                "is_dir": False,
+                "content": "before",
+            },
+        },
+    )
+    resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
+
+    result = await handler.on_approve(mock_ctx, req, resp)
+    assert "Wrote 5 characters" in result["inject_message"]
+    assert target.read_text() == "after"
+
+
+@pytest.mark.asyncio
+async def test_admin_mutation_handler_recovery_approve_aborts_if_stale(config):
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.tools.admin_tools import AdminMutationHandler
+
+    handler = AdminMutationHandler()
+    target = config.agent_path / "recovered_stale.txt"
+    target.write_text("modified on disk while agent was offline")
+
+    mock_ctx = MagicMock()
+    mock_ctx.config = config
+    mock_ctx.conv_id = "test-conv"
+
+    req = ConfirmationRequest(
+        action_type=ConfirmationAction.ADMIN_MUTATION,
+        action_data={
+            "tool_name": "admin_write",
+            "path": "recovered_stale.txt",
+            "payload": {"content": "should not write"},
+            "snapshot": {
+                "resolved": str(target.resolve()),
+                "exists": True,
+                "is_dir": False,
+                "content": "old content before offline edit",
+            },
+        },
+    )
+    resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
+
+    result = await handler.on_approve(mock_ctx, req, resp)
+    assert "error" in result
+    assert "modified on disk" in result["error"]
+    assert target.read_text() == "modified on disk while agent was offline"
+
+
+@pytest.mark.asyncio
+async def test_admin_mutation_handler_recovery_deny(config):
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.tools.admin_tools import AdminMutationHandler
+
+    handler = AdminMutationHandler()
+    mock_ctx = MagicMock()
+    mock_ctx.config = config
+    mock_ctx.conv_id = "test-conv"
+
+    req = ConfirmationRequest(
+        action_type=ConfirmationAction.ADMIN_MUTATION,
+        action_data={
+            "tool_name": "admin_write",
+            "path": "denied.txt",
+        },
+    )
+    resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=False)
+
+    result = await handler.on_deny(mock_ctx, req, resp)
+    assert "denied by user" in result["inject_message"]
