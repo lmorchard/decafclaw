@@ -164,7 +164,6 @@ def _suggest_aux_approval_pattern(command: str, has_guidance: bool) -> str:
         "git show",
         "ls",
         "cat",
-        "find",
     )
     cmd_stripped = command.strip()
     first_part = cmd_stripped.split()[0] if cmd_stripped.split() else ""
