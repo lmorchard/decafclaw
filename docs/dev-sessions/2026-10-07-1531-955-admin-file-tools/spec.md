@@ -9,7 +9,7 @@ Provide dedicated, confirmation-gated file operations (`admin_read`, `admin_list
 Currently, all `workspace_*` tools enforce containment inside `config.workspace_path`. Files in the administrative tier outside the workspace (`config.agent_path`), such as:
 - Admin-managed skills (`data/{agent_id}/skills/`)
 - Prompts and templates (`data/{agent_id}/prompts/`)
-- Configuration (`config.yaml`)
+- Configuration (`config.json`)
 - Admin schedules (`data/{agent_id}/schedules/`)
 - Admin heartbeat (`data/{agent_id}/HEARTBEAT.md`)
 
