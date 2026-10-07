@@ -10,6 +10,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
@@ -263,6 +264,8 @@ def _confirmation_request_payload(request: ConfirmationRequest) -> dict:
         "approve_label": request.approve_label,
         "deny_label": request.deny_label,
         "tool_call_id": request.tool_call_id,
+        "timeout": request.timeout,
+        "timestamp": request.timestamp,
     }
 
 
@@ -1296,6 +1299,7 @@ class ConversationManager:
             # Active path: emit the confirmation_request event for the
             # transports to render UI (outside the lock — emit awaits
             # subscribers).
+            request.timestamp = datetime.now(timezone.utc).isoformat()
             await self.emit(conv_id, _confirmation_request_payload(request))
         else:
             # Queued path: wait (no timeout) for promotion. The promote
@@ -1328,6 +1332,7 @@ class ConversationManager:
             # re-read had a narrow race window where a concurrent
             # caller could null the field (Copilot review on this PR).
             event = queued.active_event
+            request.timestamp = datetime.now(timezone.utc).isoformat()
             await self.emit(conv_id, _confirmation_request_payload(request))
 
         # By either path (active or queued-then-promoted) ``event`` is
@@ -1337,7 +1342,10 @@ class ConversationManager:
         # Wait for response or timeout (lock not held — responder
         # needs to acquire it to claim the slot and set the event).
         try:
-            await asyncio.wait_for(event.wait(), timeout=request.timeout)
+            if request.timeout is not None and request.timeout > 0:
+                await asyncio.wait_for(event.wait(), timeout=request.timeout)
+            else:
+                await event.wait()
             timed_out = False
         except asyncio.TimeoutError:
             timed_out = True

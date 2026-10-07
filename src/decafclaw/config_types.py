@@ -244,6 +244,9 @@ class AgentConfig:
     # `<= 0` disables the wrapper globally. Per-tool overrides live on
     # TOOL_DEFINITIONS entries via the `timeout` key.
     tool_timeout_sec: int = 180
+    # Wall-clock timeout for user confirmation prompts. `<= 0` or `None`
+    # disables the timeout so the agent waits indefinitely.
+    confirmation_timeout_sec: int | None = None
     turn_on_new_message: str = "queue"  # "queue" or "cancel"
     show_context_status: bool = True
     auto_refresh_skills: bool = True

@@ -40,6 +40,8 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {string} deny_label
  * @property {string} action_type
  * @property {object} action_data
+ * @property {number|null} [timeout]
+ * @property {string} [timestamp]
  */
 
 import { uploadFile } from './upload-client.js';

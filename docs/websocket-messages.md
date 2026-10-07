@@ -84,6 +84,8 @@ Server is asking the user to approve or deny a pending action (tool call, end-of
 - `deny_label` — string
 - `tool_call_id` — string
 - `action_data` — object
+- `timeout` — number?
+- `timestamp` — string?
 
 ### `confirmation_response`
 
