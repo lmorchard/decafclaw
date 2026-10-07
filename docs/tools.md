@@ -81,13 +81,18 @@ Background process management (`shell_background_start/status/stop/list`) lives 
 
 ### Approval sources
 
-`check_shell_approval()` is the single chokepoint — don't duplicate its checks. It approves a command if any of these hold, in order:
+`check_shell_approval()` is the single chokepoint — don't duplicate its checks. It evaluates commands through the following stages, in order:
 
-1. `shell` (or the calling tool name) is in `ctx.tools.preapproved` — blanket approval from a command's `allowed-tools`.
-2. The command matches a **scoped pattern** from a skill's `allowed-tools: shell(...)` (see [Skills](skills.md#environment-for-shell-based-skills)).
-3. The command matches a **persisted pattern** in `data/{agent_id}/shell_allow_patterns.json`.
-4. (If `config.shell.aux_approval_enabled` is true) The **auxiliary LLM** analyzes the command and its risk against the default policy and any active situational presets or prompt guidance (configured via `config.shell`, stored persistently in `shell_approval_guidance.json`, or activated with user confirmation via `shell_guidance`). Approved commands are cached in `ctx.tools.llm_approved_shell_patterns` for the conversation.
-Otherwise it falls through to a user confirmation, which offers to save a suggested pattern.
+1. **Catastrophic safety filter (Tier 1 regex):** Commands matching dangerous destructive signatures (`rm -rf /`, `rm -rf ~`, `mkfs`, raw block device writes, fork bombs, shutdown/reboot) are immediately **blocked** (`SecurityStatus.BLOCK`), regardless of allowlists or permissions.
+2. **Scoped pattern allowlist:** The command matches a **scoped pattern** from a skill's `allowed-tools: shell(...)` (see [Skills](skills.md#environment-for-shell-based-skills)). These bypass Tier 2 LLM analysis and auto-approve immediately.
+3. **Persisted pattern allowlist:** The command matches a user-approved **persisted pattern** in `data/{agent_id}/shell_allow_patterns.json`. These bypass Tier 2 LLM analysis and auto-approve immediately without repeating interactive confirmation prompts (#966).
+4. **Security monitor evaluation:** If not explicitly allowlisted, `evaluate_command_llm()` evaluates the command:
+   - Tier 1 sensitive command checks (`npm/pip/cargo install`, `git push`, sensitive filesystem modifications) and Tier 2 LLM classification require human confirmation (`SecurityStatus.ASK`), or are denied outright on unattended turns.
+   - Any malicious construct classified as `SecurityStatus.BLOCK` by Tier 2 is blocked.
+5. **Blanket tool pre-approval:** If the command passed the security monitor checks and `shell` (or the tool name) is in `ctx.tools.preapproved` (blanket approval from `allowed-tools`), it is approved. Placing this after the security monitor ensures that blanket tool approvals cannot run unvetted package installations or out-of-workspace file mutations without confirmation.
+6. **Auxiliary LLM auto-approval:** (If `config.shell.aux_approval_enabled` is true) The **auxiliary LLM** analyzes the command and its risk against the default policy and any active situational presets or prompt guidance (configured via `config.shell`, stored persistently in `shell_approval_guidance.json`, or activated with user confirmation via `shell_guidance`). Approved commands are cached in `ctx.tools.llm_approved_shell_patterns` for the conversation.
+
+Otherwise it falls through to a user confirmation prompt, which offers to save a suggested allow pattern.
 
 **Unattended turns get the same allowlist and no prompt (#649).** Heartbeat and scheduled turns
 (`ctx.is_unattended`, i.e. `task_mode` in `{"heartbeat", "scheduled"}`) traverse exactly the branches
@@ -117,6 +122,14 @@ The chaining tokens (`_SHELL_CHAIN_TOKENS`) are a minimal covering set — each 
 | `\n` | newline as statement separator |
 
 Don't add `&&` or `||` back as separate entries — they're already covered, and the redundancy invites the mistake of thinking `&&` is handled while bare `&` isn't. That exact gap shipped once: `&` was missing while `&&` was present, so `python foo.py --a & rm -rf ~` backgrounded the approved command and ran an unapproved one.
+
+#### Quote-aware token scanning and nested interpreter handling (#966)
+
+The chaining token scanner is quote-aware:
+- Newlines, semicolons, and pipes embedded within quoted strings (`"..."` or `'...'`) are treated as literal argument data rather than statement separators. This enables multi-line commit messages (`git commit -m "title\n\nbody"`) and multi-line issue bodies (`gh issue create --body "line 1\nline 2"`) to match wildcard allow patterns.
+- Command substitutions (`$()`, `` ` ``) inside double quotes remain active in shell execution and are always detected as chaining.
+- If a command invokes nested script execution (e.g. `sh -c`, `bash -c`, or `eval`), the script arguments are recursively inspected for chaining tokens, ensuring that second-pass script parsing cannot smuggle unvetted operators inside outer quotes.
+- Wildcard patterns for interpreters (`sh -c *`, `bash -c *`, `eval *`) are ineligible for class matching; `_suggest_pattern()` never wildcards them, requiring explicit literal approvals for specific scripts.
 
 This covers command *chaining* only. Redirection (`>`, `<`) is deliberately not blocked — it can't introduce a second command, and rejecting it would break too many legitimate invocations. A wildcard pattern therefore still permits redirection in its arguments.
 

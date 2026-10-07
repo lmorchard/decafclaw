@@ -19,7 +19,7 @@ Commands matching persisted allow patterns (e.g. `gh issue *`, `git commit *`) c
 ### Goals
 - Differentiate between statement-separating newlines outside quotes and literal newlines embedded inside quoted strings (`"..."` or `'...'`).
 - Ensure quote-aware checking prevents command injection/chaining while allowing multi-line string arguments.
-- Reorder approval checks in `check_shell_approval()` so explicit allow patterns (`ctx.tools.preapproved`, `ctx.tools.preapproved_shell_patterns`, and persistent `shell_allow_patterns.json`) are checked *before* invoking `evaluate_command_llm()`.
+- Reorder approval checks in `check_shell_approval()` so scoped and persisted allow patterns (`ctx.tools.preapproved_shell_patterns` and persistent `shell_allow_patterns.json`) are checked *before* invoking `evaluate_command_llm()`.
 - Auto-approve matching commands without incurring Tier 2 LLM classification latency or repeated confirmation prompts.
 - Maintain existing security guarantees: chained commands (e.g., `;`, `&`, `|`, `$(...)`, `` `...` ``, or unquoted `\n`) cannot be smuggled through wildcard patterns.
 
@@ -40,15 +40,15 @@ Replace the naive `any(tok in command for tok in _SHELL_CHAIN_TOKENS)` with a sc
 - Outside quotes: detects `;`, `&`, `|`, `` ` ``, `$(` and unquoted `\n`.
 
 ### 3.2 Approval Check Precedence (`check_shell_approval`)
-Check allow patterns in order:
-1. Pre-approved tool names: `if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved`
+Check approvals in order:
+1. Tier 1 security monitor fast path: immediate BLOCK on catastrophic commands (`rm -rf /`, `mkfs`, fork bombs).
 2. Scoped shell patterns: `if _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns)`
 3. Persisted allow patterns: `patterns = _load_allow_patterns(ctx.config); if _command_matches_pattern(command, patterns)`
-4. If no explicit allow pattern matched, proceed to `evaluate_command_llm()`.
-5. If `evaluate_command_llm` returns `SecurityStatus.BLOCK`: block.
-6. If `evaluate_command_llm` returns `SecurityStatus.ASK`: prompt user for confirmation.
-7. If `evaluate_command_llm` passes, proceed to aux-LLM auto-approval / fallback prompt.
-
+4. If no explicit allow pattern matched, proceed to `evaluate_command_llm()`:
+   - If `evaluate_command_llm` returns `SecurityStatus.BLOCK`: block.
+   - If `evaluate_command_llm` returns `SecurityStatus.ASK`: prompt user for confirmation.
+5. Blanket tool pre-approval: `if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved` (evaluated after the security monitor so unvetted scripts cannot run sensitive actions like package installs without confirmation).
+6. If `evaluate_command_llm` passes and no blanket approval, proceed to aux-LLM auto-approval / fallback prompt.
 ## 4. Acceptance Criteria
 1. `_has_shell_metacharacters('git commit -m "title\n\nbody"')` returns `False`.
 2. `_has_shell_metacharacters("gh issue create --body 'line1\nline2'")` returns `False`.
