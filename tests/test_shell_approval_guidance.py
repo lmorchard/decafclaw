@@ -3,12 +3,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from decafclaw.config import load_sub_config
 from decafclaw.config_types import ShellConfig
-from decafclaw.context import Context, ToolState
+from decafclaw.context import Context, SkillState, ToolState
 from decafclaw.media import ToolResult
 from decafclaw.security_monitor import SecurityDecision, SecurityStatus
 from decafclaw.tools.shell_tools import (
     DEFAULT_AUX_APPROVAL_PRESETS,
+    _load_guidance_text,
+    _suggest_aux_approval_pattern,
+    _suggest_pattern,
     build_aux_approval_prompt,
     check_shell_approval,
     resolve_aux_approval_guidance,
@@ -25,6 +29,8 @@ def _make_mock_ctx(tmp_path: Path):
     ctx.config.agent_path.mkdir(parents=True, exist_ok=True)
     ctx.config.shell = ShellConfig(aux_approval_enabled=True)
     ctx.tools = ToolState()
+    ctx.skills = SkillState()
+    ctx.skip_vault_retrieval = False
     ctx.is_unattended = False
     ctx.task_mode = ""
     ctx.skip_archive = True
@@ -283,3 +289,84 @@ async def test_tool_shell_guidance_unattended_denied(tmp_path: Path):
     res_enable = await tool_shell_guidance(ctx, action="enable_preset", preset="developer")
     assert isinstance(res_enable, ToolResult)
     assert "denied on unattended turn" in res_enable.text
+
+
+def test_suggest_aux_approval_pattern_no_destructive_wildcards():
+    # Without guidance: legacy behavior wildcards subcommands
+    assert _suggest_aux_approval_pattern("git checkout feature/topic", has_guidance=False) == "git checkout *"
+
+    # With guidance: state-changing commands are cached with EXACT string, never wildcarded
+    assert (
+        _suggest_aux_approval_pattern("git checkout feature/topic", has_guidance=True) == "git checkout feature/topic"
+    )
+    assert _suggest_aux_approval_pattern("git add path/to/file.py", has_guidance=True) == "git add path/to/file.py"
+    assert _suggest_aux_approval_pattern("git commit -m 'feat'", has_guidance=True) == "git commit -m 'feat'"
+
+    # Safe read-only / test commands are still allowed to wildcard
+    assert (
+        _suggest_aux_approval_pattern("pytest tests/test_foo.py -v", has_guidance=True) == "pytest tests/test_foo.py *"
+    )
+    assert _suggest_aux_approval_pattern("git status", has_guidance=True) == "git status"
+    assert _suggest_aux_approval_pattern("git diff HEAD~1", has_guidance=True) == "git diff *"
+
+
+def test_env_dict_coercion_for_presets(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("SHELL_AUX_APPROVAL_PRESETS", '{"ci": "Auto-approve ci scripts"}')
+    cfg = load_sub_config(ShellConfig, json_data={}, env_prefix="SHELL")
+    assert isinstance(cfg.aux_approval_presets, dict)
+    assert cfg.aux_approval_presets == {"ci": "Auto-approve ci scripts"}
+
+    ctx = _make_mock_ctx(tmp_path)
+    ctx.config.shell = cfg
+    ctx.config.shell.active_aux_approval_presets = ["ci"]
+    guidelines = resolve_aux_approval_guidance(ctx)
+    assert "Auto-approve ci scripts" in guidelines
+
+
+def test_load_guidance_text_no_cwd_leakage(tmp_path: Path, monkeypatch):
+    ctx = _make_mock_ctx(tmp_path)
+    # Create a file in current working directory
+    cwd_file = Path("test_leak_marker.txt")
+    try:
+        cwd_file.write_text("CWD secret content")
+        # Relative path without matching file in agent_path or workspace_path
+        # must NOT read from CWD
+        result = _load_guidance_text(ctx, "test_leak_marker.txt")
+        assert result == "test_leak_marker.txt"
+        assert result != "CWD secret content"
+    finally:
+        if cwd_file.exists():
+            cwd_file.unlink()
+
+
+def test_conversation_manager_persists_guidance_across_turns(tmp_path: Path):
+    from decafclaw.conversation_manager import ConversationManager, ConversationState
+
+    cm = MagicMock(spec=ConversationManager)
+    cm._restore_per_conv_state = ConversationManager._restore_per_conv_state.__get__(cm)
+    cm._save_conversation_state = ConversationManager._save_conversation_state.__get__(cm)
+
+    state = ConversationState(conv_id="test-conv")
+
+    # Turn 1: ctx adds presets and guidance
+    ctx1 = _make_mock_ctx(tmp_path)
+    ctx1.tools.active_aux_approval_presets = ["developer"]
+    ctx1.tools.disabled_aux_approval_presets = ["github"]
+    ctx1.tools.aux_approval_guidance = ["Rule 1"]
+    ctx1.tools.llm_approved_shell_patterns = ["pytest *"]
+
+    cm._save_conversation_state(state, ctx1)
+
+    assert state.persisted.active_aux_approval_presets == ["developer"]
+    assert state.persisted.disabled_aux_approval_presets == ["github"]
+    assert state.persisted.aux_approval_guidance == ["Rule 1"]
+    assert state.persisted.llm_approved_shell_patterns == ["pytest *"]
+
+    # Turn 2: fresh ctx restores persisted state
+    ctx2 = _make_mock_ctx(tmp_path)
+    cm._restore_per_conv_state(state, ctx2)
+
+    assert ctx2.tools.active_aux_approval_presets == ["developer"]
+    assert ctx2.tools.disabled_aux_approval_presets == ["github"]
+    assert ctx2.tools.aux_approval_guidance == ["Rule 1"]
+    assert ctx2.tools.llm_approved_shell_patterns == ["pytest *"]

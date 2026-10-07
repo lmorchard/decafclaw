@@ -139,13 +139,50 @@ def _suggest_pattern(command: str) -> str:
     return command
 
 
+def _suggest_aux_approval_pattern(command: str, has_guidance: bool) -> str:
+    """Generate cache pattern for aux-LLM approvals.
+
+    When guidance/presets are active, state-changing commands (e.g. git checkout,
+    git add, git commit) must not be wildcarded into dangerous catch-alls (like
+    'git checkout *' which would auto-approve destructive 'git checkout -- .').
+    Safe read-only commands (e.g. pytest, ruff, git status, git diff) can still
+    use suggested wildcard patterns.
+    """
+    if not has_guidance:
+        return _suggest_pattern(command)
+
+    safe_wildcard_prefixes = (
+        "pytest",
+        "ruff",
+        "vitest",
+        "npm test",
+        "npm run test",
+        "cargo test",
+        "git status",
+        "git diff",
+        "git log",
+        "git show",
+        "ls",
+        "cat",
+        "find",
+    )
+    cmd_stripped = command.strip()
+    first_part = cmd_stripped.split()[0] if cmd_stripped.split() else ""
+    first_two = " ".join(cmd_stripped.split()[:2]) if len(cmd_stripped.split()) >= 2 else ""
+
+    if first_part in safe_wildcard_prefixes or first_two in safe_wildcard_prefixes:
+        return _suggest_pattern(command)
+
+    return cmd_stripped
+
+
 DEFAULT_AUX_APPROVAL_PRESETS: dict[str, str] = {
     "developer": (
         "Auto-approve standard software development commands within active workspace repositories, "
         "including running test suites (e.g. pytest, npm test, vitest), linters and formatters (e.g. ruff, black, eslint, prettier), "
-        "build commands, and non-destructive git operations (e.g. git status, git diff, git log, git add, git commit, git branch, "
-        "git checkout, git switch, and git push to non-main/feature branches). "
-        "Do not auto-approve destructive operations (e.g. git push --force, git reset --hard, deleting uncommitted work), "
+        "build commands, and non-destructive local git operations (e.g. git status, git diff, git log, git add, git commit, git branch, "
+        "git checkout, git switch). "
+        "Do not auto-approve destructive operations (e.g. git reset --hard, deleting uncommitted work), "
         "or commands operating outside the workspace."
     ),
     "github": (
@@ -154,6 +191,23 @@ DEFAULT_AUX_APPROVAL_PRESETS: dict[str, str] = {
         "Do not auto-approve destructive operations (such as repository deletion or deleting releases/tags)."
     ),
 }
+
+
+def _get_all_presets(config) -> dict[str, str]:
+    """Merge built-in presets with user-defined presets from config."""
+    raw_custom = getattr(config.shell, "aux_approval_presets", {})
+    if isinstance(raw_custom, str):
+        try:
+            custom = json.loads(raw_custom)
+            if not isinstance(custom, dict):
+                custom = {}
+        except (json.JSONDecodeError, ValueError):
+            custom = {}
+    elif isinstance(raw_custom, dict):
+        custom = raw_custom
+    else:
+        custom = {}
+    return {**DEFAULT_AUX_APPROVAL_PRESETS, **custom}
 
 
 def _persistent_guidance_path(config) -> Path:
@@ -227,15 +281,18 @@ def _load_guidance_text(ctx: "Context", raw: str) -> str:
     if not text:
         return ""
     if "\n" not in text and len(text) < 512:
-        candidate_paths = [
-            Path(text),
-            ctx.config.agent_path / text,
-            ctx.config.workspace_path / text,
-        ]
-        for p in candidate_paths:
+        p = Path(text)
+        if p.is_absolute():
+            candidate_paths = [p]
+        else:
+            candidate_paths = [
+                ctx.config.agent_path / text,
+                ctx.config.workspace_path / text,
+            ]
+        for candidate in candidate_paths:
             try:
-                if p.is_file():
-                    return p.read_text().strip()
+                if candidate.is_file():
+                    return candidate.read_text().strip()
             except OSError:
                 pass
     return text
@@ -264,8 +321,7 @@ def resolve_aux_approval_guidance(ctx: "Context") -> list[str]:
 
     disabled_presets = set(getattr(ctx.tools, "disabled_aux_approval_presets", []))
 
-    all_presets = {**DEFAULT_AUX_APPROVAL_PRESETS, **getattr(ctx.config.shell, "aux_approval_presets", {})}
-
+    all_presets = _get_all_presets(ctx.config)
     seen_presets = set()
     for name in active_preset_names:
         if name in seen_presets or name in disabled_presets:
@@ -413,7 +469,9 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 log.info(
                     f"[{tool_name}] auto-approved by aux LLM (risk: {data.get('risk')}): {command} - {data.get('reason')}"
                 )
-                suggested_pattern = _suggest_pattern(command)
+                suggested_pattern = _suggest_aux_approval_pattern(
+                    command, has_guidance=bool(resolve_aux_approval_guidance(ctx))
+                )
                 ctx.tools.llm_approved_shell_patterns.append(suggested_pattern)
 
                 msg_content = f"Command: {command}\nRisk: {data.get('risk')}\nReason: {data.get('reason')}"
@@ -576,7 +634,7 @@ async def tool_shell_guidance(
     """Manage aux-LLM shell auto-approval prompt guidance and situational presets."""
     log.info(f"[tool:shell_guidance] action={action} preset={preset} rule={rule} persistent={persistent}")
 
-    all_presets = {**DEFAULT_AUX_APPROVAL_PRESETS, **getattr(ctx.config.shell, "aux_approval_presets", {})}
+    all_presets = _get_all_presets(ctx.config)
 
     if action == "list":
         persisted = _load_persistent_guidance(ctx.config)

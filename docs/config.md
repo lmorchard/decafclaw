@@ -382,7 +382,7 @@ When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxi
 
 - **`aux_approval_guidance`**: Free-form guidance string (or path to a guidance text file relative to the agent or workspace directory). Appended to the aux evaluator prompt to permit specific categories of commands (e.g. `Auto-approve pytest and ruff invocations inside the workspace.`).
 - **`aux_approval_presets`**: Custom named presets mapping preset name to guidance text. Built-in presets:
-  - `developer`: Auto-approves test runners (`pytest`, `npm test`, `vitest`), linters/formatters (`ruff`, `prettier`, `eslint`), build commands, and non-destructive git operations (`git add`, `git commit`, `git status`, `git diff`, `git push` to feature branches) within workspace repositories.
+  - `developer`: Auto-approves test runners (`pytest`, `npm test`, `vitest`), linters/formatters (`ruff`, `prettier`, `eslint`), build commands, and non-destructive local git operations (`git add`, `git commit`, `git status`, `git diff`, `git branch`, `git checkout`, `git switch`) within workspace repositories. (Note that `git push` is always intercepted for confirmation by the security monitor).
   - `github`: Auto-approves GitHub CLI (`gh`) commands for issue/PR inspection and safe workflow management (`gh issue`, `gh pr`, `gh run`).
 - **`active_aux_approval_presets`**: List of preset names activated by default. In addition, presets and guidance can be activated conversationally via session `ToolState`.
 
