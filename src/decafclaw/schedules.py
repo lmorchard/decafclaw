@@ -840,12 +840,14 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv
                         skill_name,
                         task.name,
                     )
+                    ctx.skills.activation_denials.append(skill_name)
                     continue
                 if skill_info:
                     try:
                         await activate_skill_internal(ctx, skill_info)
                     except Exception as e:
                         log.error(f"Failed to activate skill '{skill_name}' for task '{task.name}': {e}")
+                        ctx.skills.activation_denials.append(skill_name)
 
     from .commands import substitute_body
     from .polling import build_task_preamble

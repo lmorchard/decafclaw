@@ -727,6 +727,7 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
                 f"(task_mode={ctx.task_mode!r}): workspace-tier skill "
                 f"'{name}' has no standing grant or its code was modified"
             )
+            ctx.skills.activation_denials.append(name)
             return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
         approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:

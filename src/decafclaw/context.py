@@ -95,6 +95,8 @@ class SkillState:
     # short hint system message so the agent considers activate_skill
     # without needing a failed-tool round-trip.
     preempt_matches: set[str] = field(default_factory=set)
+    # Track authorization errors / security denials (e.g. workspace skill denied on unattended turn)
+    activation_denials: list[str] = field(default_factory=list)
 
 
 class BoundLlmClient:
