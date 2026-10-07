@@ -71,8 +71,51 @@ def copy_source_tree(root):
     return root
 
 
+RELEVANT_CODEGEN_PATTERNS = [
+    "src/decafclaw/http_server.py",
+    "src/decafclaw/web/",
+    "scripts/gen_api_client.py",
+    "scripts/sticky_api_request.ts",
+    "tests/test_api_codegen.py",
+]
+
+
+def _should_skip_codegen_contract_tests() -> bool:
+    """Skip slow disposable-tree contract-drift tests when no API/web/codegen files changed."""
+    if os.environ.get("RUN_CODEGEN_TESTS", "").lower() in ("1", "true", "yes"):
+        return False
+    if os.environ.get("GITHUB_EVENT_NAME") == "push" and os.environ.get("GITHUB_REF") == "refs/heads/main":
+        return False
+
+    base = os.environ.get("GITHUB_BASE_REF") or "origin/main"
+    try:
+        branch_res = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True
+        )
+        if branch_res.returncode == 0 and branch_res.stdout.strip() == "main":
+            return False
+
+        res = subprocess.run(
+            ["git", "diff", "--name-only", f"{base}...HEAD"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode == 0:
+            changed_files = res.stdout.splitlines()
+            for f in changed_files:
+                if any(f == p or f.startswith(p) for p in RELEVANT_CODEGEN_PATTERNS):
+                    return False
+            return True
+    except Exception:
+        return False
+    return False
+
+
 @pytest.fixture
 def source_tree(tmp_path):
+    if _should_skip_codegen_contract_tests():
+        pytest.skip("No API server, web client, or codegen files modified on branch")
     return copy_source_tree(tmp_path / "source")
 
 
@@ -103,9 +146,13 @@ def test_browser_asset_gate_rejects_missing_module(source_tree):
     assert "auth-client.js" in output and "no such file" in output, output
 
 
-def test_backend_response_drift_fails_at_unchanged_caller(source_tree):
+def test_baseline_check_js_passes(source_tree):
+    """Verify clean backend contracts and generated API client pass check-js."""
     result, output = run_make(source_tree, "check-js")
     assert result.returncode == 0, output
+
+
+def test_backend_response_drift_fails_at_unchanged_caller(source_tree):
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
     changed = original.replace(
@@ -123,8 +170,6 @@ def test_backend_response_drift_fails_at_unchanged_caller(source_tree):
 
 @pytest.mark.parametrize("contract", ["identifier", "response"])
 def test_sticky_contract_drift_fails_at_unchanged_caller(source_tree, contract):
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     caller = source_tree / STATIC_REL / "lib/sticky-state.js"
     original_caller = caller.read_bytes()
     backend = source_tree / "src/decafclaw/http_server.py"
@@ -1789,8 +1834,6 @@ def test_browser_auth_logout_redirects_guard(built_static, chromium, config):
 def test_listing_contract_drift_fails_at_unchanged_caller(source_tree, operation, model, contract):
     caller = source_tree / STATIC_REL / "lib/conversation-store.js"
     original_caller = caller.read_bytes()
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
     # ruff wraps the longer system signature and route; the others fit on one line.
@@ -1851,8 +1894,6 @@ def test_listing_contract_drift_fails_at_unchanged_caller(source_tree, operation
 def test_patch_contract_drift_fails_at_unchanged_caller(source_tree, contract):
     caller = source_tree / STATIC_REL / "lib/conversation-store.js"
     original_caller = caller.read_bytes()
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
     if contract == "identifier":
@@ -1906,8 +1947,6 @@ def test_patch_contract_drift_fails_at_unchanged_caller(source_tree, contract):
 def test_folder_contract_drift_fails_at_unchanged_callers(source_tree, contract):
     caller = source_tree / STATIC_REL / "lib/conversation-store.js"
     original_caller = caller.read_bytes()
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
     if contract == "body":
@@ -1944,8 +1983,6 @@ def test_folder_contract_drift_fails_at_unchanged_callers(source_tree, contract)
 def test_lifecycle_contract_drift_fails_at_unchanged_caller(source_tree, contract):
     caller = source_tree / STATIC_REL / "lib/conversation-store.js"
     original_caller = caller.read_bytes()
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
     if contract in {"archive", "unarchive", "delete"}:
@@ -1991,8 +2028,6 @@ def test_lifecycle_contract_drift_fails_at_unchanged_caller(source_tree, contrac
 
 @pytest.mark.parametrize("contract", ["request", "response"])
 def test_login_contract_drift_fails_at_unchanged_caller(source_tree, contract):
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     caller = source_tree / STATIC_REL / "lib/auth-client.js"
     original_caller = caller.read_bytes()
     backend = source_tree / "src/decafclaw/http_server.py"
@@ -2048,8 +2083,6 @@ def test_auth_generated_contracts(source_tree):
     "contract", ["context_id", "export_id", "format", "source", "details", "candidate", "cache", "window"]
 )
 def test_context_export_contract_drift_fails_at_unchanged_caller(source_tree, contract):
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
     component = "copy-conversation-menu.js" if contract in {"export_id", "format"} else "context-inspector.js"
@@ -2093,8 +2126,6 @@ def test_context_export_contract_drift_fails_at_unchanged_caller(source_tree, co
 
 @pytest.mark.parametrize("contract", ["limit", "id", "records", "count", "title", "link"])
 def test_notification_contract_drift_fails_at_unchanged_caller(source_tree, contract):
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
     caller = source_tree / STATIC_REL / "components/notification-inbox.js"
@@ -2133,8 +2164,6 @@ def test_notification_contract_drift_fails_at_unchanged_caller(source_tree, cont
 
 
 def _mutate_canvas_contract(source_tree, replacements):
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
     changed = original
@@ -2262,17 +2291,17 @@ def test_canvas_state_field_drift_fails_at_unchanged_callers(source_tree):
     assert "Property 'active_tab' does not exist on type 'CanvasStateResponse'" in output, output
 
 
-@pytest.mark.parametrize("field", ["id", "label", "widget_type", "data"])
-def test_canvas_tab_field_drift_fails_at_unchanged_callers(source_tree, field):
-    before = {
-        "id": "class CanvasTabResponse(BaseModel):\n    id:",
-        "label": "    id: str\n    label:",
-        "widget_type": "    label: str\n    widget_type:",
-        "data": "    label: str\n    widget_type: str\n    data:",
-    }[field]
-    output = _mutate_canvas_contract(source_tree, [(before, before.replace(f"    {field}:", f"    renamed_{field}:"))])
+def test_canvas_tab_field_drift_fails_at_unchanged_callers(source_tree):
+    replacements = [
+        (
+            "    id: str\n    label: str\n    widget_type: str\n    data:",
+            "    renamed_id: str\n    renamed_label: str\n    renamed_widget_type: str\n    renamed_data:",
+        ),
+    ]
+    output = _mutate_canvas_contract(source_tree, replacements)
     assert "canvas-page.js" in output or "canvas-state.js" in output, output
-    assert f"Property '{field}' does not exist on type 'CanvasTabResponse'" in output, output
+    for field in ["id", "label", "widget_type", "data"]:
+        assert f"Property '{field}' does not exist on type 'CanvasTabResponse'" in output, output
 
 
 def test_widget_catalog_envelope_drift_fails_at_unchanged_caller(source_tree):
@@ -2289,21 +2318,26 @@ def test_widget_catalog_envelope_drift_fails_at_unchanged_caller(source_tree):
     assert "Property 'widgets' does not exist on type 'WidgetCatalogResponse'" in output, output
 
 
-@pytest.mark.parametrize("field", ["name", "js_url"])
-def test_widget_descriptor_field_drift_fails_at_unchanged_callers(source_tree, field):
-    before = {
-        "name": "class WidgetDescriptorResponse(BaseModel):\n    name:",
-        "js_url": "    data_schema: dict[str, JsonValue]\n    js_url:",
-    }[field]
-    output = _mutate_canvas_contract(source_tree, [(before, before.replace(f"    {field}:", f"    renamed_{field}:"))])
-    caller = "widget-catalog.js" if field == "name" else "widget-host.js"
-    assert caller in output and "TS2339" in output, output
-    assert f"Property '{field}' does not exist on type 'WidgetDescriptorResponse'" in output, output
+def test_widget_descriptor_field_drift_fails_at_unchanged_callers(source_tree):
+    output = _mutate_canvas_contract(
+        source_tree,
+        [
+            (
+                "class WidgetDescriptorResponse(BaseModel):\n    name:",
+                "class WidgetDescriptorResponse(BaseModel):\n    renamed_name:",
+            ),
+            (
+                "    data_schema: dict[str, JsonValue]\n    js_url:",
+                "    data_schema: dict[str, JsonValue]\n    renamed_js_url:",
+            ),
+        ],
+    )
+    assert "widget-catalog.js" in output and "widget-host.js" in output, output
+    assert "Property 'name' does not exist on type 'WidgetDescriptorResponse'" in output, output
+    assert "Property 'js_url' does not exist on type 'WidgetDescriptorResponse'" in output, output
 
 
 def _mutate_workspace_contract(source_tree, mutate):
-    result, output = run_make(source_tree, "check-js")
-    assert result.returncode == 0, output
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
     changed = mutate(original)
@@ -2374,30 +2408,28 @@ def test_workspace_read_input_drift_fails_at_every_unchanged_call(source_tree, c
 
 
 @pytest.mark.parametrize(
-    ("model", "field", "caller"),
+    ("model", "fields", "caller"),
     [
-        ("WorkspaceListingResponse", "folders", "components/files-sidebar.js"),
-        ("WorkspaceListingResponse", "files", "components/files-sidebar.js"),
-        ("WorkspaceRecentResponse", "files", "components/files-sidebar.js"),
-        ("WorkspaceFolderEntry", "name", "components/files-sidebar.js"),
-        ("WorkspaceFolderEntry", "path", "components/files-sidebar.js"),
+        ("WorkspaceListingResponse", ["folders", "files"], "components/files-sidebar.js"),
+        ("WorkspaceRecentResponse", ["files"], "components/files-sidebar.js"),
+        ("WorkspaceFolderEntry", ["name", "path"], "components/files-sidebar.js"),
+        (
+            "WorkspaceFileEntry",
+            ["name", "path", "size", "modified", "kind", "readonly", "secret"],
+            "components/files-sidebar.js",
+        ),
+        ("WorkspaceTextResponse", ["content", "modified", "readonly"], "components/file-page.js"),
+        ("AutocompleteResponse", ["results"], "components/chat-input.js"),
         *[
-            ("WorkspaceFileEntry", field, "components/files-sidebar.js")
-            for field in ("name", "path", "size", "modified", "kind", "readonly", "secret")
-        ],
-        *[("WorkspaceTextResponse", field, "components/file-page.js") for field in ("content", "modified", "readonly")],
-        ("AutocompleteResponse", "results", "components/chat-input.js"),
-        *[
-            (model, field, "components/chat-input.js")
+            (model, ["type", "id", "label", "description"], "components/chat-input.js")
             for model in ("VaultCompletion", "McpCompletion", "FileCompletion")
-            for field in ("type", "id", "label", "description")
         ],
     ],
 )
 def test_workspace_read_output_drift_fails_at_unchanged_caller(
     source_tree,
     model,
-    field,
+    fields,
     caller,
 ):
     caller_path = source_tree / STATIC_REL / caller
@@ -2407,17 +2439,19 @@ def test_workspace_read_output_drift_fails_at_unchanged_caller(
         start = original.index(f"class {model}(BaseModel):")
         end = original.index("\n\n\n", start)
         block = original[start:end]
-        before = f"    {field}:"
-        assert block.count(before) == 1
-        changed_block = block.replace(before, f"    renamed_{field}:")
-        return original[:start] + changed_block + original[end:]
+        for field in fields:
+            before = f"    {field}:"
+            assert block.count(before) == 1
+            block = block.replace(before, f"    renamed_{field}:")
+        return original[:start] + block + original[end:]
 
     output = _mutate_workspace_contract(source_tree, mutate)
     diagnostics = [line for line in output.splitlines() if "error TS" in line]
-    expected = f"Property '{field}' does not exist"
-    assert any(
-        caller in line and ("TS2339" in line or "TS2551" in line) and expected in line for line in diagnostics
-    ), output
+    for field in fields:
+        expected = f"Property '{field}' does not exist"
+        assert any(
+            caller in line and ("TS2339" in line or "TS2551" in line) and expected in line for line in diagnostics
+        ), output
     assert all(caller in line for line in diagnostics), output
     assert caller_path.read_bytes() == original_caller
 
@@ -2719,60 +2753,75 @@ def test_vault_read_input_drift_fails_at_every_unchanged_call(source_tree, contr
 
 
 @pytest.mark.parametrize(
-    ("model", "field", "callers"),
+    ("model", "fields_and_callers"),
     [
-        ("VaultListingResponse", "folders", ["components/vault-sidebar.js"]),
-        ("VaultListingResponse", "pages", ["components/vault-sidebar.js"]),
-        ("VaultRecentResponse", "pages", ["components/vault-sidebar.js"]),
-        ("VaultTagsResponse", "tags", ["components/tags-sidebar.js"]),
-        *[("VaultFolderEntry", field, ["components/vault-sidebar.js"]) for field in ("name", "path")],
-        *[
-            ("VaultPageListEntry", field, ["components/vault-sidebar.js"])
-            for field in ("title", "path", "folder", "modified", "summary")
-        ],
-        *[("VaultTagEntry", field, ["components/tags-sidebar.js"]) for field in ("tag", "count", "pages")],
-        ("VaultPageResponse", "title", ["components/wiki-page.js"]),
-        ("VaultPageResponse", "body", ["components/wiki-page.js", "components/wiki-editor.js"]),
-        ("VaultPageResponse", "modified", ["components/wiki-page.js", "components/wiki-editor.js"]),
-        *[
-            ("VaultPageResponse", field, ["components/wiki-page.js"])
-            for field in ("frontmatter", "frontmatter_raw", "frontmatter_error")
-        ],
+        (
+            "VaultListingResponse",
+            [("folders", ["components/vault-sidebar.js"]), ("pages", ["components/vault-sidebar.js"])],
+        ),
+        ("VaultRecentResponse", [("pages", ["components/vault-sidebar.js"])]),
+        ("VaultTagsResponse", [("tags", ["components/tags-sidebar.js"])]),
+        ("VaultFolderEntry", [("name", ["components/vault-sidebar.js"]), ("path", ["components/vault-sidebar.js"])]),
+        (
+            "VaultPageListEntry",
+            [
+                ("title", ["components/vault-sidebar.js"]),
+                ("path", ["components/vault-sidebar.js"]),
+                ("folder", ["components/vault-sidebar.js"]),
+                ("modified", ["components/vault-sidebar.js"]),
+                ("summary", ["components/vault-sidebar.js"]),
+            ],
+        ),
+        (
+            "VaultTagEntry",
+            [
+                ("tag", ["components/tags-sidebar.js"]),
+                ("count", ["components/tags-sidebar.js"]),
+                ("pages", ["components/tags-sidebar.js"]),
+            ],
+        ),
+        (
+            "VaultPageResponse",
+            [
+                ("title", ["components/wiki-page.js"]),
+                ("body", ["components/wiki-page.js", "components/wiki-editor.js"]),
+                ("modified", ["components/wiki-page.js", "components/wiki-editor.js"]),
+                ("frontmatter", ["components/wiki-page.js"]),
+                ("frontmatter_raw", ["components/wiki-page.js"]),
+                ("frontmatter_error", ["components/wiki-page.js"]),
+            ],
+        ),
     ],
 )
 def test_vault_read_output_drift_fails_at_unchanged_callers(
     source_tree,
     model,
-    field,
-    callers,
+    fields_and_callers,
 ):
-    originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in callers}
+    all_callers = {c for _, callers in fields_and_callers for c in callers}
+    originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in all_callers}
 
     def mutate(original):
         start = original.index(f"class {model}(BaseModel):")
         end = original.index("\n\n\n", start)
         block = original[start:end]
-        before = f"    {field}:"
-        assert block.count(before) == 1
-        return (
-            original[:start]
-            + block.replace(
-                before,
-                f"    renamed_{field}:",
-            )
-            + original[end:]
-        )
+        for field, _ in fields_and_callers:
+            before = f"    {field}:"
+            assert block.count(before) == 1
+            block = block.replace(before, f"    renamed_{field}:")
+        return original[:start] + block + original[end:]
 
     output = _mutate_workspace_contract(source_tree, mutate)
     diagnostics = [line for line in output.splitlines() if "error TS" in line]
-    for caller in callers:
-        assert any(
-            caller in diagnostic
-            and ("TS2339" in diagnostic or "TS2551" in diagnostic)
-            and f"Property '{field}' does not exist" in diagnostic
-            for diagnostic in diagnostics
-        ), output
-        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+    for field, callers in fields_and_callers:
+        for caller in callers:
+            assert any(
+                caller in diagnostic
+                and ("TS2339" in diagnostic or "TS2551" in diagnostic)
+                and f"Property '{field}' does not exist" in diagnostic
+                for diagnostic in diagnostics
+            ), output
+            assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
 
 
 @pytest.mark.parametrize(
@@ -3181,50 +3230,51 @@ def test_config_save_input_type_drift_fails_at_unchanged_editor(
 
 
 @pytest.mark.parametrize(
-    ("model", "field", "callers"),
+    ("model", "fields_and_callers"),
     [
-        *[
-            ("ConfigFileEntry", field, ["components/config-panel.js"])
-            for field in ("name", "path", "description", "scope", "exists")
-        ],
-        ("ConfigFileResponse", "content", ["components/config-panel.js", "components/wiki-editor.js"]),
-        ("ConfigFileResponse", "modified", ["components/config-panel.js", "components/wiki-editor.js"]),
-        ("ConfigWriteResponse", "modified", ["components/wiki-editor.js"]),
+        (
+            "ConfigFileEntry",
+            [(field, ["components/config-panel.js"]) for field in ("name", "path", "description", "scope", "exists")],
+        ),
+        (
+            "ConfigFileResponse",
+            [
+                ("content", ["components/config-panel.js", "components/wiki-editor.js"]),
+                ("modified", ["components/config-panel.js", "components/wiki-editor.js"]),
+            ],
+        ),
+        ("ConfigWriteResponse", [("modified", ["components/wiki-editor.js"])]),
     ],
 )
 def test_config_consumed_output_drift_fails_at_unchanged_callers(
     source_tree,
     model,
-    field,
-    callers,
+    fields_and_callers,
 ):
-    originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in callers}
+    all_callers = {c for _, callers in fields_and_callers for c in callers}
+    originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in all_callers}
 
     def mutate(original):
         start = original.index(f"class {model}(BaseModel):")
         end = original.index("\n\n\n", start)
         block = original[start:end]
-        before = f"    {field}:"
-        assert block.count(before) == 1
-        return (
-            original[:start]
-            + block.replace(
-                before,
-                f"    renamed_{field}:",
-            )
-            + original[end:]
-        )
+        for field, _ in fields_and_callers:
+            before = f"    {field}:"
+            assert block.count(before) == 1
+            block = block.replace(before, f"    renamed_{field}:")
+        return original[:start] + block + original[end:]
 
     output = _mutate_workspace_contract(source_tree, mutate)
     diagnostics = [line for line in output.splitlines() if "error TS" in line]
-    for caller in callers:
-        assert any(
-            caller in diagnostic
-            and ("TS2339" in diagnostic or "TS2551" in diagnostic)
-            and f"Property '{field}' does not exist" in diagnostic
-            for diagnostic in diagnostics
-        ), output
-        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+    for field, callers in fields_and_callers:
+        for caller in callers:
+            assert any(
+                caller in diagnostic
+                and ("TS2339" in diagnostic or "TS2551" in diagnostic)
+                and f"Property '{field}' does not exist" in diagnostic
+                for diagnostic in diagnostics
+            ), output
+            assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
 
 
 @pytest.mark.parametrize(
@@ -3392,9 +3442,8 @@ def test_schedule_path_type_drift_fails_at_unchanged_callers(
     assert all(any(caller in diagnostic for caller in callers) for diagnostic in diagnostics), output
 
 
-@pytest.mark.parametrize(
-    ("field", "old_type", "new_type", "callers"),
-    [
+def test_schedule_update_input_type_drift_fails_at_unchanged_callers(source_tree):
+    fields = [
         ("content", "str", "int", ["components/wiki-editor.js"]),
         ("modified", "float", "str", ["components/wiki-editor.js"]),
         (
@@ -3414,63 +3463,68 @@ def test_schedule_path_type_drift_fails_at_unchanged_callers(
         ("shell_patterns", "list[str]", "str", ["components/schedule-metadata.js"]),
         ("email_recipients", "list[str]", "str", ["components/schedule-metadata.js"]),
         ("pre_script", "str", "int", ["components/schedule-metadata.js"]),
-    ],
-)
-def test_schedule_update_input_type_drift_fails_at_unchanged_callers(
-    source_tree,
-    field,
-    old_type,
-    new_type,
-    callers,
-):
-    originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in callers}
+    ]
+    all_callers = {c for _, _, _, callers in fields for c in callers}
+    originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in all_callers}
 
     def mutate(original):
         start = original.index("class ScheduleUpdateRequest(BaseModel):")
         end = original.index("\n\n\n", start)
         block = original[start:end]
-        before = f"    {field}: {old_type} | None"
-        assert block.count(before) == 1
-        return (
-            original[:start]
-            + block.replace(
-                before,
-                f"    {field}: {new_type} | None",
-            )
-            + original[end:]
-        )
+        for field, old_type, new_type, _ in fields:
+            before = f"    {field}: {old_type} | None"
+            assert block.count(before) == 1
+            block = block.replace(before, f"    {field}: {new_type} | None")
+        return original[:start] + block + original[end:]
 
     output = _mutate_workspace_contract(source_tree, mutate)
     diagnostics = [line for line in output.splitlines() if "error TS" in line]
-    for caller in callers:
-        assert any(
-            caller in diagnostic and ("TS2322" in diagnostic or "TS2345" in diagnostic) and "assignable" in diagnostic
-            for diagnostic in diagnostics
-        ), output
-        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
-    assert all(any(caller in diagnostic for caller in callers) for diagnostic in diagnostics), output
+    for field, _, _, callers in fields:
+        for caller in callers:
+            assert any(
+                caller in diagnostic
+                and ("TS2322" in diagnostic or "TS2345" in diagnostic)
+                and "assignable" in diagnostic
+                for diagnostic in diagnostics
+            ), output
+            assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+    assert all(any(caller in diagnostic for caller in all_callers) for diagnostic in diagnostics), output
 
 
 @pytest.mark.parametrize(
-    ("model", "field", "callers"),
+    ("model", "fields_and_callers"),
     [
         (
             "ModelListResponse",
-            "models",
             [
-                "components/schedule-page.js",
-                "components/schedule-metadata.js",
+                (
+                    "models",
+                    [
+                        "components/schedule-page.js",
+                        "components/schedule-metadata.js",
+                    ],
+                ),
             ],
         ),
-        ("ScheduleListResponse", "schedules", ["components/schedules-sidebar.js"]),
-        ("ScheduleDetailResponse", "schedule", ["components/schedule-page.js"]),
-        ("ScheduleDetailResponse", "body", ["components/wiki-editor.js"]),
-        ("ScheduleDetailResponse", "modified", ["components/wiki-editor.js"]),
-        ("ScheduleUpdateResponse", "schedule", ["components/schedule-page.js"]),
-        ("ScheduleUpdateResponse", "modified", ["components/wiki-editor.js"]),
-        *[
-            ("ScheduleResponse", field, callers)
-            for field, callers in (
+        ("ScheduleListResponse", [("schedules", ["components/schedules-sidebar.js"])]),
+        (
+            "ScheduleDetailResponse",
+            [
+                ("schedule", ["components/schedule-page.js"]),
+                ("body", ["components/wiki-editor.js"]),
+                ("modified", ["components/wiki-editor.js"]),
+            ],
+        ),
+        (
+            "ScheduleUpdateResponse",
+            [
+                ("schedule", ["components/schedule-page.js"]),
+                ("modified", ["components/wiki-editor.js"]),
+            ],
+        ),
+        (
+            "ScheduleResponse",
+            [
                 ("name", ["components/schedules-sidebar.js", "components/schedule-page.js"]),
                 (
                     "source_tier",
@@ -3480,27 +3534,9 @@ def test_schedule_update_input_type_drift_fails_at_unchanged_callers(
                         "components/schedule-metadata.js",
                     ],
                 ),
-                (
-                    "has_overlay",
-                    [
-                        "components/schedules-sidebar.js",
-                        "components/schedule-page.js",
-                    ],
-                ),
-                (
-                    "enabled",
-                    [
-                        "components/schedules-sidebar.js",
-                        "components/schedule-metadata.js",
-                    ],
-                ),
-                (
-                    "schedule",
-                    [
-                        "components/schedules-sidebar.js",
-                        "components/schedule-metadata.js",
-                    ],
-                ),
+                ("has_overlay", ["components/schedules-sidebar.js", "components/schedule-page.js"]),
+                ("enabled", ["components/schedules-sidebar.js", "components/schedule-metadata.js"]),
+                ("schedule", ["components/schedules-sidebar.js", "components/schedule-metadata.js"]),
                 ("channel", ["components/schedule-metadata.js"]),
                 ("model", ["components/schedule-metadata.js"]),
                 ("allowed_tools", ["components/schedule-metadata.js"]),
@@ -3513,44 +3549,40 @@ def test_schedule_update_input_type_drift_fails_at_unchanged_callers(
                 ("body", ["components/schedule-page.js"]),
                 ("modified", ["components/schedule-page.js"]),
                 ("next_run_iso", ["components/schedules-sidebar.js"]),
-            )
-        ],
+            ],
+        ),
     ],
 )
 def test_schedule_consumed_output_drift_fails_at_unchanged_callers(
     source_tree,
     model,
-    field,
-    callers,
+    fields_and_callers,
 ):
-    originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in callers}
+    all_callers = {c for _, callers in fields_and_callers for c in callers}
+    originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in all_callers}
 
     def mutate(original):
         start = original.index(f"class {model}(BaseModel):")
         end = original.index("\n\n\n", start)
         block = original[start:end]
-        before = f"    {field}:"
-        assert block.count(before) == 1
-        return (
-            original[:start]
-            + block.replace(
-                before,
-                f"    renamed_{field}:",
-            )
-            + original[end:]
-        )
+        for field, _ in fields_and_callers:
+            before = f"    {field}:"
+            assert block.count(before) == 1
+            block = block.replace(before, f"    renamed_{field}:")
+        return original[:start] + block + original[end:]
 
     output = _mutate_workspace_contract(source_tree, mutate)
     diagnostics = [line for line in output.splitlines() if "error TS" in line]
-    for caller in callers:
-        assert any(
-            caller in diagnostic
-            and ("TS2339" in diagnostic or "TS2551" in diagnostic)
-            and f"Property '{field}' does not exist" in diagnostic
-            for diagnostic in diagnostics
-        ), output
-        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
-    assert all(any(caller in diagnostic for caller in callers) for diagnostic in diagnostics), output
+    for field, callers in fields_and_callers:
+        for caller in callers:
+            assert any(
+                caller in diagnostic
+                and ("TS2339" in diagnostic or "TS2551" in diagnostic)
+                and f"Property '{field}' does not exist" in diagnostic
+                for diagnostic in diagnostics
+            ), output
+            assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+    assert all(any(caller in diagnostic for caller in all_callers) for diagnostic in diagnostics), output
 
 
 @pytest.mark.parametrize(
