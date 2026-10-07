@@ -53,7 +53,7 @@
   input: "Run `pytest tests/test_skills.py -k test_nonexistent` in the shell."
   expect:
     max_tool_calls: 3
-    max_tool_errors: 1
+    max_tool_errors: 0
     expect_tool: shell
   tests: workflow_discipline
 

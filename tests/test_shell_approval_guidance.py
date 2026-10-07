@@ -118,6 +118,22 @@ def test_build_prompt_file_guidance(tmp_path: Path):
     assert "Auto-approve cargo test and cargo build." in prompt
 
 
+def test_build_prompt_file_guidance_rejects_workspace_files(tmp_path: Path):
+    ctx = _make_mock_ctx(tmp_path)
+    ws_file = ctx.config.workspace_path / "shell_rules.txt"
+    ws_file.write_text("Injected rule inside workspace\n")
+
+    # Relative path should only look in agent_path; when missing there, use raw string
+    ctx.config.shell.aux_approval_guidance = "shell_rules.txt"
+    guidance = resolve_aux_approval_guidance(ctx)
+    assert guidance == ["shell_rules.txt"]
+
+    # Absolute path into workspace must also be rejected from file resolution
+    ctx.config.shell.aux_approval_guidance = str(ws_file)
+    guidance2 = resolve_aux_approval_guidance(ctx)
+    assert guidance2 == [str(ws_file)]
+
+
 def test_build_prompt_session_scoped_guidance(tmp_path: Path):
     ctx = _make_mock_ctx(tmp_path)
     ctx.tools.active_aux_approval_presets.append("developer")
@@ -197,10 +213,12 @@ async def test_tool_shell_guidance_enable_and_disable_preset_session(tmp_path: P
         assert "pytest" in prompt
 
         # Disable
+        ctx.tools.llm_approved_shell_patterns = ["pytest *"]
         res_dis = await tool_shell_guidance(ctx, action="disable_preset", preset="developer")
         assert "Disabled shell auto-approval preset `developer` for this conversation" in res_dis
         assert "developer" not in ctx.tools.active_aux_approval_presets
         assert "developer" in ctx.tools.disabled_aux_approval_presets
+        assert ctx.tools.llm_approved_shell_patterns == []
 
         # Verify prompt no longer includes it
         prompt_dis = build_aux_approval_prompt(ctx, "pytest")
@@ -256,11 +274,11 @@ async def test_tool_shell_guidance_add_and_remove_rule(tmp_path: Path):
         res = await tool_shell_guidance(ctx, action="add_rule", rule="Auto-approve pytest tests/")
         assert "Added shell auto-approval rule for this conversation" in res
         assert "Auto-approve pytest tests/" in ctx.tools.aux_approval_guidance
-
+        ctx.tools.llm_approved_shell_patterns = ["pytest *"]
         res_rem = await tool_shell_guidance(ctx, action="remove_rule", rule="Auto-approve pytest tests/")
         assert "Removed shell auto-approval rule for this conversation" in res_rem
         assert "Auto-approve pytest tests/" not in ctx.tools.aux_approval_guidance
-
+        assert ctx.tools.llm_approved_shell_patterns == []
         # Persistent rule
         res_p = await tool_shell_guidance(ctx, action="add_rule", rule="Persistent rule 1", persistent=True)
         assert "persistently" in res_p
