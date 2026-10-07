@@ -328,6 +328,7 @@ def test_buttons_create_tokens_in_registry(http_config):
 @pytest.mark.asyncio
 async def test_poll_confirmation_manager_ignores_always_when_disallowed():
     from unittest.mock import AsyncMock, MagicMock
+
     from decafclaw.mattermost import MattermostClient
 
     client = MattermostClient.__new__(MattermostClient)
