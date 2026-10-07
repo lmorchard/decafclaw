@@ -2999,13 +2999,17 @@ async def test_scheduled_task_fails_when_required_skill_denied(config, tmp_path)
     # Stub run_agent_turn to return HEARTBEAT_OK text
     async def fake_run(turn_ctx, user_message, history, **kwargs):
         from decafclaw.media import ToolResult
+
         # Turn completes with HEARTBEAT_OK
         return ToolResult(
             text="HEARTBEAT_OK — nothing to report.",
             termination_reason="skill_activation_failed" if turn_ctx.skills.activation_denials else None,
         )
 
-    with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run), patch("decafclaw.notifications.notify") as mock_notify:
+    with (
+        patch("decafclaw.agent.run_agent_turn", side_effect=fake_run),
+        patch("decafclaw.notifications.notify") as mock_notify,
+    ):
         result = await run_schedule_task(config, EventBus(), manager, task)
 
     assert result["is_ok"] is False

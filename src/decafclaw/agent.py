@@ -1469,9 +1469,7 @@ class TurnRunner:
         otherwise just text.
         """
         termination_reason = (
-            "skill_activation_failed"
-            if self.ctx.skills.activation_denials and self.ctx.is_unattended
-            else None
+            "skill_activation_failed" if self.ctx.skills.activation_denials and self.ctx.is_unattended else None
         )
         handler = self.ctx.media_handler
         should_extract = handler is None or handler.strips_workspace_refs
