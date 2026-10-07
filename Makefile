@@ -130,6 +130,10 @@ fmt-check:
 test:
 	uv run pytest tests/ contrib/skills/
 
+# Run fast tests (excludes slow disposable-tree codegen tests in test_api_codegen.py).
+test-fast:
+	uv run pytest tests/ contrib/skills/ --ignore=tests/test_api_codegen.py
+
 # Run integration tests only (requires provider credentials).
 # Override the default `-m "not integration"` from addopts, and disable
 # xdist so parallel workers don't hammer the real APIs concurrently.
