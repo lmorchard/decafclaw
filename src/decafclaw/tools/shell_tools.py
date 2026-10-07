@@ -216,42 +216,54 @@ def _persistent_guidance_path(config) -> Path:
 
 
 def _load_persistent_guidance(config) -> dict:
-    """Load persistent guidance from disk. Returns {'active_presets': [], 'rules': []}."""
+    """Load persistent guidance from disk. Returns {'active_presets': [], 'disabled_presets': [], 'rules': []}."""
     path = _persistent_guidance_path(config)
     if not path.exists():
-        return {"active_presets": [], "rules": []}
+        return {"active_presets": [], "disabled_presets": [], "rules": []}
     try:
         data = json.loads(path.read_text())
         if not isinstance(data, dict):
-            return {"active_presets": [], "rules": []}
+            return {"active_presets": [], "disabled_presets": [], "rules": []}
         return {
             "active_presets": [str(p) for p in data.get("active_presets", [])],
+            "disabled_presets": [str(p) for p in data.get("disabled_presets", [])],
             "rules": [str(r) for r in data.get("rules", [])],
         }
     except (json.JSONDecodeError, OSError) as e:
         log.warning(f"Could not read shell approval guidance: {e}")
-        return {"active_presets": [], "rules": []}
+        return {"active_presets": [], "disabled_presets": [], "rules": []}
 
 
 def _save_persistent_preset(config, preset: str) -> None:
     path = _persistent_guidance_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _load_persistent_guidance(config)
+    changed = False
+    if preset in data["disabled_presets"]:
+        data["disabled_presets"].remove(preset)
+        changed = True
     if preset not in data["active_presets"]:
         data["active_presets"].append(preset)
+        changed = True
+    if changed:
         path.write_text(json.dumps(data, indent=2) + "\n")
         log.info(f"Saved persistent shell approval preset: {preset}")
 
 
 def _remove_persistent_preset(config, preset: str) -> None:
     path = _persistent_guidance_path(config)
-    if not path.exists():
-        return
+    path.parent.mkdir(parents=True, exist_ok=True)
     data = _load_persistent_guidance(config)
+    changed = False
     if preset in data["active_presets"]:
         data["active_presets"].remove(preset)
+        changed = True
+    if preset not in data["disabled_presets"]:
+        data["disabled_presets"].append(preset)
+        changed = True
+    if changed:
         path.write_text(json.dumps(data, indent=2) + "\n")
-        log.info(f"Removed persistent shell approval preset: {preset}")
+        log.info(f"Persistently disabled shell approval preset: {preset}")
 
 
 def _save_persistent_rule(config, rule: str) -> None:
@@ -319,7 +331,9 @@ def resolve_aux_approval_guidance(ctx: "Context") -> list[str]:
     elif isinstance(session_active, (list, tuple, set)):
         active_preset_names.extend(str(p).strip() for p in session_active if str(p).strip())
 
-    disabled_presets = set(getattr(ctx.tools, "disabled_aux_approval_presets", []))
+    disabled_presets = set(getattr(ctx.tools, "disabled_aux_approval_presets", [])) | set(
+        persisted.get("disabled_presets", [])
+    )
 
     all_presets = _get_all_presets(ctx.config)
     seen_presets = set()
@@ -604,6 +618,7 @@ async def tool_shell_patterns(ctx: "Context", action: str = "list", pattern: str
             tool_name="shell_patterns",
             command=f"Add shell allow pattern: {pattern}",
             message=f"Add shell allow pattern: `{pattern}`",
+            force=True,
         )
 
         if not result.get("approved"):
@@ -611,7 +626,6 @@ async def tool_shell_patterns(ctx: "Context", action: str = "list", pattern: str
 
         _save_allow_pattern(ctx.config, pattern)
         return f"Added shell allow pattern: `{pattern}`"
-
     elif action == "remove" and pattern:
         patterns = _load_allow_patterns(ctx.config)
         if pattern not in patterns:
@@ -648,6 +662,7 @@ async def tool_shell_guidance(
             config_active = set(p.strip() for p in str(config_active_raw).split(",") if p.strip())
 
         persistent_active = set(persisted.get("active_presets", []))
+        persistent_disabled = set(persisted.get("disabled_presets", []))
 
         lines = ["### Shell Auto-Approval Presets\n"]
         for name, desc in sorted(all_presets.items()):
@@ -661,6 +676,8 @@ async def tool_shell_guidance(
 
             if name in session_disabled:
                 status = " [DISABLED in session]"
+            elif name in persistent_disabled:
+                status = " [DISABLED persistently]"
             elif sources:
                 status = f" [ACTIVE via {', '.join(sources)}]"
             else:
@@ -711,6 +728,7 @@ async def tool_shell_guidance(
             tool_name="shell_guidance",
             command=f"Enable shell auto-approval preset '{preset}' ({scope_desc})",
             message=confirm_msg,
+            force=True,
         )
         if not result.get("approved"):
             return ToolResult(text="[error: denied]")
@@ -735,6 +753,7 @@ async def tool_shell_guidance(
             tool_name="shell_guidance",
             command=f"Disable shell auto-approval preset '{preset}' ({scope_desc})",
             message=confirm_msg,
+            force=True,
         )
         if not result.get("approved"):
             return ToolResult(text="[error: denied]")
@@ -759,6 +778,7 @@ async def tool_shell_guidance(
             tool_name="shell_guidance",
             command=f"Add shell auto-approval rule: {rule} ({scope_desc})",
             message=confirm_msg,
+            force=True,
         )
         if not result.get("approved"):
             return ToolResult(text="[error: denied]")
@@ -781,6 +801,7 @@ async def tool_shell_guidance(
             tool_name="shell_guidance",
             command=f"Remove shell auto-approval rule: {rule} ({scope_desc})",
             message=confirm_msg,
+            force=True,
         )
         if not result.get("approved"):
             return ToolResult(text="[error: denied]")

@@ -370,3 +370,83 @@ def test_conversation_manager_persists_guidance_across_turns(tmp_path: Path):
     assert ctx2.tools.disabled_aux_approval_presets == ["github"]
     assert ctx2.tools.aux_approval_guidance == ["Rule 1"]
     assert ctx2.tools.llm_approved_shell_patterns == ["pytest *"]
+
+
+@pytest.mark.asyncio
+async def test_tool_shell_guidance_cannot_be_bypassed_by_preapproved(tmp_path: Path):
+    ctx = _make_mock_ctx(tmp_path)
+    ctx.tools.preapproved.add("shell_guidance")
+
+    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
+        mock_confirm.return_value = {"approved": False}
+
+        res = await tool_shell_guidance(ctx, action="enable_preset", preset="developer")
+        assert isinstance(res, ToolResult)
+        assert "[error: denied]" in res.text
+        # Verify request_confirmation was called with force=True
+        mock_confirm.assert_called_once()
+        assert mock_confirm.call_args.kwargs.get("force") is True
+
+
+@pytest.mark.asyncio
+async def test_tool_shell_guidance_persistent_disable_config_preset(tmp_path: Path):
+    ctx = _make_mock_ctx(tmp_path)
+    ctx.config.shell.active_aux_approval_presets = ["developer"]
+
+    # Verify initially active
+    assert len(resolve_aux_approval_guidance(ctx)) == 1
+
+    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
+        mock_confirm.return_value = {"approved": True}
+
+        # Persistently disable developer preset
+        res = await tool_shell_guidance(ctx, action="disable_preset", preset="developer", persistent=True)
+        assert "Disabled shell auto-approval preset `developer` persistently" in res
+
+    # Verify that in a fresh context with developer in config, it is now masked out by persistent disable
+    fresh_ctx = _make_mock_ctx(tmp_path)
+    fresh_ctx.config.shell.active_aux_approval_presets = ["developer"]
+    assert resolve_aux_approval_guidance(fresh_ctx) == []
+
+
+def test_conversation_manager_clearing_and_reenabling_across_turns(tmp_path: Path):
+    from decafclaw.conversation_manager import ConversationManager, ConversationState
+
+    cm = MagicMock(spec=ConversationManager)
+    cm._restore_per_conv_state = ConversationManager._restore_per_conv_state.__get__(cm)
+    cm._save_conversation_state = ConversationManager._save_conversation_state.__get__(cm)
+
+    state = ConversationState(conv_id="test-conv")
+
+    # Turn 1: enable developer preset
+    ctx1 = _make_mock_ctx(tmp_path)
+    ctx1.tools.active_aux_approval_presets = ["developer"]
+    cm._save_conversation_state(state, ctx1)
+    assert state.persisted.active_aux_approval_presets == ["developer"]
+
+    # Turn 2: restore and clear it (e.g. user disabled it)
+    ctx2 = _make_mock_ctx(tmp_path)
+    cm._restore_per_conv_state(state, ctx2)
+    assert ctx2.tools.active_aux_approval_presets == ["developer"]
+    ctx2.tools.active_aux_approval_presets.clear()
+    ctx2.tools.disabled_aux_approval_presets.append("developer")
+    cm._save_conversation_state(state, ctx2)
+    assert state.persisted.active_aux_approval_presets == []
+    assert state.persisted.disabled_aux_approval_presets == ["developer"]
+
+    # Turn 3: restore and re-enable it
+    ctx3 = _make_mock_ctx(tmp_path)
+    cm._restore_per_conv_state(state, ctx3)
+    assert ctx3.tools.active_aux_approval_presets == []
+    assert ctx3.tools.disabled_aux_approval_presets == ["developer"]
+    ctx3.tools.disabled_aux_approval_presets.clear()
+    ctx3.tools.active_aux_approval_presets.append("developer")
+    cm._save_conversation_state(state, ctx3)
+    assert state.persisted.active_aux_approval_presets == ["developer"]
+    assert state.persisted.disabled_aux_approval_presets == []
+
+    # Turn 4: restore verifies re-enabled state sticks
+    ctx4 = _make_mock_ctx(tmp_path)
+    cm._restore_per_conv_state(state, ctx4)
+    assert ctx4.tools.active_aux_approval_presets == ["developer"]
+    assert ctx4.tools.disabled_aux_approval_presets == []
