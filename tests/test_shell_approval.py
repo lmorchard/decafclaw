@@ -7,9 +7,11 @@ import pytest
 
 from decafclaw.tools.shell_tools import (
     _command_matches_pattern,
+    _has_shell_metacharacters,
     _load_allow_patterns,
     _save_allow_pattern,
     _suggest_pattern,
+    check_shell_approval,
     tool_shell,
 )
 
@@ -263,3 +265,115 @@ async def test_aux_llm_deny_or_error_falls_through(ctx):
         assert "denied" in result.text
         mock_aux_llm.assert_called_once()
         mock_call.assert_awaited_once()
+
+
+# -- Issue #966: quote-aware metacharacter detection and allow pattern precedence --
+
+
+def test_quote_aware_newlines_in_double_quotes():
+    """Embedded newlines in double quotes must not be flagged as chaining tokens (#966)."""
+    assert _has_shell_metacharacters('git commit -m "title\n\nbody"') is False
+    assert _has_shell_metacharacters('gh issue create --title "foo" --body "line 1\nline 2"') is False
+
+
+def test_quote_aware_newlines_in_single_quotes():
+    """Embedded newlines in single quotes must not be flagged as chaining tokens (#966)."""
+    assert _has_shell_metacharacters("git commit -m 'title\n\nbody'") is False
+    assert _has_shell_metacharacters("gh issue create --body 'line 1\nline 2'") is False
+
+
+def test_unquoted_newlines_are_rejected():
+    """Unquoted newlines are statement separators and must be flagged (#966)."""
+    assert _has_shell_metacharacters('git commit -m "title"\nrm -rf ~') is True
+    assert _has_shell_metacharacters("git status\nls -la") is True
+
+
+def test_quote_aware_chaining_operators_inside_quotes():
+    """Semicolons, pipes, and ampersands inside quotes are literal (#966)."""
+    assert _has_shell_metacharacters('git commit -m "feat: handle | and & in parser"') is False
+    assert _has_shell_metacharacters("git commit -m 'feat: handle ; in parser'") is False
+
+
+def test_quote_aware_command_substitution_in_double_quotes():
+    """Command substitution in double quotes remains dangerous and must be flagged (#966)."""
+    assert _has_shell_metacharacters('git commit -m "commit by $(whoami)"') is True
+    assert _has_shell_metacharacters('git commit -m "commit by `whoami`"') is True
+
+
+def test_quote_aware_command_substitution_in_single_quotes():
+    """Command substitution syntax in single quotes is strictly literal (#966)."""
+    assert _has_shell_metacharacters("git commit -m 'commit by $(whoami)'") is False
+    assert _has_shell_metacharacters("git commit -m 'commit by `whoami`'") is False
+
+
+def test_unclosed_quotes_treated_as_metacharacters():
+    """Unclosed quotes fail safely by treating as having metacharacters (#966)."""
+    assert _has_shell_metacharacters('git commit -m "unclosed') is True
+    assert _has_shell_metacharacters("git commit -m 'unclosed") is True
+
+
+def test_escaped_quotes_and_backslashes():
+    """Escaped quotes and backslashes are handled properly (#966)."""
+    assert _has_shell_metacharacters('git commit -m "She said \\"hello\\"\\nbody"') is False
+    assert _has_shell_metacharacters("git commit \\; rm -rf ~") is False
+    assert _has_shell_metacharacters("git commit \\") is True
+
+
+def test_wildcard_pattern_matches_multiline_command():
+    """Wildcard allow patterns must match multiline quoted commands (#966)."""
+    cmd_double = 'git commit -m "fix: resolve bug\n\nCloses #123"'
+    cmd_single = "git commit -m 'fix: resolve bug\n\nCloses #123'"
+    assert _command_matches_pattern(cmd_double, ["git commit *"]) is True
+    assert _command_matches_pattern(cmd_single, ["git commit *"]) is True
+
+    gh_cmd = 'gh issue create --title "Bug" --body "Line 1\n\nLine 2"'
+    assert _command_matches_pattern(gh_cmd, ["gh issue *"]) is True
+
+
+def test_wildcard_pattern_rejects_multiline_chained_command():
+    """Wildcard allow patterns must still reject chaining even if multiline (#966)."""
+    cmd = 'git commit -m "fix\n\nbody"\nrm -rf ~'
+    assert _command_matches_pattern(cmd, ["git commit *"]) is False
+
+    cmd2 = 'git commit -m "fix\n\nbody"; rm -rf ~'
+    assert _command_matches_pattern(cmd2, ["git commit *"]) is False
+
+
+@pytest.mark.asyncio
+async def test_allowlist_bypasses_security_monitor_and_llm(ctx):
+    """Explicit allow patterns bypass evaluate_command_llm to avoid latency and ASK prompts (#966)."""
+    _save_allow_pattern(ctx.config, "gh issue *")
+
+    with (
+        patch("decafclaw.tools.shell_tools.evaluate_command_llm") as mock_eval_llm,
+        patch("decafclaw.tools.shell_tools.request_confirmation") as mock_confirm,
+    ):
+        result = await check_shell_approval(ctx, 'gh issue create --body "line 1\n\nline 2"')
+        assert result == {"approved": True}
+        mock_eval_llm.assert_not_called()
+        mock_confirm.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_allowlist_overrides_sensitive_ask(ctx):
+    """Commands triggering SecurityStatus.ASK are auto-approved if matched in allowlist (#966)."""
+    _save_allow_pattern(ctx.config, "npm install *")
+
+    with (
+        patch("decafclaw.tools.shell_tools.evaluate_command_llm") as mock_eval_llm,
+        patch("decafclaw.tools.shell_tools.request_confirmation") as mock_confirm,
+    ):
+        result = await check_shell_approval(ctx, "npm install lodash")
+        assert result == {"approved": True}
+        mock_eval_llm.assert_not_called()
+        mock_confirm.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_security_monitor_still_blocks_dangerous_even_with_wildcard(ctx):
+    """Catastrophically dangerous commands are blocked even if a broad allow pattern exists (#966)."""
+    _save_allow_pattern(ctx.config, "rm *")
+
+    result = await check_shell_approval(ctx, "rm -rf /")
+    assert result["approved"] is False
+    assert "Blocked by security monitor" in result["reason"]
