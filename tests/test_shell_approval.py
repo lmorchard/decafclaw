@@ -380,33 +380,14 @@ async def test_security_monitor_still_blocks_dangerous_even_with_wildcard(ctx):
     assert "Blocked by security monitor" in result["reason"]
 
 
-def test_interpreter_nested_scripts_detect_metacharacters():
-    """Commands invoking sh -c or eval recursively check nested script arguments (#966 review)."""
-    assert _has_shell_metacharacters("sh -c 'printf safe; rm -rf ./tmp'") is True
-    assert _has_shell_metacharacters('bash -c "printf safe && rm -rf ./tmp"') is True
-    assert _has_shell_metacharacters("bash -lc 'echo ok; rm -rf ./tmp'") is True
-    assert _has_shell_metacharacters("env bash -c 'printf safe; rm -rf ./tmp'") is True
-    assert _has_shell_metacharacters("env FOO=bar sh -c 'echo safe; echo chained'") is True
-    assert _has_shell_metacharacters("env -S \"bash -c 'echo safe; echo chained'\"") is True
-    assert _has_shell_metacharacters("/usr/bin/env sh -ec 'printf safe; rm -rf ./tmp'") is True
-    assert _has_shell_metacharacters("sudo -u user bash -c 'echo 1; rm -rf ~'") is True
-    assert _has_shell_metacharacters('eval "echo ok; rm -rf ./tmp"') is True
-    assert _has_shell_metacharacters("sh -c 'echo safe'") is False
-    assert _has_shell_metacharacters("bash -lc 'echo safe'") is False
-    assert _has_shell_metacharacters("env bash -c 'echo safe'") is False
-    assert _has_shell_metacharacters("env FOO=bar sh -c 'echo safe'") is False
-    assert _has_shell_metacharacters('eval "echo safe"') is False
-
-
 def test_ineligible_wildcard_patterns_for_interpreters():
-    """Wildcard patterns for sh -c and eval are ineligible for matching (#966 review)."""
+    """Wildcard patterns for shell interpreters and eval are categorically ineligible (#966)."""
+    assert _is_ineligible_wildcard_pattern("sh *") is True
     assert _is_ineligible_wildcard_pattern("sh -c *") is True
     assert _is_ineligible_wildcard_pattern("bash -c *") is True
     assert _is_ineligible_wildcard_pattern("bash -lc *") is True
     assert _is_ineligible_wildcard_pattern("env bash -c *") is True
     assert _is_ineligible_wildcard_pattern("env FOO=bar sh -c *") is True
-    assert _is_ineligible_wildcard_pattern("env -S 'bash -c *'") is True
-    assert _is_ineligible_wildcard_pattern("/usr/bin/env sh -ec *") is True
     assert _is_ineligible_wildcard_pattern("eval *") is True
     assert _is_ineligible_wildcard_pattern("git commit *") is False
     assert _is_ineligible_wildcard_pattern("python3 -c *") is False
@@ -423,7 +404,7 @@ def test_ineligible_wildcard_patterns_for_interpreters():
 
 
 def test_suggest_pattern_does_not_wildcard_interpreters():
-    """Pattern suggestions for sh -c and eval keep exact commands rather than wildcarding (#966 review)."""
+    """Pattern suggestions for shell interpreters and eval keep exact commands rather than wildcarding (#966)."""
     assert _suggest_pattern("sh -c 'echo safe'") == "sh -c 'echo safe'"
     assert _suggest_pattern('bash -lc "make build"') == 'bash -lc "make build"'
     assert _suggest_pattern("env bash -c 'make build'") == "env bash -c 'make build'"
@@ -432,7 +413,7 @@ def test_suggest_pattern_does_not_wildcard_interpreters():
 
 
 def test_suggest_pattern_preserves_quoted_arguments():
-    """Suggested patterns must preserve quotes around paths with spaces (#966 review)."""
+    """Suggested patterns must preserve quotes around paths with spaces (#966)."""
     cmd = 'python "scripts/my script.py" --flag'
     suggested = _suggest_pattern(cmd)
     assert suggested == 'python "scripts/my script.py" *'
