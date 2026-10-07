@@ -138,5 +138,27 @@ describe('MessageStore', () => {
             store.handleMessage({ type: MESSAGE_TYPES.BACKGROUND_EVENT, conv_id: '1', record: { ts: 123 } }, '1');
             expect(store.currentMessages[2].role).toBe('background_event');
         });
+
+        it('preserves queued user messages in CONV_HISTORY and dedupes on USER_MESSAGE', () => {
+            const store = new MessageStore(() => {});
+            store.clear();
+            store.handleMessage({
+                type: MESSAGE_TYPES.CONV_HISTORY,
+                conv_id: '1',
+                has_more: false,
+                messages: [
+                    { role: 'user', content: 'prior message', timestamp: 't1' },
+                    { role: 'assistant', content: 'prior reply', timestamp: 't2' },
+                    { role: 'user', content: 'queued user message', timestamp: 't3' },
+                ],
+            }, '1');
+
+            expect(store.currentMessages.length).toBe(3);
+            expect(store.currentMessages[2].content).toBe('queued user message');
+
+            // When USER_MESSAGE arrives later for the queued turn, it should dedupe
+            store.handleMessage({ type: MESSAGE_TYPES.USER_MESSAGE, conv_id: '1', text: 'queued user message' }, '1');
+            expect(store.currentMessages.length).toBe(3);
+        });
     });
 });

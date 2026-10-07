@@ -269,6 +269,33 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     # frontend can show submitted input widgets on reload.
     messages = _annotate_widget_responses(messages, _HIDDEN_ROLES)
 
+    if not before:
+        from ..inbox import _read_inbox
+
+        inbox_msgs = _read_inbox(config, conv_id)
+        manager = state.get("manager")
+        for im in inbox_msgs:
+            kind_val = im.get("kind", "")
+            if kind_val in ("user", "workflow"):
+                turn_id = im.get("turn_id", "")
+                attachments = None
+                if manager:
+                    conv_state = manager.get_state(conv_id)
+                    if conv_state:
+                        inmem = conv_state.inmemory_turn_data.get(turn_id, {})
+                        attachments = inmem.get("attachments")
+                if not attachments:
+                    attachments = im.get("attachments")
+                msg_entry = {
+                    "role": "user",
+                    "content": im.get("archive_text") or im.get("text", ""),
+                }
+                if im.get("timestamp"):
+                    msg_entry["timestamp"] = im["timestamp"]
+                if attachments:
+                    msg_entry["attachments"] = attachments
+                messages.append(msg_entry)
+
     estimated_tokens = None
     current_model = None
     if not before:
@@ -314,8 +341,13 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     # Check if a turn is active for this conversation via the manager
     manager = state.get("manager")
     if manager:
+        from ..inbox import _read_inbox
+
         conv_state = manager.get_state(conv_id)
-        if conv_state and conv_state.busy:
+        has_pending_inbox = bool(_read_inbox(config, conv_id))
+        if conv_state and (conv_state.busy or has_pending_inbox):
+            response["turn_active"] = True
+        elif has_pending_inbox:
             response["turn_active"] = True
         # Include pending confirmation if any
         if conv_state and conv_state.pending_confirmation:
