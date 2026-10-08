@@ -150,6 +150,24 @@ def test_show_model_configs(capsys, monkeypatch, tmp_path):
     assert "model_configs.flash.model = gemini-2.5-flash" in out
 
 
+def test_model_effort_cli_roundtrip(capsys, monkeypatch, tmp_path):
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    path = agent_dir / "config.json"
+    path.write_text(json.dumps({"model_configs": {"luna": {"provider": "openai", "model": "gpt-6-luna"}}}))
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    cmd_set(_Args(path="model_configs.luna.reasoning_effort", value="low"))
+    assert json.loads(path.read_text())["model_configs"]["luna"]["reasoning_effort"] == "low"
+    cmd_get(_Args(path="model_configs.luna.reasoning_effort"))
+    assert capsys.readouterr().out.endswith("low\n")
+    cmd_set(_Args(path="model_configs.luna.reasoning_effort", value="null"))
+    assert json.loads(path.read_text())["model_configs"]["luna"]["reasoning_effort"] is None
+    previous = path.read_text()
+    with pytest.raises(SystemExit):
+        cmd_set(_Args(path="model_configs.luna.reasoning_effort", value="bogus"))
+    assert path.read_text() == previous
+
+
 def test_show_top_level_field_filter(capsys, monkeypatch, tmp_path):
     """A top-level scalar name is a valid `show` filter, not an unknown group."""
     monkeypatch.setenv("DATA_HOME", str(tmp_path))

@@ -381,13 +381,8 @@ def _load_model_configs(raw: dict) -> dict[str, ModelConfig]:
         if not isinstance(entry, dict):
             log.warning("Invalid model config '%s': expected object, got %s", name, type(entry).__name__)
             continue
-        result[name] = ModelConfig(
-            provider=entry.get("provider", ""),
-            model=entry.get("model", ""),
-            context_window_size=entry.get("context_window_size", 0),
-            timeout=entry.get("timeout", 300),
-            streaming=entry.get("streaming", True),
-        )
+        known = {f.name for f in dc_fields(ModelConfig)}
+        result[name] = ModelConfig(**{key: value for key, value in entry.items() if key in known})
     return result
 
 

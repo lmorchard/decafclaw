@@ -7,6 +7,7 @@ import pytest
 
 from decafclaw import agent, llm
 from decafclaw.llm.providers.openai_compat import OpenAICompatProvider
+from decafclaw.llm.providers.openai_responses import OpenAIResponsesProvider
 from decafclaw.llm.providers.vertex import VertexProvider
 
 
@@ -46,6 +47,11 @@ async def test_unstubbed_vertex_complete_raises():
         RuntimeError, match=r"Unstubbed LLM call in test:.*Use stub_llm fixture or mark with @pytest\.mark\.live_llm"
     ):
         await provider.complete("gemini-2.5-flash", [{"role": "user", "content": "hello"}])
+
+
+async def test_unstubbed_responses_complete_raises():
+    with pytest.raises(RuntimeError, match="Unstubbed LLM call in test"):
+        await OpenAIResponsesProvider().complete("gpt-6-luna", [])
 
 
 @pytest.mark.asyncio

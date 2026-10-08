@@ -8,6 +8,7 @@ from typing import Any, Callable, Protocol
 # Provider type constants — used in config.json "providers" section
 PROVIDER_OPENAI_COMPAT = "openai-compat"
 PROVIDER_OPENAI = "openai"
+PROVIDER_OPENAI_RESPONSES = "openai-responses"
 PROVIDER_VERTEX = "vertex"
 # Legacy alias
 PROVIDER_LITELLM = "litellm"
@@ -39,6 +40,7 @@ class Provider(Protocol):
 
     All methods return data in the internal format:
     - complete() returns {"content", "tool_calls", "role", "usage", "finish_reason"}
+    - optional provider_data carries private replay state into assistant history
     - embed() returns a list of floats or None
     """
 

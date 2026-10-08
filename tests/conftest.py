@@ -51,6 +51,10 @@ def stub_llm(monkeypatch):
         "decafclaw.llm.providers.vertex.VertexProvider.complete",
         fake_provider_complete,
     )
+    monkeypatch.setattr(
+        "decafclaw.llm.providers.openai_responses.OpenAIResponsesProvider.complete",
+        fake_provider_complete,
+    )
     return calls
 
 
@@ -77,6 +81,10 @@ def guard_chat_completions(monkeypatch, request):
     )
     monkeypatch.setattr(
         "decafclaw.llm.providers.vertex.VertexProvider.complete",
+        _guard_fail,
+    )
+    monkeypatch.setattr(
+        "decafclaw.llm.providers.openai_responses.OpenAIResponsesProvider.complete",
         _guard_fail,
     )
 

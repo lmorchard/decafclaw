@@ -34,6 +34,7 @@ from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
 from .iteration_budget import IterationBudget
 from .llm import call_llm
+from .llm.history import assistant_message
 from .loop_breaker import (
     CallSignature,
     LoopBreaker,
@@ -609,6 +610,7 @@ class TurnRunner:
     empty_retries: int = 0
     reflection_retries: int = 0
     last_reflection: "ReflectionResult | None" = None
+    iteration_response: dict = field(default_factory=dict)
     # Reflection telemetry (#409) — captured across rounds for the per-turn
     # metrics emit. first_response is the round-0 response the judge saw;
     # exhausted survives _reflection_skip nulling last_reflection.
@@ -814,6 +816,7 @@ class TurnRunner:
             if self.composer is not None:
                 self.composer.record_actuals(prompt_tokens, completion_tokens, cached_tokens)
 
+        self.iteration_response = response
         tool_calls = response.get("tool_calls")
         if tool_calls:
             return await self._handle_tool_calls(response, tool_calls)
@@ -831,8 +834,7 @@ class TurnRunner:
         Returns _Continue to loop again, or _Final(result) to end the turn.
         """
         iter_content = response.get("content")
-        assistant_msg = {"role": "assistant", "content": iter_content}
-        assistant_msg["tool_calls"] = tool_calls
+        assistant_msg = assistant_message(response)
         self.history.append(assistant_msg)
         self.messages.append(assistant_msg)
         _archive(self.ctx, assistant_msg)
@@ -925,7 +927,7 @@ class TurnRunner:
                 **self.model_override,
             )
             present_content = present_response.get("content") or ""
-            present_msg = {"role": "assistant", "content": present_content}
+            present_msg = assistant_message(present_response, present_content)
             self.history.append(present_msg)
             self.messages.append(present_msg)
             _archive(self.ctx, present_msg)
@@ -966,7 +968,7 @@ class TurnRunner:
                 **self.model_override,
             )
             content = final_response.get("content") or ""
-            final_msg = {"role": "assistant", "content": content}
+            final_msg = assistant_message(final_response, content)
             self.history.append(final_msg)
             _archive(self.ctx, final_msg)
 
@@ -1099,7 +1101,7 @@ class TurnRunner:
         assert outcome.text is not None  # invariant: should_retry=False implies text is not None
         content = outcome.text
 
-        final_msg = {"role": "assistant", "content": content}
+        final_msg = assistant_message(response, content)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
 
@@ -1261,7 +1263,7 @@ class TurnRunner:
                 self.config.reflection.max_retries,
                 result.critique[:200],
             )
-            failed_msg = {"role": "assistant", "content": content}
+            failed_msg = assistant_message(self.iteration_response, content)
             self.history.append(failed_msg)
             self.messages.append(failed_msg)
             _archive(self.ctx, failed_msg)
@@ -1337,7 +1339,7 @@ class TurnRunner:
             # contract). _finalize_max_iterations will archive the notice.
             log.warning("Grace-turn LLM call returned empty content — falling back to notice")
             return None
-        final_msg = {"role": "assistant", "content": content}
+        final_msg = assistant_message(response, content)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(

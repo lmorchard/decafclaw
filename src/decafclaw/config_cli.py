@@ -9,7 +9,8 @@ Usage:
 import argparse
 import json
 import sys
-from dataclasses import fields
+from dataclasses import fields, replace
+from typing import get_origin
 
 from .config import Config, load_config
 
@@ -62,7 +63,7 @@ def _resolve_field(config: Config, path: str):
     parts = path.split(".")
     obj = config
     for part in parts[:-1]:
-        obj = getattr(obj, part, None)
+        obj = obj.get(part) if isinstance(obj, dict) else getattr(obj, part, None)
         if obj is None:
             return None
     if not hasattr(obj, "__dataclass_fields__"):
@@ -76,6 +77,8 @@ def _resolve_field(config: Config, path: str):
 def _coerce_cli_value(field_info, raw: str):
     """Coerce a CLI string value based on the field's type."""
     field_type = field_info.type
+    if field_type == "str | None" and raw == "null":
+        return None
     # Handle string type annotations
     if field_type in (bool, "bool"):
         return raw.strip().lower() in ("true", "1", "yes")
@@ -83,7 +86,7 @@ def _coerce_cli_value(field_info, raw: str):
         return int(raw)
     if field_type in (float, "float"):
         return float(raw)
-    if field_type in ("list[str]",) or (hasattr(field_type, "__origin__") and field_type.__origin__ is list):
+    if field_type in ("list[str]",) or get_origin(field_type) is list:
         try:
             parsed = json.loads(raw)
             if isinstance(parsed, list):
@@ -190,8 +193,13 @@ def cmd_set(args) -> None:
         if resolved is None:
             print(f"Unknown config path: {args.path}", file=sys.stderr)
             sys.exit(1)
-        _, field_info, _ = resolved
+        parent, field_info, _ = resolved
         value = _coerce_cli_value(field_info, args.value)
+        try:
+            replace(parent, **{field_info.name: value})
+        except (TypeError, ValueError) as exc:
+            print(f"Invalid config value for {args.path}: {exc}", file=sys.stderr)
+            sys.exit(1)
     else:
         value = args.value
 
