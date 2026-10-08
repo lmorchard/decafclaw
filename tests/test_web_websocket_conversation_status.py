@@ -21,29 +21,45 @@ class TestConversationStatusForwarder:
         return sent, send
 
     @pytest.mark.asyncio
-    async def test_forwards_conversation_status(self):
+    async def test_forwards_conversation_status_for_owner(self, config):
         sent, send = self._capture()
-        forward = _make_conversation_status_forwarder(send)
+        index = MagicMock()
+        forward = _make_conversation_status_forwarder(send, config, index, "testuser")
         await forward(
             {
                 "type": "conversation_status",
-                "conv_id": "c1",
+                "conv_id": "web-testuser-c1",
                 "status": "busy",
             }
         )
         assert sent == [
             {
                 "type": WSMessageType.CONVERSATION_STATUS,
-                "conv_id": "c1",
+                "conv_id": "web-testuser-c1",
                 "status": "busy",
             }
         ]
 
     @pytest.mark.asyncio
-    async def test_ignores_other_event_types(self):
+    async def test_filters_private_conversations_of_other_users(self, config):
         sent, send = self._capture()
-        forward = _make_conversation_status_forwarder(send)
-        await forward({"type": "notification_created", "conv_id": "c1"})
+        index = MagicMock()
+        forward = _make_conversation_status_forwarder(send, config, index, "testuser")
+        await forward(
+            {
+                "type": "conversation_status",
+                "conv_id": "web-otheruser-secret",
+                "status": "busy",
+            }
+        )
+        assert sent == []
+
+    @pytest.mark.asyncio
+    async def test_ignores_other_event_types(self, config):
+        sent, send = self._capture()
+        index = MagicMock()
+        forward = _make_conversation_status_forwarder(send, config, index, "testuser")
+        await forward({"type": "notification_created", "conv_id": "web-testuser-c1"})
         await forward({"type": "vault_changed", "path": "p"})
         assert sent == []
 
@@ -75,7 +91,7 @@ async def test_websocket_chat_forwards_status_events(config, mock_ws, monkeypatc
             await bus.publish(
                 {
                     "type": "conversation_status",
-                    "conv_id": "c-bg",
+                    "conv_id": "web-testuser-bg",
                     "status": "waiting",
                 }
             )
@@ -89,6 +105,6 @@ async def test_websocket_chat_forwards_status_events(config, mock_ws, monkeypatc
     assert len(status_payloads) == 1
     assert status_payloads[0] == {
         "type": WSMessageType.CONVERSATION_STATUS,
-        "conv_id": "c-bg",
+        "conv_id": "web-testuser-bg",
         "status": "waiting",
     }
