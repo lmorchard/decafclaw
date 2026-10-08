@@ -278,6 +278,7 @@ class SrvToolStart(TypedDict):
     conv_id: str
     tool: str
     tool_call_id: str
+    command: NotRequired[str]
 
 
 class SrvToolStatus(TypedDict):

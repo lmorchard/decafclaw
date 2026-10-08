@@ -12,6 +12,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {string} [content]
  * @property {string} [timestamp]
  * @property {string} [tool]
+ * @property {string} [command]
  * @property {string} [tool_call_id]
  * @property {string} [display_short_text]
  * @property {object[]} [tool_calls]

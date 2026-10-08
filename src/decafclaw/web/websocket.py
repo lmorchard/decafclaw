@@ -802,9 +802,12 @@ def _subscribe_to_conv(state, conv_id):
                 streaming_buffer["text"] = ""
 
         elif event_type == "tool_start":
+            args = event.get("args")
+            command = args.get("command") if event.get("tool") == "shell" and isinstance(args, dict) else None
             await ws_send(
                 {
                     "type": WSMessageType.TOOL_START,
+                    "command": command if isinstance(command, str) else "",
                     "conv_id": event_conv_id,
                     "tool": event.get("tool", ""),
                     "tool_call_id": event.get("tool_call_id", ""),

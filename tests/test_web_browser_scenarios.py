@@ -1584,3 +1584,30 @@ def test_browser_auth_logout_redirects_guard(built_static, chromium, config):
             base + "/api/vault/agent/pages/Browser%20%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E",
         }, scenario.failed_requests
         scenario.failed_requests.clear()
+
+
+def test_browser_shell_command_and_result(built_static, chromium, config):
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        page.evaluate("""async () => {
+            const { MessageStore } = await import('/static/lib/message-store.js');
+            const { MESSAGE_TYPES } = await import('/static/lib/message-types.js');
+            await import('/static/components/chat-view.js');
+            const store = new MessageStore(() => {});
+            store.handleMessage({ type: MESSAGE_TYPES.CONV_HISTORY, conv_id: '1', messages: [
+                { role: 'assistant', tool_calls: [{ id: 'tc1', function: { name: 'shell', arguments: JSON.stringify({command: 'echo <hello>'}) } }], timestamp: 't1' },
+                { role: 'tool', tool_call_id: 'tc1', content: '<hello>', timestamp: 't2' },
+            ] }, '1');
+            const view = document.createElement('chat-view');
+            view.id = 'shell-test-view';
+            view._convId = '1';
+            view._messages = store.currentMessages;
+            document.body.append(view);
+            await view.updateComplete;
+        }""")
+        page.locator("#shell-test-view .tool-result-header").click()
+        page.wait_for_function("""() => document.querySelector('#shell-test-view')
+            .textContent.includes('echo <hello>')""")
+        details = page.locator("#shell-test-view .tool-result-detail pre").all_text_contents()
+        assert details == ["echo <hello>", "<hello>"]
+        assert page.locator("#shell-test-view hello").count() == 0
