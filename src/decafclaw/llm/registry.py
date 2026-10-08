@@ -7,6 +7,7 @@ from .types import (
     PROVIDER_LITELLM,
     PROVIDER_OPENAI,
     PROVIDER_OPENAI_COMPAT,
+    PROVIDER_OPENAI_RESPONSES,
     PROVIDER_VERTEX,
     Provider,
 )
@@ -49,6 +50,7 @@ def init_providers(config: Any) -> None:
     """
     from .providers.openai import OpenAIProvider
     from .providers.openai_compat import OpenAICompatProvider
+    from .providers.openai_responses import OpenAIResponsesProvider
     from .providers.vertex import VertexProvider
 
     clear_providers()
@@ -57,6 +59,8 @@ def init_providers(config: Any) -> None:
         provider_type = pc.type
         if provider_type in (PROVIDER_OPENAI_COMPAT, PROVIDER_LITELLM):
             register_provider(name, OpenAICompatProvider(url=pc.url, api_key=pc.api_key))
+        elif provider_type == PROVIDER_OPENAI_RESPONSES:
+            register_provider(name, OpenAIResponsesProvider(url=pc.url, api_key=pc.api_key, name=name))
         elif provider_type == PROVIDER_OPENAI:
             register_provider(name, OpenAIProvider(url=pc.url, api_key=pc.api_key))
         elif provider_type == PROVIDER_VERTEX:

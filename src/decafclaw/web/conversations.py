@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..conversation_paths import iter_conversation_archives
+from ..llm.history import without_provider_data
 
 log = logging.getLogger(__name__)
 
@@ -267,4 +268,4 @@ class ConversationIndex:
         has_more = len(all_messages) > limit
         messages = all_messages[-limit:] if has_more else all_messages
 
-        return messages, has_more
+        return without_provider_data(messages), has_more

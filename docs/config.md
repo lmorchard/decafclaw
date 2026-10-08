@@ -429,9 +429,9 @@ Named LLM provider connections. See [LLM Providers](providers.md) for full detai
 
 | Field | Type | Providers | Description |
 |-------|------|-----------|-------------|
-| `type` | str | all | `"vertex"`, `"openai"`, or `"openai-compat"` (alias: `"litellm"`) |
-| `api_key` | str | openai, openai-compat | API key (secret) |
-| `url` | str | openai, openai-compat | Base URL for the API endpoint |
+| `type` | str | all | `"vertex"`, `"openai-responses"`, `"openai"`, or `"openai-compat"` (alias: `"litellm"`) |
+| `api_key` | str | openai-responses, openai, openai-compat | API key (secret) |
+| `url` | str | openai-responses, openai, openai-compat | Base URL or API endpoint |
 | `project` | str | vertex | GCP project ID |
 | `region` | str | vertex | GCP region (default: `us-central1`) |
 | `service_account_file` | str | vertex | Path to service account JSON key file |
@@ -460,6 +460,7 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 | `context_window_size` | int | `0` | Context window tokens (0 = use compaction_max_tokens) |
 | `timeout` | int | `300` | HTTP timeout in seconds |
 | `streaming` | bool | `true` | Use streaming responses |
+| `reasoning_effort` | str or null | `null` | OpenAI Responses only: reasoning effort; omitted/null uses model default |
 
 `default_model` (top-level string) sets which model config to use when none is explicitly selected.
 
