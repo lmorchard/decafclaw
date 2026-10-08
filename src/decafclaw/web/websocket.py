@@ -18,6 +18,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from decafclaw.commands import list_invokable_commands
 from decafclaw.conversation_manager import TurnKind
+from decafclaw.llm.history import without_provider_data
 from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
 from decafclaw.web.message_types import (
     ServerMessage,
@@ -233,7 +234,7 @@ def _annotate_widget_responses(messages: list[dict], hidden_roles: set[str]) -> 
                 m["submitted"] = True
                 m["response"] = resp
         visible.append(m)
-    return visible
+    return without_provider_data(visible)
 
 
 async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, state) -> None:
