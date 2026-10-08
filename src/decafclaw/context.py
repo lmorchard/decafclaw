@@ -285,7 +285,6 @@ class Context:
         child = copy.copy(self)
         child.tokens = TokenUsage()
         child.tools = replace(self.tools, current_call_id=tool_call_id)
-        child.confirmation_active = asyncio.Event()
         return child
 
     async def publish(self, event_type: str, **kwargs) -> None:
