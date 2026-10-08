@@ -27,6 +27,7 @@ def _make_mock_ctx(tmp_path: Path):
     ctx.config.agent_path = tmp_path / "agent"
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
     ctx.config.agent_path.mkdir(parents=True, exist_ok=True)
+    ctx.config.agent.confirmation_timeout_sec = 60
     ctx.config.shell = ShellConfig(aux_approval_enabled=True)
     ctx.tools = ToolState()
     ctx.skills = SkillState()
@@ -57,6 +58,10 @@ def test_build_prompt_builtin_developer_preset(tmp_path: Path):
     assert "Additional Approval Guidelines:" in prompt
     assert "- Auto-approve standard software development commands" in prompt
     assert "pytest" in prompt
+    assert "uv run" in prompt
+    assert "pyright" in prompt
+    assert "git fetch" in prompt
+    assert "&&" in prompt
     assert "unless explicitly permitted by the additional approval guidelines below" in prompt
 
 
@@ -71,6 +76,7 @@ def test_build_prompt_builtin_github_preset(tmp_path: Path):
     prompt = build_aux_approval_prompt(ctx, "gh issue list")
     assert "Additional Approval Guidelines:" in prompt
     assert "- Auto-approve GitHub CLI (gh) commands" in prompt
+    assert "gh pr list/view/diff/checkout/create/checks" in prompt
 
 
 def test_build_prompt_custom_and_overridden_presets(tmp_path: Path):
@@ -205,6 +211,7 @@ async def test_tool_shell_guidance_enable_and_disable_preset_session(tmp_path: P
 
         # Enable
         res = await tool_shell_guidance(ctx, action="enable_preset", preset="developer")
+        assert isinstance(res, str)
         assert "Enabled shell auto-approval preset `developer` for this conversation" in res
         assert "developer" in ctx.tools.active_aux_approval_presets
 
@@ -215,6 +222,7 @@ async def test_tool_shell_guidance_enable_and_disable_preset_session(tmp_path: P
         # Disable
         ctx.tools.llm_approved_shell_patterns = ["pytest *"]
         res_dis = await tool_shell_guidance(ctx, action="disable_preset", preset="developer")
+        assert isinstance(res_dis, str)
         assert "Disabled shell auto-approval preset `developer` for this conversation" in res_dis
         assert "developer" not in ctx.tools.active_aux_approval_presets
         assert "developer" in ctx.tools.disabled_aux_approval_presets
@@ -246,6 +254,7 @@ async def test_tool_shell_guidance_persistent_preset(tmp_path: Path):
         mock_confirm.return_value = {"approved": True}
 
         res = await tool_shell_guidance(ctx, action="enable_preset", preset="developer", persistent=True)
+        assert isinstance(res, str)
         assert "persistently (across all conversations)" in res
 
         # Check persistent file exists
@@ -258,6 +267,7 @@ async def test_tool_shell_guidance_persistent_preset(tmp_path: Path):
 
         # Disable persistent
         res_dis = await tool_shell_guidance(ctx, action="disable_preset", preset="developer", persistent=True)
+        assert isinstance(res_dis, str)
         assert "Disabled" in res_dis
         data_after = json.loads(p_file.read_text())
         assert "developer" not in data_after["active_presets"]
@@ -272,15 +282,18 @@ async def test_tool_shell_guidance_add_and_remove_rule(tmp_path: Path):
 
         # Session rule
         res = await tool_shell_guidance(ctx, action="add_rule", rule="Auto-approve pytest tests/")
+        assert isinstance(res, str)
         assert "Added shell auto-approval rule for this conversation" in res
         assert "Auto-approve pytest tests/" in ctx.tools.aux_approval_guidance
         ctx.tools.llm_approved_shell_patterns = ["pytest *"]
         res_rem = await tool_shell_guidance(ctx, action="remove_rule", rule="Auto-approve pytest tests/")
+        assert isinstance(res_rem, str)
         assert "Removed shell auto-approval rule for this conversation" in res_rem
         assert "Auto-approve pytest tests/" not in ctx.tools.aux_approval_guidance
         assert ctx.tools.llm_approved_shell_patterns == []
         # Persistent rule
         res_p = await tool_shell_guidance(ctx, action="add_rule", rule="Persistent rule 1", persistent=True)
+        assert isinstance(res_p, str)
         assert "persistently" in res_p
         p_file = ctx.config.agent_path / "shell_approval_guidance.json"
         import json
@@ -289,6 +302,7 @@ async def test_tool_shell_guidance_add_and_remove_rule(tmp_path: Path):
         assert "Persistent rule 1" in data["rules"]
 
         res_p_rem = await tool_shell_guidance(ctx, action="remove_rule", rule="Persistent rule 1", persistent=True)
+        assert isinstance(res_p_rem, str)
         assert "Removed" in res_p_rem
         data_after = json.loads(p_file.read_text())
         assert "Persistent rule 1" not in data_after["rules"]
@@ -422,6 +436,7 @@ async def test_tool_shell_guidance_persistent_disable_config_preset(tmp_path: Pa
 
         # Persistently disable developer preset
         res = await tool_shell_guidance(ctx, action="disable_preset", preset="developer", persistent=True)
+        assert isinstance(res, str)
         assert "Disabled shell auto-approval preset `developer` persistently" in res
 
     # Verify that in a fresh context with developer in config, it is now masked out by persistent disable
@@ -471,3 +486,36 @@ def test_conversation_manager_clearing_and_reenabling_across_turns(tmp_path: Pat
     cm._restore_per_conv_state(state, ctx4)
     assert ctx4.tools.active_aux_approval_presets == ["developer"]
     assert ctx4.tools.disabled_aux_approval_presets == []
+
+
+@pytest.mark.asyncio
+async def test_check_shell_approval_feature_branch_push_with_developer_preset(tmp_path: Path):
+    from decafclaw.tools.shell_tools import check_shell_approval
+
+    ctx = _make_mock_ctx(tmp_path)
+    ctx.config.shell.aux_approval_enabled = True
+    ctx.config.shell.active_aux_approval_presets = ["developer"]
+
+    mock_llm = AsyncMock(
+        return_value={"content": '{"auto_approve": true, "risk": "low", "reason": "pushing to feature branch"}'}
+    )
+    ctx.aux_llm = MagicMock(return_value=mock_llm)
+
+    res = await check_shell_approval(ctx, "git push -u origin feat/my-new-feature")
+    assert res.get("approved") is True
+    assert mock_llm.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_check_shell_approval_main_push_requires_confirmation(tmp_path: Path):
+    from decafclaw.tools.shell_tools import check_shell_approval
+
+    ctx = _make_mock_ctx(tmp_path)
+    ctx.config.shell.aux_approval_enabled = True
+    ctx.config.shell.active_aux_approval_presets = ["developer"]
+
+    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
+        mock_confirm.return_value = {"approved": False}
+        res = await check_shell_approval(ctx, "git push origin main")
+        assert res.get("approved") is False
+        assert mock_confirm.call_count == 1
