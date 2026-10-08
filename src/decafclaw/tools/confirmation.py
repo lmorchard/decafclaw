@@ -152,16 +152,23 @@ async def request_confirmation(
     if not force and tool_name in ctx.tools.preapproved:
         log.info(f"Confirmation pre-approved for {tool_name}")
         return {"approved": True}
-    # Route through manager
-    if ctx.request_confirmation is not None:
-        return await _request_via_manager(ctx, tool_name, command, message, timeout, **extra_event_fields)
+    event = getattr(ctx, "confirmation_active", None)
+    if event is not None:
+        event.set()
+    try:
+        # Route through manager
+        if ctx.request_confirmation is not None:
+            return await _request_via_manager(ctx, tool_name, command, message, timeout, **extra_event_fields)
 
-    # Fallback for contexts not managed by ConversationManager
-    # (heartbeat, scheduled tasks). These should auto-approve via
-    # preapproved checks above, so hitting this path is unexpected.
-    log.warning(
-        "No ConversationManager for confirmation request (tool=%s, user=%s) — using legacy event bus",
-        tool_name,
-        getattr(ctx, "user_id", "?"),
-    )
-    return await _request_via_event_bus(ctx, tool_name, command, message, timeout, **extra_event_fields)
+        # Fallback for contexts not managed by ConversationManager
+        # (heartbeat, scheduled tasks). These should auto-approve via
+        # preapproved checks above, so hitting this path is unexpected.
+        log.warning(
+            "No ConversationManager for confirmation request (tool=%s, user=%s) — using legacy event bus",
+            tool_name,
+            getattr(ctx, "user_id", "?"),
+        )
+        return await _request_via_event_bus(ctx, tool_name, command, message, timeout, **extra_event_fields)
+    finally:
+        if event is not None:
+            event.clear()

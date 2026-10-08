@@ -1163,6 +1163,7 @@ SKILL_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "timeout": None,
         "function": {
             "name": "activate_skill",
             "description": (

@@ -240,3 +240,46 @@ def test_tabstack_research_has_configured_timeout():
     )
     assert entry is not None, "tabstack_research not in TOOL_DEFINITIONS"
     assert entry.get("timeout") == 600, f"expected timeout=600, got {entry.get('timeout')!r}"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_active_pauses_tool_timeout(ctx):
+    """When a confirmation prompt is active, the tool execution watchdog pauses."""
+
+    async def prompt_tool(ctx):
+        ctx.confirmation_active.set()
+        await asyncio.sleep(1.2)
+        ctx.confirmation_active.clear()
+        return "approved and finished"
+
+    _register_extra_tool(ctx, "prompt_tool", prompt_tool)
+    _set_timeout(ctx, 1)
+
+    # 1s watchdog would fire before 1.2s sleep if confirmation_active didn't pause it
+    result = await _safe_execute(ctx, "prompt_tool")
+    assert result.text == "approved and finished"
+
+
+def test_confirmation_gated_tools_have_timeout_none():
+    """Regression guard for #969: confirmation-gated tools opt out of the
+    generic 180s watchdog via explicit timeout: None so user deliberation
+    time is not capped by tool_timeout_sec."""
+    checked = [
+        "shell",
+        "shell_guidance",
+        "activate_skill",
+        "admin_write",
+        "admin_replace_lines",
+        "admin_edit",
+        "admin_delete",
+        "http_request",
+        "send_email",
+    ]
+    for tool_name in checked:
+        entry = next(
+            (d for d in TOOL_DEFINITIONS if (d.get("function") or {}).get("name") == tool_name),
+            None,
+        )
+        assert entry is not None, f"{tool_name} not found in TOOL_DEFINITIONS"
+        assert "timeout" in entry, f"{tool_name} must explicitly declare 'timeout' key"
+        assert entry.get("timeout") is None, f"{tool_name} expected timeout=None, got {entry.get('timeout')!r}"

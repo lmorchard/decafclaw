@@ -1699,6 +1699,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "timeout": None,
         "function": {
             "name": "vault_write",
             "description": (
@@ -1735,6 +1736,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "timeout": None,
         "function": {
             "name": "vault_delete",
             "description": (
@@ -1760,6 +1762,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "timeout": None,
         "function": {
             "name": "vault_rename",
             "description": (
@@ -1793,6 +1796,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "timeout": None,
         "function": {
             "name": "vault_grant_folder",
             "description": (
@@ -2204,6 +2208,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "timeout": None,
         "function": {
             "name": "vault_update_frontmatter",
             "description": (
