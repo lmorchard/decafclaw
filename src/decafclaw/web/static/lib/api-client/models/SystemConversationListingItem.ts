@@ -7,5 +7,6 @@ export type SystemConversationListingItem = {
     title: string;
     conv_type: string;
     updated_at: string;
+    status?: string;
 };
 

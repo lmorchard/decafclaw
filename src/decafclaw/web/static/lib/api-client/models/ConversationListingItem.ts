@@ -7,5 +7,6 @@ export type ConversationListingItem = {
     title: string;
     created_at: string;
     updated_at: string;
+    status?: string;
 };
 

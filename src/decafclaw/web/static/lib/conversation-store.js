@@ -91,6 +91,9 @@ export class ConversationStore extends EventTarget {
   /** @type {string} */
   #systemCurrentFolder = '';
 
+  // -- Activity status state --
+  /** @type {Map<string, 'idle' | 'busy' | 'waiting' | 'finished'>} */
+  #conversationStatuses = new Map();
   // -- Current conversation state --
   /** @type {string|null} */
   #currentConvId = null;
@@ -181,6 +184,26 @@ export class ConversationStore extends EventTarget {
   get systemCurrentFolder() { return this.#systemCurrentFolder; }
   /** @returns {boolean} */
   get isReadOnly() { return this.#readOnly; }
+  /**
+   * @param {string} convId
+   * @returns {'idle' | 'busy' | 'waiting' | 'finished'}
+   */
+  getConversationStatus(convId) {
+    return this.#conversationStatuses.get(convId) || 'idle';
+  }
+
+  /** @param {Array<{conv_id: string, status?: string}>} items */
+  #syncConversationStatuses(items) {
+    for (const c of items) {
+      if (!c.conv_id) continue;
+      const current = this.#conversationStatuses.get(c.conv_id);
+      if (c.status === 'busy' || c.status === 'waiting') {
+        this.#conversationStatuses.set(c.conv_id, c.status);
+      } else if (current !== 'finished') {
+        this.#conversationStatuses.set(c.conv_id, /** @type {any} */ (c.status) || 'idle');
+      }
+    }
+  }
 
   // -- REST-based conversation management ------------------------------------
 
@@ -191,6 +214,7 @@ export class ConversationStore extends EventTarget {
       this.#conversations = data.conversations || [];
       this.#folders = data.folders || [];
       this.#currentFolder = data.folder || '';
+      this.#syncConversationStatuses(this.#conversations);
       this.#emitChange();
     } catch (err) {
       if (err instanceof ApiError) return;
@@ -205,6 +229,7 @@ export class ConversationStore extends EventTarget {
       this.#archivedConversations = data.conversations || [];
       this.#archivedFolders = data.folders || [];
       this.#archivedCurrentFolder = data.folder || '';
+      this.#syncConversationStatuses(this.#archivedConversations);
       this.#emitChange();
     } catch (err) {
       if (err instanceof ApiError) return;
@@ -219,6 +244,7 @@ export class ConversationStore extends EventTarget {
       this.#systemConversations = data.conversations || [];
       this.#systemFolders = data.folders || [];
       this.#systemCurrentFolder = data.folder || '';
+      this.#syncConversationStatuses(this.#systemConversations);
       this.#emitChange();
     } catch (err) {
       if (err instanceof ApiError) return;
@@ -370,6 +396,9 @@ export class ConversationStore extends EventTarget {
   /** @param {string} convId */
   selectConversation(convId) {
     this.#currentConvId = convId;
+    if (this.#conversationStatuses.get(convId) === 'finished') {
+      this.#conversationStatuses.set(convId, 'idle');
+    }
     this.#busy = false;
     this.#messageStore.clear();
     this.#toolStatusStore.clear();
@@ -440,6 +469,7 @@ export class ConversationStore extends EventTarget {
     if (attachments.length) userMsg.attachments = attachments;
     this.#messageStore.pushMessage(userMsg);
     this.#busy = true;
+    this.#conversationStatuses.set(this.#currentConvId, 'busy');
     this.#messageStore.clearStreamingText();
     this.#toolStatusStore.clearToolStatus();
     const wsMsg = { type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text };
@@ -543,6 +573,7 @@ export class ConversationStore extends EventTarget {
         this.#toolStatusStore.clearToolStatus();
         if (msg.final) {
           this.#busy = false;
+          this.#conversationStatuses.set(msg.conv_id, 'idle');
           if (msg.usage?.prompt_tokens) this.#contextUsage = msg.usage.prompt_tokens;
           if (msg.context_limit) this.#contextLimit = msg.context_limit;
           this.listConversations(this.#currentFolder);
@@ -571,7 +602,27 @@ export class ConversationStore extends EventTarget {
         }
         break;
 
+      case MESSAGE_TYPES.CONVERSATION_STATUS: {
+        const convId = msg.conv_id;
+        if (convId) {
+          if (msg.status === 'finished') {
+            if (convId === this.#currentConvId) {
+              this.#conversationStatuses.set(convId, 'idle');
+            } else {
+              this.#conversationStatuses.set(convId, 'finished');
+            }
+          } else {
+            this.#conversationStatuses.set(convId, msg.status || 'idle');
+          }
+          this.#emitChange();
+        }
+        break;
+      }
+
       case MESSAGE_TYPES.TURN_START:
+        if (msg.conv_id) {
+          this.#conversationStatuses.set(msg.conv_id, 'busy');
+        }
         if (!msg.conv_id || msg.conv_id === this.#currentConvId) {
           this.#busy = true;
           this.#messageStore.clearStreamingText();

@@ -459,3 +459,76 @@ describe.each([
     else expect(log).not.toHaveBeenCalled();
   });
 });
+
+describe('conversation activity status tracking', () => {
+  let ws, store, change;
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = makeStore(ws);
+    change = vi.fn();
+    store.addEventListener('change', change);
+  });
+
+  it('initializes status from REST listing items and defaults to idle', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      folder: '',
+      folders: [],
+      conversations: [
+        { conv_id: 'c1', title: 'Chat 1', status: 'busy' },
+        { conv_id: 'c2', title: 'Chat 2', status: 'waiting' },
+        { conv_id: 'c3', title: 'Chat 3' },
+      ],
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await store.listConversations();
+    expect(store.getConversationStatus('c1')).toBe('busy');
+    expect(store.getConversationStatus('c2')).toBe('waiting');
+    expect(store.getConversationStatus('c3')).toBe('idle');
+    expect(store.getConversationStatus('unknown')).toBe('idle');
+    vi.unstubAllGlobals();
+  });
+
+  it('updates status on CONVERSATION_STATUS websocket messages', () => {
+    ws.fireMessage({ type: MESSAGE_TYPES.CONVERSATION_STATUS, conv_id: 'c1', status: 'busy' });
+    expect(store.getConversationStatus('c1')).toBe('busy');
+    expect(change).toHaveBeenCalled();
+
+    ws.fireMessage({ type: MESSAGE_TYPES.CONVERSATION_STATUS, conv_id: 'c1', status: 'waiting' });
+    expect(store.getConversationStatus('c1')).toBe('waiting');
+
+    ws.fireMessage({ type: MESSAGE_TYPES.CONVERSATION_STATUS, conv_id: 'c1', status: 'idle' });
+    expect(store.getConversationStatus('c1')).toBe('idle');
+  });
+
+  it('marks background conversation as finished, but active conversation as idle', () => {
+    store.selectConversation('c-active');
+
+    // Finished in background -> finished
+    ws.fireMessage({ type: MESSAGE_TYPES.CONVERSATION_STATUS, conv_id: 'c-bg', status: 'finished' });
+    expect(store.getConversationStatus('c-bg')).toBe('finished');
+
+    // Finished while currently active -> idle (already read)
+    ws.fireMessage({ type: MESSAGE_TYPES.CONVERSATION_STATUS, conv_id: 'c-active', status: 'finished' });
+    expect(store.getConversationStatus('c-active')).toBe('idle');
+  });
+
+  it('clears finished status when the conversation is selected (read)', () => {
+    store.selectConversation('c-other');
+    ws.fireMessage({ type: MESSAGE_TYPES.CONVERSATION_STATUS, conv_id: 'c-bg', status: 'finished' });
+    expect(store.getConversationStatus('c-bg')).toBe('finished');
+
+    // Selecting c-bg clears finished to idle
+    store.selectConversation('c-bg');
+    expect(store.getConversationStatus('c-bg')).toBe('idle');
+  });
+
+  it('marks current conversation as busy when sending a message', () => {
+    store.selectConversation('c1');
+    expect(store.getConversationStatus('c1')).toBe('idle');
+
+    store.sendMessage('hello');
+    expect(store.getConversationStatus('c1')).toBe('busy');
+  });
+});

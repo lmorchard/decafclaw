@@ -701,6 +701,7 @@ class ConversationListingItem(BaseModel):
     title: str
     created_at: str
     updated_at: str
+    status: str = "idle"
 
 
 class SystemConversationListingItem(BaseModel):
@@ -708,6 +709,7 @@ class SystemConversationListingItem(BaseModel):
     title: str
     conv_type: str
     updated_at: str
+    status: str = "idle"
 
 
 class ConversationFolderEntry(BaseModel):
@@ -762,11 +764,17 @@ async def list_conversations(request: Request, folder: str = "") -> Conversation
     if not folder_param:
         folders.append({"name": "Archived", "path": "_archived", "virtual": True})
         folders.append({"name": "System", "path": "_system", "virtual": True})
+    manager = getattr(request.app.state, "manager", None)
+    conv_items = []
+    for c in filtered:
+        item = c.to_dict()
+        item["status"] = manager.get_activity_status(c.conv_id) if manager else "idle"
+        conv_items.append(item)
     return ConversationListingResponse.model_validate(
         {
             "folder": folder_param,
             "folders": folders,
-            "conversations": [c.to_dict() for c in filtered],
+            "conversations": conv_items,
         }
     )
 
@@ -807,11 +815,17 @@ async def list_archived_conversations(request: Request, folder: str = "") -> Con
     folders = [
         {"name": name, "path": f"{folder_param}/{name}" if folder_param else name} for name in sorted(child_names)
     ]
+    manager = getattr(request.app.state, "manager", None)
+    conv_items = []
+    for c in filtered:
+        item = c.to_dict()
+        item["status"] = manager.get_activity_status(c.conv_id) if manager else "idle"
+        conv_items.append(item)
     return ConversationListingResponse.model_validate(
         {
             "folder": folder_param,
             "folders": folders,
-            "conversations": [c.to_dict() for c in filtered],
+            "conversations": conv_items,
         }
     )
 
@@ -844,7 +858,12 @@ async def list_system_conversations(
     valid_types = {"heartbeat", "schedule", "delegated"}
     if folder_param not in valid_types:
         return JSONResponse({"error": "invalid system folder"}, status_code=400)
-    filtered = [c for c in all_sys if c.get("conv_type") == folder_param]
+    manager = getattr(request.app.state, "manager", None)
+    filtered = [
+        dict(c, status=manager.get_activity_status(c["conv_id"]) if manager else "idle")
+        for c in all_sys
+        if c.get("conv_type") == folder_param
+    ]
     return SystemConversationListingResponse.model_validate(
         {
             "folder": folder_param,
