@@ -1868,6 +1868,10 @@ components:
         updated_at:
           type: string
           title: Updated At
+        status:
+          type: string
+          title: Status
+          default: idle
       type: object
       required:
       - conv_id
@@ -2291,6 +2295,10 @@ components:
         updated_at:
           type: string
           title: Updated At
+        status:
+          type: string
+          title: Status
+          default: idle
       type: object
       required:
       - conv_id

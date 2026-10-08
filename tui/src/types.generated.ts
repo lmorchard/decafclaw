@@ -88,6 +88,12 @@ export interface SrvConvSelected {
   pending_confirmation?: Record<string, unknown>;
 }
 
+export interface SrvConversationStatus {
+  type: "conversation_status";
+  conv_id: string;
+  status: string;
+}
+
 export interface SrvError {
   type: "error";
   message: string;
@@ -275,6 +281,7 @@ export type ServerMessage =
   | SrvConfirmationResponse
   | SrvConvHistory
   | SrvConvSelected
+  | SrvConversationStatus
   | SrvError
   | SrvMessageComplete
   | SrvModelChanged

@@ -51,6 +51,56 @@ def test_get_state_returns_none_for_unknown(manager):
     assert manager.get_state("nonexistent") is None
 
 
+def test_get_activity_status(manager):
+    assert manager.get_activity_status("unknown") == "idle"
+
+    state = manager._get_or_create("c1")
+    assert manager.get_activity_status("c1") == "idle"
+
+    state.busy = True
+    assert manager.get_activity_status("c1") == "busy"
+
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+
+    state.pending_confirmation = ConfirmationRequest(
+        confirmation_id="conf-1",
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        message="Run ls?",
+    )
+    assert manager.get_activity_status("c1") == "waiting"
+
+    state.busy = False
+    assert manager.get_activity_status("c1") == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_activity_status_event_bus_emissions(manager):
+    events = []
+
+    async def on_event(ev):
+        if ev.get("type") == "conversation_status":
+            events.append(ev)
+
+    manager.event_bus.subscribe(on_event)
+
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+
+    req = ConfirmationRequest(
+        confirmation_id="conf-test",
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        message="allow test",
+    )
+
+    # post_confirmation emits "waiting"
+    await manager.post_confirmation("c1", req)
+    assert any(e["conv_id"] == "c1" and e["status"] == "waiting" for e in events)
+
+    # respond_to_confirmation clears waiting
+    events.clear()
+    await manager.respond_to_confirmation("c1", "conf-test", approved=True)
+    assert any(e["conv_id"] == "c1" and e["status"] == "idle" for e in events)
+
+
 # -- Subscription --------------------------------------------------------------
 
 

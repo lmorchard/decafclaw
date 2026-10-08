@@ -265,6 +265,41 @@ async def test_list_convs_route(authed_client):
 
 
 @pytest.mark.asyncio
+async def test_list_convs_status_field(authed_client, http_config, bus):
+    r1 = await authed_client.post("/api/conversations", json={"title": "Chat 1"})
+    r2 = await authed_client.post("/api/conversations", json={"title": "Chat 2"})
+    cid1 = r1.json()["conv_id"]
+    cid2 = r2.json()["conv_id"]
+
+    # Without manager, defaults to "idle"
+    resp = await authed_client.get("/api/conversations")
+    assert resp.status_code == 200
+    convs = {c["conv_id"]: c.get("status") for c in resp.json()["conversations"]}
+    assert convs[cid1] == "idle"
+    assert convs[cid2] == "idle"
+
+    # With manager attached
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.conversation_manager import ConversationManager
+
+    mgr = ConversationManager(http_config, bus)
+    authed_client._transport.app.state.manager = mgr
+
+    mgr._get_or_create(cid1).busy = True
+    mgr._get_or_create(cid2).pending_confirmation = ConfirmationRequest(
+        confirmation_id="c-conf",
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        message="run?",
+    )
+
+    resp2 = await authed_client.get("/api/conversations")
+    assert resp2.status_code == 200
+    convs2 = {c["conv_id"]: c.get("status") for c in resp2.json()["conversations"]}
+    assert convs2[cid1] == "busy"
+    assert convs2[cid2] == "waiting"
+
+
+@pytest.mark.asyncio
 async def test_rename_conv_route(authed_client):
     create_resp = await authed_client.post("/api/conversations", json={"title": "Old"})
     conv_id = create_resp.json()["conv_id"]
@@ -950,7 +985,7 @@ async def test_listing_special_folder_filter_order_and_shape(archived, authed_cl
     body = response.json()
     assert body["folder"] == folder
     assert [c["conv_id"] for c in body["conversations"]] == [second.conv_id, first.conv_id]
-    assert all(set(c) == {"conv_id", "title", "created_at", "updated_at"} for c in body["conversations"])
+    assert all(set(c) == {"conv_id", "title", "created_at", "updated_at", "status"} for c in body["conversations"])
     assert body["folders"] == []
     opposite = "/api/conversations" + ("" if archived else "/archived")
     assert (await authed_client.get(opposite, params={"folder": folder})).json()["conversations"] == []
@@ -995,7 +1030,7 @@ async def test_system_listing_shapes_order_and_delegated_user_filter(authed_clie
         assert body["folder"] == category
         assert body["folders"] == []
         assert [c["conv_id"] for c in body["conversations"]] == expected
-        assert all(set(c) == {"conv_id", "title", "conv_type", "updated_at"} for c in body["conversations"])
+        assert all(set(c) == {"conv_id", "title", "conv_type", "updated_at", "status"} for c in body["conversations"])
 
 
 @pytest.mark.parametrize("route", ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"])

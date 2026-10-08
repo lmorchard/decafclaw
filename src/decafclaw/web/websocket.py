@@ -1111,6 +1111,38 @@ def _make_vault_change_forwarder(ws_send: WSSendCallable):
     return _forward
 
 
+def _make_conversation_status_forwarder(ws_send: WSSendCallable, config, index, username: str):
+    """Forward `conversation_status` events from the global bus to a single socket.
+
+    Only forwards events for conversations visible to ``username``, preventing
+    cross-user visibility leaks for private conversations.
+    """
+    from .conversations import can_read_conversation
+
+    async def _forward(event: dict):
+        if event.get("type") != "conversation_status":
+            return
+        conv_id = event.get("conv_id", "")
+        if not conv_id:
+            return
+
+        if conv_id.startswith("web-"):
+            if not conv_id.startswith(f"web-{username}-"):
+                return
+        elif not can_read_conversation(config, index, conv_id, username):
+            return
+
+        await ws_send(
+            {
+                "type": WSMessageType.CONVERSATION_STATUS,
+                "conv_id": conv_id,
+                "status": event.get("status", "idle"),
+            }
+        )
+
+    return _forward
+
+
 # -- Main WebSocket handler ----------------------------------------------------
 
 
@@ -1163,6 +1195,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     # subscriber. See docs/notifications.md for the push architecture.
     notif_sub_id = event_bus.subscribe(_make_notification_forwarder(ws_send))
     vault_sub_id = event_bus.subscribe(_make_vault_change_forwarder(ws_send))
+    status_sub_id = event_bus.subscribe(_make_conversation_status_forwarder(ws_send, config, index, username))
 
     try:
         while True:
@@ -1188,6 +1221,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     finally:
         event_bus.unsubscribe(notif_sub_id)
         event_bus.unsubscribe(vault_sub_id)
+        event_bus.unsubscribe(status_sub_id)
         _unsubscribe_all(state)
 
 
