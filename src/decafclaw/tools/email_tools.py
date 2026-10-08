@@ -237,6 +237,7 @@ EMAIL_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "timeout": None,
         "function": {
             "name": "send_email",
             "description": (
