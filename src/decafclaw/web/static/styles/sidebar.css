@@ -149,6 +149,63 @@ conversation-sidebar .conv-item.active .conv-type-badge {
   background: rgba(255, 255, 255, 0.2);
   color: inherit;
 }
+conversation-sidebar .conv-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 0.75rem;
+}
+
+conversation-sidebar .conv-status.busy {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+conversation-sidebar .conv-status-spinner {
+  width: 0.65rem;
+  height: 0.65rem;
+  border: 1.5px solid var(--pico-muted-border-color);
+  border-top-color: var(--pico-primary);
+  border-radius: 50%;
+  animation: conv-status-spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+@keyframes conv-status-spin {
+  to { transform: rotate(360deg); }
+}
+
+conversation-sidebar .conv-status.waiting {
+  color: #e08a00;
+  font-size: 0.85rem;
+  animation: conv-status-pulse 1.5s infinite ease-in-out;
+}
+
+@keyframes conv-status-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+conversation-sidebar .conv-status.finished {
+  color: var(--pico-ins-color, #2a7);
+  font-weight: bold;
+  font-size: 0.75rem;
+}
+
+conversation-sidebar .conv-item.active .conv-status.finished {
+  color: var(--pico-primary-inverse, #fff);
+}
+
+conversation-sidebar .conv-item.active .conv-status-spinner {
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: var(--pico-primary-inverse, #fff);
+}
+
+conversation-sidebar .conv-item.active .conv-status.waiting {
+  color: #ffd166;
+}
 
 conversation-sidebar .model-picker {
   padding: 0.4rem 1rem 0.5rem;

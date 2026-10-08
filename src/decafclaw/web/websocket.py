@@ -1111,6 +1111,23 @@ def _make_vault_change_forwarder(ws_send: WSSendCallable):
     return _forward
 
 
+def _make_conversation_status_forwarder(ws_send: WSSendCallable):
+    """Forward `conversation_status` events from the global bus to a single socket."""
+
+    async def _forward(event: dict):
+        if event.get("type") != "conversation_status":
+            return
+        await ws_send(
+            {
+                "type": WSMessageType.CONVERSATION_STATUS,
+                "conv_id": event.get("conv_id", ""),
+                "status": event.get("status", "idle"),
+            }
+        )
+
+    return _forward
+
+
 # -- Main WebSocket handler ----------------------------------------------------
 
 
@@ -1163,6 +1180,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     # subscriber. See docs/notifications.md for the push architecture.
     notif_sub_id = event_bus.subscribe(_make_notification_forwarder(ws_send))
     vault_sub_id = event_bus.subscribe(_make_vault_change_forwarder(ws_send))
+    status_sub_id = event_bus.subscribe(_make_conversation_status_forwarder(ws_send))
 
     try:
         while True:
@@ -1188,6 +1206,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     finally:
         event_bus.unsubscribe(notif_sub_id)
         event_bus.unsubscribe(vault_sub_id)
+        event_bus.unsubscribe(status_sub_id)
         _unsubscribe_all(state)
 
 

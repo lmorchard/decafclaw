@@ -126,6 +126,15 @@ Confirmation that a select_conv subscribed this socket to the named conversation
 - `read_only` — boolean?
 - `pending_confirmation` — object?
 
+### `conversation_status`
+
+Activity status of a conversation changed (busy, waiting, finished, or idle).
+
+**Fields:**
+
+- `conv_id` — string
+- `status` — string
+
 ### `error`
 
 Generic error surfaced to the client (bad request, unknown conversation, internal error).
