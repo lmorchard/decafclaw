@@ -234,13 +234,23 @@ class _ResponsesState:
 
     @property
     def has_output(self) -> bool:
-        return bool(self.items or self.text)
+        return bool(self.text) or any(
+            item["type"] == "function_call"
+            or (
+                item["type"] == "message"
+                and any(part.get("text") or part.get("refusal") for part in item.get("content", []))
+            )
+            for item in self.items.values()
+        )
 
     async def emit(self, kind: str, data: Any):
         if self.on_chunk:
-            result = self.on_chunk(kind, data)
-            if inspect.isawaitable(result):
-                await result
+            try:
+                result = self.on_chunk(kind, data)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                log.debug("Responses callback failed for %s: %s", kind, exc)
 
     def accept_response(self, response: dict):
         self.response = response
@@ -293,7 +303,11 @@ class _ResponsesState:
     async def finalize(self) -> dict:
         output = [self.items[index] for index in sorted(self.items)]
         content, calls = _visible_output(output)
-        content = content or "".join(self.text) or None
+        # Terminal responses supply authoritative output. On disconnect,
+        # deltas also contain text from unfinished message items.
+        if self.response is None:
+            content = "".join(self.text) or content
+        content = content or None
         usage = None
         if self.response and self.response.get("usage"):
             raw = self.response["usage"]
