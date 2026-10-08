@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -51,6 +52,7 @@ class ConversationDisplay:
 
         # Tool call state — maps tool_call_id → Mattermost post ID
         self._tool_posts: dict[str, str] = {}
+        self._tool_commands: dict[str, str] = {}
         self._tools_text_finalized = False
 
         # Throttling
@@ -145,6 +147,8 @@ class ConversationDisplay:
     async def on_tool_start(self, tool_name, args, tool_call_id=""):
         """Tool execution starting — finalize text, post tool call message."""
         msg = f"\U0001f527 {tool_name}..."
+        if tool_name == "shell" and isinstance(args.get("command"), str):
+            self._tool_commands[tool_call_id] = args["command"]
 
         # First tool in a batch: finalize text / reuse thinking placeholder
         if not self._tools_text_finalized:
@@ -211,6 +215,17 @@ class ConversationDisplay:
             msg = f"\U0001f527 {tool_name}: {display_short_text} \u2714\ufe0f"
         else:
             msg = f"\U0001f527 {tool_name} \u2714\ufe0f"
+
+        command = self._tool_commands.pop(tool_call_id, None)
+        if command is not None:
+            output = display_text or result_text or "(no output)"
+            if len(output) > 8000:
+                output = output[:8000] + "\n[output truncated]"
+            msg = f"\U0001f527 {tool_name} \u2714\ufe0f"
+            # Commands/output may contain Markdown fences themselves.
+            fence_size = max((len(match) for match in re.findall(r"`+", command + output)), default=0)
+            fence = "`" * max(3, fence_size + 1)
+            msg = f"{msg}\n**Command:**\n{fence}\n{command}\n{fence}\n**Result:**\n{fence}\n{output}\n{fence}"
 
         post_id = self._tool_posts.pop(tool_call_id, None)
         if post_id:

@@ -94,7 +94,10 @@ export class MessageStore {
     if (!toolCallId) {
       // Fallback: replace the last tool_call (legacy behavior)
       const idx = this.#currentMessages.findLastIndex(m => m.role === 'tool_call');
-      if (idx >= 0) this.#currentMessages[idx] = msg;
+      if (idx >= 0) {
+        const old = this.#currentMessages[idx];
+        this.#currentMessages[idx] = { ...msg, command: old.command, statusHistory: old.statusHistory };
+      }
       return;
     }
     const idx = this.#currentMessages.findIndex(
@@ -105,6 +108,7 @@ export class MessageStore {
       if (old.statusHistory?.length) {
         msg.statusHistory = old.statusHistory;
       }
+      msg.command = old.command;
       this.#currentMessages[idx] = msg;
     }
   }
@@ -259,6 +263,16 @@ export class MessageStore {
         for (const tc of msg.tool_calls) {
           const toolName = tc.function?.name || 'tool';
           const tcId = tc.id;
+          let command = '';
+          if (toolName === 'shell') {
+            try {
+              const args = typeof tc.function?.arguments === 'string'
+                ? JSON.parse(tc.function.arguments) : tc.function?.arguments;
+              if (typeof args?.command === 'string') command = args.command;
+            } catch {
+              // Older or malformed arguments must not prevent rendering results.
+            }
+          }
           // Look ahead for matching tool result
           let resultContent = '';
           let resultShortText = '';
@@ -282,6 +296,7 @@ export class MessageStore {
             role: 'tool',
             tool_call_id: tcId,
             tool: toolName,
+            command,
             content: resultContent,
             display_short_text: resultShortText,
             widget: resultWidget,

@@ -174,6 +174,7 @@ export interface SrvToolStart {
   conv_id: string;
   tool: string;
   tool_call_id: string;
+  command?: string;
 }
 
 export interface SrvToolStatus {

@@ -277,3 +277,34 @@ async def test_message_complete_text_enables_finalize_for_wake_no_chunks():
     # finalize must edit the placeholder with the final text (not delete it)
     client.edit_message.assert_awaited_with("placeholder-id", final_text)
     client.delete_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("output", ["hello", "(no output)", "[error: command timed out after 30 seconds]"])
+async def test_shell_completion_preserves_command_and_output(output):
+    client = make_mock_client()
+    display = make_display(client)
+    command = "printf 'hello'"
+    await display.on_tool_start("shell", {"command": command}, tool_call_id="shell1")
+    await display.on_tool_start("web_search", {}, tool_call_id="search1")
+    await display.on_tool_status("shell", "Running command", tool_call_id="shell1")
+    client.edit_message.reset_mock()
+    await display.on_tool_end("shell", output, None, [], tool_call_id="shell1")
+    message = client.edit_message.call_args.args[1]
+    assert command in message
+    assert output in message
+    assert "search1" in display._tool_posts
+
+
+@pytest.mark.asyncio
+async def test_shell_result_bounds_output_and_preserves_markdown_fences():
+    client = make_mock_client()
+    display = make_display(client)
+    command = "printf '```'"
+    await display.on_tool_start("shell", {"command": command}, tool_call_id="tc1")
+    await display.on_tool_end("shell", "```\n" + "x" * 9000, None, [], tool_call_id="tc1")
+    message = client.edit_message.call_args.args[1]
+    assert "````\n" + command + "\n````" in message
+    assert "[output truncated]" in message
+    assert len(message) < 8500
+    assert not display._tool_commands

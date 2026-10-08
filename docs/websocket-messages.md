@@ -249,6 +249,7 @@ Tool call has begun execution.
 - `conv_id` — string
 - `tool` — string
 - `tool_call_id` — string
+- `command` — string?
 
 ### `tool_status`
 

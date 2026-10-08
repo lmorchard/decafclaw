@@ -140,7 +140,8 @@ export class ToolStatusStore {
         if (msg.conv_id === currentConvId) {
           this.#messageStore.pushMessage({
             role: 'tool_call',
-            content: `Running ${msg.tool}...`,
+            content: msg.command ? `Running ${msg.tool}: ${msg.command}` : `Running ${msg.tool}...`,
+            command: msg.command || '',
             tool: msg.tool,
             tool_call_id: tcId,
             timestamp: new Date().toISOString(),
