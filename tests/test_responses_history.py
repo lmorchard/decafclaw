@@ -3,7 +3,7 @@
 import copy
 import dataclasses
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -169,6 +169,57 @@ async def test_browser_history_strips_opaque_state(config):
     assert "provider_data" not in messages[0]
     assert "provider_data" not in _annotate_widget_responses([message], set())[0]
     assert "provider_data" in restore_history(config, "conv")[0]
+
+
+@pytest.mark.parametrize("calls", [False, True])
+async def test_cancelled_response_does_not_archive_unmatched_calls_or_normal_answer(ctx, calls):
+    ctx.config.llm.streaming = False
+    ctx.manager = MagicMock()
+    cancelled = await normalized("Partial answer", calls)
+    cancelled["finish_reason"] = "cancelled"
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock, return_value=cancelled),
+        patch("decafclaw.tool_execution.execute_tool", new_callable=AsyncMock) as execute,
+    ):
+        history = []
+        result = await run_agent_turn(ctx, "Check", history)
+    execute.assert_not_called()
+    ctx.manager.note_cancel_observed_by_agent.assert_called_once_with(ctx.conv_id)
+    assert result.termination_reason == "cancelled"
+    assert "Partial answer" not in json.dumps(history)
+    assert not any(message.get("tool_calls") for message in history)
+    archived = restore_history(ctx.config, ctx.conv_id)
+    assert not any(message.get("role") == "assistant" for message in archived)
+
+
+@pytest.mark.parametrize("path", ["presentation", "end_turn", "grace"])
+async def test_cancelled_closing_response_keeps_only_completed_tool_exchange(ctx, path):
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 1
+    ctx.manager = MagicMock()
+    first = await normalized("Checking", True)
+    cancelled = await normalized("Partial closing answer")
+    cancelled["finish_reason"] = "cancelled"
+    end_turn = EndTurnConfirm(message="Review") if path == "presentation" else path == "end_turn"
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock, side_effect=[first, cancelled]),
+        patch(
+            "decafclaw.tool_execution.execute_tool",
+            new_callable=AsyncMock,
+            return_value=ToolResult(text="ok", end_turn=end_turn),
+        ) as execute,
+        patch("decafclaw.agent._handle_end_turn_confirm", new_callable=AsyncMock) as confirm,
+    ):
+        history = []
+        result = await run_agent_turn(ctx, "Check", history)
+    execute.assert_called_once()
+    confirm.assert_not_called()
+    ctx.manager.note_cancel_observed_by_agent.assert_called_once_with(ctx.conv_id)
+    assert result.termination_reason == "cancelled"
+    archived = restore_history(ctx.config, ctx.conv_id)
+    assert "Partial closing answer" not in json.dumps(archived)
+    assert [message["role"] for message in archived] == ["user", "assistant", "tool"]
+    assert archived[1]["tool_calls"][0]["id"] == archived[2]["tool_call_id"]
 
 
 @pytest.mark.live_llm

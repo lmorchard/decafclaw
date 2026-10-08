@@ -476,3 +476,69 @@ async def test_interleaved_argument_events_resolve_item_id():
     with patch("httpx_sse.aconnect_sse", return_value=EventSource(events)):
         result = await OpenAIResponsesProvider().complete(MODEL, [], streaming=True)
     assert [json.loads(call["function"]["arguments"])["city"] for call in result["tool_calls"]] == ["Paris", "London"]
+
+
+@pytest.mark.parametrize("failure", ["api", "disconnect"])
+async def test_reasoning_only_stream_failure_surfaces_error(failure):
+    events = [{"type": "response.output_item.added", "output_index": 0, "item": REASONING}]
+    error = None
+    if failure == "api":
+        events.append(
+            {"type": "response.failed", "response": response([REASONING], "failed", error={"message": "API failure"})}
+        )
+    else:
+        error = httpx.ReadError("stream lost")
+    with (
+        patch("httpx_sse.aconnect_sse", return_value=EventSource(events, error=error)),
+        pytest.raises((RuntimeError, httpx.ReadError), match="API failure|stream lost"),
+    ):
+        await OpenAIResponsesProvider().complete(MODEL, [], streaming=True)
+
+
+async def test_reasoning_only_nonstream_failure_surfaces_error():
+    client = mock_http(response([REASONING], "failed", error={"message": "API failure"}))
+    with patch("httpx.AsyncClient", return_value=client), pytest.raises(RuntimeError, match="API failure"):
+        await OpenAIResponsesProvider().complete(MODEL, [])
+
+
+@pytest.mark.parametrize("broken_kind", ["text", "tool_call_start", "tool_call_delta", "tool_call_end", "done"])
+@pytest.mark.parametrize("async_callback", [False, True])
+async def test_delivery_callback_failure_does_not_change_result(broken_kind, async_callback):
+    received = []
+
+    def callback(kind, data):
+        received.append(kind)
+        if kind == broken_kind:
+            raise RuntimeError("delivery failed")
+
+    async def async_cb(kind, data):
+        callback(kind, data)
+
+    events = [
+        *call_events(),
+        {"type": "response.output_text.delta", "output_index": 3, "delta": "Sunny."},
+        {"type": "response.completed", "response": response([REASONING, *CALLS, MESSAGE])},
+    ]
+    with patch("httpx_sse.aconnect_sse", return_value=EventSource(events)):
+        result = await OpenAIResponsesProvider().complete(
+            MODEL, [], streaming=True, on_chunk=async_cb if async_callback else callback
+        )
+    assert result["finish_reason"] == "tool_calls"
+    assert len(result["tool_calls"]) == 2
+    assert result["content"] == "Sunny."
+    assert "done" in received
+    assert "provider_data" in result
+
+
+async def test_disconnect_keeps_commentary_and_partial_final_answer():
+    commentary = {**MESSAGE, "phase": "commentary", "content": [{"type": "output_text", "text": "Checking."}]}
+    events = [
+        {"type": "response.output_text.delta", "output_index": 0, "delta": "Checking."},
+        {"type": "response.output_item.done", "output_index": 0, "item": commentary},
+        {"type": "response.output_text.delta", "output_index": 1, "delta": "The answer is"},
+    ]
+    with patch("httpx_sse.aconnect_sse", return_value=EventSource(events, error=httpx.ReadError("lost"))):
+        result = await OpenAIResponsesProvider().complete(MODEL, [], streaming=True)
+    assert result["content"] == "Checking.The answer is"
+    assert result["finish_reason"] == "error"
+    assert "provider_data" not in result
