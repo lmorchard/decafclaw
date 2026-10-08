@@ -4,12 +4,13 @@ DecafClaw supports multiple LLM providers and named model configurations. Users 
 
 ## Providers
 
-Three provider types are supported:
+Four provider types are supported:
 
 | Provider | Type | Auth | Use case |
 |----------|------|------|----------|
 | **Vertex AI** | `vertex` | ADC or service account JSON | Direct Gemini access, no proxy |
-| **OpenAI** | `openai` | API key | Direct OpenAI API |
+| **OpenAI Responses** | `openai-responses` | API key | Reasoning with function tools; stateless item replay |
+| **OpenAI Chat Completions** | `openai` | API key | Existing direct OpenAI connections |
 | **OpenAI-compatible** | `openai-compat` | API key (or none) | LiteLLM, Ollama, vLLM, OpenRouter, etc. |
 
 See [LLM Providers](providers.md) for detailed setup.
@@ -47,6 +48,11 @@ Model config has two layers in `config.json`:
 ```
 
 **Providers** define connections (credentials, endpoints). **Model configs** reference a provider and add per-model settings (timeout, context window size, streaming preference).
+
+For OpenAI reasoning with tools, use `openai-responses` and optionally set
+`reasoning_effort` on each model config. The setting follows named, default,
+and auxiliary model selection in both streaming modes. See the
+[Responses setup example](providers.md#openai-responses-openai-responses).
 
 ## Selecting a model
 
