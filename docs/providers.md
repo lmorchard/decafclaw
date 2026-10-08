@@ -71,7 +71,66 @@ export GOOGLE_APPLICATION_CREDENTIALS=/etc/decafclaw/vertex-sa.json
 
 Set `"region": "global"` to use the multi-region global endpoint. Newer Gemini models are often global-only and 404 on every regional endpoint, so `global` is the safer default unless you have a data-residency requirement. Note that `global` is a *location*, not a host prefix — the provider dispatches it to `aiplatform.googleapis.com` rather than `global-aiplatform.googleapis.com` (which does not exist).
 
-### OpenAI
+### OpenAI Responses (`openai-responses`)
+
+Use this provider for OpenAI reasoning models with DecafClaw's function tools.
+It uses `/v1/responses`; the existing `openai` provider uses Chat Completions.
+
+```json
+{
+  "providers": {
+    "openai": { "type": "openai-responses", "api_key": "sk-..." }
+  },
+  "model_configs": {
+    "luna": {
+      "provider": "openai",
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium"
+    }
+  },
+  "default_model": "luna"
+}
+```
+
+Set the key explicitly in the provider configuration. Like `openai`, this
+provider does not automatically read `OPENAI_API_KEY`. Merge the entries into
+`data/{agent_id}/config.json`, restart, and select the model in the conversation
+picker (an existing conversation may retain its previous selection).
+
+`url` accepts a base URL such as `https://api.openai.com/v1` or a full
+`/responses` endpoint. If your key requires a regional hostname, set it there;
+for example, `https://us.api.openai.com/v1/responses`. Embeddings use the same
+base path with `/embeddings`.
+
+`reasoning_effort` is optional. Omit it or set it to `null` to use the model's
+default. Accepted values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+and `max`; support varies by model, and the API reports unsupported combinations.
+DecafClaw rejects this setting on other provider types instead of silently
+ignoring it. For an existing model entry, the CLI supports:
+
+```bash
+decafclaw config set model_configs.luna.reasoning_effort low
+decafclaw config set model_configs.luna.reasoning_effort null
+```
+
+Requests use `store: false` and explicitly request encrypted reasoning items.
+Ordered output items, including assistant phase, are archived alongside visible
+history and replayed only for the same provider name, endpoint, and model. Other
+providers see visible text and tool history. Switching back can reuse unchanged
+items still in the working history. Compaction removes replay metadata with the
+summarized messages; cleared tool results remain cleared. Browser chat history
+does not include opaque replay metadata.
+
+Both streaming modes support text, image attachments, parallel function calls,
+and refusals. Tools still run through DecafClaw's execution and approval system.
+OpenAI-hosted tools, hosted conversations, and background Responses are outside
+this provider's scope. Incomplete, failed, or interrupted responses cannot
+execute tools.
+
+See [OpenAI's Responses migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses)
+and [reasoning guidance](https://developers.openai.com/api/docs/guides/reasoning).
+
+### OpenAI Chat Completions (`openai`)
 
 Direct access to OpenAI's API.
 
@@ -154,14 +213,15 @@ Users can switch between these via the web UI dropdown.
 | `context_window_size` | int | 0 | Context window in tokens (0 = use compaction_max_tokens) |
 | `timeout` | int | 300 | HTTP timeout in seconds |
 | `streaming` | bool | true | Use streaming responses |
+| `reasoning_effort` | string or null | null | Responses reasoning effort; omitted/null uses the model default |
 
 ## Provider config fields
 
 | Field | Type | Providers | Description |
 |-------|------|-----------|-------------|
-| `type` | string | all | `"vertex"`, `"openai"`, or `"openai-compat"` (alias: `"litellm"`) |
-| `api_key` | string | openai, openai-compat | API key (secret, masked in config show) |
-| `url` | string | openai, openai-compat | Base URL for the API endpoint |
+| `type` | string | all | `"vertex"`, `"openai-responses"`, `"openai"`, or `"openai-compat"` (alias: `"litellm"`) |
+| `api_key` | string | openai-responses, openai, openai-compat | API key (secret, masked in config show) |
+| `url` | string | openai-responses, openai, openai-compat | Base URL or API endpoint |
 | `project` | string | vertex | GCP project ID |
 | `region` | string | vertex | GCP region (default: `us-central1`) |
 | `service_account_file` | string | vertex | Path to service account JSON key file |
@@ -174,6 +234,7 @@ The provider abstraction lives in `src/decafclaw/llm/`:
 - `registry.py` — Named provider registry, initialized from config at startup
 - `providers/openai_compat.py` — OpenAI-compat provider (httpx + SSE)
 - `providers/openai.py` — Direct OpenAI (thin subclass of openai-compat)
+- `providers/openai_responses.py` — OpenAI Responses wire adapter and stateless output-item replay
 - `providers/vertex.py` — Native Gemini REST API with ADC/service account auth
 
 All providers normalize responses to the same internal format (`content`, `tool_calls`, `role`, `usage`). Tool definitions are sent in each provider's native format — OpenAI envelope for openai-compat/openai, `FunctionDeclaration` for Vertex/Gemini.
@@ -187,3 +248,14 @@ make test-all            # everything
 ```
 
 Integration tests require credentials (ADC for Vertex, `OPENAI_API_KEY` in `.env` for OpenAI). Tests are auto-skipped when credentials are unavailable.
+
+For the bounded Luna Responses tests, set `OPENAI_API_KEY` in `.env` and run:
+
+```bash
+uv run pytest tests/test_responses_integration.py -m integration -n 0
+```
+
+These tests exercise an image and two tool iterations in both streaming modes,
+with a 2,048-output-token cap per response. Set `OPENAI_RESPONSES_URL` for a
+regional test endpoint if required. This variable applies to the tests; runtime
+connections use the provider's `url` field in `config.json`.

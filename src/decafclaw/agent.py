@@ -34,6 +34,7 @@ from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
 from .iteration_budget import IterationBudget
 from .llm import call_llm
+from .llm.history import assistant_message
 from .loop_breaker import (
     CallSignature,
     LoopBreaker,
@@ -223,7 +224,7 @@ def _extract_call_signatures(tool_calls, messages) -> list[CallSignature]:
 # -- Agent turn helpers --------------------------------------------------------
 
 
-def _check_cancelled(ctx: "Context", history):
+def _check_cancelled(ctx: "Context", history, response: dict | None = None):
     """Check if the agent turn has been cancelled. Returns ToolResult or None.
 
     Appends an in-memory marker to history so the iteration loop's
@@ -234,13 +235,13 @@ def _check_cancelled(ctx: "Context", history):
     completion path persists the marker even when this helper returns
     cleanly via _Final (issue #491).
     """
-    if ctx.cancelled and ctx.cancelled.is_set():
+    if (ctx.cancelled and ctx.cancelled.is_set()) or (response and response.get("finish_reason") == "cancelled"):
         log.info("Agent turn cancelled by user")
         msg = "[Agent turn cancelled by user]"
         final_msg = {"role": "assistant", "content": msg}
         history.append(final_msg)
         _note_cancel_observed(ctx)
-        return ToolResult(text=msg)
+        return ToolResult(text=msg, termination_reason="cancelled")
     return None
 
 
@@ -609,6 +610,7 @@ class TurnRunner:
     empty_retries: int = 0
     reflection_retries: int = 0
     last_reflection: "ReflectionResult | None" = None
+    iteration_response: dict = field(default_factory=dict)
     # Reflection telemetry (#409) — captured across rounds for the per-turn
     # metrics emit. first_response is the round-0 response the judge saw;
     # exhausted survives _reflection_skip nulling last_reflection.
@@ -814,6 +816,11 @@ class TurnRunner:
             if self.composer is not None:
                 self.composer.record_actuals(prompt_tokens, completion_tokens, cached_tokens)
 
+        cancelled = _check_cancelled(self.ctx, self.history, response)
+        if cancelled:
+            return _Final(result=cancelled)
+
+        self.iteration_response = response
         tool_calls = response.get("tool_calls")
         if tool_calls:
             return await self._handle_tool_calls(response, tool_calls)
@@ -831,8 +838,7 @@ class TurnRunner:
         Returns _Continue to loop again, or _Final(result) to end the turn.
         """
         iter_content = response.get("content")
-        assistant_msg = {"role": "assistant", "content": iter_content}
-        assistant_msg["tool_calls"] = tool_calls
+        assistant_msg = assistant_message(response)
         self.history.append(assistant_msg)
         self.messages.append(assistant_msg)
         _archive(self.ctx, assistant_msg)
@@ -842,17 +848,6 @@ class TurnRunner:
             await self.ctx.publish("text_before_tools", text=iter_content)
 
         finish_reason = response.get("finish_reason")
-        if finish_reason == "cancelled":
-            cancelled = _check_cancelled(self.ctx, self.history)
-            if not cancelled:
-                log.info("Agent turn cancelled by response finish_reason")
-                msg = "[Agent turn cancelled by user]"
-                final_msg = {"role": "assistant", "content": msg}
-                self.history.append(final_msg)
-                _archive(self.ctx, final_msg)
-                cancelled = ToolResult(text=msg)
-            return _Final(result=cancelled)
-
         if finish_reason == "length" or finish_reason in ("error", "interrupted"):
             log.warning(
                 "LLM response finish_reason is %r; rejecting %d tool call(s)",
@@ -924,8 +919,11 @@ class TurnRunner:
                 [],
                 **self.model_override,
             )
+            cancelled = _check_cancelled(self.ctx, self.history, present_response)
+            if cancelled:
+                return _Final(result=cancelled)
             present_content = present_response.get("content") or ""
-            present_msg = {"role": "assistant", "content": present_content}
+            present_msg = assistant_message(present_response, present_content)
             self.history.append(present_msg)
             self.messages.append(present_msg)
             _archive(self.ctx, present_msg)
@@ -965,8 +963,11 @@ class TurnRunner:
                 [],
                 **self.model_override,
             )
+            cancelled = _check_cancelled(self.ctx, self.history, final_response)
+            if cancelled:
+                return _Final(result=cancelled)
             content = final_response.get("content") or ""
-            final_msg = {"role": "assistant", "content": content}
+            final_msg = assistant_message(final_response, content)
             self.history.append(final_msg)
             _archive(self.ctx, final_msg)
 
@@ -1099,7 +1100,7 @@ class TurnRunner:
         assert outcome.text is not None  # invariant: should_retry=False implies text is not None
         content = outcome.text
 
-        final_msg = {"role": "assistant", "content": content}
+        final_msg = assistant_message(response, content)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
 
@@ -1261,7 +1262,7 @@ class TurnRunner:
                 self.config.reflection.max_retries,
                 result.critique[:200],
             )
-            failed_msg = {"role": "assistant", "content": content}
+            failed_msg = assistant_message(self.iteration_response, content)
             self.history.append(failed_msg)
             self.messages.append(failed_msg)
             _archive(self.ctx, failed_msg)
@@ -1330,6 +1331,10 @@ class TurnRunner:
             )
             return None
 
+        cancelled = _check_cancelled(self.ctx, self.history, response)
+        if cancelled:
+            return cancelled
+
         content = response.get("content") or ""
         if not content:
             # Grace turn produced no usable output — fall back to the notice
@@ -1337,7 +1342,7 @@ class TurnRunner:
             # contract). _finalize_max_iterations will archive the notice.
             log.warning("Grace-turn LLM call returned empty content — falling back to notice")
             return None
-        final_msg = {"role": "assistant", "content": content}
+        final_msg = assistant_message(response, content)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(

@@ -9,6 +9,7 @@ Call sites can use either:
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from ..telemetry import get_tracer
@@ -28,6 +29,7 @@ from .types import (  # noqa: F401
     PROVIDER_LITELLM,
     PROVIDER_OPENAI,
     PROVIDER_OPENAI_COMPAT,
+    PROVIDER_OPENAI_RESPONSES,
     PROVIDER_VERTEX,
     Provider,
     StreamCallback,
@@ -66,19 +68,20 @@ async def _call_llm_impl(
     Use model_name to resolve through the provider/model config system.
     Or use llm_url/llm_model/llm_api_key for legacy override behavior.
     """
-    provider, model, timeout = _resolve(
+    resolved = _resolve(
         config,
         model_name=model_name,
         llm_url=llm_url,
         llm_model=llm_model,
         llm_api_key=llm_api_key,
     )
-    return await provider.complete(
-        model,
+    return await resolved.provider.complete(
+        resolved.model,
         messages,
         tools=tools,
         streaming=False,
-        timeout=timeout,
+        timeout=resolved.timeout,
+        **resolved.completion_options(),
     )
 
 
@@ -116,21 +119,22 @@ async def _call_llm_streaming_impl(
     Use model_name to resolve through the provider/model config system.
     Or use llm_url/llm_model/llm_api_key for legacy override behavior.
     """
-    provider, model, timeout = _resolve(
+    resolved = _resolve(
         config,
         model_name=model_name,
         llm_url=llm_url,
         llm_model=llm_model,
         llm_api_key=llm_api_key,
     )
-    return await provider.complete(
-        model,
+    return await resolved.provider.complete(
+        resolved.model,
         messages,
         tools=tools,
         streaming=True,
         on_chunk=on_chunk,
         cancel_event=cancel_event,
-        timeout=timeout,
+        timeout=resolved.timeout,
+        **resolved.completion_options(),
     )
 
 
@@ -139,8 +143,21 @@ async def embed_text(config: Any, text: str, model_name: str | None = None) -> l
 
     Falls back to the default model's provider if model_name is not given.
     """
-    provider, model, _timeout = _resolve(config, model_name=model_name)
-    return await provider.embed(model, text)
+    resolved = _resolve(config, model_name=model_name)
+    return await resolved.provider.embed(resolved.model, text)
+
+
+@dataclass
+class ResolvedModel:
+    provider: Provider
+    model: str
+    timeout: int
+    reasoning_effort: str | None = None
+
+    def completion_options(self) -> dict[str, Any]:
+        if self.reasoning_effort is None:
+            return {}
+        return {"reasoning_effort": self.reasoning_effort}
 
 
 def _resolve(
@@ -149,7 +166,7 @@ def _resolve(
     llm_url: str | None = None,
     llm_model: str | None = None,
     llm_api_key: str | None = None,
-) -> tuple[Any, str, int]:
+) -> ResolvedModel:
     """Resolve a provider, model name, and timeout.
 
     Priority:
@@ -166,7 +183,9 @@ def _resolve(
         try:
             pc, mc = resolve_model(config, model_name)
             provider = get_provider(mc.provider)
-            return provider, mc.model, mc.timeout
+            if mc.reasoning_effort is not None and config.providers[mc.provider].type != PROVIDER_OPENAI_RESPONSES:
+                raise ValueError("reasoning_effort requires an openai-responses provider")
+            return ResolvedModel(provider, mc.model, mc.timeout, mc.reasoning_effort)
         except KeyError as e:
             log.warning("Model resolution failed: %s; falling back to default", e)
 
@@ -176,7 +195,7 @@ def _resolve(
         model = llm_model or config.llm.model
         api_key = llm_api_key or config.llm.api_key
         timeout = getattr(config.llm, "timeout", 300)
-        return OpenAICompatProvider(url=url, api_key=api_key), model, timeout
+        return ResolvedModel(OpenAICompatProvider(url=url, api_key=api_key), model, timeout)
 
     # Path 3: Default from registry (model from config.llm or default_model)
     model = llm_model or config.llm.model
@@ -187,7 +206,9 @@ def _resolve(
         try:
             mc = config.model_configs[config.default_model]
             provider = get_provider(mc.provider)
-            return provider, mc.model, mc.timeout
+            if mc.reasoning_effort is not None and config.providers[mc.provider].type != PROVIDER_OPENAI_RESPONSES:
+                raise ValueError("reasoning_effort requires an openai-responses provider")
+            return ResolvedModel(provider, mc.model, mc.timeout, mc.reasoning_effort)
         except KeyError as exc:
             log.debug("default model %r not in provider registry: %s; falling through", config.default_model, exc)
 
@@ -197,7 +218,7 @@ def _resolve(
     except KeyError:
         provider = OpenAICompatProvider(url=config.llm.url, api_key=config.llm.api_key)
 
-    return provider, model, timeout
+    return ResolvedModel(provider, model, timeout)
 
 
 _failed_model_info: set[tuple[str, str]] = set()

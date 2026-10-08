@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from ..history import without_provider_data
 from ..types import StreamCallback
 
 log = logging.getLogger(__name__)
@@ -110,7 +111,7 @@ class OpenAICompatProvider:
         timeout=300,
     ) -> dict:
         url = self._completions_url()
-        body: dict = {"model": model, "messages": messages}
+        body: dict = {"model": model, "messages": without_provider_data(messages)}
         if tools:
             body["tools"] = tools
 
@@ -177,7 +178,7 @@ class OpenAICompatProvider:
         url = self._completions_url()
         body: dict = {
             "model": model,
-            "messages": messages,
+            "messages": without_provider_data(messages),
             "stream": True,
             "stream_options": {"include_usage": True},
         }

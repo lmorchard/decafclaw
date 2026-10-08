@@ -105,9 +105,9 @@ def test_model_resolution_uses_registered_provider(config):
 
     init_providers(config)
 
-    provider, model, timeout = _resolve(config, model_name="gpt4")
-    assert model == "gpt-4o"
-    assert timeout == 120
+    resolved = _resolve(config, model_name="gpt4")
+    assert resolved.model == "gpt-4o"
+    assert resolved.timeout == 120
 
 
 def test_model_resolution_falls_back_when_registry_empty(config):
@@ -126,9 +126,9 @@ def test_model_resolution_falls_back_when_registry_empty(config):
     )
 
     # DON'T call init_providers — simulates the bug
-    provider, model, timeout = _resolve(config, model_name="gpt4")
+    resolved = _resolve(config, model_name="gpt4")
     # Should fall back to legacy config.llm, not crash
-    assert model == config.llm.model  # fell back to default
+    assert resolved.model == config.llm.model  # fell back to default
 
 
 def test_migration_creates_default_provider(config):

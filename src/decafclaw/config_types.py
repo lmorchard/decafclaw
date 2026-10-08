@@ -359,7 +359,7 @@ class ImportanceConfig:
 class ProviderConfig:
     """Connection config for an LLM provider."""
 
-    type: str = ""  # "vertex", "openai", "openai-compat" (also accepts "litellm")
+    type: str = ""  # "vertex", "openai-responses", "openai", "openai-compat" (alias "litellm")
     api_key: str = field(default="", metadata={"secret": True})
     url: str = ""  # litellm/openai base URL
     project: str = ""  # vertex GCP project
@@ -376,6 +376,19 @@ class ModelConfig:
     context_window_size: int = 0
     timeout: int = 300
     streaming: bool = True
+    reasoning_effort: str | None = None
+
+    def __post_init__(self):
+        if self.reasoning_effort is not None and self.reasoning_effort not in (
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ):
+            raise ValueError(f"Invalid reasoning_effort: {self.reasoning_effort!r}")
 
 
 @dataclass
