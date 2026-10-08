@@ -95,7 +95,7 @@
     "tool_start": {
       "direction": "server_to_client",
       "description": "Tool call has begun execution.",
-      "fields": {"conv_id": "string", "tool": "string", "tool_call_id": "string"}
+      "fields": {"conv_id": "string", "tool": "string", "tool_call_id": "string", "command": "string?"}
     },
     "tool_status": {
       "direction": "server_to_client",

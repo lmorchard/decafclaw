@@ -162,3 +162,40 @@ describe('MessageStore', () => {
         });
     });
 });
+
+
+describe('shell command details', () => {
+    it('keeps each live command alongside its result after progress updates', async () => {
+        const { ToolStatusStore } = await import('./tool-status-store.js');
+        const messages = new MessageStore(() => {});
+        const tools = new ToolStatusStore(() => {}, {}, messages);
+        for (const id of ['a', 'b']) {
+            tools.handleMessage({ type: MESSAGE_TYPES.TOOL_START, conv_id: '1', tool: 'shell', tool_call_id: id, command: `echo ${id}` }, '1');
+            tools.handleMessage({ type: MESSAGE_TYPES.TOOL_STATUS, conv_id: '1', tool: 'shell', tool_call_id: id, message: 'Running' }, '1');
+        }
+        for (const id of ['b', 'a']) {
+            tools.handleMessage({ type: MESSAGE_TYPES.TOOL_END, conv_id: '1', tool: 'shell', tool_call_id: id, result_text: id }, '1');
+        }
+        expect(messages.currentMessages.map(m => [m.command, m.content])).toEqual([['echo a', 'a'], ['echo b', 'b']]);
+    });
+
+    it('restores the command from archived arguments', () => {
+        const store = new MessageStore(() => {});
+        store.handleMessage({ type: MESSAGE_TYPES.CONV_HISTORY, conv_id: '1', messages: [
+            { role: 'assistant', tool_calls: [{ id: 'tc1', function: { name: 'shell', arguments: JSON.stringify({ command: 'echo hello' }) } }], timestamp: 't1' },
+            { role: 'tool', tool_call_id: 'tc1', content: 'hello', timestamp: 't2' },
+        ] }, '1');
+        expect(store.currentMessages[0].command).toBe('echo hello');
+        expect(store.currentMessages[0].content).toBe('hello');
+    });
+});
+
+it.each(['not json', undefined, '{}'])('renders shell results with unavailable arguments (%s)', (argumentsValue) => {
+    const store = new MessageStore(() => {});
+    store.handleMessage({ type: MESSAGE_TYPES.CONV_HISTORY, conv_id: '1', messages: [
+        { role: 'assistant', tool_calls: [{ id: 'tc1', function: { name: 'shell', arguments: argumentsValue } }], timestamp: 't1' },
+        { role: 'tool', tool_call_id: 'tc1', content: 'output', timestamp: 't2' },
+    ] }, '1');
+    expect(store.currentMessages[0].command).toBe('');
+    expect(store.currentMessages[0].content).toBe('output');
+});

@@ -10,6 +10,7 @@ export class ChatMessage extends LitElement {
     content: { type: String },
     streaming: { type: Boolean },
     tool: { type: String },
+    command: { type: String },
     display_short_text: { type: String, attribute: false },
     toolCalls: { type: Array, attribute: false },
     toolCallId: { type: String, attribute: false },
@@ -31,6 +32,7 @@ export class ChatMessage extends LitElement {
     this.content = '';
     this.streaming = false;
     this.tool = '';
+    this.command = '';
     this.display_short_text = '';
     /** @type {Array|null} */
     this.toolCalls = null;
@@ -119,7 +121,7 @@ export class ChatMessage extends LitElement {
     }
 
     if (this.role === 'tool') {
-      return html`<tool-message .tool=${this.tool} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response}></tool-message>`;
+      return html`<tool-message .tool=${this.tool} .command=${this.command} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response}></tool-message>`;
     }
 
     if (this.role === 'assistant' && this.toolCalls?.length) {

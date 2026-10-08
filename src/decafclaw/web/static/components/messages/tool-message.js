@@ -6,6 +6,7 @@ import '../widgets/widget-host.js';
 export class ToolMessage extends LitElement {
   static properties = {
     tool: { type: String },
+    command: { type: String },
     content: { type: String },
     icon: { type: String },
     display_short_text: { type: String },
@@ -25,6 +26,7 @@ export class ToolMessage extends LitElement {
   constructor() {
     super();
     this.tool = '';
+    this.command = '';
     this.content = '';
     this.icon = '\u{1f527}';
     this.display_short_text = '';
@@ -76,7 +78,7 @@ export class ToolMessage extends LitElement {
     const hasContent = this.content && this.content.length > 0;
     const hasHistory = this.statusHistory?.length > 0;
     const hasWidget = !!this.widget;
-    const expandable = hasContent || hasHistory || hasWidget;
+    const expandable = hasContent || hasHistory || hasWidget || !!this.command;
     return html`
       <div class="message tool">
         <div class="tool-result-header" @click=${expandable ? this.#toggleExpand : nothing}>
@@ -94,6 +96,12 @@ export class ToolMessage extends LitElement {
           ` : nothing}
         </div>
         ${this._expanded ? html`
+          ${this.command ? html`
+            <div class="tool-result-detail">
+              <strong>Command</strong>
+              <pre>${this.command}</pre>
+            </div>
+          ` : nothing}
           ${hasHistory ? html`
             <div class="status-history">
               ${this.statusHistory.map(entry => html`
