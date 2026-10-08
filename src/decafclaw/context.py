@@ -162,6 +162,7 @@ class Context:
         # misclassification bug that `task_mode != ""` would be (see #685).
         self.task_mode: str = ""
         self.request_confirmation: Any = None  # set by ConversationManager
+        self.confirmation_active: asyncio.Event = asyncio.Event()
         self.manager: Any = None  # set by ConversationManager
         self.terminal_registry: Any = None  # AgentTerminalHandle, set by ConversationManager
         self._interceptors: dict[TurnLifecycle, list[Callable]] = {}
@@ -187,8 +188,8 @@ class Context:
         return BoundLlmClient(self.config, model_name)
 
     # Turn kinds where no human can answer a confirmation prompt: it is emitted
-    # only to subscribers of an ephemeral conv_id, so it blocks for the full 60s
-    # timeout and is then synthesized into a denial. Deliberately NOT
+    # only to subscribers of an ephemeral conv_id, so it would block for confirmation
+    # timeout (or indefinitely) and is then synthesized into a denial. Deliberately NOT
     # `task_mode != ""` — child_agent inherits the parent's request_confirmation,
     # so a child of an interactive turn does have someone who can answer.
     UNATTENDED_TASK_MODES = frozenset({"heartbeat", "scheduled"})
