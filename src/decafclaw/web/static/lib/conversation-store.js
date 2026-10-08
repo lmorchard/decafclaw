@@ -94,6 +94,9 @@ export class ConversationStore extends EventTarget {
   // -- Activity status state --
   /** @type {Map<string, 'idle' | 'busy' | 'waiting' | 'finished'>} */
   #conversationStatuses = new Map();
+  /** @type {Map<string, number>} monotonic revision counter per conversation */
+  #statusRevisions = new Map();
+  #statusSequence = 0;
   // -- Current conversation state --
   /** @type {string|null} */
   #currentConvId = null;
@@ -192,15 +195,34 @@ export class ConversationStore extends EventTarget {
     return this.#conversationStatuses.get(convId) || 'idle';
   }
 
-  /** @param {Array<{conv_id: string, status?: string}>} items */
-  #syncConversationStatuses(items) {
+  /**
+   * @param {string} convId
+   * @param {'idle' | 'busy' | 'waiting' | 'finished'} status
+   */
+  #setConversationStatus(convId, status) {
+    this.#statusSequence++;
+    this.#statusRevisions.set(convId, this.#statusSequence);
+    this.#conversationStatuses.set(convId, status);
+  }
+
+  /**
+   * @param {Array<{conv_id: string, status?: string}>} items
+   * @param {number} reqSeq
+   */
+  #syncConversationStatuses(items, reqSeq) {
     for (const c of items) {
       if (!c.conv_id) continue;
+      // Skip if a newer websocket/local transition occurred since this REST request was issued
+      const lastUpdateSeq = this.#statusRevisions.get(c.conv_id) || 0;
+      if (lastUpdateSeq > reqSeq) continue;
+
       const current = this.#conversationStatuses.get(c.conv_id);
       if (c.status === 'busy' || c.status === 'waiting') {
         this.#conversationStatuses.set(c.conv_id, c.status);
+        this.#statusRevisions.set(c.conv_id, reqSeq);
       } else if (current !== 'finished') {
         this.#conversationStatuses.set(c.conv_id, /** @type {any} */ (c.status) || 'idle');
+        this.#statusRevisions.set(c.conv_id, reqSeq);
       }
     }
   }
@@ -209,12 +231,13 @@ export class ConversationStore extends EventTarget {
 
   /** @param {string} [folder] */
   async listConversations(folder = '') {
+    const reqSeq = this.#statusSequence;
     try {
       const data = await DefaultService.listConversationsApiConversationsGet(folder || undefined);
       this.#conversations = data.conversations || [];
       this.#folders = data.folders || [];
       this.#currentFolder = data.folder || '';
-      this.#syncConversationStatuses(this.#conversations);
+      this.#syncConversationStatuses(this.#conversations, reqSeq);
       this.#emitChange();
     } catch (err) {
       if (err instanceof ApiError) return;
@@ -224,12 +247,13 @@ export class ConversationStore extends EventTarget {
 
   /** @param {string} [folder] */
   async listArchivedConversations(folder = '') {
+    const reqSeq = this.#statusSequence;
     try {
       const data = await DefaultService.listArchivedConversationsApiConversationsArchivedGet(folder || undefined);
       this.#archivedConversations = data.conversations || [];
       this.#archivedFolders = data.folders || [];
       this.#archivedCurrentFolder = data.folder || '';
-      this.#syncConversationStatuses(this.#archivedConversations);
+      this.#syncConversationStatuses(this.#archivedConversations, reqSeq);
       this.#emitChange();
     } catch (err) {
       if (err instanceof ApiError) return;
@@ -239,12 +263,13 @@ export class ConversationStore extends EventTarget {
 
   /** @param {string} [folder] */
   async listSystemConversations(folder = '') {
+    const reqSeq = this.#statusSequence;
     try {
       const data = await DefaultService.listSystemConversationsApiConversationsSystemGet(folder || undefined);
       this.#systemConversations = data.conversations || [];
       this.#systemFolders = data.folders || [];
       this.#systemCurrentFolder = data.folder || '';
-      this.#syncConversationStatuses(this.#systemConversations);
+      this.#syncConversationStatuses(this.#systemConversations, reqSeq);
       this.#emitChange();
     } catch (err) {
       if (err instanceof ApiError) return;
@@ -397,7 +422,7 @@ export class ConversationStore extends EventTarget {
   selectConversation(convId) {
     this.#currentConvId = convId;
     if (this.#conversationStatuses.get(convId) === 'finished') {
-      this.#conversationStatuses.set(convId, 'idle');
+      this.#setConversationStatus(convId, 'idle');
     }
     this.#busy = false;
     this.#messageStore.clear();
@@ -469,7 +494,7 @@ export class ConversationStore extends EventTarget {
     if (attachments.length) userMsg.attachments = attachments;
     this.#messageStore.pushMessage(userMsg);
     this.#busy = true;
-    this.#conversationStatuses.set(this.#currentConvId, 'busy');
+    this.#setConversationStatus(this.#currentConvId, 'busy');
     this.#messageStore.clearStreamingText();
     this.#toolStatusStore.clearToolStatus();
     const wsMsg = { type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text };
@@ -573,7 +598,7 @@ export class ConversationStore extends EventTarget {
         this.#toolStatusStore.clearToolStatus();
         if (msg.final) {
           this.#busy = false;
-          this.#conversationStatuses.set(msg.conv_id, 'idle');
+          this.#setConversationStatus(msg.conv_id, 'idle');
           if (msg.usage?.prompt_tokens) this.#contextUsage = msg.usage.prompt_tokens;
           if (msg.context_limit) this.#contextLimit = msg.context_limit;
           this.listConversations(this.#currentFolder);
@@ -607,12 +632,12 @@ export class ConversationStore extends EventTarget {
         if (convId) {
           if (msg.status === 'finished') {
             if (convId === this.#currentConvId) {
-              this.#conversationStatuses.set(convId, 'idle');
+              this.#setConversationStatus(convId, 'idle');
             } else {
-              this.#conversationStatuses.set(convId, 'finished');
+              this.#setConversationStatus(convId, 'finished');
             }
           } else {
-            this.#conversationStatuses.set(convId, msg.status || 'idle');
+            this.#setConversationStatus(convId, msg.status || 'idle');
           }
           this.#emitChange();
         }
@@ -621,7 +646,7 @@ export class ConversationStore extends EventTarget {
 
       case MESSAGE_TYPES.TURN_START:
         if (msg.conv_id) {
-          this.#conversationStatuses.set(msg.conv_id, 'busy');
+          this.#setConversationStatus(msg.conv_id, 'busy');
         }
         if (!msg.conv_id || msg.conv_id === this.#currentConvId) {
           this.#busy = true;
@@ -647,6 +672,11 @@ export class ConversationStore extends EventTarget {
 
       case MESSAGE_TYPES.ERROR:
         console.error('Server error:', msg.message);
+        if (msg.conv_id) {
+          this.#setConversationStatus(msg.conv_id, 'idle');
+        } else if (this.#currentConvId) {
+          this.#setConversationStatus(this.#currentConvId, 'idle');
+        }
         if (!msg.conv_id || msg.conv_id === this.#currentConvId) {
           this.#busy = false;
           this.#toolStatusStore.clearToolStatus();

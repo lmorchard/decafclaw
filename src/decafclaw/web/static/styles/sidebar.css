@@ -206,6 +206,12 @@ conversation-sidebar .conv-item.active .conv-status-spinner {
 conversation-sidebar .conv-item.active .conv-status.waiting {
   color: #ffd166;
 }
+@media (prefers-reduced-motion: reduce) {
+  conversation-sidebar .conv-status-spinner,
+  conversation-sidebar .conv-status.waiting {
+    animation: none;
+  }
+}
 
 conversation-sidebar .model-picker {
   padding: 0.4rem 1rem 0.5rem;

@@ -531,4 +531,41 @@ describe('conversation activity status tracking', () => {
     store.sendMessage('hello');
     expect(store.getConversationStatus('c1')).toBe('busy');
   });
+  it('does not overwrite newer websocket transition with delayed REST response', async () => {
+    let resolveRest;
+    const restPromise = new Promise(resolve => { resolveRest = resolve; });
+    const fetchMock = vi.fn(async () => {
+      await restPromise;
+      return new Response(JSON.stringify({
+        folder: '',
+        folders: [],
+        conversations: [{ conv_id: 'c1', title: 'Chat 1', status: 'idle' }],
+      }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Start REST list fetch (snapshots sequence before fetch)
+    const listPromise = store.listConversations();
+
+    // While REST fetch is in flight, websocket event arrives
+    ws.fireMessage({ type: MESSAGE_TYPES.CONVERSATION_STATUS, conv_id: 'c1', status: 'busy' });
+    expect(store.getConversationStatus('c1')).toBe('busy');
+
+    // REST fetch resolves with stale 'idle'
+    resolveRest();
+    await listPromise;
+
+    // Must remain 'busy' because websocket transition was newer than REST request start
+    expect(store.getConversationStatus('c1')).toBe('busy');
+    vi.unstubAllGlobals();
+  });
+
+  it('rolls back optimistic busy status on ERROR message', () => {
+    store.selectConversation('c1');
+    store.sendMessage('hello');
+    expect(store.getConversationStatus('c1')).toBe('busy');
+
+    ws.fireMessage({ type: MESSAGE_TYPES.ERROR, conv_id: 'c1', message: 'Send failed' });
+    expect(store.getConversationStatus('c1')).toBe('idle');
+  });
 });
