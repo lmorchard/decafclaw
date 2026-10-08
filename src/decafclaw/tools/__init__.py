@@ -76,7 +76,7 @@ TOOL_DEFINITIONS = (
 )
 
 
-async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name=""):
+async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name="", ctx=None):
     """Run a coroutine, racing it against optional cancel + timeout signals.
 
     Returns (task, terminated) where terminated is a ToolResult if the
@@ -92,41 +92,87 @@ async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name=""):
         await tool_task
         return tool_task, None
 
-    aux_tasks: list[asyncio.Task] = []
     cancel_task: asyncio.Task | None = None
-    timer_task: asyncio.Task | None = None
     if cancel_event:
         cancel_task = asyncio.create_task(cancel_event.wait())
-        aux_tasks.append(cancel_task)
-    if timeout_sec is not None and timeout_sec > 0:
-        timer_task = asyncio.create_task(asyncio.sleep(timeout_sec))
-        aux_tasks.append(timer_task)
 
-    done, _pending = await asyncio.wait([tool_task, *aux_tasks], return_when=asyncio.FIRST_COMPLETED)
+    while True:
+        aux_tasks: list[asyncio.Task] = []
+        if cancel_task is not None:
+            aux_tasks.append(cancel_task)
 
-    # Cancel leftover auxiliary tasks regardless of outcome.
-    for t in aux_tasks:
-        if not t.done():
-            t.cancel()
+        timer_task: asyncio.Task | None = None
+        if timeout_sec is not None and timeout_sec > 0:
+            timer_task = asyncio.create_task(asyncio.sleep(timeout_sec))
+            aux_tasks.append(timer_task)
 
-    # Cancel beats timeout on tie. Check cancel first.
-    if cancel_task is not None and cancel_task in done:
-        tool_task.cancel()
-        try:
-            await tool_task
-        except (asyncio.CancelledError, Exception):
-            pass
-        return tool_task, ToolResult(text="[tool interrupted: agent turn cancelled]")
+        done, _pending = await asyncio.wait([tool_task, *aux_tasks], return_when=asyncio.FIRST_COMPLETED)
 
-    if timer_task is not None and timer_task in done and tool_task not in done:
-        tool_task.cancel()
-        try:
-            await tool_task
-        except (asyncio.CancelledError, Exception):
-            pass
-        return tool_task, ToolResult(text=f"[error: tool {tool_name} timed out after {timeout_sec}s]")
+        # Cancel leftover timer task for this round
+        if timer_task is not None and not timer_task.done():
+            timer_task.cancel()
 
-    return tool_task, None
+        # Tool task finished
+        if tool_task in done:
+            if cancel_task is not None and not cancel_task.done():
+                cancel_task.cancel()
+            return tool_task, None
+
+        # Cancel beats timeout on tie. Check cancel first.
+        if cancel_task is not None and cancel_task in done:
+            tool_task.cancel()
+            try:
+                await tool_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            return tool_task, ToolResult(text="[tool interrupted: agent turn cancelled]")
+
+        # Timer task fired
+        if timer_task is not None and timer_task in done:
+            # Check if the tool is currently waiting for interactive confirmation.
+            # While the user is considering the prompt, pause the watchdog rather
+            # than killing the tool.
+            conf_active = getattr(ctx, "confirmation_active", None)
+            if conf_active is not None and conf_active.is_set():
+                conf_poll = asyncio.create_task(asyncio.sleep(0.5))
+                while conf_active.is_set() and not tool_task.done():
+                    wait_tasks = [tool_task, conf_poll]
+                    if cancel_task is not None:
+                        wait_tasks.append(cancel_task)
+                    wait_done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
+                    if cancel_task is not None and cancel_task in wait_done:
+                        if not conf_poll.done():
+                            conf_poll.cancel()
+                        tool_task.cancel()
+                        try:
+                            await tool_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                        return tool_task, ToolResult(text="[tool interrupted: agent turn cancelled]")
+                    if tool_task in wait_done:
+                        if not conf_poll.done():
+                            conf_poll.cancel()
+                        if cancel_task is not None and not cancel_task.done():
+                            cancel_task.cancel()
+                        return tool_task, None
+                    if conf_poll in wait_done:
+                        conf_poll = asyncio.create_task(asyncio.sleep(0.5))
+                if not conf_poll.done():
+                    conf_poll.cancel()
+                if tool_task.done():
+                    if cancel_task is not None and not cancel_task.done():
+                        cancel_task.cancel()
+                    return tool_task, None
+                continue
+
+            tool_task.cancel()
+            try:
+                await tool_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            if cancel_task is not None and not cancel_task.done():
+                cancel_task.cancel()
+            return tool_task, ToolResult(text=f"[error: tool {tool_name} timed out after {timeout_sec}s]")
 
 
 _MISSING = object()
@@ -409,7 +455,9 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
     timeout_sec = _resolve_tool_timeout(ctx, name)
     try:
         coro = fn(ctx, **arguments) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, ctx, **arguments)
-        tool_task, interrupted = await _run_with_cancel(coro, cancel_event, timeout_sec=timeout_sec, tool_name=name)
+        tool_task, interrupted = await _run_with_cancel(
+            coro, cancel_event, timeout_sec=timeout_sec, tool_name=name, ctx=ctx
+        )
         if interrupted:
             return interrupted
         return _to_tool_result(tool_task.result())

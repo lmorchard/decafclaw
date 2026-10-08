@@ -189,6 +189,7 @@ HTTP_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "timeout": None,
         "function": {
             "name": "http_request",
             "description": (

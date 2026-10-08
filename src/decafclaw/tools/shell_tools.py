@@ -1057,6 +1057,7 @@ SHELL_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "timeout": None,
         "function": {
             "name": "shell_guidance",
             "description": (
@@ -1096,6 +1097,7 @@ SHELL_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "timeout": None,
         "function": {
             "name": "shell",
             "description": (

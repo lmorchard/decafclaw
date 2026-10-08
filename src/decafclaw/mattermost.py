@@ -562,6 +562,7 @@ class MattermostClient:
                             conv_id,
                             confirmation_id,
                             action_type,
+                            timeout=event.get("timeout"),
                             allow_always=not bool(approve_label),
                         )
                     )
@@ -778,7 +779,7 @@ class MattermostClient:
         conv_id,
         confirmation_id,
         action_type,
-        timeout=60,
+        timeout: float | None = None,
         poll_interval=2,
         allow_always=True,
     ):
@@ -799,8 +800,23 @@ class MattermostClient:
             except Exception as exc:
                 log.debug("confirmation result edit failed for post %s: %s", post_id, exc)
 
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        deadline = (time.monotonic() + timeout) if (timeout is not None and timeout > 0) else None
+        while deadline is None or time.monotonic() < deadline:
+            if not getattr(self, "_running", True):
+                return
+            if hasattr(manager, "get_state"):
+                from .conversation_manager import ConversationState
+
+                state = manager.get_state(conv_id)
+                if isinstance(state, ConversationState):
+                    pending = state.pending_confirmation
+                    if pending is None or pending.confirmation_id != confirmation_id:
+                        log.debug(
+                            "confirmation %s no longer pending for conv %s, stopping poll",
+                            confirmation_id,
+                            conv_id,
+                        )
+                        return
             try:
                 resp = await self._http.get(f"/posts/{post_id}/reactions")
                 resp.raise_for_status()
