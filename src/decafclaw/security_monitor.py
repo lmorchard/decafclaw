@@ -121,8 +121,12 @@ SENSITIVE_PATTERNS = [
         "Package installation or dependency modification",
     ),
     (
-        re.compile(r"\bgit\s+push\b", re.IGNORECASE),
-        "Git push operation",
+        re.compile(r"\bgit\s+push\b.*?\b(?:main|master)\b", re.IGNORECASE),
+        "Git push to protected branch (main/master)",
+    ),
+    (
+        re.compile(r"\bgit\s+push\b.*?(?:--delete|-d\b|:\w+)", re.IGNORECASE),
+        "Git remote branch deletion (git push --delete)",
     ),
 ]
 

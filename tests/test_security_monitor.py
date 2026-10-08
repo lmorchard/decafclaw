@@ -63,6 +63,9 @@ def test_evaluates_sensitive_commands_as_ask(tmp_path: Path):
         "npm install express",
         "pip install requests",
         "git push origin main",
+        "git push origin master",
+        "git push --delete origin feat/123",
+        "git push origin :feat/123",
     ]
 
     for cmd in sensitive_commands:
@@ -70,6 +73,17 @@ def test_evaluates_sensitive_commands_as_ask(tmp_path: Path):
         assert decision.status == SecurityStatus.ASK, f"Expected ASK for sensitive command: {cmd}"
         assert decision.requires_confirmation
         assert decision.reason, f"Expected reason for ASK command: {cmd}"
+
+
+def test_feature_branch_push_not_sensitive(tmp_path: Path):
+    """Pushes to non-protected feature branches pass Tier 1 sensitive pattern filter."""
+    for cmd in [
+        "git push -u origin feat/my-branch",
+        "git push origin fix/bug-123",
+        "git push origin test/perf",
+    ]:
+        decision = evaluate_command(cmd, workspace_path=tmp_path)
+        assert decision.status == SecurityStatus.ALLOW, f"Expected ALLOW in Tier 1 for {cmd}"
 
 
 def test_evaluates_autonomous_chained_commands_as_ask(tmp_path: Path):
