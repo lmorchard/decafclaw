@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from typing import TYPE_CHECKING
 
@@ -16,6 +15,16 @@ log = logging.getLogger(__name__)
 # Status indicators shown in placeholder messages
 THINKING_INDICATOR = "\U0001f4ad Thinking..."
 THINKING_SUFFIX = "\n\U0001f4ad Thinking..."
+
+
+def _shell_preview(text: str, limit: int = 8000) -> str:
+    """Bound an indented code block, including indentation and truncation marker."""
+    # Indented code needs no variable-length delimiter for embedded backticks.
+    preview = "    " + text[:limit].replace("\n", "\n    ")
+    if len(text) > limit or len(preview) > limit:
+        marker = "\n    [output truncated]"
+        preview = preview[: limit - len(marker)] + marker
+    return preview
 
 
 class ConversationDisplay:
@@ -147,7 +156,7 @@ class ConversationDisplay:
     async def on_tool_start(self, tool_name, args, tool_call_id=""):
         """Tool execution starting — finalize text, post tool call message."""
         msg = f"\U0001f527 {tool_name}..."
-        if tool_name == "shell" and isinstance(args.get("command"), str):
+        if tool_name == "shell" and isinstance(args, dict) and isinstance(args.get("command"), str):
             self._tool_commands[tool_call_id] = args["command"]
 
         # First tool in a batch: finalize text / reuse thinking placeholder
@@ -219,13 +228,10 @@ class ConversationDisplay:
         command = self._tool_commands.pop(tool_call_id, None)
         if command is not None:
             output = display_text or result_text or "(no output)"
-            if len(output) > 8000:
-                output = output[:8000] + "\n[output truncated]"
-            msg = f"\U0001f527 {tool_name} \u2714\ufe0f"
-            # Commands/output may contain Markdown fences themselves.
-            fence_size = max((len(match) for match in re.findall(r"`+", command + output)), default=0)
-            fence = "`" * max(3, fence_size + 1)
-            msg = f"{msg}\n**Command:**\n{fence}\n{command}\n{fence}\n**Result:**\n{fence}\n{output}\n{fence}"
+            msg = (
+                f"\U0001f527 {tool_name} \u2714\ufe0f\n\n**Command:**\n\n{_shell_preview(command)}"
+                f"\n\n**Result:**\n\n{_shell_preview(output)}"
+            )
 
         post_id = self._tool_posts.pop(tool_call_id, None)
         if post_id:

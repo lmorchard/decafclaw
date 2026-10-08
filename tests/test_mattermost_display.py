@@ -297,14 +297,42 @@ async def test_shell_completion_preserves_command_and_output(output):
 
 
 @pytest.mark.asyncio
-async def test_shell_result_bounds_output_and_preserves_markdown_fences():
+async def test_shell_result_bounds_output_and_preserves_backticks():
     client = make_mock_client()
     display = make_display(client)
     command = "printf '```'"
     await display.on_tool_start("shell", {"command": command}, tool_call_id="tc1")
     await display.on_tool_end("shell", "```\n" + "x" * 9000, None, [], tool_call_id="tc1")
     message = client.edit_message.call_args.args[1]
-    assert "````\n" + command + "\n````" in message
+    assert "    " + command in message
+    assert "\n    ```\n" in message
     assert "[output truncated]" in message
     assert len(message) < 8500
     assert not display._tool_commands
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("args", [None, [], "command", 42, {"command": None}, {"command": []}])
+async def test_shell_start_handles_malformed_arguments(args):
+    client = make_mock_client()
+    display = make_display(client)
+    await display.on_tool_start("shell", args, tool_call_id="tc1")
+    assert "tc1" in display._tool_posts
+    assert not display._tool_commands
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command, output",
+    [("x" * 20000, "result"), ("echo test", "`" * 8000), ("`" * 20000, "`" * 20000), ("a\n" * 20000, "b\n" * 20000)],
+    ids=["long-command", "backtick-output", "backticks-both", "multiline"],
+)
+async def test_shell_completion_bounds_total_post(command, output):
+    client = make_mock_client()
+    display = make_display(client)
+    await display.on_tool_start("shell", {"command": command}, tool_call_id="tc1")
+    await display.on_tool_end("shell", output, None, [], tool_call_id="tc1")
+    message = client.edit_message.call_args.args[1]
+    assert len(message) <= 16383
+    assert "**Command:**" in message
+    assert "**Result:**" in message
