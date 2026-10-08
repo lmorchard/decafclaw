@@ -820,6 +820,7 @@ class ConversationManager:
             # wakes; we don't emit here. (Issue #485.)
             async with state.lock:
                 self._promote_next_confirmation_unlocked(state, conv_id)
+            await self._publish_status(conv_id, self.get_activity_status(conv_id))
 
     async def cancel_pending_confirmation(self, conv_id: str) -> bool:
         """Drop a pending confirmation without triggering recovery.
@@ -915,6 +916,8 @@ class ConversationManager:
         # itself under the lock and promote the next queued entry.
         if waiter_event is not None:
             waiter_event.set()
+        else:
+            await self._publish_status(conv_id, self.get_activity_status(conv_id))
         return True
 
     def note_partial_assistant_archived(self, conv_id: str) -> None:
@@ -1094,6 +1097,28 @@ class ConversationManager:
     def get_state(self, conv_id: str) -> ConversationState | None:
         """Get current conversation state, or None if not tracked."""
         return self._conversations.get(conv_id)
+
+    def get_activity_status(self, conv_id: str) -> str:
+        """Get current activity status of a conversation ('idle', 'busy', or 'waiting')."""
+        state = self._conversations.get(conv_id)
+        if not state:
+            return "idle"
+        if state.pending_confirmation is not None:
+            return "waiting"
+        if state.busy:
+            return "busy"
+        return "idle"
+
+    async def _publish_status(self, conv_id: str, status: str) -> None:
+        """Publish a conversation_status event to the event bus."""
+        if self.event_bus:
+            await self.event_bus.publish(
+                {
+                    "type": "conversation_status",
+                    "conv_id": conv_id,
+                    "status": status,
+                }
+            )
 
     def set_initial_history(self, conv_id: str, history: list) -> None:
         """Pre-populate conversation history (e.g., for Mattermost thread-fork).
@@ -1339,6 +1364,7 @@ class ConversationManager:
             request.timestamp = datetime.now(timezone.utc).isoformat()
             await self.emit(conv_id, _confirmation_request_payload(request))
 
+        await self._publish_status(conv_id, "waiting")
         # By either path (active or queued-then-promoted) ``event`` is
         # bound to the live ``state.confirmation_event`` for this
         # request.
@@ -1427,6 +1453,8 @@ class ConversationManager:
         # emit its own ``confirmation_request`` payload — we
         # deliberately don't emit here to avoid duplicate emits per
         # promotion (issue #485).
+        if state.pending_confirmation is None and state.busy:
+            await self._publish_status(conv_id, "busy")
 
         return response
 
@@ -1472,6 +1500,7 @@ class ConversationManager:
             state.confirmation_event = None  # no waiter — recovery path
             state.confirmation_response = None
         await self.emit(conv_id, _confirmation_request_payload(request))
+        await self._publish_status(conv_id, "waiting")
 
     # -- Internal methods ------------------------------------------------------
 
@@ -1508,7 +1537,7 @@ class ConversationManager:
         state.busy = True
         state.cancel_event = asyncio.Event()
         state.steer_event = asyncio.Event()
-
+        await self._publish_status(conv_id, "busy")
         # -- Persist / inherit transport context --------------------------------
         # USER turns save their user_id and context_setup so that subsequent
         # WAKE turns (which have no transport of their own) can inherit them.
@@ -1774,6 +1803,9 @@ class ConversationManager:
                 # observe busy=False before _drain_pending has run —
                 # see the "Drain queued messages" comment below for
                 # how the drain handles that case (issue #440).
+                is_cancelled = (
+                    state.cancel_event is not None and state.cancel_event.is_set()
+                ) or state.cancel_observed_by_agent
                 async with state.lock:
                     # Circuit breaker tracking is USER-only (task turns are
                     # externally rate-limited by the scheduler / heartbeat
@@ -1798,6 +1830,12 @@ class ConversationManager:
                 # finally-block lock release and here will compete on
                 # equal footing: whoever grabs the lock first dispatches.
                 await self._drain_pending(state)
+
+                if not state.busy:
+                    if is_cancelled:
+                        await self._publish_status(conv_id, "idle")
+                    else:
+                        await self._publish_status(conv_id, "finished")
 
         state.agent_task = asyncio.create_task(run())
 

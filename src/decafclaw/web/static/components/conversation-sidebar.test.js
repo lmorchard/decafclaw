@@ -106,3 +106,81 @@ describe('conversation-sidebar model selector', () => {
     expect(store.setModel).toHaveBeenCalledWith('openai-gpt-4o');
   });
 });
+
+describe('conversation-sidebar activity indicators', () => {
+  let sidebar;
+
+  afterEach(() => {
+    sidebar?.remove();
+  });
+
+  async function mountWithStatuses(statuses = {}) {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'c1',
+      conversations: [
+        { conv_id: 'c1', title: 'Trip planning' },
+        { conv_id: 'c2', title: 'Coding task' },
+        { conv_id: 'c3', title: 'Refactoring' },
+        { conv_id: 'c4', title: 'Idle chat' },
+      ],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 0,
+      contextLimit: 0,
+      activeModel: '',
+      availableModels: [],
+      defaultModel: '',
+      selectConversation: vi.fn(),
+      listConversations: vi.fn(),
+      getConversationStatus: (id) => statuses[id] || 'idle',
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    await sidebar.updateComplete;
+    return { sidebar, store };
+  }
+
+  it('renders busy spinner indicator on busy conversation rows', async () => {
+    const { sidebar } = await mountWithStatuses({ c2: 'busy' });
+    const row = sidebar.querySelector('.conv-item[title*="Coding task"]');
+    expect(row).toBeTruthy();
+    expect(row.classList.contains('status-busy')).toBe(true);
+    expect(row.getAttribute('title')).toContain('(busy)');
+    const indicator = row.querySelector('.conv-status.busy');
+    expect(indicator).toBeTruthy();
+    expect(indicator.querySelector('.conv-status-spinner')).toBeTruthy();
+  });
+
+  it('renders waiting indicator on waiting conversation rows', async () => {
+    const { sidebar } = await mountWithStatuses({ c3: 'waiting' });
+    const row = sidebar.querySelector('.conv-item[title*="Refactoring"]');
+    expect(row).toBeTruthy();
+    expect(row.classList.contains('status-waiting')).toBe(true);
+    expect(row.getAttribute('title')).toContain('(waiting for answer)');
+    const indicator = row.querySelector('.conv-status.waiting');
+    expect(indicator).toBeTruthy();
+    expect(indicator.textContent).toContain('●');
+  });
+
+  it('renders finished checkmark indicator on finished background conversation rows', async () => {
+    const { sidebar } = await mountWithStatuses({ c2: 'finished' });
+    const row = sidebar.querySelector('.conv-item[title*="Coding task"]');
+    expect(row).toBeTruthy();
+    expect(row.classList.contains('status-finished')).toBe(true);
+    expect(row.getAttribute('title')).toContain('(finished)');
+    const indicator = row.querySelector('.conv-status.finished');
+    expect(indicator).toBeTruthy();
+    expect(indicator.textContent).toContain('✓');
+  });
+
+  it('omits status indicator on idle conversation rows', async () => {
+    const { sidebar } = await mountWithStatuses({});
+    const row = sidebar.querySelector('.conv-item[title="Idle chat"]');
+    expect(row).toBeTruthy();
+    expect(row.querySelector('.conv-status')).toBeNull();
+  });
+});

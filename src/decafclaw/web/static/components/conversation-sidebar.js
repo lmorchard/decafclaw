@@ -81,15 +81,16 @@ export class ConversationSidebar extends LitElement {
       this._defaultModel = this.store?.defaultModel || '';
       // Update conversation list and folders based on current section
       if (this._chatSection === '_archived') {
-        this._conversations = this.store?.archivedConversations || [];
+        this._conversations = [...(this.store?.archivedConversations || [])];
         this._chatFolders = this.store?.archivedFolders || [];
       } else if (this._chatSection === '_system') {
-        this._conversations = this.store?.systemConversations || [];
+        this._conversations = [...(this.store?.systemConversations || [])];
         this._chatFolders = this.store?.systemFolders || [];
       } else {
-        this._conversations = this.store?.conversations || [];
+        this._conversations = [...(this.store?.conversations || [])];
         this._chatFolders = this.store?.folders || [];
       }
+      this.requestUpdate();
     };
   }
 
@@ -421,12 +422,29 @@ export class ConversationSidebar extends LitElement {
   }
 
   /**
-   * Render a single conversation item.
+   * @param {'idle' | 'busy' | 'waiting' | 'finished' | string} status
+   */
+  #renderStatusIndicator(status) {
+    if (!status || status === 'idle') return nothing;
+    if (status === 'busy') {
+      return html`<span class="conv-status busy" title="Agent is busy" aria-label="Agent is busy"><span class="conv-status-spinner"></span></span>`;
+    }
+    if (status === 'waiting') {
+      return html`<span class="conv-status waiting" title="Waiting on an answer" aria-label="Waiting on an answer">&#x25cf;</span>`;
+    }
+    if (status === 'finished') {
+      return html`<span class="conv-status finished" title="Turn finished" aria-label="Turn finished">&#x2713;</span>`;
+    }
+    return nothing;
+  }
+
+  /**
+   * Render a conversation item row in the sidebar list.
    * @param {import("../lib/conversation-store.js").ConversationMeta | import("../lib/conversation-store.js").SystemConversationMeta} conv
-   * @param {object} [opts]
-   * @param {boolean}  [opts.isActive]    - Whether this item is currently selected
-   * @param {string}   [opts.extraClass]  - Additional CSS class (e.g. 'archived', 'system')
-   * @param {string}   [opts.actionLabel] - Button label/symbol (e.g. '×', '↩')
+   * @param {object}   [opts]
+   * @param {boolean}  [opts.isActive]    - Whether this row is currently selected
+   * @param {string}   [opts.extraClass]  - Additional CSS class ('archived', 'system')
+   * @param {string}   [opts.actionLabel] - Primary action button label (e.g. '×' or '↩')
    * @param {string}   [opts.actionTitle] - Button title text
    * @param {function} [opts.onAction]    - Click handler for the action button
    * @param {string}   [opts.action2Label] - Second action button label
@@ -441,7 +459,17 @@ export class ConversationSidebar extends LitElement {
     if (opts.extraClass) classes.push(opts.extraClass);
     if (opts.isActive) classes.push('active');
 
-    const titleAttr = opts.titleSuffix ? `${conv.title} (${opts.titleSuffix})` : conv.title;
+    const status = this.store?.getConversationStatus?.(conv.conv_id) || (/** @type {any} */ (conv).status) || 'idle';
+    if (status && status !== 'idle') {
+      classes.push(`status-${status}`);
+    }
+
+    let titleSuffix = opts.titleSuffix || '';
+    if (status && status !== 'idle') {
+      const statusLabel = status === 'busy' ? 'busy' : status === 'waiting' ? 'waiting for answer' : status === 'finished' ? 'finished' : status;
+      titleSuffix = titleSuffix ? `${titleSuffix}, ${statusLabel}` : statusLabel;
+    }
+    const titleAttr = titleSuffix ? `${conv.title} (${titleSuffix})` : conv.title;
 
     return html`
       <div
@@ -457,6 +485,7 @@ export class ConversationSidebar extends LitElement {
           @dblclick=${opts.onDblClick || nothing}
         >${conv.title}</span>
         ${opts.badge ? html`<span class="conv-type-badge">${opts.badge}</span>` : nothing}
+        ${this.#renderStatusIndicator(status)}
         ${opts.onAction2 ? html`
           <button
             class="conv-archive"
