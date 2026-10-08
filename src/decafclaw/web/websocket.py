@@ -805,6 +805,7 @@ def _subscribe_to_conv(state, conv_id):
             await ws_send(
                 {
                     "type": WSMessageType.TOOL_START,
+                    "command": event.get("args", {}).get("command", "") if event.get("tool") == "shell" else "",
                     "conv_id": event_conv_id,
                     "tool": event.get("tool", ""),
                     "tool_call_id": event.get("tool_call_id", ""),
