@@ -656,6 +656,7 @@ TOOLS = {
 TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "timeout": None,
         "function": {
             "name": "shell_background_start",
             "description": (

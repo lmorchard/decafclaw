@@ -370,6 +370,89 @@ async def test_poll_confirmation_manager_ignores_always_when_disallowed():
     )
 
 
+@pytest.mark.asyncio
+async def test_poll_confirmation_manager_indefinite_timeout_resolves():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from decafclaw.mattermost import MattermostClient
+
+    client = MattermostClient.__new__(MattermostClient)
+    client.bot_user_id = "bot-1"
+    client._http = MagicMock()
+    client.edit_message = AsyncMock()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = [
+        {"emoji_name": "+1", "user_id": "user-1"},
+    ]
+    mock_resp.raise_for_status = MagicMock()
+    client._http.get = AsyncMock(return_value=mock_resp)
+
+    manager = MagicMock()
+    manager.respond_to_confirmation = AsyncMock()
+
+    # timeout=None should poll indefinitely and resolve when reaction is found
+    await client._poll_confirmation_manager(
+        post_id="p1",
+        manager=manager,
+        conv_id="c1",
+        confirmation_id="conf-1",
+        action_type="run_shell_command",
+        timeout=None,
+        poll_interval=0.01,
+    )
+
+    manager.respond_to_confirmation.assert_called_once_with(
+        "c1",
+        "conf-1",
+        approved=True,
+        always=False,
+        add_pattern=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_poll_confirmation_manager_stops_when_confirmation_cleared():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from decafclaw.mattermost import MattermostClient
+
+    client = MattermostClient.__new__(MattermostClient)
+    client.bot_user_id = "bot-1"
+    client._http = MagicMock()
+    client.edit_message = AsyncMock()
+
+    # No reactions
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = []
+    mock_resp.raise_for_status = MagicMock()
+    client._http.get = AsyncMock(return_value=mock_resp)
+
+    # Manager indicates confirmation is no longer pending
+    from decafclaw.conversation_manager import ConversationState
+
+    fake_state = ConversationState()
+    fake_state.pending_confirmation = None
+    manager = MagicMock()
+    manager.get_state.return_value = fake_state
+    manager.respond_to_confirmation = AsyncMock()
+
+    # Polling should exit immediately on the state check without looping forever
+    await client._poll_confirmation_manager(
+        post_id="p1",
+        manager=manager,
+        conv_id="c1",
+        confirmation_id="conf-1",
+        action_type="run_shell_command",
+        timeout=None,
+        poll_interval=0.01,
+    )
+
+    manager.respond_to_confirmation.assert_not_called()
+
+
 # -- Server shutdown --------------------------------------------------------
 
 

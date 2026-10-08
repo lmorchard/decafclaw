@@ -876,6 +876,7 @@ ADMIN_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "timeout": None,
         "function": {
             "name": "admin_write",
             "description": (
@@ -903,6 +904,7 @@ ADMIN_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "timeout": None,
         "function": {
             "name": "admin_replace_lines",
             "description": (
@@ -938,6 +940,7 @@ ADMIN_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "timeout": None,
         "function": {
             "name": "admin_edit",
             "description": (
@@ -973,6 +976,7 @@ ADMIN_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "timeout": None,
         "function": {
             "name": "admin_delete",
             "description": (
