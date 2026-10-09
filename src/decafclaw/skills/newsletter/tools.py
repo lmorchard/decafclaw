@@ -104,7 +104,8 @@ def _is_status_token(content: str) -> bool:
     return bool(_STATUS_TOKEN_RE.match(stripped))
 
 
-_WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
+_WIKILINK_RE = re.compile(r"(`{0,2})\[\[([^\]|`]+)(?:\|([^\]`]+))?\]\]\1")
+_BACKTICK_MDLINK_RE = re.compile(r"`\[([^\]]+)\]\((https?://[^\)]+)\)`")
 
 
 def _resolve_page_link(config, page_name: str, display_text: str | None, base_url: str) -> tuple[str, str]:
@@ -153,6 +154,9 @@ def _resolve_page_link(config, page_name: str, display_text: str | None, base_ur
 
 def render_newsletter_email(markdown: str, config, base_url: str = "http://decafclaw:18880") -> tuple[str, str]:
     """Convert raw newsletter markdown into (plain_text, html_body) with resolved links."""
+    # Unwrap any markdown links that were inadvertently wrapped in backticks
+    clean_markdown = _BACKTICK_MDLINK_RE.sub(r"[\1](\2)", markdown)
+
     # Cache resolved links across substitutions to avoid duplicate vault I/O
     link_cache: dict[tuple[str, str | None], tuple[str, str]] = {}
 
@@ -164,8 +168,8 @@ def render_newsletter_email(markdown: str, config, base_url: str = "http://decaf
 
     # 1. Transform [[wiki-links]] for plain text
     def _plain_sub(match: re.Match) -> str:
-        target = match.group(1)
-        display = match.group(2)
+        target = match.group(2)
+        display = match.group(3)
         label, url = _get_resolved(target, display)
         if url:
             if label != url:
@@ -173,25 +177,29 @@ def render_newsletter_email(markdown: str, config, base_url: str = "http://decaf
             return url
         return label
 
-    plain_text = _WIKILINK_RE.sub(_plain_sub, markdown)
+    plain_text = _WIKILINK_RE.sub(_plain_sub, clean_markdown)
 
     # 2. Transform [[wiki-links]] for HTML markdown conversion
+    pills: list[str] = []
+
     def _html_sub(match: re.Match) -> str:
-        target = match.group(1)
-        display = match.group(2)
+        target = match.group(2)
+        display = match.group(3)
         label, url = _get_resolved(target, display)
         if url:
             escaped_label = label.replace("[", r"\[").replace("]", r"\]")
             return f"[{escaped_label}]({url})"
         # Fallback to tag/pill representation with properly escaped text
         escaped_label = html.escape(label)
-        return (
+        pill_idx = len(pills)
+        pills.append(
             '<span style="display:inline-block;padding:1px 6px;margin:0 1px;border-radius:4px;'
             'background-color:#e2e8f0;color:#334155;font-size:0.9em;font-weight:500;">'
             f"#{escaped_label}</span>"
         )
+        return f"%%NEWSLETTER_PILL_{pill_idx}%%"
 
-    html_markdown = _WIKILINK_RE.sub(_html_sub, markdown)
+    html_markdown = _WIKILINK_RE.sub(_html_sub, clean_markdown)
 
     try:
         from markdown_it import MarkdownIt
@@ -199,6 +207,8 @@ def render_newsletter_email(markdown: str, config, base_url: str = "http://decaf
         # Disable raw HTML so agent/vault-generated HTML cannot inject arbitrary tags/scripts
         md = MarkdownIt("commonmark", {"html": False})
         content_html = md.render(html_markdown)
+        for idx, pill_html in enumerate(pills):
+            content_html = content_html.replace(f"%%NEWSLETTER_PILL_{idx}%%", pill_html)
     except Exception as exc:
         log.warning("Failed to render markdown to HTML with markdown-it: %s", exc)
         content_html = f"<pre>{html.escape(plain_text)}</pre>"
