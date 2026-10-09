@@ -965,26 +965,28 @@ async def test_publish_vault_folder_absolute_blocked(ctx, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_render_newsletter_email_external_link(ctx, tmp_path):
+def test_render_newsletter_email_internal_vault_link_ignores_frontmatter_external_url(ctx, tmp_path):
     vault = tmp_path / "vault"
     vault.mkdir()
     ctx.config.vault.vault_path = str(vault)
 
-    # Vault page with external source URL in frontmatter
-    page_file = vault / "agent" / "pages" / "My Article.md"
+    # Vault page with external source URL in frontmatter (e.g. a bookmarked page)
+    page_file = vault / "agent" / "pages" / "bookmarks" / "My Bookmark.md"
     page_file.parent.mkdir(parents=True)
     page_file.write_text(
-        "---\nurl: https://example.com/article\ntitle: My Article\n---\nArticle content here.",
+        "---\nurl: https://example.com/article\ntitle: My Bookmark\n---\nArticle content here.",
         encoding="utf-8",
     )
 
     from decafclaw.skills.newsletter.tools import render_newsletter_email
 
-    md = "Check out [[My Article]] for details."
+    md = "Check out [[agent/pages/bookmarks/My Bookmark]] for details."
     plain, html = render_newsletter_email(md, ctx.config, base_url="http://decafclaw:18880")
 
-    assert "My Article (https://example.com/article)" in plain
-    assert '<a href="https://example.com/article">My Article</a>' in html
+    expected_url = "http://decafclaw:18880/?vault=agent%2Fpages%2Fbookmarks%2FMy%20Bookmark"
+    assert f"agent/pages/bookmarks/My Bookmark ({expected_url})" in plain
+    assert f'<a href="{expected_url}">agent/pages/bookmarks/My Bookmark</a>' in html
+    assert "https://example.com/article" not in html
 
 
 def test_render_newsletter_email_internal_deep_link(ctx, tmp_path):
@@ -1057,9 +1059,10 @@ async def test_publish_scheduled_sends_html_body(ctx, tmp_path, monkeypatch):
 
     assert len(calls) == 1
     assert calls[0]["to"] == ["reader@example.com"]
-    assert "Note (https://example.com/note)" in calls[0]["body"]
+    expected_url = "http://decafclaw:18880/?vault=agent%2Fpages%2FNote"
+    assert f"Note ({expected_url})" in calls[0]["body"]
     assert calls[0]["html_body"] is not None
-    assert '<a href="https://example.com/note">Note</a>' in calls[0]["html_body"]
+    assert f'<a href="{expected_url}">Note</a>' in calls[0]["html_body"]
     assert "email" in result.data["delivered_targets"]
 
 
