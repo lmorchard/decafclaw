@@ -38,7 +38,7 @@ Argument: $ARGUMENTS
 
 4. Apply the SOUL voice — conversational, curious, reflective. Use first person. **Use bullet points where they help surface rich details** (e.g., listing specific findings, decisions, or summaries of articles). Do not smooth over the details for a quick read; unpack them so the user can genuinely learn what you learned.
 
-5. Link to vault pages using Obsidian `[[Page Name]]` syntax (do not wrap in code backticks) when referring to pages I touched. They'll render correctly when the newsletter is filed to the vault. When sent via email, links will automatically resolve to external URLs or web UI deep links, with fallback to clean tags.
+5. Link to vault pages using Obsidian `[[Page Name]]` syntax (do not wrap in code backticks) when referring to pages I touched. They'll render correctly when the newsletter is filed to the vault. When sent via email, links will automatically resolve to web UI deep links, with fallback to clean tags.
 
 6. At the very end of the newsletter (just before the stats line), include an explicit **"Vault Changes" section** that lists every vault page created or modified during the window. Use `[[Page Name]]` syntax for each page (without backticks) so they are easy to navigate, and group them logically if there are many.
 
