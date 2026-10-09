@@ -111,8 +111,8 @@ _BACKTICK_MDLINK_RE = re.compile(r"`\[([^\]]+)\]\((https?://[^\)]+)\)`")
 def _resolve_page_link(config, page_name: str, display_text: str | None, base_url: str) -> tuple[str, str]:
     """Resolve a wiki-link target into (label, url_or_text).
 
-    Returns (label, url) if a link can be constructed, or (label, "") if it should
-    be rendered as unlinked text / styled pill.
+    Returns (label, url) if a link can be constructed to the internal vault page,
+    or (label, "") if it should be rendered as unlinked text / styled pill.
     """
     clean_target = page_name.strip()
     label = (display_text or clean_target).strip()
@@ -122,20 +122,7 @@ def _resolve_page_link(config, page_name: str, display_text: str | None, base_ur
         # Target not in vault — return label with empty url
         return label, ""
 
-    # Check for external source URL in frontmatter
-    try:
-        from decafclaw.frontmatter import parse_frontmatter
-
-        content = resolved_path.read_text(encoding="utf-8")
-        metadata, _ = parse_frontmatter(content)
-        for key in ("url", "source_url", "link", "external_url"):
-            val = metadata.get(key)
-            if isinstance(val, str) and (val.startswith("http://") or val.startswith("https://")):
-                return label, val
-    except Exception as exc:
-        log.debug("Failed reading frontmatter for %s: %s", resolved_path, exc)
-
-    # DecafClaw web UI deep link
+    # DecafClaw web UI deep link to the internal vault page
     if base_url:
         vault_root = config.vault_root.resolve()
         try:
