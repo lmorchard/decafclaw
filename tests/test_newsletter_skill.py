@@ -1020,6 +1020,7 @@ def test_render_newsletter_email_missing_page_fallback(ctx, tmp_path):
     plain, html = render_newsletter_email(md, ctx.config, base_url="http://decafclaw:18880")
 
     assert plain == "Refer to Nonexistent Page here."
+    assert '<span style="display:inline-block' in html
     assert "#Nonexistent Page" in html
     assert "<a href=" not in html
 
@@ -1075,5 +1076,47 @@ def test_render_newsletter_email_escapes_fallback_and_disables_raw_html(ctx, tmp
     # Raw script in fallback should be escaped
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+    assert '<span style="display:inline-block' in html
     # Raw HTML image tag should NOT be rendered as an HTML element
     assert '<img src="x"' not in html
+
+
+def test_render_newsletter_email_backticked_wiki_links(ctx, tmp_path):
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    ctx.config.vault.vault_path = str(vault)
+
+    page_file = vault / "agent" / "pages" / "Signal Decay.md"
+    page_file.parent.mkdir(parents=True)
+    page_file.write_text("# Signal Decay\n\nRadio recovery notes.", encoding="utf-8")
+
+    from decafclaw.skills.newsletter.tools import render_newsletter_email
+
+    md = (
+        "Check `[[Signal Decay]]` and `[[Signal Decay|Alias]]` alongside `[[Missing]]`.\n"
+        "- `[[agent/pages/Signal Decay]]`"
+    )
+    plain, html = render_newsletter_email(md, ctx.config, base_url="http://decafclaw:18880")
+
+    expected_url = "http://decafclaw:18880/?vault=agent%2Fpages%2FSignal%20Decay"
+    assert f'<a href="{expected_url}">Signal Decay</a>' in html
+    assert f'<a href="{expected_url}">Alias</a>' in html
+    assert '<span style="display:inline-block' in html
+    assert "#Missing" in html
+    # Ensure backticks were not left around markdown link syntax
+    assert f"`[{expected_url}]`" not in html
+    assert "`<a href=" not in html
+    # Plain text should not have backticks around substituted links
+    assert f"Signal Decay ({expected_url})" in plain
+    assert f"`Signal Decay ({expected_url})`" not in plain
+
+
+def test_render_newsletter_email_backticked_markdown_link(ctx, tmp_path):
+    from decafclaw.skills.newsletter.tools import render_newsletter_email
+
+    md = "Refer to `[Documentation](https://example.com/docs)` for details."
+    plain, html = render_newsletter_email(md, ctx.config, base_url="http://decafclaw:18880")
+
+    assert '<a href="https://example.com/docs">Documentation</a>' in html
+    assert "`<a href=" not in html
+    assert "[Documentation](https://example.com/docs)" in plain
