@@ -41,6 +41,7 @@ from .config_types import (
     RecentJournalConfig,
     ReflectionConfig,
     RelevanceConfig,
+    SecretPolicyConfig,
     ShellConfig,
     TelemetryConfig,
     TerminalConfig,
@@ -228,6 +229,7 @@ class Config:
     pre_script: PreScriptConfig = field(default_factory=PreScriptConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     widgets: WidgetsConfig = field(default_factory=WidgetsConfig)
+    secret_policy: SecretPolicyConfig = field(default_factory=SecretPolicyConfig)
 
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
@@ -512,6 +514,8 @@ def load_config() -> Config:
 
     telemetry = load_sub_config(TelemetryConfig, file_data.get("telemetry", {}), "TELEMETRY")
 
+    secret_policy = load_sub_config(SecretPolicyConfig, file_data.get("secret_policy", {}), "SECRET_POLICY")
+
     # Build the doubly-nested widgets.map leaf explicitly so its systematic
     # env vars (WIDGETS_MAP_*) resolve. load_sub_config only recurses into a
     # nested dataclass field when that key is present in JSON, so a bare
@@ -611,6 +615,7 @@ def load_config() -> Config:
         pre_script=pre_script,
         telemetry=telemetry,
         widgets=widgets,
+        secret_policy=secret_policy,
         env=env_vars,
         system_prompt=system_prompt,
     )

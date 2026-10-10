@@ -93,6 +93,34 @@ idempotent and never deletes data (only moves). Preview the moves first with
 upgrading. (There is no runtime fallback — run the migration before relying
 on pre-#576 conversations.)
 
+## Secret files
+
+Some admin files *are* secret stores — the value in the file is the secret itself.
+The six admin tools refuse the agent's access to these on a shared rule (one place
+that decides, not per-tool checks). The default refuse set (glob patterns relative
+to `data/{agent_id}/`) is:
+
+- `web_tokens.json`, `browser_tokens.json` — auth token stores
+- `mcp_oauth/**` — MCP OAuth tokens
+- `*.pem`, `*.key`, `**/keys/*` — private/key files
+- `service_account*.json` — Vertex service-account key files
+
+A separate tier *redacts* the two config files (`config.json`, `mcp_servers.json`)
+rather than refusing them, because reading configuration is intended: the agent
+sees the structure and every non-secret field, with secret leaf values replaced by
+`<redacted>`. Which values are redacted is driven by the **`secret` field annotation**
+(`metadata={"secret": True}` in `config_types.py`) — the same convention `decafclaw
+config show` uses to mask values unless `--reveal` — plus fixed structural rules for
+the raw-dict sections an annotation can't reach (`env.*`, `skills.*.*`,
+`mcpServers.*.env.*`, `mcpServers.*.headers.*`). Neither tier is a key-name
+pattern-matcher: a config field becomes redacted when its author marks it `secret`,
+not when its name happens to look credential-ish.
+
+This is **harm reduction, not watertightness** — best-effort, admin-extensible. An
+operator can widen either tier without code via `config.json → secret_policy`:
+`refuse_paths` (glob patterns) and `redact_paths` (dotted JSON paths); see
+[docs/tools.md](tools.md#admin-files-toolsadmintools).
+
 ## Trust boundary
 
 The key architectural decision: **admin files are read-only to the agent, workspace files are read-write.**
