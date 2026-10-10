@@ -2,12 +2,6 @@
 
 context-inspector {
   display: none;
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
-  z-index: 100;
-  margin-bottom: 4px;
 }
 
 context-inspector[open] {
@@ -15,12 +9,14 @@ context-inspector[open] {
 }
 
 context-inspector .inspector {
+  position: fixed;
+  z-index: 1000;
   background: var(--pico-card-background-color, #fff);
   border: 1px solid var(--pico-muted-border-color, #ddd);
   border-radius: 8px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.15);
   padding: 1rem;
-  max-height: 70vh;
+  max-height: 75vh;
   overflow-y: auto;
   font-size: 0.8rem;
   color: var(--pico-color, #333);
