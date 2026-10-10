@@ -24,6 +24,7 @@ def _isolate_env(monkeypatch):
                 "HTTP_",
                 "TABSTACK_",
                 "CLAUDE_CODE_",
+                "SECRET_POLICY_",
                 "SKILLS_",
                 "MEMORY_SEARCH",
                 "SYSTEM_PROMPT",
@@ -88,6 +89,35 @@ def test_show_excludes_runtime_only_fields(capsys, monkeypatch, tmp_path):
     assert "discovered_skills" not in out
     assert "always_loaded_skill_tools" not in out
     assert "skill_tool_owners" not in out
+
+
+def test_show_secret_policy_defaults(capsys, monkeypatch, tmp_path):
+    """`secret_policy` surfaces in `config show` with its defaults (issue #1013).
+
+    Guards against a regression that silently drops the new Config field; the two
+    admin knobs must be visible and loadable."""
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    (tmp_path / "decafclaw").mkdir()
+    cmd_show(_Args(group="secret_policy", reveal=False))
+    out = capsys.readouterr().out
+    assert "secret_policy.refuse_paths = []" in out
+    assert "secret_policy.redact_paths = []" in out
+
+
+def test_show_secret_policy_values(capsys, monkeypatch, tmp_path):
+    """`secret_policy` values from config.json appear in `config show` (issue #1013)."""
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(
+        json.dumps(
+            {"secret_policy": {"refuse_paths": ["custom_secrets.json"], "redact_paths": ["some_group.legacy_key"]}}
+        )
+    )
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    cmd_show(_Args(group="secret_policy", reveal=False))
+    out = capsys.readouterr().out
+    assert '"custom_secrets.json"' in out
+    assert '"some_group.legacy_key"' in out
 
 
 def test_show_providers_masks_api_key(capsys, monkeypatch, tmp_path):

@@ -17,6 +17,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..media import ToolResult
+from ..secret_policy import (
+    is_redactable,
+    is_refused,
+    marker_in,
+    marker_message,
+    redact_text,
+    refusal_message,
+)
 from .confirmation import request_confirmation
 from .file_locks import file_lock
 
@@ -97,6 +105,34 @@ def _resolve_admin_path(config, path_str: str, *, allow_root: bool = False) -> t
         return None, f"[error: path '{path_str}' is inside the workspace; use workspace_* tools instead]"
 
     return target, None
+
+
+def _normalize_rel(path_str: str) -> str:
+    """Normalize a raw admin tool path string to the forward-slash, dot-free form
+    that the secret_policy rules expect (the caller has already checked containment
+    against the agent directory, so we just canonicalize the form)."""
+    segs = [s for s in str(path_str).replace("\\", "/").strip("/").split("/") if s not in ("", ".")]
+    return "/".join(segs)
+
+
+def _refuse_if_secret(config, path_str: str) -> ToolResult | None:
+    """Return a refusal ToolResult if ``path_str`` is a protected secret, else None.
+
+    Every admin tool calls this after path resolution (including the mutation
+    *recovery* path): the refusal applies before confirmation, reading, or
+    mutation, so a secret store can neither be read nor modified through admin
+    tools. See decafclaw.secret_policy for the one shared rule.
+    """
+    if is_refused(_normalize_rel(path_str), config):
+        return ToolResult(text=refusal_message(path_str))
+    return None
+
+
+def _redaction_envelope(base_data: dict, redacted_paths: list[str]) -> dict:
+    """Attach redaction diagnostics to a read envelope (only when something was redacted)."""
+    if redacted_paths:
+        base_data = {**base_data, "redacted": True, "redacted_fields": sorted(set(redacted_paths))}
+    return base_data
 
 
 def _dir_manifest(dir_path: Path) -> dict[str, tuple[int, int]]:
@@ -319,6 +355,10 @@ def tool_admin_read(
         return ToolResult(text=err)
     assert resolved is not None
 
+    refusal = _refuse_if_secret(ctx.config, path)
+    if refusal is not None:
+        return refusal
+
     if not resolved.exists():
         return ToolResult(text=f"[error: file not found: {path}]")
     if resolved.is_dir():
@@ -329,14 +369,36 @@ def tool_admin_read(
     except (PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path)
 
+    # Redactable config files (config.json / mcp_servers.json) have their secret
+    # values replaced before the content is returned; the envelope (size/lines)
+    # is computed from the *redacted* text so the agent cannot infer secret length
+    # from the byte count. A JSON parse failure is treated as a refusal (fail-closed).
+    redacted_paths: list[str] = []
+    rel = _normalize_rel(path)
+    if is_redactable(rel):
+        outcome = redact_text(content, ctx.config)
+        if outcome is None:
+            # Refuse rather than leak an unparseable-but-possibly-valid secret store's bytes.
+            return ToolResult(
+                text=(
+                    f"[error: file '{path}' could not be parsed as JSON; "
+                    "refusing to return it without redacting (fail-closed). "
+                    "Fix the file's JSON or add it to secret_policy.redact_paths explicitly.]"
+                )
+            )
+        content, redacted_paths = outcome
+
     all_lines = content.splitlines()
     total = len(all_lines)
     partial = start_line is not None or end_line is not None
-    base_data: dict = {
-        "path": path,
-        "size": len(content.encode("utf-8")),
-        "lines": total,
-    }
+    base_data: dict = _redaction_envelope(
+        {
+            "path": path,
+            "size": len(content.encode("utf-8")),
+            "lines": total,
+        },
+        redacted_paths,
+    )
 
     if not partial and total > MAX_READ_LINES:
         end = MAX_READ_LINES
@@ -377,6 +439,13 @@ def tool_admin_list(ctx: "Context", path: str = ".") -> str | ToolResult:
         return ToolResult(text=err)
     assert resolved is not None
 
+    # Listing into a protected secret directory is refused. The *file name* of a
+    # refused file may still appear when listing its parent (a name is not its
+    # contents), per the issue; only descending *into* the secret store is blocked.
+    refusal = _refuse_if_secret(ctx.config, path)
+    if refusal is not None:
+        return refusal
+
     if not resolved.exists():
         return ToolResult(text=f"[error: path not found: {path}]")
     if not resolved.is_dir():
@@ -416,6 +485,15 @@ async def tool_admin_write(ctx: "Context", path: str, content: str) -> str | Too
     if err:
         return ToolResult(text=err)
     assert resolved is not None
+
+    refusal = _refuse_if_secret(ctx.config, path)
+    if refusal is not None:
+        return refusal
+    # Marker guard: refuse to write the redaction placeholder — it would clobber
+    # a real secret with the fixed string if the agent round-trips a redacted
+    # read back through a mutation.
+    if marker_in(content):
+        return ToolResult(text=marker_message(path))
 
     if resolved.is_dir():
         return ToolResult(text=f"[error: '{path}' is a directory, not a file]")
@@ -473,6 +551,12 @@ async def tool_admin_replace_lines(
     if err:
         return ToolResult(text=err)
     assert resolved is not None
+
+    refusal = _refuse_if_secret(ctx.config, path)
+    if refusal is not None:
+        return refusal
+    if marker_in(content):
+        return ToolResult(text=marker_message(path))
 
     if not resolved.exists():
         return ToolResult(text=f"[error: file not found: {path}]")
@@ -553,6 +637,15 @@ async def tool_admin_edit(
         return ToolResult(text=err)
     assert resolved is not None
 
+    refusal = _refuse_if_secret(ctx.config, path)
+    if refusal is not None:
+        return refusal
+    # Guard on new_text (what actually gets written). old_text may legitimately
+    # contain the marker as the anchor for a restore — refusing on *that* would
+    # prevent an admin from ever replacing a placeholder their tool round-tripped.
+    if marker_in(new_text):
+        return ToolResult(text=marker_message(path))
+
     if not resolved.exists():
         return ToolResult(text=f"[error: file not found: {path}]")
     if resolved.is_dir():
@@ -626,6 +719,10 @@ async def tool_admin_delete(ctx: "Context", path: str, recursive: bool = False) 
     if err:
         return ToolResult(text=err)
     assert resolved is not None
+
+    refusal = _refuse_if_secret(ctx.config, path)
+    if refusal is not None:
+        return refusal
 
     if not resolved.exists():
         return ToolResult(text=f"[error: file not found: {path}]")
@@ -761,10 +858,32 @@ class AdminMutationHandler:
     async def _apply_mutation(
         self, ctx: Any, tool_name: str, path: str, payload: dict, snapshot_data: dict
     ) -> str | ToolResult:
+        """Apply a previously-confirmed admin mutation after a server restart.
+
+        MUST inherit every guard the interactive tools have (secret-path refusal +
+        marker guard), not just the interactive-path check — a pending confirmation
+        is re-applied here after a restart, and without these guards this path is
+        a direct bypass of the interactive refusal (see issue #1013; the guard
+        was specifically designed to be inherited here).
+        """
         resolved, err = _resolve_admin_path(ctx.config, path, allow_root=False)
         if err:
             return ToolResult(text=err)
         assert resolved is not None
+
+        # Secret-path refusal: the same rule every other tool consults.
+        refusal = _refuse_if_secret(ctx.config, path)
+        if refusal is not None:
+            return refusal
+
+        # Marker guard (per tool): content/new_content/new_text are the write
+        # payloads; admin_delete has no content to guard.
+        if tool_name == "admin_write" and marker_in(payload.get("content", "")):
+            return ToolResult(text=marker_message(path))
+        if tool_name == "admin_replace_lines" and marker_in(payload.get("new_content", "")):
+            return ToolResult(text=marker_message(path))
+        if tool_name == "admin_edit" and marker_in(payload.get("new_content", "")):
+            return ToolResult(text=marker_message(path))
 
         snapshot = _AdminFileSnapshot.from_dict(snapshot_data, default_path=resolved)
 
