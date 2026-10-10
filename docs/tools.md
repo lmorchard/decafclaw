@@ -117,6 +117,8 @@ Otherwise it falls through to a user confirmation prompt. When the auxiliary rev
 - Subsequent commands in that conversation are evaluated against the newly added guidance rule.
 - Users can also choose standard "Approve", "Deny", or "Allow Pattern" (which persists a glob pattern).
 
+Active conversation rules can also be snapshotted or appended to a custom situational preset on disk via `shell_guidance(action="save_preset", preset="<name>")` (#1031). This stores custom named presets in `data/{agent_id}/shell_approval_presets.json` without auto-enabling them globally, allowing future conversations to reuse them on demand via `shell_guidance(action="enable_preset", preset="<name>")`.
+
 **Unattended turns get the same allowlist and no prompt (#649).** Heartbeat and scheduled turns
 (`ctx.is_unattended`, i.e. `task_mode` in `{"heartbeat", "scheduled"}`) traverse exactly the branches
 above — there is no bypass for them. On a miss they are **denied outright** instead of falling through

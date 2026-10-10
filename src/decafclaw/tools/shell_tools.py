@@ -368,8 +368,96 @@ DEFAULT_AUX_APPROVAL_PRESETS: dict[str, str] = {
 }
 
 
+def _saved_presets_path(config) -> Path:
+    """Path to custom saved presets file in the agent data directory."""
+    return config.agent_path / "shell_approval_presets.json"
+
+
+def _load_saved_presets(config) -> dict[str, str]:
+    """Load custom saved presets from disk. Returns {'preset_name': 'guidance text'}.
+
+    Raises ValueError if file exists but contains invalid or corrupt data.
+    """
+    path = _saved_presets_path(config)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if not isinstance(k, str) or not isinstance(v, str):
+                    raise ValueError(f"Invalid preset entry ({k!r}: {v!r}); keys and values must be strings")
+            return {k: v for k, v in data.items()}
+        raise ValueError(f"Presets file root is not a JSON object: {type(data).__name__}")
+    except (json.JSONDecodeError, OSError) as e:
+        log.warning(f"Could not read saved shell approval presets from {path}: {e}")
+        raise ValueError(f"Corrupt or unreadable presets file: {e}") from e
+
+
+def _save_custom_preset(config, preset_name: str, rules: list[str]) -> tuple[bool, str]:
+    """Save or append rules to a custom preset on disk.
+
+    Preserves existing text from saved presets or configured presets in config.shell.aux_approval_presets.
+    Returns (is_new, updated_text).
+    """
+    path = _saved_presets_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    presets = _load_saved_presets(config)
+
+    # Check whether the preset already exists in saved disk presets or config
+    raw_config_presets = getattr(config.shell, "aux_approval_presets", {})
+    if isinstance(raw_config_presets, str):
+        try:
+            cfg_presets = json.loads(raw_config_presets)
+            if not isinstance(cfg_presets, dict):
+                cfg_presets = {}
+        except (json.JSONDecodeError, ValueError):
+            cfg_presets = {}
+    elif isinstance(raw_config_presets, dict):
+        cfg_presets = raw_config_presets
+    else:
+        cfg_presets = {}
+
+    is_new = preset_name not in presets and preset_name not in cfg_presets
+
+    raw_existing = presets.get(preset_name) or cfg_presets.get(preset_name) or ""
+    existing_text = str(raw_existing).strip()
+
+    # Parse existing rules (split by newlines and clean bullet prefixes if present)
+    existing_rules = []
+    if existing_text:
+        for line in existing_text.splitlines():
+            cleaned = line.strip().lstrip("-").strip()
+            if cleaned and cleaned not in existing_rules:
+                existing_rules.append(cleaned)
+
+    # Append new rules avoiding duplicates
+    for r in rules:
+        cleaned_r = str(r).strip().lstrip("-").strip()
+        if cleaned_r and cleaned_r not in existing_rules:
+            existing_rules.append(cleaned_r)
+
+    # Format cleanly with markdown bullet points if multiple rules, or single sentence if one
+    if len(existing_rules) == 1:
+        updated_text = existing_rules[0]
+    else:
+        updated_text = "\n".join(f"- {r}" for r in existing_rules)
+
+    presets[preset_name] = updated_text
+    tmp_path = path.with_suffix(".json.tmp")
+    try:
+        tmp_path.write_text(json.dumps(presets, indent=2) + "\n")
+        tmp_path.replace(path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+    log.info(f"Saved custom shell approval preset '{preset_name}' to {path}")
+    return is_new, updated_text
+
+
 def _get_all_presets(config) -> dict[str, str]:
-    """Merge built-in presets with user-defined presets from config."""
+    """Merge built-in presets with user-defined presets from config and saved presets."""
     raw_custom = getattr(config.shell, "aux_approval_presets", {})
     if isinstance(raw_custom, str):
         try:
@@ -382,7 +470,13 @@ def _get_all_presets(config) -> dict[str, str]:
         custom = raw_custom
     else:
         custom = {}
-    return {**DEFAULT_AUX_APPROVAL_PRESETS, **custom}
+
+    saved = {}
+    try:
+        saved = _load_saved_presets(config)
+    except ValueError as e:
+        log.warning(f"Could not load custom saved presets from disk: {e}")
+    return {**DEFAULT_AUX_APPROVAL_PRESETS, **custom, **saved}
 
 
 _warned_deprecated_guidance_files: set[str] = set()
@@ -940,8 +1034,60 @@ async def tool_shell_guidance(
         ctx.tools.llm_approved_shell_patterns.clear()
 
         return f"Removed shell auto-approval rule {scope_desc}: '{rule}'"
+
+    elif action == "save_preset":
+        preset_clean = (preset or "").strip()
+        if not preset_clean:
+            return ToolResult(text="[error: 'preset' name is required for action 'save_preset']")
+
+        if preset_clean in DEFAULT_AUX_APPROVAL_PRESETS:
+            return ToolResult(
+                text=f"[error: cannot overwrite built-in preset '{preset_clean}'. Please choose a custom preset name.]"
+            )
+
+        # Rules to save: explicit rule argument if supplied, otherwise all active conversation guidance
+        if rule and rule.strip():
+            rules_to_save = [rule.strip()]
+        else:
+            rules_to_save = [r.strip() for r in getattr(ctx.tools, "aux_approval_guidance", []) if r.strip()]
+
+        if not rules_to_save:
+            return ToolResult(
+                text="[error: no guidance rules to save. Pass rule='...' or add rules to the conversation first.]"
+            )
+
+        try:
+            saved_presets = _load_saved_presets(ctx.config)
+        except ValueError as e:
+            return ToolResult(
+                text=f"[error: cannot save preset because {_saved_presets_path(ctx.config)} is unreadable or malformed: {e}]"
+            )
+        is_existing = preset_clean in saved_presets or preset_clean in getattr(
+            ctx.config.shell, "aux_approval_presets", {}
+        )
+        action_verb = "Update" if is_existing else "Save"
+
+        rules_formatted = "\n".join(f"> - {r}" for r in rules_to_save)
+        confirm_msg = f"{action_verb} custom shell auto-approval preset `{preset_clean}` with rules:\n{rules_formatted}"
+        result = await request_confirmation(
+            ctx,
+            tool_name="shell_guidance",
+            command=f"{action_verb} shell auto-approval preset '{preset_clean}'",
+            message=confirm_msg,
+            force=True,
+        )
+        if not result.get("approved"):
+            return ToolResult(text="[error: denied]")
+
+        try:
+            is_new, updated_text = _save_custom_preset(ctx.config, preset_clean, rules_to_save)
+        except ValueError as e:
+            return ToolResult(text=f"[error: failed to save preset: {e}]")
+        status_msg = "Created" if is_new else "Updated"
+        return f"{status_msg} custom shell auto-approval preset `{preset_clean}`:\n{updated_text}"
+
     return ToolResult(
-        text="[error: invalid action. Use 'list', 'enable_preset', 'disable_preset', 'add_rule', or 'remove_rule'.]"
+        text="[error: invalid action. Use 'list', 'enable_preset', 'disable_preset', 'add_rule', 'remove_rule', or 'save_preset'.]"
     )
 
 
@@ -986,11 +1132,13 @@ SHELL_TOOL_DEFINITIONS = [
         "function": {
             "name": "shell_guidance",
             "description": (
-                "Manage aux-LLM shell auto-approval prompt guidance and situational presets for this conversation. "
+                "Manage aux-LLM shell auto-approval prompt guidance and situational presets. "
+                "Guidance rules and enabled presets are scoped to the current conversation. "
                 "Call at the start of software development, testing, or GitHub workflows to reduce approval friction on routine commands. "
                 "Use 'list' to view available presets and active rules. "
                 "Use 'enable_preset' or 'disable_preset' with preset='name' to toggle situational presets (e.g. 'developer', 'github'). "
                 "Use 'add_rule' or 'remove_rule' with rule='text' to add or remove custom auto-approval prompt guidelines for this conversation. "
+                "Use 'save_preset' with preset='name' to bundle active conversation rules (or a specific rule) into a reusable custom preset on disk. "
                 "Modifying approval rules requires user confirmation."
             ),
             "parameters": {
@@ -998,16 +1146,16 @@ SHELL_TOOL_DEFINITIONS = [
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "enable_preset", "disable_preset", "add_rule", "remove_rule"],
+                        "enum": ["list", "enable_preset", "disable_preset", "add_rule", "remove_rule", "save_preset"],
                         "description": "Action to perform (default: list)",
                     },
                     "preset": {
                         "type": "string",
-                        "description": "Preset name (for enable_preset / disable_preset). E.g. 'developer', 'github'",
+                        "description": "Preset name (for enable_preset / disable_preset / save_preset). E.g. 'developer', 'github', 'my_project'",
                     },
                     "rule": {
                         "type": "string",
-                        "description": "Guidance rule text (for add_rule / remove_rule). E.g. 'Auto-approve pytest and ruff in workspace'",
+                        "description": "Guidance rule text (for add_rule / remove_rule, or optional specific rule for save_preset). E.g. 'Auto-approve pytest and ruff in workspace'",
                     },
                 },
                 "required": [],
