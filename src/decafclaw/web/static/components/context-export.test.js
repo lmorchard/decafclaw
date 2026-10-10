@@ -122,6 +122,17 @@ it('renders raw view and copies request JSON', async () => {
   expect(el.textContent).toContain('test-model-4');
   expect(el.textContent).toContain('Messages (1)');
   expect(el.textContent).toContain('Tools (1)');
+
+  const jsonWidgets = el.querySelectorAll('dc-widget-json-view');
+  expect(jsonWidgets.length).toBe(2);
+  expect(jsonWidgets[0].shadowRoot?.textContent).toContain('hello');
+  expect(jsonWidgets[1].shadowRoot?.textContent).toContain('test_tool');
+
+  // Switch to JSON text format
+  const jsonBtn = Array.from(el.querySelectorAll('.tab-btn')).find(b => b.textContent === 'JSON');
+  jsonBtn?.click();
+  await el.updateComplete;
+
   expect(el.textContent).toContain('"hello"');
   expect(el.textContent).toContain('test_tool');
 

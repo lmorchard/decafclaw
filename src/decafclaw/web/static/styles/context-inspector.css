@@ -11,15 +11,30 @@ context-inspector[open] {
 context-inspector .inspector {
   position: fixed;
   z-index: 1000;
+  top: 1rem;
+  bottom: 5.25rem;
+  left: 1rem;
+  width: min(88vw, calc(100vw - 2rem));
+  display: flex;
+  flex-direction: column;
   background: var(--pico-card-background-color, #fff);
   border: 1px solid var(--pico-muted-border-color, #ddd);
   border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-  padding: 1rem;
-  max-height: 75vh;
-  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+  padding: 1rem 1.25rem;
   font-size: 0.8rem;
   color: var(--pico-color, #333);
+  box-sizing: border-box;
+}
+
+@media (max-width: 600px) {
+  context-inspector .inspector {
+    left: 0.5rem;
+    width: calc(100vw - 1rem);
+    top: 0.5rem;
+    bottom: 4.5rem;
+    padding: 0.75rem;
+  }
 }
 
 context-inspector .inspector-header {
@@ -27,6 +42,14 @@ context-inspector .inspector-header {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 0.75rem;
+  flex-shrink: 0;
+}
+
+context-inspector #panel-diagnostics,
+context-inspector #panel-raw {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 context-inspector .inspector-header h3 {
@@ -68,7 +91,7 @@ context-inspector .tab-btn.active {
 context-inspector .raw-view {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 
 context-inspector .raw-actions {
@@ -77,6 +100,13 @@ context-inspector .raw-actions {
   align-items: center;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--pico-muted-border-color, #eee);
+  flex-shrink: 0;
+}
+
+context-inspector .raw-view-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 context-inspector .raw-meta {
@@ -96,18 +126,31 @@ context-inspector .raw-section h4 {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--pico-muted-color);
+  flex-shrink: 0;
+}
+
+context-inspector dc-widget-json-view {
+  background: var(--pico-code-background-color, #f8f9fa);
+  border: 1px solid var(--pico-muted-border-color, #eee);
+  border-radius: 4px;
+  padding: 0.5rem;
+  max-height: 400px;
+  overflow: auto;
 }
 
 context-inspector .raw-pre {
   background: var(--pico-code-background-color, #f8f9fa);
   border: 1px solid var(--pico-muted-border-color, #eee);
   border-radius: 4px;
-  padding: 0.5rem;
-  max-height: 250px;
+  padding: 0.75rem;
+  max-height: 400px;
   overflow: auto;
-  font-size: 0.72rem;
-  line-height: 1.3;
+  font-size: 0.75rem;
+  line-height: 1.4;
   margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Structural rules from .dc-icon-btn in primitives.css. Per-site
