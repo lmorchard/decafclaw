@@ -44,8 +44,8 @@ Branch: `issue/1003-tool-audit-and-budget`
 ### After
 - **Critical tools:** 18 tools (13 core + 5 vault)
 - **Active tools:** 30 tools + 1 `tool_search` = 31 tools
-- **Normal tools active:** **12** (`vault_delete`, `vault_recent`, `vault_tags`, `vault_backlinks`, `conversation_search`, `conversation_compact`, `workspace_preview_markdown`, `workspace_append`, `workspace_search`, `workspace_glob`, `workspace_move`, `workspace_mkdir`)
-- **Token usage:** 5,783 tokens (comfortably below 10,000 budget)
+- **Normal tools active:** **12** (`vault_delete`, `vault_recent`, `vault_tags`, `vault_backlinks`, `conversation_search`, `conversation_compact`, `workspace_search`, `workspace_glob`, `workspace_list`, `workspace_diff`, `workspace_preview_markdown`, `workspace_append`)
+- **Token usage:** 5,817 tokens (comfortably below 10,000 budget)
 - **Status:** **Zero warning noise.** High-value workspace search and listing tools are immediately available in the prompt.
 
 ## Verification
