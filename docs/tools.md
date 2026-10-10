@@ -47,6 +47,59 @@ Dedicated file tools for the agent's administrative directory (`config.agent_pat
 | `admin_edit` | | Exact string replacement in an admin file (requires confirmation) |
 | `admin_delete` | | Delete an admin file or directory (requires confirmation) |
 
+### Secret-file protection
+
+The admin directory holds secret-bearing files (web/browser token
+stores, provider API keys, MCP credentials, per-VM keys). The six tools consult
+**one shared rule** in `decafclaw/secret_policy.py`, so a new secret file
+needs a single extension point, not a per-tool fix:
+
+- **Refuse** — the agent gets nothing. Applied to *all six tools*, before
+  confirmation, reading, or mutation. The default set is:
+   `web_tokens.json`, `browser_tokens.json`, `mcp_oauth/**`, `*.pem`, `*.key`,
+   `**/keys/*`, `service_account*.json`. `admin_list` still shows the *name* of a
+   refused file (a name is not its contents) but refuses to descend into a
+   refused directory. The check runs on the path's *resolved* location
+   (`subdir/../web_tokens.json`, a symlink named innocently, …), so a spelling
+   that resolves into a secret store is refused too — the rule may over-match,
+   but never under-match.
+- **Redact** — applied to `config.json` and `mcp_servers.json` on `admin_read`.
+  The agent sees the structure and every non-secret field, with secret leaf
+  values replaced by the fixed marker `<redacted>`. The redacted set is the
+  `secret`-annotated field names walked across `Config`
+  (`config_types.py`), plus fixed structural rules
+  (`env.*`, `skills.*.*`, `mcpServers.*.env.*`, `mcpServers.*.headers.*`).
+  This is the same annotation `config show` uses to mask values, so the two
+  surfaces stay in lockstep.
+- **Extend** — both tiers are admin-widenable in `config.json`:
+
+  ```jsonc
+  {
+    "secret_policy": {
+      "refuse_paths": ["vault_backup/keys/**", "legacy_key.json"],
+      "redact_paths": ["some_group.legacy_key", "providers.*.extra_cred"]
+    }
+  }
+  ```
+
+  `refuse_paths` are globs (relative to `config.agent_path`, `*`/`?` cross
+  `/`); `redact_paths` are dotted JSON paths into a redactable file, with a
+  single `*` segment matching any one key.
+
+**Marker guard.** Any write payload containing `<redacted>` is refused
+(`admin_write`, `admin_replace_lines`, `admin_edit`), and the mutation
+*recovery* path (`AdminMutationHandler._apply_mutation`) inherits the guard —
+a pending approval that arrives after a restart is still refused. The guard
+exists to stop a read→modify→write of the marker from clobbering a real secret.
+
+**Fail-closed.** If a redactable file's JSON does not parse, `admin_read`
+refuses to return it (rather than leak unparseable bytes that might still hold
+secrets). Fix the file's JSON, or list it under `secret_policy.refuse_paths`
+if it is not actually config.
+
+This is best-effort harm reduction, not watertightness — the admin is the
+final arbiter. See [data-layout.md → Secret files](data-layout.md#secret-files).
+
 ## Vault (`skills/vault/tools.py`)
 
 Always-activated skill for the unified knowledge base. See [Vault](vault.md).

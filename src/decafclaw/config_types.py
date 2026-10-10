@@ -589,6 +589,31 @@ class TelemetryConfig:
     otlp_service_name: str = "decafclaw"
 
 
+@dataclass
+class SecretPolicyConfig:
+    """Admin-tool secret-file protection for ``data/{agent_id}/`` (issue #1013).
+
+    The six admin tools are the agent's only door into this directory, and it
+    holds secrets (tokens, API keys, MCP credentials). This dataclass carries
+    the admin's *extensions* to the built-in protection in
+    :mod:`decafclaw.secret_policy`:
+
+    - ``refuse_paths`` — glob patterns (relative to ``config.agent_path``;
+      ``*``/``?`` cross ``/``) naming files/directories to REFUSE on every admin
+      tool. Add a new secret file here instead of in code.
+    - ``redact_paths`` — dotted JSON paths (relative to the JSON root of a
+      redactable file: ``config.json`` or ``mcp_servers.json``) to REDACT in
+      ``admin_read`` output. A single ``*`` segment matches any one key, e.g.
+      ``providers.*.api_key``. Applied on top of the annotation-derived set.
+
+    This is harm reduction, not watertightness: best-effort, admin-extensible.
+    See docs/data-layout.md ("Secret files") and docs/tools.md (Admin Files).
+    """
+
+    refuse_paths: list[str] = field(default_factory=list)
+    redact_paths: list[str] = field(default_factory=list)
+
+
 def is_secret(dc_class: type, field_name: str) -> bool:
     """Check if a dataclass field is marked as secret."""
     for f in dc_fields(dc_class):
