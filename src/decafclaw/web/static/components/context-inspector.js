@@ -38,7 +38,6 @@ export class ContextInspector extends LitElement {
     open: { type: Boolean, reflect: true },
     contextVersion: { type: Number },  // bumped by parent when context changes
     _tab: { type: String, state: true },
-    _style: { type: String, state: true },
     _data: { type: Object, state: true },
     _loading: { type: Boolean, state: true },
     _error: { type: String, state: true },
@@ -55,7 +54,6 @@ export class ContextInspector extends LitElement {
     this.open = false;
     this.contextVersion = 0;
     this._tab = 'diagnostics';
-    this._style = '';
     /** @type {Diagnostics|null} */
     this._data = null;
     this._loading = false;
@@ -64,12 +62,6 @@ export class ContextInspector extends LitElement {
     this._rawData = null;
     this._rawLoading = false;
     this._rawError = '';
-  }
-
-  willUpdate(changed) {
-    if (changed.has('open') && this.open) {
-      this.#positionPanel();
-    }
   }
 
   updated(changed) {
@@ -85,8 +77,6 @@ export class ContextInspector extends LitElement {
     }
     if (changed.has('open')) {
       if (this.open) {
-        this._onResize = () => this.#positionPanel();
-        window.addEventListener('resize', this._onResize);
         // Defer so the current click doesn't immediately close
         requestAnimationFrame(() => {
           this._onDocClick = (e) => {
@@ -121,26 +111,6 @@ export class ContextInspector extends LitElement {
       document.removeEventListener('click', this._onDocClick, true);
       this._onDocClick = null;
     }
-    if (this._onResize) {
-      window.removeEventListener('resize', this._onResize);
-      this._onResize = null;
-    }
-  }
-
-  #positionPanel() {
-    const anchor = this.previousElementSibling || this.parentElement || this;
-    const rect = typeof anchor.getBoundingClientRect === 'function'
-      ? anchor.getBoundingClientRect()
-      : { left: 16, top: 0 };
-    const winWidth = typeof window !== 'undefined' ? (window.innerWidth || 1024) : 1024;
-    const panelWidth = Math.min(720, winWidth - 32);
-    let left = Math.max(16, rect.left || 16);
-    if (left + panelWidth > winWidth - 16) {
-      left = Math.max(8, winWidth - panelWidth - 8);
-    }
-    const winHeight = typeof window !== 'undefined' ? (window.innerHeight || 768) : 768;
-    const bottom = Math.max(8, winHeight - (rect.top || 0) + 4);
-    this._style = `left:${left}px; bottom:${bottom}px; width:${panelWidth}px;`;
   }
 
   async #fetchData() {
@@ -405,7 +375,8 @@ export class ContextInspector extends LitElement {
     }
 
     return html`
-      <div class="inspector" style=${this._style} @click=${(e) => e.stopPropagation()}>
+      <div class="inspector-backdrop" @click=${() => this.dispatchEvent(new Event('close'))}></div>
+      <div class="inspector" role="dialog" aria-modal="true" aria-label="Context Inspector" @click=${(e) => e.stopPropagation()}>
         <div class="inspector-header">
           <div class="inspector-title-row">
             <h3>Context Inspector</h3>
