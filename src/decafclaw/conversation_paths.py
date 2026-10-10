@@ -26,6 +26,7 @@ SIDECAR_FILENAMES: tuple[tuple[str, str], ...] = (
     (".notes.md", "notes.md"),
     (".decisions.json", "decisions.json"),
     (".context.json", "context.json"),
+    (".last_request.json", "last_request.json"),
     (".canvas.json", "canvas.json"),
     (".skills.json", "skills.json"),
     (".skill_data.json", "skill_data.json"),
@@ -101,3 +102,8 @@ def delete_conversation_files(config, conv_id: str) -> None:
                 p.unlink()
             except OSError as exc:
                 log.warning("Failed to remove legacy sidecar %s: %s", p, exc)
+
+
+def last_request_path(config, conv_id: str) -> Path:
+    """Resolve the last LLM request sidecar at conversations/{conv_id}/last_request.json."""
+    return sidecar_path(config, conv_id, "last_request.json")
