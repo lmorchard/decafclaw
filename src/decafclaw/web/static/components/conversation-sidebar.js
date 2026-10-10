@@ -667,6 +667,7 @@ export class ConversationSidebar extends LitElement {
           return html`
             <div class="context-usage ${cls}" title="Click for details"
                  style="cursor:pointer;position:relative"
+                 role="button"
                  tabindex="0"
                  aria-expanded=${this._contextInspectorOpen}
                  @click=${() => { this._contextInspectorOpen = !this._contextInspectorOpen; }}
@@ -678,13 +679,13 @@ export class ConversationSidebar extends LitElement {
               <div class="context-usage-bar">
                 <div class="context-usage-fill" style="width: ${Math.min(100, pct)}%"></div>
               </div>
-              <context-inspector
-                .convId=${this._activeId || ''}
-                .open=${this._contextInspectorOpen}
-                .contextVersion=${this._contextVersion}
-                @close=${() => { this._contextInspectorOpen = false; }}
-              ></context-inspector>
             </div>
+            <context-inspector
+              .convId=${this._activeId || ''}
+              .open=${this._contextInspectorOpen}
+              .contextVersion=${this._contextVersion}
+              @close=${() => { this._contextInspectorOpen = false; }}
+            ></context-inspector>
           `;
         })()}
       ` : nothing}
