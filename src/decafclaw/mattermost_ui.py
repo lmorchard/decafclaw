@@ -67,6 +67,7 @@ def build_confirm_buttons(
     confirmation_id: str = "",
     approve_label: str = "",
     deny_label: str = "",
+    suggested_rule: str = "",
 ) -> list[dict]:
     """Build Mattermost attachment with interactive action buttons.
 
@@ -76,7 +77,7 @@ def build_confirm_buttons(
     if not config.http.enabled:
         return []
 
-    def _make_token(action: str) -> str:
+    def _make_token(action: str, **extra_token_fields) -> str:
         return _token_registry.create(
             context_id=context_id,
             tool_name=tool_name,
@@ -86,6 +87,7 @@ def build_confirm_buttons(
             tool_call_id=tool_call_id,
             conv_id=conv_id,
             confirmation_id=confirmation_id,
+            **extra_token_fields,
         )
 
     base_url = f"{config.http_callback_base}/actions/confirm"
@@ -118,8 +120,8 @@ def build_confirm_buttons(
                 },
             },
         ]
-    elif tool_name == "shell" and suggested_pattern:
-        # Shell tool: Approve / Deny / Allow Pattern (no Always)
+    elif tool_name == "shell" and (suggested_pattern or suggested_rule):
+        # Shell tool: Approve / Deny / Allow Pattern / Remember Rule (no Always)
         # NOTE: button IDs must not contain underscores — Mattermost
         # silently drops callbacks for buttons with underscores in the ID.
         actions = [
@@ -141,16 +143,31 @@ def build_confirm_buttons(
                     "context": {**base_context, "action": "deny"},
                 },
             },
-            {
-                "id": "allowpattern",
-                "name": f"Allow Pattern: {suggested_pattern}",
-                "style": "default",
-                "integration": {
-                    "url": f"{base_url}?token={_make_token('add_pattern')}",
-                    "context": {**base_context, "action": "add_pattern"},
-                },
-            },
         ]
+        if suggested_rule:
+            actions.append(
+                {
+                    "id": "addrule",
+                    "name": "Approve + remember why",
+                    "style": "default",
+                    "integration": {
+                        "url": f"{base_url}?token={_make_token('add_rule', rule=suggested_rule)}",
+                        "context": {**base_context, "action": "add_rule", "rule": suggested_rule},
+                    },
+                }
+            )
+        if suggested_pattern:
+            actions.append(
+                {
+                    "id": "allowpattern",
+                    "name": f"Allow Pattern: {suggested_pattern}",
+                    "style": "default",
+                    "integration": {
+                        "url": f"{base_url}?token={_make_token('add_pattern')}",
+                        "context": {**base_context, "action": "add_pattern"},
+                    },
+                }
+            )
     else:
         # Other tools: Approve / Deny / Always
         actions = [

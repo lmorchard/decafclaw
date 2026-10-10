@@ -49,6 +49,8 @@ export interface SrvConfirmRequest {
   tool: string;
   command: string;
   suggested_pattern: string;
+  decline_reason?: string;
+  suggested_rule?: string;
   message: string;
   approve_label: string;
   deny_label: string;
@@ -225,6 +227,8 @@ export interface CliConfirmResponse {
   approved: boolean;
   always: boolean;
   add_pattern: boolean;
+  add_rule?: boolean;
+  rule?: string;
   data?: Record<string, unknown>;
 }
 

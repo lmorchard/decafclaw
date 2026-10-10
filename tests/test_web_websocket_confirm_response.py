@@ -59,6 +59,8 @@ class TestConfirmResponseDataForwarding:
             approved=True,
             always=False,
             add_pattern=False,
+            add_rule=False,
+            rule="",
             data={"value": "tide pools"},
         )
 
@@ -82,6 +84,8 @@ class TestConfirmResponseDataForwarding:
             approved=True,
             always=False,
             add_pattern=False,
+            add_rule=False,
+            rule="",
             data=None,
         )
 
@@ -106,5 +110,34 @@ class TestConfirmResponseDataForwarding:
             approved=True,
             always=False,
             add_pattern=False,
+            add_rule=False,
+            rule="",
+            data=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_add_rule_forwarded_to_manager(self, ws_send, index, ws_state):
+        """add_rule and rule ride through _handle_confirm_response to respond_to_confirmation (#982)."""
+        msg = {
+            "type": "confirm_response",
+            "conv_id": "conv-1",
+            "confirmation_id": "cfm-rule",
+            "approved": True,
+            "always": False,
+            "add_pattern": False,
+            "add_rule": True,
+            "rule": "Auto-approve gh pr create in this repo",
+        }
+
+        await _handle_confirm_response(ws_send, index, "testuser", msg, ws_state)
+
+        ws_state["manager"].respond_to_confirmation.assert_awaited_once_with(
+            "conv-1",
+            "cfm-rule",
+            approved=True,
+            always=False,
+            add_pattern=False,
+            add_rule=True,
+            rule="Auto-approve gh pr create in this repo",
             data=None,
         )

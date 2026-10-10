@@ -656,6 +656,8 @@ class ConversationManager:
         *,
         always: bool = False,
         add_pattern: bool = False,
+        add_rule: bool = False,
+        rule: str = "",
         data: dict | None = None,
     ) -> None:
         """Resolve a pending confirmation request.
@@ -709,6 +711,8 @@ class ConversationManager:
                 approved=approved,
                 always=always,
                 add_pattern=add_pattern,
+                add_rule=add_rule,
+                rule=rule,
                 data=data or {},
             )
             # Archive the response under the lock so the durable record

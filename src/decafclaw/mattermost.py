@@ -540,6 +540,8 @@ class MattermostClient:
                 approve_label = event.get("approve_label", "")
                 deny_label = event.get("deny_label", "")
                 display_tool = action_data.get("tool_name", action_type)
+                decline_reason = action_data.get("decline_reason", "")
+                suggested_rule = action_data.get("suggested_rule", "")
                 confirm_post_id = await cd.on_confirm_request(
                     display_tool,
                     command,
@@ -551,6 +553,8 @@ class MattermostClient:
                     confirmation_id=confirmation_id,
                     approve_label=approve_label,
                     deny_label=deny_label,
+                    decline_reason=decline_reason,
+                    suggested_rule=suggested_rule,
                 )
 
                 # Start emoji polling routed through the manager
@@ -564,6 +568,7 @@ class MattermostClient:
                             action_type,
                             timeout=event.get("timeout"),
                             allow_always=not bool(approve_label),
+                            suggested_rule=suggested_rule,
                         )
                     )
 
@@ -782,16 +787,23 @@ class MattermostClient:
         timeout: float | None = None,
         poll_interval=2,
         allow_always=True,
+        suggested_rule: str = "",
     ):
         """Poll a post for reactions to resolve a confirmation via the manager."""
 
-        async def _resolve(approved, always=False, add_pattern=False, label=""):
+        async def _resolve(approved, always=False, add_pattern=False, add_rule=False, rule="", label=""):
+            kwargs = {
+                "approved": approved,
+                "always": always,
+                "add_pattern": add_pattern,
+            }
+            if add_rule or rule:
+                kwargs["add_rule"] = add_rule
+                kwargs["rule"] = rule
             await manager.respond_to_confirmation(
                 conv_id,
                 confirmation_id,
-                approved=approved,
-                always=always,
-                add_pattern=add_pattern,
+                **kwargs,
             )
             try:
                 resp = await self._http.get(f"/posts/{post_id}")
@@ -826,7 +838,16 @@ class MattermostClient:
                     user_id = r.get("user_id", "")
                     if user_id == self.bot_user_id:
                         continue
-                    if emoji in ("notebook",) and action_type == "run_shell_command":
+                    if emoji in ("memo", "pencil2") and action_type == "run_shell_command" and suggested_rule:
+                        log.info(f"Tool approved with rule by {user_id}")
+                        await _resolve(
+                            True,
+                            add_rule=True,
+                            rule=suggested_rule,
+                            label="\U0001f4dd approved + rule added",
+                        )
+                        return
+                    elif emoji in ("notebook",) and action_type == "run_shell_command":
                         log.info(f"Tool approved with pattern by {user_id}")
                         await _resolve(True, add_pattern=True, label="\U0001f4d3 approved + pattern added")
                         return

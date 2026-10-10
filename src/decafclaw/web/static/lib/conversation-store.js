@@ -36,6 +36,8 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {string} tool_call_id
  * @property {string} command
  * @property {string} suggested_pattern
+ * @property {string} [decline_reason]
+ * @property {string} [suggested_rule]
  * @property {string} message
  * @property {string} approve_label
  * @property {string} deny_label
