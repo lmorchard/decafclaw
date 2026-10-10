@@ -265,6 +265,7 @@ TOOLS = {
 TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "mcp_status",
             "description": (
@@ -292,6 +293,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "mcp_list_resources",
             "description": (
@@ -303,6 +305,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "mcp_read_resource",
             "description": ("Read a resource from an MCP server by URI. Returns text content or binary attachments."),
@@ -324,6 +327,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "mcp_list_prompts",
             "description": (
@@ -334,6 +338,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "mcp_get_prompt",
             "description": (

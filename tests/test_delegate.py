@@ -881,3 +881,21 @@ class TestChildAbnormalTermination:
             "re-archiving already-archived text even though it now "
             "re-delivers it to the parent"
         )
+
+    @pytest.mark.asyncio
+    async def test_delegate_task_consolidated_batch_dispatch(self, ctx):
+        """tool_delegate_task dispatches batch when passed task list or tasks arg."""
+
+        async def fake_run(parent_ctx, task, **kwargs):
+            return (f"result for {task}", None)
+
+        with patch("decafclaw.tools.delegate.run_child_turn", side_effect=fake_run):
+            # Passed as task=[...]
+            result1 = await tool_delegate_task(ctx, ["task1", "task2"])
+            assert isinstance(result1, ToolResult)
+            assert result1.data["summary"] == {"total": 2, "ok": 2, "failed": 0}
+
+            # Passed as tasks=[...]
+            result2 = await tool_delegate_task(ctx, tasks=["task1", "task2"])
+            assert isinstance(result2, ToolResult)
+            assert result2.data["summary"] == {"total": 2, "ok": 2, "failed": 0}

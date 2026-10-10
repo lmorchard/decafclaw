@@ -162,8 +162,9 @@ CHECKLIST_TOOL_DEFINITIONS = [
         "function": {
             "name": "checklist_create",
             "description": (
-                "When you already know the steps for a task (3 or more), create "
-                "a checklist to execute them methodically. This is for direct "
+                "When you start on a task with multiple steps (3 or more distinct steps "
+                "or non-trivial multi-file work), begin by assembling a checklist to "
+                "track the work and execute it methodically. This is for direct "
                 "execution of known steps — not for tasks that need brainstorming "
                 "or planning first (use the project skill for those). Each step "
                 "will be presented one at a time. Overwrites any existing checklist."

@@ -40,14 +40,31 @@ def get_critical_names(config) -> set[str]:
 
     Includes:
     - User env override (``config.agent.critical_tools``)
-    - Tool names from always-loaded skills (cached on config after
-      first activation)
     """
-    extra = set(config.agent.critical_tools)
+    return set(config.agent.critical_tools)
+
+
+def get_always_loaded_tool_names(config) -> set[str]:
+    """Return the set of tool names belonging to always-loaded skills."""
+    cached = getattr(config, "always_loaded_skill_tools", set()) or set()
+    if cached:
+        return cached
+    names: set[str] = set()
     for skill in config.discovered_skills:
         if skill.always_loaded and skill.has_native_tools:
-            extra |= config.always_loaded_skill_tools
-    return extra
+            try:
+                from .skill_tools import _load_native_tools
+
+                _, tool_defs, _ = _load_native_tools(skill)
+                for td in tool_defs:
+                    tname = td.get("function", {}).get("name")
+                    if tname:
+                        names.add(tname)
+            except Exception:
+                pass
+    if names and hasattr(config, "always_loaded_skill_tools"):
+        config.always_loaded_skill_tools = names
+    return names
 
 
 def get_priority(tool_def: dict, config, force_critical: set[str]) -> str:
@@ -104,10 +121,13 @@ def classify_tools(
     preempt_matches = preempt_matches or set()
     skill_tool_owners = getattr(config, "skill_tool_owners", {}) or {}
 
+    always_loaded_tools = get_always_loaded_tool_names(config)
+    on_demand_skill_tools = skill_tool_names - always_loaded_tools
+
     # Build the "force critical" set
     force_critical = get_critical_names(config)
     force_critical |= fetched_names
-    force_critical |= skill_tool_names
+    force_critical |= on_demand_skill_tools
     force_critical |= preempt_matches
 
     budget = config.tool_context_budget
@@ -130,7 +150,7 @@ def classify_tools(
     for td in all_tool_defs:
         name = td.get("function", {}).get("name", "")
         token_cost[id(td)] = estimate_tool_tokens([td])
-        if name in skill_tool_owners and name not in skill_tool_names:
+        if name in skill_tool_owners and name not in skill_tool_names and name not in always_loaded_tools:
             hidden_skill_tools.append(td)
             continue
         prio = get_priority(td, config, force_critical)

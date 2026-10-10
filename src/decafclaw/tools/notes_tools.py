@@ -116,7 +116,7 @@ NOTES_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
-        "priority": "critical",
+        "priority": "normal",
         "function": {
             "name": "notes_read",
             "description": (

@@ -179,13 +179,37 @@ class TestClassifyTools:
         assert "norm_5" in active_names
 
     def test_skill_tool_names_treated_critical(self, config):
-        """Activated skill tools are promoted to critical."""
+        """Activated on-demand skill tools are promoted to critical."""
         tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
         config.compaction.max_tokens = 100
 
         active, deferred = classify_tools(tools, config, skill_tool_names={"norm_3"})
         active_names = {td["function"]["name"] for td in active}
         assert "norm_3" in active_names
+
+    def test_always_loaded_skill_tools_respect_declared_priority(self, config):
+        """Tools belonging to always-loaded skills respect declared priority and
+        are not automatically forced critical."""
+        config.always_loaded_skill_tools = {"al_crit", "al_norm", "al_low"}
+        tools = [
+            _make_tool_def("al_crit", "x" * 200, priority="critical"),
+            _make_tool_def("al_norm", "x" * 200, priority="normal"),
+            _make_tool_def("al_low", "x" * 200, priority="low"),
+        ]
+        # Very tight budget: only critical fits
+        config.compaction.max_tokens = 100
+
+        active, deferred = classify_tools(
+            tools,
+            config,
+            skill_tool_names={"al_crit", "al_norm", "al_low"},
+        )
+        active_names = {td["function"]["name"] for td in active}
+        deferred_names = {td["function"]["name"] for td in deferred}
+
+        assert "al_crit" in active_names
+        assert "al_norm" in deferred_names
+        assert "al_low" in deferred_names
 
     def test_env_override_treated_critical(self, config):
         """Env override (via critical_tools) promotes to critical."""
