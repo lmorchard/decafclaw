@@ -1491,3 +1491,63 @@ async def test_context_optional_and_extra_diagnostics_are_unchanged(authed_clien
     response = await authed_client.get(f"/api/conversations/{conv_id}/context")
     assert response.status_code == 200
     assert response.json() == payload
+
+
+@pytest.mark.asyncio
+async def test_context_raw_endpoint_serves_sidecar_and_checks_auth(authed_client, app, http_config):
+    from httpx import ASGITransport, AsyncClient
+
+    from decafclaw.context_composer import write_last_request_sidecar
+
+    conv = (await authed_client.post("/api/conversations", json={})).json()
+    conv_id = conv["conv_id"]
+
+    # 404 when no sidecar exists yet
+    assert (await authed_client.get(f"/api/conversations/{conv_id}/context/raw")).status_code == 404
+
+    payload = {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [{"type": "function", "function": {"name": "test"}}],
+    }
+    write_last_request_sidecar(http_config, conv_id, payload)
+
+    # 200 with sidecar
+    resp = await authed_client.get(f"/api/conversations/{conv_id}/context/raw")
+    assert resp.status_code == 200
+    assert resp.json() == payload
+
+    # Aliases also work
+    assert (await authed_client.get(f"/api/conversations/{conv_id}/last-request")).status_code == 200
+    assert (await authed_client.get(f"/api/conversations/{conv_id}/last_request")).status_code == 200
+
+    # 401 when unauthenticated
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as unauth:
+        assert (await unauth.get(f"/api/conversations/{conv_id}/context/raw")).status_code == 401
+
+    # 404 for other user's web conv
+    from decafclaw.web.auth import create_token
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as other_client:
+        token = create_token(http_config, "other-user")
+        login_resp = await other_client.post("/api/auth/login", json={"token": token})
+        other_client.cookies = login_resp.cookies
+        assert (await other_client.get(f"/api/conversations/{conv_id}/context/raw")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_context_raw_system_conv(authed_client, http_config):
+    """REST /context/raw should also serve system conversations."""
+    from decafclaw.context_composer import write_last_request_sidecar
+
+    conv_dir = http_config.workspace_path / "conversations"
+    conv_id = "schedule-newsletter-20260520-080000"
+    (conv_dir / conv_id).mkdir(parents=True, exist_ok=True)
+    (conv_dir / conv_id / "archive.jsonl").write_text("{}\n")
+
+    payload = {"model": "system-model", "messages": [], "tools": []}
+    write_last_request_sidecar(http_config, conv_id, payload)
+
+    resp = await authed_client.get(f"/api/conversations/{conv_id}/context/raw")
+    assert resp.status_code == 200
+    assert resp.json() == payload

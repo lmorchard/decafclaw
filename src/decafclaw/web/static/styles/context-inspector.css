@@ -38,6 +38,82 @@ context-inspector .inspector-header h3 {
   font-size: 0.9rem;
 }
 
+context-inspector .inspector-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+context-inspector .inspector-tabs {
+  display: inline-flex;
+  background: var(--pico-muted-border-color, #eee);
+  border-radius: 4px;
+  padding: 2px;
+}
+
+context-inspector .tab-btn {
+  background: transparent;
+  border: none;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--pico-muted-color);
+  margin: 0;
+}
+
+context-inspector .tab-btn.active {
+  background: var(--pico-card-background-color, #fff);
+  color: var(--pico-color, #333);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+context-inspector .raw-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+context-inspector .raw-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--pico-muted-border-color, #eee);
+}
+
+context-inspector .raw-meta {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
+context-inspector .raw-actions button.copy-raw-btn {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  margin: 0;
+  width: auto;
+}
+
+context-inspector .raw-section h4 {
+  margin: 0.5rem 0 0.25rem 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--pico-muted-color);
+}
+
+context-inspector .raw-pre {
+  background: var(--pico-code-background-color, #f8f9fa);
+  border: 1px solid var(--pico-muted-border-color, #eee);
+  border-radius: 4px;
+  padding: 0.5rem;
+  max-height: 250px;
+  overflow: auto;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  margin: 0;
+}
+
 /* Structural rules from .dc-icon-btn in primitives.css. Per-site
    overrides: tighter inline padding, larger font. The hover state
    comes from the primitive (was previously missing here — now

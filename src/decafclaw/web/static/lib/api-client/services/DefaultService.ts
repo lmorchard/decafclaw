@@ -12,6 +12,7 @@ import type { ConfigFileEntry } from '../models/ConfigFileEntry';
 import type { ConfigFileResponse } from '../models/ConfigFileResponse';
 import type { ConfigWriteResponse } from '../models/ConfigWriteResponse';
 import type { ContextDiagnosticsResponse } from '../models/ContextDiagnosticsResponse';
+import type { ContextRawResponse } from '../models/ContextRawResponse';
 import type { ConversationCreateResponse } from '../models/ConversationCreateResponse';
 import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
 import type { ConversationFolderResponse } from '../models/ConversationFolderResponse';
@@ -358,6 +359,27 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/conversations/{id}/context',
+            path: {
+                'id': id,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Get Context Raw
+     * Return raw last request payload for a conversation.
+     * @param id
+     * @returns ContextRawResponse Successful Response
+     * @throws ApiError
+     */
+    public static getContextRawApiConversationsIdContextRawGet(
+        id: string,
+    ): CancelablePromise<ContextRawResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/conversations/{id}/context/raw',
             path: {
                 'id': id,
             },

@@ -100,3 +100,62 @@ it.each(['network', 'clipboard', 'body'])('reports %s failures', async (failure)
   await el._copy('markdown');
   expect(showToast).toHaveBeenCalledWith(`Copy failed: ${failure} failed`);
 });
+
+it('renders raw view and copies request JSON', async () => {
+  const rawData = {
+    model: 'test-model-4',
+    messages: [{ role: 'user', content: 'hello' }],
+    tools: [{ type: 'function', function: { name: 'test_tool' } }],
+  };
+  fetchMock.mockResolvedValue(json(rawData));
+  const el = document.createElement('context-inspector');
+  el.convId = 'id ?#%é';
+  el.open = true;
+  el._tab = 'raw';
+  document.body.append(el);
+  await el.updateComplete;
+  await vi.waitFor(() => expect(el._rawLoading).toBe(false));
+  await el.updateComplete;
+
+  expect(fetchMock).toHaveBeenCalledWith('/api/conversations/id%20%3F%23%25%C3%A9/context/raw',
+    expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
+  expect(el.textContent).toContain('test-model-4');
+  expect(el.textContent).toContain('Messages (1)');
+  expect(el.textContent).toContain('Tools (1)');
+  expect(el.textContent).toContain('"hello"');
+  expect(el.textContent).toContain('test_tool');
+
+  const copyBtn = el.querySelector('.copy-raw-btn');
+  expect(copyBtn).not.toBeNull();
+  copyBtn.click();
+  await vi.waitFor(() => expect(copyToClipboard).toHaveBeenCalledWith(JSON.stringify(rawData, null, 2)));
+  expect(showToast).toHaveBeenCalledWith('Copied raw context');
+});
+
+it('shows empty message when raw context is 404', async () => {
+  fetchMock.mockResolvedValue(new Response('not found', { status: 404 }));
+  const el = document.createElement('context-inspector');
+  el.convId = 'id';
+  el.open = true;
+  el._tab = 'raw';
+  document.body.append(el);
+  await el.updateComplete;
+  await vi.waitFor(() => expect(el._rawLoading).toBe(false));
+  await el.updateComplete;
+
+  expect(el.textContent).toContain('No raw request data yet');
+});
+
+it('shows error message when raw context returns 500', async () => {
+  fetchMock.mockResolvedValue(new Response('server error', { status: 500 }));
+  const el = document.createElement('context-inspector');
+  el.convId = 'id';
+  el.open = true;
+  el._tab = 'raw';
+  document.body.append(el);
+  await el.updateComplete;
+  await vi.waitFor(() => expect(el._rawLoading).toBe(false));
+  await el.updateComplete;
+
+  expect(el.textContent).toContain('Error: HTTP 500');
+});

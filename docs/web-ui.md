@@ -145,10 +145,16 @@ When multiple model configs are defined, a dropdown in the sidebar lets you swit
 ### Context inspector
 
 Click the context usage bar in the sidebar to see a popover with:
-- Waffle chart showing token allocation by source
-- Summary stats (estimated vs actual tokens, window size, compaction threshold)
-- Source breakdown table
-- Memory candidates with composite scores
+- **Diagnostics tab:**
+  - Waffle chart showing token allocation by source
+  - Summary stats (estimated vs actual tokens, window size, compaction threshold)
+  - Source breakdown table
+  - Memory candidates with composite scores
+- **Raw tab:**
+  - View the literal model request payload (`last_request.json`) sent on the most recent LLM call
+  - Model name, messages count, and tools count
+  - Full formatted messages and tools JSON
+  - Copy button to copy the raw request JSON to the clipboard
 
 See [Context Composer](context-composer.md#context-inspection) for details.
 
@@ -417,6 +423,7 @@ socket with no reconnect logic at all, so it is not covered by this.
 | `DELETE` | `/api/conversations/{id}` | Delete a conversation |
 | `GET` | `/api/conversations/{id}/history` | Get conversation history (paginated) |
 | `GET` | `/api/conversations/{id}/context` | Get context diagnostics sidecar |
+| `GET` | `/api/conversations/{id}/context/raw` | Get raw last request sidecar |
 | `GET` | `/api/conversations/{id}/export?format=jsonl\|markdown` | Export raw archive or rendered transcript |
 | `POST` | `/api/conversations/{id}/archive` | Archive a conversation |
 | `POST` | `/api/conversations/{id}/unarchive` | Unarchive a conversation |
@@ -657,10 +664,10 @@ The backend preserves ownership checks, archive data, and folder assignments.
 Deletion stops the target conversation's terminals before it removes files and assignments.
 
 The context inspector and copy menu use generated methods for
-`GET /api/conversations/{id}/context` and `GET /api/conversations/{id}/export`.
-The inspector keeps the generated diagnostics type in its state and rendering helpers.
+`GET /api/conversations/{id}/context`, `GET /api/conversations/{id}/context/raw`, and `GET /api/conversations/{id}/export`.
+The inspector keeps the generated diagnostics and raw response types in its state and rendering helpers.
 Its source records, detail records, memory candidates, and cache statistics retain their types.
-Absent optional diagnostics stay absent. A 404 response still shows the empty state.
+Absent optional diagnostics or raw requests stay absent. A 404 response still shows the empty state.
 Other HTTP errors, network failures, and JSON decoding failures keep their existing messages.
 
 Export requires a string identifier and a `jsonl` or `markdown` query value.
