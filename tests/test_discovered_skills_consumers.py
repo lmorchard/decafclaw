@@ -69,7 +69,7 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
     "and requires_skills activation. Restriction still applies at every "
     "tier; the command's own activation stays ungated because the human "
     "typed its name.",
-    ("tool_definitions.py", "collect_all_tool_defs"): "GATE (#744): grants_capability before _load_native_tools, which "
+    ("tool_definitions.py", "_preloaded_skill_defs"): "GATE (#744): grants_capability before _load_native_tools, which "
     "imports tools.py and therefore execs module-level code.",
     ("__init__.py", "main"): "DELEGATES to skills.build_skill_tool_owners, which applies "
     "grants_capability before importing any tools.py (#744). This is the "
@@ -81,6 +81,14 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
         "activate_always_loaded",
     ): "GATE: skips trust_tier == 'workspace' outright. Workspace skills also "
     "have always_loaded stripped at discovery; this is defense in depth.",
+    (
+        "tool_definitions.py",
+        "collect_trusted_tool_guidelines",
+    ): "GATE (#998): grants_capability filter on dynamic providers; only "
+    "trusted tiers (bundled, admin, extra) may contribute prompt_guidelines, "
+    "read from the owner's own definitions rather than the active one by "
+    "name. Static skill definitions come via _preloaded_skill_defs, which "
+    "is gated the same way.",
     # -- deliberate permits ----------------------------------------------------
     (
         "skills/__init__.py",

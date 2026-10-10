@@ -638,7 +638,6 @@ class TurnRunner:
     attachments: list[dict] | None
 
     messages: list = field(default_factory=list)
-    deferred_msg: dict | None = None
     prompt_tokens: int = 0
     empty_retries: int = 0
     reflection_retries: int = 0
@@ -749,11 +748,6 @@ class TurnRunner:
             else:
                 _archive(self.ctx, msg)
 
-        if len(self.messages) > 1 and self.messages[1].get("role") == "system" and self.composed.deferred_tools:
-            self.deferred_msg = self.messages[1]
-        else:
-            self.deferred_msg = None
-
         self.turn_start_index = len(self.history)
 
     async def _run_iteration(self, iteration: int) -> IterationOutcome:
@@ -773,20 +767,11 @@ class TurnRunner:
         log.debug(f"Agent iteration {iteration + 1}")
         self.ctx._current_iteration = iteration + 1
 
-        refresh_dynamic_tools(self.ctx)
-        all_tools, deferred_text = build_tool_list(self.ctx)
-
-        if deferred_text:
-            new_msg = {"role": "system", "content": deferred_text}
-            if self.deferred_msg is not None and self.deferred_msg in self.messages:
-                idx = self.messages.index(self.deferred_msg)
-                self.messages[idx] = new_msg
-            else:
-                self.messages.insert(1, new_msg)
-            self.deferred_msg = new_msg
-        elif self.deferred_msg is not None and self.deferred_msg in self.messages:
-            self.messages.remove(self.deferred_msg)
-            self.deferred_msg = None
+        if self.composer is not None:
+            all_tools = self.composer.update_iteration_tools(self.ctx, self.messages)
+        else:
+            refresh_dynamic_tools(self.ctx)
+            all_tools, _, _ = build_tool_list(self.ctx)
 
         for hook in self.ctx.get_interceptors(TurnLifecycle.BEFORE_LLM_CALL):
             try:

@@ -59,6 +59,10 @@ class ToolState:
     # Tracks which tool names each dynamic provider contributed last turn,
     # so stale entries can be removed when the provider returns fewer tools.
     dynamic_provider_names: dict[str, set[str]] = field(default_factory=dict)
+    # The definitions each dynamic provider returned this turn, kept per
+    # skill so prompt guidance can be attributed to its owner rather than to
+    # whichever same-named definition happens to be active.
+    dynamic_provider_definitions: dict[str, list[dict]] = field(default_factory=dict)
     # Names each activated skill contributed, so re-activating a skill whose
     # tools.py was edited can retract the previous generation before
     # registering the new one. Without it a renamed or deleted tool lingers in

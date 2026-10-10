@@ -2903,7 +2903,7 @@ TOOL_DEFINITIONS = [
     from decafclaw.tools.skill_tools import activate_skill_internal
 
     await activate_skill_internal(ctx, info)
-    tools, text = build_tool_list(ctx)
+    tools, text, _ = build_tool_list(ctx)
     tool_names = [t["function"]["name"] for t in tools]
     assert "my_tool1" in tool_names
     assert "my_tool2" not in tool_names
@@ -2941,7 +2941,7 @@ TOOL_DEFINITIONS = [{"function": {"name": "my_tool", "description": "2"}}]
 
     from decafclaw.tool_definitions import build_tool_list
 
-    tools, text = build_tool_list(ctx)
+    tools, text, _ = build_tool_list(ctx)
 
     my_tools = [t for t in tools if "my_tool" in t["function"]["name"]]
     assert len(my_tools) == 2

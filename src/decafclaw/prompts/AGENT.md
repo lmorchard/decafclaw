@@ -255,21 +255,7 @@ to-do lists, working files, and editable skills live here.
 - `drafts/` — in-progress writing (blog posts, docs) before they land in the vault or an external repo.
 - Do not leave the workspace root cluttered — periodically sweep or organize.
 
-**Edit tools, by what you're doing:**
-
-- `workspace_search` / `workspace_glob` — find files first
-- `workspace_read` — see the exact current content and line numbers
-- `workspace_edit` — the default for surgical edits where you have the
-  text in view: single-line or multi-line. Replace an exact block with
-  another; no line-number arithmetic. Copy `old_text` from a fresh
-  `workspace_read` (or a prior edit's diff) — never reconstruct it from
-  memory. Fails if the text isn't found or matches more than once.
-- `workspace_replace_lines` / `workspace_insert` — edits by line number
-  (boundary rewrites, deletions by range, insertions)
-- `workspace_append` — add to the end of a file
-- `workspace_move` / `workspace_delete` — rename or remove
-- `workspace_diff` — compare two files
-- `workspace_write` — new files or full rewrites only
+Prefer surgical edits to full rewrites. Never rewrite an entire file when changing a few lines.
 
 **Workspace files are workspace files.** This includes files inside git
 checkouts under the workspace (e.g. `decafclaw/`, `projects/<repo>/`). Read

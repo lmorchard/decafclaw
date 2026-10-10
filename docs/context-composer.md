@@ -32,6 +32,7 @@ deferred-tool catalog is wrapped in `build_deferred_list_text`).
 | `<skill_catalog>` | `build_catalog_text` output (listing of Active + Available skills) | Only when at least one skill was discovered |
 | `<loaded_skills>` | Bodies of always-loaded bundled skills, one nested `<skill name="…">` block per body | Only when at least one bundled always-loaded skill exists |
 | `<deferred_tools>` | `build_deferred_list_text` output (separate system message) | Only when at least one deferred tool entry is emitted |
+| `<tool_guidance>` | `build_tool_guidance_text` output (separate system message) | Only when at least one active tool defines `prompt_guidelines` |
 
 Empty sections emit nothing — no dangling `<tag></tag>` wrappers.
 
@@ -363,7 +364,7 @@ not to be conflated (#197 P0-M2).
 
 ## Relationship to agent loop
 
-The agent loop (`run_agent_turn`) creates a `ContextComposer` at the start of each turn and calls `compose()` once. The iteration loop still uses `_build_tool_list()` per-iteration because fetched tools change mid-turn as the model calls `tool_search`. After each LLM response, `record_actuals()` stores the real token counts for future calibration.
+The agent loop (`run_agent_turn`) creates a `ContextComposer` at the start of each turn and calls `compose()` once. Across iterations within a turn, `TurnRunner` delegates mid-turn tool message updates to `ContextComposer.update_iteration_tools()`, which synchronizes both `<deferred_tools>` and `<tool_guidance>` system messages in-place as tools are fetched via `tool_search` or refreshed dynamically. After each LLM response, `record_actuals()` stores the real token counts for future calibration.
 
 ## Memory retrieval modes (#301)
 
