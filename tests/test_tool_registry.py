@@ -179,13 +179,34 @@ class TestClassifyTools:
         assert "norm_5" in active_names
 
     def test_skill_tool_names_treated_critical(self, config):
-        """Activated on-demand skill tools are promoted to critical."""
-        tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
+        """Activated on-demand skill tools without explicit priority are promoted to critical."""
+        tools = [_make_tool_def(f"norm_{i}", "x" * 200) for i in range(20)]
         config.compaction.max_tokens = 100
 
         active, deferred = classify_tools(tools, config, skill_tool_names={"norm_3"})
         active_names = {td["function"]["name"] for td in active}
         assert "norm_3" in active_names
+
+    def test_on_demand_skill_tools_honor_declared_priority(self, config):
+        """Activated on-demand skill tools with explicit normal/low priority honor it."""
+        tools = [
+            _make_tool_def("ondemand_crit", "x" * 200, priority="critical"),
+            _make_tool_def("ondemand_norm", "x" * 200, priority="normal"),
+            _make_tool_def("ondemand_low", "x" * 200, priority="low"),
+        ]
+        config.compaction.max_tokens = 100  # tight budget: only critical fits
+
+        active, deferred = classify_tools(
+            tools,
+            config,
+            skill_tool_names={"ondemand_crit", "ondemand_norm", "ondemand_low"},
+        )
+        active_names = {td["function"]["name"] for td in active}
+        deferred_names = {td["function"]["name"] for td in deferred}
+
+        assert "ondemand_crit" in active_names
+        assert "ondemand_norm" in deferred_names
+        assert "ondemand_low" in deferred_names
 
     def test_always_loaded_skill_tools_respect_declared_priority(self, config):
         """Tools belonging to always-loaded skills respect declared priority and

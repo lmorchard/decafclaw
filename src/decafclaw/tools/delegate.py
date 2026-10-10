@@ -598,18 +598,32 @@ DELEGATE_TOOL_DEFINITIONS = [
         "function": {
             "name": "delegate_task",
             "description": (
-                "Delegate a subtask to a child agent (a separate sub-agent / fork) "
-                "that runs as an independent agent turn with access to the same tools "
-                "and skills. Use this whenever the user asks you to spin up, fork off, "
-                "or hand off a task to a sub-agent / child agent, or when a task has an "
-                "independent part that benefits from running in its own context. "
-                "To run multiple subtasks in parallel, pass a list of task descriptions "
-                "in `task`."
+                "Delegate a subtask (or a list of subtasks in parallel) to child "
+                "agents (forks) that run as independent agent turns with access "
+                "to the same tools and skills. Use this whenever the user asks "
+                "you to spin up, fork off, or hand off a task to a sub-agent / "
+                "child agent, or when a task has independent parts that benefit "
+                "from running in isolated contexts.\n\n"
+                "Result shapes on ToolResult.data:\n"
+                "- Single task: child's parsed return_schema object arrives on ToolResult.data.\n"
+                "- Task list: structured summary arrives on ToolResult.data with shape "
+                "{'summary': {'total': N, 'ok': M, 'failed': K}, 'results': [{'index': 0, 'ok': True, 'text': ..., 'data': ...}, ...]}."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task": {
+                        "anyOf": [
+                            {
+                                "type": "string",
+                                "description": "Single task description string with context for the child agent.",
+                            },
+                            {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of task descriptions to execute concurrently in parallel.",
+                            },
+                        ],
                         "description": (
                             "Task description string with enough context for the child "
                             "agent to work independently, or a list of task descriptions "
@@ -646,8 +660,10 @@ DELEGATE_TOOL_DEFINITIONS = [
                         "type": "object",
                         "description": (
                             "Optional JSON-schema-shaped object describing "
-                            "the structured return shape from the child. The parsed "
-                            "object arrives on ToolResult.data. Treat as a hint."
+                            "the structured return shape from the child. For a single task, "
+                            "the parsed object arrives directly on ToolResult.data. "
+                            "For a batch of tasks, each child's parsed object arrives under "
+                            "ToolResult.data['results'][i]['data']. Treat as a hint."
                         ),
                     },
                 },

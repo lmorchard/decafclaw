@@ -33,3 +33,19 @@
     control case, a tool-happy bias would silently inflate pass rates
     on the disambiguation cases — failure here means the model is
     hammering tools regardless of whether a tool is appropriate.
+
+# -- checklist_create: multi-step task tracking (#1003) ----------------------
+
+- name: checklist-create-multistep-task
+  scenario: |
+    We need to perform a three-step maintenance task on the repo:
+    1. Check git status and list modified files.
+    2. Run ruff format and ruff check on the codebase.
+    3. Run pytest on the test suite.
+    Let's track this methodical work with a checklist and execute it.
+  expected: checklist_create
+  near_miss: [shell, workspace_read]
+  notes: |
+    A multi-step task with 3 distinct numbered action steps should begin by
+    assembling a checklist via checklist_create, as instructed by AGENT.md
+    and checklist_create's description.

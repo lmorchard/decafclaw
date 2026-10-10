@@ -43,7 +43,7 @@ When adding a new core tool, you **must** declare a priority — an invariant te
 ### Guidelines
 
 - **`critical`**: tools the agent needs in every conversation regardless of context. File I/O (`workspace_read`, `workspace_write`), `workspace_edit` (the default surgical-edit tool), shell, skill activation, delegation (`delegate_task`), the checklist loop (`checklist_create`, `checklist_step_done`, `checklist_abort`, `checklist_status`), core vault tools (`vault_read`, `vault_write`, `vault_search`, `vault_list`, `vault_journal_append`), `notes_append`, time (`current_time`), and web ingestion (`web_fetch`).
-- **`normal`**: widely useful but situational. Workspace file discovery (`workspace_search`, `workspace_list`, `workspace_glob`, `workspace_diff`, `workspace_move`), secondary vault operations (`vault_delete`, `vault_recent`, `vault_tags`, `vault_backlinks`), `notes_read`, `delegate_tasks`, conversation search/compact, attachments.
+- **`normal`**: widely useful but situational. Workspace file discovery (`workspace_search`, `workspace_list`, `workspace_glob`, `workspace_diff`, `workspace_move`), secondary vault operations (`vault_delete`, `vault_recent`, `vault_tags`, `vault_backlinks`), `notes_read`, conversation search/compact, attachments.
 - **`low`**: admin tools (`admin_*`), specialized editing variants (`workspace_insert`, `workspace_replace_lines`, `vault_show_sections`, `vault_move_lines`, `vault_section`, `vault_update_frontmatter`, `vault_rename`, `vault_grant_folder`), background process tools (`shell_background_*`), MCP introspection tools (`mcp_*`), rarely-called utilities (`wait`, `http_request`, `refresh_skills`, `debug_context`, `context_stats`, `health_status`, `heartbeat_trigger`, `shell_patterns`, `shell_guidance`).
 
 ## Skill tools
@@ -53,7 +53,7 @@ Skill tools can declare an explicit `"priority"` field:
 - **Always-loaded skills** (`vault`, `background`, `mcp`): tools respect their declared priority. Only tools explicitly marked `critical` join the hard floor; `normal` tools compete for open slots, and `low` tools stay deferred behind `tool_search`.
 - **On-demand skills** (e.g. `project`, `tabstack`):
   - **Not activated** → hidden from direct tool callability (advertised via the skill catalog in the system prompt; activation is required).
-  - **Activated** → undeclared tools are promoted to `critical` automatically, so they dominate the active set once the user or agent has opted in.
+  - **Activated** → undeclared tools are promoted to `critical` automatically (ensuring backward compatibility), while tools declaring `normal` or `low` honor their declared tier.
 
 This allows always-loaded skills to expose rich toolsets without blowing the default active-tool budget.
 
