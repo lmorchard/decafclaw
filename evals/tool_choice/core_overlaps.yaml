@@ -357,3 +357,12 @@
   notes: |
     Inspecting the active auto-approval prompt guidance rules and presets
     is shell_guidance with action='list'.
+
+- name: shell-guidance-save-preset
+  scenario: "Save our active conversation approval rules into a custom preset named 'web_deploy' so we can reuse them later."
+  expected: shell_guidance
+  near_miss: [shell_patterns, shell]
+  notes: |
+    Saving active conversation guidance rules into a named custom preset on disk
+    is shell_guidance with action='save_preset', preset='web_deploy'.
+
