@@ -216,9 +216,16 @@ export class MessageStore {
 
       case MESSAGE_TYPES.COMPACTION_DONE:
         if (msg.conv_id === currentConvId) {
+          // #1005 — the event now carries a success flag; a failed compaction
+          // leaves history unchanged, so the old unconditional "compacted"
+          // notice was misleading (N → N messages).
+          const failed = msg.success === false;
+          const detail = failed
+            ? 'Compaction failed (no change to conversation)'
+            : `Conversation compacted: ${msg.before_messages} → ${msg.after_messages} messages`;
           this.#currentMessages.push({
             role: 'compaction',
-            content: `Conversation compacted: ${msg.before_messages} → ${msg.after_messages} messages`,
+            content: detail,
             timestamp: new Date().toISOString(),
           });
         }

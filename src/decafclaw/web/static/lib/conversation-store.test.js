@@ -569,3 +569,106 @@ describe('conversation activity status tracking', () => {
     expect(store.getConversationStatus('c1')).toBe('idle');
   });
 });
+
+// #1005 — the context meter must drop after a successful compaction.
+// Previously the store read `msg.usage.prompt_tokens`, which on a compacting
+// turn is the pre-compaction prompt (>100%) and nothing corrected it. The
+// server now carries a dedicated `context_usage` field: the post-compaction
+// estimate when the turn compacted, else the real last_prompt. The meter
+// prefers `context_usage`; it only falls back to `usage.prompt_tokens` for
+// older servers that predate the field.
+describe('ConversationStore context meter after compaction (#1005)', () => {
+  /** @type {FakeWS} */
+  let ws;
+  /** @type {ConversationStore} */
+  let store;
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = makeStore(ws);
+  });
+
+  it('drops the meter to the post-compaction estimate via context_usage', () => {
+    store.selectConversation('c1');
+    // Turn's last LLM call reported a prompt size above the threshold
+    // (>100% in the meter) — this is what `usage.prompt_tokens` still carries.
+    // The server computed the post-compaction estimate and forwarded it as
+    // context_usage (well under the limit).
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MESSAGE_COMPLETE,
+      conv_id: 'c1',
+      final: true,
+      role: 'assistant',
+      text: 'done',
+      usage: { prompt_tokens: 50_000, completion_tokens: 100 },
+      context_usage: 9_000,
+      context_limit: 48_000,
+    });
+    // The meter must reflect the post-compaction value, not the raw LLM usage.
+    expect(store.contextUsage).toBe(9_000);
+    // The limit is unchanged — only the usage numerator was corrected.
+    expect(store.contextLimit).toBe(48_000);
+  });
+
+  it('stays at the true value when the turn did not compact', () => {
+    store.selectConversation('c1');
+    // No compaction: context_usage is the real last_prompt (same as usage).
+    // The meter still correctly tracks the actual prompt size.
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MESSAGE_COMPLETE,
+      conv_id: 'c1',
+      final: true,
+      role: 'assistant',
+      text: 'done',
+      usage: { prompt_tokens: 20_000, completion_tokens: 50 },
+      context_usage: 20_000,
+      context_limit: 48_000,
+    });
+    expect(store.contextUsage).toBe(20_000);
+  });
+
+  it('ignores an older-server message without context_usage (fallback path)', () => {
+    store.selectConversation('c1');
+    // Older server: no context_usage field. The meter falls back to the
+    // historical behavior of reading usage.prompt_tokens.
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MESSAGE_COMPLETE,
+      conv_id: 'c1',
+      final: true,
+      role: 'assistant',
+      text: 'done',
+      usage: { prompt_tokens: 30_000, completion_tokens: 25 },
+      context_limit: 48_000,
+    });
+    expect(store.contextUsage).toBe(30_000);
+  });
+
+  it('leaves the meter alone when the conv id does not match', () => {
+    store.selectConversation('c1');
+    // First set a baseline value on the active conversation.
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MESSAGE_COMPLETE,
+      conv_id: 'c1',
+      final: true,
+      role: 'assistant',
+      text: 'baseline',
+      usage: { prompt_tokens: 10_000, completion_tokens: 10 },
+      context_usage: 10_000,
+      context_limit: 48_000,
+    });
+    expect(store.contextUsage).toBe(10_000);
+
+    // A MESSAGE_COMPLETE for another conversation must not affect c1.
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MESSAGE_COMPLETE,
+      conv_id: 'other',
+      final: true,
+      role: 'assistant',
+      text: 'other done',
+      usage: { prompt_tokens: 50_000, completion_tokens: 100 },
+      context_usage: 9_000,
+      context_limit: 48_000,
+    });
+    expect(store.contextUsage).toBe(10_000);
+  });
+});

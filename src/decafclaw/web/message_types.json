@@ -29,8 +29,8 @@
     },
     "compaction_done": {
       "direction": "server_to_client",
-      "description": "Conversation history compaction completed; client should reload history.",
-      "fields": {"conv_id": "string", "before_messages": "number", "after_messages": "number"}
+      "description": "Conversation history compaction finished (success or failure); client should reload history. `success` is false when the summarization failed, in which case the conversation is unchanged (#1005).",
+      "fields": {"conv_id": "string", "success": "boolean", "before_messages": "number", "after_messages": "number"}
     },
     "confirm_request": {
       "direction": "server_to_client",
@@ -64,8 +64,8 @@
     },
     "message_complete": {
       "direction": "server_to_client",
-      "description": "Final form of an assistant message after streaming completed (or when replayed from history).",
-      "fields": {"conv_id": "string", "text": "string", "role": "string?", "final": "boolean?", "usage": "object?", "context_limit": "number?"}
+      "description": "Final form of an assistant message after streaming completed (or when replayed from history). `context_usage` is the context meter's value: the post-compaction estimate when this turn compacted, else the turn's last LLM prompt size (#1005).",
+      "fields": {"conv_id": "string", "text": "string", "role": "string?", "final": "boolean?", "usage": "object?", "context_usage": "number?", "context_limit": "number?"}
     },
     "model_changed": {
       "direction": "server_to_client",

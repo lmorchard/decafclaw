@@ -23,6 +23,7 @@ from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
 from decafclaw.web.message_types import (
     ServerMessage,
     SrvCanvasUpdate,
+    SrvCompactionDone,
     SrvConfirmationResponse,
     SrvConfirmRequest,
     SrvConvHistory,
@@ -965,6 +966,8 @@ def _subscribe_to_conv(state, conv_id):
                 msg_complete["final"] = event["final"]
             if "usage" in event:
                 msg_complete["usage"] = event["usage"]
+            if "context_usage" in event:
+                msg_complete["context_usage"] = event["context_usage"]
             if "context_limit" in event:
                 msg_complete["context_limit"] = event["context_limit"]
             await ws_send(msg_complete)
@@ -1027,14 +1030,18 @@ def _subscribe_to_conv(state, conv_id):
             )
 
         elif event_type == "compaction_end":
-            await ws_send(
-                {
-                    "type": WSMessageType.COMPACTION_DONE,
-                    "conv_id": event_conv_id,
-                    "before_messages": event.get("before_messages", 0),
-                    "after_messages": event.get("after_messages", 0),
-                }
-            )
+            # #1005 — forward the success flag so the web UI can mark a failed
+            # compaction as such (the old notice read "compacted" even on
+            # failure). The context-meter correction is carried by
+            # message_complete.context_usage, not this frame.
+            compaction_done: SrvCompactionDone = {
+                "type": WSMessageType.COMPACTION_DONE,
+                "conv_id": event_conv_id,
+                "before_messages": event.get("before_messages", 0),
+                "after_messages": event.get("after_messages", 0),
+                "success": event.get("success", True),
+            }
+            await ws_send(compaction_done)
 
     sub_id = manager.subscribe(conv_id, on_conv_event)
     subscriptions[conv_id] = sub_id

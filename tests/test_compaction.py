@@ -189,6 +189,96 @@ class TestCompactHistory:
         assert result is False
 
     @pytest.mark.asyncio
+    async def test_compaction_end_reports_post_estimate_on_success(self, ctx, populated_archive):
+        """#1005 — compaction_end must carry a post-compaction estimate so the
+        context meter can update, and the estimate must be recorded on
+        ctx.tokens.last_compaction_estimate for the turn's message_complete.
+
+        The estimate is computed over the *rebuilt* history (summary +
+        protected + recent), NOT the pre-compaction ``last_prompt`` that the
+        turn's last LLM call reported (which by definition was >threshold)."""
+        ctx.config.compaction.preserve_turns = 5
+        history = [{"role": "user", "content": f"message {i}"} for i in range(8)]
+
+        events: list[dict] = []
+        ctx.event_bus.subscribe(events.append)
+        mock_response = {
+            "content": "Summary of earlier conversation.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        end = [e for e in events if e["type"] == "compaction_end"]
+        assert len(end) == 1
+        assert end[0]["success"] is True
+        # The estimate is computed over the rebuilt history (the actual
+        # prompt size the next turn would send), not the old last_prompt.
+        expected = estimate_tokens(flatten_messages(history))
+        assert end[0]["estimated_tokens_after"] == expected
+        # Authoritative meter figure threaded through to message_complete.
+        assert ctx.tokens.last_compaction_estimate == expected
+
+    @pytest.mark.asyncio
+    async def test_compaction_end_reports_failure_on_llm_error(self, ctx, populated_archive):
+        """#1005 — when compaction fails, the event must say so and not carry
+        a post-compaction estimate (history is unchanged, meter stays put)."""
+        ctx.config.compaction.preserve_turns = 5
+        history = [{"role": "user", "content": "test"}]
+
+        events: list[dict] = []
+        ctx.event_bus.subscribe(events.append)
+
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, side_effect=Exception("LLM error")):
+            result = await compact_history(ctx, history)
+
+        assert result is False
+        end = [e for e in events if e["type"] == "compaction_end"]
+        assert len(end) == 1
+        assert end[0]["success"] is False
+        assert end[0].get("estimated_tokens_after") is None
+        assert ctx.tokens.last_compaction_estimate is None
+
+    @pytest.mark.asyncio
+    async def test_persist_failure_leaves_history_untouched(self, ctx, populated_archive):
+        """#1005 — a failed sidecar write must leave the live history intact
+        and report the compaction as not successful. The rebuilt list is
+        persisted before the in-memory swap, so a write failure is caught
+        with the original history in place: the compaction_end success flag
+        and the context meter both reflect "no change" rather than a
+        shortened view the disk never actually got."""
+        ctx.config.compaction.preserve_turns = 5
+        history = [{"role": "user", "content": f"message {m}"} for m in range(8)]
+        original = list(history)
+
+        events: list[dict] = []
+        ctx.event_bus.subscribe(events.append)
+        mock_response = {
+            "content": "Summary of earlier conversation.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with (
+            patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response),
+            patch("decafclaw.compaction.write_compacted_history", side_effect=OSError("disk full")),
+        ):
+            result = await compact_history(ctx, history)
+
+        assert result is False
+        assert history == original
+        end = [e for e in events if e["type"] == "compaction_end"]
+        assert len(end) == 1
+        assert end[0]["success"] is False
+        assert end[0].get("estimated_tokens_after") is None
+        assert ctx.tokens.last_compaction_estimate is None
+
+    @pytest.mark.asyncio
     async def test_incremental_compaction(self, ctx, config):
         """Second compaction should only summarize newly-old turns."""
         conv_id = "test-conv"
