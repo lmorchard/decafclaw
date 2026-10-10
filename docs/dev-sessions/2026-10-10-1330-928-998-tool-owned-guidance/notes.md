@@ -29,4 +29,14 @@ Combining #928 and #998 to provide prompt-owned tool usage guidelines dynamicall
 ## Architectural Improvements
 - Clean separation of concerns: `TurnRunner` in `agent.py` no longer performs manual array slicing or message pointer tracking; it delegates mid-turn tool message updates to `ContextComposer.update_iteration_tools()`.
 - Trust boundary verified: `tests/test_discovered_skills_consumers.py` explicitly records the `get_trusted_skill_tool_names` gate requiring `skills.grants_capability(info)`.
+- Adversarial self-review catches:
+  1. Guarded against untrusted workspace skills attempting to inject guidance by declaring a tool with a colliding name (e.g. `workspace_read`): core tool guidelines are strictly sourced from authentic core definitions.
+  2. Fixed defensive fallback in `get_trusted_skill_tool_names` when `discovered_skills` is `None` or absent.
+  3. Preserved prompt ordering in `sync_tool_messages` so mid-turn updates place tool messages after `<vault_guide>` rather than displacing it.
+
+## Pull Request
+- PR: https://github.com/lmorchard/decafclaw/pull/1044
+- Issues: Closes #928, Closes #998
+- All CI checks green (lint-and-test, check-tui, js-test). Project board status moved to `In review`.
+
 
