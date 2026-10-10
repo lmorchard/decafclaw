@@ -267,6 +267,22 @@ async def test_run_case_passes_through_loadout_and_model(config, patched_call_ll
 
 
 @pytest.mark.asyncio
+async def test_run_case_renders_tool_guidance(config, patched_call_llm):
+    """Active tools' prompt_guidelines reach the system prompt, as in production; MCP never does."""
+    case = Case(name="t", scenario="x", expected="t", near_miss=["u"])
+    loadout = [
+        {"function": {"name": "workspace_edit"}, "prompt_guidelines": ["Edit surgically."]},
+        {"function": {"name": "mcp__srv__tool"}, "prompt_guidelines": ["MCP says hi."]},
+    ]
+
+    await run_case(case, model="m", config=config, tool_loadout=loadout)
+
+    system = patched_call_llm.calls[0]["messages"][0]["content"]
+    assert "<tool_guidance>\n- Edit surgically.\n</tool_guidance>" in system
+    assert "MCP says hi." not in system
+
+
+@pytest.mark.asyncio
 async def test_run_cases_concurrency(config, patched_call_llm):
     """run_cases returns one result per case, in order."""
     cases = [Case(name=f"c{i}", scenario=str(i), expected="t", near_miss=["u"]) for i in range(5)]

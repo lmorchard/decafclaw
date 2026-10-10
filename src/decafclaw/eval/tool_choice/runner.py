@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from ...llm import call_llm
 from ...prompts import load_system_prompt
+from ...tools.tool_registry import build_tool_guidance_text
 from .case import Case
 
 log = logging.getLogger(__name__)
@@ -94,6 +95,17 @@ async def run_case(
         deferred_text = build_deferred_list_text(deferred)
         if deferred_text:
             system_prompt += f"\n\n{deferred_text}"
+
+    # Mirror production's <tool_guidance> block. The loadout is already
+    # capability-tier only (see loadout.py); MCP tools never contribute.
+    trusted = {
+        name: td.get("prompt_guidelines") or []
+        for td in tool_loadout
+        if not (name := td.get("function", {}).get("name", "")).startswith("mcp__")
+    }
+    guidance_text = build_tool_guidance_text(tool_loadout, trusted)
+    if guidance_text:
+        system_prompt += f"\n\n{guidance_text}"
 
     messages = [
         {"role": "system", "content": system_prompt},

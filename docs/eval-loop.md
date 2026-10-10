@@ -379,7 +379,7 @@ uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --include-mcp  # 
 For each YAML case, the runner:
 
 1. Builds the **fully-loaded** tool schema (every core tool + every discovered skill's `tools.py` exports; MCP off by default). No deferral, no activation gating — the eval measures description overlap under fair conditions.
-2. Sends one chat completion with the system prompt + the case's user message + the full tool schema. Same `load_system_prompt(config)` assembly the full-agent runner uses (see [System prompt](#system-prompt)).
+2. Sends one chat completion with the system prompt + the case's user message + the full tool schema. Same `load_system_prompt(config)` assembly the full-agent runner uses (see [System prompt](#system-prompt)). Active tools' `prompt_guidelines` are appended as a `<tool_guidance>` block, mirroring production (see [docs/tools.md](tools.md#tool-owned-prompt-guidance-prompt_guidelines-928--998)); MCP tools never contribute.
 3. Captures the first tool name from `tool_calls` (or `<no_tool>` if the model emits text only). No tool execution, no agent loop iteration — the overlap signal we care about lives in the *first* decision.
 4. Aggregates results into a per-pair overlap report: for each declared `(expected, near_miss)` pair, what fraction of cases swapped to the near-miss?
 
