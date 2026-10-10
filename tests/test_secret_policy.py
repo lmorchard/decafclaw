@@ -140,6 +140,71 @@ async def test_all_tools_refuse_secret_paths(ctx, path, name):
     assert target.read_text() == before
 
 
+# ---------------------------------------------------------------------------
+# 1b. Refusal must be decided on the RESOLVED path, not the raw string.
+# ---------------------------------------------------------------------------
+# The rule is fail-safe: it may over-match but must never under-match. Before #1013's
+# fix every tool checked the *lexical* tool-path against the globs, while
+# _resolve_admin_path resolved the path (collapsing `..`, following symlinks). A path
+# that resolves to a secret store but is spelled so its raw form misses the globs
+# therefore read/clobbered the store. These pin that the check rides on resolution.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ALL_TOOL_NAMES)
+async def test_all_tools_refuse_dotdot_spelled_secret(ctx, name):
+    """`subdir/../web_tokens.json` resolves to web_tokens.json — must refuse, not read."""
+    target = _ensure(ctx.config, "web_tokens.json")
+    target.write_text("a-real-secret-value")
+    (ctx.config.agent_path / "subdir").mkdir(parents=True, exist_ok=True)
+    crafted = "subdir/../web_tokens.json"
+    confirm = _mock_confirm(approved=True)
+    ctx.request_confirmation = confirm
+
+    r = await _call(ctx, name, crafted)
+    text = _text(r)
+    assert "protected secret" in text
+    assert "a-real-secret-value" not in text
+    assert confirm.call_count == 0
+    assert target.read_text() == "a-real-secret-value"
+
+
+def test_admin_read_refuses_symlink_to_secret_file(ctx):
+    """A symlink named innocently that points at a secret store must refuse."""
+    target = _ensure(ctx.config, "web_tokens.json")
+    target.write_text("session-token=LEAKME")
+    link = ctx.config.agent_path / "notes.txt"
+    link.symlink_to(target.name)  # same-dir, relative link target
+
+    r = tool_admin_read(ctx, "notes.txt")
+    assert "protected secret" in _text(r)
+    assert "LEAKME" not in _text(r)
+
+
+@pytest.mark.asyncio
+async def test_admin_write_refuses_symlink_to_secret_file(ctx):
+    """Writing through a symlink into a secret store is a clobber — must refuse."""
+    target = _ensure(ctx.config, "web_tokens.json")
+    target.write_text("original-tokens")
+    (ctx.config.agent_path / "notes.txt").symlink_to(target.name)
+    ctx.request_confirmation = _mock_confirm(approved=True)
+
+    r = await tool_admin_write(ctx, "notes.txt", "clobbered")
+    assert "protected secret" in _text(r)
+    assert target.read_text() == "original-tokens"
+    assert ctx.request_confirmation.call_count == 0
+
+
+def test_admin_read_refuses_dotted_secret_path_into_store(ctx):
+    """Refusal of a secret store's file must hold when the path is dotted into it."""
+    (ctx.config.agent_path / "mcp_oauth").mkdir(parents=True, exist_ok=True)
+    (ctx.config.agent_path / "mcp_oauth" / "linear.json").write_text("oauth-secret")
+    (ctx.config.agent_path / "sub").mkdir(parents=True, exist_ok=True)
+    r = tool_admin_read(ctx, "sub/../mcp_oauth/linear.json")
+    assert "protected secret" in _text(r)
+    assert "oauth-secret" not in _text(r)
+
+
 def _unused_anchor():
     pass
 

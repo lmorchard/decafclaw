@@ -56,10 +56,13 @@ needs a single extension point, not a per-tool fix:
 
 - **Refuse** — the agent gets nothing. Applied to *all six tools*, before
   confirmation, reading, or mutation. The default set is:
-  `web_tokens.json`, `browser_tokens.json`, `mcp_oauth/**`, `*.pem`, `*.key`,
-  `**/keys/*`, `service_account*.json`. `admin_list` still shows the *name* of a
-  refused file (a name is not its contents) but refuses to descend into a
-  refused directory.
+   `web_tokens.json`, `browser_tokens.json`, `mcp_oauth/**`, `*.pem`, `*.key`,
+   `**/keys/*`, `service_account*.json`. `admin_list` still shows the *name* of a
+   refused file (a name is not its contents) but refuses to descend into a
+   refused directory. The check runs on the path's *resolved* location
+   (`subdir/../web_tokens.json`, a symlink named innocently, …), so a spelling
+   that resolves into a secret store is refused too — the rule may over-match,
+   but never under-match.
 - **Redact** — applied to `config.json` and `mcp_servers.json` on `admin_read`.
   The agent sees the structure and every non-secret field, with secret leaf
   values replaced by the fixed marker `<redacted>`. The redacted set is the

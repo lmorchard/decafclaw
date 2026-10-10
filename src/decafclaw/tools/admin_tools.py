@@ -107,24 +107,34 @@ def _resolve_admin_path(config, path_str: str, *, allow_root: bool = False) -> t
     return target, None
 
 
-def _normalize_rel(path_str: str) -> str:
-    """Normalize a raw admin tool path string to the forward-slash, dot-free form
-    that the secret_policy rules expect (the caller has already checked containment
-    against the agent directory, so we just canonicalize the form)."""
-    segs = [s for s in str(path_str).replace("\\", "/").strip("/").split("/") if s not in ("", ".")]
-    return "/".join(segs)
+def _agent_rel(resolved: Path, config: Any) -> str:
+    """Forward-slash path of ``resolved`` relative to ``config.agent_path``.
 
-
-def _refuse_if_secret(config, path_str: str) -> ToolResult | None:
-    """Return a refusal ToolResult if ``path_str`` is a protected secret, else None.
-
-    Every admin tool calls this after path resolution (including the mutation
-    *recovery* path): the refusal applies before confirmation, reading, or
-    mutation, so a secret store can neither be read nor modified through admin
-    tools. See decafclaw.secret_policy for the one shared rule.
+    Admin tools resolve the raw tool path through ``_resolve_admin_path`` (which calls
+    ``.resolve()``), then consult the secret rule on this *resolved* relative form —
+    not the raw string. Matching on the resolved location is what closes the evasion
+    where a path that resolves to a secret store is spelled so its lexical form misses
+    the default globs (``subdir/../web_tokens.json``, a symlink named innocently, ...).
     """
-    if is_refused(_normalize_rel(path_str), config):
-        return ToolResult(text=refusal_message(path_str))
+    agent_dir = config.agent_path.resolve()
+    try:
+        rel = resolved.resolve().relative_to(agent_dir)
+    except ValueError:
+        return ""
+    return "/".join(rel.parts)
+
+
+def _refuse_if_secret(resolved: Path, config: Any, display: str) -> ToolResult | None:
+    """Return a refusal ToolResult if the *resolved* path is a protected secret.
+
+    Every admin tool calls this after ``_resolve_admin_path`` (including the mutation
+    *recovery* path), before confirmation, reading, or mutation, so a secret store can
+    neither be read nor modified through admin tools. The check runs on the resolved
+    location, so spelling evasions (``..``, symlinks) don't under-match the rule; the raw
+    ``display`` string is only used in the user-facing message. See decafclaw.secret_policy.
+    """
+    if is_refused(_agent_rel(resolved, config), config):
+        return ToolResult(text=refusal_message(display))
     return None
 
 
@@ -355,7 +365,7 @@ def tool_admin_read(
         return ToolResult(text=err)
     assert resolved is not None
 
-    refusal = _refuse_if_secret(ctx.config, path)
+    refusal = _refuse_if_secret(resolved, ctx.config, path)
     if refusal is not None:
         return refusal
 
@@ -374,7 +384,7 @@ def tool_admin_read(
     # is computed from the *redacted* text so the agent cannot infer secret length
     # from the byte count. A JSON parse failure is treated as a refusal (fail-closed).
     redacted_paths: list[str] = []
-    rel = _normalize_rel(path)
+    rel = _agent_rel(resolved, ctx.config)
     if is_redactable(rel):
         outcome = redact_text(content, ctx.config)
         if outcome is None:
@@ -442,7 +452,7 @@ def tool_admin_list(ctx: "Context", path: str = ".") -> str | ToolResult:
     # Listing into a protected secret directory is refused. The *file name* of a
     # refused file may still appear when listing its parent (a name is not its
     # contents), per the issue; only descending *into* the secret store is blocked.
-    refusal = _refuse_if_secret(ctx.config, path)
+    refusal = _refuse_if_secret(resolved, ctx.config, path)
     if refusal is not None:
         return refusal
 
@@ -486,7 +496,7 @@ async def tool_admin_write(ctx: "Context", path: str, content: str) -> str | Too
         return ToolResult(text=err)
     assert resolved is not None
 
-    refusal = _refuse_if_secret(ctx.config, path)
+    refusal = _refuse_if_secret(resolved, ctx.config, path)
     if refusal is not None:
         return refusal
     # Marker guard: refuse to write the redaction placeholder — it would clobber
@@ -552,7 +562,7 @@ async def tool_admin_replace_lines(
         return ToolResult(text=err)
     assert resolved is not None
 
-    refusal = _refuse_if_secret(ctx.config, path)
+    refusal = _refuse_if_secret(resolved, ctx.config, path)
     if refusal is not None:
         return refusal
     if marker_in(content):
@@ -637,7 +647,7 @@ async def tool_admin_edit(
         return ToolResult(text=err)
     assert resolved is not None
 
-    refusal = _refuse_if_secret(ctx.config, path)
+    refusal = _refuse_if_secret(resolved, ctx.config, path)
     if refusal is not None:
         return refusal
     # Guard on new_text (what actually gets written). old_text may legitimately
@@ -720,7 +730,7 @@ async def tool_admin_delete(ctx: "Context", path: str, recursive: bool = False) 
         return ToolResult(text=err)
     assert resolved is not None
 
-    refusal = _refuse_if_secret(ctx.config, path)
+    refusal = _refuse_if_secret(resolved, ctx.config, path)
     if refusal is not None:
         return refusal
 
@@ -872,7 +882,7 @@ class AdminMutationHandler:
         assert resolved is not None
 
         # Secret-path refusal: the same rule every other tool consults.
-        refusal = _refuse_if_secret(ctx.config, path)
+        refusal = _refuse_if_secret(resolved, ctx.config, path)
         if refusal is not None:
             return refusal
 
