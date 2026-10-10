@@ -173,7 +173,13 @@ async def _setup_workspace(config, test_case: dict):
     # let a test fixture clobber files outside the temp workspace on the runner.
     workspace_files = setup.get("workspace_files", {})
     workspace_root = config.workspace_path.resolve()
+    now_eval = datetime.now()
+    today_sched_ts = now_eval.strftime("%Y%m%d-030000")
+    today_str = now_eval.strftime("%Y-%m-%d")
     for rel_path, content in workspace_files.items():
+        rel_path = rel_path.replace("{today_sched_ts}", today_sched_ts).replace("{today}", today_str)
+        if isinstance(content, str):
+            content = content.replace("{today_sched_ts}", today_sched_ts).replace("{today}", today_str)
         rel = Path(rel_path)
         if rel.is_absolute():
             raise ValueError(f"workspace_files path must be relative: {rel_path}")
@@ -325,7 +331,12 @@ def _check_workspace_assertions(test_case: dict, workspace_path: Path) -> tuple[
 
     workspace_root = workspace_path.resolve()
 
+    now_eval = datetime.now()
+    today_sched_ts = now_eval.strftime("%Y%m%d-030000")
+    today_str = now_eval.strftime("%Y-%m-%d")
+
     def _resolve(rel_path: str) -> Path:
+        rel_path = rel_path.replace("{today_sched_ts}", today_sched_ts).replace("{today}", today_str)
         rel = Path(rel_path)
         if rel.is_absolute():
             raise ValueError(f"expect_workspace path must be relative: {rel_path}")

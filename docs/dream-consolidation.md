@@ -17,12 +17,16 @@ Both commands can be configured with a specific model for quality page writing. 
 
 Runs through four phases:
 
-1. **Orient** — survey existing vault pages and their summaries
-2. **Gather** — scan recent journal entries and search conversations for new insights, corrections, preferences, and overlooked themes
+1. **Orient** — call `dream_recent_runs` to review what memory consolidation runs happened in the last 7 days (narrative summaries and vault pages touched) so recent work is not rehashed, and survey existing vault pages and their summaries
+2. **Gather** — scan recent journal entries and search recent conversations (via `conversation_search` with `days=7` or narrower) for new insights, corrections, preferences, and overlooked themes
 3. **Consolidate** — update existing vault pages or create new ones, add `[[wiki-links]]`, convert relative dates to absolute, then call [`vault_update_frontmatter`](vault.md#page-frontmatter) (`overwrite=False`) to fill `summary`, `keywords`, `tags`, and an initial `importance` score — never clobbering fields a human set manually
 4. **Prune** — resolve contradictions, note corrections in Sources sections
 
 Always ends with a short narrative summary — what was consolidated and any new pages created. When the cycle was quiet, the summary is prefixed with `HEARTBEAT_OK` so the scheduler's log-line stays tidy; the narrative still reaches the newsletter via the archive. Scheduled runs are logged only, not posted to any channel.
+
+#### Dream Skill Tools
+
+- **`dream_recent_runs(days=7)`** — returns scheduled dream runs from the last N days (default 7), including `started_at`, `final_message`, and `vault_pages_touched`. Uses shared activity collection over `schedule-dream-*` conversation archives without separate storage to prune.
 
 ### Vault Gardening (`!garden`)
 
