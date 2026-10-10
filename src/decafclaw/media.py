@@ -112,6 +112,10 @@ class MediaHandler:
     # Web and Terminal set False (refs render in-place).
     strips_workspace_refs: bool = True
 
+    # Whether this handler uploads media to an external platform (e.g. Mattermost).
+    # Handlers that store files locally (LocalFileMediaHandler) set this to False.
+    uploads_to_platform: bool = True
+
     async def save_media(self, conv_id: str, filename: str, data: bytes, content_type: str) -> MediaSaveResult:
         """Save media and return a result describing where it went.
 
@@ -191,6 +195,8 @@ def extract_workspace_media(text: str, workspace_path: Path) -> tuple[str, list[
 
 class LocalFileMediaHandler(MediaHandler):
     """Media handler for terminal and web UI — saves to conversation uploads."""
+
+    uploads_to_platform: bool = False
 
     def __init__(self, config, strips_workspace_refs: bool = False):
         self.config = config

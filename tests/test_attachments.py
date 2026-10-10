@@ -5,6 +5,7 @@ import base64
 from decafclaw.attachments import (
     list_conversation_attachments,
     read_attachment_base64,
+    read_attachment_bytes,
     save_attachment,
     uploads_dir,
 )
@@ -43,6 +44,19 @@ def test_save_attachment_collision_handling(config):
     assert r1["filename"] != r2["filename"]
     assert r1["filename"].startswith("test-")
     assert r2["filename"].startswith("test-")
+
+
+def test_read_attachment_bytes(config):
+    data = b"hello bytes"
+    result = save_attachment(config, "conv1", "file.bin", data, "application/octet-stream")
+
+    raw = read_attachment_bytes(config, result)
+    assert raw == data
+
+
+def test_read_attachment_bytes_missing_file(config):
+    result = read_attachment_bytes(config, {"path": "conversations/conv1/uploads/gone.bin"})
+    assert result is None
 
 
 def test_read_attachment_base64(config):

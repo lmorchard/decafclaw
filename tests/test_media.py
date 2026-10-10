@@ -168,6 +168,7 @@ async def test_base_handler_save_media_raises():
 def test_base_handler_strips_workspace_refs_default():
     handler = MediaHandler()
     assert handler.strips_workspace_refs is True
+    assert handler.uploads_to_platform is True
 
 
 # -- Helper: fake config for save_attachment --
@@ -185,6 +186,7 @@ def test_local_handler_strips_workspace_refs_default():
     config = _FakeConfig(workspace_path=Path("/tmp"))
     handler = LocalFileMediaHandler(config)
     assert handler.strips_workspace_refs is False
+    assert handler.uploads_to_platform is False
 
 
 def test_local_handler_strips_workspace_refs_enabled():
@@ -234,6 +236,7 @@ def _make_mock_http():
 
 def test_mattermost_handler_strips_workspace_refs():
     assert MattermostMediaHandler.strips_workspace_refs is True
+    assert MattermostMediaHandler.uploads_to_platform is True
 
 
 @pytest.mark.asyncio
