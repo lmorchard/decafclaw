@@ -429,7 +429,7 @@ var request2 = (config, options) => {
   const login = options.method === "POST" && options.url === "/api/auth/login";
   const logout = options.method === "POST" && options.url === "/api/auth/logout";
   const vaultGuard = options.method === "GET" && options.url === "/api/auth/me" && options.discardResponse;
-  const diagnostics = options.method === "GET" && options.url === "/api/conversations/{id}/context";
+  const diagnostics = options.method === "GET" && ["/api/conversations/{id}/context", "/api/conversations/{id}/context/raw"].includes(options.url);
   const sticky = options.url === "/api/sticky/{conv_id}";
   const widgetCatalog = options.method === "GET" && options.url === "/api/widgets";
   const canvasState = options.method === "GET" && options.url === "/api/canvas/{conv_id}";
@@ -751,6 +751,25 @@ var DefaultService = class {
     return request2(OpenAPI, {
       method: "GET",
       url: "/api/conversations/{id}/context",
+      path: {
+        "id": id
+      },
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
+   * Get Context Raw
+   * Return raw last request payload for a conversation.
+   * @param id
+   * @returns ContextRawResponse Successful Response
+   * @throws ApiError
+   */
+  static getContextRawApiConversationsIdContextRawGet(id) {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/conversations/{id}/context/raw",
       path: {
         "id": id
       },

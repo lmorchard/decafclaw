@@ -142,6 +142,7 @@ def test_delete_removes_dir_with_nested_files(tmp_path):
     (uploads / "file").write_text("data")
     (convdir / "workflow.json").write_text("{}")
     (convdir / "archive.jsonl").write_text("{}")
+    (convdir / "last_request.json").write_text("{}")
     delete_conversation_files(cfg, "abc")
     assert not convdir.exists()
 
@@ -155,14 +156,25 @@ def test_delete_also_removes_leftover_flat_sidecars(tmp_path):
     root.mkdir(parents=True)
     flat_archive = root / "abc.jsonl"
     flat_notes = root / "abc.notes.md"
+    flat_last_request = root / "abc.last_request.json"
     flat_archive.write_text("{}")
     flat_notes.write_text("- note")
+    flat_last_request.write_text("{}")
     delete_conversation_files(cfg, "abc")
     assert not flat_archive.exists()
     assert not flat_notes.exists()
+    assert not flat_last_request.exists()
 
 
 def test_delete_is_noop_when_nothing_exists(tmp_path):
     cfg = _cfg(tmp_path)
     # Should not raise.
     delete_conversation_files(cfg, "abc")
+
+
+def test_last_request_path(tmp_path):
+    from decafclaw.conversation_paths import last_request_path
+
+    cfg = _cfg(tmp_path)
+    p = last_request_path(cfg, "conv-123")
+    assert p == conversations_root(cfg) / "conv-123" / "last_request.json"

@@ -1,8 +1,11 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
+import { showToast } from '../lib/toast.js';
+import { copyToClipboard } from '../lib/utils.js';
 
 /** @typedef {import('../lib/api-client/index.js').ContextDiagnosticsResponse} Diagnostics */
 /** @typedef {import('../lib/api-client/index.js').ContextSource} Source */
+/** @typedef {import('../lib/api-client/index.js').ContextRawResponse} ContextRaw */
 
 const SOURCE_COLORS = {
   system_prompt: '#4A90D9',
@@ -34,9 +37,14 @@ export class ContextInspector extends LitElement {
     convId: { type: String },
     open: { type: Boolean, reflect: true },
     contextVersion: { type: Number },  // bumped by parent when context changes
+    _tab: { type: String, state: true },
+    _style: { type: String, state: true },
     _data: { type: Object, state: true },
     _loading: { type: Boolean, state: true },
     _error: { type: String, state: true },
+    _rawData: { type: Object, state: true },
+    _rawLoading: { type: Boolean, state: true },
+    _rawError: { type: String, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -46,18 +54,39 @@ export class ContextInspector extends LitElement {
     this.convId = '';
     this.open = false;
     this.contextVersion = 0;
+    this._tab = 'diagnostics';
+    this._style = '';
     /** @type {Diagnostics|null} */
     this._data = null;
     this._loading = false;
     this._error = '';
+    /** @type {ContextRaw|null} */
+    this._rawData = null;
+    this._rawLoading = false;
+    this._rawError = '';
+  }
+
+  willUpdate(changed) {
+    if (changed.has('open') && this.open) {
+      this.#positionPanel();
+    }
   }
 
   updated(changed) {
     if (changed.has('open') && this.open && this.convId) {
-      this.#fetchData();
+      if (this._tab === 'raw') {
+        this.#fetchRawData();
+      } else {
+        this.#fetchData();
+      }
+    }
+    if (changed.has('_tab') && this.open && this.convId && this._tab === 'raw' && !this._rawData && !this._rawLoading) {
+      this.#fetchRawData();
     }
     if (changed.has('open')) {
       if (this.open) {
+        this._onResize = () => this.#positionPanel();
+        window.addEventListener('resize', this._onResize);
         // Defer so the current click doesn't immediately close
         requestAnimationFrame(() => {
           this._onDocClick = (e) => {
@@ -68,25 +97,49 @@ export class ContextInspector extends LitElement {
           document.addEventListener('click', this._onDocClick, true);
         });
       } else {
-        this.#removeDocClickListener();
+        this.#cleanupListeners();
       }
     }
     // Re-fetch when context changes while inspector is open
-    if (changed.has('contextVersion') && this.open && this.convId && !this._loading) {
-      this.#fetchData();
+    if (changed.has('contextVersion') && this.open && this.convId) {
+      if (this._tab === 'raw' && !this._rawLoading) {
+        this.#fetchRawData();
+      } else if (this._tab === 'diagnostics' && !this._loading) {
+        this.#fetchData();
+      }
     }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    this.#removeDocClickListener();
+    this.#cleanupListeners();
   }
 
-  #removeDocClickListener() {
+  #cleanupListeners() {
     if (this._onDocClick) {
       document.removeEventListener('click', this._onDocClick, true);
       this._onDocClick = null;
     }
+    if (this._onResize) {
+      window.removeEventListener('resize', this._onResize);
+      this._onResize = null;
+    }
+  }
+
+  #positionPanel() {
+    const anchor = this.parentElement || this;
+    const rect = typeof anchor.getBoundingClientRect === 'function'
+      ? anchor.getBoundingClientRect()
+      : { left: 16, top: 0 };
+    const winWidth = typeof window !== 'undefined' ? (window.innerWidth || 1024) : 1024;
+    const panelWidth = Math.min(720, winWidth - 32);
+    let left = Math.max(16, rect.left || 16);
+    if (left + panelWidth > winWidth - 16) {
+      left = Math.max(8, winWidth - panelWidth - 8);
+    }
+    const winHeight = typeof window !== 'undefined' ? (window.innerHeight || 768) : 768;
+    const bottom = Math.max(8, winHeight - (rect.top || 0) + 4);
+    this._style = `left:${left}px; bottom:${bottom}px; width:${panelWidth}px;`;
   }
 
   async #fetchData() {
@@ -102,6 +155,34 @@ export class ContextInspector extends LitElement {
       }
     } finally {
       this._loading = false;
+    }
+  }
+
+  async #fetchRawData() {
+    if (!this.convId) return;
+    this._rawLoading = true;
+    this._rawError = '';
+    this._rawData = null;
+    try {
+      this._rawData = await DefaultService.getContextRawApiConversationsIdContextRawGet(this.convId);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 404)) {
+        this._rawError = e instanceof ApiError ? `HTTP ${e.status}` : e.message || 'Failed to load';
+      }
+    } finally {
+      this._rawLoading = false;
+    }
+  }
+
+  async #copyRaw() {
+    if (!this._rawData) return;
+    try {
+      const text = JSON.stringify(this._rawData, null, 2);
+      await copyToClipboard(text);
+      showToast('Copied raw context');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Copy failed: ${msg}`);
     }
   }
 
@@ -251,11 +332,48 @@ export class ContextInspector extends LitElement {
     `;
   }
 
+  #renderRaw() {
+    if (this._rawLoading) {
+      return html`<div class="loading">Loading...</div>`;
+    }
+    if (this._rawError) {
+      return html`<div class="error-msg">Error: ${this._rawError}</div>`;
+    }
+    if (!this._rawData) {
+      return html`<div class="empty-msg">No raw request data yet</div>`;
+    }
+    const d = this._rawData;
+    return html`
+      <div class="raw-view">
+        <div class="raw-actions">
+          <div class="raw-meta">
+            Model: <strong>${d.model || '—'}</strong>
+          </div>
+          <button
+            type="button"
+            class="copy-raw-btn dc-small-btn"
+            @click=${this.#copyRaw}
+          >Copy JSON</button>
+        </div>
+        <div class="raw-section">
+          <h4>Messages (${d.messages?.length || 0})</h4>
+          <pre class="raw-pre"><code>${JSON.stringify(d.messages || [], null, 2)}</code></pre>
+        </div>
+        <div class="raw-section">
+          <h4>Tools (${d.tools?.length || 0})</h4>
+          <pre class="raw-pre"><code>${JSON.stringify(d.tools || [], null, 2)}</code></pre>
+        </div>
+      </div>
+    `;
+  }
+
   render() {
     if (!this.open) return nothing;
 
     let content;
-    if (this._loading) {
+    if (this._tab === 'raw') {
+      content = this.#renderRaw();
+    } else if (this._loading) {
       content = html`<div class="loading">Loading...</div>`;
     } else if (this._error) {
       content = html`<div class="error-msg">Error: ${this._error}</div>`;
@@ -272,9 +390,27 @@ export class ContextInspector extends LitElement {
     }
 
     return html`
-      <div class="inspector">
+      <div class="inspector" style=${this._style}>
         <div class="inspector-header">
-          <h3>Context Inspector</h3>
+          <div class="inspector-title-row">
+            <h3>Context Inspector</h3>
+            <div class="inspector-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                class="tab-btn ${this._tab === 'diagnostics' ? 'active' : ''}"
+                aria-selected=${this._tab === 'diagnostics'}
+                @click=${() => { this._tab = 'diagnostics'; }}
+              >Diagnostics</button>
+              <button
+                type="button"
+                role="tab"
+                class="tab-btn ${this._tab === 'raw' ? 'active' : ''}"
+                aria-selected=${this._tab === 'raw'}
+                @click=${() => { this._tab = 'raw'; }}
+              >Raw</button>
+            </div>
+          </div>
           <button class="close-btn dc-icon-btn" @click=${() => this.dispatchEvent(new Event('close'))} title="Close context inspector" aria-label="Close context inspector">&times;</button>
         </div>
         ${content}

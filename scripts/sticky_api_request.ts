@@ -15,7 +15,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
     // Keep the main session check on its existing transport; only the vault
     // guard selects the response-discarding overload.
     const vaultGuard = options.method === 'GET' && options.url === '/api/auth/me' && options.discardResponse;
-    const diagnostics = options.method === 'GET' && options.url === '/api/conversations/{id}/context';
+    const diagnostics = options.method === 'GET'
+        && ['/api/conversations/{id}/context', '/api/conversations/{id}/context/raw'].includes(options.url);
     const sticky = options.url === '/api/sticky/{conv_id}';
     const widgetCatalog = options.method === 'GET' && options.url === '/api/widgets';
     const canvasState = options.method === 'GET' && options.url === '/api/canvas/{conv_id}';

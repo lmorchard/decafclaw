@@ -1063,6 +1063,12 @@ class ContextDiagnosticsResponse(BaseModel):
     compaction_threshold: int | None = None
 
 
+class ContextRawResponse(BaseModel):
+    model: str | None = None
+    messages: list[dict[str, JsonValue]] | None = None
+    tools: list[dict[str, JsonValue]] | None = None
+
+
 async def get_context_diagnostics(request: Request, id: str) -> JSONResponse:
     """Return context composer diagnostics for a conversation."""
     from .context_composer import read_context_sidecar
@@ -1079,6 +1085,25 @@ async def get_context_diagnostics(request: Request, id: str) -> JSONResponse:
     data = read_context_sidecar(config, conv_id)
     if data is None:
         return JSONResponse({"error": "no context data"}, status_code=404)
+    return JSONResponse(data)
+
+
+async def get_context_raw(request: Request, id: str) -> JSONResponse:
+    """Return raw last request payload for a conversation."""
+    from .context_composer import read_last_request_sidecar
+    from .web.conversations import ConversationIndex, can_read_conversation
+
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    conv_id = id
+    index = ConversationIndex(config)
+    if not can_read_conversation(config, index, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    data = read_last_request_sidecar(config, conv_id)
+    if data is None:
+        return JSONResponse({"error": "no raw context data"}, status_code=404)
     return JSONResponse(data)
 
 
@@ -3147,6 +3172,12 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             get_context_diagnostics,
             methods=["GET"],
             response_model=ContextDiagnosticsResponse,
+        ),
+        APIRoute(
+            "/api/conversations/{id}/context/raw",
+            get_context_raw,
+            methods=["GET"],
+            response_model=ContextRawResponse,
         ),
         APIRoute(
             "/api/conversations/{id}/export",
