@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { showToast } from '../lib/toast.js';
 import { copyToClipboard } from '../lib/utils.js';
+import '../widgets/json_view/widget.js';
 
 /** @typedef {import('../lib/api-client/index.js').ContextDiagnosticsResponse} Diagnostics */
 /** @typedef {import('../lib/api-client/index.js').ContextSource} Source */
@@ -38,6 +39,7 @@ export class ContextInspector extends LitElement {
     open: { type: Boolean, reflect: true },
     contextVersion: { type: Number },  // bumped by parent when context changes
     _tab: { type: String, state: true },
+    _rawFormat: { type: String, state: true },
     _data: { type: Object, state: true },
     _loading: { type: Boolean, state: true },
     _error: { type: String, state: true },
@@ -54,6 +56,7 @@ export class ContextInspector extends LitElement {
     this.open = false;
     this.contextVersion = 0;
     this._tab = 'diagnostics';
+    this._rawFormat = 'tree';
     /** @type {Diagnostics|null} */
     this._data = null;
     this._loading = false;
@@ -330,22 +333,49 @@ export class ContextInspector extends LitElement {
       <div class="raw-view">
         <div class="raw-actions">
           <div class="raw-meta">
-            Model: <strong>${d.model || '—'}</strong>
+            Model: <strong>${d.model || '—'}</strong> &bull;
+            ${d.messages?.length || 0} messages &bull;
+            ${d.tools?.length || 0} tools
           </div>
-          <button
-            type="button"
-            class="copy-raw-btn dc-small-btn"
-            @click=${this.#copyRaw}
-          >Copy JSON</button>
+          <div class="raw-view-controls">
+            <div class="inspector-tabs" role="group" aria-label="JSON view format">
+              <button
+                type="button"
+                class="tab-btn ${this._rawFormat === 'tree' ? 'active' : ''}"
+                @click=${() => { this._rawFormat = 'tree'; }}
+              >Tree</button>
+              <button
+                type="button"
+                class="tab-btn ${this._rawFormat === 'text' ? 'active' : ''}"
+                @click=${() => { this._rawFormat = 'text'; }}
+              >JSON</button>
+            </div>
+            <button
+              type="button"
+              class="copy-raw-btn dc-small-btn"
+              @click=${this.#copyRaw}
+            >Copy JSON</button>
+          </div>
         </div>
-        <div class="raw-section">
-          <h4>Messages (${d.messages?.length || 0})</h4>
-          <pre class="raw-pre"><code>${JSON.stringify(d.messages || [], null, 2)}</code></pre>
-        </div>
-        <div class="raw-section">
-          <h4>Tools (${d.tools?.length || 0})</h4>
-          <pre class="raw-pre"><code>${JSON.stringify(d.tools || [], null, 2)}</code></pre>
-        </div>
+        ${this._rawFormat === 'tree' ? html`
+          <div class="raw-section">
+            <h4>Messages (${d.messages?.length || 0})</h4>
+            <dc-widget-json-view .data=${{ value: d.messages || [], expand_depth: 2 }} .mode=${'canvas'}></dc-widget-json-view>
+          </div>
+          <div class="raw-section">
+            <h4>Tools (${d.tools?.length || 0})</h4>
+            <dc-widget-json-view .data=${{ value: d.tools || [], expand_depth: 1 }} .mode=${'canvas'}></dc-widget-json-view>
+          </div>
+        ` : html`
+          <div class="raw-section">
+            <h4>Messages (${d.messages?.length || 0})</h4>
+            <pre class="raw-pre"><code>${JSON.stringify(d.messages || [], null, 2)}</code></pre>
+          </div>
+          <div class="raw-section">
+            <h4>Tools (${d.tools?.length || 0})</h4>
+            <pre class="raw-pre"><code>${JSON.stringify(d.tools || [], null, 2)}</code></pre>
+          </div>
+        `}
       </div>
     `;
   }
@@ -375,7 +405,6 @@ export class ContextInspector extends LitElement {
     }
 
     return html`
-      <div class="inspector-backdrop" @click=${() => this.dispatchEvent(new Event('close'))}></div>
       <div class="inspector" role="dialog" aria-modal="true" aria-label="Context Inspector" @click=${(e) => e.stopPropagation()}>
         <div class="inspector-header">
           <div class="inspector-title-row">

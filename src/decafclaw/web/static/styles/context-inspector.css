@@ -8,30 +8,19 @@ context-inspector[open] {
   display: block;
 }
 
-context-inspector .inspector-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  background: rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(2px);
-}
-
 context-inspector .inspector {
   position: fixed;
   z-index: 1000;
-  top: 5vh;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(60vw, calc(100vw - 2rem));
-  min-width: 480px;
-  height: 90vh;
-  max-height: 90vh;
+  top: 1rem;
+  bottom: 5.25rem;
+  left: 1rem;
+  width: min(88vw, calc(100vw - 2rem));
   display: flex;
   flex-direction: column;
   background: var(--pico-card-background-color, #fff);
   border: 1px solid var(--pico-muted-border-color, #ddd);
   border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
   padding: 1rem 1.25rem;
   font-size: 0.8rem;
   color: var(--pico-color, #333);
@@ -40,10 +29,10 @@ context-inspector .inspector {
 
 @media (max-width: 600px) {
   context-inspector .inspector {
+    left: 0.5rem;
     width: calc(100vw - 1rem);
-    min-width: unset;
-    top: 2.5vh;
-    height: 95vh;
+    top: 0.5rem;
+    bottom: 4.5rem;
     padding: 0.75rem;
   }
 }
@@ -114,6 +103,12 @@ context-inspector .raw-actions {
   flex-shrink: 0;
 }
 
+context-inspector .raw-view-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 context-inspector .raw-meta {
   font-size: 0.75rem;
   color: var(--pico-muted-color);
@@ -132,6 +127,15 @@ context-inspector .raw-section h4 {
   font-weight: 600;
   color: var(--pico-muted-color);
   flex-shrink: 0;
+}
+
+context-inspector dc-widget-json-view {
+  background: var(--pico-code-background-color, #f8f9fa);
+  border: 1px solid var(--pico-muted-border-color, #eee);
+  border-radius: 4px;
+  padding: 0.5rem;
+  max-height: 400px;
+  overflow: auto;
 }
 
 context-inspector .raw-pre {
