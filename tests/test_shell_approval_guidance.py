@@ -272,6 +272,118 @@ async def test_tool_shell_guidance_add_and_remove_rule(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_tool_shell_guidance_save_preset_new_and_update(tmp_path: Path):
+    """Test saving active conversation rules to a new preset, and updating it (#1031)."""
+    ctx = _make_mock_ctx(tmp_path)
+    ctx.tools.aux_approval_guidance = [
+        "Auto-approve gh pr create and git push",
+        "Auto-approve npm run test:watch",
+    ]
+
+    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
+        mock_confirm.return_value = {"approved": True}
+
+        # 1. Save new preset with all active conversation rules
+        res = await tool_shell_guidance(ctx, action="save_preset", preset="my_project")
+        assert isinstance(res, str)
+        assert "Created custom shell auto-approval preset `my_project`" in res
+        assert "- Auto-approve gh pr create and git push" in res
+        assert "- Auto-approve npm run test:watch" in res
+        assert mock_confirm.call_args.kwargs.get("force") is True
+
+        # Check saved presets file
+        p_file = ctx.config.agent_path / "shell_approval_presets.json"
+        assert p_file.exists()
+        data = json.loads(p_file.read_text())
+        assert "my_project" in data
+        assert "- Auto-approve gh pr create and git push" in data["my_project"]
+
+        # 2. Update existing preset with a specific new rule
+        res_update = await tool_shell_guidance(
+            ctx, action="save_preset", preset="my_project", rule="Auto-approve make check"
+        )
+        assert isinstance(res_update, str)
+        assert "Updated custom shell auto-approval preset `my_project`" in res_update
+        assert "- Auto-approve make check" in res_update
+
+        # Verify it merged on disk
+        data_updated = json.loads(p_file.read_text())
+        assert "- Auto-approve make check" in data_updated["my_project"]
+        assert "- Auto-approve gh pr create and git push" in data_updated["my_project"]
+
+        # 3. Verify newly saved preset appears in 'list' and can be enabled
+        res_list = await tool_shell_guidance(ctx, action="list")
+        assert "**`my_project`**" in res_list
+
+        fresh_ctx = _make_mock_ctx(tmp_path)
+        res_enable = await tool_shell_guidance(fresh_ctx, action="enable_preset", preset="my_project")
+        assert isinstance(res_enable, str)
+        assert "Enabled shell auto-approval preset `my_project` for this conversation" in res_enable
+        assert "my_project" in fresh_ctx.tools.active_aux_approval_presets
+        guidelines = resolve_aux_approval_guidance(fresh_ctx)
+        assert any("gh pr create" in g for g in guidelines)
+
+        # 4. Save preset when target initially exists only in config.shell.aux_approval_presets (#1033 review)
+        fresh_ctx.config.shell.aux_approval_presets = {
+            "from_config": "Auto-approve make build",
+        }
+        res_update_config = await tool_shell_guidance(
+            fresh_ctx, action="save_preset", preset="from_config", rule="Auto-approve make test"
+        )
+        assert isinstance(res_update_config, str)
+        assert "Updated custom shell auto-approval preset `from_config`" in res_update_config
+        # Verify both configured and new rules are present in the disk file
+        data_cfg_updated = json.loads(p_file.read_text())
+        assert "- Auto-approve make build" in data_cfg_updated["from_config"]
+        assert "- Auto-approve make test" in data_cfg_updated["from_config"]
+
+
+@pytest.mark.asyncio
+async def test_tool_shell_guidance_save_preset_validations(tmp_path: Path):
+    """Test validations for save_preset (empty name, built-in overwrite, no rules)."""
+    ctx = _make_mock_ctx(tmp_path)
+
+    # 1. Missing preset name
+    res_no_name = await tool_shell_guidance(ctx, action="save_preset", preset="")
+    assert isinstance(res_no_name, ToolResult)
+    assert "preset' name is required" in res_no_name.text
+
+    # 2. Cannot overwrite built-in preset
+    res_builtin = await tool_shell_guidance(ctx, action="save_preset", preset="developer")
+    assert isinstance(res_builtin, ToolResult)
+    assert "cannot overwrite built-in preset 'developer'" in res_builtin.text
+
+    # 3. No rules to save
+    res_no_rules = await tool_shell_guidance(ctx, action="save_preset", preset="custom_prj")
+    assert isinstance(res_no_rules, ToolResult)
+    assert "no guidance rules to save" in res_no_rules.text
+
+    # 4. Denied by user confirmation
+    ctx.tools.aux_approval_guidance = ["Auto-approve something"]
+    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
+        mock_confirm.return_value = {"approved": False}
+        res_denied = await tool_shell_guidance(ctx, action="save_preset", preset="custom_prj")
+        assert isinstance(res_denied, ToolResult)
+        assert "[error: denied]" in res_denied.text
+
+    # 5. Malformed presets file aborts and does not overwrite existing file
+    p_file = ctx.config.agent_path / "shell_approval_presets.json"
+    p_file.write_text("NOT VALID JSON")
+    res_corrupt = await tool_shell_guidance(ctx, action="save_preset", preset="custom_prj")
+    assert isinstance(res_corrupt, ToolResult)
+    assert "unreadable or malformed" in res_corrupt.text
+    # Verify file was not overwritten with blank catalog
+    assert p_file.read_text() == "NOT VALID JSON"
+
+    # 6. Presets file with non-string values is rejected
+    p_file.write_text(json.dumps({"bad_entry": None}))
+    res_non_string = await tool_shell_guidance(ctx, action="save_preset", preset="custom_prj")
+    assert isinstance(res_non_string, ToolResult)
+    assert "unreadable or malformed" in res_non_string.text
+    assert "must be strings" in res_non_string.text
+
+
+@pytest.mark.asyncio
 async def test_tool_shell_guidance_unattended_denied(tmp_path: Path):
     ctx = _make_mock_ctx(tmp_path)
     ctx.is_unattended = True

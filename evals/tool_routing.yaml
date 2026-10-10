@@ -172,3 +172,18 @@
           preset: developer
     max_tool_calls: 3
     max_tool_errors: 0
+
+- name: "routes to shell_guidance save_preset to preserve active conversation guidance"
+  tests: routing
+  setup:
+    config_overrides: {reflection.enabled: false}
+  input: "Please bundle and save our current shell auto-approval guidance rules into a new preset called 'web_deploy' so we can reuse it later."
+  expect:
+    expect_tool: shell_guidance
+    expect_tool_args:
+      - tool: shell_guidance
+        args:
+          action: save_preset
+          preset: web_deploy
+    max_tool_calls: 3
+    max_tool_errors: 0
