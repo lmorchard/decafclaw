@@ -769,3 +769,31 @@ class TestGuidanceProvenance:
         ctx.tools.dynamic_providers = {"dyn_skill": lambda c: ({"dyn_tool": lambda: None}, [dyn_def])}
 
         assert "Dynamic untrusted guidance." not in self._guidance(ctx)
+
+    def test_trusted_activated_contributions_take_precedence_over_preload(self, ctx, monkeypatch):
+        from decafclaw import tool_definitions
+
+        ctx.config.discovered_skills = [
+            SkillInfo(name="trusted_skill", description="", location=Path("/b"), trust_tier="bundled"),
+        ]
+        stale = _make_tool_def("skill_tool", prompt_guidelines=["Stale preloaded guidance."])
+        current = _make_tool_def("skill_tool", prompt_guidelines=["Current activated guidance."])
+        renamed = _make_tool_def("trusted_skill__other", prompt_guidelines=["Renamed tool guidance."])
+        monkeypatch.setitem(tool_definitions._skill_def_cache, id(ctx.config), [stale])
+        ctx.tools.extra_definitions = [current, renamed]
+        ctx.tools.skill_contributions = {"trusted_skill": ({}, [current, renamed])}
+
+        text = self._guidance(ctx)
+        assert "Current activated guidance." in text
+        assert "Renamed tool guidance." in text
+        assert "Stale preloaded guidance." not in text
+
+    def test_workspace_activated_contributions_do_not_contribute(self, ctx):
+        ctx.config.discovered_skills = [
+            SkillInfo(name="ws_skill", description="", location=Path("/w"), trust_tier="workspace"),
+        ]
+        ws_def = _make_tool_def("ws_tool", prompt_guidelines=["Workspace activated guidance."])
+        ctx.tools.extra_definitions = [ws_def]
+        ctx.tools.skill_contributions = {"ws_skill": ({}, [ws_def])}
+
+        assert "Workspace activated guidance." not in self._guidance(ctx)

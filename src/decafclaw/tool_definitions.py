@@ -191,7 +191,10 @@ def collect_trusted_tool_guidelines(ctx: "Context") -> dict[str, list[str]]:
     keeps agent-authored text out of the ``<tool_guidance>`` system block.
 
     Precedence: core tools, then trusted skills' dynamic providers (this
-    turn's ``get_tools`` output), then trusted skills' static definitions.
+    turn's ``get_tools`` output), then what trusted skills registered on
+    activation (``skill_contributions`` — current after a reload, and carries
+    names that activation renamed to dodge a collision), then the pre-loaded
+    static definitions for trusted skills that aren't activated.
     """
     guidelines: dict[str, list[str]] = {}
 
@@ -203,10 +206,17 @@ def collect_trusted_tool_guidelines(ctx: "Context") -> dict[str, list[str]]:
 
     _add(TOOL_DEFINITIONS)
     skills_by_name = {s.name: s for s in ctx.config.discovered_skills}
-    for skill_name in ctx.tools.dynamic_providers:
+
+    def _trusted(skill_name: str) -> bool:
         info = skills_by_name.get(skill_name)
-        if info is not None and grants_capability(info):
+        return info is not None and grants_capability(info)
+
+    for skill_name in ctx.tools.dynamic_providers:
+        if _trusted(skill_name):
             _add(ctx.tools.dynamic_provider_definitions.get(skill_name, []))
+    for skill_name, (_, tool_defs) in ctx.tools.skill_contributions.items():
+        if _trusted(skill_name):
+            _add(tool_defs)
     _add(_preloaded_skill_defs(ctx))
     return guidelines
 

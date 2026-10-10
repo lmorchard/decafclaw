@@ -283,6 +283,22 @@ async def test_run_case_renders_tool_guidance(config, patched_call_llm):
 
 
 @pytest.mark.asyncio
+async def test_run_case_tool_guidance_keeps_first_definition(config, patched_call_llm):
+    """Duplicate names keep the first (core) definition's guidance, matching production."""
+    case = Case(name="t", scenario="x", expected="t", near_miss=["u"])
+    loadout = [
+        {"function": {"name": "workspace_edit"}, "prompt_guidelines": ["Core guidance."]},
+        {"function": {"name": "workspace_edit"}, "prompt_guidelines": ["Skill guidance."]},
+    ]
+
+    await run_case(case, model="m", config=config, tool_loadout=loadout)
+
+    system = patched_call_llm.calls[0]["messages"][0]["content"]
+    assert "Core guidance." in system
+    assert "Skill guidance." not in system
+
+
+@pytest.mark.asyncio
 async def test_run_cases_concurrency(config, patched_call_llm):
     """run_cases returns one result per case, in order."""
     cases = [Case(name=f"c{i}", scenario=str(i), expected="t", near_miss=["u"]) for i in range(5)]
