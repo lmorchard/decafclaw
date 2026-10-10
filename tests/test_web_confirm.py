@@ -252,3 +252,72 @@ def test_request_via_manager_uses_empty_label_defaults():
     assert req.approve_label == ""
     assert req.deny_label == ""
     assert req.action_data["suggested_pattern"] == "tv list-screens *"
+
+
+def test_confirmation_to_dict_includes_decline_reason_and_suggested_rule():
+    """_confirmation_to_dict forwards decline_reason and suggested_rule to the client (#982)."""
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.web.websocket import _confirmation_to_dict
+
+    req = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={
+            "command": "git push origin my-feature",
+            "suggested_pattern": "git push origin *",
+            "decline_reason": "Modifies git remote state",
+            "suggested_rule": "Auto-approve git push to origin topic branches",
+        },
+        message="Shell command: `git push origin my-feature`",
+    )
+    payload = _confirmation_to_dict(req)
+    assert payload["decline_reason"] == "Modifies git remote state"
+    assert payload["suggested_rule"] == "Auto-approve git push to origin topic branches"
+
+
+def test_request_via_manager_forwards_decline_and_rule_fields():
+    """_request_via_manager maps decline_reason and suggested_rule to action_data and returns add_rule/rule."""
+    import asyncio
+
+    from decafclaw.confirmations import (
+        ConfirmationAction,
+        ConfirmationRequest,
+        ConfirmationResponse,
+    )
+    from decafclaw.tools.confirmation import _request_via_manager
+
+    captured: list[ConfirmationRequest] = []
+
+    async def fake_request_confirmation(request: ConfirmationRequest):
+        captured.append(request)
+        return ConfirmationResponse(
+            confirmation_id=request.confirmation_id,
+            approved=True,
+            add_rule=True,
+            rule="My custom exception rule",
+        )
+
+    class _ToolsState:
+        current_call_id = "call_test"
+
+    class _StubCtx:
+        tools = _ToolsState()
+        request_confirmation = staticmethod(fake_request_confirmation)
+
+    result = asyncio.run(
+        _request_via_manager(
+            _StubCtx(),
+            tool_name="shell",
+            command="git push origin my-branch",
+            message="Shell command: `git push origin my-branch`",
+            timeout=1.0,
+            decline_reason="Remote git push",
+            suggested_rule="Auto-approve push to my-branch",
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0].action_data["decline_reason"] == "Remote git push"
+    assert captured[0].action_data["suggested_rule"] == "Auto-approve push to my-branch"
+    assert result["approved"] is True
+    assert result["add_rule"] is True
+    assert result["rule"] == "My custom exception rule"

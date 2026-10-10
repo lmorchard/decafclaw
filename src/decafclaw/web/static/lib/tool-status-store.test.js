@@ -45,6 +45,42 @@ describe('ToolStatusStore', () => {
         expect(store.pendingConfirms.length).toBe(1);
     });
 
+    it('maps decline_reason and suggested_rule including action_data fallback (#982)', () => {
+        const ws = {};
+        const msgStore = {};
+        const store = new ToolStatusStore(() => {}, ws, msgStore);
+
+        // Top-level fields
+        store.handleMessage({
+            type: MESSAGE_TYPES.CONFIRM_REQUEST,
+            conv_id: '1',
+            confirmation_id: 'c1',
+            tool: 'shell',
+            command: 'gh pr create',
+            decline_reason: 'Creating PR modifies state',
+            suggested_rule: 'Auto-approve gh pr create',
+        }, '1');
+        expect(store.pendingConfirms.length).toBe(1);
+        expect(store.pendingConfirms[0].decline_reason).toBe('Creating PR modifies state');
+        expect(store.pendingConfirms[0].suggested_rule).toBe('Auto-approve gh pr create');
+
+        // action_data fallback
+        store.handleMessage({
+            type: MESSAGE_TYPES.CONFIRM_REQUEST,
+            conv_id: '1',
+            confirmation_id: 'c2',
+            tool: 'shell',
+            command: 'git push',
+            action_data: {
+                decline_reason: 'Pushing to remote',
+                suggested_rule: 'Auto-approve push to origin topic branches',
+            },
+        }, '1');
+        expect(store.pendingConfirms.length).toBe(2);
+        expect(store.pendingConfirms[1].decline_reason).toBe('Pushing to remote');
+        expect(store.pendingConfirms[1].suggested_rule).toBe('Auto-approve push to origin topic branches');
+    });
+
     it('handles CONFIRMATION_RESPONSE', () => {
         const ws = {};
         const msgStore = { markToolWidgetSubmitted: vi.fn() };

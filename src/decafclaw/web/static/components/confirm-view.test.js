@@ -96,4 +96,61 @@ describe('confirm-view dialog semantics', () => {
     expect(badge).toBeTruthy();
     expect(badge.textContent).toBe('⏱ No timeout');
   });
+
+  it('renders decline reason, editable rule, and Approve + remember why button (#982)', async () => {
+    let responded = null;
+    const fakeStore = {
+      respondToConfirm: (contextId, tool, toolCallId, approved, extra) => {
+        responded = { contextId, tool, toolCallId, approved, extra };
+      },
+    };
+
+    const el = /** @type {any} */ (document.createElement('confirm-view'));
+    el.store = fakeStore;
+    el.confirms = [{
+      context_id: 'ctx-982',
+      confirmation_id: 'c-982',
+      tool: 'shell',
+      tool_call_id: 'tc-982',
+      command: 'gh pr create',
+      suggested_pattern: 'gh pr create *',
+      decline_reason: 'Remote PR creation modifies external state',
+      suggested_rule: 'Auto-approve gh pr create in this repo',
+    }];
+    document.body.appendChild(el);
+    await el.updateComplete;
+
+    // Check decline reason display
+    const declineEl = el.querySelector('.confirm-decline-reason');
+    expect(declineEl).toBeTruthy();
+    expect(declineEl.textContent).toContain('Remote PR creation modifies external state');
+
+    // Check rule input
+    const input = el.querySelector('.confirm-rule-input');
+    expect(input).toBeTruthy();
+    expect(input.value).toBe('Auto-approve gh pr create in this repo');
+
+    // Check Approve + remember why button
+    const buttons = Array.from(el.querySelectorAll('.confirm-buttons button'));
+    const rememberBtn = buttons.find(b => b.textContent?.includes('Approve + remember why'));
+    expect(rememberBtn).toBeTruthy();
+
+    // Edit input and click
+    input.value = 'Auto-approve gh pr create in this repo (edited)';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    rememberBtn.click();
+
+    expect(responded).toEqual({
+      contextId: 'ctx-982',
+      tool: 'shell',
+      toolCallId: 'tc-982',
+      approved: true,
+      extra: {
+        add_rule: true,
+        rule: 'Auto-approve gh pr create in this repo (edited)',
+      },
+    });
+  });
 });

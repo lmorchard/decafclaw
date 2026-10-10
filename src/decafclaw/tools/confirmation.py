@@ -47,7 +47,7 @@ async def _request_via_manager(ctx: "Context", tool_name, command, message, time
 
     # Build action_data from the tool-specific parameters
     action_data: dict = {"command": command}
-    for key in ("suggested_pattern", "skill_name"):
+    for key in ("suggested_pattern", "skill_name", "decline_reason", "suggested_rule"):
         if key in extra_event_fields:
             action_data[key] = extra_event_fields[key]
     if "action_data" in extra_event_fields and isinstance(extra_event_fields["action_data"], dict):
@@ -71,6 +71,9 @@ async def _request_via_manager(ctx: "Context", tool_name, command, message, time
         result["always"] = True
     if response.add_pattern:
         result["add_pattern"] = True
+    if response.add_rule:
+        result["add_rule"] = True
+        result["rule"] = response.rule
     return result
 
 

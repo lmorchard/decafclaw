@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -44,6 +45,9 @@ def test_build_prompt_default_strict(tmp_path: Path):
 
     assert "Only auto-approve low risk read-only or harmless commands" in prompt
     assert "Additional Approval Guidelines:" not in prompt
+    assert '"suggested_rule": "<string or null>"' in prompt
+    assert "If auto_approve is false, formulate a concise, natural-language exception rule in suggested_rule" in prompt
+    assert "If auto_approve is true or no rule makes sense, set suggested_rule to null." in prompt
 
 
 def test_build_prompt_builtin_developer_preset(tmp_path: Path):
@@ -519,3 +523,66 @@ async def test_check_shell_approval_main_push_requires_confirmation(tmp_path: Pa
         res = await check_shell_approval(ctx, "git push origin main")
         assert res.get("approved") is False
         assert mock_confirm.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_exception_rule_added_on_approval_surfaces_in_subsequent_aux_evaluations(tmp_path: Path):
+    """End-to-end exception flow:
+
+    1. Command declined by aux reviewer with suggested exception rule.
+    2. User confirms with 'Approve + remember why' (add_rule=True).
+    3. Rule is added to ctx.tools.aux_approval_guidance.
+    4. Subsequent command evaluation receives the added rule in its prompt.
+    """
+    from decafclaw.tools.shell_tools import check_shell_approval
+
+    ctx = _make_mock_ctx(tmp_path)
+    ctx.config.shell.aux_approval_enabled = True
+
+    # 1. First command declined
+    mock_llm_decline = AsyncMock(
+        return_value={
+            "content": json.dumps(
+                {
+                    "auto_approve": False,
+                    "risk": "medium",
+                    "reason": "Creating PR modifies remote state",
+                    "suggested_rule": "Auto-approve gh pr create in this repository",
+                }
+            )
+        }
+    )
+    ctx.aux_llm = MagicMock(return_value=mock_llm_decline)
+
+    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
+        # User approves and remembers the rule (possibly edited)
+        mock_confirm.return_value = {
+            "approved": True,
+            "add_rule": True,
+            "rule": "Auto-approve gh pr create in this repository",
+        }
+        res1 = await check_shell_approval(ctx, "gh pr create --title 'Test PR'")
+        assert res1.get("approved") is True
+        assert "Auto-approve gh pr create in this repository" in ctx.tools.aux_approval_guidance
+
+    # 2. Second command evaluated by aux LLM: verify prompt contains the exception rule
+    captured_messages = []
+
+    async def mock_llm_subsequent(messages):
+        captured_messages.extend(messages)
+        return {
+            "content": json.dumps(
+                {
+                    "auto_approve": True,
+                    "risk": "low",
+                    "reason": "Matches exception rule for gh pr create",
+                }
+            )
+        }
+
+    ctx.aux_llm = MagicMock(return_value=mock_llm_subsequent)
+    res2 = await check_shell_approval(ctx, "gh pr create --title 'Another PR'")
+    assert res2.get("approved") is True
+    assert len(captured_messages) == 1
+    prompt_text = captured_messages[0]["content"]
+    assert "Auto-approve gh pr create in this repository" in prompt_text

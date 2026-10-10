@@ -565,7 +565,11 @@ def build_aux_approval_prompt(ctx: "Context", command: str) -> str:
         f"Command: {command}\n"
         f"Working Directory: {ctx.config.workspace_path}\n"
         "Determine if this is a low-risk command that should be auto-approved, or if it requires user confirmation.\n"
-        'Return a JSON object: {"auto_approve": bool, "reason": "<string>", "risk": "low" | "medium" | "high"}\n'
+        'Return a JSON object: {"auto_approve": bool, "reason": "<string>", "risk": "low" | "medium" | "high", "suggested_rule": "<string or null>"}\n'
+        "If auto_approve is false, formulate a concise, natural-language exception rule in suggested_rule phrased as a "
+        "constrained condition under which this command or class of operation is acceptable in this repo "
+        '(e.g. "Auto-approve gh pr create and git push during PR workflow in this repo"). '
+        "If auto_approve is true or no rule makes sense, set suggested_rule to null.\n"
     )
 
     if not guidelines:
@@ -656,6 +660,8 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
         log.info(f"[{tool_name}] pre-approved by command: {command}")
         return {"approved": True}
+    decline_reason = ""
+    suggested_rule = ""
     if ctx.config.shell.aux_approval_enabled:
         if _command_matches_pattern(command, ctx.tools.llm_approved_shell_patterns):
             log.info(f"[{tool_name}] auto-approved by session aux-LLM memory: {command}")
@@ -711,6 +717,9 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                     f"[{tool_name}] aux LLM declined auto-approval (risk: {data.get('risk')}): {command} - {data.get('reason')}"
                 )
 
+                decline_reason = str(data.get("reason") or "").strip()
+                suggested_rule = str(data.get("suggested_rule") or "").strip()
+
                 msg_content = f"Command: {command}\nRisk: {data.get('risk')}\nReason: {data.get('reason')}"
                 if not ctx.skip_archive:
                     try:
@@ -747,9 +756,20 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
         command=command,
         message=message or f"Shell command: `{command}`",
         suggested_pattern=suggested_pattern,
+        decline_reason=decline_reason,
+        suggested_rule=suggested_rule,
     )
-    if result.get("add_pattern"):
+    if result.get("approved") and result.get("add_pattern"):
         _save_allow_pattern(ctx.config, suggested_pattern)
+    if result.get("approved") and result.get("add_rule") and suggested_rule:
+        # If the user explicitly provided a rule field (including empty), use it;
+        # otherwise default to the reviewer's suggested_rule.
+        rule_val = result.get("rule")
+        new_rule = str(rule_val).strip() if rule_val is not None else suggested_rule.strip()
+        if new_rule:
+            if new_rule not in ctx.tools.aux_approval_guidance:
+                ctx.tools.aux_approval_guidance.append(new_rule)
+                log.info(f"[{tool_name}] added per-conversation aux approval rule: '{new_rule}'")
     return result
 
 

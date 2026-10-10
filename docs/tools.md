@@ -111,7 +111,11 @@ Background process management (`shell_background_start/status/stop/list`) lives 
 5. **Blanket tool pre-approval:** If the command passed the security monitor checks and `shell` (or the tool name) is in `ctx.tools.preapproved` (blanket approval from `allowed-tools`), it is approved. Placing this after the security monitor ensures that blanket tool approvals cannot run unvetted package installations or out-of-workspace file mutations without confirmation.
 6. **Auxiliary LLM auto-approval:** (If `config.shell.aux_approval_enabled` is true) The **auxiliary LLM** analyzes the command and its risk against the default policy and any active situational presets or prompt guidance (configured via `config.shell`, stored persistently in `shell_approval_guidance.json`, or activated with user confirmation via `shell_guidance`). Approved commands are cached in `ctx.tools.llm_approved_shell_patterns` for the conversation.
 
-Otherwise it falls through to a user confirmation prompt, which offers to save a suggested allow pattern.
+Otherwise it falls through to a user confirmation prompt. When the auxiliary reviewer declines auto-approval, it returns a decline reason and drafts a suggested natural-language exception rule (`suggested_rule`). The confirmation dialog then displays the decline reason and an **"Approve + remember why"** option (#982):
+- In the **Web UI**, the drafted rule appears in an editable field. Choosing "Approve + remember why" executes the command and adds the (optionally edited) rule to the conversation's active guidance (`ctx.tools.aux_approval_guidance`).
+- In **Mattermost**, the post shows the decline reason and suggested rule, offering an "Approve + remember why" button (and `:memo:` reaction).
+- Subsequent commands in that conversation are evaluated against the newly added guidance rule.
+- Users can also choose standard "Approve", "Deny", or "Allow Pattern" (which persists a glob pattern).
 
 **Unattended turns get the same allowlist and no prompt (#649).** Heartbeat and scheduled turns
 (`ctx.is_unattended`, i.e. `task_mode` in `{"heartbeat", "scheduled"}`) traverse exactly the branches

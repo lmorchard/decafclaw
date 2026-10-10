@@ -551,13 +551,16 @@ async def handle_confirm(request: Request) -> JSONResponse:
     # Extract manager-routing fields from token data
     conv_id = (token_data or {}).get("conv_id", "") or context.get("conv_id", "")
     confirmation_id = (token_data or {}).get("confirmation_id", "") or context.get("confirmation_id", "")
+    # Prefer authenticated rule bound into single-use token; fall back to context for tokenless/direct callbacks
+    rule = (token_data or {}).get("rule", "") or context.get("rule", "")
 
     log.info(f"Confirm callback: action={action} tool={tool_name} context={context_id[:8]}")
 
     # Map action to event fields
-    approved = action in ("approve", "always", "add_pattern")
+    approved = action in ("approve", "always", "add_pattern", "add_rule")
     always = action == "always"
     add_pattern = action == "add_pattern"
+    add_rule = action == "add_rule"
 
     # Route through manager if available, fall back to event bus
     if manager and conv_id and confirmation_id:
@@ -567,6 +570,8 @@ async def handle_confirm(request: Request) -> JSONResponse:
             approved=approved,
             always=always,
             add_pattern=add_pattern,
+            add_rule=add_rule,
+            rule=rule,
         )
     else:
         await event_bus.publish(
@@ -578,6 +583,8 @@ async def handle_confirm(request: Request) -> JSONResponse:
                 **({"tool_call_id": tool_call_id} if tool_call_id else {}),
                 **({"always": True} if always else {}),
                 **({"add_pattern": True} if add_pattern else {}),
+                **({"add_rule": True} if add_rule else {}),
+                **({"rule": rule} if rule else {}),
             }
         )
 
@@ -586,6 +593,7 @@ async def handle_confirm(request: Request) -> JSONResponse:
         "approve": "\u2705 Approved",
         "always": "\u2705 Always approved",
         "add_pattern": "\U0001f4d3 Approved + pattern added",
+        "add_rule": "\U0001f4dd Approved + rule added",
         "deny": "\U0001f44e Denied",
     }
     label = labels.get(action, f"\u2753 Unknown action: {action}")

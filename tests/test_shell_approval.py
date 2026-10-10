@@ -465,3 +465,106 @@ def test_load_allow_patterns_malformed_values(tmp_path, monkeypatch):
     path.write_text(json.dumps([None, 456, "ls *"]))
     assert _load_allow_patterns(cfg) == ["ls *"]
     assert _command_matches_pattern("ls -la", _load_allow_patterns(cfg)) is True
+
+
+@pytest.mark.asyncio
+async def test_aux_llm_declined_passes_suggested_rule_and_applies_on_approval(ctx):
+    """When aux LLM declines and provides suggested_rule, it is passed to confirmation
+
+    and added to ctx.tools.aux_approval_guidance if user chooses add_rule (#982).
+    """
+    ctx.config.shell.aux_approval_enabled = True
+
+    mock_call = AsyncMock(
+        return_value={
+            "content": json.dumps(
+                {
+                    "auto_approve": False,
+                    "reason": "Modifies git remote state",
+                    "risk": "medium",
+                    "suggested_rule": "Auto-approve git push to origin topic branches",
+                }
+            )
+        }
+    )
+    ctx.aux_llm = MagicMock(return_value=mock_call)
+
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.request_confirmation",
+            new_callable=AsyncMock,
+            return_value={
+                "approved": True,
+                "add_rule": True,
+                "rule": "Auto-approve git push to origin topic branches (edited)",
+            },
+        ) as mock_confirm,
+        patch("decafclaw.tools.shell_tools._execute_command", return_value="pushed"),
+    ):
+        result = await tool_shell(ctx, "git push origin my-feature")
+        assert result == "pushed"
+        mock_confirm.assert_awaited_once()
+        _, kwargs = mock_confirm.call_args
+        assert kwargs.get("decline_reason") == "Modifies git remote state"
+        assert kwargs.get("suggested_rule") == "Auto-approve git push to origin topic branches"
+        assert "Auto-approve git push to origin topic branches (edited)" in ctx.tools.aux_approval_guidance
+
+
+@pytest.mark.asyncio
+async def test_add_rule_ignored_when_denied_or_no_suggested_rule(ctx):
+    """If confirmation is denied or reviewer made no suggestion, add_rule is not applied."""
+    ctx.config.shell.aux_approval_enabled = True
+
+    # 1. Denied response with add_rule: True must not add rule
+    mock_call = AsyncMock(
+        return_value={
+            "content": json.dumps(
+                {
+                    "auto_approve": False,
+                    "reason": "Dangerous",
+                    "risk": "high",
+                    "suggested_rule": "Auto-approve danger",
+                }
+            )
+        }
+    )
+    ctx.aux_llm = MagicMock(return_value=mock_call)
+
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.request_confirmation",
+            new_callable=AsyncMock,
+            return_value={"approved": False, "add_rule": True, "rule": "Auto-approve danger"},
+        ),
+        patch("decafclaw.tools.shell_tools._execute_command", return_value="never"),
+    ):
+        result = await tool_shell(ctx, "danger-cmd")
+        assert "denied" in result.text
+        assert "Auto-approve danger" not in ctx.tools.aux_approval_guidance
+
+    # 2. Approved response when reviewer provided NO suggested_rule must not add arbitrary rule
+    mock_call2 = AsyncMock(
+        return_value={
+            "content": json.dumps(
+                {
+                    "auto_approve": False,
+                    "reason": "Unknown",
+                    "risk": "high",
+                    "suggested_rule": None,
+                }
+            )
+        }
+    )
+    ctx.aux_llm = MagicMock(return_value=mock_call2)
+
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.request_confirmation",
+            new_callable=AsyncMock,
+            return_value={"approved": True, "add_rule": True, "rule": "Unsolicited rule"},
+        ),
+        patch("decafclaw.tools.shell_tools._execute_command", return_value="ran"),
+    ):
+        result2 = await tool_shell(ctx, "some-cmd")
+        assert result2 == "ran"
+        assert "Unsolicited rule" not in ctx.tools.aux_approval_guidance

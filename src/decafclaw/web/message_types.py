@@ -155,6 +155,8 @@ class SrvConfirmRequest(TypedDict):
     tool: str
     command: str
     suggested_pattern: str
+    decline_reason: NotRequired[str]
+    suggested_rule: NotRequired[str]
     message: str
     approve_label: str
     deny_label: str
@@ -331,6 +333,8 @@ class CliConfirmResponse(TypedDict):
     approved: bool
     always: bool
     add_pattern: bool
+    add_rule: NotRequired[bool]
+    rule: NotRequired[str]
     data: NotRequired[dict[str, object]]
 
 
