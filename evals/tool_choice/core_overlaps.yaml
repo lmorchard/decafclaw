@@ -3,6 +3,42 @@
 # descriptions. The model should pick `expected`; the eval reports
 # overlap when it picks something on `near_miss` instead.
 
+# -- workspace_edit vs shell / workspace_replace_lines (#989) ------------------
+# These pin the #989 routing: a multi-line (or in-repo-checkout) edit whose
+# target text is in view is a workspace_edit, not a shell heredoc/sed and not
+# line-number arithmetic via workspace_replace_lines.
+
+- name: workspace-edit-multiline-block
+  scenario: |
+    workspace/projects/mypy/mypy_config.py currently contains exactly this:
+
+        def compute_limit(base: int) -> int:
+            factor = 2
+            return base * factor
+
+    Apply the edit now: change factor from 2 to 3 inside compute_limit.
+  expected: workspace_edit
+  near_miss: [shell, workspace_replace_lines]
+  notes: |
+    The full path and exact current text are in view, so the natural first call
+    is the edit. The near-misses are the two habits the old description trained:
+    reaching for shell (heredoc Python / sed) or line-number arithmetic via
+    workspace_replace_lines. (A defensive workspace_read before the edit is
+    permitted — it's not the steering failure #989 targets.)
+
+- name: workspace-edit-in-repo-checkout
+  scenario: |
+    In decafclaw/src/decafclaw/agent.py the line
+            max_tokens = int(prompt_tokens * 0.9)
+    lives inside _effective_threshold. Change the multiplier from 0.9 to 0.8.
+  expected: workspace_edit
+  near_miss: [shell, workspace_replace_lines]
+  notes: |
+    A file inside a git checkout under the workspace is still a workspace
+    file. The failure pattern was treating decafclaw/ as shell-only and patching
+    it with sed/heredoc. A single-value textual change with the target in view
+    is a workspace_edit.
+
 # -- vault_search vs conversation_search --------------------------------------
 
 - name: vault-vs-conv-decisions

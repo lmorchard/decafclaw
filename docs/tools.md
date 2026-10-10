@@ -24,7 +24,7 @@ Sandboxed file operations inside `data/{agent_id}/workspace/`. See [Data Layout]
 | `workspace_write` | ✓ | Write/overwrite a file, creating parents |
 | `workspace_list` | | List files and directories |
 | `workspace_append` | | Append content to a file |
-| `workspace_edit` | | Exact string replacement in a file |
+| `workspace_edit` | ✓ | Surgical text edits (single- or multi-line); default tool for edits where the text is in view |
 | `workspace_insert` | | Insert text at a specific line number |
 | `workspace_replace_lines` | | Replace or delete a range of lines |
 | `workspace_search` | | Regex search across workspace files |
