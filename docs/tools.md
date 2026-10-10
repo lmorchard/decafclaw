@@ -104,14 +104,14 @@ final arbiter. See [data-layout.md → Secret files](data-layout.md#secret-files
 
 Always-activated skill for the unified knowledge base. See [Vault](vault.md).
 
-| Tool | What it does |
-|------|--------------|
-| `vault_read` | Read a vault page by name or path |
-| `vault_write` | Create or overwrite a vault page; auto-indexes in embeddings |
-| `vault_journal_append` | Append a timestamped journal entry |
-| `vault_search` | Semantic + substring search across the vault |
-| `vault_list` | List pages with last-modified dates |
-| `vault_backlinks` | Find pages linking to a given page |
+| Tool | Always | What it does |
+|------|:------:|--------------|
+| `vault_read` | ✓ | Read a vault page by name or path |
+| `vault_write` | ✓ | Create or overwrite a vault page; auto-indexes in embeddings |
+| `vault_journal_append` | ✓ | Append a timestamped journal entry |
+| `vault_search` | ✓ | Semantic + substring search across the vault |
+| `vault_list` | ✓ | List pages with last-modified dates |
+| `vault_backlinks` | | Find pages linking to a given page |
 
 ## Conversation (`tools/conversation_tools.py`)
 

@@ -953,7 +953,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
-        "priority": "normal",
+        "priority": "low",
         "function": {
             "name": "workspace_insert",
             "description": "Insert text at a specific line number in a workspace file, pushing existing content down. Line numbers are 1-based. Use workspace_read first to see line numbers.",
@@ -979,7 +979,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
-        "priority": "normal",
+        "priority": "low",
         "function": {
             "name": "workspace_replace_lines",
             "description": "Replace a range of lines (1-based, inclusive) with new content. Pass empty content to delete lines. Use workspace_read first to see line numbers.",

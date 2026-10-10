@@ -1398,9 +1398,11 @@ class ContextComposer:
         # get_critical_names), fetched (via get_fetched_tools), and
         # activated skill tools (from ctx.tools.extra_definitions).
         # Plus declared priority: "critical" on the tool def itself.
+        always_loaded = getattr(config, "always_loaded_skill_tools", set()) or set()
+        on_demand = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions} - always_loaded
         already_critical: set[str] = get_critical_names(config)
         already_critical |= get_fetched_tools(ctx)
-        already_critical |= {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions}
+        already_critical |= on_demand
 
         all_defs = collect_all_tool_defs(ctx)
         # If the context restricts the usable tool set (eval runner,

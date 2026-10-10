@@ -136,8 +136,8 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
     "the catalog itself grants nothing.",
     (
         "tools/tool_registry.py",
-        "get_critical_names",
-    ): "NO GRANT: promotes tool names from always_loaded skills. Workspace "
+        "get_always_loaded_tool_names",
+    ): "NO GRANT: collects tool names from always_loaded skills. Workspace "
     "skills cannot be always_loaded — stripped at discovery and skipped "
     "again in activate_always_loaded — so this cannot see one.",
     ("tools/__init__.py", "execute_tool"): "NO GRANT: reads trust_tier to phrase an error message, and refuses "

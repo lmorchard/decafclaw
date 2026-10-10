@@ -17,13 +17,14 @@ Tiers are string values on the tool definition, parsed as the `Priority` enum in
 Priority is resolved per tool with this precedence (highest first):
 
 1. **`CRITICAL_TOOLS` env override** — names in this set are promoted to `critical` regardless of what the tool declares. Useful for pinning a specific MCP tool or giving a custom skill priority.
-2. **Activation-based promotion** — tools from activated skills, tools fetched via `tool_search`, and tool names from always-loaded skills all become `critical` at classification time (no declaration needed in the tool def itself).
-3. **Declared `priority` field** on the tool definition dict.
-4. **Default `normal`** — any tool without an explicit declaration (e.g. MCP server tools, which the MCP layer exposes without priority metadata).
+2. **Fetched / pre-emptive promotion** — tools fetched via `tool_search` and pre-emptive keyword matches are promoted to `critical` for that turn.
+3. **On-demand skill activation** — tools from activated on-demand skills without declared priority are promoted to `critical`.
+4. **Declared `priority` field** on the tool definition dict (`critical`, `normal`, `low`). Used by core tools and native tools of always-loaded skills (`vault`, `background`, `mcp`).
+5. **Default `normal`** — any tool without an explicit declaration (e.g. MCP server tools, which the MCP layer exposes without priority metadata).
 
-## Declaring priority on a core tool
+## Declaring priority on a core or skill tool
 
-Every entry in `TOOL_DEFINITIONS` carries a `"priority"` field alongside `"function"`:
+Every entry in core `TOOL_DEFINITIONS` and always-loaded skills (`vault`, `background`, `mcp`) carries a `"priority"` field alongside `"function"`:
 
 ```python
 {
@@ -41,18 +42,20 @@ When adding a new core tool, you **must** declare a priority — an invariant te
 
 ### Guidelines
 
-- **`critical`**: tools the agent needs in every conversation regardless of context. File I/O (`workspace_read`, `workspace_write`), `workspace_edit` (the default surgical-edit tool), shell, skill activation, delegation, the checklist loop, `tool_search`, time.
-- **`normal`**: widely useful but situational. Other file-editing variants (line-range `workspace_replace_lines`, `workspace_insert`, `workspace_append`), conversation search/compact, attachments.
-- **`low`**: debug/admin tools, rarely-called utilities (`wait`, `http_request`, `refresh_skills`, `debug_context`, `context_stats`, `health_status`, `heartbeat_trigger`, `shell_patterns`).
+- **`critical`**: tools the agent needs in every conversation regardless of context. File I/O (`workspace_read`, `workspace_write`), `workspace_edit` (the default surgical-edit tool), shell, skill activation, delegation (`delegate_task`), the checklist loop (`checklist_create`, `checklist_step_done`, `checklist_abort`, `checklist_status`), core vault tools (`vault_read`, `vault_write`, `vault_search`, `vault_list`, `vault_journal_append`), `notes_append`, time (`current_time`), and web ingestion (`web_fetch`).
+- **`normal`**: widely useful but situational. Workspace file discovery (`workspace_search`, `workspace_list`, `workspace_glob`, `workspace_diff`, `workspace_move`), secondary vault operations (`vault_delete`, `vault_recent`, `vault_tags`, `vault_backlinks`), `notes_read`, `delegate_tasks`, conversation search/compact, attachments.
+- **`low`**: admin tools (`admin_*`), specialized editing variants (`workspace_insert`, `workspace_replace_lines`, `vault_show_sections`, `vault_move_lines`, `vault_section`, `vault_update_frontmatter`, `vault_rename`, `vault_grant_folder`), background process tools (`shell_background_*`), MCP introspection tools (`mcp_*`), rarely-called utilities (`wait`, `http_request`, `refresh_skills`, `debug_context`, `context_stats`, `health_status`, `heartbeat_trigger`, `shell_patterns`, `shell_guidance`).
 
 ## Skill tools
 
-Skill tools don't declare priority. They're treated specially:
+Skill tools can declare an explicit `"priority"` field:
 
-- **Not activated** → not in the candidate pool at all (the skill catalog in the system prompt advertises the skill; activation is required).
-- **Activated** → promoted to `critical` automatically, so they dominate the active set once the user has opted in.
+- **Always-loaded skills** (`vault`, `background`, `mcp`): tools respect their declared priority. Only tools explicitly marked `critical` join the hard floor; `normal` tools compete for open slots, and `low` tools stay deferred behind `tool_search`.
+- **On-demand skills** (e.g. `project`, `tabstack`):
+  - **Not activated** → hidden from direct tool callability (advertised via the skill catalog in the system prompt; activation is required).
+  - **Activated** → undeclared tools are promoted to `critical` automatically, so they dominate the active set once the user or agent has opted in.
 
-This means the skill author doesn't need to worry about priority — activation *is* the priority signal.
+This allows always-loaded skills to expose rich toolsets without blowing the default active-tool budget.
 
 ## MCP tools
 
