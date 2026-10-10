@@ -41,8 +41,8 @@ When adding a new core tool, you **must** declare a priority — an invariant te
 
 ### Guidelines
 
-- **`critical`**: tools the agent needs in every conversation regardless of context. File I/O (`workspace_read`, `workspace_write`), shell, skill activation, delegation, the checklist loop, `tool_search`, time.
-- **`normal`**: widely useful but situational. File editing variants, conversation search/compact, attachments.
+- **`critical`**: tools the agent needs in every conversation regardless of context. File I/O (`workspace_read`, `workspace_write`), `workspace_edit` (the default surgical-edit tool), shell, skill activation, delegation, the checklist loop, `tool_search`, time.
+- **`normal`**: widely useful but situational. Other file-editing variants (line-range `workspace_replace_lines`, `workspace_insert`, `workspace_append`), conversation search/compact, attachments.
 - **`low`**: debug/admin tools, rarely-called utilities (`wait`, `http_request`, `refresh_skills`, `debug_context`, `context_stats`, `health_status`, `heartbeat_trigger`, `shell_patterns`).
 
 ## Skill tools

@@ -249,23 +249,26 @@ to-do lists, working files, and editable skills live here.
 - `drafts/` — in-progress writing (blog posts, docs) before they land in the vault or an external repo.
 - Do not leave the workspace root cluttered — periodically sweep or organize.
 
-**Prefer surgical, line-based tools over string-match edits and
-full rewrites:**
+**Edit tools, by what you're doing:**
 
 - `workspace_search` / `workspace_glob` — find files first
-- `workspace_read` — gets line numbers and exact current content
-- `workspace_replace_lines` — rewrite or delete a block by line
-  range; most reliable for multi-line edits
-- `workspace_insert` — add content at a specific line
+- `workspace_read` — see the exact current content and line numbers
+- `workspace_edit` — the default for surgical edits where you have the
+  text in view: single-line or multi-line. Replace an exact block with
+  another; no line-number arithmetic. Copy `old_text` from a fresh
+  `workspace_read` (or a prior edit's diff) — never reconstruct it from
+  memory. Fails if the text isn't found or matches more than once.
+- `workspace_replace_lines` / `workspace_insert` — edits by line number
+  (boundary rewrites, deletions by range, insertions)
 - `workspace_append` — add to the end of a file
-- `workspace_edit` — small targeted string replacements (typo,
-  URL swap, single identifier rename) where you have the exact
-  current content in mind. Fails if `old_text` doesn't match
-  character-for-character — prefer line-based tools for anything
-  multi-line
 - `workspace_move` / `workspace_delete` — rename or remove
 - `workspace_diff` — compare two files
 - `workspace_write` — new files or full rewrites only
+
+**Workspace files are workspace files.** This includes files inside git
+checkouts under the workspace (e.g. `decafclaw/`, `projects/<repo>/`). Read
+and edit them with `workspace_*` tools. Use `shell` for git, build, and test
+commands — not to edit file text with `sed`, heredocs, or `python`.
 
 Edit tools include a unified diff in their output — use it to
 verify edits without a follow-up `workspace_read`. For reads, use

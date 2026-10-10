@@ -563,3 +563,67 @@ def test_collect_never_emits_duplicate_names(ctx):
     assert not dupes, f"duplicate declarations would be sent to the provider: {dupes}"
     # Deduping must not drop the tool entirely.
     assert "a_genuinely_new_tool" in names
+
+
+# -- #989: workspace_edit is the default surgical-edit tool -------------------
+
+
+def _real_pool(config):
+    """Core tool defs + the real always-loaded skill tool defs
+    (background/mcp/vault), with ``config.always_loaded_skill_tools`` populated
+    the way startup activation does, so ``get_critical_names`` fires the
+    always-loaded branch. Reproduces the deployed default floor: 14 core-critical
+    + 24 always-loaded = 38 tools, which exceeds ``max_active_tools`` (30)."""
+    from decafclaw.skills import discover_skills, grants_capability
+    from decafclaw.tools.skill_tools import _load_native_tools
+
+    config.discovered_skills = discover_skills(config)
+    extra_defs = []
+    names = []
+    for info in config.discovered_skills:
+        if info.always_loaded and info.has_native_tools and grants_capability(info):
+            _tools, defs, _ = _load_native_tools(info)
+            extra_defs.extend(defs)
+            names.extend(d["function"]["name"] for d in defs)
+    config.always_loaded_skill_tools = set(names)
+    return list(TOOL_DEFINITIONS) + extra_defs
+
+
+class TestWorkspaceEditDefaultRouting:
+    """workspace_edit is the default surgical-edit tool; with the real floor it
+    must be in the active set. Fails on main (workspace_edit declared ``normal``
+    -> deferred under the 38-tool floor)."""
+
+    def test_workspace_edit_active_in_real_floor(self, config):
+        pool = _real_pool(config)
+        active, deferred = classify_tools(pool, config)
+        active_names = {td["function"]["name"] for td in active}
+        deferred_names = {td["function"]["name"] for td in deferred}
+        assert "workspace_edit" in active_names
+        assert "workspace_edit" not in deferred_names
+
+
+class TestWorkspaceEditDescription:
+    """The description is a control surface (#989): it must steer toward
+    workspace_edit as the default, never say 'use sparingly', and no longer
+    point users to workspace_replace_lines for multi-line edits."""
+
+    def _workspace_edit_def(self):
+        return next(td for td in TOOL_DEFINITIONS if td["function"]["name"] == "workspace_edit")
+
+    def test_stays_within_token_budget(self):
+        """#989 pins the def at/below its original 386-token estimate. The
+        critical floor already exceeds max_active_tools (30), so a growing
+        definition only tightens the hard floor — keep it bounded."""
+        assert estimate_tool_tokens([self._workspace_edit_def()]) <= 386
+
+    def test_is_default_not_sparing(self):
+        desc = self._workspace_edit_def()["function"]["description"]
+        assert "SPARINGLY" not in desc.upper()
+
+    def test_no_longer_defers_multiline_to_replace_lines(self):
+        # The old steer: "prefer workspace_replace_lines for multi-line edits".
+        # It may still mention workspace_replace_lines for by-line edits, but it
+        # must not position it as the preferred tool for multi-line work.
+        desc = self._workspace_edit_def()["function"]["description"].lower()
+        assert "prefer workspace_replace_lines for multi-line" not in desc

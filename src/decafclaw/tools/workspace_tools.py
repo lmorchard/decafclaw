@@ -902,26 +902,23 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
-        "priority": "normal",
+        "priority": "critical",
         "function": {
             "name": "workspace_edit",
             "description": (
-                "Replace an exact string with another exact string in a file. "
-                "USE SPARINGLY — prefer workspace_replace_lines for multi-line "
-                "edits, workspace_insert for additions, workspace_write for "
-                "full rewrites.\n\n"
-                "When to use: small, targeted changes (typo fix, URL swap, "
-                "single identifier rename) where you have the exact current "
-                "content fresh from workspace_read. The old_text must match "
-                "CHARACTER-FOR-CHARACTER including every whitespace "
-                "character.\n\n"
-                "Common failure: reconstructing text from memory instead of "
-                "a fresh read — your mental model drifts from the file on "
-                "disk and the match fails. If you don't have the current "
-                "content in front of you, use workspace_replace_lines with "
-                "line numbers instead.\n\n"
-                "Fails if old_text is not found or matches multiple locations. "
-                "Set replace_all=true for intentional bulk replacement."
+                "The default tool for surgical file edits — single-line or "
+                "multi-line. Replace an exact block of text with another in "
+                "any file under the workspace, including git checkouts like "
+                "decafclaw/src/decafclaw/foo.py. Works across lines; no "
+                "line-number arithmetic or repeated re-reads.\n\n"
+                "Copy old_text from a fresh workspace_read (or a prior edit's "
+                "diff) so the match is exact; never reconstruct it from memory "
+                "— matching is character-for-character, every space, tab, and "
+                "newline, and reconstructed text fails.\n\n"
+                "For edits by line number, use workspace_replace_lines or "
+                "workspace_insert; for a new file or full rewrite, use "
+                "workspace_write. Fails if old_text is not found or matches "
+                "more than once; set replace_all=true for bulk replacement."
             ),
             "parameters": {
                 "type": "object",
@@ -933,10 +930,12 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     "old_text": {
                         "type": "string",
                         "description": (
-                            "Exact text currently in the file. Must match "
-                            "character-for-character including every space, "
-                            "tab, and newline. If you can't see the current "
-                            "content, use workspace_replace_lines instead."
+                            "Exact text currently in the file to replace, "
+                            "single-line or multi-line. Copy it from a fresh "
+                            "workspace_read (or a previous edit's diff) so it "
+                            "matches the file character-for-character, "
+                            "including every space, tab, and newline. Do not "
+                            "reconstruct it from memory."
                         ),
                     },
                     "new_text": {
