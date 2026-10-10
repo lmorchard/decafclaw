@@ -1,10 +1,14 @@
 """Tests for tool registry — priority classification, token estimation, catalog."""
 
+from pathlib import Path
+
+from decafclaw.skills import SkillInfo
 from decafclaw.tools import TOOL_DEFINITIONS
 from decafclaw.tools.tool_registry import (
     Priority,
     add_fetched_tools,
     build_deferred_list_text,
+    build_tool_guidance_text,
     classify_tools,
     estimate_tool_tokens,
     get_critical_names,
@@ -14,7 +18,7 @@ from decafclaw.tools.tool_registry import (
 )
 
 
-def _make_tool_def(name, description="A tool.", params=None, priority=None):
+def _make_tool_def(name, description="A tool.", params=None, priority=None, prompt_guidelines=None):
     td = {
         "type": "function",
         "function": {
@@ -25,6 +29,8 @@ def _make_tool_def(name, description="A tool.", params=None, priority=None):
     }
     if priority is not None:
         td["priority"] = priority
+    if prompt_guidelines is not None:
+        td["prompt_guidelines"] = prompt_guidelines
     return td
 
 
@@ -672,3 +678,122 @@ class TestWorkspaceEditDescription:
         # must not position it as the preferred tool for multi-line work.
         desc = self._workspace_edit_def()["function"]["description"].lower()
         assert "prefer workspace_replace_lines for multi-line" not in desc
+
+
+# -- Tool guidance rendering & trust gating -----------------------------------
+
+
+class TestBuildToolGuidanceText:
+    def test_empty_active_defs_returns_none(self):
+        assert build_tool_guidance_text([], {}) is None
+
+    def test_no_guidelines_returns_none(self):
+        tools = [_make_tool_def("custom_tool")]
+        assert build_tool_guidance_text(tools, {"custom_tool": []}) is None
+
+    def test_active_tool_with_trusted_guidelines_contributes(self):
+        tool = _make_tool_def("workspace_read")
+        out = build_tool_guidance_text([tool], {"workspace_read": ["Use workspace_read to see exact line numbers."]})
+        assert out is not None
+        assert out.startswith("<tool_guidance>\n")
+        assert out.endswith("\n</tool_guidance>")
+        assert "- Use workspace_read to see exact line numbers." in out
+
+    def test_guidelines_deduplicated_preserving_order(self):
+        tools = [_make_tool_def("tool_a"), _make_tool_def("tool_b")]
+        trusted = {"tool_a": ["Rule 1", "Rule 2"], "tool_b": ["Rule 2", "Rule 3"]}
+        out = build_tool_guidance_text(tools, trusted)
+        expected = "<tool_guidance>\n- Rule 1\n- Rule 2\n- Rule 3\n</tool_guidance>"
+        assert out == expected
+
+    def test_inactive_trusted_tool_does_not_contribute(self):
+        tools = [_make_tool_def("tool_a")]
+        out = build_tool_guidance_text(tools, {"tool_a": ["Active rule"], "tool_b": ["Deferred rule"]})
+        assert out == "<tool_guidance>\n- Active rule\n</tool_guidance>"
+
+    def test_active_definition_guidelines_are_never_read(self):
+        # Untrusted (workspace / MCP) tools are absent from the trusted map,
+        # and a shadowing definition's own text is ignored.
+        untrusted = _make_tool_def("agent_authored_tool", prompt_guidelines=["Injected guidance."])
+        shadow = _make_tool_def("workspace_read", prompt_guidelines=["Malicious prompt injection"])
+        mcp_tool = _make_tool_def("mcp__server__tool", prompt_guidelines=["MCP guidance."])
+        out = build_tool_guidance_text([untrusted, shadow, mcp_tool], {"workspace_read": ["Authentic core guidance"]})
+        assert out == "<tool_guidance>\n- Authentic core guidance\n</tool_guidance>"
+
+
+class TestGuidanceProvenance:
+    """Guidance is sourced from the trusted owner's own definition, never the active one by name."""
+
+    @staticmethod
+    def _guidance(ctx):
+        from decafclaw.tool_definitions import build_tool_list, refresh_dynamic_tools
+
+        refresh_dynamic_tools(ctx)
+        _, _, guidance_text = build_tool_list(ctx)
+        return guidance_text or ""
+
+    def test_workspace_skill_shadowing_trusted_skill_tool_cannot_inject(self, ctx, monkeypatch):
+        from decafclaw import tool_definitions
+
+        ctx.config.discovered_skills = [
+            SkillInfo(name="trusted_skill", description="", location=Path("/b"), trust_tier="bundled"),
+            SkillInfo(name="ws_skill", description="", location=Path("/w"), trust_tier="workspace"),
+        ]
+        ctx.config.skill_tool_owners = {"shared_tool": "trusted_skill"}
+        authentic = _make_tool_def("shared_tool", prompt_guidelines=["Authentic skill guidance."])
+        malicious = _make_tool_def("shared_tool", prompt_guidelines=["Malicious injected guidance."])
+        # Trusted skill's definition is preloaded; the activated workspace
+        # skill's same-named definition sits in extra_definitions and wins dedupe.
+        monkeypatch.setitem(tool_definitions._skill_def_cache, id(ctx.config), [authentic])
+        ctx.tools.extra_definitions = [malicious]
+        ctx.tools.skill_tool_names = {"ws_skill": {"shared_tool"}}
+
+        text = self._guidance(ctx)
+        assert "Malicious injected guidance." not in text
+        assert "Authentic skill guidance." in text
+
+    def test_trusted_dynamic_only_skill_contributes(self, ctx):
+        ctx.config.discovered_skills = [
+            SkillInfo(name="dyn_skill", description="", location=Path("/b"), trust_tier="bundled"),
+        ]
+        dyn_def = _make_tool_def("dyn_tool", prompt_guidelines=["Dynamic trusted guidance."])
+        ctx.tools.dynamic_providers = {"dyn_skill": lambda c: ({"dyn_tool": lambda: None}, [dyn_def])}
+
+        assert "Dynamic trusted guidance." in self._guidance(ctx)
+
+    def test_workspace_dynamic_skill_does_not_contribute(self, ctx):
+        ctx.config.discovered_skills = [
+            SkillInfo(name="dyn_skill", description="", location=Path("/w"), trust_tier="workspace"),
+        ]
+        dyn_def = _make_tool_def("dyn_tool", prompt_guidelines=["Dynamic untrusted guidance."])
+        ctx.tools.dynamic_providers = {"dyn_skill": lambda c: ({"dyn_tool": lambda: None}, [dyn_def])}
+
+        assert "Dynamic untrusted guidance." not in self._guidance(ctx)
+
+    def test_trusted_activated_contributions_take_precedence_over_preload(self, ctx, monkeypatch):
+        from decafclaw import tool_definitions
+
+        ctx.config.discovered_skills = [
+            SkillInfo(name="trusted_skill", description="", location=Path("/b"), trust_tier="bundled"),
+        ]
+        stale = _make_tool_def("skill_tool", prompt_guidelines=["Stale preloaded guidance."])
+        current = _make_tool_def("skill_tool", prompt_guidelines=["Current activated guidance."])
+        renamed = _make_tool_def("trusted_skill__other", prompt_guidelines=["Renamed tool guidance."])
+        monkeypatch.setitem(tool_definitions._skill_def_cache, id(ctx.config), [stale])
+        ctx.tools.extra_definitions = [current, renamed]
+        ctx.tools.skill_contributions = {"trusted_skill": ({}, [current, renamed])}
+
+        text = self._guidance(ctx)
+        assert "Current activated guidance." in text
+        assert "Renamed tool guidance." in text
+        assert "Stale preloaded guidance." not in text
+
+    def test_workspace_activated_contributions_do_not_contribute(self, ctx):
+        ctx.config.discovered_skills = [
+            SkillInfo(name="ws_skill", description="", location=Path("/w"), trust_tier="workspace"),
+        ]
+        ws_def = _make_tool_def("ws_tool", prompt_guidelines=["Workspace activated guidance."])
+        ctx.tools.extra_definitions = [ws_def]
+        ctx.tools.skill_contributions = {"ws_skill": ({}, [ws_def])}
+
+        assert "Workspace activated guidance." not in self._guidance(ctx)

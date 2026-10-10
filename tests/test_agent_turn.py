@@ -98,7 +98,7 @@ def test_check_cancelled_not_set(ctx):
 
 
 def test_build_tool_list_base_tools(ctx):
-    tools, deferred_text = build_tool_list(ctx)
+    tools, deferred_text, guidance_text = build_tool_list(ctx)
     # Should have some active tools and may defer some with max_active_tools
     assert len(tools) > 0
     names = [t["function"]["name"] for t in tools]
@@ -112,7 +112,7 @@ def test_build_tool_list_with_extra_tools(ctx):
         "function": {"name": "custom_tool", "parameters": {}},
     }
     ctx.tools.extra_definitions = [extra_def]
-    tools, _ = build_tool_list(ctx)
+    tools, _, _ = build_tool_list(ctx)
     names = [t["function"]["name"] for t in tools]
     assert "custom_tool" in names
 

@@ -756,8 +756,8 @@ class TestComposeVaultGuide:
 # -- Tool assembly -------------------------------------------------------------
 
 
-def _make_tool_def(name, description="A tool."):
-    return {
+def _make_tool_def(name, description="A tool.", priority=None, prompt_guidelines=None):
+    td = {
         "type": "function",
         "function": {
             "name": name,
@@ -765,6 +765,11 @@ def _make_tool_def(name, description="A tool."):
             "parameters": {"type": "object", "properties": {}},
         },
     }
+    if priority is not None:
+        td["priority"] = priority
+    if prompt_guidelines is not None:
+        td["prompt_guidelines"] = prompt_guidelines
+    return td
 
 
 class TestComposeTools:
@@ -775,12 +780,14 @@ class TestComposeTools:
         small_tools = [_make_tool_def("tool_a"), _make_tool_def("tool_b")]
         with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=small_tools):
             composer = ContextComposer()
-            active, deferred, text, entry = composer._compose_tools(ctx, config)
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
             assert len(active) == 2
             assert len(deferred) == 0
             assert text is None
+            assert guidance_text is None
             assert entry.source == "tools"
             assert entry.details["deferred_mode"] is False
+            assert entry.details["has_guidance"] is False
 
     def test_over_budget_deferral(self, ctx, config):
         # Set a tiny budget to force deferral
@@ -788,12 +795,11 @@ class TestComposeTools:
         config.compaction.max_tokens = 100
         many_tools = [_make_tool_def(f"tool_{i}", "x" * 200) for i in range(20)]
         # Add one critical tool — should survive deferral
-        critical_def = _make_tool_def("current_time", "Get current time")
-        critical_def["priority"] = "critical"
+        critical_def = _make_tool_def("current_time", "Get current time", priority="critical")
         many_tools.append(critical_def)
         with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=many_tools):
             composer = ContextComposer()
-            active, deferred, text, entry = composer._compose_tools(ctx, config)
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
             assert len(deferred) > 0
             assert text is not None
             assert entry.details["deferred_mode"] is True
@@ -809,7 +815,7 @@ class TestComposeTools:
         ctx.tools.allowed = {"allowed_tool"}
         with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
-            active, deferred, text, entry = composer._compose_tools(ctx, config)
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
             active_names = {t["function"]["name"] for t in active}
             assert "allowed_tool" in active_names
             assert "blocked_tool" not in active_names
@@ -824,9 +830,140 @@ class TestComposeTools:
         ctx.tools.preempt_matches = {"tool_7"}
         with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
-            active, deferred, text, entry = composer._compose_tools(ctx, config)
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
             active_names = {t["function"]["name"] for t in active}
             assert "tool_7" in active_names
+
+    def test_guidance_text_rendered_and_counted_in_entry(self, ctx, config):
+        """Active tool with prompt_guidelines produces guidance_text and increments tokens."""
+        tool = _make_tool_def("workspace_read", prompt_guidelines=["Guideline line."])
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[tool]),
+            patch("decafclaw.tool_definitions.TOOL_DEFINITIONS", [tool]),
+        ):
+            composer = ContextComposer()
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
+            assert guidance_text is not None
+            assert "<tool_guidance>\n- Guideline line.\n</tool_guidance>" in guidance_text
+            assert entry.details["has_guidance"] is True
+
+    @pytest.mark.asyncio
+    async def test_guidance_message_in_composed_messages(self, ctx, config):
+        """Integration: compose() emits <tool_guidance> system message."""
+        tool = _make_tool_def("workspace_read", prompt_guidelines=["Read exact lines."])
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[tool]),
+            patch("decafclaw.tool_definitions.TOOL_DEFINITIONS", [tool]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+        ):
+            composer = ContextComposer()
+            composed = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+            guidance_msgs = [
+                m
+                for m in composed.messages
+                if m.get("role") == "system" and m.get("content", "").startswith("<tool_guidance>")
+            ]
+            assert len(guidance_msgs) == 1
+            assert "- Read exact lines." in guidance_msgs[0]["content"]
+
+
+class TestSyncToolMessages:
+    def test_insert_both_when_neither_present(self):
+        messages = [
+            {"role": "system", "content": "base prompt"},
+            {"role": "user", "content": "hello"},
+        ]
+        ContextComposer.sync_tool_messages(
+            messages,
+            deferred_text="<deferred_tools>\n- tool_x\n</deferred_tools>",
+            guidance_text="<tool_guidance>\n- rule_y\n</tool_guidance>",
+        )
+        assert len(messages) == 4
+        assert messages[0]["content"] == "base prompt"
+        assert messages[1]["content"] == "<deferred_tools>\n- tool_x\n</deferred_tools>"
+        assert messages[2]["content"] == "<tool_guidance>\n- rule_y\n</tool_guidance>"
+        assert messages[3]["content"] == "hello"
+
+    def test_insert_guidance_without_deferred(self):
+        messages = [
+            {"role": "system", "content": "base prompt"},
+            {"role": "user", "content": "hello"},
+        ]
+        ContextComposer.sync_tool_messages(
+            messages,
+            deferred_text=None,
+            guidance_text="<tool_guidance>\n- rule_y\n</tool_guidance>",
+        )
+        assert len(messages) == 3
+        assert messages[0]["content"] == "base prompt"
+        assert messages[1]["content"] == "<tool_guidance>\n- rule_y\n</tool_guidance>"
+        assert messages[2]["content"] == "hello"
+
+    def test_replace_in_place(self):
+        messages = [
+            {"role": "system", "content": "base prompt"},
+            {"role": "system", "content": "<deferred_tools>\n- old\n</deferred_tools>"},
+            {"role": "system", "content": "<tool_guidance>\n- old_g\n</tool_guidance>"},
+            {"role": "user", "content": "hello"},
+        ]
+        ContextComposer.sync_tool_messages(
+            messages,
+            deferred_text="<deferred_tools>\n- new\n</deferred_tools>",
+            guidance_text="<tool_guidance>\n- new_g\n</tool_guidance>",
+        )
+        assert len(messages) == 4
+        assert messages[1]["content"] == "<deferred_tools>\n- new\n</deferred_tools>"
+        assert messages[2]["content"] == "<tool_guidance>\n- new_g\n</tool_guidance>"
+
+    def test_remove_when_none(self):
+        messages = [
+            {"role": "system", "content": "base prompt"},
+            {"role": "system", "content": "<deferred_tools>\n- old\n</deferred_tools>"},
+            {"role": "system", "content": "<tool_guidance>\n- old_g\n</tool_guidance>"},
+            {"role": "user", "content": "hello"},
+        ]
+        ContextComposer.sync_tool_messages(
+            messages,
+            deferred_text=None,
+            guidance_text=None,
+        )
+        assert len(messages) == 2
+        assert messages[0]["content"] == "base prompt"
+        assert messages[1]["content"] == "hello"
+
+    def test_deferred_removed_guidance_kept(self):
+        messages = [
+            {"role": "system", "content": "base prompt"},
+            {"role": "system", "content": "<deferred_tools>\n- old\n</deferred_tools>"},
+            {"role": "system", "content": "<tool_guidance>\n- keep_g\n</tool_guidance>"},
+            {"role": "user", "content": "hello"},
+        ]
+        ContextComposer.sync_tool_messages(
+            messages,
+            deferred_text=None,
+            guidance_text="<tool_guidance>\n- keep_g\n</tool_guidance>",
+        )
+        assert len(messages) == 3
+        assert messages[0]["content"] == "base prompt"
+        assert messages[1]["content"] == "<tool_guidance>\n- keep_g\n</tool_guidance>"
+        assert messages[2]["content"] == "hello"
+
+    def test_sync_tool_messages_preserves_vault_guide_position(self):
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "system", "content": "<vault_guide>guide</vault_guide>"},
+            {"role": "user", "content": "hi"},
+        ]
+        ContextComposer.sync_tool_messages(
+            messages,
+            deferred_text="<deferred_tools>\n- x\n</deferred_tools>",
+            guidance_text="<tool_guidance>\n- y\n</tool_guidance>",
+        )
+        assert messages[0]["content"] == "system prompt"
+        assert messages[1]["content"] == "<vault_guide>guide</vault_guide>"
+        assert messages[2]["content"] == "<deferred_tools>\n- x\n</deferred_tools>"
+        assert messages[3]["content"] == "<tool_guidance>\n- y\n</tool_guidance>"
+        assert messages[4]["content"] == "hi"
 
 
 # -- Pre-emptive matching ------------------------------------------------------

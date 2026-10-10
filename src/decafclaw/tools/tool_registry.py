@@ -31,8 +31,20 @@ _PRIORITY_RANK = {
 
 
 def estimate_tool_tokens(tool_defs: list[dict]) -> int:
-    """Estimate token cost of tool definitions."""
-    return sum(estimate_tokens(json.dumps(td)) for td in tool_defs)
+    """Estimate token cost of tool definitions.
+
+    Top-level prompt_guidelines are excluded because they are injected
+    into the prompt as <tool_guidance> and accounted for there, not in
+    the tool schema declarations sent to the model.
+    """
+    total = 0
+    for td in tool_defs:
+        if "prompt_guidelines" in td:
+            clean = {k: v for k, v in td.items() if k != "prompt_guidelines"}
+            total += estimate_tokens(json.dumps(clean))
+        else:
+            total += estimate_tokens(json.dumps(td))
+    return total
 
 
 def get_critical_names(config) -> set[str]:
@@ -338,3 +350,44 @@ def add_fetched_tools(ctx: "Context", names: set[str]) -> None:
     """Add tool names to the fetched set in ctx.skills.data."""
     existing = get_fetched_tools(ctx)
     ctx.skills.data["fetched_tools"] = sorted(existing | names)
+
+
+# -- Tool guidance rendering & trust gating -----------------------------------
+
+
+def build_tool_guidance_text(
+    active_defs: list[dict],
+    trusted_guidelines: dict[str, list[str]],
+) -> str | None:
+    """Build the <tool_guidance> system prompt block for the active tools.
+
+    ``trusted_guidelines`` maps tool name -> guidelines taken from the
+    definitions that core and trusted-skill owners declared (see
+    ``tool_definitions.collect_trusted_tool_guidelines``). The active
+    definitions only decide *which* names are in play; their own
+    ``prompt_guidelines`` are never read, so a shadowing definition from an
+    untrusted source cannot contribute text. MCP and workspace-tier tools are
+    simply absent from the map.
+
+    Guideline strings are deduplicated while preserving encounter order
+    across active definitions.
+
+    Returns:
+        Formatted XML block or None if no active tool contributes guidelines.
+    """
+    seen_lines: set[str] = set()
+    guidelines: list[str] = []
+
+    for td in active_defs:
+        name = td.get("function", {}).get("name", "")
+        for line in trusted_guidelines.get(name, []):
+            line_clean = line.strip()
+            if line_clean and line_clean not in seen_lines:
+                seen_lines.add(line_clean)
+                guidelines.append(line_clean)
+
+    if not guidelines:
+        return None
+
+    formatted = "\n".join(f"- {g}" for g in guidelines)
+    return f"<tool_guidance>\n{formatted}\n</tool_guidance>"
