@@ -74,3 +74,31 @@
   expect_workspace:
     workspace_file_exists: ["drafts/new-name.md"]
     workspace_file_absent: ["drafts/old-name.md"]
+
+# -- edit: multi-line change → workspace_edit, never shell (#989) --------------
+# Full-loop case: a multi-line change to a file inside a git checkout under
+# the workspace must be done with workspace_edit, never shell. Runs with real
+# deferral, so it also exercises the priority change (workspace_edit is now
+# critical).
+
+- name: "multi-line change uses workspace_edit, never shell"
+  setup:
+    workspace_files:
+      "decafclaw/src/decafclaw/rate_limiter.py": |
+        class TokenBucket:
+            def consume(self, amount: int) -> bool:
+                factor = 2
+                cost = amount * factor
+                self.tokens -= cost
+                return self.tokens >= 0
+  input: "In decafclaw/src/decafclaw/rate_limiter.py, change factor in consume() from 2 to 5 and add a comment \"# token cost multiplier\" directly above it."
+  expect:
+    response_contains: "factor"
+    max_tool_calls: 6
+    max_tool_errors: 0
+    expect_tool: workspace_edit
+    expect_no_tool: [shell]
+    config_overrides:
+      reflection.enabled: false
+  expect_workspace:
+    workspace_file_exists: ["decafclaw/src/decafclaw/rate_limiter.py"]
