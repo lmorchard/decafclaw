@@ -159,3 +159,60 @@ it('shows error message when raw context returns 500', async () => {
 
   expect(el.textContent).toContain('Error: HTTP 500');
 });
+
+it('switches tabs with ArrowLeft and ArrowRight keys', async () => {
+  fetchMock.mockResolvedValue(json({ sources: [] }));
+  const el = document.createElement('context-inspector');
+  el.convId = 'id';
+  el.open = true;
+  document.body.append(el);
+  await el.updateComplete;
+
+  const diagTab = el.querySelector('#tab-diagnostics');
+  const rawTab = el.querySelector('#tab-raw');
+  expect(diagTab?.getAttribute('aria-selected')).toBe('true');
+  expect(rawTab?.getAttribute('aria-selected')).toBe('false');
+
+  diagTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  await el.updateComplete;
+
+  expect(el._tab).toBe('raw');
+  expect(diagTab?.getAttribute('aria-selected')).toBe('false');
+  expect(rawTab?.getAttribute('aria-selected')).toBe('true');
+  expect(el.querySelector('#panel-raw')).not.toBeNull();
+
+  rawTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  await el.updateComplete;
+
+  expect(el._tab).toBe('diagnostics');
+  expect(diagTab?.getAttribute('aria-selected')).toBe('true');
+  expect(el.querySelector('#panel-diagnostics')).not.toBeNull();
+});
+
+it('does not close when clicking inside the inspector, but closes when clicking outside', async () => {
+  fetchMock.mockResolvedValue(json({ sources: [] }));
+  const trigger = document.createElement('div');
+  trigger.className = 'context-usage';
+  const el = document.createElement('context-inspector');
+  el.convId = 'id';
+  el.open = true;
+  document.body.append(trigger, el);
+  await el.updateComplete;
+
+  const closeSpy = vi.fn();
+  el.addEventListener('close', closeSpy);
+  await new Promise((r) => requestAnimationFrame(r));
+
+  // Click on the Raw tab button inside the inspector
+  const rawTab = el.querySelector('#tab-raw');
+  rawTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(closeSpy).not.toHaveBeenCalled();
+
+  // Click on trigger element
+  trigger.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(closeSpy).not.toHaveBeenCalled();
+
+  // Click outside on body
+  document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  expect(closeSpy).toHaveBeenCalled();
+});

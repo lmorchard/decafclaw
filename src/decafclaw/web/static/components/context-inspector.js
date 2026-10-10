@@ -90,9 +90,10 @@ export class ContextInspector extends LitElement {
         // Defer so the current click doesn't immediately close
         requestAnimationFrame(() => {
           this._onDocClick = (e) => {
-            if (!this.contains(e.target)) {
-              this.dispatchEvent(new Event('close'));
-            }
+            if (this.contains(e.target)) return;
+            const trigger = this.previousElementSibling;
+            if (trigger && trigger.contains(e.target)) return;
+            this.dispatchEvent(new Event('close'));
           };
           document.addEventListener('click', this._onDocClick, true);
         });
@@ -127,7 +128,7 @@ export class ContextInspector extends LitElement {
   }
 
   #positionPanel() {
-    const anchor = this.parentElement || this;
+    const anchor = this.previousElementSibling || this.parentElement || this;
     const rect = typeof anchor.getBoundingClientRect === 'function'
       ? anchor.getBoundingClientRect()
       : { left: 16, top: 0 };
@@ -183,6 +184,18 @@ export class ContextInspector extends LitElement {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast(`Copy failed: ${msg}`);
+    }
+  }
+
+  #onTabKeyDown(e) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const nextTab = this._tab === 'diagnostics' ? 'raw' : 'diagnostics';
+      this._tab = nextTab;
+      requestAnimationFrame(() => {
+        const btn = this.querySelector(`#tab-${nextTab}`);
+        if (btn instanceof HTMLElement) btn.focus();
+      });
     }
   }
 
@@ -372,41 +385,51 @@ export class ContextInspector extends LitElement {
 
     let content;
     if (this._tab === 'raw') {
-      content = this.#renderRaw();
+      content = html`<div id="panel-raw" role="tabpanel" aria-labelledby="tab-raw" tabindex="0">${this.#renderRaw()}</div>`;
     } else if (this._loading) {
-      content = html`<div class="loading">Loading...</div>`;
+      content = html`<div id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0"><div class="loading">Loading...</div></div>`;
     } else if (this._error) {
-      content = html`<div class="error-msg">Error: ${this._error}</div>`;
+      content = html`<div id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0"><div class="error-msg">Error: ${this._error}</div></div>`;
     } else if (!this._data) {
-      content = html`<div class="empty-msg">No context data yet</div>`;
+      content = html`<div id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0"><div class="empty-msg">No context data yet</div></div>`;
     } else {
       const d = this._data;
       content = html`
-        ${this.#renderWaffle(d.sources, d.context_window_size, d.total_tokens_actual)}
-        ${this.#renderStats(d)}
-        ${this.#renderSourceTable(d.sources)}
-        ${this.#renderCandidates(d.memory_candidates)}
+        <div id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0">
+          ${this.#renderWaffle(d.sources, d.context_window_size, d.total_tokens_actual)}
+          ${this.#renderStats(d)}
+          ${this.#renderSourceTable(d.sources)}
+          ${this.#renderCandidates(d.memory_candidates)}
+        </div>
       `;
     }
 
     return html`
-      <div class="inspector" style=${this._style}>
+      <div class="inspector" style=${this._style} @click=${(e) => e.stopPropagation()}>
         <div class="inspector-header">
           <div class="inspector-title-row">
             <h3>Context Inspector</h3>
-            <div class="inspector-tabs" role="tablist">
+            <div class="inspector-tabs" role="tablist" aria-label="Context views">
               <button
+                id="tab-diagnostics"
                 type="button"
                 role="tab"
                 class="tab-btn ${this._tab === 'diagnostics' ? 'active' : ''}"
                 aria-selected=${this._tab === 'diagnostics'}
+                aria-controls="panel-diagnostics"
+                tabindex=${this._tab === 'diagnostics' ? 0 : -1}
+                @keydown=${this.#onTabKeyDown}
                 @click=${() => { this._tab = 'diagnostics'; }}
               >Diagnostics</button>
               <button
+                id="tab-raw"
                 type="button"
                 role="tab"
                 class="tab-btn ${this._tab === 'raw' ? 'active' : ''}"
                 aria-selected=${this._tab === 'raw'}
+                aria-controls="panel-raw"
+                tabindex=${this._tab === 'raw' ? 0 : -1}
+                @keydown=${this.#onTabKeyDown}
                 @click=${() => { this._tab = 'raw'; }}
               >Raw</button>
             </div>
