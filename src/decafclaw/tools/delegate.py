@@ -315,13 +315,18 @@ async def run_child_turn(
 
 async def tool_delegate_task(
     ctx: "Context",
-    task: str,
+    task: str | list[str] | None = None,
+    tasks: list[str] | None = None,
     model: str = "",
     allow_vault_retrieval: bool = False,
     allow_vault_read: bool = False,
     return_schema: dict | None = None,
 ) -> ToolResult:
-    """Delegate a subtask to a child agent.
+    """Delegate a subtask (or a list of subtasks in parallel) to child agents.
+
+    If a list of tasks is provided (via `task` as a list, or `tasks`), they
+    run concurrently in parallel up to config.agent.max_parallel_delegates,
+    returning an aggregate summary with per-task results.
 
     By default the child has NO vault access — no proactive
     retrieval, no read tools, no write tools. Opt the child into
@@ -336,6 +341,26 @@ async def tool_delegate_task(
     on ``ToolResult.text``. Parse failures fall through silently with
     a debug log — the parent gets the raw response as text. See #395.
     """
+    if tasks is not None:
+        batch = tasks
+    elif isinstance(task, list):
+        batch = task
+    else:
+        batch = None
+
+    if batch is not None:
+        return await tool_delegate_tasks(
+            ctx,
+            batch,
+            model=model,
+            allow_vault_retrieval=allow_vault_retrieval,
+            allow_vault_read=allow_vault_read,
+            return_schema=return_schema,
+        )
+
+    if not task or not isinstance(task, str) or not task.strip():
+        return ToolResult(text="[error: task description is required]")
+
     log.info(
         "[tool:delegate_task] model=%s vault_retrieval=%s vault_read=%s schema=%s %s...",
         model or "inherit",
@@ -344,9 +369,6 @@ async def tool_delegate_task(
         "yes" if return_schema else "no",
         task[:80],
     )
-
-    if not task or not task.strip():
-        return ToolResult(text="[error: task description is required]")
 
     text, data = await run_child_turn(
         ctx,
@@ -576,25 +598,29 @@ DELEGATE_TOOL_DEFINITIONS = [
         "function": {
             "name": "delegate_task",
             "description": (
-                "Delegate a SINGLE subtask to a child agent (a separate sub-agent / "
-                "fork) that runs as an independent agent turn with access to "
-                "the same tools and skills. **Use this whenever the user asks "
-                "you to spin up, fork off, or hand off a task to a sub-agent, "
-                "child agent, or separate agent**, and whenever a request has "
-                "an independent part that benefits from running in its own "
-                "context (e.g. exploration / summarization that would clutter "
-                "the main conversation). For parallel work over a known list "
-                "of similar subtasks, prefer `delegate_tasks` (plural). "
-                "**Do not just do the work yourself with workspace_read / "
-                "vault_read** when the user explicitly asked for a sub-agent."
+                "Delegate a subtask to a child agent (a separate sub-agent / fork) "
+                "that runs as an independent agent turn with access to the same tools "
+                "and skills. Use this whenever the user asks you to spin up, fork off, "
+                "or hand off a task to a sub-agent / child agent, or when a task has an "
+                "independent part that benefits from running in its own context. "
+                "To run multiple subtasks in parallel, pass a list of task descriptions "
+                "in `task`."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task": {
-                        "type": "string",
                         "description": (
-                            "Task description with enough context for the child agent to work independently"
+                            "Task description string with enough context for the child "
+                            "agent to work independently, or a list of task descriptions "
+                            "to execute in parallel."
+                        ),
+                    },
+                    "tasks": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional alias for passing a list of task descriptions to execute in parallel."
                         ),
                     },
                     "model": {
@@ -604,12 +630,7 @@ DELEGATE_TOOL_DEFINITIONS = [
                     "allow_vault_retrieval": {
                         "type": "boolean",
                         "description": (
-                            "When true, the child runs the proactive memory "
-                            "retrieval at turn start. Default false — the "
-                            "child has no auto-injected memory context "
-                            "unless you opt in. Use when the child needs "
-                            "to draw on past conversations or vault "
-                            "knowledge to do its task."
+                            "When true, the child runs the proactive memory retrieval at turn start. Default false."
                         ),
                     },
                     "allow_vault_read": {
@@ -618,108 +639,19 @@ DELEGATE_TOOL_DEFINITIONS = [
                             "When true, the child can call read-side vault "
                             "tools (vault_read, vault_search, vault_list, "
                             "vault_backlinks, vault_show_sections). Default "
-                            "false — the child can't read the vault unless "
-                            "you opt in. Vault WRITE tools (vault_write, "
-                            "vault_journal_append, vault_delete, etc.) are "
-                            "NEVER available to children regardless of this "
-                            "flag; if the child's work should land in the "
-                            "vault, do the write yourself after the child "
-                            "returns."
+                            "false. Vault write tools are categorically blocked."
                         ),
                     },
                     "return_schema": {
                         "type": "object",
                         "description": (
                             "Optional JSON-schema-shaped object describing "
-                            "the structured return shape you want from the "
-                            "child. When supplied, the child is instructed "
-                            "to emit prose followed by a fenced JSON block "
-                            "matching this shape; the parsed object arrives "
-                            "on this tool result's structured-data block. "
-                            "Use for subtasks where you need specific fields "
-                            "(counts, lists, scores) rather than just prose. "
-                            "Treat as a hint — no validation is performed; "
-                            "parse failures fall back to prose-only."
+                            "the structured return shape from the child. The parsed "
+                            "object arrives on ToolResult.data. Treat as a hint."
                         ),
                     },
                 },
                 "required": ["task"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "priority": "critical",
-        # Owns child timeouts internally; gather-bounded fan-out.
-        "timeout": None,
-        "function": {
-            "name": "delegate_tasks",
-            "description": (
-                "Dispatch a BATCH of independent subtasks to child agents "
-                "in PARALLEL. Use this when you have a known list of "
-                "similar investigations (per-page, per-file, per-topic) "
-                "where the children don't need to talk to each other and "
-                "can run concurrently. Each task runs as its own forked "
-                "child with the same tools and skills. Returns one "
-                "structured result containing per-task status (ok/error) "
-                "in input order. Concurrency is capped by config; the "
-                "batch size is also capped per call. For a single "
-                "subtask, use `delegate_task` (singular) instead — the "
-                "ergonomics are simpler."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tasks": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "List of task descriptions, one per child. "
-                            "Each description should be self-contained "
-                            "with enough context to work independently. "
-                            "All tasks share the same model, vault flags, "
-                            "and return schema — for per-task overrides, "
-                            "fall back to multiple `delegate_task` calls."
-                        ),
-                    },
-                    "model": {
-                        "type": "string",
-                        "description": (
-                            "Named model config for every subtask in the batch. Omit to inherit parent's model."
-                        ),
-                    },
-                    "allow_vault_retrieval": {
-                        "type": "boolean",
-                        "description": (
-                            "When true, every child runs the proactive "
-                            "memory retrieval at turn start. Default "
-                            "false. Same semantics as `delegate_task`."
-                        ),
-                    },
-                    "allow_vault_read": {
-                        "type": "boolean",
-                        "description": (
-                            "When true, every child can call read-side "
-                            "vault tools (vault_read, vault_search, "
-                            "vault_list, vault_backlinks, "
-                            "vault_show_sections). Default false. Vault "
-                            "WRITE tools are categorically blocked. "
-                            "Same semantics as `delegate_task`."
-                        ),
-                    },
-                    "return_schema": {
-                        "type": "object",
-                        "description": (
-                            "Optional JSON-schema-shaped object applied "
-                            "to every child in the batch. Each successful "
-                            "per-task entry's `data` field will be the "
-                            "parsed JSON; `text` will be the prose with "
-                            "the JSON block stripped. Treat as a hint — "
-                            "no validation is performed."
-                        ),
-                    },
-                },
-                "required": ["tasks"],
             },
         },
     },

@@ -1,16 +1,26 @@
 # Sub-Agent Delegation
 
-The `delegate_task` tool lets the agent fork a child agent to handle a focused subtask. For batches of similar subtasks, the `delegate_tasks` (plural) tool dispatches them in parallel under one tool call — see [Parallel dispatch](#parallel-dispatch-with-delegate_tasks).
+The `delegate_task` tool lets the agent fork a child agent to handle a focused subtask. For batches of subtasks to execute in parallel, `delegate_task` accepts a list of tasks (or the alias `delegate_tasks` can be called) — see [Parallel dispatch](#parallel-dispatch).
 
 ## Usage
 
-The agent calls `delegate_task` with a task description:
+The agent calls `delegate_task` with a single task description:
 
 ```json
 {"task": "Look up the weather in Portland"}
 ```
 
-For a batch of related subtasks, prefer `delegate_tasks` (plural) — see [Parallel dispatch](#parallel-dispatch-with-delegate_tasks). The agent can also emit multiple singular `delegate_task` calls in one response and they'll execute concurrently via the agent loop's tool semaphore, but the plural tool gives a single aggregated result and a fixed concurrency cap.
+Or with a list of tasks to execute in parallel:
+
+```json
+{
+  "task": [
+    "Summarize repo A README",
+    "Summarize repo B README",
+    "Summarize repo C README"
+  ]
+}
+```
 
 Each call spawns an independent child agent that:
 - Gets a fresh, empty conversation history
@@ -79,14 +89,14 @@ The parent receives both halves:
 
 See #395 for the design rationale.
 
-## Parallel dispatch with `delegate_tasks`
+## Parallel dispatch
 
-`delegate_tasks` (plural) takes a list of task descriptions and runs them as concurrent child agents under a single tool call. Use it when you have a known list of similar investigations — per page, per file, per topic — that don't need to talk to each other.
+Pass a list of task descriptions to `delegate_task(task=[...])` (or use the alias `delegate_tasks(tasks=[...])`) to run them as concurrent child agents under a single tool call. Use it when you have a known list of similar investigations — per page, per file, per topic — that don't need to talk to each other.
 
 ```python
 # Example call (LLM-emitted tool call):
-delegate_tasks(
-    tasks=[
+delegate_task(
+    task=[
         "Summarize the README in repo A",
         "Summarize the README in repo B",
         "Summarize the README in repo C",

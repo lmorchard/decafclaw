@@ -24,12 +24,14 @@ class TestToolRegistration:
         assert "notes_append" in names
         assert "notes_read" in names
 
-    def test_definitions_marked_critical(self):
-        """Always-loaded tools must declare priority=critical so they
-        don't get deferred behind tool_search."""
+    def test_definitions_marked_priorities(self):
+        """notes_append is critical (always available for scratchpad capture);
+        notes_read is normal priority since recent notes are auto-injected."""
         for d in TOOL_DEFINITIONS:
-            if d["function"]["name"] in ("notes_append", "notes_read"):
-                assert d.get("priority") == "critical", f"{d['function']['name']} should be critical priority"
+            if d["function"]["name"] == "notes_append":
+                assert d.get("priority") == "critical"
+            elif d["function"]["name"] == "notes_read":
+                assert d.get("priority") == "normal"
 
 
 # -- tool_notes_append ---------------------------------------------------------

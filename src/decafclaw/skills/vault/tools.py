@@ -1676,6 +1676,7 @@ SECTION_PATH_HELP = (
 TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "vault_read",
             "description": (
@@ -1699,6 +1700,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "critical",
         "timeout": None,
         "function": {
             "name": "vault_write",
@@ -1736,6 +1738,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "timeout": None,
         "function": {
             "name": "vault_delete",
@@ -1762,6 +1765,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "timeout": None,
         "function": {
             "name": "vault_rename",
@@ -1796,6 +1800,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "timeout": None,
         "function": {
             "name": "vault_grant_folder",
@@ -1830,6 +1835,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "vault_journal_append",
             "description": (
@@ -1861,6 +1867,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "vault_search",
             "description": (
@@ -1941,6 +1948,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "vault_list",
             "description": (
@@ -1968,6 +1976,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "vault_recent",
             "description": (
@@ -2009,6 +2018,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "vault_tags",
             "description": (
@@ -2028,6 +2038,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "vault_backlinks",
             "description": (
@@ -2049,6 +2060,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "vault_show_sections",
             "description": (
@@ -2081,6 +2093,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "vault_move_lines",
             "description": (
@@ -2130,6 +2143,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "vault_section",
             "description": (
@@ -2208,6 +2222,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "timeout": None,
         "function": {
             "name": "vault_update_frontmatter",

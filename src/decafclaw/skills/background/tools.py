@@ -656,6 +656,7 @@ TOOLS = {
 TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "low",
         "timeout": None,
         "function": {
             "name": "shell_background_start",
@@ -689,6 +690,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "shell_background_status",
             "description": (
@@ -710,6 +712,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "shell_background_stop",
             "description": (
@@ -730,6 +733,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "shell_background_list",
             "description": (
