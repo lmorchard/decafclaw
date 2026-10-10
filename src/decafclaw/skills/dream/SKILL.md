@@ -14,23 +14,24 @@ Review recent journal entries and conversations, then distill insights into cura
 
 ## Phase 1: Orient
 
-1. Use `current_time` to note the current date and time.
-2. Use `vault_list` with `folder=agent/pages` to see what pages exist in your knowledge base.
-3. For longer pages, read the tl;dr summaries to understand the current state of knowledge.
-4. Note what topics are already well-covered vs sparse.
+1. Call `dream_recent_runs` to review what memory consolidation runs happened in the last 7 days, including the narrative summaries and vault pages touched. Note what has been consolidated recently. **Do not redo topics or rewrite pages touched in the last 7 days unless fresh journal entries provide new source material.**
+2. Use `current_time` to note the current date and time.
+3. Use `vault_list` with `folder=agent/pages` to see what pages exist in your knowledge base.
+4. For longer pages, read the tl;dr summaries to understand the current state of knowledge.
+5. Note what topics are already well-covered vs sparse.
 
 ## Phase 2: Gather
 
 1. Use `vault_search` with `source_type=journal` and `days=1` to get recent journal entries.
 2. Use `vault_search` with broader queries related to active page topics — look for entries that should be integrated.
-3. Use `conversation_search` to scan past conversations for content not yet captured in journal entries. Look for:
+3. Use `conversation_search` with `days=7` (or narrower) to scan recent conversations for content not yet captured in journal entries. Avoid unbounded queries into old history. Look for:
    - Corrections or updates to known facts
    - New preferences, opinions, or decisions
    - Project context and status changes
    - Recurring themes across conversations
    - Insights that were overlooked in the moment
 4. For anything worth preserving from conversations, create journal entries via `vault_journal_append` before distilling into pages.
-5. Make a mental list of findings worth integrating into pages.
+5. Make a mental list of findings worth integrating into pages, skipping topics already covered by recent runs.
 
 ## Phase 3: Consolidate
 
