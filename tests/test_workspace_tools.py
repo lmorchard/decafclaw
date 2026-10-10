@@ -936,8 +936,8 @@ class TestWorkspaceToolPromptGuidelines:
         from decafclaw.tools.tool_registry import build_tool_guidance_text
         from decafclaw.tools.workspace_tools import WORKSPACE_TOOL_DEFINITIONS
 
-        core_names = {td["function"]["name"] for td in WORKSPACE_TOOL_DEFINITIONS}
-        text = build_tool_guidance_text(WORKSPACE_TOOL_DEFINITIONS, core_names=core_names)
+        trusted = {td["function"]["name"]: td.get("prompt_guidelines") or [] for td in WORKSPACE_TOOL_DEFINITIONS}
+        text = build_tool_guidance_text(WORKSPACE_TOOL_DEFINITIONS, trusted)
         assert text is not None
         assert text.startswith("<tool_guidance>\n")
         assert text.endswith("\n</tool_guidance>")

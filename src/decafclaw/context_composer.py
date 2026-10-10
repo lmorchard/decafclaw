@@ -43,6 +43,7 @@ from .telemetry import get_tracer
 from .tool_definitions import (
     build_tool_list,
     collect_all_tool_defs,
+    collect_trusted_tool_guidelines,
     refresh_dynamic_tools,
 )
 from .tools import TOOL_DEFINITIONS
@@ -54,7 +55,6 @@ from .tools.tool_registry import (
     estimate_tool_tokens,
     get_critical_names,
     get_fetched_tools,
-    get_trusted_skill_tool_names,
 )
 from .util import estimate_tokens
 
@@ -1593,17 +1593,14 @@ class ContextComposer:
         if allowed is not None:
             active = [t for t in active if t.get("function", {}).get("name") in allowed]
 
-        core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
         deferred_text = None
         if deferred:
             ctx.tools.deferred_pool = deferred
             active = active + SEARCH_TOOL_DEFINITIONS
+            core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
             deferred_text = build_deferred_list_text(deferred, core_names=core_names)
 
-        trusted_skill_tools = get_trusted_skill_tool_names(config, ctx)
-        guidance_text = build_tool_guidance_text(
-            active, core_names=core_names, trusted_skill_tool_names=trusted_skill_tools
-        )
+        guidance_text = build_tool_guidance_text(active, collect_trusted_tool_guidelines(ctx))
 
         tool_tokens = estimate_tool_tokens(active)
         text_tokens = estimate_tokens(deferred_text) if deferred_text else 0

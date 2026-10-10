@@ -355,90 +355,32 @@ def add_fetched_tools(ctx: "Context", names: set[str]) -> None:
 # -- Tool guidance rendering & trust gating -----------------------------------
 
 
-def get_trusted_skill_tool_names(config, ctx: "Context | None" = None) -> set[str]:
-    """Return tool names that belong to trusted skills (bundled, admin, extra).
-
-    Workspace-tier skills are excluded via ``skills.grants_capability`` so
-    agent-writable code cannot inject privileged tool guidance.
-    """
-    from ..skills import grants_capability
-
-    discovered_skills = getattr(config, "discovered_skills", None)
-    if discovered_skills is None and hasattr(config, "discovered_skills"):
-        discovered_skills = config.discovered_skills
-    discovered_skills = discovered_skills or []
-
-    trusted_skills = {s.name for s in discovered_skills if grants_capability(s)}
-    trusted_names: set[str] = set()
-
-    if ctx is not None and getattr(ctx, "tools", None) is not None:
-        for s_name in trusted_skills:
-            trusted_names.update(ctx.tools.skill_tool_names.get(s_name, set()))
-
-    skill_tool_owners = getattr(config, "skill_tool_owners", {}) or {}
-    for tool_name, s_name in skill_tool_owners.items():
-        if s_name in trusted_skills:
-            trusted_names.add(tool_name)
-
-    return trusted_names
-
-
 def build_tool_guidance_text(
     active_defs: list[dict],
-    core_names: set[str] | None = None,
-    trusted_skill_tool_names: set[str] | None = None,
-    core_defs: list[dict] | None = None,
+    trusted_guidelines: dict[str, list[str]],
 ) -> str | None:
-    """Build the <tool_guidance> system prompt block from active tool definitions.
+    """Build the <tool_guidance> system prompt block for the active tools.
 
-    Only tools that are core tools or from trusted skills (present in
-    ``trusted_skill_tool_names``) can contribute guidelines. MCP tools and
-    untrusted (workspace-tier) skill tools are excluded.
+    ``trusted_guidelines`` maps tool name -> guidelines taken from the
+    definitions that core and trusted-skill owners declared (see
+    ``tool_definitions.collect_trusted_tool_guidelines``). The active
+    definitions only decide *which* names are in play; their own
+    ``prompt_guidelines`` are never read, so a shadowing definition from an
+    untrusted source cannot contribute text. MCP and workspace-tier tools are
+    simply absent from the map.
 
-    For core tools, guidelines are strictly sourced from authentic core tool
-    definitions (``core_defs`` or ``TOOL_DEFINITIONS``) to prevent untrusted
-    workspace skills from injecting guidance by shadowing core tool names.
-
-    Guideline strings are deduplicated while preserving the encounter order
+    Guideline strings are deduplicated while preserving encounter order
     across active definitions.
 
     Returns:
         Formatted XML block or None if no active tool contributes guidelines.
     """
-    if not active_defs:
-        return None
-
-    if core_defs is None:
-        from . import TOOL_DEFINITIONS  # deferred: circular dep
-
-        core_defs = TOOL_DEFINITIONS
-
-    core_guidelines: dict[str, list[str]] = {
-        td.get("function", {}).get("name", ""): td.get("prompt_guidelines") or [] for td in core_defs
-    }
-    if core_names is None:
-        core_names = set(core_guidelines.keys())
-
-    trusted_skill_names = trusted_skill_tool_names or set()
-
     seen_lines: set[str] = set()
     guidelines: list[str] = []
 
     for td in active_defs:
         name = td.get("function", {}).get("name", "")
-        if not name or name.startswith("mcp__"):
-            continue
-
-        lines_to_add: list[str] = []
-        if name in core_guidelines:
-            # Sourced from authentic core definition to prevent shadow injection
-            lines_to_add = core_guidelines[name]
-        elif name in trusted_skill_names:
-            lines_to_add = td.get("prompt_guidelines") or []
-        else:
-            continue
-
-        for line in lines_to_add:
+        for line in trusted_guidelines.get(name, []):
             line_clean = line.strip()
             if line_clean and line_clean not in seen_lines:
                 seen_lines.add(line_clean)

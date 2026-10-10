@@ -24,7 +24,6 @@ from .tools.tool_registry import (
     build_tool_guidance_text,
     classify_tools,
     get_fetched_tools,
-    get_trusted_skill_tool_names,
 )
 
 if TYPE_CHECKING:
@@ -66,12 +65,14 @@ def refresh_dynamic_tools(ctx: "Context") -> None:
             tools, tool_defs = get_tools_fn(ctx)
             names_to_remove.update(tools.keys())
             ctx.tools.dynamic_provider_names[skill_name] = set(tools.keys())
+            ctx.tools.dynamic_provider_definitions[skill_name] = list(tool_defs)
             provider_results.append((skill_name, tools, tool_defs))
         except Exception as e:
             # Fail-open: remove this provider's stale tools. If the model
             # tries to call a removed tool, it gets a "tool not found" error.
             log.warning(f"Dynamic tool provider for '{skill_name}' failed: {e}")
             ctx.tools.dynamic_provider_names[skill_name] = set()
+            ctx.tools.dynamic_provider_definitions[skill_name] = []
 
     # Remove all dynamic-provider tools (old + new names) from extra
     ctx.tools.extra = {name: fn for name, fn in ctx.tools.extra.items() if name not in names_to_remove}
@@ -85,18 +86,11 @@ def refresh_dynamic_tools(ctx: "Context") -> None:
         ctx.tools.extra_definitions.extend(tool_defs)
 
 
-def collect_all_tool_defs(ctx: "Context") -> list:
-    """Gather all available tool definitions (core + skill + MCP + extra).
+def _preloaded_skill_defs(ctx: "Context") -> list:
+    """Tool definitions from capability-tier skills, pre-loaded for a stable tool list.
 
-    Does NOT apply allowed_tools filter — returns the full unfiltered set
-    so classification can see everything before deciding what to defer.
+    Cached by config id to avoid re-executing tools.py every iteration.
     """
-    # Skill tools first — activated skill tools get priority positioning
-    # so the model sees them before the long tail of core tools
-    all_tools = list(ctx.tools.extra_definitions) + list(TOOL_DEFINITIONS)
-
-    # Pre-load tool definitions from discovered skills (stable tool list).
-    # Cached by config id to avoid re-executing tools.py every iteration.
     config_id = id(ctx.config)
     _cached = _skill_def_cache.get(config_id)
     if _cached is None:
@@ -115,9 +109,21 @@ def collect_all_tool_defs(ctx: "Context") -> list:
                 except Exception as e:
                     log.warning(f"Failed to pre-load skill '{skill_info.name}' tools: {e}")
         _skill_def_cache[config_id] = _cached
+    return _cached
+
+
+def collect_all_tool_defs(ctx: "Context") -> list:
+    """Gather all available tool definitions (core + skill + MCP + extra).
+
+    Does NOT apply allowed_tools filter — returns the full unfiltered set
+    so classification can see everything before deciding what to defer.
+    """
+    # Skill tools first — activated skill tools get priority positioning
+    # so the model sees them before the long tail of core tools
+    all_tools = list(ctx.tools.extra_definitions) + list(TOOL_DEFINITIONS)
 
     preloaded_names = {t.get("function", {}).get("name") for t in all_tools}
-    for td in _cached:
+    for td in _preloaded_skill_defs(ctx):
         name = td.get("function", {}).get("name")
         if name and name not in preloaded_names:
             all_tools.append(td)
@@ -175,6 +181,36 @@ def _dedupe_by_name(tool_defs: list) -> list:
     return deduped
 
 
+def collect_trusted_tool_guidelines(ctx: "Context") -> dict[str, list[str]]:
+    """Map tool name -> ``prompt_guidelines`` from the definitions trusted owners declared.
+
+    Guidance is attributed by provenance, never by reading the active
+    definition for a name: an activated workspace skill may declare a tool
+    named like a core or trusted-skill tool, and its definition then wins
+    ``_dedupe_by_name``. Reading guidance from the owner's own definition
+    keeps agent-authored text out of the ``<tool_guidance>`` system block.
+
+    Precedence: core tools, then trusted skills' dynamic providers (this
+    turn's ``get_tools`` output), then trusted skills' static definitions.
+    """
+    guidelines: dict[str, list[str]] = {}
+
+    def _add(defs: list) -> None:
+        for td in defs:
+            name = td.get("function", {}).get("name")
+            if name and name not in guidelines:
+                guidelines[name] = td.get("prompt_guidelines") or []
+
+    _add(TOOL_DEFINITIONS)
+    skills_by_name = {s.name: s for s in ctx.config.discovered_skills}
+    for skill_name in ctx.tools.dynamic_providers:
+        info = skills_by_name.get(skill_name)
+        if info is not None and grants_capability(info):
+            _add(ctx.tools.dynamic_provider_definitions.get(skill_name, []))
+    _add(_preloaded_skill_defs(ctx))
+    return guidelines
+
+
 def build_tool_list(ctx: "Context") -> tuple[list, str | None, str | None]:
     """Build the tool list, with optional deferred mode and tool-owned guidance.
 
@@ -210,23 +246,18 @@ def build_tool_list(ctx: "Context") -> tuple[list, str | None, str | None]:
         active = [t for t in active if t.get("function", {}).get("name") not in disallowed]
         deferred = [t for t in deferred if t.get("function", {}).get("name") not in disallowed]
 
-    core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
-    trusted_skill_tools = get_trusted_skill_tool_names(ctx.config, ctx)
+    trusted_guidelines = collect_trusted_tool_guidelines(ctx)
 
     if not deferred:
-        guidance_text = build_tool_guidance_text(
-            active, core_names=core_names, trusted_skill_tool_names=trusted_skill_tools
-        )
-        return active, None, guidance_text
+        return active, None, build_tool_guidance_text(active, trusted_guidelines)
 
     # Deferred mode: set the pool on ctx and add tool_search
     ctx.tools.deferred_pool = deferred
     active = active + SEARCH_TOOL_DEFINITIONS
 
     # Build deferred list text for system prompt
+    core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
     deferred_text = build_deferred_list_text(deferred, core_names=core_names)
-    guidance_text = build_tool_guidance_text(
-        active, core_names=core_names, trusted_skill_tool_names=trusted_skill_tools
-    )
+    guidance_text = build_tool_guidance_text(active, trusted_guidelines)
 
     return active, deferred_text, guidance_text

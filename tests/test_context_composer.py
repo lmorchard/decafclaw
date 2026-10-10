@@ -839,7 +839,7 @@ class TestComposeTools:
         tool = _make_tool_def("workspace_read", prompt_guidelines=["Guideline line."])
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[tool]),
-            patch("decafclaw.tools.TOOL_DEFINITIONS", [tool]),
+            patch("decafclaw.tool_definitions.TOOL_DEFINITIONS", [tool]),
         ):
             composer = ContextComposer()
             active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
@@ -853,7 +853,7 @@ class TestComposeTools:
         tool = _make_tool_def("workspace_read", prompt_guidelines=["Read exact lines."])
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[tool]),
-            patch("decafclaw.tools.TOOL_DEFINITIONS", [tool]),
+            patch("decafclaw.tool_definitions.TOOL_DEFINITIONS", [tool]),
             patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
         ):
             composer = ContextComposer()

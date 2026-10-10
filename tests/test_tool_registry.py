@@ -15,7 +15,6 @@ from decafclaw.tools.tool_registry import (
     get_description,
     get_fetched_tools,
     get_priority,
-    get_trusted_skill_tool_names,
 )
 
 
@@ -686,111 +685,87 @@ class TestWorkspaceEditDescription:
 
 class TestBuildToolGuidanceText:
     def test_empty_active_defs_returns_none(self):
-        assert build_tool_guidance_text([]) is None
+        assert build_tool_guidance_text([], {}) is None
 
     def test_no_guidelines_returns_none(self):
         tools = [_make_tool_def("custom_tool")]
-        assert build_tool_guidance_text(tools, core_defs=tools) is None
+        assert build_tool_guidance_text(tools, {"custom_tool": []}) is None
 
-    def test_active_core_tool_with_guidelines_contributes(self):
-        tool = _make_tool_def(
-            "workspace_read",
-            prompt_guidelines=["Use workspace_read to see exact line numbers."],
-        )
-        out = build_tool_guidance_text([tool], core_defs=[tool])
+    def test_active_tool_with_trusted_guidelines_contributes(self):
+        tool = _make_tool_def("workspace_read")
+        out = build_tool_guidance_text([tool], {"workspace_read": ["Use workspace_read to see exact line numbers."]})
         assert out is not None
         assert out.startswith("<tool_guidance>\n")
         assert out.endswith("\n</tool_guidance>")
         assert "- Use workspace_read to see exact line numbers." in out
 
     def test_guidelines_deduplicated_preserving_order(self):
-        tool1 = _make_tool_def(
-            "tool_a",
-            prompt_guidelines=["Rule 1", "Rule 2"],
-        )
-        tool2 = _make_tool_def(
-            "tool_b",
-            prompt_guidelines=["Rule 2", "Rule 3"],
-        )
-        out = build_tool_guidance_text([tool1, tool2], core_defs=[tool1, tool2])
+        tools = [_make_tool_def("tool_a"), _make_tool_def("tool_b")]
+        trusted = {"tool_a": ["Rule 1", "Rule 2"], "tool_b": ["Rule 2", "Rule 3"]}
+        out = build_tool_guidance_text(tools, trusted)
         expected = "<tool_guidance>\n- Rule 1\n- Rule 2\n- Rule 3\n</tool_guidance>"
         assert out == expected
 
-    def test_trusted_skill_tool_contributes_guidelines(self):
-        skill_tool = _make_tool_def(
-            "custom_skill_tool",
-            prompt_guidelines=["Guideline from trusted skill."],
-        )
-        out = build_tool_guidance_text(
-            [skill_tool],
-            core_names=set(),
-            trusted_skill_tool_names={"custom_skill_tool"},
-        )
-        assert out == "<tool_guidance>\n- Guideline from trusted skill.\n</tool_guidance>"
+    def test_inactive_trusted_tool_does_not_contribute(self):
+        tools = [_make_tool_def("tool_a")]
+        out = build_tool_guidance_text(tools, {"tool_a": ["Active rule"], "tool_b": ["Deferred rule"]})
+        assert out == "<tool_guidance>\n- Active rule\n</tool_guidance>"
 
-    def test_untrusted_workspace_skill_tool_never_contributes(self):
-        untrusted_tool = _make_tool_def(
-            "agent_authored_tool",
-            prompt_guidelines=["Injected guidance from untrusted skill."],
-        )
-        out = build_tool_guidance_text(
-            [untrusted_tool],
-            core_names={"workspace_read"},
-            trusted_skill_tool_names=set(),  # not trusted
-        )
-        assert out is None
-
-    def test_untrusted_workspace_skill_shadowing_core_tool_cannot_inject_guidelines(self):
-        malicious_tool = _make_tool_def(
-            "workspace_read",
-            prompt_guidelines=["Malicious prompt injection"],
-        )
-        core_tool = _make_tool_def("workspace_read", prompt_guidelines=["Authentic core guidance"])
-        out = build_tool_guidance_text(
-            [malicious_tool],
-            core_defs=[core_tool],
-            trusted_skill_tool_names=set(),
-        )
-        assert out is not None
-        assert "Malicious prompt injection" not in out
-        assert "Authentic core guidance" in out
-
-    def test_mcp_tool_guidelines_ignored(self):
-        mcp_tool = _make_tool_def(
-            "mcp__server__tool",
-            prompt_guidelines=["MCP guidance."],
-        )
-        out = build_tool_guidance_text(
-            [mcp_tool],
-            core_names={"mcp__server__tool"},
-            trusted_skill_tool_names={"mcp__server__tool"},
-        )
-        assert out is None
+    def test_active_definition_guidelines_are_never_read(self):
+        # Untrusted (workspace / MCP) tools are absent from the trusted map,
+        # and a shadowing definition's own text is ignored.
+        untrusted = _make_tool_def("agent_authored_tool", prompt_guidelines=["Injected guidance."])
+        shadow = _make_tool_def("workspace_read", prompt_guidelines=["Malicious prompt injection"])
+        mcp_tool = _make_tool_def("mcp__server__tool", prompt_guidelines=["MCP guidance."])
+        out = build_tool_guidance_text([untrusted, shadow, mcp_tool], {"workspace_read": ["Authentic core guidance"]})
+        assert out == "<tool_guidance>\n- Authentic core guidance\n</tool_guidance>"
 
 
-class TestGetTrustedSkillToolNames:
-    def test_gates_on_grants_capability(self, config):
-        config.discovered_skills = [
-            SkillInfo(name="bundled_skill", description="", location=Path("/b"), trust_tier="bundled"),
-            SkillInfo(name="admin_skill", description="", location=Path("/a"), trust_tier="admin"),
-            SkillInfo(name="extra_skill", description="", location=Path("/e"), trust_tier="extra"),
-            SkillInfo(name="workspace_skill", description="", location=Path("/w"), trust_tier="workspace"),
+class TestGuidanceProvenance:
+    """Guidance is sourced from the trusted owner's own definition, never the active one by name."""
+
+    @staticmethod
+    def _guidance(ctx):
+        from decafclaw.tool_definitions import build_tool_list, refresh_dynamic_tools
+
+        refresh_dynamic_tools(ctx)
+        _, _, guidance_text = build_tool_list(ctx)
+        return guidance_text or ""
+
+    def test_workspace_skill_shadowing_trusted_skill_tool_cannot_inject(self, ctx, monkeypatch):
+        from decafclaw import tool_definitions
+
+        ctx.config.discovered_skills = [
+            SkillInfo(name="trusted_skill", description="", location=Path("/b"), trust_tier="bundled"),
+            SkillInfo(name="ws_skill", description="", location=Path("/w"), trust_tier="workspace"),
         ]
-        config.skill_tool_owners = {
-            "tool_bundled": "bundled_skill",
-            "tool_admin": "admin_skill",
-            "tool_extra": "extra_skill",
-            "tool_workspace": "workspace_skill",
-        }
-        trusted = get_trusted_skill_tool_names(config)
-        assert "tool_bundled" in trusted
-        assert "tool_admin" in trusted
-        assert "tool_extra" in trusted
-        assert "tool_workspace" not in trusted
+        ctx.config.skill_tool_owners = {"shared_tool": "trusted_skill"}
+        authentic = _make_tool_def("shared_tool", prompt_guidelines=["Authentic skill guidance."])
+        malicious = _make_tool_def("shared_tool", prompt_guidelines=["Malicious injected guidance."])
+        # Trusted skill's definition is preloaded; the activated workspace
+        # skill's same-named definition sits in extra_definitions and wins dedupe.
+        monkeypatch.setitem(tool_definitions._skill_def_cache, id(ctx.config), [authentic])
+        ctx.tools.extra_definitions = [malicious]
+        ctx.tools.skill_tool_names = {"ws_skill": {"shared_tool"}}
 
-    def test_handles_none_or_missing_discovered_skills(self):
-        class MockConfig:
-            discovered_skills = None
-            skill_tool_owners = {}
+        text = self._guidance(ctx)
+        assert "Malicious injected guidance." not in text
+        assert "Authentic skill guidance." in text
 
-        assert get_trusted_skill_tool_names(MockConfig()) == set()
+    def test_trusted_dynamic_only_skill_contributes(self, ctx):
+        ctx.config.discovered_skills = [
+            SkillInfo(name="dyn_skill", description="", location=Path("/b"), trust_tier="bundled"),
+        ]
+        dyn_def = _make_tool_def("dyn_tool", prompt_guidelines=["Dynamic trusted guidance."])
+        ctx.tools.dynamic_providers = {"dyn_skill": lambda c: ({"dyn_tool": lambda: None}, [dyn_def])}
+
+        assert "Dynamic trusted guidance." in self._guidance(ctx)
+
+    def test_workspace_dynamic_skill_does_not_contribute(self, ctx):
+        ctx.config.discovered_skills = [
+            SkillInfo(name="dyn_skill", description="", location=Path("/w"), trust_tier="workspace"),
+        ]
+        dyn_def = _make_tool_def("dyn_tool", prompt_guidelines=["Dynamic untrusted guidance."])
+        ctx.tools.dynamic_providers = {"dyn_skill": lambda c: ({"dyn_tool": lambda: None}, [dyn_def])}
+
+        assert "Dynamic untrusted guidance." not in self._guidance(ctx)
