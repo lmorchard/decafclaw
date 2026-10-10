@@ -546,6 +546,42 @@ async def test_run_agent_turn_with_tool_call(ctx):
 
 
 @pytest.mark.asyncio
+async def test_run_agent_turn_overwrites_last_request_sidecar(ctx):
+    """Each LLM call in a turn overwrites last_request.json, and the last call wins."""
+    from decafclaw.context_composer import read_last_request_sidecar
+
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+    ctx.conv_id = "test-conv-last-req"
+
+    tool_call_response = _mock_llm_response(
+        content=None,
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "memory_recent",
+                    "arguments": json.dumps({"n": 1}),
+                },
+            }
+        ],
+    )
+    final_response = _mock_llm_response("Here are your memories.")
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [tool_call_response, final_response]
+        history = []
+        result = await run_agent_turn(ctx, "show memories", history)
+
+    assert result.text == "Here are your memories."
+    last_req = read_last_request_sidecar(ctx.config, ctx.conv_id)
+    assert last_req is not None
+    assert last_req["model"] == ctx.config.llm.model
+    # The last request sent to the provider included the tool result
+    assert any(m.get("role") == "tool" for m in last_req["messages"])
+
+
+@pytest.mark.asyncio
 async def test_run_agent_turn_cancellation(ctx):
     """Turn is cancelled before LLM is called."""
     ctx.config.llm.streaming = False

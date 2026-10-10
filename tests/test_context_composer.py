@@ -1882,6 +1882,55 @@ class TestContextSidecar:
             write_context_sidecar(config, "test-conv", {"data": True})
             # No exception raised
 
+
+class TestLastRequestSidecar:
+    def test_write_and_read(self, config):
+        from decafclaw.context_composer import read_last_request_sidecar, write_last_request_sidecar
+
+        data = {
+            "model": "model-1",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"type": "function", "function": {"name": "tool1"}}],
+        }
+        write_last_request_sidecar(config, "test-conv", data)
+        result = read_last_request_sidecar(config, "test-conv")
+        assert result is not None
+        assert result == data
+
+    def test_overwrite_wins(self, config):
+        from decafclaw.context_composer import read_last_request_sidecar, write_last_request_sidecar
+
+        call1 = {"model": "model-1", "messages": [{"role": "user", "content": "first"}], "tools": []}
+        call2 = {"model": "model-2", "messages": [{"role": "user", "content": "second"}], "tools": None}
+        write_last_request_sidecar(config, "test-conv", call1)
+        assert read_last_request_sidecar(config, "test-conv")["model"] == "model-1"
+
+        write_last_request_sidecar(config, "test-conv", call2)
+        assert read_last_request_sidecar(config, "test-conv")["model"] == "model-2"
+        assert read_last_request_sidecar(config, "test-conv")["messages"][0]["content"] == "second"
+
+    def test_read_missing_returns_none(self, config):
+        from decafclaw.context_composer import read_last_request_sidecar
+
+        assert read_last_request_sidecar(config, "nonexistent-conv") is None
+        assert read_last_request_sidecar(config, "") is None
+
+    def test_write_empty_conv_id_is_noop(self, config):
+        from decafclaw.context_composer import write_last_request_sidecar
+
+        # Should not raise or create invalid dir
+        write_last_request_sidecar(config, "", {"data": True})
+
+    def test_write_fail_open_logs_debug(self, config, caplog):
+        import logging
+
+        from decafclaw.context_composer import write_last_request_sidecar
+
+        with caplog.at_level(logging.DEBUG):
+            with patch("decafclaw.context_composer.Path.write_text", side_effect=OSError("disk error")):
+                write_last_request_sidecar(config, "test-conv", {"data": True})
+        assert "Failed to write last request sidecar for test-conv" in caplog.text
+
     @pytest.mark.asyncio
     async def test_mid_conversation_system_update(self, ctx):
         """WHEN config.system_prompt changes between turns in a single conversation, THE SYSTEM SHALL inject a role: "user" message announcing the update."""

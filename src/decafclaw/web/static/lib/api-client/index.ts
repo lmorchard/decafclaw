@@ -19,6 +19,7 @@ export type { ConfigWriteResponse } from './models/ConfigWriteResponse';
 export type { ContextCandidate } from './models/ContextCandidate';
 export type { ContextDiagnosticsResponse } from './models/ContextDiagnosticsResponse';
 export type { ContextMatch } from './models/ContextMatch';
+export type { ContextRawResponse } from './models/ContextRawResponse';
 export type { ContextSource } from './models/ContextSource';
 export type { ContextSourceDetails } from './models/ContextSourceDetails';
 export type { ConversationCreateResponse } from './models/ConversationCreateResponse';

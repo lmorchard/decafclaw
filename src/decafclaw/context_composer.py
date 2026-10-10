@@ -208,6 +208,42 @@ def read_context_sidecar(config, conv_id: str) -> dict | None:
         return None
 
 
+def _last_request_sidecar_path(config, conv_id: str) -> Path:
+    from .conversation_paths import last_request_path
+
+    return last_request_path(config, conv_id)
+
+
+def write_last_request_sidecar(config, conv_id: str, data: dict) -> None:
+    """Write the last LLM request payload to the sidecar file. Fail-open.
+
+    A failure to write the sidecar is logged at debug level and does not
+    fail the turn.
+    """
+    if not conv_id:
+        return
+    try:
+        path = _last_request_sidecar_path(config, conv_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, default=str))
+    except Exception:
+        log.debug("Failed to write last request sidecar for %s", conv_id, exc_info=True)
+
+
+def read_last_request_sidecar(config, conv_id: str) -> dict | None:
+    """Read the last LLM request payload from the sidecar file. Returns None if missing."""
+    if not conv_id:
+        return None
+    try:
+        path = _last_request_sidecar_path(config, conv_id)
+        if not path.exists():
+            return None
+        return json.loads(path.read_text())
+    except Exception:
+        log.debug("Failed to read last request sidecar for %s", conv_id, exc_info=True)
+        return None
+
+
 # -- History sanitization -----------------------------------------------------
 
 

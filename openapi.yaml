@@ -322,6 +322,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/conversations/{id}/context/raw:
+    get:
+      summary: Get Context Raw
+      description: Return raw last request payload for a conversation.
+      operationId: get_context_raw_api_conversations__id__context_raw_get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextRawResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/conversations/{id}/export:
     get:
       summary: Export Conversation
@@ -1714,6 +1739,33 @@ components:
       - name
       - score
       title: ContextMatch
+    ContextRawResponse:
+      properties:
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+        messages:
+          anyOf:
+          - items:
+              additionalProperties:
+                $ref: '#/components/schemas/JsonValue'
+              type: object
+            type: array
+          - type: 'null'
+          title: Messages
+        tools:
+          anyOf:
+          - items:
+              additionalProperties:
+                $ref: '#/components/schemas/JsonValue'
+              type: object
+            type: array
+          - type: 'null'
+          title: Tools
+      type: object
+      title: ContextRawResponse
     ContextSource:
       properties:
         source:

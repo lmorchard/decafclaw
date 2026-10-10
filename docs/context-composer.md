@@ -513,17 +513,28 @@ Earlier turns covered ... (prose summary)
 
 After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}/context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
 
-**REST endpoint:** `GET /api/conversations/{id}/context` returns the sidecar data.
-The generated client describes the diagnostics fields consumed by the inspector.
-The inspector retains those types through its state and rendering helpers.
-Optional fields can remain absent. A missing sidecar returns 404 and displays “No context data yet.”
-The route returns the stored data unchanged, including additional fields that the inspector does not use.
+On every LLM call, the agent also writes the exact request payload to a sidecar file (`workspace/conversations/{conv_id}/last_request.json`). It records the model name, the full messages list, and the tools payload as sent to the provider. Each LLM call overwrites this file so the last call in a multi-step turn wins. Any write failure logs at debug level without failing the turn. Note that because this sidecar records the full prompt as sent, it holds injected vault content and the full system prompt on disk.
+
+**REST endpoints:**
+- `GET /api/conversations/{id}/context` returns the diagnostics sidecar data (`context.json`).
+  The generated client describes the diagnostics fields consumed by the inspector.
+  The inspector retains those types through its state and rendering helpers.
+  Optional fields can remain absent. A missing sidecar returns 404 and displays “No context data yet.”
+  The route returns the stored data unchanged, including additional fields that the inspector does not use.
+- `GET /api/conversations/{id}/context/raw` returns the raw last request payload (`last_request.json`) with `model`, `messages`, and `tools`.
+  It requires authentication and applies the same conversation ownership/access checks as `/context`. If no request has been recorded yet, it returns 404.
 
 **Web UI:** Click the context usage bar in the sidebar to open a popover with:
-- Waffle chart (grid map) showing token allocation by source
-- Summary stats (estimated vs actual tokens, window size, compaction threshold)
-- Source breakdown table with token counts and item details
-- Memory candidates with composite scores, score breakdowns, and graph expansion provenance
+- **Diagnostics tab:**
+  - Waffle chart (grid map) showing token allocation by source
+  - Summary stats (estimated vs actual tokens, window size, compaction threshold)
+  - Source breakdown table with token counts and item details
+  - Memory candidates with composite scores, score breakdowns, and graph expansion provenance
+- **Raw tab:**
+  - "View source" inspection of the last request sent to the model
+  - Model name and counts of messages and tools
+  - Full formatted JSON of messages and tool definitions
+  - Copy button to copy the raw request JSON to the clipboard
 
 ## Canvas tools
 

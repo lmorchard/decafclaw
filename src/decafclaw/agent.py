@@ -424,6 +424,39 @@ async def _call_llm_with_events(
     if llm_api_key:
         llm_kwargs["llm_api_key"] = llm_api_key
 
+    conv_id = getattr(ctx, "conv_id", "") or getattr(ctx, "channel_id", "")
+    if conv_id:
+        try:
+            from .llm import _resolve
+
+            resolved = _resolve(
+                config,
+                model_name=model_name or ctx.active_model,
+                llm_url=llm_url,
+                llm_model=llm_model,
+                llm_api_key=llm_api_key,
+            )
+            target_model = resolved.model
+        except Exception:
+            target_model = model_name or ctx.active_model or getattr(config, "default_model", "")
+            if not target_model and hasattr(config, "llm"):
+                target_model = getattr(config.llm, "model", "")
+
+        try:
+            from .context_composer import write_last_request_sidecar
+
+            write_last_request_sidecar(
+                config,
+                conv_id,
+                {
+                    "model": target_model,
+                    "messages": messages,
+                    "tools": tools,
+                },
+            )
+        except Exception as exc:
+            log.debug("last_request sidecar write failed for %s: %s", conv_id, exc)
+
     iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
     start_time = time.monotonic()
