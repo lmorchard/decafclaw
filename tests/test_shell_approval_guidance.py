@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -251,33 +252,6 @@ async def test_tool_shell_guidance_enable_preset_denied(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_tool_shell_guidance_persistent_preset(tmp_path: Path):
-    ctx = _make_mock_ctx(tmp_path)
-
-    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
-        mock_confirm.return_value = {"approved": True}
-
-        res = await tool_shell_guidance(ctx, action="enable_preset", preset="developer", persistent=True)
-        assert isinstance(res, str)
-        assert "persistently (across all conversations)" in res
-
-        # Check persistent file exists
-        p_file = ctx.config.agent_path / "shell_approval_guidance.json"
-        assert p_file.exists()
-        import json
-
-        data = json.loads(p_file.read_text())
-        assert "developer" in data["active_presets"]
-
-        # Disable persistent
-        res_dis = await tool_shell_guidance(ctx, action="disable_preset", preset="developer", persistent=True)
-        assert isinstance(res_dis, str)
-        assert "Disabled" in res_dis
-        data_after = json.loads(p_file.read_text())
-        assert "developer" not in data_after["active_presets"]
-
-
-@pytest.mark.asyncio
 async def test_tool_shell_guidance_add_and_remove_rule(tmp_path: Path):
     ctx = _make_mock_ctx(tmp_path)
 
@@ -295,21 +269,6 @@ async def test_tool_shell_guidance_add_and_remove_rule(tmp_path: Path):
         assert "Removed shell auto-approval rule for this conversation" in res_rem
         assert "Auto-approve pytest tests/" not in ctx.tools.aux_approval_guidance
         assert ctx.tools.llm_approved_shell_patterns == []
-        # Persistent rule
-        res_p = await tool_shell_guidance(ctx, action="add_rule", rule="Persistent rule 1", persistent=True)
-        assert isinstance(res_p, str)
-        assert "persistently" in res_p
-        p_file = ctx.config.agent_path / "shell_approval_guidance.json"
-        import json
-
-        data = json.loads(p_file.read_text())
-        assert "Persistent rule 1" in data["rules"]
-
-        res_p_rem = await tool_shell_guidance(ctx, action="remove_rule", rule="Persistent rule 1", persistent=True)
-        assert isinstance(res_p_rem, str)
-        assert "Removed" in res_p_rem
-        data_after = json.loads(p_file.read_text())
-        assert "Persistent rule 1" not in data_after["rules"]
 
 
 @pytest.mark.asyncio
@@ -427,26 +386,31 @@ async def test_tool_shell_guidance_cannot_be_bypassed_by_preapproved(tmp_path: P
         assert mock_confirm.call_args.kwargs.get("force") is True
 
 
-@pytest.mark.asyncio
-async def test_tool_shell_guidance_persistent_disable_config_preset(tmp_path: Path):
+def test_existing_persistent_guidance_file_ignored_and_warned_once(tmp_path: Path, caplog):
+    """A pre-existing shell_approval_guidance.json on disk is ignored and produces one warning (#986)."""
     ctx = _make_mock_ctx(tmp_path)
-    ctx.config.shell.active_aux_approval_presets = ["developer"]
+    p_file = ctx.config.agent_path / "shell_approval_guidance.json"
+    p_file.write_text(
+        json.dumps(
+            {
+                "active_presets": ["developer"],
+                "disabled_presets": [],
+                "rules": ["Legacy auto-approve anything"],
+            }
+        )
+    )
 
-    # Verify initially active
-    assert len(resolve_aux_approval_guidance(ctx)) == 1
+    with caplog.at_level(logging.WARNING):
+        guidance1 = resolve_aux_approval_guidance(ctx)
+        assert guidance1 == []
+        assert "Found deprecated" in caplog.text
+        assert "shell_approval_guidance.json" in caplog.text
 
-    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
-        mock_confirm.return_value = {"approved": True}
-
-        # Persistently disable developer preset
-        res = await tool_shell_guidance(ctx, action="disable_preset", preset="developer", persistent=True)
-        assert isinstance(res, str)
-        assert "Disabled shell auto-approval preset `developer` persistently" in res
-
-    # Verify that in a fresh context with developer in config, it is now masked out by persistent disable
-    fresh_ctx = _make_mock_ctx(tmp_path)
-    fresh_ctx.config.shell.active_aux_approval_presets = ["developer"]
-    assert resolve_aux_approval_guidance(fresh_ctx) == []
+        # Second call produces no duplicate warning
+        caplog.clear()
+        guidance2 = resolve_aux_approval_guidance(ctx)
+        assert guidance2 == []
+        assert "Found deprecated" not in caplog.text
 
 
 def test_conversation_manager_clearing_and_reenabling_across_turns(tmp_path: Path):
