@@ -65,6 +65,40 @@
   max-width: 100%;
 }
 
+.confirm-decline-reason {
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.1);
+  border-left: 3px solid #ef4444;
+  font-size: 0.8rem;
+  color: var(--pico-color);
+}
+
+.confirm-decline-label {
+  font-weight: 600;
+  color: var(--pico-color);
+}
+
+.confirm-rule-box {
+  margin-top: 0.5rem;
+}
+
+.confirm-rule-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  margin-bottom: 0.2rem;
+  font-weight: 500;
+}
+
+.confirm-rule-input {
+  width: 100%;
+  margin: 0 !important;
+  font-size: 0.85rem !important;
+  padding: 0.35rem 0.5rem !important;
+}
+
 .confirm-buttons {
   display: flex;
   flex-wrap: wrap;

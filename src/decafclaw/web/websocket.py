@@ -154,6 +154,10 @@ def _confirmation_to_dict(req) -> dict:
         "action_data": action_data,
         "timestamp": getattr(req, "timestamp", ""),
     }
+    if action_data.get("decline_reason"):
+        res["decline_reason"] = action_data["decline_reason"]
+    if action_data.get("suggested_rule"):
+        res["suggested_rule"] = action_data["suggested_rule"]
     if getattr(req, "timeout", None) is not None:
         res["timeout"] = req.timeout
     return res
@@ -704,6 +708,8 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
             approved=msg.get("approved", False),
             always=msg.get("always", False),
             add_pattern=msg.get("add_pattern", False),
+            add_rule=msg.get("add_rule", False),
+            rule=msg.get("rule", ""),
             data=data,
         )
     else:
@@ -718,6 +724,8 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
                 **({"tool_call_id": tool_call_id} if tool_call_id else {}),
                 **({"always": True} if msg.get("always") else {}),
                 **({"add_pattern": True} if msg.get("add_pattern") else {}),
+                **({"add_rule": True} if msg.get("add_rule") else {}),
+                **({"rule": msg.get("rule", "")} if msg.get("rule") else {}),
             }
         )
 
@@ -916,6 +924,10 @@ def _subscribe_to_conv(state, conv_id):
                 "tool_call_id": event.get("tool_call_id", ""),
                 "action_data": action_data,
             }
+            if action_data.get("decline_reason"):
+                confirm_req["decline_reason"] = action_data["decline_reason"]
+            if action_data.get("suggested_rule"):
+                confirm_req["suggested_rule"] = action_data["suggested_rule"]
             if event.get("timeout") is not None:
                 confirm_req["timeout"] = event.get("timeout")
             if event.get("timestamp"):

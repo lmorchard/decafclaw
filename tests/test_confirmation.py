@@ -103,6 +103,8 @@ class TestConfirmationResponseArchive:
             approved=True,
             always=True,
             add_pattern=True,
+            add_rule=True,
+            rule="auto-approve echo *",
             data={"choice": "option_a"},
         )
         msg = resp.to_archive_message()

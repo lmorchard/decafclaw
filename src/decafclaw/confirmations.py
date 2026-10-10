@@ -81,6 +81,8 @@ class ConfirmationResponse:
     approved: bool
     always: bool = False
     add_pattern: bool = False
+    add_rule: bool = False
+    rule: str = ""
     data: dict = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -94,6 +96,10 @@ class ConfirmationResponse:
             msg.pop("always")
         if not msg["add_pattern"]:
             msg.pop("add_pattern")
+        if not msg["add_rule"]:
+            msg.pop("add_rule")
+        if not msg["rule"]:
+            msg.pop("rule")
         if not msg["data"]:
             msg.pop("data")
         return msg
