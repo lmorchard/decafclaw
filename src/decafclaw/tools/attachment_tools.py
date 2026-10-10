@@ -1,13 +1,31 @@
 """Attachment tools — list and retrieve conversation file attachments."""
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from ..attachments import list_conversation_attachments, read_attachment_base64
-from ..media import ToolResult
+from ..attachments import (
+    list_conversation_attachments,
+    read_attachment_base64,
+    read_attachment_bytes,
+)
+from ..media import LocalFileMediaHandler, ToolResult
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
+
+
+def _should_provide_media(handler: Any) -> bool:
+    """Check whether the active media handler uploads to an external platform.
+
+    For local handlers (web, terminal), files are already stored locally in
+    uploads/ and referenced in the result text, so returning media items would
+    cause duplicate files and duplicate markdown image references.
+    """
+    if handler is None:
+        return False
+    if isinstance(handler, LocalFileMediaHandler):
+        return False
+    return bool(getattr(handler, "uploads_to_platform", True))
 
 
 async def tool_list_attachments(ctx: "Context") -> str | ToolResult:
@@ -37,22 +55,25 @@ async def tool_get_attachment(ctx: "Context", filename: str) -> str | ToolResult
     mime = match.get("mime_type", "application/octet-stream")
 
     if mime.startswith("image/"):
-        b64 = read_attachment_base64(ctx.config, match)
-        if b64 is None:
+        raw_data = read_attachment_bytes(ctx.config, match)
+        if raw_data is None:
             return ToolResult(text=f"[error: could not read file: {filename}]")
         # Include workspace path as markdown image so the assistant can
         # embed it in responses (web UI rewrites to /api/workspace/ URLs)
         path = match["path"]
-        return ToolResult(
-            text=f"Image attachment: {filename} ({mime})\n\n![{filename}]({path})",
-            media=[
+        media = []
+        if _should_provide_media(ctx.media_handler):
+            media = [
                 {
                     "type": "file",
                     "filename": filename,
-                    "data": b64,
+                    "data": raw_data,
                     "content_type": mime,
                 }
-            ],
+            ]
+        return ToolResult(
+            text=f"Image attachment: {filename} ({mime})\n\n![{filename}]({path})",
+            media=media,
         )
 
     if mime.startswith("text/"):
