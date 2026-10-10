@@ -60,8 +60,8 @@ def get_always_loaded_tool_names(config) -> set[str]:
                     tname = td.get("function", {}).get("name")
                     if tname:
                         names.add(tname)
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Failed to inspect always-loaded skill %r: %s", getattr(skill, "name", skill), exc)
     if names and hasattr(config, "always_loaded_skill_tools"):
         config.always_loaded_skill_tools = names
     return names
@@ -123,11 +123,19 @@ def classify_tools(
 
     always_loaded_tools = get_always_loaded_tool_names(config)
     on_demand_skill_tools = skill_tool_names - always_loaded_tools
+    # On-demand activated skill tools without explicit declared priority
+    # default to critical (backward compatibility: activation is the priority
+    # signal). Tools with an explicit priority declaration honor it.
+    undeclared_on_demand = set()
+    for td in all_tool_defs:
+        tname = td.get("function", {}).get("name", "")
+        if tname in on_demand_skill_tools and td.get("priority") not in _PRIORITY_RANK:
+            undeclared_on_demand.add(tname)
 
     # Build the "force critical" set
     force_critical = get_critical_names(config)
     force_critical |= fetched_names
-    force_critical |= on_demand_skill_tools
+    force_critical |= undeclared_on_demand
     force_critical |= preempt_matches
 
     budget = config.tool_context_budget

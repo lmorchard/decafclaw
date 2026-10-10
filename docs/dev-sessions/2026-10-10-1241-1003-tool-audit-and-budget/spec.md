@@ -23,13 +23,13 @@ Furthermore:
 1. **Per-tool priority for skills:** Skill tools can declare `"priority": "critical" | "normal" | "low"` on their definition dictionaries.
 2. For always-loaded skills (`vault`, `background`, `mcp`):
    - Only tools explicitly declared as `critical` enter the critical floor. Undeclared or other tools default to their declared tier (`normal` or `low`).
-   - `vault`: 5 tools are `critical` (`vault_read`, `vault_write`, `vault_search`, `vault_list`, `vault_journal_append`). The remaining 10 tools are `normal`.
+   - `vault`: 5 tools are `critical` (`vault_read`, `vault_write`, `vault_search`, `vault_list`, `vault_journal_append`). 4 tools are `normal` (`vault_delete`, `vault_recent`, `vault_tags`, `vault_backlinks`). The remaining 6 specialized editors/admin tools are `low` (`vault_rename`, `vault_grant_folder`, `vault_show_sections`, `vault_move_lines`, `vault_section`, `vault_update_frontmatter`).
    - `background`: all 4 tools are `low`.
    - `mcp`: all 5 tools are `low`.
 3. For on-demand skills (e.g. `project`): when activated, tools with declared priority use that priority (or default to `critical` if undeclared, ensuring backward compatibility).
-4. **Core tool priority adjustments:**
+4. **Core tool priority adjustments & consolidation:**
    - `notes_read` demoted to `normal`.
-   - `delegate_tasks` demoted to `normal`.
+   - `delegate_task` consolidated to accept single task string or list of tasks (`task: str | list[str]`), executing lists in parallel; `delegate_tasks` definition removed from the catalog.
    - `admin_*` tools (all 6) set to `low` so they don't crowd out workspace tools.
    - `workspace_insert`, `workspace_replace_lines`, and `admin_replace_lines` set to `low`.
 5. **Resulting critical set:**

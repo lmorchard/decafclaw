@@ -835,6 +835,102 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "function": {
+            "name": "workspace_search",
+            "description": "Search for a regex pattern across files in the workspace. Returns matching lines with line numbers and surrounding context, grouped by file. Use the glob parameter to filter file types (e.g. '*.py'). Pass a specific file path to search within one file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory or file to search in (default: workspace root)",
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Filename glob filter (default: '*' for all files). Examples: '*.py', '*.md', '*.json'",
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Lines of context to show around each match (default: 2)",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "function": {
+            "name": "workspace_glob",
+            "description": "Find files by name/glob pattern, recursively. Returns matching file paths relative to workspace root with file sizes. Useful for finding files by extension or name pattern.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern to match filenames (e.g. '*.py', 'config*', '*.md')",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search from (default: workspace root)",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "function": {
+            "name": "workspace_list",
+            "description": "List files and directories in your workspace. Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative directory path (default: workspace root)",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "function": {
+            "name": "workspace_diff",
+            "description": "Show a unified diff between two workspace files. Useful for comparing versions, checking what changed, or reviewing differences.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path1": {
+                        "type": "string",
+                        "description": "Relative path to the first file",
+                    },
+                    "path2": {
+                        "type": "string",
+                        "description": "Relative path to the second file",
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Lines of context around each change (default: 3)",
+                    },
+                },
+                "required": ["path1", "path2"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "function": {
             "name": "workspace_preview_markdown",
             "description": (
                 "Read a workspace markdown file (.md or .markdown) and "
@@ -1011,58 +1107,6 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "function": {
-            "name": "workspace_search",
-            "description": "Search for a regex pattern across files in the workspace. Returns matching lines with line numbers and surrounding context, grouped by file. Use the glob parameter to filter file types (e.g. '*.py'). Pass a specific file path to search within one file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "Regex pattern to search for",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Directory or file to search in (default: workspace root)",
-                    },
-                    "glob": {
-                        "type": "string",
-                        "description": "Filename glob filter (default: '*' for all files). Examples: '*.py', '*.md', '*.json'",
-                    },
-                    "context_lines": {
-                        "type": "integer",
-                        "description": "Lines of context to show around each match (default: 2)",
-                    },
-                },
-                "required": ["pattern"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "priority": "normal",
-        "function": {
-            "name": "workspace_glob",
-            "description": "Find files by name/glob pattern, recursively. Returns matching file paths relative to workspace root with file sizes. Useful for finding files by extension or name pattern.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "Glob pattern to match filenames (e.g. '*.py', 'config*', '*.md')",
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Directory to search from (default: workspace root)",
-                    },
-                },
-                "required": ["pattern"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "priority": "normal",
-        "function": {
             "name": "workspace_move",
             "description": "Move or rename a file within the workspace. Fails if the destination already exists.",
             "parameters": {
@@ -1147,32 +1191,6 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "function": {
-            "name": "workspace_diff",
-            "description": "Show a unified diff between two workspace files. Useful for comparing versions, checking what changed, or reviewing differences.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path1": {
-                        "type": "string",
-                        "description": "Relative path to the first file",
-                    },
-                    "path2": {
-                        "type": "string",
-                        "description": "Relative path to the second file",
-                    },
-                    "context_lines": {
-                        "type": "integer",
-                        "description": "Lines of context around each change (default: 3)",
-                    },
-                },
-                "required": ["path1", "path2"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "priority": "normal",
-        "function": {
             "name": "file_share",
             "description": "Share a file from the workspace as an attachment in the conversation. The file will be uploaded and displayed inline (images) or as a download (other files). Use this to share reports, images, logs, or any workspace file with the user.",
             "parameters": {
@@ -1188,24 +1206,6 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "priority": "normal",
-        "function": {
-            "name": "workspace_list",
-            "description": "List files and directories in your workspace. Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Relative directory path (default: workspace root)",
-                    },
-                },
-                "required": [],
             },
         },
     },
