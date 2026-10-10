@@ -3,6 +3,7 @@
 import heapq
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import snowballstemmer
@@ -10,6 +11,7 @@ import snowballstemmer
 from ..conversation_paths import iter_conversation_archives
 from ..media import ToolResult
 from ..preempt_search import tokenize
+from ..scheduled_activity import parse_scheduled_conv_id
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -34,13 +36,24 @@ def _stemmed_tokens(text: str) -> set[str]:
     return {_STEMMER.stemWord(t) for t in tokenize(text)}
 
 
-def tool_conversation_search(ctx: "Context", query: str) -> str:
+def tool_conversation_search(ctx: "Context", query: str, days: int = 0) -> str:
     """Search conversation archives by stemmed-token overlap plus substring."""
-    log.info(f"[tool:conversation_search] query={query}")
+    log.info(f"[tool:conversation_search] query={query} days={days}")
 
     archives = sorted(iter_conversation_archives(ctx.config), key=lambda t: t[0], reverse=True)
     if not archives:
         return f"No conversation history found matching '{query}'"
+
+    try:
+        days_int = int(days) if days else 0
+    except (ValueError, TypeError):
+        days_int = 0
+
+    cutoff: datetime | None = None
+    cutoff_ts: float | None = None
+    if days_int > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days_int)
+        cutoff_ts = cutoff.timestamp()
 
     query_lower = query.lower()
     query_stems = _stemmed_tokens(query)
@@ -55,6 +68,19 @@ def tool_conversation_search(ctx: "Context", query: str) -> str:
     order = 0  # archive iteration order — deterministic tie-break
 
     for conv_id, filepath in archives:
+        if cutoff is not None and cutoff_ts is not None:
+            # Fast filter on archive file:
+            parsed = parse_scheduled_conv_id(conv_id)
+            if parsed is not None:
+                if parsed[1] < cutoff:
+                    continue
+            else:
+                try:
+                    if filepath.stat().st_mtime < cutoff_ts:
+                        continue
+                except OSError:
+                    continue
+
         with filepath.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -69,6 +95,18 @@ def tool_conversation_search(ctx: "Context", query: str) -> str:
                 content = msg.get("content", "")
                 if not content:
                     continue
+
+                if cutoff is not None:
+                    msg_ts = msg.get("timestamp")
+                    if msg_ts:
+                        try:
+                            msg_dt = datetime.fromisoformat(msg_ts)
+                            if msg_dt.tzinfo is None:
+                                msg_dt = msg_dt.replace(tzinfo=timezone.utc)
+                            if msg_dt < cutoff:
+                                continue
+                        except (ValueError, TypeError):
+                            pass
 
                 score = 0
                 if query_lower in content.lower():
@@ -142,6 +180,10 @@ CONVERSATION_TOOL_DEFINITIONS = [
                     "query": {
                         "type": "string",
                         "description": "What to search for in past conversations",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Optional: only search conversations from the last N days (0 or omitted = all history)",
                     },
                 },
                 "required": ["query"],

@@ -552,6 +552,12 @@ skills/<name>/
 
 ## Bundled skills
 
+### dream
+
+Periodic memory consolidation: reviews recent journal entries and conversations, distills insights into curated vault pages, and updates page summaries and frontmatter. See [Dream Consolidation](dream-consolidation.md).
+
+Tools: `dream_recent_runs`
+
 ### tabstack
 
 Web browsing, content extraction, research, and browser automation via the Tabstack API (SDK >= 2.6.1). Requires `TABSTACK_API_KEY`.

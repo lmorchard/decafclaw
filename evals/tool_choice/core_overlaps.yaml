@@ -61,6 +61,15 @@
     "what did I tell you about" — present-tense framing that points
     at chat history.
 
+- name: conv-vs-vault-recent-chat
+  scenario: "Search our chat history from the last 3 days for the exact link Alice shared about database indexing."
+  expected: conversation_search
+  near_miss: [vault_search]
+  notes: |
+    Explicitly asking for chat history / messages ("search our chat history")
+    with an exact reference ("exact link Alice shared") calls conversation_search,
+    not vault_search.
+
 # -- vault_read vs workspace_read --------------------------------------------
 
 - name: vault-read-vs-workspace-read-known-page

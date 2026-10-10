@@ -1,6 +1,9 @@
 """Tests for tool_conversation_search over the dir sidecar layout."""
 
 import json
+import os
+import time
+from datetime import datetime, timedelta, timezone
 
 from decafclaw.conversation_paths import conversations_root
 from decafclaw.tools.conversation_tools import tool_conversation_search
@@ -143,3 +146,88 @@ def test_search_no_match_when_no_tokens_overlap(ctx):
     )
     out = tool_conversation_search(ctx, "quantum chromodynamics")
     assert "No conversation history found" in out
+
+
+# --- Date bound filtering (days parameter) ---
+
+
+def test_search_date_bound_excludes_old_archives_by_mtime(ctx):
+    """Archives with mtime older than days are excluded when days > 0."""
+    _write_dir(
+        ctx.config,
+        "conv-recent",
+        [
+            {"role": "user", "content": "recent discussion about pineapples"},
+        ],
+    )
+    _write_dir(
+        ctx.config,
+        "conv-old",
+        [
+            {"role": "user", "content": "old discussion about pineapples"},
+        ],
+    )
+    old_archive = conversations_root(ctx.config) / "conv-old" / "archive.jsonl"
+    ten_days_ago = time.time() - (10 * 86400)
+    os.utime(old_archive, (ten_days_ago, ten_days_ago))
+
+    # With days=7, conv-old is excluded
+    out = tool_conversation_search(ctx, "pineapples", days=7)
+    assert "conv-recent" in out
+    assert "conv-old" not in out
+
+    # Without days or days=0, both are returned (default behavior preserved)
+    out_default = tool_conversation_search(ctx, "pineapples")
+    assert "conv-recent" in out_default
+    assert "conv-old" in out_default
+
+    out_zero = tool_conversation_search(ctx, "pineapples", days=0)
+    assert "conv-recent" in out_zero
+    assert "conv-old" in out_zero
+
+
+def test_search_date_bound_scheduled_conv_id(ctx):
+    """Scheduled conversation conv_ids encode timestamps; older runs are filtered out."""
+    now = datetime.now(timezone.utc)
+    recent_ts = (now - timedelta(days=1)).strftime("%Y%m%d-%H%M%S")
+    old_ts = (now - timedelta(days=14)).strftime("%Y%m%d-%H%M%S")
+
+    _write_dir(
+        ctx.config,
+        f"schedule-dream-{recent_ts}",
+        [
+            {"role": "assistant", "content": "consolidated hummingbirds into vault"},
+        ],
+    )
+    _write_dir(
+        ctx.config,
+        f"schedule-dream-{old_ts}",
+        [
+            {"role": "assistant", "content": "consolidated hummingbirds long ago"},
+        ],
+    )
+
+    out = tool_conversation_search(ctx, "hummingbirds", days=7)
+    assert f"schedule-dream-{recent_ts}" in out
+    assert f"schedule-dream-{old_ts}" not in out
+
+
+def test_search_date_bound_message_timestamp(ctx):
+    """Within an archive, messages older than cutoff are excluded when message has timestamp."""
+    now = datetime.now(timezone.utc)
+    recent_iso = (now - timedelta(days=2)).isoformat()
+    old_iso = (now - timedelta(days=20)).isoformat()
+
+    _write_dir(
+        ctx.config,
+        "conv-mixed",
+        [
+            {"role": "user", "content": "ancient note on dragonflies", "timestamp": old_iso},
+            {"role": "assistant", "content": "recent note on dragonflies", "timestamp": recent_iso},
+        ],
+    )
+
+    out = tool_conversation_search(ctx, "dragonflies", days=7)
+    assert "conv-mixed" in out
+    assert "recent note on dragonflies" in out
+    assert "ancient note on dragonflies" not in out
