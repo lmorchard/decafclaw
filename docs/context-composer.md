@@ -513,7 +513,7 @@ Earlier turns covered ... (prose summary)
 
 After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}/context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
 
-On every LLM call, the agent also writes the exact request payload to a sidecar file (`workspace/conversations/{conv_id}/last_request.json`). It records the model name, the full messages list, and the tools payload as sent to the provider. Each LLM call overwrites this file so the last call in a multi-step turn wins. Any write failure logs at debug level without failing the turn. Note that because this sidecar records the full prompt as sent, it holds injected vault content and the full system prompt on disk.
+On every LLM call, the agent also writes the request payload to a sidecar file (`workspace/conversations/{conv_id}/last_request.json`). It records the model name, the finalized canonical messages list, and the tools definition payload prepared for the provider. Each provider subsequently translates these canonical structures into its specific API wire format (e.g. Gemini `contents`/`systemInstruction` or OpenAI `input`). Each LLM call overwrites this file so the last call in a multi-step turn wins. Any write failure logs at debug level without failing the turn. Note that because this sidecar records the full prompt and injected context, it holds injected vault content and the full system prompt on disk.
 
 **REST endpoints:**
 - `GET /api/conversations/{id}/context` returns the diagnostics sidecar data (`context.json`).

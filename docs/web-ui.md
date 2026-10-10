@@ -151,10 +151,10 @@ Click the context usage bar in the sidebar to see a popover with:
   - Source breakdown table
   - Memory candidates with composite scores
 - **Raw tab:**
-  - View the literal model request payload (`last_request.json`) sent on the most recent LLM call
+  - View the canonical model request payload (`last_request.json`) prepared for the provider on the most recent LLM call
   - Model name, messages count, and tools count
-  - Full formatted messages and tools JSON
-  - Copy button to copy the raw request JSON to the clipboard
+  - Full formatted canonical messages and tools JSON
+  - Copy button to copy the request JSON to the clipboard
 
 See [Context Composer](context-composer.md#context-inspection) for details.
 
