@@ -17,7 +17,7 @@ import json
 import logging
 import re as _re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -26,8 +26,8 @@ if TYPE_CHECKING:
     from .context_composer import ComposedContext
     from .reflection import ReflectionResult
 
+from . import compaction
 from .archive import append_message
-from .compaction import compact_history
 from .config_types import LoopBreakerConfig
 from .context import TurnLifecycle
 from .context_cleanup import clear_old_tool_results
@@ -175,7 +175,7 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None
     if prompt_tokens and prompt_tokens > config.compaction.max_tokens:
         log.info(f"Token budget exceeded ({prompt_tokens} > {config.compaction.max_tokens}), triggering compaction")
         try:
-            await compact_history(ctx, history)
+            await compaction.compact_history(ctx, history)
             # After compaction, summarized content replaces originals —
             # allow previously-injected pages to be re-injected if relevant,
             # and reset cleanup accounting since the new in-memory view
@@ -810,18 +810,24 @@ class TurnRunner:
         except Exception as exc:
             if _is_context_length_exceeded(exc):
                 log.warning("Context length exceeded during LLM call, forcing compaction.")
-                # Dynamically lower the compaction threshold
-                from .compaction import compact_history
-
-                self.config.compaction.max_tokens = max(
+                # Dynamically lower the compaction threshold for this turn without mutating shared config
+                lower_threshold = max(
                     1000,
                     int(
                         (self.prompt_tokens or (self.composed.total_tokens_estimated if self.composed else 0) or 10000)
                         * 0.8
                     ),
                 )
+                self.config = replace(
+                    self.config,
+                    compaction=replace(
+                        self.config.compaction,
+                        max_tokens=lower_threshold,
+                    ),
+                )
+                self.ctx.config = self.config
 
-                await compact_history(self.ctx, self.history)
+                await compaction.compact_history(self.ctx, self.history)
                 # After compaction, summarized content replaces originals
                 self.ctx.composer.injected_paths.clear()
                 self.ctx.composer.cleanup_cleared_count = 0
