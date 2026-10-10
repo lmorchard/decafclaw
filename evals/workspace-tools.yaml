@@ -102,3 +102,26 @@
       reflection.enabled: false
   expect_workspace:
     workspace_file_exists: ["decafclaw/src/decafclaw/rate_limiter.py"]
+
+# -- replace_lines: edits by line number with deferred tool ------------------
+# When asked to edit specific line numbers, the agent should search for and use
+# workspace_replace_lines rather than rewriting the file or doing surgical text replacement.
+
+- name: "replaces lines by line number using workspace_replace_lines"
+  setup:
+    workspace_files:
+      "src/config.txt": |
+        alpha=1
+        beta=2
+        gamma=3
+        delta=4
+  input: "In src/config.txt, replace lines 2 through 3 with 'beta=20\ngamma=30'."
+  expect:
+    max_tool_calls: 6
+    max_tool_errors: 0
+    expect_tool: workspace_replace_lines
+    config_overrides:
+      reflection.enabled: false
+  expect_workspace:
+    workspace_file_exists: ["src/config.txt"]
+

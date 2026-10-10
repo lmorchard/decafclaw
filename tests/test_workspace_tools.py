@@ -1,5 +1,6 @@
 """Tests for workspace file tools — path sandboxing and file sharing."""
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -904,3 +905,50 @@ def test_write_does_not_note_a_nested_workspace_dir(ctx):
     result = tool_workspace_write(ctx, path="notes/workspace/plan.md", content="x")
     text = result if isinstance(result, str) else result.text
     assert "did you mean" not in text.lower()
+
+
+class TestWorkspaceToolPromptGuidelines:
+    def test_workspace_tools_define_prompt_guidelines(self):
+        from decafclaw.tools.workspace_tools import WORKSPACE_TOOL_DEFINITIONS
+
+        expected_tools = {
+            "workspace_read",
+            "workspace_search",
+            "workspace_glob",
+            "workspace_write",
+            "workspace_append",
+            "workspace_edit",
+            "workspace_insert",
+            "workspace_replace_lines",
+            "workspace_move",
+            "workspace_delete",
+            "workspace_diff",
+        }
+        defs_by_name = {td["function"]["name"]: td for td in WORKSPACE_TOOL_DEFINITIONS}
+        for name in expected_tools:
+            td = defs_by_name.get(name)
+            assert td is not None, f"Missing definition for {name}"
+            guidelines = td.get("prompt_guidelines")
+            assert guidelines, f"Tool {name} must declare prompt_guidelines"
+            assert isinstance(guidelines, list)
+
+    def test_guidelines_rendered_and_deduplicated(self):
+        from decafclaw.tools.tool_registry import build_tool_guidance_text
+        from decafclaw.tools.workspace_tools import WORKSPACE_TOOL_DEFINITIONS
+
+        core_names = {td["function"]["name"] for td in WORKSPACE_TOOL_DEFINITIONS}
+        text = build_tool_guidance_text(WORKSPACE_TOOL_DEFINITIONS, core_names=core_names)
+        assert text is not None
+        assert text.startswith("<tool_guidance>\n")
+        assert text.endswith("\n</tool_guidance>")
+        # Check deduplication: search and glob share the same line
+        assert text.count("Use workspace_search and workspace_glob to find files first.") == 1
+        # Check deduplication: move and delete share the same line
+        assert text.count("Use workspace_move and workspace_delete to rename or remove files.") == 1
+
+    def test_agent_md_no_longer_contains_workspace_selection_bullets(self):
+        # Read the raw AGENT.md text
+        agent_md = (Path(__file__).parents[1] / "src" / "decafclaw" / "prompts" / "AGENT.md").read_text()
+        assert "workspace_replace_lines / workspace_insert" not in agent_md
+        assert "workspace_search / workspace_glob" not in agent_md
+        assert "Prefer surgical edits to full rewrites." in agent_md

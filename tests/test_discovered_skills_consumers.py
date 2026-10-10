@@ -81,6 +81,12 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
         "activate_always_loaded",
     ): "GATE: skips trust_tier == 'workspace' outright. Workspace skills also "
     "have always_loaded stripped at discovery; this is defense in depth.",
+    (
+        "tools/tool_registry.py",
+        "get_trusted_skill_tool_names",
+    ): "GATE (#998): grants_capability filter; only trusted tiers (bundled, "
+    "admin, extra) may contribute prompt_guidelines. Agent-writable "
+    "workspace-tier skills are rejected.",
     # -- deliberate permits ----------------------------------------------------
     (
         "skills/__init__.py",

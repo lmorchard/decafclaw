@@ -31,8 +31,20 @@ _PRIORITY_RANK = {
 
 
 def estimate_tool_tokens(tool_defs: list[dict]) -> int:
-    """Estimate token cost of tool definitions."""
-    return sum(estimate_tokens(json.dumps(td)) for td in tool_defs)
+    """Estimate token cost of tool definitions.
+
+    Top-level prompt_guidelines are excluded because they are injected
+    into the prompt as <tool_guidance> and accounted for there, not in
+    the tool schema declarations sent to the model.
+    """
+    total = 0
+    for td in tool_defs:
+        if "prompt_guidelines" in td:
+            clean = {k: v for k, v in td.items() if k != "prompt_guidelines"}
+            total += estimate_tokens(json.dumps(clean))
+        else:
+            total += estimate_tokens(json.dumps(td))
+    return total
 
 
 def get_critical_names(config) -> set[str]:
@@ -338,3 +350,102 @@ def add_fetched_tools(ctx: "Context", names: set[str]) -> None:
     """Add tool names to the fetched set in ctx.skills.data."""
     existing = get_fetched_tools(ctx)
     ctx.skills.data["fetched_tools"] = sorted(existing | names)
+
+
+# -- Tool guidance rendering & trust gating -----------------------------------
+
+
+def get_trusted_skill_tool_names(config, ctx: "Context | None" = None) -> set[str]:
+    """Return tool names that belong to trusted skills (bundled, admin, extra).
+
+    Workspace-tier skills are excluded via ``skills.grants_capability`` so
+    agent-writable code cannot inject privileged tool guidance.
+    """
+    from ..skills import grants_capability
+
+    discovered_skills = getattr(config, "discovered_skills", None)
+    if discovered_skills is None and hasattr(config, "discovered_skills"):
+        discovered_skills = config.discovered_skills
+    discovered_skills = discovered_skills or []
+
+    trusted_skills = {s.name for s in discovered_skills if grants_capability(s)}
+    trusted_names: set[str] = set()
+
+    if ctx is not None and getattr(ctx, "tools", None) is not None:
+        for s_name in trusted_skills:
+            trusted_names.update(ctx.tools.skill_tool_names.get(s_name, set()))
+
+    skill_tool_owners = getattr(config, "skill_tool_owners", {}) or {}
+    for tool_name, s_name in skill_tool_owners.items():
+        if s_name in trusted_skills:
+            trusted_names.add(tool_name)
+
+    return trusted_names
+
+
+def build_tool_guidance_text(
+    active_defs: list[dict],
+    core_names: set[str] | None = None,
+    trusted_skill_tool_names: set[str] | None = None,
+    core_defs: list[dict] | None = None,
+) -> str | None:
+    """Build the <tool_guidance> system prompt block from active tool definitions.
+
+    Only tools that are core tools or from trusted skills (present in
+    ``trusted_skill_tool_names``) can contribute guidelines. MCP tools and
+    untrusted (workspace-tier) skill tools are excluded.
+
+    For core tools, guidelines are strictly sourced from authentic core tool
+    definitions (``core_defs`` or ``TOOL_DEFINITIONS``) to prevent untrusted
+    workspace skills from injecting guidance by shadowing core tool names.
+
+    Guideline strings are deduplicated while preserving the encounter order
+    across active definitions.
+
+    Returns:
+        Formatted XML block or None if no active tool contributes guidelines.
+    """
+    if not active_defs:
+        return None
+
+    if core_defs is None:
+        from . import TOOL_DEFINITIONS  # deferred: circular dep
+
+        core_defs = TOOL_DEFINITIONS
+
+    core_guidelines: dict[str, list[str]] = {
+        td.get("function", {}).get("name", ""): td.get("prompt_guidelines") or [] for td in core_defs
+    }
+    if core_names is None:
+        core_names = set(core_guidelines.keys())
+
+    trusted_skill_names = trusted_skill_tool_names or set()
+
+    seen_lines: set[str] = set()
+    guidelines: list[str] = []
+
+    for td in active_defs:
+        name = td.get("function", {}).get("name", "")
+        if not name or name.startswith("mcp__"):
+            continue
+
+        lines_to_add: list[str] = []
+        if name in core_guidelines:
+            # Sourced from authentic core definition to prevent shadow injection
+            lines_to_add = core_guidelines[name]
+        elif name in trusted_skill_names:
+            lines_to_add = td.get("prompt_guidelines") or []
+        else:
+            continue
+
+        for line in lines_to_add:
+            line_clean = line.strip()
+            if line_clean and line_clean not in seen_lines:
+                seen_lines.add(line_clean)
+                guidelines.append(line_clean)
+
+    if not guidelines:
+        return None
+
+    formatted = "\n".join(f"- {g}" for g in guidelines)
+    return f"<tool_guidance>\n{formatted}\n</tool_guidance>"

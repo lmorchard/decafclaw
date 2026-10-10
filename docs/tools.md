@@ -331,6 +331,29 @@ These skills ship with DecafClaw and provide tools when activated. Full details 
 
 Every tool declares a priority: `critical` (✓ above), `normal` (default), or `low`. When the active tool budget is exceeded, the classifier fills tier by tier: critical first, then normal, deferring `low`-priority tools behind `tool_search`. Pre-emptive search can promote tools to critical for a single turn based on user-message keyword matches. See [Tool Priority System](tool-priority.md), [Tool Search](tool-search.md), and [Pre-emptive Tool Search](preemptive-tool-search.md).
 
+## Tool-owned prompt guidance (`prompt_guidelines`) (#928 & #998)
+
+Tool definitions can optionally declare top-level `prompt_guidelines: list[str]`. When a tool is in the active set, its guidelines are rendered into an authoritative `<tool_guidance>` system message injected into the prompt.
+
+### Division of guidance responsibilities
+
+To avoid instruction duplication, drift, and prompt bloat:
+1. **Tool descriptions** (`function.description`): describe *what* the tool does, its arguments, and parameter constraints for the model's function-calling schema.
+2. **`prompt_guidelines`**: concise operational steering rules that are only relevant when the tool is callable (e.g. "Use workspace_read to see exact current content and line numbers before modifying a file"). When the tool is deferred or unavailable, its guidelines do not consume prompt tokens. Guidelines across active tools are deduplicated in stable order.
+3. **`AGENT.md`**: global behavioral invariants (e.g. "prefer surgical edits to full rewrites", never use shell to edit files, reflexivity guards) and workspace directory organization.
+4. **Skill bodies**: step-by-step procedures, multi-step workflows, and domain guidance.
+
+### Trust boundary
+
+Prompt guidance runs with system-level instruction authority. To prevent untrusted prompt injection:
+- **Core tools** and **trusted skills** (`bundled`, `admin`, `extra` passing `skills.grants_capability(info)`) may contribute `prompt_guidelines`.
+- **Workspace-tier skills** (`data/{agent_id}/workspace/skills/`) are agent-writable and **never** contribute prompt guidance, even when activated.
+- **MCP tools** (`mcp__*`) never contribute prompt guidance.
+
+### Dynamic lifecycle
+
+In `TurnRunner`, mid-turn tool loadout changes (such as fetching a deferred tool via `tool_search`, or dynamic tools refreshed via `get_tools(ctx)`) trigger `ContextComposer.update_iteration_tools()`. This updates both `<deferred_tools>` and `<tool_guidance>` in-place on the very next LLM iteration.
+
 ## Tool usage telemetry (#310)
 
 `tool_telemetry.py` is a fail-open EventBus subscriber that appends one **metadata-only** JSONL record per tool call to `{workspace}/tool_usage.jsonl`. It answers "which tools are load-bearing and which are decorative" with data instead of intuition — the first step before any [MCP-overload](tool-priority.md) consolidation.

@@ -21,8 +21,10 @@ from .tools import TOOL_DEFINITIONS
 from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
 from .tools.tool_registry import (
     build_deferred_list_text,
+    build_tool_guidance_text,
     classify_tools,
     get_fetched_tools,
+    get_trusted_skill_tool_names,
 )
 
 if TYPE_CHECKING:
@@ -173,12 +175,14 @@ def _dedupe_by_name(tool_defs: list) -> list:
     return deduped
 
 
-def build_tool_list(ctx: "Context") -> tuple[list, str | None]:
-    """Build the tool list, with optional deferred mode.
+def build_tool_list(ctx: "Context") -> tuple[list, str | None, str | None]:
+    """Build the tool list, with optional deferred mode and tool-owned guidance.
 
-    Returns (tool_definitions, deferred_text) where deferred_text is
-    None if all tools fit in the budget, or a system prompt block
-    listing deferred tools when the budget is exceeded.
+    Returns (tool_definitions, deferred_text, guidance_text) where:
+    - `deferred_text` is None if all tools fit in budget, or a system prompt block
+      listing deferred tools when budget is exceeded.
+    - `guidance_text` is None if no active tool defines guidelines, or a
+      <tool_guidance> system prompt block.
     """
     all_defs = collect_all_tool_defs(ctx)
     fetched = get_fetched_tools(ctx)
@@ -206,15 +210,23 @@ def build_tool_list(ctx: "Context") -> tuple[list, str | None]:
         active = [t for t in active if t.get("function", {}).get("name") not in disallowed]
         deferred = [t for t in deferred if t.get("function", {}).get("name") not in disallowed]
 
+    core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
+    trusted_skill_tools = get_trusted_skill_tool_names(ctx.config, ctx)
+
     if not deferred:
-        return active, None
+        guidance_text = build_tool_guidance_text(
+            active, core_names=core_names, trusted_skill_tool_names=trusted_skill_tools
+        )
+        return active, None, guidance_text
 
     # Deferred mode: set the pool on ctx and add tool_search
     ctx.tools.deferred_pool = deferred
     active = active + SEARCH_TOOL_DEFINITIONS
 
     # Build deferred list text for system prompt
-    core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
     deferred_text = build_deferred_list_text(deferred, core_names=core_names)
+    guidance_text = build_tool_guidance_text(
+        active, core_names=core_names, trusted_skill_tool_names=trusted_skill_tools
+    )
 
-    return active, deferred_text
+    return active, deferred_text, guidance_text
