@@ -63,17 +63,25 @@ def save_attachment(config, conv_id: str, filename: str, data: bytes, content_ty
     return {"filename": filename, "path": rel_path, "mime_type": content_type}
 
 
-def read_attachment_base64(config, attachment: dict) -> str | None:
-    """Read a file and return its base64-encoded content."""
+def read_attachment_bytes(config, attachment: dict) -> bytes | None:
+    """Read a file and return its raw content."""
     rel_path = attachment.get("path", "")
     if not rel_path:
         return None
     full_path = config.workspace_path / rel_path
 
     if full_path.exists():
-        return base64.b64encode(full_path.read_bytes()).decode("ascii")
+        return full_path.read_bytes()
 
     log.warning(f"Attachment file not found: {full_path}")
+    return None
+
+
+def read_attachment_base64(config, attachment: dict) -> str | None:
+    """Read a file and return its base64-encoded content."""
+    data = read_attachment_bytes(config, attachment)
+    if data is not None:
+        return base64.b64encode(data).decode("ascii")
     return None
 
 
