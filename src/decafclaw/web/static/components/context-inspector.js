@@ -39,6 +39,7 @@ export class ContextInspector extends LitElement {
     open: { type: Boolean, reflect: true },
     contextVersion: { type: Number },  // bumped by parent when context changes
     _tab: { type: String, state: true },
+    _rawOpen: { type: Boolean, state: true },
     _rawFormat: { type: String, state: true },
     _data: { type: Object, state: true },
     _loading: { type: Boolean, state: true },
@@ -56,6 +57,7 @@ export class ContextInspector extends LitElement {
     this.open = false;
     this.contextVersion = 0;
     this._tab = 'diagnostics';
+    this._rawOpen = false;
     this._rawFormat = 'tree';
     /** @type {Diagnostics|null} */
     this._data = null;
@@ -73,10 +75,15 @@ export class ContextInspector extends LitElement {
         this.#fetchRawData();
       } else {
         this.#fetchData();
+        if (this._rawOpen) {
+          this.#fetchRawData();
+        }
       }
     }
-    if (changed.has('_tab') && this.open && this.convId && this._tab === 'raw' && !this._rawData && !this._rawLoading) {
-      this.#fetchRawData();
+    if ((changed.has('_rawOpen') && this._rawOpen) || (changed.has('_tab') && this._tab === 'raw')) {
+      if (this.open && this.convId && !this._rawData && !this._rawLoading) {
+        this.#fetchRawData();
+      }
     }
     if (changed.has('open')) {
       if (this.open) {
@@ -383,60 +390,103 @@ export class ContextInspector extends LitElement {
   render() {
     if (!this.open) return nothing;
 
-    let content;
-    if (this._tab === 'raw') {
-      content = html`<div id="panel-raw" role="tabpanel" aria-labelledby="tab-raw" tabindex="0">${this.#renderRaw()}</div>`;
-    } else if (this._loading) {
-      content = html`<div id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0"><div class="loading">Loading...</div></div>`;
+    let diagContent;
+    if (this._loading) {
+      diagContent = html`<div class="loading">Loading...</div>`;
     } else if (this._error) {
-      content = html`<div id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0"><div class="error-msg">Error: ${this._error}</div></div>`;
+      diagContent = html`<div class="error-msg">Error: ${this._error}</div>`;
     } else if (!this._data) {
-      content = html`<div id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0"><div class="empty-msg">No context data yet</div></div>`;
+      diagContent = html`<div class="empty-msg">No context data yet</div>`;
     } else {
       const d = this._data;
-      content = html`
-        <div id="panel-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" tabindex="0">
-          ${this.#renderWaffle(d.sources, d.context_window_size, d.total_tokens_actual)}
-          ${this.#renderStats(d)}
-          ${this.#renderSourceTable(d.sources)}
-          ${this.#renderCandidates(d.memory_candidates)}
-        </div>
+      diagContent = html`
+        ${this.#renderWaffle(d.sources, d.context_window_size, d.total_tokens_actual)}
+        ${this.#renderStats(d)}
+        ${this.#renderSourceTable(d.sources)}
+        ${this.#renderCandidates(d.memory_candidates)}
       `;
     }
 
+    const showRawPane = this._rawOpen || this._tab === 'raw';
+
     return html`
-      <div class="inspector" role="dialog" aria-modal="true" aria-label="Context Inspector" @click=${(e) => e.stopPropagation()}>
+      <div class="inspector ${this._rawOpen ? 'expanded' : ''}" role="dialog" aria-modal="true" aria-label="Context Inspector" @click=${(e) => e.stopPropagation()}>
         <div class="inspector-header">
           <div class="inspector-title-row">
             <h3>Context Inspector</h3>
-            <div class="inspector-tabs" role="tablist" aria-label="Context views">
+            <div class="inspector-header-actions">
               <button
-                id="tab-diagnostics"
                 type="button"
-                role="tab"
-                class="tab-btn ${this._tab === 'diagnostics' ? 'active' : ''}"
-                aria-selected=${this._tab === 'diagnostics'}
-                aria-controls="panel-diagnostics"
-                tabindex=${this._tab === 'diagnostics' ? 0 : -1}
-                @keydown=${this.#onTabKeyDown}
-                @click=${() => { this._tab = 'diagnostics'; }}
-              >Diagnostics</button>
-              <button
-                id="tab-raw"
-                type="button"
-                role="tab"
-                class="tab-btn ${this._tab === 'raw' ? 'active' : ''}"
-                aria-selected=${this._tab === 'raw'}
-                aria-controls="panel-raw"
-                tabindex=${this._tab === 'raw' ? 0 : -1}
-                @keydown=${this.#onTabKeyDown}
-                @click=${() => { this._tab = 'raw'; }}
-              >Raw</button>
+                class="raw-drawer-toggle dc-small-btn"
+                aria-expanded=${this._rawOpen}
+                @click=${() => {
+                  this._rawOpen = !this._rawOpen;
+                  if (this._rawOpen && !this._rawData && !this._rawLoading) {
+                    this.#fetchRawData();
+                  }
+                }}
+              >${this._rawOpen ? '← Hide Raw' : 'View Raw →'}</button>
+
+              <div class="mobile-tabs inspector-tabs" role="tablist" aria-label="Context views">
+                <button
+                  id="tab-diagnostics"
+                  type="button"
+                  role="tab"
+                  class="tab-btn ${this._tab === 'diagnostics' ? 'active' : ''}"
+                  aria-selected=${this._tab === 'diagnostics'}
+                  aria-controls="panel-diagnostics"
+                  tabindex=${this._tab === 'diagnostics' ? 0 : -1}
+                  @keydown=${this.#onTabKeyDown}
+                  @click=${() => { this._tab = 'diagnostics'; }}
+                >Diagnostics</button>
+                <button
+                  id="tab-raw"
+                  type="button"
+                  role="tab"
+                  class="tab-btn ${this._tab === 'raw' ? 'active' : ''}"
+                  aria-selected=${this._tab === 'raw'}
+                  aria-controls="panel-raw"
+                  tabindex=${this._tab === 'raw' ? 0 : -1}
+                  @keydown=${this.#onTabKeyDown}
+                  @click=${() => {
+                    this._tab = 'raw';
+                    if (!this._rawData && !this._rawLoading) {
+                      this.#fetchRawData();
+                    }
+                  }}
+                >Raw</button>
+              </div>
+
+              <button class="close-btn dc-icon-btn" @click=${() => this.dispatchEvent(new Event('close'))} title="Close context inspector" aria-label="Close context inspector">&times;</button>
             </div>
           </div>
-          <button class="close-btn dc-icon-btn" @click=${() => this.dispatchEvent(new Event('close'))} title="Close context inspector" aria-label="Close context inspector">&times;</button>
         </div>
-        ${content}
+
+        <div class="inspector-body">
+          <div
+            id="panel-diagnostics"
+            class="inspector-pane pane-diagnostics ${this._tab !== 'diagnostics' ? 'mobile-hidden' : ''}"
+            role="tabpanel"
+            aria-labelledby="tab-diagnostics"
+            tabindex="0"
+          >
+            ${diagContent}
+          </div>
+
+          ${showRawPane ? html`
+            <div
+              id="panel-raw"
+              class="inspector-pane pane-raw ${this._tab !== 'raw' ? 'mobile-hidden' : ''}"
+              role="tabpanel"
+              aria-labelledby="tab-raw"
+              tabindex="0"
+            >
+              <div class="pane-raw-inner">
+                ${this.#renderRaw()}
+              </div>
+            </div>
+          ` : nothing}
+        </div>
       </div>
     `;
   }

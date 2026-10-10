@@ -227,3 +227,39 @@ it('does not close when clicking inside the inspector, but closes when clicking 
   document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   expect(closeSpy).toHaveBeenCalled();
 });
+
+it('toggles dual-pane expanded layout via raw-drawer-toggle', async () => {
+  fetchMock.mockImplementation((url) => {
+    if (String(url).includes('/context/raw')) {
+      return Promise.resolve(json({ model: 'test-model', messages: [{ role: 'user', content: 'test' }], tools: [] }));
+    }
+    return Promise.resolve(json({ sources: [{ source: 'system_prompt', tokens: 100 }] }));
+  });
+
+  const el = document.createElement('context-inspector');
+  el.convId = 'test-conv';
+  el.open = true;
+  document.body.append(el);
+  await el.updateComplete;
+
+  const inspector = el.querySelector('.inspector');
+  expect(inspector?.classList.contains('expanded')).toBe(false);
+  expect(el.querySelector('#panel-raw')).toBeNull();
+
+  const toggleBtn = el.querySelector('.raw-drawer-toggle');
+  expect(toggleBtn?.textContent).toContain('View Raw →');
+
+  toggleBtn?.click();
+  await el.updateComplete;
+
+  expect(inspector?.classList.contains('expanded')).toBe(true);
+  expect(toggleBtn?.textContent).toContain('← Hide Raw');
+  expect(el.querySelector('#panel-diagnostics')).not.toBeNull();
+  expect(el.querySelector('#panel-raw')).not.toBeNull();
+
+  toggleBtn?.click();
+  await el.updateComplete;
+
+  expect(inspector?.classList.contains('expanded')).toBe(false);
+  expect(toggleBtn?.textContent).toContain('View Raw →');
+});
