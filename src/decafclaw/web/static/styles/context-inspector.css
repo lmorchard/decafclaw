@@ -14,7 +14,7 @@ context-inspector .inspector {
   top: 1rem;
   bottom: 5.25rem;
   left: 1rem;
-  width: min(88vw, calc(100vw - 2rem));
+  width: 380px;
   display: flex;
   flex-direction: column;
   background: var(--pico-card-background-color, #fff);
@@ -25,9 +25,87 @@ context-inspector .inspector {
   font-size: 0.8rem;
   color: var(--pico-color, #333);
   box-sizing: border-box;
+  transition: width 0.18s ease-in-out;
 }
 
-@media (max-width: 600px) {
+context-inspector .inspector.expanded {
+  width: min(88vw, 1200px);
+}
+
+context-inspector .inspector-header {
+  margin-bottom: 0.75rem;
+  flex-shrink: 0;
+}
+
+context-inspector .inspector-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+context-inspector .inspector-title-row h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+
+context-inspector .inspector-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+context-inspector .raw-drawer-toggle {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  margin: 0;
+  white-space: nowrap;
+}
+
+context-inspector .mobile-tabs {
+  display: none;
+}
+
+context-inspector .inspector-body {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  overflow: hidden;
+  gap: 1.25rem;
+}
+
+context-inspector .inspector-pane {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+context-inspector .pane-diagnostics {
+  width: 100%;
+  flex: 1;
+}
+
+context-inspector .inspector.expanded .pane-diagnostics {
+  width: 360px;
+  flex: 0 0 360px;
+  border-right: 1px solid var(--pico-muted-border-color, #eee);
+  padding-right: 1.25rem;
+}
+
+context-inspector .pane-raw {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+context-inspector .pane-raw-inner {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 639px) {
   context-inspector .inspector {
     left: 0.5rem;
     width: calc(100vw - 1rem);
@@ -35,32 +113,34 @@ context-inspector .inspector {
     bottom: 4.5rem;
     padding: 0.75rem;
   }
-}
 
-context-inspector .inspector-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.75rem;
-  flex-shrink: 0;
-}
+  context-inspector .inspector.expanded {
+    width: calc(100vw - 1rem);
+  }
 
-context-inspector #panel-diagnostics,
-context-inspector #panel-raw {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
-}
+  context-inspector .raw-drawer-toggle {
+    display: none;
+  }
 
-context-inspector .inspector-header h3 {
-  margin: 0;
-  font-size: 0.9rem;
-}
+  context-inspector .mobile-tabs {
+    display: flex;
+  }
 
-context-inspector .inspector-title-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  context-inspector .inspector-body {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  context-inspector .inspector-pane.mobile-hidden {
+    display: none;
+  }
+
+  context-inspector .inspector.expanded .pane-diagnostics {
+    width: 100%;
+    flex: 1;
+    border-right: none;
+    padding-right: 0;
+  }
 }
 
 context-inspector .inspector-tabs {
