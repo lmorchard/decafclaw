@@ -3172,18 +3172,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             response_model=ContextRawResponse,
         ),
         APIRoute(
-            "/api/conversations/{id}/last-request",
-            get_context_raw,
-            methods=["GET"],
-            include_in_schema=False,
-        ),
-        APIRoute(
-            "/api/conversations/{id}/last_request",
-            get_context_raw,
-            methods=["GET"],
-            include_in_schema=False,
-        ),
-        APIRoute(
             "/api/conversations/{id}/export",
             export_conversation,
             methods=["GET"],

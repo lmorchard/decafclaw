@@ -1517,10 +1517,6 @@ async def test_context_raw_endpoint_serves_sidecar_and_checks_auth(authed_client
     assert resp.status_code == 200
     assert resp.json() == payload
 
-    # Aliases also work
-    assert (await authed_client.get(f"/api/conversations/{conv_id}/last-request")).status_code == 200
-    assert (await authed_client.get(f"/api/conversations/{conv_id}/last_request")).status_code == 200
-
     # 401 when unauthenticated
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as unauth:
         assert (await unauth.get(f"/api/conversations/{conv_id}/context/raw")).status_code == 401
