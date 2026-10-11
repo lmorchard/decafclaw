@@ -79,6 +79,8 @@ export interface SrvConvHistory {
   active_model?: string;
   available_models?: string[];
   default_model?: string;
+  active_mode?: string;
+  available_modes?: Array<Record<string, unknown>>;
   turn_active?: boolean;
   pending_confirmation?: Record<string, unknown>;
 }
@@ -110,6 +112,14 @@ export interface SrvMessageComplete {
   final?: boolean;
   usage?: Record<string, unknown>;
   context_limit?: number;
+}
+
+export interface SrvModeChanged {
+  type: "mode_changed";
+  conv_id: string;
+  mode: string;
+  presets: string[];
+  promoted_tools: string[];
 }
 
 export interface SrvModelChanged {
@@ -261,6 +271,12 @@ export interface CliSetEffort {
   model: string;
 }
 
+export interface CliSetMode {
+  type: "set_mode";
+  conv_id: string;
+  mode: string;
+}
+
 export interface CliSetModel {
   type: "set_model";
   conv_id: string;
@@ -288,6 +304,7 @@ export type ServerMessage =
   | SrvConversationStatus
   | SrvError
   | SrvMessageComplete
+  | SrvModeChanged
   | SrvModelChanged
   | SrvModelsAvailable
   | SrvNotificationCreated
@@ -312,5 +329,6 @@ export type ClientMessage =
   | CliSelectConv
   | CliSend
   | CliSetEffort
+  | CliSetMode
   | CliSetModel
   | CliWidgetResponse;

@@ -1580,12 +1580,17 @@ class ContextComposer:
         fetched = get_fetched_tools(ctx)
         # Skill tools (from activated skills) should never be deferred
         skill_tool_names = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions}
+        from .modes import resolve_active_mode
+
+        active_mode_name = getattr(ctx, "active_mode", "default") or "default"
+        active_mode = resolve_active_mode(config, active_mode_name)
         active, deferred = classify_tools(
             all_defs,
             config,
             fetched,
             skill_tool_names,
             preempt_matches=ctx.tools.preempt_matches,
+            promoted_tools=active_mode.promoted_tools,
         )
 
         # Apply allowed_tools filter

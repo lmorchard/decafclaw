@@ -165,6 +165,43 @@ class TestClassifyTools:
         assert "low_1" in active_names
         assert deferred == []
 
+    def test_promoted_tools_prioritized_at_head_of_normal(self, config):
+        """Tools in promoted_tools claim active slots before unpromoted normal tools."""
+        normal_tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(10)]
+        # Cap max active tools to 3
+        config.agent.max_active_tools = 3
+        config.compaction.max_tokens = 1000000
+
+        # Without promotion, norm_0, norm_1, norm_2 are active
+        active_unpromoted, deferred_unpromoted = classify_tools(normal_tools, config)
+        assert [td["function"]["name"] for td in active_unpromoted] == ["norm_0", "norm_1", "norm_2"]
+
+        # Promoting norm_8 and norm_5 moves them to the front
+        active_promoted, deferred_promoted = classify_tools(
+            normal_tools,
+            config,
+            promoted_tools=["norm_8", "norm_5"],
+        )
+        active_promoted_names = [td["function"]["name"] for td in active_promoted]
+        assert active_promoted_names == ["norm_8", "norm_5", "norm_0"]
+        assert "norm_8" not in [td["function"]["name"] for td in deferred_promoted]
+
+    def test_promoted_tools_promotes_low_priority_tool(self, config):
+        """A low priority tool in promoted_tools is promoted ahead of unpromoted normal tools."""
+        normal_tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(5)]
+        low_tools = [_make_tool_def(f"low_{i}", "x" * 50, priority="low") for i in range(5)]
+        config.agent.max_active_tools = 2
+        config.compaction.max_tokens = 1000000
+
+        active, deferred = classify_tools(
+            normal_tools + low_tools,
+            config,
+            promoted_tools=["low_3"],
+        )
+        active_names = [td["function"]["name"] for td in active]
+        # low_3 gets the first active slot ahead of all normal tools
+        assert active_names == ["low_3", "norm_0"]
+
     def test_max_active_tools_cap(self, config):
         """max_active_tools limits active set even when under token budget."""
         tools = [_make_tool_def(f"norm_{i}", priority="normal") for i in range(50)]
