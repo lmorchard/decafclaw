@@ -506,6 +506,97 @@ def test_edit_nonexistent_file(ctx):
     assert "not found" in _text(result).lower()
 
 
+# -- workspace_edit line-ending preservation (issue #997) --
+
+
+def _write_bytes(ctx, name: str, data: bytes) -> Path:
+    """Write raw bytes into the workspace, returning the workspace path."""
+    ws = ctx.config.workspace_path
+    ws.mkdir(parents=True, exist_ok=True)
+    (ws / name).write_bytes(data)
+    return ws
+
+
+def test_edit_crlf_file_with_lf_old_text_preserves_crlf(ctx):
+    ws = _write_bytes(ctx, "win.txt", b"alpha\r\nbeta\r\ngamma\r\n")
+    result = tool_workspace_edit(ctx, "win.txt", "beta", "BETA")
+    assert "replaced 1" in _text(result).lower()
+    assert (ws / "win.txt").read_bytes() == b"alpha\r\nBETA\r\ngamma\r\n"
+
+
+def test_edit_crlf_file_with_crlf_old_text(ctx):
+    ws = _write_bytes(ctx, "win.txt", b"alpha\r\nbeta\r\ngamma\r\n")
+    result = tool_workspace_edit(ctx, "win.txt", "beta\r\n", "BETA\r\n")
+    assert "replaced 1" in _text(result).lower()
+    assert (ws / "win.txt").read_bytes() == b"alpha\r\nBETA\r\ngamma\r\n"
+
+
+def test_edit_lf_file_with_crlf_old_text_keeps_lf(ctx):
+    ws = _write_bytes(ctx, "unix.txt", b"alpha\nbeta\ngamma\n")
+    result = tool_workspace_edit(ctx, "unix.txt", "beta\r\n", "BETA\r\n")
+    assert "replaced 1" in _text(result).lower()
+    assert (ws / "unix.txt").read_bytes() == b"alpha\nBETA\ngamma\n"
+
+
+def test_edit_lf_file_stays_unchanged_in_behavior(ctx):
+    ws = _write_bytes(ctx, "unix.txt", b"alpha\nbeta\ngamma\n")
+    result = tool_workspace_edit(ctx, "unix.txt", "beta\n", "BETA\n")
+    assert "replaced 1" in _text(result).lower()
+    assert (ws / "unix.txt").read_bytes() == b"alpha\nBETA\ngamma\n"
+
+
+# -- workspace_edit not-found hints (issue #997) --
+
+
+def test_edit_whitespace_only_mismatch_gets_line_hint(ctx):
+    ws = _write_bytes(ctx, "code.py", b"def hello():\n    print('hi')\n")
+    before = (ws / "code.py").read_bytes()
+    result = tool_workspace_edit(ctx, "code.py", "def hello():\n  print('hi')", "x")
+    text = _text(result).lower()
+    assert "error" in text
+    assert "not found" in text
+    assert "whitespace" in text
+    assert "line 1" in text
+    assert (ws / "code.py").read_bytes() == before
+
+
+def test_edit_whitespace_hint_line_number_on_later_line(ctx):
+    ws = _write_bytes(ctx, "notes.txt", b"first\nsecond\nthird\n")
+    before = (ws / "notes.txt").read_bytes()
+    result = tool_workspace_edit(ctx, "notes.txt", "sec ond", "x")
+    text = _text(result).lower()
+    assert "error" in text
+    assert "whitespace" in text
+    assert "line 2" in text
+    assert (ws / "notes.txt").read_bytes() == before
+
+
+def test_edit_near_match_hint_names_line(ctx):
+    ws = _write_bytes(ctx, "notes.txt", b"first line\nsecond line\nthird line\n")
+    before = (ws / "notes.txt").read_bytes()
+    result = tool_workspace_edit(ctx, "notes.txt", "secend line", "x")
+    text = _text(result).lower()
+    assert "error" in text
+    assert "not found" in text
+    assert "line 2" in text
+    assert "second line" in text
+    assert (ws / "notes.txt").read_bytes() == before
+
+
+def test_edit_no_hint_when_nothing_is_close(ctx):
+    ws = _write_bytes(ctx, "notes.txt", b"first line\nsecond line\nthird line\n")
+    before = (ws / "notes.txt").read_bytes()
+    result = tool_workspace_edit(ctx, "notes.txt", "zzzzz", "x")
+    text = _text(result).lower()
+    assert "error" in text
+    assert "not found" in text
+    # Markers that only appear in the hint variants (the base error itself
+    # mentions "whitespace and indentation").
+    assert "differences are ignored" not in text
+    assert "similar line exists" not in text
+    assert (ws / "notes.txt").read_bytes() == before
+
+
 # -- workspace_insert tests --
 
 
