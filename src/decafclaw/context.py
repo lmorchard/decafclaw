@@ -30,6 +30,12 @@ class TokenUsage:
     # prompt totals — measurement only, no billing/behavior implication here.
     total_cached_prompt: int = 0
     last_cached_prompt: int = 0
+    # Post-compaction estimate of the conversation history that survived
+    # compaction (#1005). Set by compact_history() on success so the
+    # context meter can drop below 100% after a compaction event. When
+    # this is non-None, message_complete prefers it over last_prompt
+    # (the pre-compaction prompt size that would otherwise report >100%).
+    last_compaction_estimate: int | None = None
 
 
 @dataclass

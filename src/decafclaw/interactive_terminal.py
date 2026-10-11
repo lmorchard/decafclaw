@@ -132,7 +132,13 @@ async def run_interactive(ctx: "Context"):
             print("  [compacting conversation...]")
 
         elif event_type == "compaction_end":
-            print("  [compaction complete]")
+            # #1005 — a failed compaction leaves the conversation unchanged, so
+            # don't print "complete". Branch on the success flag the web and
+            # Mattermost transports also honor.
+            if event.get("success", True) is False:
+                print("  [compaction failed — conversation unchanged]")
+            else:
+                print("  [compaction complete]")
 
         elif event_type == "confirmation_request":
             confirmation_id = event.get("confirmation_id", "")

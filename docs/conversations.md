@@ -64,6 +64,21 @@ When the conversation grows too large (exceeding the token budget), the agent au
 5. In-memory history is replaced with: `[summary message] + [recent turns]`
 6. The archive is not modified — it remains the complete record
 
+### Context meter after compaction (#1005)
+
+The sidebar context meter tracks the conversation's prompt size against `COMPACTION_MAX_TOKENS`. A compacting turn's *last* LLM call, by definition, exceeded that threshold — so if the meter kept showing `usage.prompt_tokens` it would read >100% and never recover.
+
+To fix this, `compact_history` computes a post-compaction estimate of the rebuilt history (same `estimate_tokens(flatten_messages(history))` the reload path uses, so the meter and a fresh page load agree). On success that figure:
+
+- is recorded as `ctx.tokens.last_compaction_estimate`. It feeds the **in-turn** web meter only — `message_complete` carries it as `context_usage`, so the meter drops below 100% at the end of the compacting turn.
+- is published on `compaction_end` as `estimated_tokens_after` (`success: true`).
+
+The two consumers are independent: a later reload (or a fresh page load) does **not** read `last_compaction_estimate`. The WebSocket reload path at `websocket.py:315` recomputes the estimate itself from the persisted compacted sidecar (`read_compacted_history`), and `message_complete` is how the live meter is told. The Mattermost post, which renders at compaction time, still reads the pre-compaction `estimated_tokens_before` for its "~N tokens compacted" summary.
+
+`message_complete` carries it as a dedicated `context_usage` field (falling back to the real `last_prompt` when no compaction ran), **separate from `usage.prompt_tokens`** — the latter keeps its honest meaning (the turn's last LLM call) so the per-message "X in / Y out" label and the recorder's turn telemetry are unaffected. The web meter reads `context_usage`, so it drops below 100% after a successful compaction.
+
+`compaction_end` / `COMPACTION_DONE` also carry a `success` flag: when the summarization fails the `finally:` no longer reports a successful compaction, and every consumer that renders a compaction notice — the web store, the Mattermost post, and the terminal — reads "Compaction failed (no change to conversation)" instead of the misleading `N → N` "compacted".
+
 ### Configuration
 
 Compaction is configured via the `compaction` section in `config.json` or environment variables:

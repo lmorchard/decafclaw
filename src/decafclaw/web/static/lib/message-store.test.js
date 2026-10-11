@@ -132,11 +132,25 @@ describe('MessageStore', () => {
             store.handleMessage({ type: MESSAGE_TYPES.COMMAND_ACK, conv_id: '1', skill: 'test_skill' }, '1');
             expect(store.currentMessages[0].role).toBe('command');
             
-            store.handleMessage({ type: MESSAGE_TYPES.COMPACTION_DONE, conv_id: '1', before_messages: 10, after_messages: 5 }, '1');
+            store.handleMessage({ type: MESSAGE_TYPES.COMPACTION_DONE, conv_id: '1', success: true, before_messages: 10, after_messages: 5 }, '1');
             expect(store.currentMessages[1].role).toBe('compaction');
+            expect(store.currentMessages[1].content).toBe('Conversation compacted: 10 → 5 messages');
             
             store.handleMessage({ type: MESSAGE_TYPES.BACKGROUND_EVENT, conv_id: '1', record: { ts: 123 } }, '1');
             expect(store.currentMessages[2].role).toBe('background_event');
+        });
+
+        it('marks a failed compaction as failed, not silently compacted (#1005)', () => {
+            const store = new MessageStore(() => {});
+            store.handleMessage({
+                type: MESSAGE_TYPES.COMPACTION_DONE,
+                conv_id: '1',
+                success: false,
+                before_messages: 10,
+                after_messages: 10,
+            }, '1');
+            expect(store.currentMessages[0].role).toBe('compaction');
+            expect(store.currentMessages[0].content).toBe('Compaction failed (no change to conversation)');
         });
 
         it('preserves queued user messages in CONV_HISTORY and dedupes on USER_MESSAGE', () => {

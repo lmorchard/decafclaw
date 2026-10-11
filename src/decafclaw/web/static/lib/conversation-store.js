@@ -619,7 +619,15 @@ export class ConversationStore extends EventTarget {
         if (msg.final) {
           this.#busy = false;
           this.#setConversationStatus(msg.conv_id, 'idle');
-          if (msg.usage?.prompt_tokens) this.#contextUsage = msg.usage.prompt_tokens;
+          // #1005 — prefer the explicit context_usage field (the meter's
+          // value, which reflects the post-compaction estimate on a
+          // compacting turn); fall back to usage.prompt_tokens for older
+          // servers that predate the dedicated field. usage.prompt_tokens
+          // itself has a different meaning (the last LLM call's actual prompt
+          // size) — only the fallback path above treats it as a meter value,
+          // matching the historical behavior before #1005.
+          const meter = msg.context_usage ?? msg.usage?.prompt_tokens;
+          if (meter) this.#contextUsage = meter;
           if (msg.context_limit) this.#contextLimit = msg.context_limit;
           this.listConversations(this.#currentFolder);
         }

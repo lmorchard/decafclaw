@@ -67,3 +67,30 @@ async def test_text_before_tools_is_suppressed_when_streaming(ctx, monkeypatch, 
     await on_event({"type": "text_before_tools", "text": "Trying the skill again."})
 
     assert capsys.readouterr().out.count("Trying the skill again.") == 1
+
+
+# #1005 the terminal must not print "compaction complete" when the
+# summarization failed (the conversation is unchanged).
+@pytest.mark.asyncio
+async def test_compaction_end_renders_failure_on_success_false(ctx, monkeypatch, capsys):
+    on_event = await _capture_on_event(ctx, monkeypatch)
+    capsys.readouterr()
+
+    await on_event({"type": "compaction_end", "success": False, "before_messages": 10, "after_messages": 10})
+
+    out = capsys.readouterr().out
+    assert "compaction failed" in out and "unchanged" in out
+    # The misleading "complete" line must not appear on a failed compaction.
+    assert "compaction complete" not in out
+
+
+@pytest.mark.asyncio
+async def test_compaction_end_renders_success_on_success_true(ctx, monkeypatch, capsys):
+    on_event = await _capture_on_event(ctx, monkeypatch)
+    capsys.readouterr()
+
+    await on_event({"type": "compaction_end", "success": True, "before_messages": 42, "after_messages": 10})
+
+    out = capsys.readouterr().out
+    assert "compaction complete" in out
+    assert "compaction failed" not in out

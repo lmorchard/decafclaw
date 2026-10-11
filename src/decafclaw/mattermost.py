@@ -620,23 +620,33 @@ class MattermostClient:
             elif event_type == "compaction_end":
                 if compaction_post_id:
                     try:
-                        elapsed = event.get("elapsed_sec", 0)
-                        before = event.get("before_messages", 0)
-                        after = event.get("after_messages", 0)
-                        est_tokens = event.get("estimated_tokens_before", 0)
-                        if elapsed < 60:
-                            duration = f"{elapsed:.0f}s"
+                        # #1005 — compaction_end now carries a success flag;
+                        # a failed compaction leaves the conversation
+                        # unchanged, so report that rather than the
+                        # misleading "Conversation compacted".
+                        if event.get("success", True) is False:
+                            await client.edit_message(
+                                compaction_post_id,
+                                "📦 Compaction failed — conversation unchanged",
+                            )
                         else:
-                            duration = f"{elapsed / 60:.1f}m"
-                        details = f"{duration}"
-                        if before and after:
-                            details += f", {before} → {after} messages"
-                        if est_tokens:
-                            details += f", ~{est_tokens:,} tokens compacted"
-                        await client.edit_message(
-                            compaction_post_id,
-                            f"\U0001f4e6 Conversation compacted ({details})",
-                        )
+                            elapsed = event.get("elapsed_sec", 0)
+                            before = event.get("before_messages", 0)
+                            after = event.get("after_messages", 0)
+                            est_tokens = event.get("estimated_tokens_before", 0)
+                            if elapsed < 60:
+                                duration = f"{elapsed:.0f}s"
+                            else:
+                                duration = f"{elapsed / 60:.1f}m"
+                            details = f"{duration}"
+                            if before and after:
+                                details += f", {before} → {after} messages"
+                            if est_tokens:
+                                details += f", ~{est_tokens:,} tokens compacted"
+                            await client.edit_message(
+                                compaction_post_id,
+                                f"📦 Conversation compacted ({details})",
+                            )
                     except Exception as exc:
                         log.debug("compaction post edit failed: %s", exc)
                     compaction_post_id = None

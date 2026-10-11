@@ -1696,6 +1696,69 @@ async def test_user_turn_never_suppresses_even_with_sentinel(manager, config, mo
 
 
 @pytest.mark.asyncio
+async def test_message_complete_reports_post_compaction_estimate_1005(manager, config, monkeypatch):
+    """#1005 — when a turn compacted, message_complete must carry the
+    post-compaction estimate on the dedicated `context_usage` field (the
+    context meter's value), so the UI meter drops below 100% instead of
+    showing the pre-compaction prompt size. `usage.prompt_tokens` retains
+    the honest meaning (the turn's last LLM call) and is left intact."""
+    events = []
+    manager.subscribe("c1", lambda e: events.append(e))
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+
+        # The turn's last LLM call reported a prompt size above the
+        # compaction threshold (which is why compaction ran), and the
+        # compaction pass recorded the post-compaction estimate.
+        ctx.tokens.last_prompt = 50_000
+        ctx.tokens.last_compaction_estimate = 12_345
+        return ToolResult(text="Compacted and answered.")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.USER, prompt="hello")
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    completes = [e for e in events if e.get("type") == "message_complete"]
+    assert completes
+    # The meter value is the post-compaction estimate.
+    assert completes[-1]["context_usage"] == 12_345
+    # usage keeps its real, unchanged meaning (the last LLM call) — the
+    # recorder stores this verbatim as turn telemetry.
+    assert completes[-1]["usage"]["prompt_tokens"] == 50_000
+
+
+@pytest.mark.asyncio
+async def test_message_complete_context_usage_falls_back_without_compaction_1005(
+    manager,
+    config,
+    monkeypatch,
+):
+    """#1005 — without a compaction, context_usage equals the real last_prompt
+    (the meter still tracks the actual prompt size)."""
+    events = []
+    manager.subscribe("c1", lambda e: events.append(e))
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+
+        ctx.tokens.last_prompt = 9_876
+        ctx.tokens.last_compaction_estimate = None
+        return ToolResult(text="No compaction needed.")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.USER, prompt="hello")
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    completes = [e for e in events if e.get("type") == "message_complete"]
+    assert completes
+    assert completes[-1]["context_usage"] == 9_876
+    assert completes[-1]["usage"]["prompt_tokens"] == 9_876
+
+
+@pytest.mark.asyncio
 async def test_transport_subscriber_skips_on_suppress(manager, config, monkeypatch):
     """When a wake turn emits suppress_user_message=True, a subscriber that
     treats the flag correctly should NOT process the message for user display."""

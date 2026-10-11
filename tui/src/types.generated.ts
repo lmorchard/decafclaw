@@ -37,6 +37,7 @@ export interface SrvCommandList {
 export interface SrvCompactionDone {
   type: "compaction_done";
   conv_id: string;
+  success: boolean;
   before_messages: number;
   after_messages: number;
 }
@@ -111,6 +112,7 @@ export interface SrvMessageComplete {
   role?: string;
   final?: boolean;
   usage?: Record<string, unknown>;
+  context_usage?: number;
   context_limit?: number;
 }
 
