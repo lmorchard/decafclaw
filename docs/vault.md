@@ -340,7 +340,7 @@ Heartbeat / scheduled / child-agent contexts can't display confirmations, so wri
 
 ## Vault Gardening
 
-The agent follows these principles (encoded in the vault skill's system prompt):
+The agent follows these principles (practiced during [gardening sweeps](dream-consolidation.md#vault-gardening-garden) and defined in the vault's authored `AGENTS.md`):
 
 - **Search before create** — always search for existing pages before making new ones
 - **Revise and rewrite** — restructure pages as understanding evolves, don't just append
@@ -350,6 +350,14 @@ The agent follows these principles (encoded in the vault skill's system prompt):
 - **Merge related content** — consolidate scattered info into one page
 - **Split when large** — break big pages into sub-pages with a summary parent
 - **Update over duplicate** — edit existing pages rather than creating new ones
+
+## System Prompt & Instruction Division
+
+Vault instructions follow a three-tier architecture to avoid prompt bloat and instruction drift (#1050):
+
+- **`AGENT.md` (Agent Role)**: Minimal high-level overview establishing the vault as persistent memory under `agent/`, general search posture before saying "I don't know", that vault pages are not executable skills, and that journal entries about mistakes happen post-turn.
+- **`vault` skill (`skills/vault/SKILL.md`)**: Specific tool contracts and workflows (`vault_read`, `vault_write`, `vault_delete`, `vault_rename`, `vault_update_frontmatter`, `vault_grant_folder`, section editing tools, folder arguments, and when to consult vs update).
+- **Vault Guide (`<vault_guide>`)**: Authored `AGENTS.md` at the vault root defining user-specific vault conventions, folder structure, habits, and permissions.
 
 ## Journal vs Pages
 
