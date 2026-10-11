@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, html, nothing, render } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { showToast } from '../lib/toast.js';
 import { copyToClipboard } from '../lib/utils.js';
@@ -67,6 +67,21 @@ export class ContextInspector extends LitElement {
     this._rawData = null;
     this._rawLoading = false;
     this._rawError = '';
+    /** @type {HTMLElement|null} */
+    this._panelMount = null;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    // Body-level mount so the panel escapes any transformed ancestor (the
+    // mobile sidebar's translateX, which would otherwise become the
+    // containing block for `position: fixed` and clip the panel). Mirrors
+    // notification-inbox.js (#386).
+    if (!this._panelMount) {
+      this._panelMount = document.createElement('div');
+      this._panelMount.className = 'context-inspector-mount';
+      document.body.appendChild(this._panelMount);
+    }
   }
 
   updated(changed) {
@@ -90,6 +105,7 @@ export class ContextInspector extends LitElement {
         // Defer so the current click doesn't immediately close
         requestAnimationFrame(() => {
           this._onDocClick = (e) => {
+            if (this._panelMount?.contains(e.target)) return;
             if (this.contains(e.target)) return;
             const trigger = this.previousElementSibling;
             if (trigger && trigger.contains(e.target)) return;
@@ -109,11 +125,22 @@ export class ContextInspector extends LitElement {
         this.#fetchData();
       }
     }
+    // Render the panel template into the body-level mount on every update,
+    // so Lit reactivity continues to work even though the panel lives
+    // outside the component's normal render root.
+    if (this._panelMount) {
+      render(this.#panel(), this._panelMount);
+    }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.#cleanupListeners();
+    if (this._panelMount) {
+      render(nothing, this._panelMount);
+      this._panelMount.remove();
+      this._panelMount = null;
+    }
   }
 
   #cleanupListeners() {
@@ -173,7 +200,7 @@ export class ContextInspector extends LitElement {
       const nextTab = this._tab === 'diagnostics' ? 'raw' : 'diagnostics';
       this._tab = nextTab;
       requestAnimationFrame(() => {
-        const btn = this.querySelector(`#tab-${nextTab}`);
+        const btn = this._panelMount?.querySelector(`#tab-${nextTab}`);
         if (btn instanceof HTMLElement) btn.focus();
       });
     }
@@ -360,7 +387,7 @@ export class ContextInspector extends LitElement {
             <button
               type="button"
               class="copy-raw-btn dc-small-btn"
-              @click=${this.#copyRaw}
+              @click=${() => this.#copyRaw()}
             >Copy JSON</button>
           </div>
         </div>
@@ -388,6 +415,12 @@ export class ContextInspector extends LitElement {
   }
 
   render() {
+    // The panel renders into this._panelMount (document.body) via updated();
+    // the host itself stays an empty anchor in its parent template.
+    return nothing;
+  }
+
+  #panel() {
     if (!this.open) return nothing;
 
     let diagContent;
@@ -438,7 +471,7 @@ export class ContextInspector extends LitElement {
                   aria-selected=${!isExpanded}
                   aria-controls="panel-diagnostics"
                   tabindex=${!isExpanded ? 0 : -1}
-                  @keydown=${this.#onTabKeyDown}
+                  @keydown=${(event) => this.#onTabKeyDown(event)}
                   @click=${() => {
                     this._tab = 'diagnostics';
                     this._rawOpen = false;
@@ -452,7 +485,7 @@ export class ContextInspector extends LitElement {
                   aria-selected=${isExpanded}
                   aria-controls="panel-raw"
                   tabindex=${isExpanded ? 0 : -1}
-                  @keydown=${this.#onTabKeyDown}
+                  @keydown=${(event) => this.#onTabKeyDown(event)}
                   @click=${() => {
                     this._tab = 'raw';
                     this._rawOpen = true;

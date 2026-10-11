@@ -1,14 +1,7 @@
-/* Context inspector popover — light DOM styles */
+/* Context inspector panel — light DOM styles, scoped to the body-level
+   .context-inspector-mount portal (see context-inspector.js, #1037). */
 
-context-inspector {
-  display: none;
-}
-
-context-inspector[open] {
-  display: block;
-}
-
-context-inspector .inspector {
+.context-inspector-mount .inspector {
   position: fixed;
   z-index: 1000;
   bottom: 5.25rem;
@@ -28,7 +21,7 @@ context-inspector .inspector {
   transition: width 0.18s ease-in-out, max-height 0.18s ease-in-out;
 }
 
-context-inspector .inspector.expanded {
+.context-inspector-mount .inspector.expanded {
   top: 1rem;
   bottom: 5.25rem;
   width: min(88vw, 1200px);
@@ -36,41 +29,41 @@ context-inspector .inspector.expanded {
   height: calc(100vh - 6.25rem);
 }
 
-context-inspector .inspector-header {
+.context-inspector-mount .inspector-header {
   margin-bottom: 0.75rem;
   flex-shrink: 0;
 }
 
-context-inspector .inspector-title-row {
+.context-inspector-mount .inspector-title-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-context-inspector .inspector-title-row h3 {
+.context-inspector-mount .inspector-title-row h3 {
   margin: 0;
   font-size: 0.95rem;
   white-space: nowrap;
 }
 
-context-inspector .inspector-header-actions {
+.context-inspector-mount .inspector-header-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-context-inspector .raw-drawer-toggle {
+.context-inspector-mount .raw-drawer-toggle {
   font-size: 0.75rem;
   padding: 0.2rem 0.6rem;
   margin: 0;
   white-space: nowrap;
 }
 
-context-inspector .mobile-tabs {
+.context-inspector-mount .mobile-tabs {
   display: inline-flex;
 }
 
-context-inspector .inspector-body {
+.context-inspector-mount .inspector-body {
   flex: 1;
   display: flex;
   flex-direction: row;
@@ -79,67 +72,71 @@ context-inspector .inspector-body {
   gap: 1.25rem;
 }
 
-context-inspector .inspector-pane {
+.context-inspector-mount .inspector-pane {
   overflow-y: auto;
   min-height: 0;
 }
 
-context-inspector .pane-diagnostics {
+.context-inspector-mount .pane-diagnostics {
   width: 100%;
   flex: 1;
 }
 
-context-inspector .inspector.expanded .pane-diagnostics {
+.context-inspector-mount .inspector.expanded .pane-diagnostics {
   width: 400px;
   flex: 0 0 400px;
   border-right: 1px solid var(--pico-muted-border-color, #eee);
   padding-right: 1.25rem;
 }
 
-context-inspector .pane-raw {
+.context-inspector-mount .pane-raw {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-context-inspector .pane-raw-inner {
+.context-inspector-mount .pane-raw-inner {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
 @media (max-width: 639px) {
-  context-inspector .inspector {
-    left: 0.5rem;
-    width: calc(100vw - 1rem);
-    top: 0.5rem;
-    bottom: 4.5rem;
+  /* env() insets are 0 without viewport-fit=cover; they keep the panel
+     clear of device notches/home indicator if that is ever enabled. */
+  .context-inspector-mount .inspector {
+    left: calc(0.5rem + env(safe-area-inset-left, 0px));
+    width: calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    top: calc(0.5rem + env(safe-area-inset-top, 0px));
+    bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
     padding: 0.75rem;
   }
 
-  context-inspector .inspector.expanded {
-    width: calc(100vw - 1rem);
+  .context-inspector-mount .inspector.expanded {
+    width: calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    height: auto;
+    max-height: none;
   }
 
-  context-inspector .raw-drawer-toggle {
+  .context-inspector-mount .raw-drawer-toggle {
     display: none;
   }
 
-  context-inspector .mobile-tabs {
+  .context-inspector-mount .mobile-tabs {
     display: flex;
   }
 
-  context-inspector .inspector-body {
+  .context-inspector-mount .inspector-body {
     flex-direction: column;
     gap: 0;
   }
 
-  context-inspector .inspector-pane.mobile-hidden {
+  .context-inspector-mount .inspector-pane.mobile-hidden {
     display: none;
   }
 
-  context-inspector .inspector.expanded .pane-diagnostics {
+  .context-inspector-mount .inspector.expanded .pane-diagnostics {
     width: 100%;
     flex: 1;
     border-right: none;
@@ -147,14 +144,14 @@ context-inspector .pane-raw-inner {
   }
 }
 
-context-inspector .inspector-tabs {
+.context-inspector-mount .inspector-tabs {
   display: inline-flex;
   background: var(--pico-muted-border-color, #eee);
   border-radius: 4px;
   padding: 2px;
 }
 
-context-inspector .tab-btn {
+.context-inspector-mount .tab-btn {
   background: transparent;
   border: none;
   font-size: 0.75rem;
@@ -165,20 +162,20 @@ context-inspector .tab-btn {
   margin: 0;
 }
 
-context-inspector .tab-btn.active {
+.context-inspector-mount .tab-btn.active {
   background: var(--pico-card-background-color, #fff);
   color: inherit;
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
-context-inspector .raw-view {
+.context-inspector-mount .raw-view {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
-context-inspector .raw-actions {
+.context-inspector-mount .raw-actions {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -187,25 +184,25 @@ context-inspector .raw-actions {
   flex-shrink: 0;
 }
 
-context-inspector .raw-view-controls {
+.context-inspector-mount .raw-view-controls {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-context-inspector .raw-meta {
+.context-inspector-mount .raw-meta {
   font-size: 0.75rem;
   color: var(--pico-muted-color);
 }
 
-context-inspector .raw-actions button.copy-raw-btn {
+.context-inspector-mount .raw-actions button.copy-raw-btn {
   font-size: 0.75rem;
   padding: 0.2rem 0.6rem;
   margin: 0;
   width: auto;
 }
 
-context-inspector .raw-section h4 {
+.context-inspector-mount .raw-section h4 {
   margin: 0.5rem 0 0.25rem 0;
   font-size: 0.8rem;
   font-weight: 600;
@@ -213,7 +210,7 @@ context-inspector .raw-section h4 {
   flex-shrink: 0;
 }
 
-context-inspector dc-widget-json-view {
+.context-inspector-mount dc-widget-json-view {
   background: var(--pico-code-background-color, #f8f9fa);
   border: 1px solid var(--pico-muted-border-color, #eee);
   border-radius: 4px;
@@ -222,7 +219,7 @@ context-inspector dc-widget-json-view {
   overflow: auto;
 }
 
-context-inspector .raw-pre {
+.context-inspector-mount .raw-pre {
   background: var(--pico-code-background-color, #f8f9fa);
   border: 1px solid var(--pico-muted-border-color, #eee);
   border-radius: 4px;
@@ -242,13 +239,13 @@ context-inspector .raw-pre {
    comes from the primitive (was previously missing here — now
    intentionally surfaces on hover). Tag-qualified per cascade rule §1
    for robustness against future refactors. */
-context-inspector button.close-btn {
+.context-inspector-mount button.close-btn {
   font-size: 1.2rem;
   padding: 0 0.25rem;
 }
 
 /* Waffle chart */
-context-inspector .waffle {
+.context-inspector-mount .waffle {
   display: flex;
   flex-wrap: wrap;
   gap: 1px;
@@ -258,21 +255,21 @@ context-inspector .waffle {
   border-radius: 4px;
 }
 
-context-inspector .waffle-cell {
+.context-inspector-mount .waffle-cell {
   width: 6px;
   height: 6px;
   border-radius: 1px;
 }
 
 /* Legend */
-context-inspector .legend {
+.context-inspector-mount .legend {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
 
-context-inspector .legend-item {
+.context-inspector-mount .legend-item {
   display: flex;
   align-items: center;
   gap: 0.25rem;
@@ -280,14 +277,14 @@ context-inspector .legend-item {
   color: var(--pico-muted-color);
 }
 
-context-inspector .legend-swatch {
+.context-inspector-mount .legend-swatch {
   width: 8px;
   height: 8px;
   border-radius: 2px;
 }
 
 /* Summary stats */
-context-inspector .stats {
+.context-inspector-mount .stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.25rem 1rem;
@@ -295,17 +292,17 @@ context-inspector .stats {
   font-size: 0.75rem;
 }
 
-context-inspector .stats dt {
+.context-inspector-mount .stats dt {
   color: var(--pico-muted-color);
 }
 
-context-inspector .stats dd {
+.context-inspector-mount .stats dd {
   margin: 0;
   text-align: right;
 }
 
 /* Source breakdown */
-context-inspector .source-table {
+.context-inspector-mount .source-table {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 0.75rem;
@@ -313,12 +310,12 @@ context-inspector .source-table {
   background: transparent;
 }
 
-context-inspector .source-table th,
-context-inspector .source-table td {
+.context-inspector-mount .source-table th,
+.context-inspector-mount .source-table td {
   background: transparent;
 }
 
-context-inspector .source-table th {
+.context-inspector-mount .source-table th {
   text-align: left;
   font-weight: 600;
   padding: 0.25rem 0.5rem;
@@ -326,11 +323,11 @@ context-inspector .source-table th {
   color: var(--pico-muted-color);
 }
 
-context-inspector .source-table td {
+.context-inspector-mount .source-table td {
   padding: 0.25rem 0.5rem;
 }
 
-context-inspector .source-swatch {
+.context-inspector-mount .source-swatch {
   display: inline-block;
   width: 10px;
   height: 10px;
@@ -340,28 +337,28 @@ context-inspector .source-swatch {
 }
 
 /* Memory candidates */
-context-inspector .candidates-header {
+.context-inspector-mount .candidates-header {
   font-weight: 600;
   font-size: 0.75rem;
   margin-bottom: 0.4rem;
   color: var(--pico-muted-color);
 }
 
-context-inspector .candidate {
+.context-inspector-mount .candidate {
   padding: 0.3rem 0;
   border-bottom: 1px solid var(--pico-muted-border-color, #eee);
 }
 
-context-inspector .candidate:last-child {
+.context-inspector-mount .candidate:last-child {
   border-bottom: none;
 }
 
-context-inspector .candidate-path {
+.context-inspector-mount .candidate-path {
   font-weight: 500;
   font-size: 0.75rem;
 }
 
-context-inspector .candidate-meta {
+.context-inspector-mount .candidate-meta {
   display: flex;
   gap: 0.5rem;
   font-size: 0.7rem;
@@ -369,34 +366,34 @@ context-inspector .candidate-meta {
   margin-top: 0.15rem;
 }
 
-context-inspector .candidate-provenance {
+.context-inspector-mount .candidate-provenance {
   font-size: 0.65rem;
   color: var(--pico-muted-color);
   font-style: italic;
 }
 
-context-inspector .score-bars {
+.context-inspector-mount .score-bars {
   display: flex;
   gap: 2px;
   align-items: center;
   margin-top: 0.15rem;
 }
 
-context-inspector .score-bar {
+.context-inspector-mount .score-bar {
   height: 4px;
   border-radius: 2px;
   min-width: 2px;
 }
 
-context-inspector .score-label {
+.context-inspector-mount .score-label {
   font-size: 0.6rem;
   color: var(--pico-muted-color);
   margin-left: 0.25rem;
 }
 
-context-inspector .loading,
-context-inspector .error-msg,
-context-inspector .empty-msg {
+.context-inspector-mount .loading,
+.context-inspector-mount .error-msg,
+.context-inspector-mount .empty-msg {
   text-align: center;
   padding: 1rem;
   color: var(--pico-muted-color);

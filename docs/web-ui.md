@@ -156,6 +156,11 @@ Click the context usage bar in the sidebar to see a popover with:
   - Full formatted canonical messages and tools JSON
   - Copy button to copy the request JSON to the clipboard
 
+The panel portals to a body-level `context-inspector-mount` div (the
+[portal pattern](web-ui-mobile.md#no-position-fixed-inside-transformed-ancestors),
+as in `notification-inbox`), so on mobile it escapes the transformed
+sidebar's containing block instead of being clipped by it.
+
 See [Context Composer](context-composer.md#context-inspection) for details.
 
 ### Copy conversation
