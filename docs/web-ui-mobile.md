@@ -51,6 +51,8 @@ The pattern that works: **portal the popover to `document.body`** so it has no t
 - `disconnectedCallback` clears the mount and removes it.
 - The `closeOnDocClick` listener checks `this._panelMount.contains(e.target)` in addition to `this.contains(e.target)` so panel clicks don't close the panel.
 
+The context inspector (`context-inspector.js`) is a second instance of this pattern — its mobile panel portals the same way and adds `env(safe-area-inset-*)` to the panel box. One gotcha it hit: Lit's standalone render root doesn't bind the component as `this` for `@event` handlers, so portal-panel handlers must be arrow wrappers (`@click=${() => this.#method()}`), not bare method references.
+
 If you add a popover/dropdown that lives anywhere inside the sidebar, do the same.
 
 ## Constrain wide content at the source
