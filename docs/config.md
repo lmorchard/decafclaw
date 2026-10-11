@@ -188,7 +188,7 @@ Controls auto-retrieval injection at turn start. See [context-composer.md#memory
 | `enabled` | bool | `true` | `VAULT_RETRIEVAL_ENABLED` |
 | `similarity_threshold` | float | `0.3` | `VAULT_RETRIEVAL_SIMILARITY_THRESHOLD` |
 | `max_results` | int | `5` | `VAULT_RETRIEVAL_MAX_RESULTS` |
-| `max_tokens` | int | `500` | `VAULT_RETRIEVAL_MAX_TOKENS` |
+| `max_tokens` | int | `4000` | `VAULT_RETRIEVAL_MAX_TOKENS` |
 | `show_in_ui` | bool | `true` | `VAULT_RETRIEVAL_SHOW_IN_UI` |
 | `mode` | str | `always` | `VAULT_RETRIEVAL_MODE` |
 | `headline_summary_max_chars` | int | `120` | `VAULT_RETRIEVAL_HEADLINE_SUMMARY_MAX_CHARS` |
