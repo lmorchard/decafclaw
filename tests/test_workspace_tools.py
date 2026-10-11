@@ -548,6 +548,11 @@ def test_edit_lf_file_stays_unchanged_in_behavior(ctx):
 # -- workspace_edit not-found hints (issue #997) --
 
 
+# The tier-1 marker is unique to the whitespace hint — the base error text
+# already says "whitespace and indentation", so bare "whitespace" proves nothing.
+_TIER1_MARKER = "whitespace differences are ignored"
+
+
 def test_edit_whitespace_only_mismatch_gets_line_hint(ctx):
     ws = _write_bytes(ctx, "code.py", b"def hello():\n    print('hi')\n")
     before = (ws / "code.py").read_bytes()
@@ -555,18 +560,21 @@ def test_edit_whitespace_only_mismatch_gets_line_hint(ctx):
     text = _text(result).lower()
     assert "error" in text
     assert "not found" in text
-    assert "whitespace" in text
+    assert _TIER1_MARKER in text
     assert "line 1" in text
     assert (ws / "code.py").read_bytes() == before
 
 
 def test_edit_whitespace_hint_line_number_on_later_line(ctx):
-    ws = _write_bytes(ctx, "notes.txt", b"first\nsecond\nthird\n")
+    # Genuine whitespace-run difference (two spaces vs one) on line 2, so
+    # only the tier-1 whitespace hint can fire here.
+    ws = _write_bytes(ctx, "notes.txt", b"first\nline  two\nthird\n")
     before = (ws / "notes.txt").read_bytes()
-    result = tool_workspace_edit(ctx, "notes.txt", "sec ond", "x")
+    result = tool_workspace_edit(ctx, "notes.txt", "line two", "x")
     text = _text(result).lower()
     assert "error" in text
-    assert "whitespace" in text
+    assert "not found" in text
+    assert _TIER1_MARKER in text
     assert "line 2" in text
     assert (ws / "notes.txt").read_bytes() == before
 

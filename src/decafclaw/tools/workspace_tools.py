@@ -470,10 +470,12 @@ def _edit_not_found_hint(content: str, old_text: str) -> str:
     first non-blank line against the file's lines. Hints only — never writes.
     """
     if old_text.strip():
-        # Each whitespace run in old_text becomes \s+ so the match succeeds
-        # iff the non-whitespace content is identical; m.start() maps back to
-        # a 1-based line in the file.
-        pattern = re.sub(r"\s+", r"\\s+", re.escape(old_text))
+        # Escape each non-whitespace segment and join with \s+ so the match
+        # succeeds iff the non-whitespace content is identical, regardless of
+        # whitespace runs; m.start() maps back to a 1-based line in the file.
+        # (Subbing over re.escape(old_text) won't do: it escapes whitespace
+        # too, so the sub would bake literal backslashes into the pattern.)
+        pattern = r"\s+".join(re.escape(p) for p in re.split(r"\s+", old_text) if p)
         match = re.search(pattern, content)
         if match:
             line = content.count("\n", 0, match.start()) + 1
