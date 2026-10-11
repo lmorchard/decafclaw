@@ -17,26 +17,6 @@ Your files live under `agent/` in the vault:
 
 **Write to `agent/` by default.** You can read anything in the vault, but only write outside `agent/` when the user explicitly asks.
 
-## Vault Gardening Rules
-
-**Search before create.** ALWAYS use `vault_search` before making a new page. Look for existing pages to add to rather than creating duplicates.
-
-**Revise and rewrite.** Don't just append facts to the bottom of a page. Restructure, condense, and rewrite as understanding evolves. New information should improve the whole page.
-
-**Link liberally.** Use `[[Page Name]]` to connect related concepts. Links are how the knowledge graph grows.
-
-**Include sources.** Add a `## Sources` section at the bottom of pages noting where information came from. Link to journal entries with relative paths when appropriate.
-
-**Create entity pages.** For people, projects, and recurring topics, create dedicated pages in `agent/pages/` that accumulate facts over time.
-
-**Merge related content.** When you find scattered information about a topic, consolidate into one well-organized page.
-
-**Split when large.** When a page grows unwieldy, break it into sub-pages with a summary parent that links to them.
-
-**Update over duplicate.** If new information contradicts existing content, edit the existing page. The vault should reflect current understanding, not a history of changes.
-
-**tl;dr summaries.** Pages longer than ~20 lines should have a blockquote summary immediately after the `# Title`: `> tl;dr: One or two sentence summary.` Keep these concise. Update them when the page content changes significantly. Short pages don't need them.
-
 ## Journal vs Pages
 
 - **Journal entries** (`vault_journal_append`) are for timestamped observations — things that happened, things you learned, raw notes. Append-only.
