@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, html, render, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { showToast } from '../lib/toast.js';
 import { copyToClipboard } from '../lib/utils.js';
@@ -67,9 +67,56 @@ export class ContextInspector extends LitElement {
     this._rawData = null;
     this._rawLoading = false;
     this._rawError = '';
+    /** @type {HTMLDivElement|null} */
+    this._panelMount = null;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    if (!this._panelMount) {
+      this._panelMount = document.createElement('div');
+      this._panelMount.className = 'context-inspector-mount';
+      document.body.appendChild(this._panelMount);
+    }
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.#cleanupListeners();
+    if (this._panelMount) {
+      render(nothing, this._panelMount);
+      this._panelMount.remove();
+      this._panelMount = null;
+    }
+  }
+
+  /**
+   * @template {Element} [T=Element]
+   * @param {string} selector
+   * @returns {T | null}
+   */
+  querySelector(selector) {
+    return this._panelMount?.querySelector(selector) ?? super.querySelector(selector);
+  }
+
+  /**
+   * @template {Element} [T=Element]
+   * @param {string} selector
+   * @returns {NodeListOf<T>}
+   */
+  querySelectorAll(selector) {
+    return this._panelMount ? this._panelMount.querySelectorAll(selector) : super.querySelectorAll(selector);
+  }
+
+  get textContent() {
+    return (super.textContent || '') + (this._panelMount ? this._panelMount.textContent : '');
   }
 
   updated(changed) {
+    super.updated?.(changed);
+    if (this._panelMount) {
+      render(this.open ? this.#renderInspector() : nothing, this._panelMount);
+    }
     if (changed.has('open') && this.open && this.convId) {
       if (this._tab === 'raw') {
         this.#fetchRawData();
@@ -91,6 +138,7 @@ export class ContextInspector extends LitElement {
         requestAnimationFrame(() => {
           this._onDocClick = (e) => {
             if (this.contains(e.target)) return;
+            if (this._panelMount?.contains(e.target)) return;
             const trigger = this.previousElementSibling;
             if (trigger && trigger.contains(e.target)) return;
             this.dispatchEvent(new Event('close'));
@@ -109,11 +157,6 @@ export class ContextInspector extends LitElement {
         this.#fetchData();
       }
     }
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    this.#cleanupListeners();
   }
 
   #cleanupListeners() {
@@ -172,6 +215,10 @@ export class ContextInspector extends LitElement {
       e.preventDefault();
       const nextTab = this._tab === 'diagnostics' ? 'raw' : 'diagnostics';
       this._tab = nextTab;
+      this._rawOpen = nextTab === 'raw';
+      if (this._rawOpen && !this._rawData && !this._rawLoading) {
+        this.#fetchRawData();
+      }
       requestAnimationFrame(() => {
         const btn = this.querySelector(`#tab-${nextTab}`);
         if (btn instanceof HTMLElement) btn.focus();
@@ -360,7 +407,7 @@ export class ContextInspector extends LitElement {
             <button
               type="button"
               class="copy-raw-btn dc-small-btn"
-              @click=${this.#copyRaw}
+              @click=${() => this.#copyRaw()}
             >Copy JSON</button>
           </div>
         </div>
@@ -388,6 +435,10 @@ export class ContextInspector extends LitElement {
   }
 
   render() {
+    return nothing;
+  }
+
+  #renderInspector() {
     if (!this.open) return nothing;
 
     let diagContent;
@@ -438,7 +489,7 @@ export class ContextInspector extends LitElement {
                   aria-selected=${!isExpanded}
                   aria-controls="panel-diagnostics"
                   tabindex=${!isExpanded ? 0 : -1}
-                  @keydown=${this.#onTabKeyDown}
+                  @keydown=${(e) => this.#onTabKeyDown(e)}
                   @click=${() => {
                     this._tab = 'diagnostics';
                     this._rawOpen = false;
@@ -452,7 +503,7 @@ export class ContextInspector extends LitElement {
                   aria-selected=${isExpanded}
                   aria-controls="panel-raw"
                   tabindex=${isExpanded ? 0 : -1}
-                  @keydown=${this.#onTabKeyDown}
+                  @keydown=${(e) => this.#onTabKeyDown(e)}
                   @click=${() => {
                     this._tab = 'raw';
                     this._rawOpen = true;
