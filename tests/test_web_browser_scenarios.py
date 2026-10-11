@@ -560,11 +560,13 @@ def test_browser_context_inspector_mobile(built_static, chromium, config):
         page = scenario.page
         page.evaluate(
             """async (convId) => {
-            for (const href of ['/static/vendor/bundle/pico.min.css', '/static/style.css']) {
+            await Promise.all(['/static/vendor/bundle/pico.min.css', '/static/style.css'].map(href => new Promise((resolve, reject) => {
                 const link = document.createElement('link');
                 link.rel = 'stylesheet'; link.href = href;
+                link.addEventListener('load', resolve, { once: true });
+                link.addEventListener('error', reject, { once: true });
                 document.head.append(link);
-            }
+            })));
             await import('/static/components/context-inspector.js');
             // Un-upgraded element: mobile.css/sidebar.css target the tag name,
             // which is exactly the production trap (transform + overflow:hidden).
