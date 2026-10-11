@@ -1764,6 +1764,19 @@ class ConversationManager:
                             "completion_tokens": ctx.tokens.total_completion,
                             "total_tokens": (ctx.tokens.total_prompt + ctx.tokens.total_completion),
                         },
+                        # #1005 — the context meter's value, kept separate from
+                        # usage.prompt_tokens so the provider's actual LLM
+                        # usage record stays intact (the recorder stores that
+                        # verbatim). On a compacting turn last_prompt is the
+                        # last LLM call — which by definition exceeded the
+                        # threshold and would show >100% — so this carries the
+                        # post-compaction estimate instead. Non-compacting
+                        # turns fall back to the real last_prompt.
+                        "context_usage": (
+                            ctx.tokens.last_compaction_estimate
+                            if ctx.tokens.last_compaction_estimate is not None
+                            else ctx.tokens.last_prompt
+                        ),
                         "context_limit": self.config.compaction.max_tokens,
                     },
                 )

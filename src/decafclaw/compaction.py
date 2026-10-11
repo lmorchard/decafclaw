@@ -479,13 +479,16 @@ def _rebuild_history(
         "content": f"{SUMMARY_PREFIX}{body}",
     }
 
-    history.clear()
-    history.append(summary_msg)
-    history.extend(protected_messages)
-    history.extend(recent_messages)
+    rebuilt = [summary_msg, *protected_messages, *recent_messages]
 
-    # Persist compacted working history so future turns don't re-expand from archive
-    write_compacted_history(config, conv_id, list(history))
+    # Persist the rebuilt list to the sidecar *before* swapping the live
+    # history. If the write fails (raised, caught by compact_history's handler),
+    # the original history is left intact, so the compaction_end success flag and
+    # the context meter reflect "no change" rather than a shortened in-memory
+    # view the disk never actually got (#1005).
+    write_compacted_history(config, conv_id, rebuilt)
+    history.clear()
+    history.extend(rebuilt)
 
     log.info(
         f"Compaction complete: "
@@ -552,6 +555,10 @@ async def compact_history(ctx: "Context", history: list) -> bool:
 
     before_messages = len(history)
     compact_start_time = _time.monotonic()
+    # #1005 — the context meter reads this as the post-compaction prompt
+    # size. Set only on a successful compaction; a failed compaction leaves
+    # the meter at its (correct) pre-compaction value.
+    estimated_tokens_after = None
 
     # Load the existing structured slice (#302). When non-empty,
     # threaded into the prompt so the LLM sees what's already
@@ -617,6 +624,15 @@ async def compact_history(ctx: "Context", history: list) -> bool:
         _rebuild_history(
             history, clean_summary, protected_messages, recent_messages, config, conv_id, slice_prefix=slice_prefix
         )
+
+        # #1005 — the meter shows the prompt size of the last LLM call, which
+        # by definition exceeded the compaction threshold (>100%) and is not
+        # corrected after compaction. Estimate the *post-compaction* history
+        # the same way the reload path does (websocket.py), and hand it to the
+        # turn's message_complete (via ctx.tokens.last_compaction_estimate)
+        # and the COMPACTION_DONE wire message (via the event below).
+        estimated_tokens_after = estimate_tokens(flatten_messages(history))
+        ctx.tokens.last_compaction_estimate = estimated_tokens_after
         return True
 
     except Exception as e:
@@ -625,10 +641,13 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     finally:
         elapsed = _time.monotonic() - compact_start_time
         after_messages = len(history)
+        succeeded = estimated_tokens_after is not None
         await ctx.publish(
             "compaction_end",
+            success=succeeded,
             before_messages=before_messages,
             after_messages=after_messages,
             elapsed_sec=round(elapsed, 1),
             estimated_tokens_before=estimated,
+            estimated_tokens_after=estimated_tokens_after,
         )

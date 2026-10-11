@@ -1,5 +1,7 @@
 """Tests for conversation archive."""
 
+import pytest
+
 from decafclaw.archive import (
     append_message,
     archive_path,
@@ -42,6 +44,33 @@ def test_compacted_roundtrip_new_layout(config):
     restored = read_compacted_history(config, conv_id)
     assert restored is not None
     assert restored[0]["content"] == "summary"
+
+
+def test_compacted_history_failure_preserves_previous(config, monkeypatch):
+    # #1005 a failed write must not leave a truncated sidecar nor clobber the
+    # previous one. The temp file is os.replace()d into place on success; on
+    # failure the original survives and the orphaned temp file is removed.
+    conv_id = "failed-compacted"
+    write_compacted_history(
+        config,
+        conv_id,
+        [{"role": "user", "content": "old"}],
+    )
+    path = conversations_root(config) / conv_id / "compacted.jsonl"
+    assert read_compacted_history(config, conv_id)[0]["content"] == "old"
+    before = set(path.parent.iterdir())
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("decafclaw.archive.os.replace", boom)
+    with pytest.raises(OSError):
+        write_compacted_history(config, conv_id, [{"role": "user", "content": "new"}])
+
+    # Previous sidecar intact, not truncated; no orphaned temp file left behind.
+    after = set(path.parent.iterdir())
+    assert after == before
+    assert read_compacted_history(config, conv_id)[0]["content"] == "old"
 
 
 def test_append_and_read(config):

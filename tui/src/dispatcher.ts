@@ -144,8 +144,15 @@ export function dispatch(s: State, m: ServerMessage): State {
       return { ...s, model: m.active_model ?? s.model, transcript: [...items, ...s.transcript] };
     }
 
-    case "compaction_done":
-      return appendTranscript(s, { kind: "system", text: "[compaction complete]" });
+    // #1005 — a failed compaction leaves the conversation unchanged, so the old
+    // unconditional "[compaction complete]" was misleading. Mirror the web UI:
+    // mark failure distinctly and report the before/after counts on success.
+    case "compaction_done": {
+      const text = m.success === false
+        ? "[compaction failed — no change]"
+        : `[compaction complete] ${m.before_messages} → ${m.after_messages} messages`;
+      return appendTranscript(s, { kind: "system", text });
+    }
 
     case "model_changed":
       return appendTranscript(

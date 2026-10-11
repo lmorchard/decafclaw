@@ -1,7 +1,10 @@
 """Conversation archive — append-only JSONL files per conversation."""
 
+import contextlib
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -39,11 +42,21 @@ def write_compacted_history(config, conv_id: str, messages: list[dict]):
     """Write compacted working history to a sidecar file (archive is unchanged)."""
     path = _compacted_path(config, conv_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        for msg in messages:
-            if "timestamp" not in msg:
-                msg = {**msg, "timestamp": datetime.now().isoformat()}
-            f.write(json.dumps(msg) + "\n")
+    # Write atomically: stage to a temp file in the same directory, then
+    # os.replace() into place, so a mid-write failure (e.g. disk full) can
+    # never leave a truncated sidecar that restore_history() could load.
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".compacted.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            for msg in messages:
+                if "timestamp" not in msg:
+                    msg = {**msg, "timestamp": datetime.now().isoformat()}
+                f.write(json.dumps(msg) + "\n")
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
 
 
 def _read_jsonl(path: Path) -> list[dict]:

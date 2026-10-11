@@ -120,19 +120,35 @@ describe("dispatcher", () => {
     expect(s1.conv_id).toBe(CONV);
   });
 
-  it("compaction_done appends system line", () => {
+  it("compaction_done appends a system line with before/after counts (#1005)", () => {
     const s0 = { ...initialState, conv_id: CONV };
     const s1 = dispatch(s0, {
       type: "compaction_done",
       conv_id: CONV,
+      success: true,
       before_messages: 42,
       after_messages: 10,
-    });
+     });
     expect(s1.transcript.at(-1)).toEqual({
       kind: "system",
-      text: "[compaction complete]",
+      text: "[compaction complete] 42 → 10 messages",
+     });
     });
-  });
+
+  it("compaction_done marks a failed compaction distinctly (#1005)", () => {
+    const s0 = { ...initialState, conv_id: CONV };
+    const s1 = dispatch(s0, {
+      type: "compaction_done",
+      conv_id: CONV,
+      success: false,
+      before_messages: 42,
+      after_messages: 42,
+     });
+    expect(s1.transcript.at(-1)).toEqual({
+      kind: "system",
+      text: "[compaction failed — no change]",
+     });
+    });
 
   it("model_changed appends system line + updates model", () => {
     const s0 = { ...initialState, conv_id: CONV };

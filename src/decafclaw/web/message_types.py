@@ -147,6 +147,7 @@ class SrvCommandList(TypedDict):
 class SrvCompactionDone(TypedDict):
     type: Literal[WSMessageType.COMPACTION_DONE]
     conv_id: str
+    success: bool
     before_messages: int
     after_messages: int
 
@@ -221,6 +222,7 @@ class SrvMessageComplete(TypedDict):
     role: NotRequired[str]
     final: NotRequired[bool]
     usage: NotRequired[dict[str, object]]
+    context_usage: NotRequired[int]
     context_limit: NotRequired[int]
 
 
