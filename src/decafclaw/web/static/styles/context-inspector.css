@@ -115,6 +115,8 @@
 
   .context-inspector-mount .inspector.expanded {
     width: calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    height: auto;
+    max-height: none;
   }
 
   .context-inspector-mount .raw-drawer-toggle {
