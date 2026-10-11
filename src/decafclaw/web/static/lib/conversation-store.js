@@ -114,6 +114,10 @@ export class ConversationStore extends EventTarget {
   #availableModels = [];
   /** @type {string} default model from server config */
   #defaultModel = '';
+  /** @type {string} active session mode for the conversation */
+  #activeMode = 'default';
+  /** @type {{name: string, description: string, presets: string[], promoted_tools: string[]}[]} available session modes from server */
+  #availableModes = [];
   /** @type {{name: string, description: string, argument_hint: string}[]} user-invokable commands from server */
   #commands = [];
   /** @type {boolean} whether the current conversation is read-only */
@@ -179,6 +183,10 @@ export class ConversationStore extends EventTarget {
   get availableModels() { return this.#availableModels; }
   /** @returns {string} */
   get defaultModel() { return this.#defaultModel; }
+  /** @returns {string} */
+  get activeMode() { return this.#activeMode; }
+  /** @returns {{name: string, description: string, presets: string[], promoted_tools: string[]}[]} */
+  get availableModes() { return this.#availableModes; }
   /** @returns {{name: string, description: string, argument_hint: string}[]} */
   get commands() { return this.#commands; }
   /** @returns {SystemConversationMeta[]} */
@@ -432,6 +440,7 @@ export class ConversationStore extends EventTarget {
     this.#contextUsage = 0;
     this.#contextLimit = 0;
     this.#activeModel = '';
+    this.#activeMode = 'default';
     this.#readOnly = false;
     this.#ws.send({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: convId });
     this.#ws.send({ type: MESSAGE_TYPES.LOAD_HISTORY, conv_id: convId, limit: 50 });
@@ -540,6 +549,13 @@ export class ConversationStore extends EventTarget {
     this.#emitChange();
   }
 
+  /** @param {string} mode */
+  setMode(mode) {
+    if (this.#currentConvId) {
+      this.#ws.send({ type: MESSAGE_TYPES.SET_MODE, conv_id: this.#currentConvId, mode });
+    }
+  }
+
   cancelTurn() {
     if (!this.#currentConvId) return;
     this.#ws.send({ type: MESSAGE_TYPES.CANCEL_TURN, conv_id: this.#currentConvId });
@@ -585,6 +601,8 @@ export class ConversationStore extends EventTarget {
         if (msg.active_model) this.#activeModel = msg.active_model;
         if (msg.available_models) this.#availableModels = msg.available_models;
         if (msg.default_model) this.#defaultModel = msg.default_model;
+        if (msg.active_mode) this.#activeMode = msg.active_mode;
+        if (msg.available_modes) this.#availableModes = msg.available_modes;
         if (msg.read_only) this.#readOnly = true;
         if (msg.turn_active) this.#busy = true;
         // Restore pending confirmation from server state (survives reload)
@@ -660,6 +678,14 @@ export class ConversationStore extends EventTarget {
       case MESSAGE_TYPES.MODEL_CHANGED:
         if (msg.conv_id === this.#currentConvId) {
           this.#activeModel = msg.model || '';
+          this.#emitChange();
+        }
+        break;
+
+      case MESSAGE_TYPES.MODE_CHANGED:
+        if (msg.conv_id === this.#currentConvId) {
+          this.#activeMode = msg.mode || '';
+          this.#emitChange();
         }
         break;
 

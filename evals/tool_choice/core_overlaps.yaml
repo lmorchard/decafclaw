@@ -411,3 +411,13 @@
     Saving active conversation guidance rules into a named custom preset on disk
     is shell_guidance with action='save_preset', preset='web_deploy'.
 
+- name: shell-guidance-set-mode-dev
+  scenario: "Switch this conversation to dev mode so we have development tools and auto-approvals for tests and linters."
+  expected: shell_guidance
+  near_miss: [shell, shell_patterns]
+  notes: |
+    Switching session modes (such as dev, research, or admin) that bundle
+    auto-approval presets and promoted tool profiles is shell_guidance
+    with action='set_mode', mode='dev'.
+
+

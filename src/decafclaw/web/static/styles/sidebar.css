@@ -213,11 +213,13 @@ conversation-sidebar .conv-item.active .conv-status.waiting {
   }
 }
 
+conversation-sidebar .mode-picker,
 conversation-sidebar .model-picker {
   padding: 0.4rem 1rem 0.5rem;
   border-top: 1px solid var(--pico-muted-border-color);
 }
 
+conversation-sidebar .mode-picker-label,
 conversation-sidebar .model-picker-label {
   font-size: 0.75rem;
   color: var(--pico-muted-color);
@@ -225,6 +227,7 @@ conversation-sidebar .model-picker-label {
   display: block;
 }
 
+conversation-sidebar .mode-select,
 conversation-sidebar .model-select {
   width: 100%;
   font-size: 0.75rem;
@@ -423,6 +426,7 @@ conversation-sidebar[collapsed] {
 }
 
 conversation-sidebar[collapsed] .conv-list,
+conversation-sidebar[collapsed] .mode-picker,
 conversation-sidebar[collapsed] .model-picker,
 conversation-sidebar[collapsed] .context-usage,
 conversation-sidebar[collapsed] .sidebar-footer,

@@ -554,6 +554,25 @@ async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
                     ctx.active_model = name
                     break
 
+    # Restore active mode from archive if not already set or non-default.
+    from .modes import get_all_modes
+
+    all_modes = get_all_modes(config)
+    if getattr(ctx, "active_mode", "default") == "default" and conv_id:
+        from .archive import read_archive
+
+        for msg in reversed(read_archive(config, conv_id)):
+            if msg.get("role") == "mode":
+                name = msg.get("content", "")
+                if name and name in all_modes:
+                    ctx.active_mode = name
+                    break
+
+    # If active mode has presets and session presets are not yet populated, initialize them
+    active_mode_name = getattr(ctx, "active_mode", "default") or "default"
+    if active_mode_name in all_modes and not ctx.tools.active_aux_approval_presets:
+        ctx.tools.active_aux_approval_presets = list(all_modes[active_mode_name].presets)
+
     return _resolve_model_override(ctx, config)
 
 

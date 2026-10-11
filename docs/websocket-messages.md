@@ -115,6 +115,8 @@ Page of historical messages for a conversation.
 - `active_model` — string?
 - `available_models` — array of string?
 - `default_model` — string?
+- `active_mode` — string?
+- `available_modes` — array of object?
 - `turn_active` — boolean?
 - `pending_confirmation` — object?
 
@@ -158,6 +160,17 @@ Final form of an assistant message after streaming completed (or when replayed f
 - `final` — boolean?
 - `usage` — object?
 - `context_limit` — number?
+
+### `mode_changed`
+
+The active mode for a conversation changed (echoed back to all subscribers of that conversation).
+
+**Fields:**
+
+- `conv_id` — string
+- `mode` — string
+- `presets` — array of string
+- `promoted_tools` — array of string
 
 ### `model_changed`
 
@@ -374,6 +387,15 @@ Deprecated backward-compat alias for set_model used by older web clients.
 
 - `conv_id` — string
 - `model` — string
+
+### `set_mode`
+
+Change the active mode for a conversation.
+
+**Fields:**
+
+- `conv_id` — string
+- `mode` — string
 
 ### `set_model`
 

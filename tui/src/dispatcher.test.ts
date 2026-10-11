@@ -258,6 +258,18 @@ describe("dispatcher", () => {
     expect(s1.model).toBe("claude-opus-4-7");
   });
 
+  it("mode_changed returns state unchanged", () => {
+    const s0 = { ...initialState, conv_id: CONV };
+    const s1 = dispatch(s0, {
+      type: "mode_changed",
+      conv_id: CONV,
+      mode: "dev",
+      presets: ["developer"],
+      promoted_tools: ["workspace_diff"],
+    });
+    expect(s1).toBe(s0);
+  });
+
   it("unknown type returns state unchanged (forward-compat)", () => {
     const s0 = { ...initialState, conv_id: CONV };
     const unknown = { type: "future_message", conv_id: CONV } as unknown as ServerMessage;

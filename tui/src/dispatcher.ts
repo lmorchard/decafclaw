@@ -174,6 +174,7 @@ export function dispatch(s: State, m: ServerMessage): State {
     case "canvas_update":
     case "command_ack":
     case "conversation_status":
+    case "mode_changed":
     case "models_available":
     case "notification_created":
     case "notification_read":
