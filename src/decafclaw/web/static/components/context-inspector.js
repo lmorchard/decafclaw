@@ -407,10 +407,10 @@ export class ContextInspector extends LitElement {
       `;
     }
 
-    const showRawPane = this._rawOpen || this._tab === 'raw';
+    const isExpanded = this._rawOpen || this._tab === 'raw';
 
     return html`
-      <div class="inspector ${this._rawOpen ? 'expanded' : ''}" role="dialog" aria-modal="true" aria-label="Context Inspector" @click=${(e) => e.stopPropagation()}>
+      <div class="inspector ${isExpanded ? 'expanded' : ''}" role="dialog" aria-modal="true" aria-label="Context Inspector" @click=${(e) => e.stopPropagation()}>
         <div class="inspector-header">
           <div class="inspector-title-row">
             <h3>Context Inspector</h3>
@@ -418,38 +418,44 @@ export class ContextInspector extends LitElement {
               <button
                 type="button"
                 class="raw-drawer-toggle dc-small-btn"
-                aria-expanded=${this._rawOpen}
+                aria-expanded=${isExpanded}
                 @click=${() => {
-                  this._rawOpen = !this._rawOpen;
-                  if (this._rawOpen && !this._rawData && !this._rawLoading) {
+                  const next = !isExpanded;
+                  this._rawOpen = next;
+                  this._tab = next ? 'raw' : 'diagnostics';
+                  if (next && !this._rawData && !this._rawLoading) {
                     this.#fetchRawData();
                   }
                 }}
-              >${this._rawOpen ? '← Hide Raw' : 'View Raw →'}</button>
+              >${isExpanded ? '← Hide Raw' : 'View Raw →'}</button>
 
               <div class="mobile-tabs inspector-tabs" role="tablist" aria-label="Context views">
                 <button
                   id="tab-diagnostics"
                   type="button"
                   role="tab"
-                  class="tab-btn ${this._tab === 'diagnostics' ? 'active' : ''}"
-                  aria-selected=${this._tab === 'diagnostics'}
+                  class="tab-btn ${!isExpanded ? 'active' : ''}"
+                  aria-selected=${!isExpanded}
                   aria-controls="panel-diagnostics"
-                  tabindex=${this._tab === 'diagnostics' ? 0 : -1}
+                  tabindex=${!isExpanded ? 0 : -1}
                   @keydown=${this.#onTabKeyDown}
-                  @click=${() => { this._tab = 'diagnostics'; }}
+                  @click=${() => {
+                    this._tab = 'diagnostics';
+                    this._rawOpen = false;
+                  }}
                 >Diagnostics</button>
                 <button
                   id="tab-raw"
                   type="button"
                   role="tab"
-                  class="tab-btn ${this._tab === 'raw' ? 'active' : ''}"
-                  aria-selected=${this._tab === 'raw'}
+                  class="tab-btn ${isExpanded ? 'active' : ''}"
+                  aria-selected=${isExpanded}
                   aria-controls="panel-raw"
-                  tabindex=${this._tab === 'raw' ? 0 : -1}
+                  tabindex=${isExpanded ? 0 : -1}
                   @keydown=${this.#onTabKeyDown}
                   @click=${() => {
                     this._tab = 'raw';
+                    this._rawOpen = true;
                     if (!this._rawData && !this._rawLoading) {
                       this.#fetchRawData();
                     }
@@ -465,7 +471,7 @@ export class ContextInspector extends LitElement {
         <div class="inspector-body">
           <div
             id="panel-diagnostics"
-            class="inspector-pane pane-diagnostics ${this._tab !== 'diagnostics' ? 'mobile-hidden' : ''}"
+            class="inspector-pane pane-diagnostics ${isExpanded ? '' : ''}"
             role="tabpanel"
             aria-labelledby="tab-diagnostics"
             tabindex="0"
@@ -473,10 +479,10 @@ export class ContextInspector extends LitElement {
             ${diagContent}
           </div>
 
-          ${showRawPane ? html`
+          ${isExpanded ? html`
             <div
               id="panel-raw"
-              class="inspector-pane pane-raw ${this._tab !== 'raw' ? 'mobile-hidden' : ''}"
+              class="inspector-pane pane-raw"
               role="tabpanel"
               aria-labelledby="tab-raw"
               tabindex="0"

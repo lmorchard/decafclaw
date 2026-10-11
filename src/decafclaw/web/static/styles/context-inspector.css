@@ -11,10 +11,10 @@ context-inspector[open] {
 context-inspector .inspector {
   position: fixed;
   z-index: 1000;
-  top: 1rem;
   bottom: 5.25rem;
   left: 1rem;
-  width: 380px;
+  width: min(640px, calc(100vw - 2rem));
+  max-height: 480px;
   display: flex;
   flex-direction: column;
   background: var(--pico-card-background-color, #fff);
@@ -25,11 +25,15 @@ context-inspector .inspector {
   font-size: 0.8rem;
   color: var(--pico-color, #333);
   box-sizing: border-box;
-  transition: width 0.18s ease-in-out;
+  transition: width 0.18s ease-in-out, max-height 0.18s ease-in-out;
 }
 
 context-inspector .inspector.expanded {
+  top: 1rem;
+  bottom: 5.25rem;
   width: min(88vw, 1200px);
+  max-height: calc(100vh - 6.25rem);
+  height: calc(100vh - 6.25rem);
 }
 
 context-inspector .inspector-header {
@@ -63,7 +67,7 @@ context-inspector .raw-drawer-toggle {
 }
 
 context-inspector .mobile-tabs {
-  display: none;
+  display: inline-flex;
 }
 
 context-inspector .inspector-body {
@@ -86,8 +90,8 @@ context-inspector .pane-diagnostics {
 }
 
 context-inspector .inspector.expanded .pane-diagnostics {
-  width: 360px;
-  flex: 0 0 360px;
+  width: 400px;
+  flex: 0 0 400px;
   border-right: 1px solid var(--pico-muted-border-color, #eee);
   padding-right: 1.25rem;
 }
