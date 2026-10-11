@@ -102,6 +102,15 @@ class TestFlattenMessages:
         assert "..." in result
         assert len(result) < 1000
 
+    def test_truncates_long_vault_retrieval_and_references(self):
+        messages = [
+            {"role": "vault_retrieval", "content": "v" * 1000},
+            {"role": "vault_references", "content": "r" * 1000},
+        ]
+        result = flatten_messages(messages)
+        assert "vault_retrieval: " + "v" * 500 + "..." in result
+        assert "vault_references: " + "r" * 500 + "..." in result
+
 
 class TestEstimateTokens:
     def test_basic(self):

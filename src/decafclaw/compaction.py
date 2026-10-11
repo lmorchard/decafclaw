@@ -272,6 +272,9 @@ def flatten_messages(messages: list[dict]) -> str:
             preview = content[:500] + "..." if len(content) > 500 else content
             tool_id = msg.get("tool_call_id", "?")
             lines.append(f"Tool result ({tool_id}): {preview}")
+        elif role in ("vault_retrieval", "vault_references", "recent_journal", "conversation_notes"):
+            preview = content[:500] + "..." if len(content) > 500 else content
+            lines.append(f"{role}: {preview}")
         else:
             lines.append(f"{role}: {content}")
     return "\n".join(lines)

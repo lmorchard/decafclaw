@@ -296,7 +296,7 @@ class VaultRetrievalConfig:
     enabled: bool = True
     similarity_threshold: float = 0.3
     max_results: int = 5
-    max_tokens: int = 500
+    max_tokens: int = 4000  # Ceiling on auto-retrieved memory tokens (default 4000, see #1048)
     show_in_ui: bool = True
     # Retrieval injection mode (#301):
     #   "always"    — current default; inject scored full-body candidates

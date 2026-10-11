@@ -588,16 +588,18 @@ class ContextComposer:
         # Response reserve (leave room for the model's response)
         response_reserve = 4096
 
-        # Dynamic budget for scored candidates
+        # Dynamic budget for scored candidates with an explicit ceiling (#1048)
         window_size = self._get_context_window_size(config, ctx)
-        remaining_budget = max(0, window_size - fixed_tokens - response_reserve)
-
-        # Fall back to fixed max_tokens if remaining budget is unreasonable
-        # (e.g. context_window_size not configured)
-        memory_budget: int | None = None
-        if remaining_budget > 0:
-            memory_budget = remaining_budget
-        # else: None → _compose_vault_retrieval falls back to max_tokens
+        ceiling = config.vault_retrieval.max_tokens
+        if window_size > 0:
+            remaining_budget = max(0, window_size - fixed_tokens - response_reserve)
+            if ceiling and ceiling > 0:
+                memory_budget = min(remaining_budget, ceiling)
+            else:
+                memory_budget = remaining_budget
+        else:
+            # Fall back to fixed max_tokens if context_window_size is unconfigured
+            memory_budget = ceiling
 
         # -- Memory context (injected before user message in history) --
         memory_msgs, retrieved_context_text, mc_results, memory_entry = await self._compose_vault_retrieval(
@@ -857,6 +859,11 @@ class ContextComposer:
             score_threshold = config.relevance.min_composite_score
             results = [r for r in results if r.get("composite_score", 0) >= score_threshold]
 
+            # Cap candidate count to max_results (#1048)
+            max_results = config.vault_retrieval.max_results
+            if max_results and max_results > 0:
+                results = results[:max_results]
+
             # Select by token budget (score order replaces similarity order)
             budget = token_budget if token_budget is not None else config.vault_retrieval.max_tokens
             log.debug(
@@ -866,7 +873,10 @@ class ContextComposer:
                 "dynamic" if token_budget is not None else "fixed",
                 retrieval_mode,
             )
-            results = _trim_to_token_budget(results, budget)
+            if budget <= 0:
+                results = []
+            else:
+                results = _trim_to_token_budget(results, budget)
             if results:
                 log.debug(
                     "Memory context: selected %d/%d candidates (scores %.3f–%.3f)",

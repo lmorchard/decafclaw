@@ -429,6 +429,98 @@ class TestComposeMemoryContext:
         assert paths["pages/miss.md"]["included"] is False
         assert paths["pages/miss.md"]["drop_reason"] in ("score", "budget")
 
+    @pytest.mark.asyncio
+    async def test_caps_injected_candidates_to_max_results(self, ctx, config):
+        """Even if many candidates clear score threshold and fit budget,
+        only top max_results candidates are injected (#1048)."""
+        config.vault_retrieval.max_results = 2
+        config.relevance.min_composite_score = 0.5
+        mock_results = [
+            {
+                "entry_text": "cand1",
+                "source_type": "page",
+                "similarity": 0.95,
+                "file_path": "pages/1.md",
+                "importance": 0.9,
+                "modified_at": "",
+            },
+            {
+                "entry_text": "cand2",
+                "source_type": "page",
+                "similarity": 0.90,
+                "file_path": "pages/2.md",
+                "importance": 0.8,
+                "modified_at": "",
+            },
+            {
+                "entry_text": "cand3",
+                "source_type": "page",
+                "similarity": 0.85,
+                "file_path": "pages/3.md",
+                "importance": 0.7,
+                "modified_at": "",
+            },
+            {
+                "entry_text": "cand4",
+                "source_type": "page",
+                "similarity": 0.80,
+                "file_path": "pages/4.md",
+                "importance": 0.6,
+                "modified_at": "",
+            },
+        ]
+        with (
+            patch(
+                "decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock_results
+            ),
+            patch("decafclaw.context_composer.format_memory_context", return_value="formatted"),
+        ):
+            composer = ContextComposer()
+            msgs, text, raw, entry = await composer._compose_vault_retrieval(
+                ctx,
+                config,
+                "hello",
+                ComposerMode.INTERACTIVE,
+                token_budget=10000,
+            )
+            assert len(msgs) == 1
+            assert len(raw) == 2
+            assert [r["file_path"] for r in raw] == ["pages/1.md", "pages/2.md"]
+            assert entry.items_included == 2
+            assert entry.items_truncated == 2
+
+    @pytest.mark.asyncio
+    async def test_zero_or_negative_budget_skips_injection(self, ctx, config):
+        """When token_budget <= 0 (e.g. context window exhausted), retrieval is skipped."""
+        mock_results = [
+            {
+                "entry_text": "cand1",
+                "source_type": "page",
+                "similarity": 0.95,
+                "file_path": "pages/1.md",
+                "importance": 0.9,
+                "modified_at": "",
+            },
+        ]
+        with (
+            patch(
+                "decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock_results
+            ),
+        ):
+            composer = ContextComposer()
+            msgs, text, raw, entry = await composer._compose_vault_retrieval(
+                ctx,
+                config,
+                "hello",
+                ComposerMode.INTERACTIVE,
+                token_budget=0,
+            )
+            assert msgs == []
+            assert raw == []
+            assert entry is not None
+            assert entry.items_included == 0
+            assert entry.details["injection_skipped"] is True
+
 
 # -- Retrieval modes (#301) ----------------------------------------------------
 
@@ -1537,6 +1629,87 @@ class TestCompose:
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
             assert result.retrieved_context_text == "formatted memory"
+
+    @pytest.mark.asyncio
+    async def test_compose_memory_budget_capped_by_max_tokens(self, ctx, config):
+        """When model context window is large (e.g. 300,000), memory_budget is capped
+        at config.vault_retrieval.max_tokens rather than unbounded (#1048)."""
+        config.system_prompt = "System."
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 300000
+        config.vault_retrieval.max_tokens = 4000
+        captured_budget = []
+
+        composer = ContextComposer()
+        orig_compose_vault = composer._compose_vault_retrieval
+
+        async def spy_compose_vault(*args, **kwargs):
+            captured_budget.append(kwargs.get("token_budget"))
+            return await orig_compose_vault(*args, **kwargs)
+
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch.object(composer, "_compose_vault_retrieval", side_effect=spy_compose_vault),
+        ):
+            await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+            assert len(captured_budget) == 1
+            assert captured_budget[0] == 4000
+
+    @pytest.mark.asyncio
+    async def test_compose_memory_budget_constrained_by_remaining_space(self, ctx, config):
+        """When remaining context space is smaller than max_tokens, memory_budget
+        is constrained by remaining_budget (#1048)."""
+        config.system_prompt = "System."
+        config.agent.tool_context_budget_pct = 1.0
+        # Window of 5000: fixed tokens ~4 (system + user msg), response reserve 4096.
+        # remaining_budget is roughly 5000 - 4096 - fixed < 1000.
+        config.compaction.max_tokens = 5000
+        config.vault_retrieval.max_tokens = 4000
+        captured_budget = []
+
+        composer = ContextComposer()
+        orig_compose_vault = composer._compose_vault_retrieval
+
+        async def spy_compose_vault(*args, **kwargs):
+            captured_budget.append(kwargs.get("token_budget"))
+            return await orig_compose_vault(*args, **kwargs)
+
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch.object(composer, "_compose_vault_retrieval", side_effect=spy_compose_vault),
+        ):
+            await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+            assert len(captured_budget) == 1
+            assert captured_budget[0] < 4000
+            assert captured_budget[0] > 0
+
+    @pytest.mark.asyncio
+    async def test_compose_memory_budget_exhausted(self, ctx, config):
+        """When fixed costs + response reserve exceed context window, memory_budget is 0."""
+        config.system_prompt = "System."
+        config.agent.tool_context_budget_pct = 1.0
+        # Window of 4000: less than response_reserve 4096 alone!
+        config.compaction.max_tokens = 4000
+        config.vault_retrieval.max_tokens = 4000
+        captured_budget = []
+
+        composer = ContextComposer()
+        orig_compose_vault = composer._compose_vault_retrieval
+
+        async def spy_compose_vault(*args, **kwargs):
+            captured_budget.append(kwargs.get("token_budget"))
+            return await orig_compose_vault(*args, **kwargs)
+
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch.object(composer, "_compose_vault_retrieval", side_effect=spy_compose_vault),
+        ):
+            await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+            assert len(captured_budget) == 1
+            assert captured_budget[0] == 0
 
 
 class TestComposeVaultGuideIntegration:
