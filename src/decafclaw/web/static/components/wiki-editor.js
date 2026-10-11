@@ -14,12 +14,17 @@
  *   Dispatches a 'close' CustomEvent when the public close() method is called.
  *   Note: This component does not render a Done/Close button; closing is controlled
  *   by the host application.
+ *
+ *   A single click on a [[wiki-link]] in the editor opens a small popover
+ *   (portaled to document.body) with editable Target and Display fields;
+ *   Apply commits both via a ProseMirror transaction, Cancel/Escape/outside
+ *   click discard. Double-click keeps navigating (dispatches 'wiki-navigate').
  */
 
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, html, nothing, render } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import {
-  Editor, rootCtx, defaultValueCtx,
+  Editor, rootCtx, defaultValueCtx, editorViewCtx,
   commonmark, gfm, history, listener, listenerCtx, clipboard,
   callCommand, getMarkdown, replaceAll,
   toggleStrongCommand, toggleEmphasisCommand, toggleStrikethroughCommand,
@@ -63,6 +68,61 @@ const STATUS_LABELS = /** @type {Record<string, string>} */ ({
 
 /** @typedef {'/api/vault/'|'/api/config/files/'|'/api/schedules/'} EditorSaveEndpoint */
 
+// ── Wiki-link edit popover ─────────────────────────────────────────────
+
+/** Single- vs double-click disambiguation before the popover opens. */
+const LINK_EDIT_OPEN_DELAY_MS = 250;
+/** Popover size assumptions, for viewport clamping (see #showLinkEdit). */
+const LINK_EDIT_WIDTH = 240;
+const LINK_EDIT_ESTIMATED_HEIGHT = 180;
+const LINK_EDIT_GAP = 6;
+const LINK_EDIT_MARGIN = 8;
+
+/**
+ * Find the contiguous span of inline nodes carrying the wiki_link mark that
+ * contains `pos`. A marked run may span several text nodes (nested marks
+ * split it), so the span extends across adjacent marked nodes in both
+ * directions — transitive, so clicking any run of a multi-run link yields
+ * the whole run.
+ * @param {any} doc ProseMirror document
+ * @param {number} pos position at or inside the marked run
+ * @returns {{from: number, to: number} | null}
+ */
+function findWikiLinkSpan(doc, pos) {
+  /** @type {{from: number, to: number}[]} */
+  const runs = [];
+  doc.descendants((/** @type {any} */ node, /** @type {number} */ nodePos) => {
+    if (node.isInline && node.marks.some((/** @type {any} */ m) => m.type.name === 'wiki_link')) {
+      runs.push({ from: nodePos, to: nodePos + node.nodeSize });
+    }
+  });
+  let i = -1;
+  for (let k = 0; k < runs.length; k++) {
+    if (runs[k].from <= pos && pos <= runs[k].to) {
+      i = k;
+      break;
+    }
+  }
+  if (i < 0) return null;
+  let from = runs[i].from;
+  let to = runs[i].to;
+  for (let k = i + 1; k < runs.length && runs[k].from === to; k++) to = runs[k].to;
+  for (let k = i - 1; k >= 0 && runs[k].to === from; k--) from = runs[k].from;
+  return { from, to };
+}
+
+/**
+ * @typedef {Object} LinkEditState
+ * @property {number} from — marked span start in the doc
+ * @property {number} to — marked span end in the doc
+ * @property {number} left — popover fixed x (px)
+ * @property {number} top — popover fixed y (px)
+ * @property {string} target — Target field value; mutated in place on input
+ * @property {string} display — Display field value; mutated in place on input
+ * @property {string} initTarget — target when the popover opened
+ * @property {string} initDisplay — display text when the popover opened
+ */
+
 export class WikiEditor extends LitElement {
   static properties = {
     page: { type: String },
@@ -75,6 +135,8 @@ export class WikiEditor extends LitElement {
     toolbarLeft: { attribute: false },
     _status: { state: true },
     _error: { state: true },
+    /** Wiki-link edit popover model; null when the popover is closed. */
+    _linkEdit: { state: true },
   };
 
   /** @type {import('@milkdown/kit').Editor | null} */
@@ -85,6 +147,24 @@ export class WikiEditor extends LitElement {
   #lastSavedContent = '';
   /** @type {string} */
   #currentMarkdown = '';
+  /** Delayed popover open, so a double-click (navigate) can cancel it. */
+  #linkEditTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+  /** The <a> element the open popover edits, or null. */
+  #linkEditLink = /** @type {HTMLElement | null} */ (null);
+  /**
+   * Document-level outside-click handler while the popover is open.
+   * @type {(e: MouseEvent) => void}
+   */
+  #onLinkEditDocClick = (/** @type {MouseEvent} */ e) => {
+    if (!this._linkEdit) return;
+    /** @type {Element | null} */
+    const t = /** @type {Element | null} */ (e.target);
+    if (t?.closest('.wiki-link-popover')) return;
+    // A (re)click on the very link being edited keeps the popover open —
+    // through closest() so nested elements inside the link also count.
+    if (this.#linkEditLink && t?.closest('a.wiki-link') === this.#linkEditLink) return;
+    this.#closeLinkEdit();
+  };
 
   createRenderRoot() { return this; }
 
@@ -101,6 +181,22 @@ export class WikiEditor extends LitElement {
     /** @type {'idle'|'editing'|'saving'|'saved'|'error'|'conflict'} */
     this._status = 'idle';
     /** @type {string} */ this._error = '';
+    /** @type {LinkEditState | null} */
+    this._linkEdit = null;
+    /** @type {HTMLElement | null} */
+    this._popoverMount = null;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    // Body-level mount so the popover escapes the side panel's overflow and
+    // any transformed ancestor (a transform would become the containing
+    // block for position:fixed). Mirrors context-inspector.js (#1057).
+    if (!this._popoverMount) {
+      this._popoverMount = document.createElement('div');
+      this._popoverMount.className = 'wiki-link-popover-mount';
+      document.body.appendChild(this._popoverMount);
+    }
   }
 
   async firstUpdated() {
@@ -133,9 +229,28 @@ export class WikiEditor extends LitElement {
       }
     });
 
+    // A single click on a wiki link opens the edit popover (delayed, so a
+    // double-click can still mean "navigate"). Every current host sits inside
+    // #wiki-main, which the document-level .wiki-link interceptor in app.js
+    // already skips; preventDefault/stopPropagation keep the editor
+    // self-contained so a future host placed outside #wiki-main cannot
+    // navigate on single click underneath the popover.
+    root.addEventListener('click', (/** @type {MouseEvent} */ e) => {
+      const link = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (e.target).closest('a.wiki-link'));
+      if (!link) {
+        if (this.#linkEditTimer !== null) this.#cancelLinkEditOpen();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      this.#scheduleLinkEditOpen(link);
+    });
+
     root.addEventListener('dblclick', (/** @type {MouseEvent} */ e) => {
       const link = /** @type {HTMLElement} */ (e.target).closest('a.wiki-link');
       if (!link) return;
+      // Double-click navigates — drop any pending or open popover first.
+      this.#closeLinkEdit();
       const page = link.getAttribute('data-wiki-page') || link.textContent?.trim();
       if (!page) return;
       e.preventDefault();
@@ -155,6 +270,12 @@ export class WikiEditor extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    this.#closeLinkEdit();
+    if (this._popoverMount) {
+      render(nothing, this._popoverMount);
+      this._popoverMount.remove();
+      this._popoverMount = null;
+    }
     this.#flushSave();
     if (this.#editor) {
       this.#editor.destroy();
@@ -162,9 +283,29 @@ export class WikiEditor extends LitElement {
     }
   }
 
+  updated(changed) {
+    if (this._popoverMount) {
+      render(this._linkEdit ? this.#linkEditPopover() : nothing, this._popoverMount);
+    }
+    if (changed.has('_linkEdit') && this._linkEdit) {
+      // Popover (re)rendered — move focus to the Target field and select
+      // its text, so typing replaces it. (select() alone does not focus.)
+      /** @type {HTMLInputElement | null} */
+      const input = /** @type {HTMLInputElement | null} */ (
+        this._popoverMount?.querySelector('input[data-field="target"]')
+      );
+      input?.focus();
+      input?.select();
+    }
+  }
+
   /** @param {string} md */
   #onContentChange(md) {
     this.#currentMarkdown = md;
+    // The document changed under an open (or pending) link editor — the
+    // captured span is now stale, so drop the edit rather than apply it to
+    // a shifted or out-of-bounds range.
+    if (this._linkEdit !== null || this.#linkEditTimer !== null) this.#closeLinkEdit();
     // Don't resume auto-save while in conflict state — user must resolve first
     if (this._status === 'conflict') return;
     this._status = 'editing';
@@ -443,6 +584,182 @@ export class WikiEditor extends LitElement {
     this.#editor.action(ctx => {
       callCommand(cmd.key)(ctx);
     });
+  }
+
+  // ── Wiki-link edit popover ───────────────────────────────────────────
+
+  /**
+   * Fetch the ProseMirror view from the Milkdown editor, or null if the
+   * editor is not ready yet.
+   * @returns {any | null}
+   */
+  #getEditorView() {
+    if (!this.#editor) return null;
+    /** @type {any | null} */
+    let view = null;
+    this.#editor.action(ctx => {
+      view = ctx.get(editorViewCtx);
+    });
+    return view;
+  }
+
+  /**
+   * Open the popover for `link`, delayed so a double-click (which
+   * navigates) can cancel it. A popover for a different link is already
+   * closed by the document-level outside-click handler (capture phase,
+   * before this handler runs), so every open here takes the delay path.
+   * @param {HTMLElement} link
+   */
+  #scheduleLinkEditOpen(link) {
+    // The open popover is for this same link — keep it open.
+    if (this._linkEdit && this.#linkEditLink === link) return;
+    this.#cancelLinkEditOpen();
+    this.#linkEditTimer = setTimeout(() => {
+      this.#linkEditTimer = null;
+      this.#showLinkEdit(link);
+    }, LINK_EDIT_OPEN_DELAY_MS);
+  }
+
+  /** Drop a pending (not yet shown) popover open. */
+  #cancelLinkEditOpen() {
+    if (this.#linkEditTimer !== null) {
+      clearTimeout(this.#linkEditTimer);
+      this.#linkEditTimer = null;
+    }
+  }
+
+  /**
+   * Resolve the clicked link to its marked span and show the popover
+   * anchored below the link (flipping above when near the viewport edge).
+   * @param {HTMLElement} link
+   */
+  #showLinkEdit(link) {
+    if (!link.isConnected) return;
+    const view = this.#getEditorView();
+    if (!view) return;
+    let pos;
+    try {
+      pos = view.posAtDOM(link, 0);
+    } catch {
+      return;
+    }
+    const span = findWikiLinkSpan(view.state.doc, pos);
+    if (!span) return;
+    const display = (link.textContent || '').trim();
+    if (!display) return;
+    // A plain [[text]] link carries no data-wiki-page; its target is the
+    // text itself, which is what the field should show.
+    const target = link.getAttribute('data-wiki-page') || display;
+    const rect = link.getBoundingClientRect();
+    const left = Math.max(LINK_EDIT_MARGIN,
+      Math.min(rect.left, window.innerWidth - LINK_EDIT_WIDTH - LINK_EDIT_MARGIN));
+    let top = rect.bottom + LINK_EDIT_GAP;
+    if (top + LINK_EDIT_ESTIMATED_HEIGHT > window.innerHeight) {
+      top = Math.max(LINK_EDIT_MARGIN, rect.top - LINK_EDIT_ESTIMATED_HEIGHT - LINK_EDIT_GAP);
+    }
+    this.#linkEditLink = link;
+    this._linkEdit = { ...span, left, top, target, display, initTarget: target, initDisplay: display };
+    document.addEventListener('click', this.#onLinkEditDocClick, true);
+  }
+
+  /** Close the popover (and drop any pending open). Safe to call when closed. */
+  #closeLinkEdit() {
+    this.#cancelLinkEditOpen();
+    this.#linkEditLink = null;
+    this._linkEdit = null;
+    document.removeEventListener('click', this.#onLinkEditDocClick, true);
+  }
+
+  /** @param {KeyboardEvent} e */
+  #onLinkEditKeydown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      this.#closeLinkEdit();
+    } else if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+      e.preventDefault();
+      this.#applyLinkEdit();
+    }
+  }
+
+  /** @param {Event} e */
+  #onLinkEditInput(e) {
+    const edit = this._linkEdit;
+    /** @type {HTMLInputElement | null} */
+    const input = /** @type {HTMLInputElement | null} */ (e.target);
+    if (!edit || !input) return;
+    const field = input.dataset.field;
+    if (field === 'target') edit.target = input.value;
+    else if (field === 'display') edit.display = input.value;
+  }
+
+  /**
+   * Commit the edit. When the display text is unchanged, swap the
+   * wiki_link mark's attrs in place across the span so other marks (bold,
+   * italic) on the display text survive; when it changed, the field is
+   * plain text, so the run is replaced by plain text carrying only the
+   * wiki_link mark. The previous selection is mapped through the
+   * transaction, landing the cursor inside the new link text.
+   */
+  #applyLinkEdit() {
+    const edit = this._linkEdit;
+    if (!edit) return;
+    const view = this.#getEditorView();
+    if (!view) return;
+    const target = edit.target.trim();
+    const display = edit.display.trim();
+    // An empty display would leave a zero-length link; refuse to apply.
+    if (!display) return;
+    const markType = view.state.schema.marks.wiki_link;
+    // Omit the target attr when it is empty or redundant, matching the
+    // [[text]] form the serializer and input rule produce.
+    const attrs = target && target !== display ? { target } : {};
+    let tr = view.state.tr;
+    if (display === edit.initDisplay) {
+      // Display unchanged: update just the wiki mark's attrs in place.
+      if (target !== edit.initTarget) {
+        tr = tr.removeMark(edit.from, edit.to, markType)
+          .addMark(edit.from, edit.to, markType.create(attrs));
+      }
+    } else {
+      // Display edited: replace the whole run (flattening any nested
+      // formatting — the fields are plain text by design).
+      tr = tr.replaceWith(edit.from, edit.to,
+        view.state.schema.text(display, [markType.create(attrs)]));
+    }
+    if (tr.steps.length) view.dispatch(tr);
+    view.focus?.();
+    this.#closeLinkEdit();
+  }
+
+  /** Popover template, rendered into the body-level mount in updated(). */
+  #linkEditPopover() {
+    const edit = /** @type {LinkEditState} */ (this._linkEdit);
+    return html`
+      <div class="wiki-link-popover"
+        style="left: ${edit.left}px; top: ${edit.top}px"
+        role="dialog"
+        aria-label="Edit wiki link"
+        @keydown=${(e) => this.#onLinkEditKeydown(e)}>
+        <label class="wiki-link-popover-field">
+          <span>Target</span>
+          <input type="text" data-field="target"
+            .value=${edit.target}
+            @input=${(e) => this.#onLinkEditInput(e)}>
+        </label>
+        <label class="wiki-link-popover-field">
+          <span>Display text</span>
+          <input type="text" data-field="display"
+            .value=${edit.display}
+            @input=${(e) => this.#onLinkEditInput(e)}>
+        </label>
+        <div class="wiki-link-popover-actions">
+          <button type="button" class="secondary"
+            @click=${() => this.#closeLinkEdit()}>Cancel</button>
+          <button type="button" class="wiki-link-popover-apply"
+            @click=${() => this.#applyLinkEdit()}>Apply</button>
+        </div>
+      </div>
+    `;
   }
 
   render() {

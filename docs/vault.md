@@ -76,6 +76,8 @@ Pipe syntax for display text: `[[Tempest (arcade game)|Tempest arcade game]]`
 
 Link resolution: closest match in the same folder subtree first, then any match across the vault. Explicit paths work too: `[[agent/pages/DecafClaw]]`.
 
+In the web UI editor, clicking a link opens a popover to edit its target and display text without retyping the syntax (double-click navigates instead).
+
 ## Page Frontmatter
 
 Vault pages may begin with a YAML frontmatter block. Frontmatter is optional and additive — the parser in `frontmatter.py` preserves unknown keys, and pages without frontmatter work the same as those with it. The schema is informal today; we may tighten it as patterns become clearer.

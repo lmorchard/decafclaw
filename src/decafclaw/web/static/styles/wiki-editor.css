@@ -362,6 +362,46 @@ file-editor,
   cursor: default;
 }
 
+/* -- Wiki-link edit popover ---------------------------------------------
+   Rendered into a body-level mount (see wiki-editor.js) so position:fixed
+   is not captured by any transformed/overflowing ancestor of the side
+   panel. Mirrors the context-inspector portal (#1057). */
+
+.wiki-link-popover {
+  position: fixed;
+  z-index: 1000;
+  width: 240px;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.wiki-link-popover-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
+.wiki-link-popover-field input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+}
+
+.wiki-link-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 .wiki-link-edit {
   color: var(--pico-primary);
   border-bottom: 1px solid var(--pico-primary);
