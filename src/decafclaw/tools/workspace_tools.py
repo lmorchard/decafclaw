@@ -462,6 +462,35 @@ def tool_workspace_delete(ctx: "Context", path: str, recursive: bool = False) ->
             return _file_error(e, path)
 
 
+def _edit_not_found_hint(content: str, old_text: str) -> str:
+    """Build a hint for a failed exact match, or "" if nothing is close enough.
+
+    Two tiers, checked in order: a whitespace-insensitive match (the text is
+    in the file but whitespace runs differ), then a near match of old_text's
+    first non-blank line against the file's lines. Hints only — never writes.
+    """
+    if old_text.strip():
+        # Escape each non-whitespace segment and join with \s+ so the match
+        # succeeds iff the non-whitespace content is identical, regardless of
+        # whitespace runs; m.start() maps back to a 1-based line in the file.
+        # (Subbing over re.escape(old_text) won't do: it escapes whitespace
+        # too, so the sub would bake literal backslashes into the pattern.)
+        pattern = r"\s+".join(re.escape(p) for p in re.split(r"\s+", old_text) if p)
+        match = re.search(pattern, content)
+        if match:
+            line = content.count("\n", 0, match.start()) + 1
+            return f"It matches when whitespace differences are ignored — the match starts at line {line}."
+    lines = content.splitlines()
+    for candidate in old_text.splitlines():
+        if not candidate.strip():
+            continue
+        close = difflib.get_close_matches(candidate, lines, n=1, cutoff=0.8)
+        if close:
+            return f"A similar line exists at line {lines.index(close[0]) + 1}: {close[0]}"
+        break
+    return ""
+
+
 def tool_workspace_edit(
     ctx: "Context", path: str, old_text: str, new_text: str, replace_all: bool = False
 ) -> str | ToolResult:
@@ -474,16 +503,30 @@ def tool_workspace_edit(
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
         try:
-            content = resolved.read_text()
+            # newline="" keeps the file's line endings (CRLF or LF) intact;
+            # the default universal-newline read would convert CRLF to LF.
+            content = resolved.read_text(newline="")
         except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
             return _file_error(e, path)
 
-        count = content.count(old_text)
+        # Match on text normalized to \n so an LF old_text matches a CRLF
+        # file (and vice versa), then convert the result back to the file's
+        # line ending before writing.
+        eol = "\r\n" if "\r\n" in content else "\n"
+        normalized = content.replace("\r\n", "\n")
+        old = old_text.replace("\r\n", "\n")
+        new = new_text.replace("\r\n", "\n")
+
+        count = normalized.count(old)
         if count == 0:
-            return ToolResult(
-                text=f"[error: text not found in {path}. "
-                "Make sure old_text matches exactly, including whitespace and indentation.]"
+            hint = _edit_not_found_hint(normalized, old)
+            text = (
+                f"[error: text not found in {path}. "
+                "Make sure old_text matches exactly, including whitespace and indentation."
             )
+            if hint:
+                text += f" {hint}"
+            return ToolResult(text=text)
         if count > 1 and not replace_all:
             return ToolResult(
                 text=f"[error: found {count} matches in {path}. "
@@ -492,12 +535,14 @@ def tool_workspace_edit(
             )
 
         if replace_all:
-            new_content = content.replace(old_text, new_text)
+            new_normalized = normalized.replace(old, new)
         else:
-            new_content = content.replace(old_text, new_text, 1)
-        resolved.write_text(new_content)
+            new_normalized = normalized.replace(old, new, 1)
+        # newline="" writes the bytes exactly as given — no re-conversion.
+        new_content = new_normalized.replace("\n", eol)
+        resolved.write_text(new_content, newline="")
         summary = f"Edited {path}: replaced {count} occurrence(s)"
-        diff = _mini_diff(content, new_content, path)
+        diff = _mini_diff(normalized, new_normalized, path)
         if diff:
             return f"{summary}\n\n{diff}"
         return summary
