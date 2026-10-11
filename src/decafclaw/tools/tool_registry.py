@@ -108,6 +108,7 @@ def classify_tools(
     skill_tool_names: set[str] | None = None,
     *,
     preempt_matches: set[str] | None = None,
+    promoted_tools: list[str] | set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Split tool definitions into active and deferred sets by priority.
 
@@ -196,6 +197,21 @@ def classify_tools(
             budget,
             max_active,
         )
+
+    # If promoted tools are specified (e.g. from the active SessionMode),
+    # prioritize them at the front of the normal tier in their declared order.
+    if promoted_tools:
+        promoted_list = list(promoted_tools)
+        promoted_set = set(promoted_list)
+        promoted_order = {name: i for i, name in enumerate(promoted_list)}
+
+        p_tools = [td for td in normal if td.get("function", {}).get("name") in promoted_set]
+        p_tools += [td for td in low if td.get("function", {}).get("name") in promoted_set]
+        low = [td for td in low if td.get("function", {}).get("name") not in promoted_set]
+        remaining_normal = [td for td in normal if td.get("function", {}).get("name") not in promoted_set]
+
+        p_tools.sort(key=lambda td: promoted_order.get(td.get("function", {}).get("name"), 999))
+        normal = p_tools + remaining_normal
 
     def _fill(tier: list[dict]) -> None:
         nonlocal active_tokens

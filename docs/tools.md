@@ -143,6 +143,17 @@ Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.
 | `shell_patterns` | | Manage the approved shell command allow list |
 | `shell_guidance` | | Manage aux-LLM auto-approval prompt guidance and presets |
 
+### Session Modes (`default`, `dev`, `research`, `admin`)
+
+Session Modes (#959) bundle a conversation's **shell auto-approval presets** together with its **promoted situational tools** into a switchable loadout:
+
+- **`default`**: Baseline assistant configuration with standard interactive confirmation for shell commands and the default critical tool floor.
+- **`dev`**: Software engineering and pairing mode. Enables `["developer", "github"]` shell auto-approval presets, and promotes coding tools (`shell`, `workspace_diff`, `workspace_search`, `workspace_glob`, `workspace_list`, `workspace_edit`) to the front of the active tool budget.
+- **`research`**: Deep research and knowledge collection. Strict shell protection (no auto-approval presets), promoting research tools (`web_fetch`, `vault_search`, `vault_recent`, `vault_tags`, `vault_journal_append`).
+- **`admin`**: Agent management and diagnostics. Default shell confirmation, promoting administrative tools (`admin_read`, `admin_list`, `admin_edit`, `admin_write`, `mcp_status`, `health_status`, `heartbeat_trigger`).
+
+Modes can be selected in the Web UI sidebar dropdown above the Model picker, or requested by the agent via `shell_guidance(action="set_mode", mode="<name>")` (which requires user confirmation and is denied on unattended turns). Custom modes or overrides can be configured in `data/{agent_id}/config.json` under `modes: { "<name>": { "description": "...", "presets": [...], "promoted_tools": [...] } }`.
+
 ### Situational Auto-Approval Presets (`developer`, `github`)
 
 `shell_guidance` provides built-in presets to streamline common workflows without relaxing security globally:

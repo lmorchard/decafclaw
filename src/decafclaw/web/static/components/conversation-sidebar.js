@@ -21,6 +21,10 @@ export class ConversationSidebar extends LitElement {
     _activeModel: { type: String, state: true },
     _availableModels: { type: Array, state: true },
     _defaultModel: { type: String, state: true },
+    _activeMode: { type: String, state: true },
+    _availableModes: { type: Array, state: true },
+    _isBusy: { type: Boolean, state: true },
+    _isReadOnly: { type: Boolean, state: true },
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
     _sidebarTab: { type: String, state: true },
@@ -50,6 +54,10 @@ export class ConversationSidebar extends LitElement {
     this._activeModel = '';
     this._availableModels = [];
     this._defaultModel = '';
+    this._activeMode = 'default';
+    this._availableModes = [];
+    this._isBusy = false;
+    this._isReadOnly = false;
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
     this._mobileOpen = false;
     this._sidebarTab = 'conversations';
@@ -79,6 +87,10 @@ export class ConversationSidebar extends LitElement {
       this._activeModel = this.store?.activeModel || '';
       this._availableModels = this.store?.availableModels || [];
       this._defaultModel = this.store?.defaultModel || '';
+      this._activeMode = this.store?.activeMode || 'default';
+      this._availableModes = this.store?.availableModes || [];
+      this._isBusy = Boolean(this.store?.isBusy);
+      this._isReadOnly = Boolean(this.store?.isReadOnly);
       // Update conversation list and folders based on current section
       if (this._chatSection === '_archived') {
         this._conversations = [...(this.store?.archivedConversations || [])];
@@ -121,6 +133,15 @@ export class ConversationSidebar extends LitElement {
       const target = this._activeModel || this._defaultModel;
       if (target && modelSelect.value !== target) {
         modelSelect.value = target;
+      }
+    }
+
+    // Sync mode selector value if present
+    const modeSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#mode-select'));
+    if (modeSelect) {
+      const target = this._activeMode || 'default';
+      if (target && modeSelect.value !== target) {
+        modeSelect.value = target;
       }
     }
   }
@@ -421,6 +442,12 @@ export class ConversationSidebar extends LitElement {
     this.store?.setModel(model);
   }
 
+  /** @param {Event} e */
+  #handleModeChange(e) {
+    const mode = /** @type {HTMLSelectElement} */ (e.target).value;
+    this.store?.setMode(mode);
+  }
+
   /**
    * @param {'idle' | 'busy' | 'waiting' | 'finished' | string} status
    */
@@ -638,10 +665,34 @@ export class ConversationSidebar extends LitElement {
               }))
         }
       </div>
+      ${this._availableModes.length > 0 ? html`
+      <div class="mode-picker">
+        <label class="mode-picker-label" for="mode-select">Mode</label>
+        <select id="mode-select" class="mode-select"
+                ?disabled=${this._isBusy || this._isReadOnly}
+                @change=${(e) => this.#handleModeChange(e)}>
+          ${(() => {
+            const target = this._activeMode || 'default';
+            const isCustom = target === 'custom';
+            return html`
+              ${isCustom ? html`
+                <option value="custom" selected disabled>Custom</option>
+              ` : nothing}
+              ${this._availableModes.map(m => html`
+                <option value="${m.name}" ?selected=${m.name === target} .selected=${m.name === target} title="${m.description}">
+                  ${m.name}
+                </option>
+              `)}
+            `;
+          })()}
+        </select>
+      </div>
+      ` : nothing}
       ${this._availableModels.length > 0 ? html`
       <div class="model-picker">
         <label class="model-picker-label" for="model-select">Model</label>
         <select id="model-select" class="model-select"
+                ?disabled=${this._isBusy || this._isReadOnly}
                 @change=${(e) => this.#handleModelChange(e)}>
           ${(() => {
             const target = this._activeModel || this._defaultModel;

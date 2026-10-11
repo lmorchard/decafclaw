@@ -28,6 +28,7 @@ from decafclaw.web.message_types import (
     SrvConvHistory,
     SrvConvSelected,
     SrvMessageComplete,
+    SrvModeChanged,
     SrvStickyClear,
     SrvStickySet,
     SrvToolEnd,
@@ -260,7 +261,7 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         limit = 50
     before = msg.get("before", "")
     # Metadata roles that should not be rendered as chat messages
-    _HIDDEN_ROLES = {"effort", "model", "confirmation_request", "confirmation_response", "wake_trigger"}
+    _HIDDEN_ROLES = {"effort", "model", "mode", "confirmation_request", "confirmation_response", "wake_trigger"}
 
     # Read archive once and reuse for history, token estimation, and model scan
     from ..archive import read_archive as _read_archive
@@ -347,6 +348,58 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     if config.model_configs:
         response["available_models"] = sorted(config.model_configs.keys())
         response["default_model"] = config.default_model
+
+    # Send available session modes and active mode
+    from ..modes import get_all_modes
+
+    all_modes = get_all_modes(config)
+    modes_list = [
+        {
+            "name": m.name,
+            "description": m.description,
+            "presets": list(m.presets),
+            "promoted_tools": list(m.promoted_tools),
+        }
+        for m in all_modes.values()
+    ]
+    response["available_modes"] = sorted(modes_list, key=lambda x: str(x["name"]))
+
+    active_mode = None
+    for m in reversed(all_msgs):
+        if m.get("role") == "mode":
+            m_name = m.get("content", "")
+            if m_name and m_name in all_modes:
+                active_mode = m_name
+                break
+
+    manager = state.get("manager")
+    if manager:
+        conv_state = manager.get_state(conv_id)
+        if conv_state:
+            # If the manager state is pristine (default mode with empty presets)
+            # but the archive recorded a mode, hydrate manager state from the archive.
+            if (
+                conv_state.persisted.active_mode == "default"
+                and not conv_state.persisted.active_aux_approval_presets
+                and active_mode
+            ):
+                conv_state.persisted.active_mode = active_mode
+                conv_state.persisted.active_aux_approval_presets = list(all_modes[active_mode].presets)
+
+            persisted_mode = conv_state.persisted.active_mode or "default"
+            active_presets = set(conv_state.persisted.active_aux_approval_presets)
+            if persisted_mode in all_modes:
+                expected_presets = set(all_modes[persisted_mode].presets)
+                if active_presets == expected_presets:
+                    active_mode = persisted_mode
+                else:
+                    active_mode = "custom"
+            else:
+                active_mode = "custom"
+
+    if active_mode is None:
+        active_mode = "default"
+    response["active_mode"] = active_mode
 
     # Check if a turn is active for this conversation via the manager
     manager = state.get("manager")
@@ -649,6 +702,70 @@ async def _handle_set_model(ws_send: WSSendCallable, index, username, msg, state
             "model": model_name,
         }
     )
+
+
+async def _handle_set_mode(ws_send: WSSendCallable, index, username, msg, state) -> None:
+    conv_id = msg.get("conv_id", "")
+    mode_name = msg.get("mode", "")
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found", "conv_id": conv_id})
+        return
+
+    config = state["config"]
+    if not mode_name:
+        await ws_send({"type": WSMessageType.ERROR, "message": "No mode specified", "conv_id": conv_id})
+        return
+
+    from ..modes import get_all_modes
+
+    all_modes = get_all_modes(config)
+    if mode_name not in all_modes:
+        await ws_send({"type": WSMessageType.ERROR, "message": f"Unknown mode: {mode_name}", "conv_id": conv_id})
+        return
+
+    manager = state.get("manager")
+    if manager:
+        conv_state = manager.get_state(conv_id)
+        if conv_state and conv_state.busy:
+            cur_mode = conv_state.persisted.active_mode or "default"
+            cur_obj = all_modes.get(cur_mode, all_modes["default"])
+            rejection_payload: SrvModeChanged = {
+                "type": WSMessageType.MODE_CHANGED,
+                "conv_id": conv_id,
+                "mode": cur_mode,
+                "presets": list(cur_obj.presets),
+                "promoted_tools": list(cur_obj.promoted_tools),
+            }
+            await ws_send(rejection_payload)
+            return
+
+    target_mode = all_modes[mode_name]
+
+    # Record mode change in archive
+    from ..archive import append_message
+
+    append_message(config, conv_id, {"role": "mode", "content": mode_name})
+
+    event_payload: SrvModeChanged = {
+        "type": WSMessageType.MODE_CHANGED,
+        "conv_id": conv_id,
+        "mode": mode_name,
+        "presets": list(target_mode.presets),
+        "promoted_tools": list(target_mode.promoted_tools),
+    }
+
+    if manager:
+        manager.set_flag(conv_id, "active_mode", mode_name)
+        manager.set_flag(conv_id, "active_aux_approval_presets", list(target_mode.presets))
+        manager.set_flag(conv_id, "disabled_aux_approval_presets", [])
+        manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
+        await manager.emit(conv_id, event_payload)
+        subscriptions = state.get("conv_subscriptions", {})
+        if conv_id not in subscriptions:
+            await ws_send(event_payload)
+    else:
+        await ws_send(event_payload)
 
 
 async def _handle_list_commands(ws_send: WSSendCallable, index, username, msg, state) -> None:
@@ -1026,6 +1143,17 @@ def _subscribe_to_conv(state, conv_id):
                 }
             )
 
+        elif event_type == "mode_changed":
+            await ws_send(
+                {
+                    "type": WSMessageType.MODE_CHANGED,
+                    "conv_id": event_conv_id,
+                    "mode": event.get("mode", ""),
+                    "presets": event.get("presets", []),
+                    "promoted_tools": event.get("promoted_tools", []),
+                }
+            )
+
         elif event_type == "compaction_end":
             await ws_send(
                 {
@@ -1058,6 +1186,7 @@ _HANDLERS = {
     WSMessageType.CANCEL_TURN: _handle_cancel_turn,
     WSMessageType.SET_EFFORT: _handle_set_model,  # backward compat for old web UI
     WSMessageType.SET_MODEL: _handle_set_model,
+    WSMessageType.SET_MODE: _handle_set_mode,
     WSMessageType.CONFIRM_RESPONSE: _handle_confirm_response,
     WSMessageType.WIDGET_RESPONSE: _handle_widget_response,
     WSMessageType.LIST_COMMANDS: _handle_list_commands,

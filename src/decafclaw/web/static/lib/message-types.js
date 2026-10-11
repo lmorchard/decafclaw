@@ -15,6 +15,7 @@ export const MESSAGE_TYPES = Object.freeze({
   CONVERSATION_STATUS: 'conversation_status',
   ERROR: 'error',
   MESSAGE_COMPLETE: 'message_complete',
+  MODE_CHANGED: 'mode_changed',
   MODEL_CHANGED: 'model_changed',
   MODELS_AVAILABLE: 'models_available',
   NOTIFICATION_CREATED: 'notification_created',
@@ -37,6 +38,7 @@ export const MESSAGE_TYPES = Object.freeze({
   SELECT_CONV: 'select_conv',
   SEND: 'send',
   SET_EFFORT: 'set_effort',
+  SET_MODE: 'set_mode',
   SET_MODEL: 'set_model',
   WIDGET_RESPONSE: 'widget_response',
 });

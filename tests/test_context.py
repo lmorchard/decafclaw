@@ -150,7 +150,7 @@ def test_fork_for_tool_call_propagates_all_fields(ctx):
 
     # Sub-objects with intentionally different state on the child;
     # checked separately below.
-    INTENTIONALLY_DIFFERENT = {"tokens", "tools"}
+    INTENTIONALLY_DIFFERENT = {"tokens", "tools", "_parent_ctx"}
 
     parent_attrs = vars(ctx)
     child_attrs = vars(forked)
@@ -176,6 +176,7 @@ def test_fork_for_tool_call_propagates_all_fields(ctx):
     assert forked.tools.allowed is ctx.tools.allowed
     assert forked.skills is ctx.skills
     assert forked.composer is ctx.composer
+    assert forked._parent_ctx is ctx
 
 
 def test_fork_for_tool_call_propagates_task_mode(ctx):

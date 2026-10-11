@@ -51,6 +51,7 @@ from .config_types import (
     WidgetsConfig,
     WorkflowConfig,
 )
+from .modes import SessionMode
 from .skills.vault._grants import normalize_folder
 
 log = logging.getLogger(__name__)
@@ -230,6 +231,7 @@ class Config:
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     widgets: WidgetsConfig = field(default_factory=WidgetsConfig)
     secret_policy: SecretPolicyConfig = field(default_factory=SecretPolicyConfig)
+    modes: dict[str, SessionMode] = field(default_factory=dict)
 
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
@@ -388,6 +390,35 @@ def _load_model_configs(raw: dict) -> dict[str, ModelConfig]:
     return result
 
 
+def _load_modes(raw: dict) -> dict[str, SessionMode]:
+    """Parse modes section from config.json into SessionMode instances."""
+    if not isinstance(raw, dict):
+        log.warning("Invalid 'modes' section: expected object, got %s", type(raw).__name__)
+        return {}
+    result: dict[str, SessionMode] = {}
+    for name, entry in raw.items():
+        if name == "custom":
+            log.warning("Mode name 'custom' is reserved by the system and cannot be configured.")
+            continue
+        if not isinstance(entry, dict):
+            log.warning("Invalid mode '%s': expected object, got %s", name, type(entry).__name__)
+            continue
+        presets = entry.get("presets", [])
+        if not isinstance(presets, list):
+            presets = [str(presets)] if presets else []
+        promoted_tools = entry.get("promoted_tools", [])
+        if not isinstance(promoted_tools, list):
+            promoted_tools = [str(promoted_tools)] if promoted_tools else []
+        description = entry.get("description", "")
+        result[name] = SessionMode(
+            name=name,
+            description=str(description),
+            presets=[str(p) for p in presets],
+            promoted_tools=[str(t) for t in promoted_tools],
+        )
+    return result
+
+
 def load_config() -> Config:
     """Load config from defaults → config.json → env vars."""
     load_dotenv()
@@ -532,6 +563,7 @@ def load_config() -> Config:
     # Providers — named provider connection configs
     providers = _load_providers(file_data.get("providers", {}))
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
+    modes = _load_modes(file_data.get("modes", {}))
     default_model = file_data.get("default_model", "")
     auxiliary_model = file_data.get("auxiliary_model", "")
 
@@ -616,6 +648,7 @@ def load_config() -> Config:
         telemetry=telemetry,
         widgets=widgets,
         secret_policy=secret_policy,
+        modes=modes,
         env=env_vars,
         system_prompt=system_prompt,
     )

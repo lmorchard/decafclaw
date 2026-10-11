@@ -883,14 +883,28 @@ async def tool_shell_guidance(
     action: str = "list",
     preset: str = "",
     rule: str = "",
+    mode: str = "",
 ) -> str | ToolResult:
     """Manage aux-LLM shell auto-approval prompt guidance and situational presets."""
     _warn_deprecated_guidance_file(ctx.config)
-    log.info(f"[tool:shell_guidance] action={action} preset={preset} rule={rule}")
+    log.info(f"[tool:shell_guidance] action={action} preset={preset} rule={rule} mode={mode}")
 
     all_presets = _get_all_presets(ctx.config)
 
     if action == "list":
+        from ..modes import get_all_modes
+
+        all_modes = get_all_modes(ctx.config)
+        active_mode = getattr(ctx, "active_mode", "default") or "default"
+        mode_lines = ["### Session Modes\n"]
+        for m_name, m_obj in sorted(all_modes.items()):
+            active_marker = " [ACTIVE]" if m_name == active_mode else ""
+            presets_str = ", ".join(f"`{p}`" for p in m_obj.presets) if m_obj.presets else "none"
+            tools_str = ", ".join(f"`{t}`" for t in m_obj.promoted_tools) if m_obj.promoted_tools else "none"
+            mode_lines.append(
+                f"- **`{m_name}`**{active_marker}: {m_obj.description} (presets: {presets_str}; promoted tools: {tools_str})"
+            )
+
         session_active = set(getattr(ctx.tools, "active_aux_approval_presets", []))
         session_disabled = set(getattr(ctx.tools, "disabled_aux_approval_presets", []))
 
@@ -932,7 +946,7 @@ async def tool_shell_guidance(
         if not has_rules:
             lines.append("*(No custom guidance rules configured)*")
 
-        return "\n".join(lines)
+        return "\n".join(mode_lines + ["\n"] + lines)
 
     if ctx.is_unattended:
         task_mode = getattr(ctx, "task_mode", "")
@@ -943,7 +957,75 @@ async def tool_shell_guidance(
 
     scope_desc = "for this conversation"
 
-    if action == "enable_preset":
+    if action == "set_mode":
+        if not mode:
+            return ToolResult(text="[error: 'mode' is required for action 'set_mode']")
+        from ..modes import get_all_modes
+
+        all_modes = get_all_modes(ctx.config)
+        if mode not in all_modes:
+            available = ", ".join(sorted(all_modes.keys()))
+            return ToolResult(text=f"[error: unknown mode '{mode}'. Available: {available}]")
+
+        target_mode = all_modes[mode]
+        presets_desc = (
+            ", ".join(f"`{p}`" for p in target_mode.presets)
+            if target_mode.presets
+            else "none (default interactive confirmation)"
+        )
+        tools_desc = ", ".join(f"`{t}`" for t in target_mode.promoted_tools) if target_mode.promoted_tools else "none"
+
+        confirm_msg = (
+            f"Switch session mode to `{mode}` {scope_desc}?\n"
+            f"- Auto-approval presets: {presets_desc}\n"
+            f"- Promoted tools: {tools_desc}"
+        )
+        result = await request_confirmation(
+            ctx,
+            tool_name="shell_guidance",
+            command=f"Switch session mode to '{mode}' ({scope_desc})",
+            message=confirm_msg,
+            force=True,
+        )
+        if not result.get("approved"):
+            return ToolResult(text="[error: denied]")
+
+        ctx.active_mode = mode
+        if getattr(ctx, "_parent_ctx", None):
+            ctx._parent_ctx.active_mode = mode
+        ctx.tools.active_aux_approval_presets.clear()
+        ctx.tools.active_aux_approval_presets.extend(target_mode.presets)
+        ctx.tools.disabled_aux_approval_presets.clear()
+        ctx.tools.llm_approved_shell_patterns.clear()
+
+        if ctx.manager and ctx.conv_id:
+            ctx.manager.set_flag(ctx.conv_id, "active_mode", mode)
+            ctx.manager.set_flag(ctx.conv_id, "active_aux_approval_presets", list(target_mode.presets))
+            ctx.manager.set_flag(ctx.conv_id, "disabled_aux_approval_presets", [])
+            ctx.manager.set_flag(ctx.conv_id, "llm_approved_shell_patterns", [])
+
+        if ctx.conv_id:
+            from ..archive import append_message
+
+            append_message(ctx.config, ctx.conv_id, {"role": "mode", "content": mode})
+
+        from ..events import emit_for_ctx
+
+        emit = emit_for_ctx(ctx)
+        if emit:
+            await emit(
+                {
+                    "type": "mode_changed",
+                    "conv_id": ctx.conv_id,
+                    "mode": mode,
+                    "presets": list(target_mode.presets),
+                    "promoted_tools": list(target_mode.promoted_tools),
+                }
+            )
+
+        return f"Switched session mode to `{mode}` {scope_desc}."
+
+    elif action == "enable_preset":
         if not preset:
             return ToolResult(text="[error: 'preset' is required for action 'enable_preset']")
         if preset not in all_presets:
@@ -1087,7 +1169,7 @@ async def tool_shell_guidance(
         return f"{status_msg} custom shell auto-approval preset `{preset_clean}`:\n{updated_text}"
 
     return ToolResult(
-        text="[error: invalid action. Use 'list', 'enable_preset', 'disable_preset', 'add_rule', 'remove_rule', or 'save_preset'.]"
+        text="[error: invalid action. Use 'list', 'set_mode', 'enable_preset', 'disable_preset', 'add_rule', 'remove_rule', or 'save_preset'.]"
     )
 
 
@@ -1132,22 +1214,35 @@ SHELL_TOOL_DEFINITIONS = [
         "function": {
             "name": "shell_guidance",
             "description": (
-                "Manage aux-LLM shell auto-approval prompt guidance and situational presets. "
-                "Guidance rules and enabled presets are scoped to the current conversation. "
+                "Manage aux-LLM shell auto-approval prompt guidance, situational presets, and session modes. "
+                "Guidance rules, enabled presets, and session modes are scoped to the current conversation. "
                 "Call at the start of software development, testing, or GitHub workflows to reduce approval friction on routine commands. "
-                "Use 'list' to view available presets and active rules. "
+                "Use 'list' to view available modes, presets, and active rules. "
+                "Use 'set_mode' with mode='name' to switch conversation mode (e.g. 'default', 'dev', 'research', 'admin'). "
                 "Use 'enable_preset' or 'disable_preset' with preset='name' to toggle situational presets (e.g. 'developer', 'github'). "
                 "Use 'add_rule' or 'remove_rule' with rule='text' to add or remove custom auto-approval prompt guidelines for this conversation. "
                 "Use 'save_preset' with preset='name' to bundle active conversation rules (or a specific rule) into a reusable custom preset on disk. "
-                "Modifying approval rules requires user confirmation."
+                "Modifying approval rules or modes requires user confirmation."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "enable_preset", "disable_preset", "add_rule", "remove_rule", "save_preset"],
+                        "enum": [
+                            "list",
+                            "set_mode",
+                            "enable_preset",
+                            "disable_preset",
+                            "add_rule",
+                            "remove_rule",
+                            "save_preset",
+                        ],
                         "description": "Action to perform (default: list)",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Mode name for action 'set_mode' (e.g. 'default', 'dev', 'research', 'admin')",
                     },
                     "preset": {
                         "type": "string",

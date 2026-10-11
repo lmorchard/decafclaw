@@ -67,9 +67,10 @@ See `classify_tools()` in `src/decafclaw/tools/tool_registry.py`:
 
 1. Resolve every tool's priority.
 2. Active set starts with all `critical` tools (hard floor — logged as a warning if it exceeds budget, but still included).
-3. Append `normal` tools one by one while the active set is under `tool_context_budget` and `max_active_tools`.
-4. Append `low` tools the same way, only if room remains.
-5. Whatever didn't make the cut becomes the deferred set, surfaced via `tool_search` and the deferred catalog.
+3. If `promoted_tools` are passed (e.g. from the active `SessionMode`), those tools are ordered at the front of `normal` (elevating any declared `low` tools to `normal` priority), claiming active budget ahead of other normal and low tools.
+4. Append `normal` tools one by one while the active set is under `tool_context_budget` and `max_active_tools`.
+5. Append `low` tools the same way, only if room remains.
+6. Whatever didn't make the cut becomes the deferred set, surfaced via `tool_search` and the deferred catalog.
 
 Input order within a tier is preserved, so callers can influence ordering by how they order the input list.
 

@@ -159,6 +159,7 @@ class Context:
         self.skip_archive: bool = False
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.active_model: str = ""  # named model config from config.model_configs
+        self.active_mode: str = "default"  # active session mode (e.g. default, dev, research, admin)
         # From KIND_TASK_MODE (conversation_manager.py): "heartbeat" |
         # "scheduled" | "child_agent" | "background_wake", or "" for an
         # interactive user turn. Keep this list complete — `is_unattended` below
@@ -169,6 +170,7 @@ class Context:
         self.confirmation_active: asyncio.Event = asyncio.Event()
         self.manager: Any = None  # set by ConversationManager
         self.terminal_registry: Any = None  # AgentTerminalHandle, set by ConversationManager
+        self._parent_ctx: Any = None
         self._interceptors: dict[TurnLifecycle, list[Callable]] = {}
 
     def add_interceptor(self, phase: TurnLifecycle, hook: Callable) -> None:
@@ -214,6 +216,7 @@ class Context:
         channel_id: str = "",
         channel_name: str = "",
         active_model: str = "",
+        active_mode: str = "default",
         task_mode: str = "",
         skip_reflection: bool = True,
         skip_vault_retrieval: bool = True,
@@ -237,6 +240,7 @@ class Context:
         ctx.channel_id = channel_id
         ctx.channel_name = channel_name
         ctx.active_model = active_model
+        ctx.active_mode = active_mode
         ctx.task_mode = task_mode
         ctx.skip_reflection = skip_reflection
         ctx.skip_vault_retrieval = skip_vault_retrieval
@@ -289,6 +293,7 @@ class Context:
         child = copy.copy(self)
         child.tokens = TokenUsage()
         child.tools = replace(self.tools, current_call_id=tool_call_id)
+        child._parent_ctx = self
         return child
 
     async def publish(self, event_type: str, **kwargs) -> None:
