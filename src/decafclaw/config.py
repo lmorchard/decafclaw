@@ -519,7 +519,20 @@ def load_config() -> Config:
 
     reflection = load_sub_config(ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
 
-    vault_retrieval = load_sub_config(VaultRetrievalConfig, file_data.get("vault_retrieval", {}), "MEMORY_CONTEXT")
+    vault_retrieval = load_sub_config(
+        VaultRetrievalConfig,
+        file_data.get("vault_retrieval", {}),
+        "MEMORY_CONTEXT",
+        env_aliases={
+            "enabled": "VAULT_RETRIEVAL_ENABLED",
+            "similarity_threshold": "VAULT_RETRIEVAL_SIMILARITY_THRESHOLD",
+            "max_results": "VAULT_RETRIEVAL_MAX_RESULTS",
+            "max_tokens": "VAULT_RETRIEVAL_MAX_TOKENS",
+            "show_in_ui": "VAULT_RETRIEVAL_SHOW_IN_UI",
+            "mode": "VAULT_RETRIEVAL_MODE",
+            "headline_summary_max_chars": "VAULT_RETRIEVAL_HEADLINE_SUMMARY_MAX_CHARS",
+        },
+    )
 
     relevance = load_sub_config(RelevanceConfig, file_data.get("relevance", {}), "RELEVANCE")
 
