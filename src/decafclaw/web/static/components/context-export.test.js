@@ -45,28 +45,28 @@ it('renders typed source details, cache statistics, and candidates', async () =>
   expect(fetchMock).toHaveBeenCalledWith('/api/conversations/id%20%3F%23%25%C3%A9/context',
     expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
   for (const text of ['50 (50%)', 'dynamic budget', 'deferred mode', 'vault_read(3)', 'Test', 'Origin', '+2 dropped']) {
-    expect(el.textContent).toContain(text);
+    expect(el._panelMount.textContent).toContain(text);
   }
-  expect(el.querySelectorAll('.waffle-cell').length).toBeGreaterThan(0);
+  expect(el._panelMount.querySelectorAll('.waffle-cell').length).toBeGreaterThan(0);
 });
 it.each([{}, { sources: [], memory_candidates: [] }])('preserves absent diagnostics: %j', async (data) => {
   const el = await inspector(json(data));
-  expect(el.textContent).toContain('Estimated');
-  expect(el.textContent).toContain('—');
-  expect(el.querySelector('.source-table')).toBeNull();
+  expect(el._panelMount.textContent).toContain('Estimated');
+  expect(el._panelMount.textContent).toContain('—');
+  expect(el._panelMount.querySelector('.source-table')).toBeNull();
 });
 it.each([404, 401, 500])('preserves diagnostics HTTP %s', async (status) => {
   const el = await inspector(new Response('not JSON', { status }));
-  expect(el.textContent).toContain(status === 404 ? 'No context data yet' : `Error: HTTP ${status}`);
+  expect(el._panelMount.textContent).toContain(status === 404 ? 'No context data yet' : `Error: HTTP ${status}`);
 });
 it('shows loading and retains network failures', async () => {
   let reject;
   fetchMock.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
   const el = document.createElement('context-inspector');
   el.convId = 'test'; el.open = true; document.body.append(el);
-  await vi.waitFor(() => expect(el.textContent).toContain('Loading...'));
+  await vi.waitFor(() => expect(el._panelMount.textContent).toContain('Loading...'));
   reject(new Error('offline'));
-  await vi.waitFor(() => expect(el.textContent).toContain('Error: offline'));
+  await vi.waitFor(() => expect(el._panelMount.textContent).toContain('Error: offline'));
 });
 it('retains JSON parse failures', async () => {
   const el = await inspector(new Response('broken JSON'));
@@ -119,24 +119,24 @@ it('renders raw view and copies request JSON', async () => {
 
   expect(fetchMock).toHaveBeenCalledWith('/api/conversations/id%20%3F%23%25%C3%A9/context/raw',
     expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
-  expect(el.textContent).toContain('test-model-4');
-  expect(el.textContent).toContain('Messages (1)');
-  expect(el.textContent).toContain('Tools (1)');
+  expect(el._panelMount.textContent).toContain('test-model-4');
+  expect(el._panelMount.textContent).toContain('Messages (1)');
+  expect(el._panelMount.textContent).toContain('Tools (1)');
 
-  const jsonWidgets = el.querySelectorAll('dc-widget-json-view');
+  const jsonWidgets = el._panelMount.querySelectorAll('dc-widget-json-view');
   expect(jsonWidgets.length).toBe(2);
   expect(jsonWidgets[0].shadowRoot?.textContent).toContain('hello');
   expect(jsonWidgets[1].shadowRoot?.textContent).toContain('test_tool');
 
   // Switch to JSON text format
-  const jsonBtn = Array.from(el.querySelectorAll('.tab-btn')).find(b => b.textContent === 'JSON');
+  const jsonBtn = Array.from(el._panelMount.querySelectorAll('.tab-btn')).find(b => b.textContent === 'JSON');
   jsonBtn?.click();
   await el.updateComplete;
 
-  expect(el.textContent).toContain('"hello"');
-  expect(el.textContent).toContain('test_tool');
+  expect(el._panelMount.textContent).toContain('"hello"');
+  expect(el._panelMount.textContent).toContain('test_tool');
 
-  const copyBtn = el.querySelector('.copy-raw-btn');
+  const copyBtn = el._panelMount.querySelector('.copy-raw-btn');
   expect(copyBtn).not.toBeNull();
   copyBtn.click();
   await vi.waitFor(() => expect(copyToClipboard).toHaveBeenCalledWith(JSON.stringify(rawData, null, 2)));
@@ -154,7 +154,7 @@ it('shows empty message when raw context is 404', async () => {
   await vi.waitFor(() => expect(el._rawLoading).toBe(false));
   await el.updateComplete;
 
-  expect(el.textContent).toContain('No raw request data yet');
+  expect(el._panelMount.textContent).toContain('No raw request data yet');
 });
 
 it('shows error message when raw context returns 500', async () => {
@@ -168,7 +168,7 @@ it('shows error message when raw context returns 500', async () => {
   await vi.waitFor(() => expect(el._rawLoading).toBe(false));
   await el.updateComplete;
 
-  expect(el.textContent).toContain('Error: HTTP 500');
+  expect(el._panelMount.textContent).toContain('Error: HTTP 500');
 });
 
 it('switches tabs with ArrowLeft and ArrowRight keys', async () => {
@@ -179,8 +179,8 @@ it('switches tabs with ArrowLeft and ArrowRight keys', async () => {
   document.body.append(el);
   await el.updateComplete;
 
-  const diagTab = el.querySelector('#tab-diagnostics');
-  const rawTab = el.querySelector('#tab-raw');
+  const diagTab = el._panelMount.querySelector('#tab-diagnostics');
+  const rawTab = el._panelMount.querySelector('#tab-raw');
   expect(diagTab?.getAttribute('aria-selected')).toBe('true');
   expect(rawTab?.getAttribute('aria-selected')).toBe('false');
 
@@ -190,14 +190,14 @@ it('switches tabs with ArrowLeft and ArrowRight keys', async () => {
   expect(el._tab).toBe('raw');
   expect(diagTab?.getAttribute('aria-selected')).toBe('false');
   expect(rawTab?.getAttribute('aria-selected')).toBe('true');
-  expect(el.querySelector('#panel-raw')).not.toBeNull();
+  expect(el._panelMount.querySelector('#panel-raw')).not.toBeNull();
 
   rawTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
   await el.updateComplete;
 
   expect(el._tab).toBe('diagnostics');
   expect(diagTab?.getAttribute('aria-selected')).toBe('true');
-  expect(el.querySelector('#panel-diagnostics')).not.toBeNull();
+  expect(el._panelMount.querySelector('#panel-diagnostics')).not.toBeNull();
 });
 
 it('does not close when clicking inside the inspector, but closes when clicking outside', async () => {
@@ -215,7 +215,7 @@ it('does not close when clicking inside the inspector, but closes when clicking 
   await new Promise((r) => requestAnimationFrame(r));
 
   // Click on the Raw tab button inside the inspector
-  const rawTab = el.querySelector('#tab-raw');
+  const rawTab = el._panelMount.querySelector('#tab-raw');
   rawTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   expect(closeSpy).not.toHaveBeenCalled();
 
@@ -226,6 +226,29 @@ it('does not close when clicking inside the inspector, but closes when clicking 
   // Click outside on body
   document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   expect(closeSpy).toHaveBeenCalled();
+});
+
+it('portals the panel to a body-level mount and removes it on disconnect', async () => {
+  fetchMock.mockResolvedValue(json({ sources: [] }));
+  const el = document.createElement('context-inspector');
+  el.convId = 'id'; el.open = true;
+  document.body.append(el);
+  await el.updateComplete;
+  expect(el._panelMount.parentElement).toBe(document.body);
+  expect(el._panelMount.classList.contains('context-inspector-mount')).toBe(true);
+  expect(el._panelMount.querySelector('.inspector')).not.toBeNull();
+  el.remove();
+  expect(document.querySelector('.context-inspector-mount')).toBeNull();
+});
+
+it('renders nothing into the mount when closed', async () => {
+  fetchMock.mockResolvedValue(json({ sources: [] }));
+  const el = document.createElement('context-inspector');
+  el.convId = 'id'; el.open = false;
+  document.body.append(el);
+  await el.updateComplete;
+  expect(el._panelMount.parentElement).toBe(document.body);
+  expect(el._panelMount.querySelector('.inspector')).toBeNull();
 });
 
 it('toggles dual-pane expanded layout via raw-drawer-toggle', async () => {
@@ -242,11 +265,11 @@ it('toggles dual-pane expanded layout via raw-drawer-toggle', async () => {
   document.body.append(el);
   await el.updateComplete;
 
-  const inspector = el.querySelector('.inspector');
+  const inspector = el._panelMount.querySelector('.inspector');
   expect(inspector?.classList.contains('expanded')).toBe(false);
-  expect(el.querySelector('#panel-raw')).toBeNull();
+  expect(el._panelMount.querySelector('#panel-raw')).toBeNull();
 
-  const toggleBtn = el.querySelector('.raw-drawer-toggle');
+  const toggleBtn = el._panelMount.querySelector('.raw-drawer-toggle');
   expect(toggleBtn?.textContent).toContain('View Raw →');
 
   toggleBtn?.click();
@@ -254,8 +277,8 @@ it('toggles dual-pane expanded layout via raw-drawer-toggle', async () => {
 
   expect(inspector?.classList.contains('expanded')).toBe(true);
   expect(toggleBtn?.textContent).toContain('← Hide Raw');
-  expect(el.querySelector('#panel-diagnostics')).not.toBeNull();
-  expect(el.querySelector('#panel-raw')).not.toBeNull();
+  expect(el._panelMount.querySelector('#panel-diagnostics')).not.toBeNull();
+  expect(el._panelMount.querySelector('#panel-raw')).not.toBeNull();
 
   toggleBtn?.click();
   await el.updateComplete;
