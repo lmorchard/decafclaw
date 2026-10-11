@@ -7,33 +7,51 @@ import { wikiLinkMarkdown } from '../lib/milkdown-wiki-link.js';
 // is stubbed, the rest of the kit stays real. The stub's `action` also runs
 // the callback with a test-provided ctx, the way the real editor does: the
 // link-popover code fetches the ProseMirror view via
-// `editor.action(ctx => ctx.get(editorViewCtx))`.
+// `editor.action(ctx => ctx.get(editorViewCtx))`. The stub also captures
+// the `config` callback so a test can wire the `markdownUpdated` listener
+// (`ctx.get(listenerCtx)`) exactly as the real editor would.
 vi.mock('@milkdown/kit', async (importOriginal) => {
   const actual = /** @type {object} */ (await importOriginal());
-  const kitEvc = /** @type {any} */ (actual).editorViewCtx;
-  /** @type {{actions: unknown[], view: unknown, destroy: () => void}[]} */
+  const kit = /** @type {any} */ (actual);
+  /** @type {any[]} */
   const editors = [];
   const make = () => {
     /** @type {any} */
     const editor = {
       actions: [],
       view: null,
+      /** @type {((ctx: unknown) => void) | null} */
+      configFn: null,
+      /** @type {((ctx: unknown, md: unknown, prev: unknown) => void)[]} */
+      mdListeners: [],
+      getCtx() {
+        return {
+          set: () => {},
+          get: (/** @type {unknown} */ slice) => {
+            if (slice === kit.editorViewCtx) return editor.view;
+            if (slice === kit.listenerCtx) {
+              return {
+                markdownUpdated: (/** @type {any} */ cb) => editor.mdListeners.push(cb),
+              };
+            }
+            return null;
+          },
+        };
+      },
       action(fn) {
         editor.actions.push(fn);
-        fn({
-          get: (/** @type {unknown} */ slice) => (slice === kitEvc ? editor.view : null),
-        });
+        fn(editor.getCtx());
       },
       destroy: () => {},
     };
     const chainable = {
-      config: () => chainable,
+      config: (/** @type {any} */ fn) => { editor.configFn = fn; return chainable; },
       use: () => chainable,
       create: async () => { editors.push(editor); return editor; },
     };
     return chainable;
   };
-  return { ...actual, Editor: { make }, __editors: editors };
+  return { ...kit, Editor: { make }, __editors: editors };
 });
 
 await import('./wiki-editor.js');
@@ -52,6 +70,8 @@ function makeSchema() {
     },
     marks: {
       wiki_link: { attrs: { target: { default: null } } },
+      strong: {},
+      em: {},
     },
   });
 }
@@ -98,8 +118,11 @@ function renderLinkDom(root, link) {
  * (intercepted instead of letting PM rewrite the jsdom tree) stand in.
  * @param {any} doc
  * @param {HTMLElement} domParagraph
+ * @param {((domNode: Node, offset: number) => number) | null} [posFn]
+ *   override posAtDOM (e.g. to resolve inside a later run of a multi-run
+ *   link, as a click-position resolution would)
  */
-function makeFakeView(doc, domParagraph) {
+function makeFakeView(doc, domParagraph, posFn = null) {
   let state = EditorState.create({ doc });
   /** @type {any} */
   const view = {
@@ -111,7 +134,8 @@ function makeFakeView(doc, domParagraph) {
       state = state.apply(tr);
     },
     focus() {},
-    posAtDOM(/** @type {Node} */ domNode) {
+    posAtDOM(/** @type {Node} */ domNode, /** @type {number} */ offset) {
+      if (posFn) return posFn(domNode, offset);
       // The fixture is one paragraph of inline content; walk it in
       // document order and return where domNode's content begins.
       let pos = 1; // doc(0) + paragraph boundary
@@ -134,6 +158,17 @@ function markedTextNode(doc) {
     return true;
   });
   return found;
+}
+
+/** All text nodes carrying the wiki_link mark, in document order. */
+function markedTextNodes(doc) {
+  /** @type {any[]} */
+  const out = [];
+  doc.descendants((/** @type {any} */ n) => {
+    if (n.isText && n.marks.some((/** @type {any} */ m) => m.type.name === 'wiki_link')) out.push(n);
+    return true;
+  });
+  return out;
 }
 
 async function mountEditor() {
@@ -162,6 +197,47 @@ function setupFixture(el, schema, link) {
   const fakeView = makeFakeView(doc, p);
   /** @type {any} */ (editors[0]).view = fakeView;
   return fakeView;
+}
+
+/**
+ * A link whose display text spans three marked runs — a nested <strong>
+ * splits the middle run, the way Milkdown renders [[T|Old **Bold** End]].
+ * Positions: "Old " 8-12, "Bold" 12-16, " End" 16-20 (doc size 26).
+ * @param {import('./wiki-editor.js').WikiEditor} el
+ * @param {ReturnType<typeof makeSchema>} schema
+ * @param {{target: string}} opts
+ * @param {((domNode: Node, offset: number) => number) | null} [posFn]
+ */
+function setupNestedFixture(el, schema, opts, posFn = null) {
+  const wiki = schema.marks.wiki_link;
+  const strong = schema.marks.strong;
+  const doc = schema.node('doc', null, [
+    schema.node('paragraph', null, [
+      schema.text('before ', []),
+      schema.text('Old ', [wiki.create({ target: opts.target })]),
+      schema.text('Bold', [wiki.create({ target: opts.target }), strong.create()]),
+      schema.text(' End', [wiki.create({ target: opts.target })]),
+      schema.text(' after', []),
+    ]),
+  ]);
+  /** @type {HTMLElement} */
+  const root = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root'));
+  const p = document.createElement('p');
+  p.append(document.createTextNode('before '));
+  const a = document.createElement('a');
+  a.className = 'wiki-link';
+  a.setAttribute('data-wiki-page', opts.target);
+  a.append(document.createTextNode('Old '));
+  const s = document.createElement('strong');
+  s.append(document.createTextNode('Bold'));
+  a.append(s);
+  a.append(document.createTextNode(' End'));
+  p.append(a);
+  p.append(document.createTextNode(' after'));
+  root.append(p);
+  const fakeView = makeFakeView(doc, p, posFn);
+  /** @type {any} */ (editors[0]).view = fakeView;
+  return { fakeView, a, strong: s };
 }
 
 function singleClick(/** HTMLElement */ link) {
@@ -415,5 +491,131 @@ describe('wiki-editor wiki-link popover', () => {
     link.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
 
     expect(el._linkEdit).toBeNull();
+  });
+
+  it('resolves the full span of a multi-run link even when resolved at the last run', async () => {
+    // posAtDOM resolves to 18 — inside the last run (" End", 16-20), the
+    // way a click-position resolution would. A non-transitive span walk
+    // would drop the leading "Old " run.
+    const { fakeView, a } = setupNestedFixture(el, schema, { target: 'Old Target' }, () => 18);
+    link = a;
+
+    await openPopover(el, link);
+    setField('target', 'New Target');
+    clickButton('.wiki-link-popover-apply');
+
+    const nodes = markedTextNodes(fakeView.state.doc);
+    expect(nodes.map((/** @type {any} */ n) => n.text)).toEqual(['Old ', 'Bold', ' End']);
+    for (const n of nodes) {
+      expect(n.marks.some(
+        (/** @type {any} */ m) => m.type.name === 'wiki_link' && m.attrs.target === 'New Target',
+      )).toBe(true);
+    }
+  });
+
+  it('target-only edit updates the mark in place, preserving nested marks', async () => {
+    const { fakeView, a } = setupNestedFixture(el, schema, { target: 'Old Target' });
+    link = a;
+
+    await openPopover(el, a);
+    setField('target', 'New Target');
+    clickButton('.wiki-link-popover-apply');
+
+    const nodes = markedTextNodes(fakeView.state.doc);
+    expect(nodes).toHaveLength(3);
+    expect(nodes.map((/** @type {any} */ n) => n.text)).toEqual(['Old ', 'Bold', ' End']);
+    for (const n of nodes) {
+      expect(n.marks.some(
+        (/** @type {any} */ m) => m.type.name === 'wiki_link' && m.attrs.target === 'New Target',
+      )).toBe(true);
+    }
+    // The bold run kept its strong mark (mark set, order-insensitive).
+    expect(nodes[1].marks.map((/** @type {any} */ m) => m.type.name).sort())
+      .toEqual(['strong', 'wiki_link']);
+  });
+
+  it('a display edit replaces the whole run, flattening nested formatting', async () => {
+    // Documented trade-off: the fields are plain text, so editing the
+    // display replaces the full marked run (nested formatting is dropped).
+    const { fakeView, a } = setupNestedFixture(el, schema, { target: 'Old Target' });
+    link = a;
+
+    await openPopover(el, a);
+    setField('display', 'Fresh');
+    clickButton('.wiki-link-popover-apply');
+
+    const nodes = markedTextNodes(fakeView.state.doc);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].text).toBe('Fresh');
+    expect(nodes[0].marks.map((/** @type {any} */ m) => m.type.name)).toEqual(['wiki_link']);
+  });
+
+  it('apply with unchanged fields makes no document change', async () => {
+    const { fakeView, a } = setupNestedFixture(el, schema, { target: 'Old Target' });
+    link = a;
+
+    await openPopover(el, a);
+    clickButton('.wiki-link-popover-apply');
+
+    expect(el._linkEdit).toBeNull();
+    expect(fakeView.dispatches).toHaveLength(0);
+  });
+
+  it('closes the popover if the document changes while it is open', async () => {
+    setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+    // Wire the markdownUpdated listener the way the real editor does.
+    /** @type {any} */
+    const editor = editors[0];
+    editor.configFn(editor.getCtx());
+    expect(editor.mdListeners).toHaveLength(1);
+
+    await openPopover(el, link);
+    // The user edits (or undoes) the document while the popover is open —
+    // the captured span is now stale, so the edit must be dropped.
+    editor.mdListeners[0](null, 'changed content', 'Old Display');
+    await el.updateComplete;
+
+    expect(el._linkEdit).toBeNull();
+    expect(document.querySelector('.wiki-link-popover')).toBeNull();
+  });
+
+  it('cancels a pending popover open if the document changes', async () => {
+    setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+    /** @type {any} */
+    const editor = editors[0];
+    editor.configFn(editor.getCtx());
+
+    singleClick(link); // pending — the 250ms open delay has not elapsed
+    editor.mdListeners[0](null, 'changed content', 'Old Display');
+
+    // Past the open delay: the pending popover was cancelled, not shown.
+    await new Promise(r => setTimeout(r, 350));
+    expect(el._linkEdit).toBeNull();
+  });
+
+  it('opens with the Target field focused and selected', async () => {
+    setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+
+    await openPopover(el, link);
+
+    const target = /** @type {HTMLInputElement} */ (
+      document.querySelector('.wiki-link-popover input[data-field="target"]'));
+    expect(document.activeElement).toBe(target);
+  });
+
+  it('a re-click inside the same link (nested element) keeps the popover open', async () => {
+    const { a, strong } = setupNestedFixture(el, schema, { target: 'Old Target' });
+    link = a;
+
+    await openPopover(el, a);
+    const before = el._linkEdit;
+    expect(before).not.toBeNull();
+
+    singleClick(strong); // a nested element of the very link being edited
+
+    expect(el._linkEdit).toBe(before); // still open — no close/reopen
   });
 });
