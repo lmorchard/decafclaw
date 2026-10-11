@@ -106,7 +106,7 @@ class BrowserScenario:
 
 
 @contextlib.contextmanager
-def browser_scenario(static, browser: Browser, config):
+def browser_scenario(static, browser: Browser, config, viewport: dict | None = None):
     """Serve the real app from ``static`` and log a fresh browser context in."""
     test = os.environ["PYTEST_CURRENT_TEST"].rsplit(" (", 1)[0]
     _server_starts[test] += 1
@@ -154,7 +154,7 @@ def browser_scenario(static, browser: Browser, config):
         assert ready.wait(15), "test server failed to start"
         base = f"http://127.0.0.1:{sock.getsockname()[1]}"
         assert not browser.contexts, f"browser contexts left by an earlier scenario: {browser.contexts}"
-        context = browser.new_context()
+        context = browser.new_context(viewport=viewport)
         try:
             page = context.new_page()
             errors = []
@@ -534,7 +534,7 @@ def test_browser_context_inspector(built_static, chromium, config):
             conv_id,
         )
         page.wait_for_function("document.querySelector('context-inspector')._data !== null")
-        assert page.locator("context-inspector").inner_text().find("dynamic budget") >= 0
+        assert page.locator(".context-inspector-mount .inspector").inner_text().find("dynamic budget") >= 0
         assert page.evaluate("document.querySelector('context-inspector')._data") == diagnostics_payload
         assert [
             (request.method, request.path, request.query, request.body, request.authenticated)
@@ -542,6 +542,66 @@ def test_browser_context_inspector(built_static, chromium, config):
         ] == [
             ("GET", f"/api/conversations/{conv_id}/context", [], b"", True),
         ]
+
+
+def test_browser_context_inspector_mobile(built_static, chromium, config):
+    """#1037: the panel must escape the transformed sidebar's containing block."""
+    conv_id = seed_conversation(config, "Mobile context")
+    write_context_sidecar(
+        config,
+        conv_id,
+        {
+            "total_tokens_estimated": 123,
+            "context_window_size": 1000,
+            "sources": [{"source": "memory", "tokens_estimated": 123, "items_included": 1}],
+        },
+    )
+    with browser_scenario(built_static, chromium, config, viewport={"width": 390, "height": 844}) as scenario:
+        page = scenario.page
+        page.evaluate(
+            """async (convId) => {
+            await Promise.all(['/static/vendor/bundle/pico.min.css', '/static/style.css'].map(href => new Promise((resolve, reject) => {
+                const link = document.createElement('link');
+                link.rel = 'stylesheet'; link.href = href;
+                link.addEventListener('load', resolve, { once: true });
+                link.addEventListener('error', reject, { once: true });
+                document.head.append(link);
+            })));
+            await import('/static/components/context-inspector.js');
+            // Un-upgraded element: mobile.css/sidebar.css target the tag name,
+            // which is exactly the production trap (transform + overflow:hidden).
+            const sidebar = document.createElement('conversation-sidebar');
+            sidebar.setAttribute('mobile-open', '');
+            const el = document.createElement('context-inspector');
+            el.convId = convId; el.open = true;
+            sidebar.append(el);
+            document.body.append(sidebar);
+        }""",
+            conv_id,
+        )
+        page.wait_for_function("document.querySelector('.context-inspector-mount .inspector') !== null")
+        # Portaled: the mount is a direct child of body, not inside the sidebar.
+        assert page.evaluate("document.querySelector('.context-inspector-mount').parentElement === document.body")
+        # Panel box sits at viewport coordinates: 0.5rem gutters top/left/right.
+        # The collapsed panel is max-height-capped, so the bottom gutter is at
+        # least 4.5rem — the chat input stays visible below it.
+        geom = page.evaluate("""() => {
+            const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+            const r = document.querySelector('.context-inspector-mount .inspector').getBoundingClientRect();
+            return {left: r.left / rem, top: r.top / rem,
+                    right: (innerWidth - r.right) / rem, bottom: (innerHeight - r.bottom) / rem};
+        }""")
+        assert geom["left"] == pytest.approx(0.5, abs=0.1)
+        assert geom["top"] == pytest.approx(0.5, abs=0.1)
+        assert geom["right"] == pytest.approx(0.5, abs=0.1)
+        assert geom["bottom"] >= 4.5 - 0.1
+        # The right edge is actually visible — pre-fix, the sidebar's
+        # overflow:hidden clips the panel at 90vw and this point hits nothing.
+        assert page.evaluate("""() => {
+            const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+            return document.elementFromPoint(innerWidth - rem - 4, innerHeight / 2)
+                   ?.closest('.inspector') !== null;
+        }""")
 
 
 def test_browser_conversation_export(built_static, chromium, config):
