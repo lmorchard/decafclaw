@@ -15,6 +15,19 @@ import { $mark, $remark, $inputRule, InputRule } from '@milkdown/kit';
 
 // ── 1. Remark plugin ──────────────────────────────────────────────────
 
+/**
+ * Serialize a wiki link into its [[...]] form. The target is omitted when
+ * it is empty or identical to the display text — the plain [[text]] form
+ * means "target is the text itself".
+ * @param {string | null | undefined} target
+ * @param {string} display
+ * @returns {string}
+ */
+export function wikiLinkMarkdown(target, display) {
+  const t = target || '';
+  return t && t !== display ? `[[${t}|${display}]]` : `[[${display}]]`;
+}
+
 const WIKI_LINK_RE = /\[\[([^\]]+)\]\]/g;
 
 /**
@@ -113,10 +126,9 @@ const wikiLinkMark = $mark('wiki_link', () => ({
   toMarkdown: {
     match: (/** @type {{ type: { name: string } }} */ mark) => mark.type.name === 'wiki_link',
     runner: (/** @type {any} */ state, /** @type {any} */ mark, /** @type {any} */ node) => {
-      const text = node.text || '';
-      const target = mark.attrs.target || '';
-      const wiki = target && target !== text ? `[[${target}|${text}]]` : `[[${text}]]`;
-      state.addNode('text', undefined, undefined, { value: wiki });
+      state.addNode('text', undefined, undefined, {
+        value: wikiLinkMarkdown(mark.attrs.target, node.text || ''),
+      });
       return true; // prevent default text handler from also emitting the text
     },
   },
