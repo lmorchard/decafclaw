@@ -13,8 +13,9 @@
   4. Web store (`web/static/lib/message-store.js`) and TUI (`tui/src/dispatcher.ts`) UNCHANGED.
   5. Per-transport regression tests (mattermost + terminal) that pin the notice string.
 - **Authorization limits:** implement + publish draft PR in this session. NOT authorized: mark ready, request review, merge. Flow endpoint: PR review follow-up (handled by coordinator after publish). Review will be an independent local review in a fresh context by the coordinator (same model config — user-approved exception).
-- **Latest checks:** baseline `make test` on b9d21206: 4512 passed, 2 skipped. Commit 1 `602d055c` (helper + Mattermost + tests): targeted pytest 45 passed, fmt+lint clean. Commit 2 (terminal route + tightened terminal tests, uncommitted at last update): `tests/test_interactive_terminal.py` 4 passed; both new tests FAIL against the old handler (verified via stash); Mattermost pin teeth-checked via drift simulation (hardcoded divergent prefix → 2 notice tests fail, restore → green); fmt+lint clean.
-- **Next action:** commit 3 (docs: conversations.md + CLAUDE.md key-files), re-run `make check` + `make test` on final head, self-review, push commits 2+3 to draft PR #1064, refresh PR body, verify, final report.
+- **Latest checks:** baseline `make test` on b9d21206: 4512 passed, 2 skipped. On code head `60f4fe0b`: `make check` passed (full chain), `make test` 4522 passed, 2 skipped. Behavior-disabled + drift teeth checks green (see below).
+- **Status:** implementation complete. Draft PR #1064 published at final head (notes-only commit after `60f4fe0b`, which carries all code + full gates). NOT ready-marked (not authorized; coordinator dispatches independent local review in a fresh context, same model — user-approved exception). Board stays In progress (no In review / Done moves authorized).
+- **Next action (coordinator):** dispatch independent local review of the published head; on clean findings, the ready-marking + In review transition happens under separate authorization.
 
 ## Findings
 
@@ -45,9 +46,12 @@
 - Checkpoint 1 targeted: `uv run pytest tests/test_compaction_display.py tests/test_mattermost_compaction.py tests/test_mattermost_attachments.py tests/test_mattermost_display.py -n 0` → 45 passed. Re-run after `make fmt` → 10 passed (the two new files).
 - `make fmt`: 2 files reformatted (the two new test files); `make lint`: all checks passed.
 - Note: the Mattermost transport test pins a string the pre-refactor code already produced (pure move of wording) — expected for a behavior-preserving refactor; it pins the string against future drift. The terminal test (commit 2) is the one that fails pre-change (wording actually changes there).
-- Draft PR published: https://github.com/lmorchard/decafclaw/pull/1064 (draft, base main, head `issue-1053-compaction-notice` @ `602d055c8dfb6c2dc4e41328317e47bd6ddae6d4`, `verify-commit --pr-head` is_pr_head=true). PR body file: `/var/folders/8p/p5kz_p794bbbwgg2_hgn34nw0000gn/T/opencode/issue1053-pr-body.md` (needs refresh before final push).
+- Draft PR published: https://github.com/lmorchard/decafclaw/pull/1064 (draft, base main, branch `issue-1053-compaction-notice`). Published as draft at checkpoint 1 `602d055c`; final commits `e86c633b` + `60f4fe0b` pushed to the same draft; PR body refreshed to final state (body file: `/var/folders/8p/p5kz_p794bbbwgg2_hgn34nw0000gn/T/opencode/issue1053-pr-body.md`). `verify-commit --pr-head` is_pr_head=true for `60f4fe0b` (and for the notes-only commit after it — see final entry).
 - Commit 2 targeted: `tests/test_interactive_terminal.py -n 0` → 4 passed.
 - Behavior-disabled check (terminal): `git stash push -- src/decafclaw/interactive_terminal.py` (test kept) → both new tests FAILED (2 failed, 2 passed); `git stash pop` → green. Tests cover the new behavior, not just absence of the change.
 - Teeth check (Mattermost pin): temporarily sed-drifted the `📦 ` prefix in mattermost.py → `test_mattermost_compaction.py` 2 failed (failure + success notice), 1 passed (no-start); `git checkout --` restored → 3 passed. The pin catches drift.
 - Full gates on `e86c633b` (before docs commit): `make check` passed (install-js → check-browser-assets full chain); `make test` 4522 passed, 2 skipped (baseline 4512 + 10 new tests).
-- Docs (commit 3): `docs/conversations.md` compaction-notice paragraph updated (was quoting one wording for all consumers; now names the shared helper); CLAUDE.md key-files gains `compaction_display.py` under Data and persistence.
+- Docs (commit 3 `60f4fe0b`): `docs/conversations.md` compaction-notice paragraph updated (was quoting one wording for all consumers; now names the shared helper); CLAUDE.md key-files gains `compaction_display.py` under Data and persistence.
+- Self-review of full diff (b9d21206..HEAD): no missed Python renderers of the compaction_end notice remain (remaining grep hits are the tool-result string in conversation_tools.py, a log line in agent.py, and a comment — all out of scope); working tree clean; 3 logical commits.
+- Final push `602d055..60f4fe0` to origin; PR body updated via `gh pr edit` and read back (draft preserved, head `60f4fe0b`); `verify-commit 60f4fe0b --on issue-1053-compaction-notice --pr-head <PR #1064>`: subject_matches, on_branch, is_pr_head all true.
+- This notes-only commit follows `60f4fe0b` (all code + gates); it changes no code.
