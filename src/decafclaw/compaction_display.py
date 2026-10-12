@@ -12,7 +12,7 @@ review.
 
 
 def compaction_notice(
-    success: bool,
+    success: bool | None,
     before: int = 0,
     after: int = 0,
     elapsed: float = 0.0,
