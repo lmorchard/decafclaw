@@ -3,7 +3,7 @@
 ## Resume here
 
 - **Goal:** extract the compaction_end notice text into one helper, `compaction_notice(...)`, in a new module `src/decafclaw/compaction_display.py`; route the Mattermost and interactive-terminal transports through it; add per-transport regression tests that pin the notice string. Web store + TUI stay UNCHANGED.
-- **Issue:** https://github.com/lmorchard/decafclaw/issues/1053 (board: In progress, moved 2026-10-12 from Backlog)
+- **Issue:** https://github.com/lmorchard/decafclaw/issues/1053 (board: In review, moved 2026-10-12 at ready-marking; earlier Backlog → In progress)
 - **Worktree:** `.claude/worktrees/issue-1053-compaction-notice` (absolute: `/Users/lmorchard/devel/mine/decafclaw/.claude/worktrees/issue-1053-compaction-notice`)
 - **Branch:** `issue-1053-compaction-notice`, base `origin/main` @ `b9d21206eaa5719191d150689a7b405f6968a1f5`
 - **Confirmed decisions (user-settled, do not reopen):**
@@ -12,10 +12,11 @@
   3. Transport-specific prefixes (Mattermost `📦 ` emoji, terminal `  [ ]` brackets) stay OUTSIDE the helper; caller composes prefix + helper result.
   4. Web store (`web/static/lib/message-store.js`) and TUI (`tui/src/dispatcher.ts`) UNCHANGED.
   5. Per-transport regression tests (mattermost + terminal) that pin the notice string.
-- **Authorization limits:** implement + publish draft PR in this session. NOT authorized: mark ready, request review, merge. Flow endpoint: PR review follow-up (handled by coordinator after publish). Review will be an independent local review in a fresh context by the coordinator (same model config — user-approved exception).
+- **Authorization limits:** implement + publish draft PR (done), then ready-marking (done this step). NOT authorized: merge (still unauthorized). Review was an independent local review in a fresh context by the coordinator (same model config — user-approved exception).
 - **Latest checks:** baseline `make test` on b9d21206: 4512 passed, 2 skipped. On code head `60f4fe0b`: `make check` passed (full chain), `make test` 4522 passed, 2 skipped. On review-fix code head `031fdbfa` (annotation only): `make fmt` no-op, targeted 14 passed, `make check` passed, `make test` 4522 passed, 2 skipped. Behavior-disabled + drift teeth checks green (see below).
-- **Status:** implementation complete; independent local review (fresh context, same model under user-approved exception) returned **Approve**, no actionable code defects, three disputed findings — all resolved (see Decisions 6–8). Draft PR #1064 pushed to the review-fix commit. NOT ready-marked (not authorized). Board stays In progress (no In review / Done moves authorized).
-- **Next action (coordinator, under separate authorization):** ready-marking step — `pr ready` with `--expect-head` on the reviewed head, board → In review. The FINAL description at ready-marking MUST carry a plain `Closes #1053` line (user direction, Decision 8) — the current body's backticked meta-sentence does not satisfy it.
+- **Status:** READY FOR REVIEW. Independent local review (fresh context, same model under user-approved exception) returned **Approve** (first pass over base→5532a48: three disputed findings, all dispositioned; re-review of delta 5532a48→ac29b75: no findings). Reviewed head `ac29b75`. `pr ready` marked the PR ready (draft→ready) at head `ac29b75`, wrote the FINAL description with a plain `Closes #1053` line (read-back `description_matches: true`), and moved the board In progress → In review (read-back matched). NOT merged (merge remains unauthorized).
+- **Reviewed head vs branch head:** the reviewed/ready head is `ac29b75074ec07b317f11b9cfe85a5970dc34f3f`. This notes-only commit sits AFTER it on the branch (expected; the coordinator reports the reviewed head separately).
+- **Next action (coordinator):** merge is the only remaining step and is NOT authorized — Les reviews and merges. Nothing else pending.
 
 ## Findings
 
@@ -60,3 +61,5 @@
 - This notes-only commit follows `60f4fe0b` (all code + gates); it changes no code.
 - Independent local review (fresh context, same model `llama.cpp/llama` under user-approved exception), covering head `5532a48`: **Approve**, no actionable code defects; three disputed findings resolved per Decisions 6–8.
 - Review fix `031fdbfa`: `compaction_display.py` annotation `success: bool` → `success: bool | None`. Checks on `031fdbfa`: `make fmt` 432 files unchanged; `uv run pytest tests/test_compaction_display.py tests/test_mattermost_compaction.py tests/test_interactive_terminal.py -n 0` → 14 passed; `make check` passed (full chain); `make test` → 4522 passed, 2 skipped.
+- Ready-marking (this step, `pr ready` on head `ac29b75`): `description` confirmed + `description_matches: true` (FINAL body carries a plain `Closes #1053` line, replacing the backticked meta-sentence per Decision 8); `ready` confirmed, `before.is_draft: true` → `after.is_draft: false`, head unchanged at `ac29b75`, `expected_head_matches: true`, `action: ready`; board `In progress` → `In review` (project 6, Status), `readback_matches: true`; final `pr_state`: state OPEN, is_draft false, mergeable MERGEABLE, base main, base_behind_by 0, ci green (lint-and-test + js-test passed [required], check-tui passed [optional]), no review requests, no reviews, no comments.
+- This notes-only commit is the one the task-notes rule requires AFTER ready-marking; it sits after the reviewed head `ac29b75` and changes no code.
