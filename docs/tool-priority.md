@@ -66,7 +66,7 @@ External MCP server tools (`mcp__server__tool`) default to `normal` since the MC
 See `classify_tools()` in `src/decafclaw/tools/tool_registry.py`:
 
 1. Resolve every tool's priority.
-2. Active set starts with all `critical` tools (hard floor — logged as a warning if it exceeds budget, but still included).
+2. Active set starts with all `critical` tools (hard floor — still included even when over; a token-budget overrun is logged as a warning, a count-cap overrun as info).
 3. If `promoted_tools` are passed (e.g. from the active `SessionMode`), those tools are ordered at the front of `normal` (elevating any declared `low` tools to `normal` priority), claiming active budget ahead of other normal and low tools.
 4. Append `normal` tools one by one while the active set is under `tool_context_budget` and `max_active_tools`.
 5. Append `low` tools the same way, only if room remains.
