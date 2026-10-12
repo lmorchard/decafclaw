@@ -6,11 +6,11 @@
 - Issue: https://github.com/lmorchard/decafclaw/issues/1012 (board: Backlog -> In progress done; In review happens in the LATER flow step, not this one)
 - Target: /Users/lmorchard/devel/mine/decafclaw; base origin/main @ cbe24424f90c1cb130229fa57ee5e75588cc84cf
 - Worktree: .claude/worktrees/issue-1012-classify-tools-log-level; branch: issue-1012-classify-tools-log-level
-- **PR: https://github.com/lmorchard/decafclaw/pull/1062 (DRAFT, OPEN, head 0f03da85f20b6d51383414869062c356248cddbc, base main, mergeable, CI GREEN — lint-and-test + js-test required passed, check-tui optional passed)**
+- **PR: https://github.com/lmorchard/decafclaw/pull/1062 (DRAFT, OPEN, base main, mergeable; the fix commit is aa8a44868173b7751789337a879b635ad81fe7c0; PR head at writing = branch tip — confirm the LIVE head with pr-state before review, CI was GREEN on head 0f03da8 with lint-and-test + js-test required passed, check-tui optional passed)**
 - Identity: MokaGnome (ghflow exec for commits/pushes/gh writes); `gh api user` returned MokaGnome before first write
 - Review plan: user-approved exception — same model for implementation and review (both dispatched as opencode `general` subagents inheriting session model llama.cpp/llama); reviewer runs in a fresh context via review-changes. Waives model difference only; independent fresh-context review still required.
 - Endpoint: through PR review follow-up; PR open; NO merge.
-- Next action: (for the parent flow) dispatch independent review (review-changes) on the published head 0f03da8, then ready-for-review + board In review + review request. CI is already green. See "Environment flake" below before re-running local `make test` (do not — CI is the authoritative gate and it passed).
+- Next action: (for the parent flow) read the LIVE PR head with pr-state, confirm CI green on it, dispatch independent review (review-changes) on that head, then ready-for-review + board In review + review request. CI was green on 0f03da8; if the head moved after (docs-only), re-confirm CI. See "Environment flake" below before re-running local `make test` (do not — CI is the authoritative gate and it passed).
 
 ## Decisions
 - 2026-10-11: User (Les) requested delivery of #1012 with the same model for implementation and review. Scope: this task only.
