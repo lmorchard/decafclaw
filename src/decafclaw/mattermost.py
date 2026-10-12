@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import httpx
 import websockets
 
+from .compaction_display import compaction_notice
 from .mattermost_display import THINKING_INDICATOR, ConversationDisplay  # noqa: F401
 
 log = logging.getLogger(__name__)
@@ -620,33 +621,22 @@ class MattermostClient:
             elif event_type == "compaction_end":
                 if compaction_post_id:
                     try:
-                        # #1005 — compaction_end now carries a success flag;
-                        # a failed compaction leaves the conversation
+                        # #1005 — a failed compaction leaves the conversation
                         # unchanged, so report that rather than the
-                        # misleading "Conversation compacted".
-                        if event.get("success", True) is False:
-                            await client.edit_message(
-                                compaction_post_id,
-                                "📦 Compaction failed — conversation unchanged",
-                            )
-                        else:
-                            elapsed = event.get("elapsed_sec", 0)
-                            before = event.get("before_messages", 0)
-                            after = event.get("after_messages", 0)
-                            est_tokens = event.get("estimated_tokens_before", 0)
-                            if elapsed < 60:
-                                duration = f"{elapsed:.0f}s"
-                            else:
-                                duration = f"{elapsed / 60:.1f}m"
-                            details = f"{duration}"
-                            if before and after:
-                                details += f", {before} → {after} messages"
-                            if est_tokens:
-                                details += f", ~{est_tokens:,} tokens compacted"
-                            await client.edit_message(
-                                compaction_post_id,
-                                f"📦 Conversation compacted ({details})",
-                            )
+                        # misleading "Conversation compacted". #1053 — the
+                        # notice wording is shared via compaction_notice();
+                        # the 📦 prefix is this transport's framing.
+                        await client.edit_message(
+                            compaction_post_id,
+                            "📦 "
+                            + compaction_notice(
+                                event.get("success", True),
+                                before=event.get("before_messages", 0),
+                                after=event.get("after_messages", 0),
+                                elapsed=event.get("elapsed_sec", 0),
+                                est_tokens=event.get("estimated_tokens_before", 0),
+                            ),
+                        )
                     except Exception as exc:
                         log.debug("compaction post edit failed: %s", exc)
                     compaction_post_id = None

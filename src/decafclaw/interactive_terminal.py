@@ -10,6 +10,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from .compaction_display import compaction_notice
 from .config import resolve_streaming
 from .tools import TOOL_DEFINITIONS
 
@@ -132,13 +133,17 @@ async def run_interactive(ctx: "Context"):
             print("  [compacting conversation...]")
 
         elif event_type == "compaction_end":
-            # #1005 — a failed compaction leaves the conversation unchanged, so
-            # don't print "complete". Branch on the success flag the web and
-            # Mattermost transports also honor.
-            if event.get("success", True) is False:
-                print("  [compaction failed — conversation unchanged]")
-            else:
-                print("  [compaction complete]")
+            # #1005 — a failed compaction leaves the conversation unchanged,
+            # so the notice says so. #1053 — the wording is shared via
+            # compaction_notice(); the "  [ ]" framing is this transport's.
+            notice = compaction_notice(
+                event.get("success", True),
+                before=event.get("before_messages", 0),
+                after=event.get("after_messages", 0),
+                elapsed=event.get("elapsed_sec", 0),
+                est_tokens=event.get("estimated_tokens_before", 0),
+            )
+            print(f"  [{notice}]")
 
         elif event_type == "confirmation_request":
             confirmation_id = event.get("confirmation_id", "")
