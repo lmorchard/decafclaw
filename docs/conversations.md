@@ -70,7 +70,7 @@ The sidebar context meter tracks the conversation's prompt size against `COMPACT
 
 To fix this, `compact_history` computes a post-compaction estimate of the rebuilt history (same `estimate_tokens(flatten_messages(history))` the reload path uses, so the meter and a fresh page load agree). On success that figure:
 
-- is recorded as `ctx.tokens.last_compaction_estimate`. It feeds the **in-turn** web meter only — `message_complete` carries it as `context_usage`, so the meter drops below 100% at the end of the compacting turn.
+- is recorded as `ctx.tokens.last_compaction_estimate`. It feeds the **in-turn** web meter only — `message_complete` carries it as `context_usage`, so the meter drops below 100% at the end of the compacting turn. It is a one-shot fallback: as soon as a later LLM call in the same turn records real usage, the agent loop clears it and the meter tracks that call's `last_prompt` (the actual post-compaction prompt size) (#1054). If no call succeeds after the compaction (e.g. the reactive-overflow retry also failed), the estimate survives to `message_complete`.
 - is published on `compaction_end` as `estimated_tokens_after` (`success: true`).
 
 The two consumers are independent: a later reload (or a fresh page load) does **not** read `last_compaction_estimate`. The WebSocket reload path at `websocket.py:315` recomputes the estimate itself from the persisted compacted sidecar (`read_compacted_history`), and `message_complete` is how the live meter is told. The Mattermost post, which renders at compaction time, still reads the pre-compaction `estimated_tokens_before` for its "~N tokens compacted" summary.

@@ -151,7 +151,7 @@ Generic error surfaced to the client (bad request, unknown conversation, interna
 
 ### `message_complete`
 
-Final form of an assistant message after streaming completed (or when replayed from history). `context_usage` is the context meter's value: the post-compaction estimate when this turn compacted, else the turn's last LLM prompt size (#1005).
+Final form of an assistant message after streaming completed (or when replayed from history). `context_usage` is the context meter's value: the post-compaction estimate when this turn compacted and no later LLM call recorded usage, else the turn's last LLM prompt size (#1005, #1054).
 
 **Fields:**
 

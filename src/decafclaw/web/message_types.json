@@ -64,7 +64,7 @@
     },
     "message_complete": {
       "direction": "server_to_client",
-      "description": "Final form of an assistant message after streaming completed (or when replayed from history). `context_usage` is the context meter's value: the post-compaction estimate when this turn compacted, else the turn's last LLM prompt size (#1005).",
+      "description": "Final form of an assistant message after streaming completed (or when replayed from history). `context_usage` is the context meter's value: the post-compaction estimate when this turn compacted and no later LLM call recorded usage, else the turn's last LLM prompt size (#1005, #1054).",
       "fields": {"conv_id": "string", "text": "string", "role": "string?", "final": "boolean?", "usage": "object?", "context_usage": "number?", "context_limit": "number?"}
     },
     "model_changed": {

@@ -35,6 +35,9 @@ class TokenUsage:
     # context meter can drop below 100% after a compaction event. When
     # this is non-None, message_complete prefers it over last_prompt
     # (the pre-compaction prompt size that would otherwise report >100%).
+    # Cleared as soon as a later LLM call records real usage (#1054) —
+    # it is a one-shot fallback for turns with no successful call after
+    # the compaction, not a standing override.
     last_compaction_estimate: int | None = None
 
 
