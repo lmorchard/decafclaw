@@ -187,7 +187,7 @@ def classify_tools(
     active_tokens = sum(token_cost[id(td)] for td in active)
     deferred: list[dict] = []
 
-    if active_tokens > budget or len(active) > max_active:
+    if active_tokens > budget:
         log.warning(
             "Critical tool set exceeds budget or count: "
             "%d tools / %d tokens (budget %d, max %d). "
@@ -195,6 +195,14 @@ def classify_tools(
             len(active),
             active_tokens,
             budget,
+            max_active,
+        )
+    elif len(active) > max_active:
+        # Count-only overflow: the normal state under the default config
+        # (#1012). The token budget is intact, so this is informational.
+        log.info(
+            "Critical tool set over count cap: %d tools (max %d); normal and low tools are deferred.",
+            len(active),
             max_active,
         )
 

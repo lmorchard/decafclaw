@@ -1,5 +1,6 @@
 """Tests for tool registry — priority classification, token estimation, catalog."""
 
+import logging
 from pathlib import Path
 
 from decafclaw.skills import SkillInfo
@@ -310,6 +311,87 @@ class TestClassifyTools:
         active, _ = classify_tools(tools, config)
         names = [td["function"]["name"] for td in active]
         assert names == ["norm_a", "norm_b", "norm_c"]
+
+
+# -- classify_tools overflow logging (#1012) -----------------------------------
+
+REGISTRY_LOGGER = "decafclaw.tools.tool_registry"
+
+
+class TestClassifyToolsOverflowLogging:
+    """Count-only critical overflow logs at info; token-budget overflow still
+    logs at warning. Classification itself never changes."""
+
+    def _records(self, caplog, level):
+        return [r for r in caplog.records if r.name == REGISTRY_LOGGER and r.levelno == level]
+
+    def test_count_only_overflow_logs_info_not_warning(self, config, caplog):
+        """Critical set over the count cap but under the token budget: one INFO, no WARNING."""
+        tools = [_make_tool_def(f"crit_{i}", priority="critical") for i in range(35)]
+        config.compaction.max_tokens = 1000000  # huge token budget; count cap stays 30
+
+        with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
+            active, deferred = classify_tools(tools, config)
+
+        assert self._records(caplog, logging.WARNING) == []
+        infos = self._records(caplog, logging.INFO)
+        assert len(infos) == 1
+        msg = infos[0].getMessage()
+        assert "count cap" in msg
+        assert "normal and low" in msg
+        assert "deferred" in msg
+        # Classification unchanged: all critical active, nothing deferred
+        assert [td["function"]["name"] for td in active] == [f"crit_{i}" for i in range(35)]
+        assert deferred == []
+
+    def test_token_budget_overflow_logs_warning_count_under_cap(self, config, caplog):
+        """Critical set over the token budget, under the count cap: WARNING, as before."""
+        critical_tools = [_make_tool_def(f"crit_{i}", "x" * 200, priority="critical") for i in range(5)]
+        normal_tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(5)]
+        config.compaction.max_tokens = 100  # tiny budget → 10 token budget; count cap stays 30
+
+        with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
+            active, deferred = classify_tools(critical_tools + normal_tools, config)
+
+        warnings = self._records(caplog, logging.WARNING)
+        assert len(warnings) == 1
+        assert "exceeds budget or count" in warnings[0].getMessage()
+        # No count-overflow info: the token-budget warning takes precedence
+        assert not [r for r in self._records(caplog, logging.INFO) if "count cap" in r.getMessage()]
+        # Classification unchanged: critical active, normal deferred
+        assert {td["function"]["name"] for td in active} == {f"crit_{i}" for i in range(5)}
+        assert {td["function"]["name"] for td in deferred} == {f"norm_{i}" for i in range(5)}
+
+    def test_token_budget_overflow_logs_warning_count_over_cap(self, config, caplog):
+        """Both limits exceeded: still exactly one WARNING, no count-overflow INFO."""
+        tools = [_make_tool_def(f"crit_{i}", "x" * 200, priority="critical") for i in range(35)]
+        config.compaction.max_tokens = 100  # tiny budget; 35 critical > count cap 30
+
+        with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
+            active, deferred = classify_tools(tools, config)
+
+        warnings = self._records(caplog, logging.WARNING)
+        assert len(warnings) == 1
+        assert "exceeds budget or count" in warnings[0].getMessage()
+        assert not [r for r in self._records(caplog, logging.INFO) if "count cap" in r.getMessage()]
+        # All critical tools stay active
+        assert {td["function"]["name"] for td in active} == {f"crit_{i}" for i in range(35)}
+        assert deferred == []
+
+    def test_within_limits_logs_no_overflow_record(self, config, caplog):
+        """Critical set within both limits: no overflow warning or info at all."""
+        tools = [_make_tool_def(f"crit_{i}", priority="critical") for i in range(5)]
+        config.compaction.max_tokens = 1000000
+
+        with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
+            active, deferred = classify_tools(tools, config)
+
+        all_records = self._records(caplog, logging.WARNING) + self._records(caplog, logging.INFO)
+        assert not [
+            r for r in all_records if "exceeds budget or count" in r.getMessage() or "count cap" in r.getMessage()
+        ]
+        assert len(active) == 5
+        assert deferred == []
 
 
 # -- get_description -----------------------------------------------------------

@@ -50,11 +50,13 @@ def main():
     )
 
     # Silence three loggers that fire on every LLM call in eval context but
-    # are noise rather than signal here. All three remain WARNING-level in
-    # production where they carry useful information.
-    #   - tool_registry "Critical tool set exceeds budget" — fires per
-    #     `_build_tool_list`; informational ("Critical tools are included
-    #     anyway"). Tracked separately if we want to downgrade globally.
+    # are noise rather than signal here. The silenced messages remain
+    # WARNING-level (or higher) in production where they carry useful
+    # information.
+    #   - tool_registry "Critical tool set exceeds budget" — the
+    #     token-budget warning fires per `_build_tool_list`; informational
+    #     ("Critical tools are included anyway"). Count-only overruns now
+    #     log at INFO (#1012); the level bump silences them too.
     #   - tools.confirmation "No ConversationManager" — evals never wire one
     #     up; the legacy event-bus path is the intended eval behavior.
     #   - tool_execution "widget registry is not initialized" — evals don't
