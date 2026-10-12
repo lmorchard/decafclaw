@@ -13,9 +13,9 @@
   4. Web store (`web/static/lib/message-store.js`) and TUI (`tui/src/dispatcher.ts`) UNCHANGED.
   5. Per-transport regression tests (mattermost + terminal) that pin the notice string.
 - **Authorization limits:** implement + publish draft PR in this session. NOT authorized: mark ready, request review, merge. Flow endpoint: PR review follow-up (handled by coordinator after publish). Review will be an independent local review in a fresh context by the coordinator (same model config — user-approved exception).
-- **Latest checks:** baseline `make test` on b9d21206: 4512 passed, 2 skipped. On code head `60f4fe0b`: `make check` passed (full chain), `make test` 4522 passed, 2 skipped. Behavior-disabled + drift teeth checks green (see below).
-- **Status:** implementation complete. Draft PR #1064 published at final head (notes-only commit after `60f4fe0b`, which carries all code + full gates). NOT ready-marked (not authorized; coordinator dispatches independent local review in a fresh context, same model — user-approved exception). Board stays In progress (no In review / Done moves authorized).
-- **Next action (coordinator):** dispatch independent local review of the published head; on clean findings, the ready-marking + In review transition happens under separate authorization.
+- **Latest checks:** baseline `make test` on b9d21206: 4512 passed, 2 skipped. On code head `60f4fe0b`: `make check` passed (full chain), `make test` 4522 passed, 2 skipped. On review-fix code head `031fdbfa` (annotation only): `make fmt` no-op, targeted 14 passed, `make check` passed, `make test` 4522 passed, 2 skipped. Behavior-disabled + drift teeth checks green (see below).
+- **Status:** implementation complete; independent local review (fresh context, same model under user-approved exception) returned **Approve**, no actionable code defects, three disputed findings — all resolved (see Decisions 6–8). Draft PR #1064 pushed to the review-fix commit. NOT ready-marked (not authorized). Board stays In progress (no In review / Done moves authorized).
+- **Next action (coordinator, under separate authorization):** ready-marking step — `pr ready` with `--expect-head` on the reviewed head, board → In review. The FINAL description at ready-marking MUST carry a plain `Closes #1053` line (user direction, Decision 8) — the current body's backticked meta-sentence does not satisfy it.
 
 ## Findings
 
@@ -39,6 +39,9 @@
 - Shared wording = Mattermost's current wording (sentence case, em dash): failure `Compaction failed — conversation unchanged`; success `Conversation compacted ({details})`. Terminal's old lowercase/short wording is replaced by the shared one — that is the unification the issue asks for.
 - Transport tests pin the LITERAL user-visible string (not `prefix + compaction_notice(...)`), so both drift without the helper AND an unreviewed wording change surface as a per-file mismatch (issue: "single source of wording ... reviewable per file"). Helper unit tests pin the same literals in `tests/test_compaction_display.py`.
 - Commit split: (1) helper + Mattermost route + both new test files + notes; (2) terminal route + terminal test tightening + notes. Draft PR published after commit 1; final commits pushed to same draft before returning.
+- **6. (user, on review dispute)** `compaction_notice`'s `success` annotation becomes `bool | None` — the pinned tests (test_compaction_display.py:45-49) cover None/missing → success notice, preserving the pre-refactor `is False` semantics, so `bool` understated the accepted input. Applied as commit `031fdbfa` (annotation only, no behavior change).
+- **7. (user, on review dispute)** Session dir stays notes-only (no spec.md/plan.md): accepted for this pre-decided XS refactor — the issue's shape was fixed by triage and all design choices were settled in the handoff before implementation started, so spec/plan artifacts would have restated decisions rather than explore them. Do NOT add them later.
+- **8. (user, deferred to ready-marking)** The PR body's closing keyword currently reads as a backticked meta-sentence ("`Closes #1053` applies when this PR merges."). The FINAL description at ready-marking must carry a plain `Closes #1053` line (GitHub only treats a plain keyword line as a closing reference). The ready step rewrites the description accordingly; do not mark ready from the current body.
 
 ## Attempts and checks
 
@@ -55,3 +58,5 @@
 - Self-review of full diff (b9d21206..HEAD): no missed Python renderers of the compaction_end notice remain (remaining grep hits are the tool-result string in conversation_tools.py, a log line in agent.py, and a comment — all out of scope); working tree clean; 3 logical commits.
 - Final push `602d055..60f4fe0` to origin; PR body updated via `gh pr edit` and read back (draft preserved, head `60f4fe0b`); `verify-commit 60f4fe0b --on issue-1053-compaction-notice --pr-head <PR #1064>`: subject_matches, on_branch, is_pr_head all true.
 - This notes-only commit follows `60f4fe0b` (all code + gates); it changes no code.
+- Independent local review (fresh context, same model `llama.cpp/llama` under user-approved exception), covering head `5532a48`: **Approve**, no actionable code defects; three disputed findings resolved per Decisions 6–8.
+- Review fix `031fdbfa`: `compaction_display.py` annotation `success: bool` → `success: bool | None`. Checks on `031fdbfa`: `make fmt` 432 files unchanged; `uv run pytest tests/test_compaction_display.py tests/test_mattermost_compaction.py tests/test_interactive_terminal.py -n 0` → 14 passed; `make check` passed (full chain); `make test` → 4522 passed, 2 skipped.
