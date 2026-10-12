@@ -195,6 +195,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `conversation_paths.py` — per-conversation sidecar path chokepoint: `conversations/{conv_id}/{file}` dir layout, archive iteration + delete helpers (one-time migration from the pre-#576 flat layout: `make migrate-sidecars`)
 - `compaction.py` — Summarization + pre-compaction memory sweep
 - `compaction_decisions.py` — Structured decision slice threaded through compaction (decisions / open questions / artifacts; persisted to per-conv sidecar)
+- `compaction_display.py` — Shared compaction-notice wording for the Python transports (`compaction_notice`)
 - `context_cleanup.py` — Lightweight clear tier: stubs old large tool messages before compaction
 - `canvas.py` — per-conversation canvas state sidecar + state operations
 - `sticky.py` — per-conversation sticky-slot sidecar (`sticky.json`) + `set_sticky`/`clear_sticky`

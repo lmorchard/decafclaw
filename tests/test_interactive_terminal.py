@@ -69,28 +69,39 @@ async def test_text_before_tools_is_suppressed_when_streaming(ctx, monkeypatch, 
     assert capsys.readouterr().out.count("Trying the skill again.") == 1
 
 
-# #1005 the terminal must not print "compaction complete" when the
-# summarization failed (the conversation is unchanged).
+# #1005 the terminal must not print a "complete" notice when the
+# summarization failed (the conversation is unchanged). #1053 — the notice
+# wording is shared via compaction_notice(); these pin the exact line.
 @pytest.mark.asyncio
-async def test_compaction_end_renders_failure_on_success_false(ctx, monkeypatch, capsys):
+async def test_compaction_end_renders_failure_notice(ctx, monkeypatch, capsys):
     on_event = await _capture_on_event(ctx, monkeypatch)
     capsys.readouterr()
 
     await on_event({"type": "compaction_end", "success": False, "before_messages": 10, "after_messages": 10})
 
     out = capsys.readouterr().out
-    assert "compaction failed" in out and "unchanged" in out
+    assert "  [Compaction failed — conversation unchanged]\n" in out
     # The misleading "complete" line must not appear on a failed compaction.
-    assert "compaction complete" not in out
+    assert "complete" not in out
 
 
 @pytest.mark.asyncio
-async def test_compaction_end_renders_success_on_success_true(ctx, monkeypatch, capsys):
+async def test_compaction_end_renders_success_notice(ctx, monkeypatch, capsys):
+    """#1053 — the terminal shares the full notice, details included."""
     on_event = await _capture_on_event(ctx, monkeypatch)
     capsys.readouterr()
 
-    await on_event({"type": "compaction_end", "success": True, "before_messages": 42, "after_messages": 10})
+    await on_event(
+        {
+            "type": "compaction_end",
+            "success": True,
+            "before_messages": 42,
+            "after_messages": 10,
+            "elapsed_sec": 12.3,
+            "estimated_tokens_before": 50000,
+        }
+    )
 
     out = capsys.readouterr().out
-    assert "compaction complete" in out
-    assert "compaction failed" not in out
+    assert "  [Conversation compacted (12s, 42 → 10 messages, ~50,000 tokens compacted)]\n" in out
+    assert "failed" not in out
