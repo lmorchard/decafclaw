@@ -14,7 +14,7 @@
   5. Per-transport regression tests (mattermost + terminal) that pin the notice string.
 - **Authorization limits:** implement + publish draft PR in this session. NOT authorized: mark ready, request review, merge. Flow endpoint: PR review follow-up (handled by coordinator after publish). Review will be an independent local review in a fresh context by the coordinator (same model config — user-approved exception).
 - **Latest checks:** baseline `make test` on b9d21206: 4512 passed, 2 skipped. Commit 1 `602d055c` (helper + Mattermost + tests): targeted pytest 45 passed, fmt+lint clean. Commit 2 (terminal route + tightened terminal tests, uncommitted at last update): `tests/test_interactive_terminal.py` 4 passed; both new tests FAIL against the old handler (verified via stash); Mattermost pin teeth-checked via drift simulation (hardcoded divergent prefix → 2 notice tests fail, restore → green); fmt+lint clean.
-- **Next action:** commit 2, full `make check` + `make test`, self-review, push to draft PR #1064, update PR body, final report.
+- **Next action:** commit 3 (docs: conversations.md + CLAUDE.md key-files), re-run `make check` + `make test` on final head, self-review, push commits 2+3 to draft PR #1064, refresh PR body, verify, final report.
 
 ## Findings
 
@@ -49,3 +49,5 @@
 - Commit 2 targeted: `tests/test_interactive_terminal.py -n 0` → 4 passed.
 - Behavior-disabled check (terminal): `git stash push -- src/decafclaw/interactive_terminal.py` (test kept) → both new tests FAILED (2 failed, 2 passed); `git stash pop` → green. Tests cover the new behavior, not just absence of the change.
 - Teeth check (Mattermost pin): temporarily sed-drifted the `📦 ` prefix in mattermost.py → `test_mattermost_compaction.py` 2 failed (failure + success notice), 1 passed (no-start); `git checkout --` restored → 3 passed. The pin catches drift.
+- Full gates on `e86c633b` (before docs commit): `make check` passed (install-js → check-browser-assets full chain); `make test` 4522 passed, 2 skipped (baseline 4512 + 10 new tests).
+- Docs (commit 3): `docs/conversations.md` compaction-notice paragraph updated (was quoting one wording for all consumers; now names the shared helper); CLAUDE.md key-files gains `compaction_display.py` under Data and persistence.

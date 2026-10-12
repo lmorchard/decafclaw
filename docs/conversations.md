@@ -77,7 +77,7 @@ The two consumers are independent: a later reload (or a fresh page load) does **
 
 `message_complete` carries it as a dedicated `context_usage` field (falling back to the real `last_prompt` when no compaction ran), **separate from `usage.prompt_tokens`** — the latter keeps its honest meaning (the turn's last LLM call) so the per-message "X in / Y out" label and the recorder's turn telemetry are unaffected. The web meter reads `context_usage`, so it drops below 100% after a successful compaction.
 
-`compaction_end` / `COMPACTION_DONE` also carry a `success` flag: when the summarization fails the `finally:` no longer reports a successful compaction, and every consumer that renders a compaction notice — the web store, the Mattermost post, and the terminal — reads "Compaction failed (no change to conversation)" instead of the misleading `N → N` "compacted".
+`compaction_end` / `COMPACTION_DONE` also carry a `success` flag: when the summarization fails the `finally:` no longer reports a successful compaction, and every consumer that renders a compaction notice — the web store, the Mattermost post, and the terminal — reads a failure notice instead of the misleading `N → N` "compacted". The two Python transports share their wording via `compaction_display.compaction_notice()` (#1053); the web store and TUI keep their own copies and are read against that helper in review.
 
 ### Configuration
 
