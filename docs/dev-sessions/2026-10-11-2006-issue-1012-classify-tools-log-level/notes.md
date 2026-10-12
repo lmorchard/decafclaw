@@ -6,11 +6,11 @@
 - Issue: https://github.com/lmorchard/decafclaw/issues/1012 (board: Backlog -> In progress done; In review happens in the LATER flow step, not this one)
 - Target: /Users/lmorchard/devel/mine/decafclaw; base origin/main @ cbe24424f90c1cb130229fa57ee5e75588cc84cf
 - Worktree: .claude/worktrees/issue-1012-classify-tools-log-level; branch: issue-1012-classify-tools-log-level
-- **PR: https://github.com/lmorchard/decafclaw/pull/1062 (DRAFT, OPEN, head aa8a44868173b7751789337a879b635ad81fe7c0, base main, mergeable, CI was pending at handoff)**
+- **PR: https://github.com/lmorchard/decafclaw/pull/1062 (DRAFT, OPEN, head 0f03da85f20b6d51383414869062c356248cddbc, base main, mergeable, CI GREEN — lint-and-test + js-test required passed, check-tui optional passed)**
 - Identity: MokaGnome (ghflow exec for commits/pushes/gh writes); `gh api user` returned MokaGnome before first write
 - Review plan: user-approved exception — same model for implementation and review (both dispatched as opencode `general` subagents inheriting session model llama.cpp/llama); reviewer runs in a fresh context via review-changes. Waives model difference only; independent fresh-context review still required.
 - Endpoint: through PR review follow-up; PR open; NO merge.
-- Next action: (for the parent flow) read hosted CI for head aa8a448 (lint-and-test, js-test required), then dispatch independent review (review-changes) on the published head, then ready-for-review + board In review + review request. See "Environment flake" below before re-running local `make test`.
+- Next action: (for the parent flow) dispatch independent review (review-changes) on the published head 0f03da8, then ready-for-review + board In review + review request. CI is already green. See "Environment flake" below before re-running local `make test` (do not — CI is the authoritative gate and it passed).
 
 ## Decisions
 - 2026-10-11: User (Les) requested delivery of #1012 with the same model for implementation and review. Scope: this task only.
@@ -49,4 +49,5 @@
   - `security_monitor.py` contains "pkill" only inside its block-pattern regex list — it evaluates commands, sends no signals. Not the killer.
   - **Conclusion for this task:** pre-existing shared-environment flake, not caused by this change (base code died too); the suite itself is green (5 direct full-suite passes with the change); hosted CI (which runs `uv run pytest tests/ contrib/skills/` directly) is the authoritative gate. Do NOT burn more time re-running `make test` locally.
 - 2026-10-12: Draft PR published: pushed branch, verify-commit aa8a448 --on branch (subject_matches, on_branch, parents=[base]) OK; `gh pr create --draft` → **https://github.com/lmorchard/decafclaw/pull/1062**; read back: OPEN, is_draft=true, head aa8a448, head_branch correct, base main, base_behind_by=0, mergeable; verify-commit --pr-head OK (is_pr_head=true). Body file: docs/dev-sessions/2026-10-11-2006-issue-1012-classify-tools-log-level/pr-body.md (left untracked; canonical body is on the PR). CI at handoff: lint-and-test (required) + js-test (required) pending, check-tui (optional) pending. No review requests/reviews/comments (none requested — per task limits).
-- 2026-10-12: This notes file + pr-body.md committed? notes.md committed to the branch per repo convention (recent PRs #1060/#1057/#1055 all carry their session notes); pr-body.md left untracked.
+- 2026-10-12: This notes file committed to the branch per repo convention (recent PRs #1060/#1057/#1055 all carry their session notes); pr-body.md left untracked (scratch; canonical body is on the PR).
+- 2026-10-12: **Hosted CI GREEN on head 0f03da8** (pr-state): lint-and-test passed (required; runs `uv run pytest tests/ contrib/skills/`), js-test passed (required), check-tui passed (optional). ci=green, errors=[]. This confirms the local `make test` flake is environment-specific — the identical suite passes on the hosted runner. PR description updated to the final state (CI section added, remaining work = none) via `gh pr edit --body-file` (same pr-body.md file).
