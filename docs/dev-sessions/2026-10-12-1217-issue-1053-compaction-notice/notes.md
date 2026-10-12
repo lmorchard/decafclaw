@@ -13,8 +13,8 @@
   4. Web store (`web/static/lib/message-store.js`) and TUI (`tui/src/dispatcher.ts`) UNCHANGED.
   5. Per-transport regression tests (mattermost + terminal) that pin the notice string.
 - **Authorization limits:** implement + publish draft PR in this session. NOT authorized: mark ready, request review, merge. Flow endpoint: PR review follow-up (handled by coordinator after publish). Review will be an independent local review in a fresh context by the coordinator (same model config — user-approved exception).
-- **Latest checks:** baseline `make test` on b9d21206: 4512 passed, 2 skipped. Checkpoint 1 (helper + Mattermost route + tests): targeted pytest 45 passed; `make fmt` (2 new test files reformatted) + `make lint` clean.
-- **Next action:** commit checkpoint 1, publish draft PR, then terminal route (commit 2).
+- **Latest checks:** baseline `make test` on b9d21206: 4512 passed, 2 skipped. Commit 1 `602d055c` (helper + Mattermost + tests): targeted pytest 45 passed, fmt+lint clean. Commit 2 (terminal route + tightened terminal tests, uncommitted at last update): `tests/test_interactive_terminal.py` 4 passed; both new tests FAIL against the old handler (verified via stash); Mattermost pin teeth-checked via drift simulation (hardcoded divergent prefix → 2 notice tests fail, restore → green); fmt+lint clean.
+- **Next action:** commit 2, full `make check` + `make test`, self-review, push to draft PR #1064, update PR body, final report.
 
 ## Findings
 
@@ -45,3 +45,7 @@
 - Checkpoint 1 targeted: `uv run pytest tests/test_compaction_display.py tests/test_mattermost_compaction.py tests/test_mattermost_attachments.py tests/test_mattermost_display.py -n 0` → 45 passed. Re-run after `make fmt` → 10 passed (the two new files).
 - `make fmt`: 2 files reformatted (the two new test files); `make lint`: all checks passed.
 - Note: the Mattermost transport test pins a string the pre-refactor code already produced (pure move of wording) — expected for a behavior-preserving refactor; it pins the string against future drift. The terminal test (commit 2) is the one that fails pre-change (wording actually changes there).
+- Draft PR published: https://github.com/lmorchard/decafclaw/pull/1064 (draft, base main, head `issue-1053-compaction-notice` @ `602d055c8dfb6c2dc4e41328317e47bd6ddae6d4`, `verify-commit --pr-head` is_pr_head=true). PR body file: `/var/folders/8p/p5kz_p794bbbwgg2_hgn34nw0000gn/T/opencode/issue1053-pr-body.md` (needs refresh before final push).
+- Commit 2 targeted: `tests/test_interactive_terminal.py -n 0` → 4 passed.
+- Behavior-disabled check (terminal): `git stash push -- src/decafclaw/interactive_terminal.py` (test kept) → both new tests FAILED (2 failed, 2 passed); `git stash pop` → green. Tests cover the new behavior, not just absence of the change.
+- Teeth check (Mattermost pin): temporarily sed-drifted the `📦 ` prefix in mattermost.py → `test_mattermost_compaction.py` 2 failed (failure + success notice), 1 passed (no-start); `git checkout --` restored → 3 passed. The pin catches drift.
