@@ -849,6 +849,12 @@ class TurnRunner:
             self.ctx.tokens.total_prompt += prompt_tokens
             self.ctx.tokens.total_completion += completion_tokens
             self.ctx.tokens.last_prompt = prompt_tokens
+            # #1054 — real usage from this call supersedes any
+            # post-compaction estimate cached earlier in the turn (e.g. by
+            # the reactive-overflow path); clear it so the meter
+            # (message_complete context_usage) tracks last_prompt again.
+            # A call that records no usage leaves the estimate as fallback.
+            self.ctx.tokens.last_compaction_estimate = None
             self.ctx.tokens.total_cached_prompt += cached_tokens
             self.ctx.tokens.last_cached_prompt = cached_tokens
             self.prompt_tokens = prompt_tokens
