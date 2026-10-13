@@ -17,7 +17,7 @@ This skill is only for *administering* the MCP layer itself — inspecting serve
 - `mcp_list_resources()` — list resources (static) and resource templates (parameterized) from all connected servers.
 - `mcp_read_resource(server, uri)` — fetch a specific resource by URI.
 - `mcp_list_prompts()` — list prompts from connected servers, including argument schemas.
-- `mcp_get_prompt(server, name, arguments?)` — retrieve a specific prompt, optionally with JSON arguments.
+- `mcp_get_prompt(server, name, arguments?)` — retrieve a specific prompt, optionally with an object of arguments.
 
 ## When to use
 

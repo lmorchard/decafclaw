@@ -1146,6 +1146,97 @@ async def test_mcp_get_prompt_missing_params(ctx, monkeypatch):
     assert "[error:" in result.text
 
 
+@pytest.mark.asyncio
+async def test_mcp_get_prompt_dict_arguments(ctx, monkeypatch):
+    """mcp_get_prompt passes a dict of arguments through to get_prompt unchanged."""
+    from decafclaw import mcp_client
+    from decafclaw.skills.mcp.tools import tool_mcp_get_prompt
+
+    mock_session = AsyncMock()
+    prompt_result = MagicMock()
+    msg = MagicMock()
+    msg.role = "user"
+    msg.content = MagicMock()
+    msg.content.text = "Please summarize the following"
+    prompt_result.messages = [msg]
+    mock_session.get_prompt = AsyncMock(return_value=prompt_result)
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="ai-srv", type="stdio")
+    registry.servers["ai-srv"] = MCPServerState(
+        config=cfg,
+        status="connected",
+        session=mock_session,
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    args = {"text": "hello world", "limit": 3}
+    result = await tool_mcp_get_prompt(ctx, server="ai-srv", name="summarize", arguments=args)
+    assert "Please summarize the following" in result.text
+    mock_session.get_prompt.assert_awaited_once_with("summarize", args)
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_prompt_json_string_arguments(ctx, monkeypatch):
+    """mcp_get_prompt still accepts a JSON string of arguments."""
+    from decafclaw import mcp_client
+    from decafclaw.skills.mcp.tools import tool_mcp_get_prompt
+
+    mock_session = AsyncMock()
+    prompt_result = MagicMock()
+    msg = MagicMock()
+    msg.role = "user"
+    msg.content = MagicMock()
+    msg.content.text = "Please summarize the following"
+    prompt_result.messages = [msg]
+    mock_session.get_prompt = AsyncMock(return_value=prompt_result)
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="ai-srv", type="stdio")
+    registry.servers["ai-srv"] = MCPServerState(
+        config=cfg,
+        status="connected",
+        session=mock_session,
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await tool_mcp_get_prompt(ctx, server="ai-srv", name="summarize", arguments='{"text": "hi"}')
+    assert "Please summarize the following" in result.text
+    mock_session.get_prompt.assert_awaited_once_with("summarize", {"text": "hi"})
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_prompt_non_object_arguments(ctx, monkeypatch):
+    """mcp_get_prompt rejects non-object arguments with an error and no get_prompt call."""
+    from decafclaw import mcp_client
+    from decafclaw.skills.mcp.tools import tool_mcp_get_prompt
+
+    mock_session = AsyncMock()
+    prompt_result = MagicMock()
+    msg = MagicMock()
+    msg.role = "user"
+    msg.content = MagicMock()
+    msg.content.text = "Please summarize the following"
+    prompt_result.messages = [msg]
+    mock_session.get_prompt = AsyncMock(return_value=prompt_result)
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="ai-srv", type="stdio")
+    registry.servers["ai-srv"] = MCPServerState(
+        config=cfg,
+        status="connected",
+        session=mock_session,
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    for bad in (42, True, "not json", "42", "[1, 2]"):
+        mock_session.get_prompt.reset_mock()
+        result = await tool_mcp_get_prompt(ctx, server="ai-srv", name="summarize", arguments=bad)
+        assert result.text.startswith("[error:")
+        assert "must be an object" in result.text
+        mock_session.get_prompt.assert_not_awaited()
+
+
 # -- MCP prompt command tests --
 
 
