@@ -1006,10 +1006,10 @@ def _substring_search(
         if req_tags:
             tag_list = sorted(req_tags)
             msg = (
-                f"0 documents matched the tag filter {tag_list} for query '{query}'. "
-                f"The empty result is from the tag filter — not evidence that the vault has "
-                f"no relevant content. Matching pages may exist without those tags; retry "
-                f"without the `tags` filter to search untagged."
+                f"0 documents matched query '{query}' with the tag filter {tag_list} — "
+                f"no page both matched the query and carried these tags. This is not "
+                f"evidence the vault lacks relevant content. If you expected matches, "
+                f"retry with a broader query or without the `tags` filter."
             )
             data = {
                 "query": query,
