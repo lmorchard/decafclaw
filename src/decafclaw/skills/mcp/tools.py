@@ -212,7 +212,7 @@ async def tool_mcp_list_prompts(ctx: "Context") -> str | ToolResult:
 
 
 async def tool_mcp_get_prompt(
-    ctx: "Context", server: str = "", name: str = "", arguments: str = "{}"
+    ctx: "Context", server: str = "", name: str = "", arguments: dict | str | None = None
 ) -> str | ToolResult:
     """Get a prompt from an MCP server and return its messages."""
     import asyncio
@@ -233,10 +233,20 @@ async def tool_mcp_get_prompt(
     if state.status != "connected" or not state.session:
         return ToolResult(text=f"[error: MCP server '{server}' is not connected]")
 
-    try:
-        args_dict = _json.loads(arguments) if arguments else {}
-    except _json.JSONDecodeError as e:
-        return ToolResult(text=f"[error: invalid JSON arguments: {e}]")
+    if arguments is None:
+        args_dict = {}
+    elif isinstance(arguments, dict):
+        args_dict = arguments
+    elif isinstance(arguments, str):
+        try:
+            parsed = _json.loads(arguments) if arguments else {}
+        except _json.JSONDecodeError as e:
+            return ToolResult(text=f"[error: arguments must be an object; invalid JSON: {e}]")
+        if not isinstance(parsed, dict):
+            return ToolResult(text=f"[error: arguments must be an object, got {type(parsed).__name__}]")
+        args_dict = parsed
+    else:
+        return ToolResult(text=f"[error: arguments must be an object, got {type(arguments).__name__}]")
 
     try:
         timeout_s = state.config.timeout / 1000
@@ -357,8 +367,8 @@ TOOL_DEFINITIONS = [
                         "description": "Prompt name",
                     },
                     "arguments": {
-                        "type": "string",
-                        "description": "JSON object of prompt arguments (default: '{}')",
+                        "type": "object",
+                        "description": "Object of prompt arguments (default: empty object)",
                     },
                 },
                 "required": ["server", "name"],
