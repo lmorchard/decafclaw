@@ -1003,11 +1003,28 @@ def _substring_search(
             rows.append({"page": page, "excerpt": excerpt})
 
     if not lines:
-        msg = f"No results matching '{query}'." if query else "No files found."
+        if req_tags:
+            tag_list = sorted(req_tags)
+            msg = (
+                f"0 documents matched the tag filter {tag_list} for query '{query}'. "
+                f"The empty result is from the tag filter — not evidence that the vault has "
+                f"no relevant content. Matching pages may exist without those tags; retry "
+                f"without the `tags` filter to search untagged."
+            )
+            data = {
+                "query": query,
+                "mode": "substring",
+                "tags": tag_list,
+                "any_tag": any_tag,
+                "results": [],
+            }
+        else:
+            msg = f"No results matching '{query}'." if query else "No files found."
+            data = {"query": query, "mode": "substring", "results": []}
         return ToolResult(
             text=msg,
             display_short_text=f"'{query}' — no results",
-            data={"query": query, "mode": "substring", "results": []},
+            data=data,
         )
 
     text = f"Found {len(lines)} result(s):\n\n" + "\n".join(lines)
