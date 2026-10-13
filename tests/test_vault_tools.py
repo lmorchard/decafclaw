@@ -1,5 +1,6 @@
 """Tests for vault tools."""
 
+import logging
 import os
 import re
 import time
@@ -396,6 +397,98 @@ class TestVaultWriteUserFolders:
         assert "creative/foo.md" in captured["message"]
         assert "hello world" in captured["message"]
         assert "(new page)" in captured["message"]
+
+
+class TestVaultWriteBrokenLinks:
+    """Deterministic broken [[wiki-link]] check on vault_write (no LLM, fail-open)."""
+
+    @pytest.mark.asyncio
+    async def test_all_links_resolve_no_unresolved(self, ctx, agent_pages):
+        (agent_pages / "Alpha.md").write_text("# Alpha")
+        (agent_pages / "Beta.md").write_text("# Beta")
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(ctx, "agent/pages/Linker", "See [[Alpha]] and [[Beta]].")
+        assert (agent_pages / "Linker.md").exists()
+        assert "saved" in result.text.lower()
+        assert "Unresolved links" not in result.text
+        assert "unresolved_links" not in result.data
+
+    @pytest.mark.asyncio
+    async def test_dangling_link_reported_deduped_in_order(self, ctx, agent_pages):
+        (agent_pages / "Alpha.md").write_text("# Alpha")
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(
+                ctx,
+                "agent/pages/Linker",
+                "See [[Alpha]], then [[Gone]], [[Missing]], and [[Gone]] again.",
+            )
+        # Write still happened even though links are dangling.
+        assert (agent_pages / "Linker.md").exists()
+        assert "saved" in result.text.lower()
+        # Resolved [[Alpha]] not reported; dangling ones named, deduped, first-occurrence order.
+        assert "[[Alpha]]" not in result.text
+        assert "Unresolved links: [[Gone]], [[Missing]]" in result.text
+        assert result.data["unresolved_links"] == ["Gone", "Missing"]
+
+    @pytest.mark.asyncio
+    async def test_display_form_and_subfolder_bare_resolve(self, ctx, agent_pages):
+        (agent_pages / "Target.md").write_text("# Target")
+        (agent_pages / "people").mkdir()
+        (agent_pages / "people" / "Alice.md").write_text("# Alice")
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(ctx, "agent/pages/Linker", "Links to [[Target|the display]] and [[Alice]].")
+        assert (agent_pages / "Linker.md").exists()
+        assert "Unresolved links" not in result.text
+        assert "unresolved_links" not in result.data
+
+    @pytest.mark.asyncio
+    async def test_dangling_subfolder_and_display_reported(self, ctx, agent_pages):
+        (agent_pages / "people").mkdir()
+        (agent_pages / "people" / "Alice.md").write_text("# Alice")
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(
+                ctx,
+                "agent/pages/Linker",
+                "See [[people/Alice]] which resolves, but [[people/Bob]] and [[Ghost]] do not.",
+            )
+        assert (agent_pages / "Linker.md").exists()
+        # people/Alice resolves (by stem); people/Bob and Ghost are dangling.
+        assert result.data["unresolved_links"] == ["people/Bob", "Ghost"]
+        assert "[[people/Bob]]" in result.text
+        assert "[[Ghost]]" in result.text
+        assert "[[people/Alice]]" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_self_link_resolves_because_check_runs_after_write(self, ctx, agent_pages):
+        # A [[link]] to the page being written resolves because the page is on
+        # disk before the check runs. Pins the check-after-write ordering: if the
+        # check were moved before the write, [[selfref]] would be reported.
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(ctx, "agent/pages/selfref", "About [[selfref]] and [[Gone]].")
+        # Page is saved.
+        assert (agent_pages / "selfref.md").exists()
+        # The self-link resolves (not reported); only the dangling link is named.
+        assert result.data["unresolved_links"] == ["Gone"]
+        assert "selfref" not in result.data["unresolved_links"]
+        assert "[[selfref]]" not in result.text
+        assert "Unresolved links: [[Gone]]" in result.text
+        assert "[[Gone]]" in result.text
+
+    @pytest.mark.asyncio
+    async def test_resolution_error_fails_open(self, ctx, agent_pages, caplog):
+        (agent_pages / "Alpha.md").write_text("# Alpha")
+        with (
+            caplog.at_level(logging.DEBUG, logger="decafclaw.skills.vault.tools"),
+            patch("decafclaw.backlinks._resolve_link_target", side_effect=RuntimeError("boom")),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            result = await tool_vault_write(ctx, "agent/pages/Linker", "See [[Alpha]] and [[Missing]].")
+        # Write still succeeded and the normal result is returned.
+        assert (agent_pages / "Linker.md").exists()
+        assert result.text == "Vault page 'agent/pages/Linker' saved."
+        assert "unresolved_links" not in result.data
+        # The failure is logged at debug, not raised.
+        assert any("broken-link check" in r.message for r in caplog.records)
 
 
 class TestVaultDelete:
