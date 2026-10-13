@@ -1038,6 +1038,18 @@ class TestVaultSearch:
         assert "no" in result.text.lower()
 
     @pytest.mark.asyncio
+    async def test_search_no_results_message_unchanged_without_tags(self, ctx, vault_dir):
+        """#688 regression guard: a tagless empty result keeps the exact
+        existing message and data shape — the tag-filter wording must not
+        leak into the no-filter path."""
+        (vault_dir / "Drinks.md").write_text("# Drinks\n\nBoulevardier")
+
+        result = await tool_vault_search(ctx, "nonexistent")
+
+        assert result.text == "No results matching 'nonexistent'."
+        assert result.data == {"query": "nonexistent", "mode": "substring", "results": []}
+
+    @pytest.mark.asyncio
     async def test_search_with_folder_filter(self, ctx, agent_pages):
         (agent_pages / "Topic.md").write_text("# Topic\n\nImportant")
         result = await tool_vault_search(ctx, "Important", folder="agent/pages")
@@ -1062,6 +1074,61 @@ class TestVaultSearchTags:
 
         assert "AsyncPage" in result.text
         assert "RustPage" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_query_plus_tags_false_empty_reports_the_tag_filter(self, ctx, agent_pages):
+        """#688: the query substring-matches a page, but the AND tag filter
+        drops it — an empty result the old `No results matching '...'`
+        message framed as total absence. The message must state the
+        combined query+tag predicate (0 documents matched the query with
+        the tag filter; no page both matched the query and carried the
+        tags), name the tags, and not read as total absence — the tool
+        must not perform the fallback itself."""
+        (agent_pages / "Escalation.md").write_text(
+            "# Escalation\n\nPage the on-call engineer via Nightwatch and post the update."
+        )
+
+        result = await tool_vault_search(ctx, "on-call", tags=["P1", "incident"])
+
+        assert "Escalation" not in result.text
+        assert "0 documents matched query 'on-call' with the tag filter ['incident', 'p1']" in result.text
+        assert "no page both matched the query and carried these tags" in result.text
+        assert "not evidence the vault lacks relevant content" in result.text
+        assert "No results matching" not in result.text
+        assert "retry" in result.text.lower()
+        assert result.data["tags"] == ["incident", "p1"]
+        assert result.data["any_tag"] is False
+        assert result.data["results"] == []
+        assert result.data["mode"] == "substring"
+
+    @pytest.mark.asyncio
+    async def test_query_matches_nothing_with_tags_reports_combined_predicate(self, ctx, agent_pages):
+        """#688 sub-case: the query itself matches no page, so the tag
+        filter drops nothing real. The message must still state the
+        combined query+tag predicate — attributing the empty result
+        exclusively to the tag filter would be wrong here, and 'retry
+        without the tags filter' alone would be a no-op."""
+        (agent_pages / "Escalation.md").write_text("# Escalation\n\nPage the on-call engineer via Nightwatch.")
+
+        result = await tool_vault_search(ctx, "zqxwv", tags=["foo"])
+
+        assert "0 documents matched query 'zqxwv' with the tag filter ['foo']" in result.text
+        assert "no page both matched the query and carried these tags" in result.text
+        assert "not evidence the vault lacks relevant content" in result.text
+        assert "No results matching" not in result.text
+        assert result.data["tags"] == ["foo"]
+        assert result.data["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_pure_tag_filter_empty_message_unchanged(self, ctx, agent_pages):
+        """#688 regression guard: the pure tag-filter path (empty query)
+        keeps its own empty message — only the query+tags path changes."""
+        (agent_pages / "Plain.md").write_text("---\ntags: [rust]\n---\nbody")
+
+        result = await tool_vault_search(ctx, "", tags=["async"])
+
+        assert result.text == "No pages found matching tags ['async']."
+        assert result.data == {"query": "", "mode": "tags", "tags": ["async"], "any_tag": False, "results": []}
 
     @pytest.mark.asyncio
     async def test_empty_query_pure_tag_filter_is_and_by_default(self, ctx, agent_pages):
@@ -1335,6 +1402,36 @@ class TestVaultSearchTagsSemantic:
 
         paths = [r["path"] for r in result.data["results"]]
         assert paths == ["agent/pages/AsyncPage"]
+
+    @pytest.mark.asyncio
+    async def test_tag_filter_empties_semantic_falls_through_to_tag_message(self, ctx, agent_pages, monkeypatch):
+        """#688: when the tag post-filter empties the semantic candidates,
+        the fall-through to `_substring_search` must surface the combined
+        query+tag empty message — the semantic path is what deployed
+        agents use."""
+        ctx.config.embedding.search_strategy = "semantic"
+        (agent_pages / "RustPage.md").write_text("# RustPage\n\nWidget notes about rust work. #rust")
+
+        async def fake_search_similar(*args, **kwargs):
+            return [
+                {
+                    "file_path": "agent/pages/RustPage.md",
+                    "similarity": 0.9,
+                    "source_type": "page",
+                    "entry_text": "Widget notes rust",
+                },
+            ]
+
+        monkeypatch.setattr("decafclaw.embeddings.search_similar", fake_search_similar)
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        assert "0 documents matched query 'widget' with the tag filter ['async']" in result.text
+        assert "no page both matched the query and carried these tags" in result.text
+        assert "No results matching" not in result.text
+        assert result.data["mode"] == "substring"
+        assert result.data["tags"] == ["async"]
+        assert result.data["results"] == []
 
 
 class TestVaultList:
