@@ -154,7 +154,7 @@ The vault skill is **always loaded** — its tools are available in every conver
 | Tool | Description |
 |------|-------------|
 | `vault_read(page)` | Read a page by name or path. Searches subdirectories. |
-| `vault_write(page, content)` | Create or overwrite a page. Indexes in semantic search. |
+| `vault_write(page, content)` | Create or overwrite a page. Indexes in semantic search. After saving, resolves the page's `[[wiki-links]]` and reports any that don't resolve (an `Unresolved links:` line in the result and `data.unresolved_links`); the write still succeeds (fail-open). |
 | `vault_delete(page)` | Delete a page. Pages outside `agent/` trigger a user confirmation. |
 | `vault_rename(from_page, to_page)` | Rename/move a page (preserves links). Pages outside `agent/` trigger a user confirmation. |
 | `vault_grant_folder(folder, reason)` | Request per-conversation trust for a folder. After approval, vault_write/delete/rename under the folder skip confirmation. |

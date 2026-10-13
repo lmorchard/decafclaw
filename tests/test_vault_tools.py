@@ -459,6 +459,22 @@ class TestVaultWriteBrokenLinks:
         assert "[[people/Alice]]" not in result.text
 
     @pytest.mark.asyncio
+    async def test_self_link_resolves_because_check_runs_after_write(self, ctx, agent_pages):
+        # A [[link]] to the page being written resolves because the page is on
+        # disk before the check runs. Pins the check-after-write ordering: if the
+        # check were moved before the write, [[selfref]] would be reported.
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(ctx, "agent/pages/selfref", "About [[selfref]] and [[Gone]].")
+        # Page is saved.
+        assert (agent_pages / "selfref.md").exists()
+        # The self-link resolves (not reported); only the dangling link is named.
+        assert result.data["unresolved_links"] == ["Gone"]
+        assert "selfref" not in result.data["unresolved_links"]
+        assert "[[selfref]]" not in result.text
+        assert "Unresolved links: [[Gone]]" in result.text
+        assert "[[Gone]]" in result.text
+
+    @pytest.mark.asyncio
     async def test_resolution_error_fails_open(self, ctx, agent_pages, caplog):
         (agent_pages / "Alpha.md").write_text("# Alpha")
         with (
