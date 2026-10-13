@@ -2,9 +2,11 @@
 
 ## Resume here
 
-Implementation complete, local gates green, published as a DRAFT PR (not ready, no
+Implementation complete, local gates green, published as DRAFT PR #1067 (not ready, no
 review requested). Worktree: `.claude/worktrees/issue-1006-vault-write-broken-links`,
 branch `issue-1006-vault-write-broken-links`, base `origin/main @ 4eaef9ee`.
+Code implemented and tested at `6c7bc8feaf62b01e02a7a21625464d3628a4bad7`; this
+notes-only commit is the final published head (code identical to `6c7bc8fe`).
 Next action: independent review of the published head (separate worker), then
 `pr ready` + board "In review" + review request — all explicitly out of scope here.
 
@@ -74,4 +76,8 @@ Ready → In progress (via `ghflow board set-status`), readback confirmed.
 
 ## PR
 
-Draft PR URL and published head recorded below at publication.
+- Draft PR: https://github.com/lmorchard/decafclaw/pull/1067 (DRAFT, not ready, no review requested).
+- Code commit (implemented + tested): `6c7bc8feaf62b01e02a7a21625464d3628a4bad7`.
+- This notes-only commit is the final published head (code identical to `6c7bc8fe`).
+- `verify-commit` clean on the branch and on the PR head. No `Closes #1006` in the draft
+  body; add it when marking ready (the `pr ready` step finalizes the description).
