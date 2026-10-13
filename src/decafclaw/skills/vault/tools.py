@@ -429,14 +429,34 @@ async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | Too
         kind=KIND_UPDATE if existed else KIND_CREATE,
         path=path,
     )
-    return ToolResult(
-        text=f"Vault page '{page}' saved.",
-        data={
-            "path": page,
-            "created": not existed,
-            "bytes_written": len(content.encode("utf-8")),
-        },
-    )
+    result_text = f"Vault page '{page}' saved."
+    result_data = {
+        "path": page,
+        "created": not existed,
+        "bytes_written": len(content.encode("utf-8")),
+    }
+    # Deterministic broken-link check (no LLM, fail-open). The page is already
+    # on disk, so a [[link]] to itself resolves and is not reported. Uses the
+    # same helpers as vault_backlinks so the rules match exactly.
+    try:
+        from decafclaw.backlinks import _build_page_lookup, _resolve_link_target
+
+        vault = _vault_root(ctx.config).resolve()
+        pages = sorted(vault.rglob("*.md"))
+        full_lower_map, stem_lower_map = _build_page_lookup(pages, vault)
+        unresolved: list[str] = []
+        seen: set[str] = set()
+        for match in _WIKI_LINK_RE.finditer(content):
+            raw = match.group(1)
+            if _resolve_link_target(raw, full_lower_map, stem_lower_map) is None and raw not in seen:
+                seen.add(raw)
+                unresolved.append(raw)
+        if unresolved:
+            result_text += "\nUnresolved links: " + ", ".join(f"[[{raw}]]" for raw in unresolved)
+            result_data["unresolved_links"] = unresolved
+    except Exception as exc:
+        log.debug("vault_write: broken-link check failed for %r: %s", page, exc)
+    return ToolResult(text=result_text, data=result_data)
 
 
 async def tool_vault_delete(ctx: "Context", page: str) -> ToolResult:
