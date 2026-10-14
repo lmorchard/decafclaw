@@ -668,11 +668,14 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 "reason": f"Security monitor requires explicit confirmation: {decision.reason}",
             }
         suggested_pattern = _suggest_pattern(command)
+        ask_message = f"Shell command (security review requested): `{command}`"
+        if decision.reason:
+            ask_message += f"\nReason: {decision.reason}"
         result = await request_confirmation(
             ctx,
             tool_name=tool_name,
             command=command,
-            message=message or f"Shell command (security review requested): `{command}`",
+            message=message or ask_message,
             suggested_pattern=suggested_pattern,
         )
         if result.get("add_pattern"):
@@ -684,6 +687,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
         log.info(f"[{tool_name}] pre-approved by command: {command}")
         return {"approved": True}
     decline_reason = ""
+    decline_risk = ""
     suggested_rule = ""
     if ctx.config.shell.aux_approval_enabled:
         if _command_matches_pattern(command, ctx.tools.llm_approved_shell_patterns):
@@ -741,6 +745,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 )
 
                 decline_reason = str(data.get("reason") or "").strip()
+                decline_risk = str(data.get("risk") or "").strip()
                 suggested_rule = str(data.get("suggested_rule") or "").strip()
 
                 msg_content = f"Command: {command}\nRisk: {data.get('risk')}\nReason: {data.get('reason')}"
@@ -773,11 +778,16 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
         log.warning(f"[{tool_name}] denied on unattended turn (task_mode={ctx.task_mode!r}): {command}")
         return {"approved": False, "reason": "unattended turn: command matches no allow pattern"}
 
+    prompt_message = f"Shell command: `{command}`"
+    if decline_risk:
+        prompt_message += f"\nRisk: {decline_risk}"
+    if decline_reason:
+        prompt_message += f"\nReason: {decline_reason}"
     result = await request_confirmation(
         ctx,
         tool_name=tool_name,
         command=command,
-        message=message or f"Shell command: `{command}`",
+        message=message or prompt_message,
         suggested_pattern=suggested_pattern,
         decline_reason=decline_reason,
         suggested_rule=suggested_rule,

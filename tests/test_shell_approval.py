@@ -568,3 +568,111 @@ async def test_add_rule_ignored_when_denied_or_no_suggested_rule(ctx):
         result2 = await tool_shell(ctx, "some-cmd")
         assert result2 == "ran"
         assert "Unsolicited rule" not in ctx.tools.aux_approval_guidance
+
+
+# -- Issue #90: the confirmation message explains why approval is requested --
+
+
+@pytest.mark.asyncio
+async def test_ask_confirmation_message_includes_monitor_reason(ctx):
+    """A security-monitor ASK decision puts its reason in the confirmation message (#90)."""
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+        return_value={"approved": False},
+    ) as mock_confirm:
+        result = await check_shell_approval(ctx, "chmod 777 script.sh")
+        assert result == {"approved": False}
+        _, kwargs = mock_confirm.call_args
+        message = kwargs["message"]
+        assert "Shell command (security review requested): `chmod 777 script.sh`" in message
+        assert (
+            "Reason: Sensitive command requires explicit confirmation: System permission modification (chmod)"
+            in message
+        )
+
+
+@pytest.mark.asyncio
+async def test_aux_decline_confirmation_message_includes_risk_and_reason(ctx):
+    """An aux-LLM decline puts its risk and reason in the confirmation message (#90)."""
+    ctx.config.shell.aux_approval_enabled = True
+
+    mock_call = AsyncMock(
+        return_value={
+            "content": json.dumps(
+                {
+                    "auto_approve": False,
+                    "reason": "Modifies git remote state",
+                    "risk": "medium",
+                }
+            )
+        }
+    )
+    ctx.aux_llm = MagicMock(return_value=mock_call)
+
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+        return_value={"approved": False},
+    ) as mock_confirm:
+        result = await check_shell_approval(ctx, "echo hello")
+        assert result == {"approved": False}
+        _, kwargs = mock_confirm.call_args
+        message = kwargs["message"]
+        assert "Shell command: `echo hello`" in message
+        assert "Risk: medium" in message
+        assert "Reason: Modifies git remote state" in message
+        # the decline reason still flows to the confirmation action data (#982)
+        assert kwargs.get("decline_reason") == "Modifies git remote state"
+
+
+@pytest.mark.asyncio
+async def test_no_reason_confirmation_message_unchanged(ctx):
+    """No monitor ASK and no aux decision: the message stays exactly as before (#90).
+
+    Aux approval is disabled by default, so `echo hello` (tier-1 ALLOW, not
+    ambiguous) falls straight through to the plain prompt.
+    """
+    assert ctx.config.shell.aux_approval_enabled is False
+
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+        return_value={"approved": False},
+    ) as mock_confirm:
+        result = await check_shell_approval(ctx, "echo hello")
+        assert result == {"approved": False}
+        _, kwargs = mock_confirm.call_args
+        assert kwargs["message"] == "Shell command: `echo hello`"
+
+
+@pytest.mark.asyncio
+async def test_caller_message_takes_precedence(ctx):
+    """A caller-supplied message still wins on both prompt paths (#90)."""
+    # ASK path: the generated reason must not replace the caller's message
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+        return_value={"approved": False},
+    ) as mock_confirm:
+        result = await check_shell_approval(ctx, "chmod 777 script.sh", message="Custom ask message")
+        assert result == {"approved": False}
+        _, kwargs = mock_confirm.call_args
+        assert kwargs["message"] == "Custom ask message"
+
+    # Fallthrough path: aux declines, but the caller's message still wins
+    ctx.config.shell.aux_approval_enabled = True
+    mock_call = AsyncMock(
+        return_value={"content": json.dumps({"auto_approve": False, "reason": "Too risky", "risk": "high"})}
+    )
+    ctx.aux_llm = MagicMock(return_value=mock_call)
+
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+        return_value={"approved": False},
+    ) as mock_confirm:
+        result = await check_shell_approval(ctx, "echo hello", message="Background process: `echo hello`")
+        assert result == {"approved": False}
+        _, kwargs = mock_confirm.call_args
+        assert kwargs["message"] == "Background process: `echo hello`"
