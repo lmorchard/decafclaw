@@ -7,11 +7,13 @@ import dataclasses
 from decafclaw.config_types import CleanupConfig
 from decafclaw.context_cleanup import (
     _STUB_PREFIX,
+    _SUPERSEDED_STUB,
     ClearStats,
     _build_tool_name_index,
     _user_turn_boundary_indices,
     clear_old_tool_results,
 )
+from decafclaw.context_composer import ComposerMode
 
 
 def _cfg(**overrides):
@@ -281,6 +283,147 @@ class TestClearOldToolResults:
         assert stats.cleared_count == 1
         # Stub mentions byte count, not char count.
         assert "1200 bytes" in history[2]["content"]
+
+
+# -- resolved-error pruning (#540) --------------------------------------------
+
+
+class TestPruneResolvedErrors:
+    """The second, more aggressive pass: a tool error a later same-tool
+    success has resolved is stubbed, regardless of size or age."""
+
+    def _tool_call_args(self, call_id, name, arguments):
+        return {"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
+
+    def _resolved_history(self, *, tool_name="shell", error_args=None, success_args=None):
+        """History where tool T errors (c1) then a later call to T succeeds
+        (c2). The error body is deliberately small (under the 1024-byte
+        ``min_size_bytes``) so only the pruning pass — not the size/age clear
+        — can stub it, isolating the behavior under test."""
+        err_args = "{}" if error_args is None else error_args
+        ok_args = "{}" if success_args is None else success_args
+        return [
+            _user("turn1"),
+            _assistant(tool_calls=[self._tool_call_args("c1", tool_name, err_args)]),
+            _tool("c1", "[error: command failed: " + "detail " * 16 + "]"),
+            _assistant(tool_calls=[self._tool_call_args("c2", tool_name, ok_args)]),
+            _tool("c2", "OK: file read successfully"),
+            _assistant("synthesized"),
+            _user("turn2"),
+            _assistant("ok"),
+            _user("turn3"),
+            _assistant("hi"),
+        ]
+
+    def test_prunes_resolved_error_results(self):
+        history = self._resolved_history()
+        stats = clear_old_tool_results(history, _cfg())
+        # The resolved error is stubbed; the later success is untouched.
+        assert history[2]["content"] == _SUPERSEDED_STUB
+        assert history[4]["content"] == "OK: file read successfully"
+        assert stats.cleared_count == 1
+        assert stats.cleared_bytes > 0
+        # The stub does not masquerade as an error on a later pass.
+        assert not history[2]["content"].startswith("[error")
+
+    def test_prune_resolved_errors_config(self):
+        # Enabled (the default): the resolved error is stubbed.
+        history = self._resolved_history()
+        clear_old_tool_results(history, _cfg())
+        assert history[2]["content"] == _SUPERSEDED_STUB
+
+        # Disabled: the resolved error is left untouched.
+        history = self._resolved_history()
+        cfg = _cfg()
+        cfg.cleanup.prune_resolved_errors = False
+        clear_old_tool_results(history, cfg)
+        assert history[2]["content"].startswith("[error")
+
+    def test_prune_resolved_same_args_only(self):
+        # Conservative mode: a later same-tool success with DIFFERENT args
+        # does not resolve the error.
+        history = self._resolved_history(error_args='{"path": "a"}', success_args='{"path": "b"}')
+        cfg = _cfg()
+        cfg.cleanup.prune_resolved_same_args_only = True
+        clear_old_tool_results(history, cfg)
+        assert history[2]["content"].startswith("[error")
+
+        # A later same-tool success with the SAME args (even reordered /
+        # re-spaced JSON) does resolve it.
+        history = self._resolved_history(error_args='{"path": "a"}', success_args='{"path":"a"}')
+        cfg = _cfg()
+        cfg.cleanup.prune_resolved_same_args_only = True
+        clear_old_tool_results(history, cfg)
+        assert history[2]["content"] == _SUPERSEDED_STUB
+
+        # Default (same-tool-only) ignores args entirely.
+        history = self._resolved_history(error_args='{"path": "a"}', success_args='{"path": "b"}')
+        clear_old_tool_results(history, _cfg())
+        assert history[2]["content"] == _SUPERSEDED_STUB
+
+    def test_unresolved_error_not_pruned(self):
+        """An error with no later same-tool success stays as-is."""
+        history = [
+            _user("turn1"),
+            _assistant(tool_calls=[self._tool_call_args("c1", "shell", "{}")]),
+            _tool("c1", "[error: command failed: " + "detail " * 16 + "]"),
+            _assistant("gave up"),
+            _user("turn2"),
+            _assistant("ok"),
+        ]
+        clear_old_tool_results(history, _cfg())
+        assert history[2]["content"].startswith("[error")
+
+    def test_tiny_resolved_error_not_pruned(self):
+        """A resolved error smaller than the stub is left as-is — stubbing
+        it would make the in-memory view *larger* (mirrors the size/age
+        clear's pathological-case skip)."""
+        history = [
+            _user("turn1"),
+            _assistant(tool_calls=[self._tool_call_args("c1", "shell", "{}")]),
+            _tool("c1", "[error: denied]"),
+            _assistant(tool_calls=[self._tool_call_args("c2", "shell", "{}")]),
+            _tool("c2", "OK"),
+            _assistant("done"),
+            _user("turn2"),
+            _assistant("ok"),
+            _user("turn3"),
+        ]
+        clear_old_tool_results(history, _cfg())
+        assert history[2]["content"] == "[error: denied]"
+
+    def test_different_tools_not_cross_pruned(self):
+        """A success of a different tool must not resolve an earlier error."""
+        history = self._resolved_history(tool_name="shell")
+        # c2 is a shell success; add a separate error for a DIFFERENT tool
+        # (web_fetch) with no later web_fetch success — must stay.
+        history.insert(1, _assistant(tool_calls=[self._tool_call_args("c0", "web_fetch", "{}")]))
+        history.insert(2, _tool("c0", "[error: fetch failed: " + "detail " * 16 + "]"))
+        clear_old_tool_results(history, _cfg())
+        # web_fetch error (now at index 2) is unresolved; shell error (now
+        # at index 4) is resolved by the later shell success.
+        assert history[2]["content"].startswith("[error")
+        assert history[4]["content"] == _SUPERSEDED_STUB
+
+    def test_prune_skipped_in_non_interactive_modes(self):
+        """Heartbeat / scheduled / child turns skip pruning, like memory
+        retrieval. The size/age clear is unaffected by mode."""
+        for mode in (ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT):
+            history = self._resolved_history()
+            clear_old_tool_results(history, _cfg(), mode=mode)
+            assert history[2]["content"].startswith("[error"), f"expected no prune in {mode}"
+        history = self._resolved_history()
+        clear_old_tool_results(history, _cfg(), mode=ComposerMode.INTERACTIVE)
+        assert history[2]["content"] == _SUPERSEDED_STUB
+
+    def test_prune_idempotent(self):
+        history = self._resolved_history()
+        first = clear_old_tool_results(history, _cfg())
+        assert first.cleared_count == 1
+        second = clear_old_tool_results(history, _cfg())
+        assert second.cleared_count == 0
+        assert second.cleared_bytes == 0
+        assert history[2]["content"] == _SUPERSEDED_STUB
 
 
 class TestClearStats:

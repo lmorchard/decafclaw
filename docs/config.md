@@ -141,7 +141,7 @@ Auto-surface recently written journal entries at interactive turn start on a sma
 
 ### `cleanup`
 
-Tool-result clearing — a lightweight pre-compaction tier that replaces large old tool-message bodies with a short stub (`[tool output cleared: N chars]`) so the agent loop doesn't keep paying attention budget on raw tool output it has already synthesized. Runs every iteration (cheap, in-memory). The original tool body remains durably written to the per-conversation JSONL archive — only the in-memory copy is edited. See [context-composer.md#tool-result-clearing-lightweight-tier](context-composer.md#tool-result-clearing-lightweight-tier) and #298.
+Tool-result clearing — a lightweight pre-compaction tier with two in-memory passes. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: N chars]`) so the agent loop doesn't keep paying attention budget on raw tool output it has already synthesized. The **resolved-error pruning** pass (#540) stubs a tool error a later same-tool success has resolved (`[tool error superseded by later success]`). Both run every iteration (cheap, in-memory). The original tool body remains durably written to the per-conversation JSONL archive — only the in-memory copy is edited. See [context-composer.md#tool-result-clearing-lightweight-tier](context-composer.md#tool-result-clearing-lightweight-tier) and #298.
 
 | Field | Type | Default | Env Var |
 |-------|------|---------|---------|
@@ -149,8 +149,10 @@ Tool-result clearing — a lightweight pre-compaction tier that replaces large o
 | `min_turn_age` | int | `2` | `CLEANUP_MIN_TURN_AGE` |
 | `min_size_bytes` | int | `1024` | `CLEANUP_MIN_SIZE_BYTES` |
 | `preserve_tools` | list[str] | `["activate_skill", "checklist_create", "checklist_step_done", "checklist_abort", "checklist_status"]` | `CLEANUP_PRESERVE_TOOLS` |
+| `prune_resolved_errors` | bool | `true` | `CLEANUP_PRUNE_RESOLVED_ERRORS` |
+| `prune_resolved_same_args_only` | bool | `false` | `CLEANUP_PRUNE_RESOLVED_SAME_ARGS_ONLY` |
 
-`min_turn_age: 2` means tool messages from the current and previous user turn stay intact; older results are eligible for clearing. `min_size_bytes: 1024` is a floor — messages smaller than the stub itself wouldn't be worth clearing. `preserve_tools` is a hard allowlist for tools whose output is fundamentally load-bearing (e.g. `activate_skill` announces the tools the agent will use; `checklist_*` carries the per-conversation execution-loop state).
+`min_turn_age: 2` means tool messages from the current and previous user turn stay intact; older results are eligible for clearing. `min_size_bytes: 1024` is a floor — messages smaller than the stub itself wouldn't be worth clearing. `preserve_tools` is a hard allowlist for tools whose output is fundamentally load-bearing (e.g. `activate_skill` announces the tools the agent will use; `checklist_*` carries the per-conversation execution-loop state). `prune_resolved_errors: true` enables the resolved-error pruning pass (disabled = errors are left to the size/age clear alone); `prune_resolved_same_args_only: true` makes that pass conservative, pruning only when the resolving success used the same arguments as the failed call (default `false` = match on tool name alone).
 
 ### `vault`
 
