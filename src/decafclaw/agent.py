@@ -146,6 +146,18 @@ def _archive(ctx: "Context", msg) -> None:
             log.debug("note_partial_assistant_archived failed: %s", exc)
 
 
+def _composer_mode_for(ctx: "Context") -> ComposerMode:
+    """Map a runtime context to its composer mode, the single source of the
+    non-interactive classification. HEARTBEAT, SCHEDULED, and CHILD_AGENT are
+    the kinds that skip memory/wiki injection and resolved-error pruning;
+    everything else (interactive, background wake) is INTERACTIVE."""
+    if ctx.is_child:
+        return ComposerMode.CHILD_AGENT
+    if ctx.task_mode in _TASK_MODE_TO_COMPOSER:
+        return _TASK_MODE_TO_COMPOSER[ctx.task_mode]
+    return ComposerMode.INTERACTIVE
+
+
 async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None:
     """Run the lightweight tool-result clear pass, then trigger
     full compaction if the token budget is exceeded.
@@ -154,9 +166,11 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None
     so it runs every iteration. Full compaction only fires when
     history is large enough to justify the LLM summarization cost.
     """
-    # Lightweight tier first — see #298 and docs/context-composer.md.
+    # Lightweight tier first — see #298 and docs/context-composer.md. The
+    # composer mode gates the resolved-error pruning pass (#540); the
+    # size/age clear inside is mode-independent.
     try:
-        delta = clear_old_tool_results(history, config)
+        delta = clear_old_tool_results(history, config, mode=_composer_mode_for(ctx))
         ctx.composer.cleanup_cleared_count += delta.cleared_count
         ctx.composer.cleanup_cleared_bytes += delta.cleared_bytes
         if delta.cleared_count:
@@ -733,12 +747,7 @@ class TurnRunner:
         not via mode — HEARTBEAT/SCHEDULED skip wiki too, which isn't
         always desired when only memory should be skipped.
         """
-        if self.ctx.is_child:
-            composer_mode = ComposerMode.CHILD_AGENT
-        elif self.ctx.task_mode in _TASK_MODE_TO_COMPOSER:
-            composer_mode = _TASK_MODE_TO_COMPOSER[self.ctx.task_mode]
-        else:
-            composer_mode = ComposerMode.INTERACTIVE
+        composer_mode = _composer_mode_for(self.ctx)
 
         self.composer = ContextComposer(state=self.ctx.composer)
         self.composed = await self.composer.compose(

@@ -6,17 +6,33 @@ the model doesn't keep paying attention budget on raw tool output it
 has already synthesized. The original body remains durably written to
 the conversation's JSONL archive — this is purely an in-memory edit.
 
+A second, more aggressive pass stubs tool *errors* that a later success
+of the same tool has already resolved (#540), so a recovered failure no
+longer earns attention budget either. Same in-memory-only invariant: the
+archive keeps the original.
+
 See ``docs/context-composer.md`` and #298 for design rationale.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
+
+from .context_composer import ComposerMode
 
 log = logging.getLogger(__name__)
 
 _STUB_PREFIX = "[tool output cleared:"
+_SUPERSEDED_PREFIX = "[tool error superseded"
+_SUPERSEDED_STUB = "[tool error superseded by later success]"
+
+# Non-interactive turn kinds skip resolved-error pruning, mirroring the mode
+# gate memory retrieval uses (see ComposerMode and
+# context_composer.py:``skip_modes``). The size-based clear below still runs
+# in every mode — only this pass is mode-gated.
+_PRUNE_SKIP_MODES = frozenset({ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT})
 
 
 @dataclass
@@ -37,6 +53,17 @@ def _is_already_cleared(content) -> bool:
     """Return True if this content already starts with the stub
     prefix (idempotent re-runs)."""
     return isinstance(content, str) and content.startswith(_STUB_PREFIX)
+
+
+def _is_error_result(content) -> bool:
+    """Return True if this tool result encodes a failure.
+
+    Tools report errors as ``ToolResult(text="[error: ...]")``, which lands
+    in the in-memory history as a tool-role message whose content starts
+    with ``[error`` (see ``tool_execution.py`` and
+    ``agent.py:_extract_call_signatures``). Leading whitespace is tolerated.
+    """
+    return isinstance(content, str) and content.lstrip().startswith("[error")
 
 
 def _user_turn_boundary_indices(history: list[dict]) -> list[int]:
@@ -75,29 +102,135 @@ def _build_tool_name_index(history: list[dict]) -> dict[str, str]:
     return by_call_id
 
 
-def clear_old_tool_results(history: list[dict], config) -> ClearStats:
-    """Mutate ``history`` in place: for each tool message that's old,
-    large, and not allowlisted, replace ``content`` with a short stub.
+def _build_tool_args_index(history: list[dict]) -> dict[str, object]:
+    """Build a one-pass ``{tool_call_id: arguments}`` lookup used only for
+    same-args matching (``prune_resolved_same_args_only``).
 
-    Eligibility (all must hold):
+    JSON argument strings are parsed so key order and whitespace don't
+    affect equality (``{"a":1,"b":2}`` == ``{"b":2,"a":1}``). Unparseable
+    arguments fall back to their raw string, degrading the comparison to
+    exact-string equality rather than guessing.
+    """
+    by_call_id: dict[str, object] = {}
+    for msg in history:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls", []) or []:
+            if not isinstance(tc, dict):
+                continue
+            call_id = tc.get("id")
+            if not call_id:
+                continue
+            fn = tc.get("function") or {}
+            raw = fn.get("arguments", tc.get("arguments", ""))
+            if isinstance(raw, str):
+                try:
+                    by_call_id[call_id] = json.loads(raw)
+                except (TypeError, ValueError):
+                    by_call_id[call_id] = raw
+            else:
+                by_call_id[call_id] = raw
+    return by_call_id
+
+
+def _prune_resolved_errors(history: list[dict], cfg, tool_names_by_call_id, stats) -> None:
+    """Stub tool *errors* that a later success of the same tool resolved.
+
+    More aggressive than the size-based clear: an error is eligible
+    regardless of size or age once a later same-tool result is not itself an
+    error. When ``cfg.prune_resolved_same_args_only`` is set, the later
+    success must also carry the same arguments as the failed call (the
+    conservative matching mode). Mutates ``history`` in place and folds the
+    reclaimed bytes into ``stats``.
+    """
+    n = len(history)
+    tool_args_by_call_id = _build_tool_args_index(history) if cfg.prune_resolved_same_args_only else None
+    stub_bytes = len(_SUPERSEDED_STUB.encode("utf-8"))
+
+    for i, msg in enumerate(history):
+        if msg.get("role") != "tool":
+            continue
+        content = msg.get("content") or ""
+        if not isinstance(content, str) or not _is_error_result(content):
+            continue
+        if content.startswith(_SUPERSEDED_PREFIX):
+            # Idempotent re-run guard — already pruned this pass or a prior one.
+            continue
+        call_id = msg.get("tool_call_id", "")
+        name = tool_names_by_call_id.get(call_id)
+        if not name:
+            # Originating assistant message compacted away — can't match a tool.
+            continue
+        resolved = False
+        for j in range(i + 1, n):
+            later = history[j]
+            if later.get("role") != "tool":
+                continue
+            later_content = later.get("content") or ""
+            if not isinstance(later_content, str) or _is_error_result(later_content):
+                continue
+            if tool_names_by_call_id.get(later.get("tool_call_id", "")) != name:
+                continue
+            if tool_args_by_call_id is not None and tool_args_by_call_id.get(call_id) != tool_args_by_call_id.get(
+                later.get("tool_call_id", "")
+            ):
+                continue
+            resolved = True
+            break
+        if not resolved:
+            continue
+        original_bytes = len(content.encode("utf-8"))
+        if original_bytes <= stub_bytes:
+            # A recovered error this small isn't worth the edit — stubbing
+            # it would make the in-memory view *larger*. Mirrors the
+            # size/age clear's pathological-case skip below.
+            continue
+        msg["content"] = _SUPERSEDED_STUB
+        stats.cleared_count += 1
+        stats.cleared_bytes += original_bytes - stub_bytes
+        log.debug("Pruned resolved error at history[%d] (tool=%s, %d bytes)", i, name, original_bytes)
+
+
+def clear_old_tool_results(history: list[dict], config, mode: ComposerMode = ComposerMode.INTERACTIVE) -> ClearStats:
+    """Mutate ``history`` in place in two passes.
+
+    Pass 1 — resolved-error pruning (#540): a tool error that a later
+    success of the same tool has resolved is stubbed, more aggressively than
+    the size/age clear (any size, any age). Skipped when
+    ``cleanup.prune_resolved_errors`` is off or in a non-interactive
+    ``mode`` (heartbeat / scheduled / child).
+
+    Pass 2 — size/age clear. For each tool message that's old, large, and
+    not allowlisted, replace ``content`` with a short stub. Eligibility (all
+    must hold):
       1. ``role == "tool"``
       2. ``content`` is not already a stub (idempotent re-run guard)
       3. originating tool name is not in ``cleanup.preserve_tools``
-         (None — name-not-resolvable — is treated as eligible)
+          (None — name-not-resolvable — is treated as eligible)
       4. message is older than ``cleanup.min_turn_age`` user-turn
-         boundaries
+          boundaries
       5. ``len(content.encode("utf-8")) >= cleanup.min_size_bytes``
       6. the stub itself would actually be smaller than the original
-         (skips the pathological case where ``min_size_bytes`` is set
-         below the stub length)
+          (skips the pathological case where ``min_size_bytes`` is set
+          below the stub length)
 
     Returns a ``ClearStats`` with the count + bytes of *this call's*
-    deletions (not cumulative).
+    deletions (both passes, not cumulative).
     """
     stats = ClearStats()
     cfg = config.cleanup
     if not cfg.enabled:
         return stats
+
+    tool_names_by_call_id = _build_tool_name_index(history)
+
+    # Pass 1 — resolved-error pruning. Runs before the size/age guards below
+    # because it's independent of them: a resolved error is worth stubbing
+    # even when it's small (under ``min_size_bytes``) or recent (inside the
+    # protected window). Skipped in non-interactive modes, like memory
+    # retrieval; the size/age clear is unaffected by ``mode``.
+    if cfg.prune_resolved_errors and mode not in _PRUNE_SKIP_MODES:
+        _prune_resolved_errors(history, cfg, tool_names_by_call_id, stats)
 
     # Defensive guard: a misconfigured ``min_turn_age`` <= 0 would index
     # ``boundaries[-0] == boundaries[0]`` and silently clear everything
@@ -117,7 +250,6 @@ def clear_old_tool_results(history: list[dict], config) -> ClearStats:
     # protected turn; messages strictly before cutoff are eligible.
     cutoff = boundaries[-cfg.min_turn_age]
     preserve = set(cfg.preserve_tools)
-    tool_names_by_call_id = _build_tool_name_index(history)
 
     for i, msg in enumerate(history):
         if i >= cutoff:
