@@ -119,8 +119,10 @@ class CleanupConfig:
     """Tool-result clearing — a lightweight tier that runs before
     full compaction. Replaces large old tool-message bodies with a
     short stub so the agent loop doesn't keep paying attention budget
-    on raw tool output it has already synthesized. See
-    docs/context-composer.md and #298.
+    on raw tool output it has already synthesized. A second, more
+    aggressive pass stubs tool errors that a later success of the same
+    tool has already resolved. See docs/context-composer.md, #298,
+    and #540.
     """
 
     enabled: bool = True
@@ -135,6 +137,13 @@ class CleanupConfig:
             "checklist_status",
         ]
     )
+    # Resolved-error pruning (#540): stub a tool error whose same-tool
+    # failure was later recovered. More aggressive than the size/age clear —
+    # applies regardless of size and age. Skipped in non-interactive modes.
+    prune_resolved_errors: bool = True
+    # Conservative matching: only prune when the later success carries the
+    # same arguments as the failed call. Default False = same-tool-only.
+    prune_resolved_same_args_only: bool = False
 
 
 @dataclass
