@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from tabstack import APIStatusError, AsyncTabstack
+from tabstack.types import GeotargetGeoTarget
 
 from decafclaw.media import ToolResult
 from decafclaw.tools.confirmation import request_confirmation
@@ -51,11 +52,18 @@ def _get_client() -> AsyncTabstack:
 # -- Read / extract tools ---------------------------------------------------
 
 
-async def tool_tabstack_extract_markdown(ctx: "Context", url: str) -> ToolResult:
+async def tool_tabstack_extract_markdown(
+    ctx: "Context",
+    url: str,
+    geo_target: str | None = None,
+) -> ToolResult:
     """Extract clean Markdown from a web page or PDF."""
     log.info(f"[tool:tabstack_extract_markdown] {url}")
     try:
-        result = await _get_client().extract.markdown(url=url)
+        kwargs: dict = {"url": url}
+        if geo_target:
+            kwargs["geo_target"] = GeotargetGeoTarget(country=geo_target)
+        result = await _get_client().extract.markdown(**kwargs)
         return ToolResult(
             text=result.content,
             data={"url": url, "size": len(result.content.encode("utf-8"))},
@@ -102,6 +110,8 @@ async def tool_tabstack_automate(
     url: str | None = None,
     data: dict | None = None,
     interactive: bool = False,
+    guardrails: str | None = None,
+    geo_target: str | None = None,
 ) -> str:
     """Run a multi-step browser automation task.
 
@@ -112,17 +122,23 @@ async def tool_tabstack_automate(
     can gather them and retry.
     """
     log.info(
-        "[tool:tabstack_automate] task=%s url=%s interactive=%s data_keys=%s",
+        "[tool:tabstack_automate] task=%s url=%s interactive=%s data_keys=%s guardrails=%s geo_target=%s",
         task,
         url,
         interactive,
         sorted((data or {}).keys()),
+        guardrails,
+        geo_target,
     )
     try:
         client = _get_client()
         kwargs: dict = {"task": task}
         if url:
             kwargs["url"] = url
+        if guardrails:
+            kwargs["guardrails"] = guardrails
+        if geo_target:
+            kwargs["geo_target"] = GeotargetGeoTarget(country=geo_target)
         if interactive:
             kwargs["interactive"] = True
             # `data` is only meaningful for interactive form-fill; never forward it
@@ -443,7 +459,11 @@ TOOL_DEFINITIONS = [
                     "url": {
                         "type": "string",
                         "description": "URL of the web page or PDF to read",
-                    }
+                    },
+                    "geo_target": {
+                        "type": "string",
+                        "description": "ISO 3166-1 alpha-2 country code (e.g. 'US', 'GB') to fetch the page from that region. Omit for default behavior.",
+                    },
                 },
                 "required": ["url"],
             },
@@ -521,6 +541,14 @@ TOOL_DEFINITIONS = [
                     "interactive": {
                         "type": "boolean",
                         "description": "Enable interactive form-fill: answer the agent's form-data requests from `data`, gated by user confirmation. Default false.",
+                    },
+                    "guardrails": {
+                        "type": "string",
+                        "description": "Natural-language safety constraints for the automation (e.g. 'do not enter payment details'). Omit for default behavior.",
+                    },
+                    "geo_target": {
+                        "type": "string",
+                        "description": "ISO 3166-1 alpha-2 country code (e.g. 'US', 'GB') to run the automation from that region. Omit for default behavior.",
                     },
                 },
                 "required": ["task"],

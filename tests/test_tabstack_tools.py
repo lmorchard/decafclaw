@@ -5,11 +5,13 @@ plain-dict extract/generate responses, and the interactive form-fill flow with
 its confirmation gate — without real network calls.
 """
 
+import inspect
 import types
 
 import httpx
 import pytest
 from tabstack import APIStatusError
+from tabstack.types import GeotargetGeoTarget
 
 from decafclaw.media import ToolResult
 from decafclaw.skills.tabstack import tools
@@ -58,11 +60,17 @@ class _FakeAgent:
 
 
 class _FakeExtract:
-    def __init__(self, json_result):
+    def __init__(self, json_result=None, markdown_content="# hi"):
         self._json_result = json_result
+        self._markdown_content = markdown_content
+        self.markdown_calls = []  # list of kwargs
 
     async def json(self, **kwargs):
         return self._json_result
+
+    async def markdown(self, **kwargs):
+        self.markdown_calls.append(kwargs)
+        return types.SimpleNamespace(content=self._markdown_content)
 
 
 class _FakeGenerate:
@@ -182,6 +190,49 @@ async def test_automate_uninitialized_client_returns_error(ctx, monkeypatch):
 
     result = await tools.tool_tabstack_automate(ctx, task="t")
     assert result.startswith("[error:")
+
+
+# -- guardrails / geo_target forwarding --------------------------------------
+
+
+async def test_automate_forwards_guardrails(ctx, use_client):
+    agent = _FakeAgent(automate_events=[_event("complete", final_answer="x")])
+    use_client(_FakeClient(agent=agent))
+
+    await tools.tool_tabstack_automate(ctx, task="t", guardrails="do not enter payment details")
+
+    assert agent.last_automate_kwargs["guardrails"] == "do not enter payment details"
+
+
+async def test_automate_forwards_geo_target(ctx, use_client):
+    agent = _FakeAgent(automate_events=[_event("complete", final_answer="x")])
+    use_client(_FakeClient(agent=agent))
+
+    await tools.tool_tabstack_automate(ctx, task="t", geo_target="US")
+
+    assert agent.last_automate_kwargs["geo_target"] == GeotargetGeoTarget(country="US")
+
+
+async def test_automate_omits_unset_optional_params(ctx, use_client):
+    """Omitted guardrails/geo_target must not reach the SDK — default behavior."""
+    agent = _FakeAgent(automate_events=[_event("complete", final_answer="x")])
+    use_client(_FakeClient(agent=agent))
+
+    await tools.tool_tabstack_automate(ctx, task="t", url="http://x")
+
+    assert "guardrails" not in agent.last_automate_kwargs
+    assert "geo_target" not in agent.last_automate_kwargs
+
+
+async def test_automate_does_not_forward_empty_optional_params(ctx, use_client):
+    """None/empty values must not be forwarded as empty SDK options."""
+    agent = _FakeAgent(automate_events=[_event("complete", final_answer="x")])
+    use_client(_FakeClient(agent=agent))
+
+    await tools.tool_tabstack_automate(ctx, task="t", guardrails="", geo_target="")
+
+    assert "guardrails" not in agent.last_automate_kwargs
+    assert "geo_target" not in agent.last_automate_kwargs
 
 
 # -- progress narration -----------------------------------------------------
@@ -428,6 +479,53 @@ async def test_research_error_event_surfaced(ctx, use_client):
 
 
 # -- extract / generate dict shapes -----------------------------------------
+
+
+async def test_extract_markdown_returns_content(ctx, use_client):
+    extract = _FakeExtract()
+    use_client(_FakeClient(extract=extract))
+
+    result = await tools.tool_tabstack_extract_markdown(ctx, url="http://x")
+
+    assert isinstance(result, ToolResult)
+    assert result.text == "# hi"
+    assert result.data["url"] == "http://x"
+    assert "geo_target" not in extract.markdown_calls[0]
+
+
+async def test_extract_markdown_forwards_geo_target(ctx, use_client):
+    extract = _FakeExtract()
+    use_client(_FakeClient(extract=extract))
+
+    await tools.tool_tabstack_extract_markdown(ctx, url="http://x", geo_target="US")
+
+    assert extract.markdown_calls[0]["geo_target"] == GeotargetGeoTarget(country="US")
+
+
+async def test_extract_markdown_does_not_forward_empty_geo_target(ctx, use_client):
+    extract = _FakeExtract()
+    use_client(_FakeClient(extract=extract))
+
+    await tools.tool_tabstack_extract_markdown(ctx, url="http://x", geo_target="")
+
+    assert "geo_target" not in extract.markdown_calls[0]
+
+
+def test_tool_definitions_match_signatures():
+    """TOOL_DEFINITIONS schemas must track the tool signatures — a new parameter
+    that is not documented (or a stale schema entry) is a control-surface bug."""
+    for name, fn in [
+        ("tabstack_automate", tools.tool_tabstack_automate),
+        ("tabstack_extract_markdown", tools.tool_tabstack_extract_markdown),
+    ]:
+        schema = next(t for t in tools.TOOL_DEFINITIONS if t["function"]["name"] == name)
+        params = inspect.signature(fn).parameters
+        props = set(schema["function"]["parameters"]["properties"])
+        assert props == {p for p in params if p != "ctx"}, f"{name}: {props}"
+        required = set(schema["function"]["parameters"]["required"])
+        assert required == {p for p in params if p != "ctx" and params[p].default is inspect.Parameter.empty}, (
+            f"{name}: {required}"
+        )
 
 
 async def test_extract_json_returns_plain_dict(ctx, use_client):
