@@ -16,6 +16,8 @@ Tabstack is a web execution API for reading, extracting, transforming, and inter
 
 Best for: reading articles, documentation, PDF reports. This is the cheapest operation — prefer it when you just need to read content.
 
+Optional `geo_target` (ISO 3166-1 alpha-2 country code, e.g. `US`) fetches the page from that region.
+
 ### 2. `tabstack_extract_json` — Pull structured data from a page or PDF
 
 Best for: prices, product details, tables, invoices, any document with predictable repeating structure. Pass a JSON Schema defining the structure you want to extract.
@@ -29,6 +31,8 @@ Best for: summaries, categorization, sentiment analysis, reformatting. Unlike `t
 Best for: tasks needing real browser interaction — clicking, navigating across pages, filling forms. Also has built-in web search — when no URL is given, it searches the web itself. This makes it great for quick factual lookups (addresses, hours, prices) without needing a URL.
 
 Takes 30-120 seconds.
+
+Optional `guardrails` (natural-language safety constraints for the run) and `geo_target` (ISO 3166-1 alpha-2 country code, e.g. `US`) to run the automation from that region.
 
 **Interactive form-fill.** To let the browser agent fill a form that needs personal data, set `interactive: true` and pass the values in `data`, keyed by field label:
 
