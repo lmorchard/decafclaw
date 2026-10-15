@@ -25,9 +25,17 @@ typecheck:
 	uv run pyright
 
 # Install all dependencies (Python + JS)
+#
+# `--ignore-scripts` is the repo's lifecycle-script policy (#930): no dependency
+# install/build script runs unless the package is named in the project's
+# `.npm-script-allowlist`, in which case `npm rebuild` runs exactly those.
+# See docs/dependency-install-policy.md.
 install:
 	uv sync
-	cd src/decafclaw/web/static && npm install
+	cd src/decafclaw/web/static && \
+	  allow=$$(grep -vE '^[[:space:]]*(#|$)' .npm-script-allowlist 2>/dev/null | tr '\n' ' ') && \
+	  npm install --ignore-scripts && \
+	  if [ -n "$$allow" ]; then npm rebuild $$allow; fi
 
 # Install JS dependencies in static/ for a *check*. Uses `npm ci`, which installs
 # strictly from the lockfile and cannot write it — `npm install` can and does.
@@ -46,16 +54,22 @@ install:
 # and package-lock.json disagree, which is the drift #706 was about.
 #
 # The guard stays as a regression detector. Under `npm ci` it should never fire.
+#
+# `--ignore-scripts` per the lifecycle-script policy (#930); allowlisted
+# packages get their scripts via `npm rebuild` (see `install` above).
 install-js:
 	@cd src/decafclaw/web/static && \
+	  allow=$$(grep -vE '^[[:space:]]*(#|$)' .npm-script-allowlist 2>/dev/null | tr '\n' ' ') && \
 	  before=$$(git hash-object package-lock.json) && \
-	  npm ci && \
+	  npm ci --ignore-scripts && \
+	  if [ -n "$$allow" ]; then npm rebuild $$allow; fi && \
 	  after=$$(git hash-object package-lock.json) && \
 	  if [ "$$before" != "$$after" ]; then \
 	    echo ""; \
 	    echo "ERROR: npm ci rewrote package-lock.json during a check."; \
 	    echo "  This should be impossible — npm ci does not write the lockfile."; \
 	    echo "  Intentional dependency change?  run 'make vendor' and commit the lockfile."; \
+	    echo "  (make vendor installs with --ignore-scripts; see docs/dependency-install-policy.md.)"; \
 	    echo "  Otherwise restore it:  git checkout -- src/decafclaw/web/static/package-lock.json"; \
 	    echo "  Background: #706 (silent rewrites have ridden into unrelated PRs), #716."; \
 	    echo ""; \
@@ -73,16 +87,19 @@ test-js: install-js
 # Install TUI deps. Same `npm ci` rationale as install-js above (#706/#716):
 # npm ci cannot rewrite the lockfile, and fails outright when package.json and
 # package-lock.json disagree. The guard stays as a regression detector.
+# `--ignore-scripts` per the lifecycle-script policy (#930), same as install-js.
 install-tui:
 	@cd tui && \
+	  allow=$$(grep -vE '^[[:space:]]*(#|$)' .npm-script-allowlist 2>/dev/null | tr '\n' ' ') && \
 	  before=$$(git hash-object package-lock.json) && \
-	  npm ci && \
+	  npm ci --ignore-scripts && \
+	  if [ -n "$$allow" ]; then npm rebuild $$allow; fi && \
 	  after=$$(git hash-object package-lock.json) && \
 	  if [ "$$before" != "$$after" ]; then \
 	    echo ""; \
 	    echo "ERROR: npm ci rewrote tui/package-lock.json during a check."; \
 	    echo "  This should be impossible — npm ci does not write the lockfile."; \
-	    echo "  Intentional dependency change?  run 'npm install' in tui/ and commit the lockfile."; \
+	    echo "  Intentional dependency change?  run 'npm install --ignore-scripts' in tui/ and commit the lockfile."; \
 	    echo "  Otherwise restore it:  git checkout -- tui/package-lock.json"; \
 	    echo "  Background: #706 (silent rewrites have ridden into unrelated PRs), #716."; \
 	    echo ""; \
@@ -102,7 +119,7 @@ test-tui: install-tui
 # `check` used to carry its own `ruff check src/ tests/` line, so widening the
 # `lint` target did not widen what CI actually gates — the same duplication
 # that let check-message-types and check-js run nowhere before #854.
-check: install-js check-message-types fmt-check lint typecheck check-js check-browser-assets
+check: install-js check-npm-policy check-message-types fmt-check lint typecheck check-js check-browser-assets
 
 # Regenerate the WebSocket message-type enum/JS/docs from the manifest
 gen-message-types:
@@ -112,6 +129,14 @@ gen-message-types:
 check-message-types:
 	uv run python scripts/gen_message_types.py
 	git diff --exit-code -- src/decafclaw/web/message_types.py src/decafclaw/web/static/lib/message-types.js docs/websocket-messages.md tui/src/types.generated.ts
+
+# Verify the npm dependency policy (#930): direct dependencies exact-pinned
+# (no ^/~ ranges) in both package.json files, and every .npm-script-allowlist
+# entry still matches an install-script package in the adjacent lockfile.
+# Composed into `check` below so CI gates it through the make target — CI
+# never carries its own copy of this command.
+check-npm-policy:
+	uv run python scripts/check_npm_policy.py
 
 # Auto-fix lint issues
 lint-fix:
@@ -198,8 +223,13 @@ prune-worktrees:
 # Build web UI vendor bundle (npm + esbuild)
 # Run after changing JS dependencies in src/decafclaw/web/static/package.json
 # Requires Node.js. Output is committed to git, so only needed for dev.
+# `--ignore-scripts` per the lifecycle-script policy (#930), same as `install`.
 vendor:
-	cd src/decafclaw/web/static && npm install && npm run build
+	cd src/decafclaw/web/static && \
+	  allow=$$(grep -vE '^[[:space:]]*(#|$)' .npm-script-allowlist 2>/dev/null | tr '\n' ' ') && \
+	  npm install --ignore-scripts && \
+	  if [ -n "$$allow" ]; then npm rebuild $$allow; fi && \
+	  npm run build
 
 # Show resolved config
 config:

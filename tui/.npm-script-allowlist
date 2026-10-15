@@ -1,0 +1,15 @@
+# Lifecycle-script allowlist for npm installs in this project (#930).
+#
+# All Makefile npm installs run with `--ignore-scripts`, so no dependency
+# install/build script runs. A package that genuinely needs its lifecycle
+# scripts (for example, a native module that compiles at install time) is
+# named here, one per line, with the reason in a comment above it. The install
+# targets then run `npm rebuild` for exactly those packages.
+#
+# `make check` (scripts/check_npm_policy.py) fails if an entry does not name a
+# package with an install script in package-lock.json, so stale entries cannot
+# linger silently — remove an entry when the package goes away.
+#
+# Currently empty: every installed package works with its scripts disabled
+# (esbuild finds its platform binary through the @esbuild/<platform> optional
+# dependency; see docs/dependency-install-policy.md).
