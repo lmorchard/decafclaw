@@ -213,6 +213,53 @@ class TestJsonFileLoading:
         assert c.agent.preemptive_search.enabled is False
         assert c.agent.preemptive_search.max_matches == 5
 
+    def test_vault_guide_from_json(self, tmp_path, monkeypatch):
+        """VaultGuideConfig block loads from config.json (#600)."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        config_file = agent_dir / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "vault_guide": {
+                        "path": "protocols/GUIDE.md",
+                        "max_tokens": 500,
+                        "enabled": False,
+                    },
+                }
+            )
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.vault_guide.path == "protocols/GUIDE.md"
+        assert c.vault_guide.max_tokens == 500
+        assert c.vault_guide.enabled is False
+
+    def test_vault_guide_env_beats_json(self, tmp_path, monkeypatch):
+        """VAULT_GUIDE_PATH env beats the JSON value; unset fields keep JSON (#600)."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        config_file = agent_dir / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "vault_guide": {
+                        "path": "protocols/GUIDE.md",
+                        "max_tokens": 500,
+                        "enabled": False,
+                    },
+                }
+            )
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        # Distinct from the JSON path so the precedence assertion is not vacuous
+        monkeypatch.setenv("VAULT_GUIDE_PATH", "env/OVERRIDE.md")
+        c = load_config()
+        assert c.vault_guide.path == "env/OVERRIDE.md"
+        # Fields env does not set keep their JSON values
+        assert c.vault_guide.max_tokens == 500
+        assert c.vault_guide.enabled is False
+
     def test_widgets_map_config_defaults(self):
         """MapWidgetConfig defaults to OpenStreetMap public tiles."""
         from decafclaw.config_types import MapWidgetConfig, WidgetsConfig
