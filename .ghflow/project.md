@@ -1,6 +1,6 @@
 ---
 ghflow_project_facts: 1
-written: 2026-10-13
+written: 2026-10-14
 sources:
   - AGENTS.md c051f329d7f18632b0a9578f3ad80d0ff1d093d7
   - CLAUDE.md c051f329d7f18632b0a9578f3ad80d0ff1d093d7
@@ -10,7 +10,7 @@ sources:
   - tests/conftest.py 2d6b3d8b2f004425aa727bd4f80bb1322da0aa16
   - pyproject.toml 04e6750836aea68c8801d38f2b29e1b3f3ca4972
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
-  - docs/config.md 70d3f15f6dee6f3b817d8cc9705cf97284003f0d
+  - docs/config.md cc3cbc8e7053729b82e02f8b5ace95dcd95811af
 ---
 # decafclaw project facts
 
