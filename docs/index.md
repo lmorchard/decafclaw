@@ -8,6 +8,10 @@ These docs are as much for me as they are for agents working on this project. Th
 - [Configuration Reference](config.md) — Config file, env vars, CLI tool, all settings
 - [Deployment](deployment.md) — Systemd service on a Debian VM
 
+## Dependencies & Toolchain
+
+- [Dependency Install Policy](dependency-install-policy.md) — exact-pinned npm direct deps, lifecycle scripts disabled on all Makefile installs, allowlist exceptions
+
 ## Interfaces
 
 - [Web UI](web-ui.md) — Browser-based chat, vault editor, conversation management, model picker

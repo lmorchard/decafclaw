@@ -127,7 +127,7 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
 
 - **Sync with `origin/main` before starting any significant task.** `git fetch origin && git log --oneline main..origin/main`. Stale local main → ghost references and missing docs in audits — every session that skipped this ended with conflicts or rework.
 - **A gate that exists can still run nowhere.** `make check` is *composed* from
-  `install-js check-message-types fmt-check lint typecheck check-js check-browser-assets` — never give it (or CI) its
+  `install-js check-npm-policy check-message-types fmt-check lint typecheck check-js check-browser-assets` — never give it (or CI) its
   own copy of those commands. A
   duplicated command means widening one copy silently gates nothing: that is how
   `check-message-types` and `check-js` ran nowhere for months (#854), how `tui/`'s
@@ -244,7 +244,8 @@ make typecheck    # Pyright
 make check-js     # Generate API client + tsc --checkJs
 make fmt          # ruff format over src/ tests/ scripts/ contrib/ (writes files)
 make fmt-check    # ruff format --check over the same paths (no writes)
-make check        # Full gate: install-js + check-message-types + fmt-check + lint + typecheck + check-js + check-browser-assets
+make check        # Full gate: install-js + check-npm-policy + check-message-types + fmt-check + lint + typecheck + check-js + check-browser-assets
+make check-npm-policy  # npm dependency policy: exact-pinned direct deps, no stale script-allowlist entries (#930)
 make test-js      # vitest (JS unit tests, web/static)
 make check-tui    # tsc --noEmit for tui/ (separate from `make check`)
 make test-tui     # vitest (tui/)
