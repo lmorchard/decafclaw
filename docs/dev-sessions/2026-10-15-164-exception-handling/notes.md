@@ -4,8 +4,8 @@
 
 - **Goal**: implement issue #164's settled scope — narrow/split the named broad `except Exception` / `contextlib.suppress(CancelledError, Exception)` blocks in `src/decafclaw/agent.py` and `src/decafclaw/web/websocket.py`, add the named unit tests, pass `make lint` + `make typecheck` (zero errors) and the full gates.
 - **Worktree**: `/Users/lmorchard/devel/mine/decafclaw/.claude/worktrees/issue-164-exception-handling`, branch `issue-164-exception-handling`, base `origin/main` @ `9173771da6e410635f37d7b5b6426f78ef4792ef`.
-- **Status**: implementation complete (all 7 sites + 7 new tests). All gates green (see checks below). Next: commit checkpoint, publish draft PR.
-- **Next action**: commit (2 code commits + notes), publish draft PR via submit-pr, report to coordinator.
+- **Status**: implementation complete (all 7 sites + 7 new tests). All gates green (see checks below). Draft PR published: https://github.com/lmorchard/decafclaw/pull/1080 (draft, head `3245c9e42a30a481c2271e46466ec99016719e2a`, base `main` @ `9173771da6e410635f37d7b5b6426f78ef4792ef`). Not marked ready, no review requested (per flow).
+- **Next action**: coordinator runs the independent review (fresh context, same local model per user-approved exception), then ready-submission with `Closes #164` at that point.
 
 ## Issue site mapping (issue line → current line @ 9173771d)
 
@@ -58,3 +58,11 @@ All checks run in the worktree, after `make fmt`, on the final working tree (pre
 - `make test` (full suite, after changes): **4573 passed, 2 skipped in 19.76s** — baseline +7, exactly the new tests; no regressions.
 - `pytest --durations=10` on the two changed test files: no new test in the top-10 slowest (fastest new tests ~0.05s; no fixed sleeps — blocking coroutines resolve via immediate cancellation).
 - Docs check: no `docs/` page describes the old ws_send log wording or the changed blocks (grep for "client likely disconnected" / "ws send failed" in docs/ → no live-doc hits), so no doc update in this PR.
+
+## Publication
+
+- Commits: `4f404e5f4cf9385d8aadd3cc87e97bbe165742a2` (fix(agent)), `2d3b82e70830707a66e42244ed63dc3db5a7fe8c` (fix(web)), `3245c9e42a30a481c2271e46466ec99016719e2a` (notes) = PR head.
+- Pushed to `origin/issue-164-exception-handling`; `verify-commit` `--on issue-164-exception-handling` and `--pr-head <PR>` both: no errors, expectations met.
+- Draft PR: https://github.com/lmorchard/decafclaw/pull/1080 (draft, base `main`, title "Tighten exception handling in the agent loop and WebSocket sends"). Body file: `docs/dev-sessions/2026-10-15-164-exception-handling/pr-body.md` (untracked, outside the diff).
+- Hosted CI on PR head `3245c9e4` (run 38821025224): **lint-and-test pass (2m23s), js-test pass (44s), check-tui pass (12s)** — all required checks green.
+- NOT marked ready; no review requested; board stays "In progress" (per flow: ready-submission + In review happen after the independent review).
