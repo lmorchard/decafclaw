@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -119,3 +120,33 @@ def reset_otlp_singletons():
     # It might be in opentelemetry.util._once.Once
     if hasattr(trace, "_TRACER_PROVIDER_SET_ONCE"):
         trace._TRACER_PROVIDER_SET_ONCE._done = False
+
+
+def check_asyncio_loop_leak(request) -> None:
+    """Fail the test if it left asyncio's running-loop mark set.
+
+    A stale mark makes every later async test on this worker fail with
+    'Runner.run() cannot be called from a running event loop' (#941), far
+    from the cause. The mark is cleared before the failure so one leak does
+    not cascade; the next leaker then fails at its own source.
+    """
+    if asyncio._get_running_loop() is not None:
+        asyncio._set_running_loop(None)
+        pytest.fail(
+            f"{request.node.nodeid} left an asyncio running-loop mark set "
+            "(asyncio._set_running_loop was called without a matching clear). "
+            "The mark was cleared, so later tests on this worker are unaffected."
+        )
+
+
+@pytest.fixture(autouse=True)
+def guard_asyncio_loop_leak(request):
+    """Fail a test that leaks asyncio's running-loop mark.
+
+    Sync on purpose: an async fixture's teardown would run inside the loop
+    pytest-asyncio drives and see it as running. As an autouse fixture it is
+    set up before the test's own fixtures, so the check runs after they
+    finish. Teardown failures show as ERROR, which names the leaker.
+    """
+    yield
+    check_asyncio_loop_leak(request)
