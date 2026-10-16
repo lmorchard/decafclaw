@@ -648,7 +648,7 @@ async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, usern
 
     try:
         await registry.spawn(conv_id, tab_id, session_id, str(resolved), shell)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         log.warning("terminal spawn failed conv=%s: %s", conv_id, exc)
         await canvas.close_tab(config, conv_id, tab_id, emit=emit)
         await _msg(f"Could not start terminal: {exc}")
@@ -1294,6 +1294,28 @@ def _make_conversation_status_forwarder(ws_send: WSSendCallable, config, index, 
 # -- Main WebSocket handler ----------------------------------------------------
 
 
+def _make_ws_send(websocket: WebSocket) -> WSSendCallable:
+    """Build the per-connection ``ws_send`` used by all message handlers.
+
+    Client disconnections mid-send (``WebSocketDisconnect`` /
+    ``RuntimeError``) are expected and logged at DEBUG. Message
+    serialization failures (``TypeError`` / ``ValueError``) are
+    server-side bugs, not disconnects, so they are logged at ERROR with
+    a full traceback (#164). Anything else propagates to the connection
+    loop, which logs it with a traceback and closes the socket.
+    """
+
+    async def ws_send(msg: ServerMessage) -> None:
+        try:
+            await websocket.send_json(msg)
+        except (WebSocketDisconnect, RuntimeError) as exc:
+            log.debug("ws send failed (client disconnected): %s", exc)
+        except (TypeError, ValueError) as exc:
+            log.error("ws send failed to serialize message: %s", exc, exc_info=True)
+
+    return ws_send
+
+
 async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manager=None, terminal_registry=None):
     """Handle a WebSocket chat connection."""
     from .auth import get_current_user
@@ -1307,11 +1329,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     await websocket.accept()
     log.info(f"WebSocket connected: {username}")
 
-    async def ws_send(msg: ServerMessage) -> None:
-        try:
-            await websocket.send_json(msg)
-        except Exception as exc:
-            log.debug("ws send failed (client likely disconnected): %s", exc)
+    ws_send = _make_ws_send(websocket)
 
     # Send available models immediately so the picker is visible before
     # any conversation is selected

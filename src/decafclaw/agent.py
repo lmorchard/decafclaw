@@ -84,7 +84,7 @@ def _is_context_length_exceeded(exc: Exception) -> bool:
         status = exc.response.status_code
         try:
             body = exc.response.text.lower()
-        except Exception:
+        except (AttributeError, RuntimeError, UnicodeDecodeError):
             body = ""
         if status in (400, 413) and any(
             k in body
@@ -131,8 +131,8 @@ def _archive(ctx: "Context", msg) -> None:
     try:
         append_message(ctx.config, _conv_id(ctx), msg)
         wrote = True
-    except Exception as e:
-        log.error(f"Archive write failed: {e}")
+    except (OSError, TypeError, ValueError) as e:
+        log.error(f"Archive write failed: {e}", exc_info=True)
     # Mark the conversation so a subsequent CancelledError handler
     # doesn't double-archive the partial body (issue #491). Only fires
     # for assistant messages with actual body content that actually
@@ -198,7 +198,7 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None
             ctx.composer.cleanup_cleared_count = 0
             ctx.composer.cleanup_cleared_bytes = 0
         except Exception as e:
-            log.error(f"Compaction failed: {e}")
+            log.error(f"Compaction failed: {e}", exc_info=True)
 
 
 def _extract_call_signatures(tool_calls, messages) -> list[CallSignature]:
@@ -371,7 +371,7 @@ async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause) -
                 # didn't respond, they cancelled.
                 cancelled_during_pause = True
                 confirm_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
+                with contextlib.suppress(asyncio.CancelledError):
                     await confirm_task
                 manager = ctx.manager
                 conv_id = ctx.conv_id
@@ -495,8 +495,15 @@ async def _call_llm_with_events(
                 llm_task.cancel()
                 try:
                     await llm_task
-                except (asyncio.CancelledError, Exception):
+                except asyncio.CancelledError:
+                    # Expected: the user stopped the turn while the LLM
+                    # call was in flight.
                     pass
+                except Exception:
+                    # An unexpected failure from the LLM task is not a
+                    # cancellation — log it with a full traceback instead
+                    # of hiding it (#164).
+                    log.error("LLM task failed while being cancelled (conv=%s)", conv_id, exc_info=True)
                 response = {
                     "content": "",
                     "tool_calls": None,

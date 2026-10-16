@@ -2,18 +2,21 @@
 
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from decafclaw.agent import (
     _archive,
+    _call_llm_with_events,
     _check_cancelled,
     _conv_id,
+    _handle_widget_input_pause,
     run_agent_turn,
 )
 from decafclaw.config_types import ReflectionConfig
-from decafclaw.media import EndTurnConfirm, ToolResult
+from decafclaw.media import EndTurnConfirm, ToolResult, WidgetInputPause
 from decafclaw.reflection import ReflectionResult
 from decafclaw.tool_definitions import build_tool_list, refresh_dynamic_tools
 from decafclaw.tool_execution import execute_tool_calls
@@ -1211,6 +1214,106 @@ async def test_wake_turn_archives_nudge_as_wake_trigger_not_user(ctx, config):
     wake_trigger_msgs = [m for m in all_msgs if m.get("role") == "wake_trigger"]
     assert len(wake_trigger_msgs) == 1
     assert "background job" in wake_trigger_msgs[0]["content"].lower()
+
+
+# -- Tightened exception handling (#164) ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_llm_with_events_cancel_suppresses_cancelled_error(ctx, caplog):
+    """When the turn is cancelled while the LLM call is in flight, the LLM
+    task's CancelledError is suppressed and the caller gets the standard
+    'cancelled' response — no error is logged for the expected path."""
+    ctx.config.llm.streaming = False
+    ctx.cancelled = asyncio.Event()
+    ctx.cancelled.set()
+
+    async def blocking_llm(*args, **kwargs):
+        await asyncio.Event().wait()  # never completes until cancelled
+
+    with (
+        patch("decafclaw.agent.call_llm", new=blocking_llm),
+        caplog.at_level(logging.DEBUG, logger="decafclaw.agent"),
+    ):
+        response = await _call_llm_with_events(ctx, ctx.config, [], [])
+
+    assert response["finish_reason"] == "cancelled"
+    assert response["content"] == ""
+    records = [r for r in caplog.records if r.name == "decafclaw.agent"]
+    assert not [r for r in records if r.levelno >= logging.ERROR], (
+        "Cancelling the in-flight LLM task is the expected path and must not produce error logs."
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_llm_with_events_unexpected_llm_task_exception_logs_error(ctx, caplog):
+    """An unexpected (non-CancelledError) failure from the LLM task is logged
+    at ERROR with a full traceback instead of being silently swallowed (#164).
+    The turn still yields the 'cancelled' response — the failure is surfaced
+    in the log, not to the user."""
+    ctx.config.llm.streaming = False
+    ctx.cancelled = asyncio.Event()
+    ctx.cancelled.set()
+
+    async def blowing_llm(*args, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise RuntimeError("simulated LLM failure")
+
+    with (
+        patch("decafclaw.agent.call_llm", new=blowing_llm),
+        caplog.at_level(logging.DEBUG, logger="decafclaw.agent"),
+    ):
+        response = await _call_llm_with_events(ctx, ctx.config, [], [])
+
+    assert response["finish_reason"] == "cancelled"
+    errors = [r for r in caplog.records if r.name == "decafclaw.agent" and r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "LLM task failed while being cancelled" in errors[0].getMessage()
+    # The record must carry the traceback (exc_info), not just the message.
+    assert errors[0].exc_info is not None
+    assert "simulated LLM failure" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_widget_input_pause_cancel_suppresses_cancelled_error(ctx):
+    """When the turn is cancelled while a widget input is pending, the
+    confirm task's CancelledError is suppressed and the pause returns None
+    so the outer loop ends the turn cleanly."""
+    ctx.cancelled = asyncio.Event()
+    ctx.cancelled.set()
+    signal = WidgetInputPause(tool_call_id="tc-widget", widget_payload={"widget_type": "test"})
+
+    async def blocking_confirmation(request):
+        await asyncio.Event().wait()  # never responds until cancelled
+
+    ctx.request_confirmation = blocking_confirmation
+
+    result = await _handle_widget_input_pause(ctx, signal)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_handle_widget_input_pause_unexpected_confirmation_failure_propagates(ctx):
+    """A non-CancelledError failure from the confirm task is no longer
+    swallowed — the narrow suppress around confirm_task only covers
+    asyncio.CancelledError (#164). Before the fix, the broad
+    suppress(CancelledError, Exception) here returned None and hid the bug."""
+    ctx.cancelled = asyncio.Event()
+    ctx.cancelled.set()
+    signal = WidgetInputPause(tool_call_id="tc-widget", widget_payload={"widget_type": "test"})
+
+    async def blowing_confirmation(request):
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise RuntimeError("simulated confirmation failure")
+
+    ctx.request_confirmation = blowing_confirmation
+
+    with pytest.raises(RuntimeError, match="simulated confirmation failure"):
+        await _handle_widget_input_pause(ctx, signal)
 
 
 # -- Public surface contract test ----------------------------------------------
