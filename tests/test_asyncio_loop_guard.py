@@ -24,17 +24,20 @@ def _request(nodeid: str):
 
 def test_guard_fails_leaking_test_and_names_it():
     request = _request(NODEID)
-    asyncio._set_running_loop(asyncio.new_event_loop())
+    loop = asyncio.new_event_loop()
+    asyncio._set_running_loop(loop)
     try:
         with pytest.raises(Failed, match=re.escape(NODEID)):
             check_asyncio_loop_leak(request)
     finally:
         asyncio._set_running_loop(None)
+        loop.close()
 
 
 def test_guard_clears_leaked_mark_before_failing():
     request = _request(NODEID)
-    asyncio._set_running_loop(asyncio.new_event_loop())
+    loop = asyncio.new_event_loop()
+    asyncio._set_running_loop(loop)
     try:
         with pytest.raises(Failed):
             check_asyncio_loop_leak(request)
@@ -43,6 +46,7 @@ def test_guard_clears_leaked_mark_before_failing():
         assert asyncio._get_running_loop() is None
     finally:
         asyncio._set_running_loop(None)
+        loop.close()
 
 
 def test_guard_passes_clean_test():
