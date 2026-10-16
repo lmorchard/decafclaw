@@ -7,6 +7,7 @@ here is wrapped so it expects the failure: the guard's check runs inside
 """
 
 import asyncio
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -25,7 +26,7 @@ def test_guard_fails_leaking_test_and_names_it():
     request = _request(NODEID)
     asyncio._set_running_loop(asyncio.new_event_loop())
     try:
-        with pytest.raises(Failed, match=NODEID):
+        with pytest.raises(Failed, match=re.escape(NODEID)):
             check_asyncio_loop_leak(request)
     finally:
         asyncio._set_running_loop(None)
@@ -37,9 +38,11 @@ def test_guard_clears_leaked_mark_before_failing():
     try:
         with pytest.raises(Failed):
             check_asyncio_loop_leak(request)
+        # Assert the mark state after the raises block returns and before the
+        # test-side cleanup below: this is the clear-before-fail property.
+        assert asyncio._get_running_loop() is None
     finally:
         asyncio._set_running_loop(None)
-    assert asyncio._get_running_loop() is None
 
 
 def test_guard_passes_clean_test():
