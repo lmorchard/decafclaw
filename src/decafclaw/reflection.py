@@ -16,8 +16,12 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from .llm import call_llm
+
+if TYPE_CHECKING:
+    from .config import Config
 
 log = logging.getLogger(__name__)
 
@@ -135,7 +139,7 @@ def _summarize_tool_result(content: str, max_len: int) -> str:
     return selected + f"\n[... {omitted} chars of detail omitted]"
 
 
-def _extract_tool_lines(messages: list, max_result_len: int) -> list[str]:
+def _extract_tool_lines(messages: list[dict[str, Any]], max_result_len: int) -> list[str]:
     """Extract tool call/result lines from a slice of history messages.
 
     Also surfaces user replies that came in via input widgets
@@ -158,7 +162,7 @@ def _extract_tool_lines(messages: list, max_result_len: int) -> list[str]:
     return tool_lines
 
 
-def build_tool_summary(history: list, turn_start_index: int, max_result_len: int = 2000) -> str:
+def build_tool_summary(history: list[dict[str, Any]], turn_start_index: int, max_result_len: int = 2000) -> str:
     """Extract tool call/result pairs from this turn's history.
 
     Scans history from turn_start_index onward for assistant messages with
@@ -171,7 +175,7 @@ def build_tool_summary(history: list, turn_start_index: int, max_result_len: int
 
 
 def build_prior_turn_summary(
-    history: list,
+    history: list[dict[str, Any]],
     turn_start_index: int,
     max_turns: int = 3,
     max_result_len: int = 200,
@@ -213,7 +217,7 @@ def build_prior_turn_summary(
     return "Tools used in prior turns:\n" + "\n".join(tool_lines)
 
 
-def _coerce_bool(value) -> bool | None:
+def _coerce_bool(value: Any) -> bool | None:
     """Coerce a JSON value to bool. Returns None if not interpretable."""
     if isinstance(value, bool):
         return value
@@ -228,7 +232,7 @@ def _coerce_bool(value) -> bool | None:
     return None
 
 
-def _extract_verdict(data: dict) -> tuple[bool | None, str]:
+def _extract_verdict(data: dict[str, Any]) -> tuple[bool | None, str]:
     """Extract pass/fail from a parsed JSON dict."""
     if "pass" not in data:
         return (None, "")
@@ -266,7 +270,7 @@ def _parse_verdict(text: str) -> tuple[bool | None, str]:
 
 
 async def evaluate_response(
-    config,
+    config: Config,
     user_message: str,
     agent_response: str,
     tool_summary: str,
