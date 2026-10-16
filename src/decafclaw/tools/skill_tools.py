@@ -579,6 +579,66 @@ async def _call_init(module, config, skill_name: str = "") -> None:
             await asyncio.to_thread(init_fn, config)
 
 
+# Per-instance timeout for a skill's shutdown() call at server shutdown.
+# Generous for prompt cleanup (closing clients, stopping jobs) while still
+# bounding the shutdown if a skill hangs.
+_SKILL_SHUTDOWN_TIMEOUT = 10.0
+
+# Process-level registry of skill module instances for server-shutdown
+# cleanup. Every activation and restore imports a fresh module object via
+# _import_tools_module, so the same skill can have several live instances
+# with independent module-level state (e.g. background's _managers), and
+# cleanup must reach each one — not just the last import in sys.modules.
+# Keyed by id() so re-recording an instance is a no-op while distinct
+# instances each get an entry; the registry holds the only strong
+# references, so the ids stay valid for the registered objects' lifetimes.
+_shutdownable_modules: dict[int, object] = {}
+
+
+def _record_shutdownable(module) -> None:
+    """Record an activated module instance for shutdown_skills().
+
+    Called after a successful _call_init in the activation paths
+    (activate_skill_internal, restore_skills). Modules imported without
+    activation (e.g. for build_skill_tool_owners) are never recorded, so
+    shutdown runs no code that activation did not already load.
+    """
+    if getattr(module, "shutdown", None) is not None:
+        _shutdownable_modules[id(module)] = module
+
+
+async def _call_shutdown(module) -> None:
+    """Call module.shutdown(), sync or async (mirrors _call_init)."""
+    shutdown_fn = getattr(module, "shutdown", None)
+    if shutdown_fn is None:
+        return
+    if asyncio.iscoroutinefunction(shutdown_fn):
+        await shutdown_fn()
+    else:
+        await asyncio.to_thread(shutdown_fn)
+
+
+async def shutdown_skills(timeout: float = _SKILL_SHUTDOWN_TIMEOUT) -> None:
+    """Call shutdown() once on every activated skill module instance.
+
+    Runs at server shutdown, after the conversation manager has stopped all
+    turns and before the MCP servers disconnect, so no turn can start new
+    work while cleanup is in flight. Each recorded instance gets exactly one
+    call (sync or async) bounded by a per-instance timeout; a failing or
+    slow shutdown is logged with log.warning and skipped so one broken skill
+    cannot wedge the rest of the shutdown. The registry is cleared up front,
+    so a second call is a no-op.
+    """
+    modules = list(_shutdownable_modules.values())
+    _shutdownable_modules.clear()
+    for module in modules:
+        name = getattr(module, "__name__", "<skill module>")
+        try:
+            await asyncio.wait_for(_call_shutdown(module), timeout=timeout)
+        except Exception as exc:
+            log.warning("skill shutdown failed for %s: %s", name, exc)
+
+
 async def restore_skills(ctx: "Context") -> None:
     """Re-activate skills recorded in ctx.skills.activated, without permission checks.
 
@@ -618,6 +678,7 @@ async def restore_skills(ctx: "Context") -> None:
                 log.debug(f"Skill '{name}' tools already loaded, skipping restore")
                 continue
             await _call_init(module, ctx.config, name)
+            _record_shutdownable(module)
             _register_skill_tools(ctx, name, tools, tool_defs)
 
             # Register dynamic tool provider if available
@@ -877,6 +938,7 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
         try:
             tools, tool_defs, module = _load_native_tools(skill_info)
             await _call_init(module, ctx.config, skill_info.name)
+            _record_shutdownable(module)
 
             allowed_set = set(skill_info.allowed_tools) if skill_info.allowed_tools else None
 

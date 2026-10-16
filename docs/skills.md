@@ -161,7 +161,14 @@ def init(config, skill_config: SkillConfig):
     pass
 
 async def shutdown():
-    """Optional. Called to clean up resources (e.g., close clients)."""
+    """Optional. Called once on server shutdown to clean up resources
+    (e.g., close clients, stop background processes). Must be idempotent.
+
+    Runs only for module instances that went through activation — the
+    loader's init step ran for them — not for modules merely imported
+    without activation (e.g. for tool-owner mapping). Each loaded instance
+    gets its own call. Reload and deactivation do not call it yet (#30).
+    """
     pass
 ```
 

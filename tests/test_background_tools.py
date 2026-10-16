@@ -269,6 +269,32 @@ async def test_cleanup_all(tmp_path):
         assert job.status != "running"
 
 
+@pytest.mark.asyncio
+async def test_shutdown_stops_all_jobs_and_clears_managers(tmp_path):
+    """The skill's shutdown() (server shutdown) stops every job in the
+    module-level _managers registry and clears it. Idempotent: a second
+    call with no managers is a no-op."""
+    ctx = SimpleNamespace(conv_id="shutdown-conv", context_id="shutdown-conv")
+    manager = tools._get_job_manager(ctx)
+    job = await manager.start("sleep 10", cwd=str(tmp_path))
+    assert job.status == "running"
+    assert job.reader_task is not None and not job.reader_task.done()
+
+    try:
+        await tools.shutdown()
+    finally:
+        # Safety net: a failed shutdown must not leak the running process.
+        if tools._managers:
+            await tools.shutdown()
+
+    assert job.process.returncode is not None  # process exited
+    assert job.reader_task.done()  # no reader task remains
+    assert job.status != "running"
+    assert tools._managers == {}
+
+    await tools.shutdown()  # second call: no managers left, must be a no-op
+
+
 def test_build_background_event_record_truncates_tails():
     from collections import deque
 

@@ -218,5 +218,12 @@ async def run_all(app_ctx):
         # Wait for in-flight agent turns managed by the conversation manager
         await manager.shutdown()
 
+        # Shut down skill-owned resources (e.g. background jobs) now that no
+        # turn can be running, and before MCP disconnects so skills that talk
+        # to MCP servers still see them connected.
+        from .tools.skill_tools import shutdown_skills
+
+        await shutdown_skills()
+
         await shutdown_mcp()
         log.info("Shutdown complete")
