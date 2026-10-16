@@ -14,7 +14,7 @@ import types
 from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
 from pathlib import Path
-from typing import Any, Union, get_args, get_origin
+from typing import Any, TypeVar, Union, cast, get_args, get_origin
 
 from dotenv import load_dotenv
 
@@ -52,6 +52,7 @@ from .config_types import (
     WorkflowConfig,
 )
 from .modes import SessionMode
+from .skills import SkillInfo
 from .skills.vault._grants import normalize_folder
 
 log = logging.getLogger(__name__)
@@ -123,13 +124,15 @@ def _coerce(value: str, field_type) -> object:
 # Generic sub-config loader
 # ---------------------------------------------------------------------------
 
+T = TypeVar("T")
+
 
 def load_sub_config(
-    dc_class: type,
-    json_data: dict,
+    dc_class: type[T],
+    json_data: dict[str, Any],
     env_prefix: str,
     env_aliases: dict[str, str] | None = None,
-) -> Any:
+) -> T:
     """Build a sub-config dataclass from JSON data + env vars + defaults.
 
     For each field:
@@ -146,7 +149,10 @@ def load_sub_config(
 
     hints = typing.get_type_hints(dc_class)
 
-    for f in dc_fields(dc_class):
+    # dataclasses.fields() wants type[DataclassInstance]; the generic T is
+    # only ever a dataclass type in practice (all callers pass sub-config
+    # dataclasses), so widen at the call site rather than bound T.
+    for f in dc_fields(cast(type[Any], dc_class)):
         field_type = hints.get(f.name, f.type)
         env_val = None
 
@@ -238,7 +244,7 @@ class Config:
 
     # Runtime-only (not in config file)
     system_prompt: str = ""
-    discovered_skills: list = field(default_factory=list)
+    discovered_skills: list[SkillInfo] = field(default_factory=list)
     always_loaded_skill_tools: set[str] = field(default_factory=set)
     # Tool name → owning skill name. Built at skill discovery for the
     # subset of skills with has_native_tools. Used by the unknown-tool
