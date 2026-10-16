@@ -644,6 +644,17 @@ async def tool_shell_background_list(ctx: "Context") -> ToolResult:
     )
 
 
+async def shutdown() -> None:
+    """Stop every background job across all conversations (server shutdown).
+
+    Called once at server shutdown by the loader (see docs/skills.md).
+    Idempotent: a second call finds no managers and does nothing.
+    """
+    for manager in list(_managers.values()):
+        await manager.cleanup_all()
+    _managers.clear()
+
+
 # -- Registration -------------------------------------------------------------
 
 TOOLS = {
