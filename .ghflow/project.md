@@ -1,40 +1,38 @@
 ---
 ghflow_project_facts: 1
-written: 2026-10-14
+written: 2026-10-16
 sources:
-  - AGENTS.md c051f329d7f18632b0a9578f3ad80d0ff1d093d7
-  - CLAUDE.md c051f329d7f18632b0a9578f3ad80d0ff1d093d7
-  - Makefile a1ce2143c4fa03d4885e6a392f6d58b75f6611fb
+  - AGENTS.md c0bd3ac248b8642d99f1d66996b345c003f9c03e
+  - CLAUDE.md c0bd3ac248b8642d99f1d66996b345c003f9c03e
+  - Makefile 457995d835091b7e747bb8640cc0cf74752a385d
   - .github/workflows/ci.yml 2de18948e0afc3ee4c14570649660a08aea316d5
   - conftest.py fb46496f6536760ece617b135afc7aef3c6eac93
-  - tests/conftest.py 2d6b3d8b2f004425aa727bd4f80bb1322da0aa16
-  - pyproject.toml 04e6750836aea68c8801d38f2b29e1b3f3ca4972
+  - tests/conftest.py 40eed4d3c579e8ac92c078611042f0b3fdfd909d
+  - pyproject.toml aec1dec19c1e6be37fbc5d51ae35a93c59e74c48
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
   - docs/config.md cc3cbc8e7053729b82e02f8b5ace95dcd95811af
 ---
 # decafclaw project facts
 
-Stable facts for agent workers. `AGENTS.md` is a symlink to `CLAUDE.md`; read it in full. `ghflow facts` reports when a source above changes.
+`AGENTS.md` is a symlink to `CLAUDE.md`; read it in full. `ghflow facts` reports when a source above changes.
 
 ## Worktree setup
-- Worktrees live at `.claude/worktrees/{branch}/`. Branch from `origin/main`. Never edit the main clone.
-- `uv sync` (or `make install` for Python and JS). A doc-only worktree can skip it; say so in the report.
-- `cp ../../../.env .env` from the main clone (it points at the main clone's `data/`), then add `HTTP_PORT=<port>` (default 18880) to avoid port conflicts with other worktrees.
-- Run `make test` once for a baseline before code changes.
+- Worktrees at `.claude/worktrees/{branch}/`, branched from `origin/main`; never edit the main clone. `uv sync` (or `make install`); a doc-only worktree skips it (say so in the report).
+- `cp ../../../.env .env` from the main clone (it points at the main clone's `data/`), then add `HTTP_PORT=<port>` (default 18880) to avoid port conflicts with other worktrees. Run `make test` once for a baseline before code changes.
 
 ## Gates
-- `make fmt` before every commit. Then `make check` = `install-js check-message-types fmt-check lint typecheck check-js check-browser-assets`, then `make test` = `uv run pytest tests/ contrib/skills/`.
+- `make fmt` before every commit. `make check` = `install-js check-npm-policy check-message-types fmt-check lint typecheck check-js check-browser-assets`; `make test` = `uv run pytest tests/ contrib/skills/`.
 - CI: required `lint-and-test` (`make check`, `playwright install chromium`, pytest) and `js-test` (`make test-js`); `check-tui` runs `make check-tui test-tui` outside `make check`.
-- `make install-js` uses `npm ci`. Do not run `npm install` in `src/decafclaw/web/static/`; dependency changes go through `make vendor`.
+- npm policy (#930): direct deps exact-pinned (no ^/~); every Makefile npm install runs `--ignore-scripts` (allowlisted scripts via `npm rebuild`); `make check-npm-policy` gates it (detail in `docs/dependency-install-policy.md`). `make install-js` uses `npm ci`; do not `npm install` in `src/decafclaw/web/static/` — dependency changes go through `make vendor`.
 
 ## Generated files
 - `src/decafclaw/web/message_types.json` generates `src/decafclaw/web/message_types.py`, `src/decafclaw/web/static/lib/message-types.js`, `docs/websocket-messages.md`, and `tui/src/types.generated.ts` via `make gen-message-types`. `make check-message-types` (inside `make check`) fails on a hand edit.
 - `make gen-api-client` (inside `make check-js`) regenerates the committed OpenAPI client under `src/decafclaw/web/static/lib/api-client/`. `make vendor` rebuilds the committed vendor bundle.
 
 ## Test layout
-- Root `conftest.py` holds the shared fixtures `config`, `ctx`, `tmp_data`, and autouse `mock_embed_text`. `tests/conftest.py` adds `stub_llm` and an autouse guard that fails any unstubbed LLM call. `tests/web/conftest.py` adds `http_config`, `app`, `client`.
+- Root `conftest.py` holds the shared fixtures `config`, `ctx`, `tmp_data`, and autouse `mock_embed_text`. `tests/conftest.py` adds `stub_llm`, an autouse guard that fails any unstubbed LLM call, and an autouse guard that fails tests leaking asyncio's running-loop mark. `tests/web/conftest.py` adds `http_config`, `app`, `client`.
 - One file: `uv run pytest tests/test_x.py -n 0` (`-n 0` turns off xdist). Default addopts: `-n auto --dist=worksteal -m 'not integration'`; `testpaths = ["tests", "contrib"]`.
-- Markers `integration` and `live_llm` call real APIs; `make test` excludes `integration`. Browser tests need Playwright chromium.
+- Markers: `integration` hits real LLM APIs (`make test` excludes it); `live_llm` opts a test out of the unstubbed-LLM-call guard — real provider code with HTTP mocked below the guard. Browser tests need Playwright chromium.
 
 ## Session notes
 - `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `plan.md`, `notes.md`. Session docs are committed.
