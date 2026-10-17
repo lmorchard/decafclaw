@@ -1072,7 +1072,6 @@ class TestComposePreemptMatches:
                 ctx,
                 config,
                 "read my vault",
-                [],
                 ComposerMode.INTERACTIVE,
             )
             assert entry is None
@@ -1087,7 +1086,6 @@ class TestComposePreemptMatches:
                 ctx,
                 config,
                 "",
-                [],
                 ComposerMode.INTERACTIVE,
             )
             assert entry is None
@@ -1105,7 +1103,6 @@ class TestComposePreemptMatches:
                 ctx,
                 config,
                 "show my vault backlinks",
-                [],
                 ComposerMode.INTERACTIVE,
             )
             assert entry is not None
@@ -1114,28 +1111,6 @@ class TestComposePreemptMatches:
             assert "unrelated_tool" not in ctx.tools.preempt_matches
             match_names = [m["name"] for m in entry.details["matches"]]
             assert "vault_backlinks" in match_names
-
-    def test_prior_assistant_carries_topic(self, ctx, config):
-        """Short user message + prior assistant response still matches via union."""
-        tools = [
-            _make_tool_def("vault_backlinks", "List pages linking to a vault page"),
-        ]
-        history = [
-            {"role": "user", "content": "what are the backlinks?"},
-            {"role": "assistant", "content": "Here are the vault backlinks for foo."},
-        ]
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
-            composer = ContextComposer()
-            # User message alone is stopword-only; prior assistant carries the topic.
-            entry = composer._compose_preempt_matches(
-                ctx,
-                config,
-                "and for bar?",
-                history,
-                ComposerMode.INTERACTIVE,
-            )
-            assert entry is not None
-            assert "vault_backlinks" in ctx.tools.preempt_matches
 
     def test_critical_tool_excluded_from_candidates(self, ctx, config):
         """Tools already declared critical don't get re-promoted — they're in already."""
@@ -1147,7 +1122,6 @@ class TestComposePreemptMatches:
                 ctx,
                 config,
                 "run a shell command",
-                [],
                 ComposerMode.INTERACTIVE,
             )
             # Nothing to promote — the only candidate is already critical.
@@ -1164,7 +1138,6 @@ class TestComposePreemptMatches:
                 ctx,
                 config,
                 "show me vault backlinks",
-                [],
                 ComposerMode.INTERACTIVE,
             )
             # Already fetched — nothing new to promote.
@@ -1180,7 +1153,6 @@ class TestComposePreemptMatches:
                 ctx,
                 config,
                 "vault operation",
-                [],
                 ComposerMode.INTERACTIVE,
             )
             assert entry is not None
@@ -1201,7 +1173,6 @@ class TestComposePreemptMatches:
                 ctx,
                 config,
                 "show vault backlinks",
-                [],
                 ComposerMode.INTERACTIVE,
             )
             assert entry is not None
@@ -1218,7 +1189,6 @@ class TestComposePreemptMatches:
                 ctx,
                 config,
                 "show vault backlinks",
-                [],
                 ComposerMode.INTERACTIVE,
             )
             assert "stale_tool" not in ctx.tools.preempt_matches
@@ -1252,7 +1222,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "run my server in the background",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert entry is None
@@ -1267,7 +1236,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert entry is None
@@ -1287,7 +1255,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "start my dev server in the background",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert entry is not None
@@ -1307,7 +1274,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "run in background",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert entry is None
@@ -1322,7 +1288,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "run something in the background",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert entry is None
@@ -1345,7 +1310,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "alpha beta gamma",
-            [],
             ComposerMode.INTERACTIVE,
         )
         bullets = self._hint_bullets(hint)
@@ -1371,7 +1335,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "alpha beta",
-            [],
             ComposerMode.INTERACTIVE,
         )
         bullets = self._hint_bullets(hint)
@@ -1390,7 +1353,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "alpha beta gamma",
-            [],
             ComposerMode.INTERACTIVE,
         )
         bullets = self._hint_bullets(hint)
@@ -1407,7 +1369,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "alpha beta gamma",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert len(self._hint_bullets(hint)) == 1  # one collapsed bullet, not two
@@ -1424,7 +1385,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "vault search and retrieval",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert entry is not None
@@ -1440,28 +1400,9 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "run dev server in background",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert "stale_skill" not in ctx.skills.preempt_matches
-        assert "background" in ctx.skills.preempt_matches
-
-    def test_prior_assistant_carries_topic(self, ctx, config):
-        """Short user message + prior assistant response still matches via union."""
-        config.discovered_skills = [_make_skill_info("background", "Run things in the background")]
-        history = [
-            {"role": "user", "content": "what about the dev server?"},
-            {"role": "assistant", "content": "Started the dev server in the background."},
-        ]
-        composer = ContextComposer()
-        entry, hint = composer._compose_preempt_skill_matches(
-            ctx,
-            config,
-            "and the watcher?",
-            history,
-            ComposerMode.INTERACTIVE,
-        )
-        assert entry is not None
         assert "background" in ctx.skills.preempt_matches
 
     def test_max_matches_zero_returns_none(self, ctx, config):
@@ -1473,7 +1414,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "run my server in the background",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert entry is None
@@ -1494,7 +1434,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "run dev server in background",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert entry is not None
@@ -1524,7 +1463,6 @@ class TestComposePreemptSkillMatches:
             ctx,
             config,
             "search background vault",
-            [],
             ComposerMode.INTERACTIVE,
         )
         assert hint is not None
@@ -1629,6 +1567,60 @@ class TestCompose:
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
             assert result.retrieved_context_text == "formatted memory"
+
+    @pytest.mark.asyncio
+    async def test_preempt_matchers_ignores_memory_context_history(self, ctx, config):
+        """#1049 end-to-end: keywords that reach history via the injected
+        memory context — and the prior assistant response echoing them —
+        must not drive pre-emptive tool promotion or skill hints for a user
+        message that has nothing to do with them. The matchers evaluate the
+        raw user message only."""
+        config.system_prompt = "You are a test agent."
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 1000000
+        config.discovered_skills = [
+            _make_skill_info("meta-ingest", "Run the meta-ingest pipeline for opencode sessions"),
+        ]
+        tools = [
+            _make_tool_def("opencode_send", "Send a prompt to an opencode session"),
+            _make_tool_def("unrelated_tool", "Totally unrelated"),
+        ]
+        history = [
+            {"role": "user", "content": "tell me about my pipelines"},
+            {
+                "role": "vault_retrieval",
+                "content": (
+                    "Memory context:\n\n## meta-ingest pipeline\n"
+                    "The meta-ingest workflow runs opencode sessions over the vault."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": "Your meta-ingest pipeline runs opencode sessions over the vault.",
+            },
+        ]
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools),
+            patch(
+                "decafclaw.context_composer.retrieve_memory_context",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(
+                ctx,
+                "how do I water my plants",
+                history,
+                mode=ComposerMode.INTERACTIVE,
+            )
+        sources = {s.source for s in result.sources}
+        assert "preempt_matches" not in sources
+        assert "preempt_skill_matches" not in sources
+        assert ctx.tools.preempt_matches == set()
+        assert ctx.skills.preempt_matches == set()
+        # No <preempt_skill_hint> system message in the composed prompt.
+        assert not any(m.get("content", "").startswith("<preempt_skill_hint>") for m in result.messages)
 
     @pytest.mark.asyncio
     async def test_compose_memory_budget_capped_by_max_tokens(self, ctx, config):
