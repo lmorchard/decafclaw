@@ -138,7 +138,7 @@ def match_tools(
     results, sorted by (-score, name) for deterministic tie-breaking.
 
     Args:
-        input_tokens: the user message + prior assistant tokens (already tokenized).
+        input_tokens: the raw user message tokens (already tokenized).
         candidates: tool definitions in the OpenAI-style shape
             ``{"function": {"name": str, "description": str, ...}, ...}``.
         max_matches: safety cap on the number of returned tools.
@@ -174,30 +174,3 @@ def match_tools(
     # Sort by -score, then alphabetical name for determinism.
     scored.sort(key=lambda e: (-e["score"], e["name"]))
     return scored[:max_matches]
-
-
-def extract_last_assistant_text(history: list[dict]) -> str:
-    """Find the most recent assistant-role message with non-empty content.
-
-    Skips tool results, confirmation requests/responses, vault retrievals,
-    cancelled markers (``"[cancelled]"``), and any non-assistant roles.
-    Returns the content text, or an empty string if no prior assistant
-    message exists.
-
-    Used by the pre-emptive search to carry topical continuity from the
-    previous turn's final assistant response into the current turn's
-    match input.
-    """
-    if not history:
-        return ""
-    for msg in reversed(history):
-        if msg.get("role") != "assistant":
-            continue
-        content = msg.get("content")
-        if not content or not isinstance(content, str):
-            continue
-        stripped = content.strip()
-        if not stripped or stripped == "[cancelled]":
-            continue
-        return stripped
-    return ""

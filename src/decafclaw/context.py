@@ -91,9 +91,9 @@ class ToolState:
     # nothing would remain to rebind from. Insertion order is activation order.
     skill_contributions: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = field(default_factory=dict)
     # Tool names promoted for this turn by pre-emptive keyword matching
-    # against the current user message + prior assistant response.
-    # Populated once at the start of a turn by ContextComposer; reused
-    # across iterations so classify_tools() stays consistent mid-turn.
+    # against the raw user message only (#1049 — no history, no injected
+    # context). Populated once at the start of a turn by ContextComposer;
+    # reused across iterations so classify_tools() stays consistent mid-turn.
     # See docs/preemptive-tool-search.md.
     preempt_matches: set[str] = field(default_factory=set)
 
@@ -105,10 +105,10 @@ class SkillState:
     activated: dict[str, str] = field(default_factory=dict)
     data: dict[str, Any] = field(default_factory=dict)
     # Skill names surfaced for this turn by pre-emptive keyword matching
-    # against the current user message + prior assistant response. Skills
-    # already in `activated` (including always-loaded) are excluded.
-    # Populated once at turn start by ContextComposer; rendered as a
-    # short hint system message so the agent considers activate_skill
+    # against the raw user message only (#1049 — no history, no injected
+    # context). Skills already in `activated` (including always-loaded) are
+    # excluded. Populated once at turn start by ContextComposer; rendered as
+    # a short hint system message so the agent considers activate_skill
     # without needing a failed-tool round-trip.
     preempt_matches: set[str] = field(default_factory=set)
     # Track authorization errors / security denials (e.g. workspace skill denied on unattended turn)
