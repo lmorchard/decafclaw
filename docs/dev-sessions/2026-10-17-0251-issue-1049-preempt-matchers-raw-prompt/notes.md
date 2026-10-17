@@ -6,9 +6,12 @@
 - Worktree: /Users/lmorchard/devel/mine/decafclaw/.claude/worktrees/issue-1049-preempt-matchers-raw-prompt
 - Branch: issue-1049-preempt-matchers-raw-prompt
 - Base: origin/main at b47262d20fa2002efa07c24f631566e377c0df11
-- Status: implemented, all local gates green (make check, make test). Committed;
-  draft PR published. Eval of `evals/tool-deferral.yaml` re-running with
-  `--model gpt-4o-mini` (Vertex endpoint TLS-broken from this machine).
+- Status: implemented, all local gates green (make check, make test). Committed
+  at 243da2c1; draft PR #1083 published (https://github.com/lmorchard/decafclaw/pull/1083).
+  Eval of `evals/tool-deferral.yaml` complete: 3/4 pass on gpt-4o-mini; the one
+  failure reproduces identically on the base commit with the same model (pre-existing,
+  not a regression). Remaining: coordinator dispatches the fresh-context local review;
+  hosted CI green.
 
 ## Problem
 
@@ -66,6 +69,18 @@ Consequences (all in scope):
 - `make check` (install-js, check-npm-policy, check-message-types, fmt-check,
   lint, typecheck, check-js, check-browser-assets): exit 0.
 - `make fmt`: clean.
+- `evals/tool-deferral.yaml` (real LLM, `--model gpt-4o-mini`): 3/4 pass —
+  "no tool_search when answer is reachable from critical tools" PASS,
+  "pre-empted tool callable without tool_search" PASS (the raw-user-message
+  promotion path), "preempt skill hint activates the clearly-relevant skill"
+  PASS. "agent reaches a deferred tool end-to-end" FAIL: gpt-4o-mini routed
+  the "Use the `wait` tool to pause for 1 second" prompt to `shell` (sleep)
+  plus an unrelated tool instead of `wait`. Run on the base commit
+  (b47262d2, unmodified src) with the same model fails the same assertion
+  (`notes_append, shell` instead of `wait`) → pre-existing model behavior,
+  not a regression from this change. Also consistent with the change being
+  inert on that case: it is single-turn, so the old match input
+  (`user_message + ""` — no prior assistant) is identical to the new one.
 
 ## Tests
 
@@ -87,10 +102,24 @@ Consequences (all in scope):
   now-dead helper, updated docs + comments, re-ran full gates green.
 - Running `evals/tool-deferral.yaml` (real LLM) as a behavioral check of the
   pre-emptive promotion path.
-- First eval run (default model `vertex-gemini-flash`) failed 4/4 with
-  "All connection attempts failed" at 0s/0 tokens: the Vertex endpoint
-  (`aiplatform.us-central1.googleapis.com`) presents a TLS certificate that does
-  not match its hostname from this machine (curl exit 60), and the LAN LiteLLM
-  endpoint (192.168.0.199:4000) times out. Infrastructure, not code. Re-running
-  with `--model gpt-4o-mini` (OpenAI endpoint verified reachable, HTTP 401 =
-  alive, key configured).
+- First two eval runs failed 4/4 at 0s/0 tokens with "All connection attempts
+  failed". Root cause (found by probing `load_config()` + `_resolve()`): the
+  worktree `.env` had no `DATA_HOME`, so `load_config()` used the worktree's
+  own empty `data/` — no providers, no model_configs — and the auto-generated
+  "default" provider fell back to the built-in legacy LLM default
+  (LAN LiteLLM `http://192.168.0.199:4000`, which is down). Fix: added
+  `DATA_HOME=/Users/lmorchard/devel/mine/decafclaw/data` to the worktree `.env`
+  (eval test state still sandboxes to tmp via `_build_test_config`).
+  Secondary infra limits (why the default model can't run here at all): the
+  Vertex endpoint presents a TLS cert that doesn't match its hostname from this
+  machine, and the shared config's vertex `service_account_file` points at
+  `/Users/lorchard/...` (wrong home — pre-existing config typo, left alone).
+- Committed 243da2c1, pushed, draft PR #1083 published and read back
+  (draft, head verified via `verify-commit --pr-head`).
+- Third eval run (after the DATA_HOME fix) with `--model gpt-4o-mini`: 3/4
+  pass; the failing case ("agent reaches a deferred tool end-to-end") fails the
+  same way on the base commit with the same model → pre-existing gpt-4o-mini
+  routing behavior (picks `shell` sleep over the named `wait` tool), not a
+  regression.
+- Remaining for the coordinator: dispatch the fresh-context local review of the
+  published head (same local model, waiver documented) and confirm hosted CI.
