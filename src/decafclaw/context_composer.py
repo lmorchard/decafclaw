@@ -37,7 +37,7 @@ from .memory_context import (
     retrieve_memory_context,
 )
 from .notes import format_notes_for_context, read_notes
-from .preempt_search import extract_last_assistant_text, match_tools, tokenize
+from .preempt_search import match_tools, tokenize
 from .prompts import wrap_xml
 from .telemetry import get_tracer
 from .tool_definitions import (
@@ -503,7 +503,6 @@ class ContextComposer:
             ctx,
             config,
             user_message,
-            history,
             mode,
         )
         if preempt_entry is not None:
@@ -516,7 +515,6 @@ class ContextComposer:
             ctx,
             config,
             user_message,
-            history,
             mode,
         )
         if preempt_skill_entry is not None:
@@ -1374,15 +1372,18 @@ class ContextComposer:
         ctx,
         config,
         user_message: str,
-        history: list,
         mode: ComposerMode,
     ) -> SourceEntry | None:
         """Run pre-emptive keyword match, populate ``ctx.tools.preempt_matches``.
 
-        Matches user message + prior assistant response against tool names +
-        descriptions. Matched tool names get promoted to critical for this
-        turn via ``classify_tools``'s ``preempt_matches`` parameter. See
+        Matches the raw user message against tool names + descriptions.
+        Matched tool names get promoted to critical for this turn via
+        ``classify_tools``'s ``preempt_matches`` parameter. See
         docs/preemptive-tool-search.md.
+
+        Only the user's own input is evaluated (#1049): injected memory /
+        wiki / journal context and prior assistant responses are excluded
+        so background retrieval can't induce irrelevant promotions.
 
         Returns a ``SourceEntry`` for the diagnostics sidecar, or None if
         matching is disabled or produced no results.
@@ -1403,10 +1404,9 @@ class ContextComposer:
         if not cfg.enabled:
             return None
 
-        # Assemble match input: user message + last assistant response.
-        prior_text = extract_last_assistant_text(history)
-        input_text = f"{user_message}\n{prior_text}" if prior_text else user_message
-        input_tokens = tokenize(input_text)
+        # Match input is the raw user message only — no history, no
+        # injected context (#1049).
+        input_tokens = tokenize(user_message)
         if not input_tokens:
             return None
 
@@ -1475,7 +1475,6 @@ class ContextComposer:
         ctx,
         config,
         user_message: str,
-        history: list,
         mode: ComposerMode,
     ) -> tuple[SourceEntry | None, str | None]:
         """Pre-emptive keyword match against the discovered skill catalog.
@@ -1488,6 +1487,10 @@ class ContextComposer:
         agent considers ``activate_skill`` without first calling a tool
         that hasn't been loaded yet.
 
+        Only the raw user message is evaluated (#1049) — injected memory /
+        wiki / journal context and prior assistant responses are excluded
+        so background retrieval can't induce irrelevant skill hints.
+
         Returns ``(source_entry, hint_text)``. Both ``None`` if matching
         is disabled, the message tokenizes to nothing, or no skills match.
         """
@@ -1499,9 +1502,9 @@ class ContextComposer:
         if not cfg.enabled or cfg.max_matches <= 0:
             return None, None
 
-        prior_text = extract_last_assistant_text(history)
-        input_text = f"{user_message}\n{prior_text}" if prior_text else user_message
-        input_tokens = tokenize(input_text)
+        # Match input is the raw user message only — no history, no
+        # injected context (#1049).
+        input_tokens = tokenize(user_message)
         if not input_tokens:
             return None, None
 

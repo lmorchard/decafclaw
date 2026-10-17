@@ -2,7 +2,6 @@
 
 from decafclaw.preempt_search import (
     STOPWORDS,
-    extract_last_assistant_text,
     match_tools,
     tokenize,
 )
@@ -151,62 +150,3 @@ class TestMatchTools:
         result = match_tools({"vault"}, tools, 10)
         assert len(result) == 1
         assert result[0]["name"] == "vault_read"
-
-
-# -- extract_last_assistant_text ---------------------------------------------
-
-
-class TestExtractLastAssistantText:
-    def test_empty_history(self):
-        assert extract_last_assistant_text([]) == ""
-
-    def test_no_assistant_messages(self):
-        history = [
-            {"role": "user", "content": "hello"},
-            {"role": "tool", "content": "some result"},
-        ]
-        assert extract_last_assistant_text(history) == ""
-
-    def test_returns_most_recent_assistant(self):
-        history = [
-            {"role": "assistant", "content": "First response"},
-            {"role": "user", "content": "follow up"},
-            {"role": "assistant", "content": "Second response"},
-        ]
-        assert extract_last_assistant_text(history) == "Second response"
-
-    def test_skips_tool_roles(self):
-        history = [
-            {"role": "assistant", "content": "Text response"},
-            {"role": "tool", "content": "tool result"},
-            {"role": "user", "content": "question"},
-        ]
-        assert extract_last_assistant_text(history) == "Text response"
-
-    def test_skips_cancelled_marker(self):
-        history = [
-            {"role": "assistant", "content": "Real response"},
-            {"role": "user", "content": "stop"},
-            {"role": "assistant", "content": "[cancelled]"},
-        ]
-        assert extract_last_assistant_text(history) == "Real response"
-
-    def test_skips_empty_content(self):
-        history = [
-            {"role": "assistant", "content": "Real response"},
-            {"role": "assistant", "content": ""},
-            {"role": "assistant", "content": None},
-        ]
-        assert extract_last_assistant_text(history) == "Real response"
-
-    def test_strips_whitespace(self):
-        history = [{"role": "assistant", "content": "   hello   "}]
-        assert extract_last_assistant_text(history) == "hello"
-
-    def test_non_string_content_skipped(self):
-        # Some histories store list-of-parts content; we only match plain strings.
-        history = [
-            {"role": "assistant", "content": "Real text"},
-            {"role": "assistant", "content": [{"type": "text", "text": "fancy"}]},
-        ]
-        assert extract_last_assistant_text(history) == "Real text"

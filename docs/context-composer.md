@@ -141,7 +141,7 @@ This contract closes a class of underreporting bugs (#393) where a role-based fi
 4. Retrieves and injects memory context (semantic search over vault/journal)
 5. Builds the user message and archives it
 6. Filters/remaps history roles for the LLM
-7. Runs pre-emptive tool search — keyword-matches the user message + last assistant response against tool names/descriptions, populating `ctx.tools.preempt_matches` for promotion to critical in tool classification. See [Pre-emptive Tool Search](preemptive-tool-search.md).
+7. Runs pre-emptive tool search — keyword-matches the raw user message against tool names/descriptions, populating `ctx.tools.preempt_matches` for promotion to critical in tool classification. See [Pre-emptive Tool Search](preemptive-tool-search.md).
 8. Classifies tools into active vs deferred sets using the priority system. See [Tool Priority](tool-priority.md).
 9. Returns a `ComposedContext` with everything ready to send
 

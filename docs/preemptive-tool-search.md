@@ -10,7 +10,7 @@ This is a partial implementation of [issue #257](https://github.com/lmorchard/de
 
 At turn start, `ContextComposer._compose_preempt_matches` runs before tool classification:
 
-1. **Assemble match input** — tokenize the user message plus the most recent assistant response from history.
+1. **Assemble match input** — tokenize the raw user message only (no history, no injected context — see [#1049](https://github.com/lmorchard/decafclaw/issues/1049)).
 2. **Tokenize** — lowercase, split on non-alphanumeric boundaries, drop tokens shorter than 3 characters, drop a small set of common English stopwords.
 3. **Score candidates** — for each tool that isn't already force-critical (declared `critical` priority, env-overridden, activated skill tool, already-fetched), compute `score = |input_tokens ∩ tokenize(name + description)|`. Tools with `score ≥ 1` are matches.
 4. **Cap by `max_matches`** — sort by `(-score, name)`, keep the top N (default 10).
@@ -41,15 +41,17 @@ The wording is intentionally bulleted (one skill per line) rather than comma-joi
 
 Diagnostics surface as a parallel source entry, `preempt_skill_matches`. `details.matches` is the full promoted set (with score and matched tokens); `details.hinted` is the subset actually named in the hint, and `promoted_count` / `hinted_count` record the split.
 
-## Why "user + previous assistant"?
+## Why the raw user message only?
 
-Short follow-ups like "yes, another one" carry no keywords on their own. Unioning with the previous assistant message's text preserves topical continuity so the matched tools stay promoted across short exchanges. Topic pivots linger one turn (the previous assistant still has the old topic), which is a small acceptable cost.
+The match input is the user's own message — nothing else. It does **not** include prior assistant responses, and it never sees the injected memory / wiki / journal context.
 
-First turn of a conversation has no prior assistant — only the user message contributes.
+This matters because the injected memory context is background retrieval, not a user intent signal. When proactive retrieval surfaces vault pages full of keywords (e.g. a page mentioning `meta-ingest` or `opencode`), letting those keywords feed the matcher created a feedback loop: background retrieval induced irrelevant tool/skill promotions and `<preempt_skill_hint>` lines even when the user's actual prompt had nothing to do with them. Scoping the input to the raw user message breaks that loop — the matcher only reacts to what the user actually typed this turn. (#1049)
+
+The trade-off is that short keyword-less follow-ups ("yes, another one") no longer inherit topical continuity from the previous assistant reply. That is accepted: a keyword-less user message simply produces no pre-emptive promotion, and the agent can still reach deferred tools explicitly via `tool_search`.
 
 ## Ephemeral, not persistent
 
-Pre-emptive matches are **recomputed fresh every turn**. They don't persist like tools the agent explicitly fetched via `tool_search`, which stay loaded for the rest of the conversation. If the user pivots topics, the previous match drops out after one extra turn (prior-assistant heuristic).
+Pre-emptive matches are **recomputed fresh every turn** from the raw user message. They don't persist like tools the agent explicitly fetched via `tool_search`, which stay loaded for the rest of the conversation. If the user pivots topics, the previous match drops out on the very next turn.
 
 Calling a matched tool does **not** automatically add it to `fetched_tools`. The auto-fetch fallback in `execute_tool` only fires when a tool name is in the deferred pool but not resolvable — a matched tool resolves directly because it's in the active set, so that path isn't triggered. This is intentional: "matched once" isn't a strong enough signal to persist across topic shifts.
 
@@ -85,7 +87,7 @@ Runs in every mode that goes through `ContextComposer.compose`:
 | Reflection judge | ❌ (no tool calls) |
 | Compaction / memory sweep | ❌ (purpose-specific tool sets) |
 
-Heartbeat and scheduled tasks pass `history=[]`, so the prior-assistant heuristic is a no-op — matching runs on the task prompt only.
+Heartbeat and scheduled tasks run with no conversation history — matching runs on the task prompt only.
 
 ## Debugging
 
