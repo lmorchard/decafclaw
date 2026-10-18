@@ -34,6 +34,7 @@ def _get_tool_action_map():
             "admin_replace_lines": ConfirmationAction.ADMIN_MUTATION,
             "admin_edit": ConfirmationAction.ADMIN_MUTATION,
             "admin_delete": ConfirmationAction.ADMIN_MUTATION,
+            "update_system_prompt": ConfirmationAction.UPDATE_SYSTEM_PROMPT,
         }
     return _TOOL_ACTION_MAP
 

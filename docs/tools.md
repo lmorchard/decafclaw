@@ -50,11 +50,12 @@ Dedicated file tools for the agent's administrative directory (`config.agent_pat
 ### Secret-file protection
 
 The admin directory holds secret-bearing files (web/browser token
-stores, provider API keys, MCP credentials, per-VM keys). The six tools consult
-**one shared rule** in `decafclaw/secret_policy.py`, so a new secret file
-needs a single extension point, not a per-tool fix:
+stores, provider API keys, MCP credentials, per-VM keys). The six admin tools
+and `update_system_prompt` (the only other agent-facing writer under this
+directory) consult **one shared rule** in `decafclaw/secret_policy.py`, so a
+new secret file needs a single extension point, not a per-tool fix:
 
-- **Refuse** — the agent gets nothing. Applied to *all six tools*, before
+- **Refuse** — the agent gets nothing. Applied to *all seven tools*, before
   confirmation, reading, or mutation. The default set is:
    `web_tokens.json`, `browser_tokens.json`, `mcp_oauth/**`, `*.pem`, `*.key`,
    `**/keys/*`, `service_account*.json`. `admin_list` still shows the *name* of a
@@ -87,10 +88,11 @@ needs a single extension point, not a per-tool fix:
   single `*` segment matching any one key.
 
 **Marker guard.** Any write payload containing `<redacted>` is refused
-(`admin_write`, `admin_replace_lines`, `admin_edit`), and the mutation
-*recovery* path (`AdminMutationHandler._apply_mutation`) inherits the guard —
-a pending approval that arrives after a restart is still refused. The guard
-exists to stop a read→modify→write of the marker from clobbering a real secret.
+(`admin_write`, `admin_replace_lines`, `admin_edit`, `update_system_prompt`),
+and the mutation *recovery* paths (`AdminMutationHandler._apply_mutation`,
+`UpdateSystemPromptHandler.on_approve`) inherit the guard — a pending approval
+that arrives after a restart is still refused. The guard exists to stop a
+read→modify→write of the marker from clobbering a real secret.
 
 **Fail-closed.** If a redactable file's JSON does not parse, `admin_read`
 refuses to return it (rather than leak unparseable bytes that might still hold
@@ -99,6 +101,20 @@ if it is not actually config.
 
 This is best-effort harm reduction, not watertightness — the admin is the
 final arbiter. See [data-layout.md → Secret files](data-layout.md#secret-files).
+
+## Prompt Sections (`tools/prompt_tools.py`)
+
+The system prompt is assembled from markdown files under
+`config.agent_path` ([Context Composer → System prompt](context-composer.md#system-prompt)).
+Two of those files are the agent's own "living document" sections and can be
+rewritten by the agent — with the same protections as the admin file tools
+(interactive confirmation with a diff preview, blocked on unattended turns and
+child agents, the shared secret-file rule, the marker guard, snapshot
+revalidation).
+
+| Tool | Always | What it does |
+|------|:------:|--------------|
+| `update_system_prompt` | | Rewrite `USER.md` (user context) or `CUSTOM.md` (custom standing instructions) in `data/{agent_id}/` (requires confirmation). `SOUL.md` is guarded and rejected; any other name is rejected as an invalid section |
 
 ## Vault (`skills/vault/tools.py`)
 

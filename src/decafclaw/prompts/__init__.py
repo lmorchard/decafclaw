@@ -40,9 +40,11 @@ def load_system_prompt(config, rejections: list | None = None):
     1. Check agent directory: data/{agent_id}/{file}
     2. Fall back to bundled: src/decafclaw/prompts/{file}
 
-    Then append USER.md from agent directory if it exists, the skill
-    catalog if any skills were discovered, and the bodies of always-
-    loaded bundled skills. Each section is wrapped in an XML tag; see
+    Then append USER.md and CUSTOM.md from the agent directory if they
+    exist (both per-deployment; CUSTOM.md is the agent-writable custom
+    section, see update_system_prompt, #24), the skill catalog if any
+    skills were discovered, and the bodies of always-loaded bundled
+    skills. Each section is wrapped in an XML tag; see
     docs/context-composer.md.
 
     Returns:
@@ -80,6 +82,17 @@ def load_system_prompt(config, rejections: list | None = None):
         if wrapped:
             sections.append(wrapped)
             log.info("Loaded USER.md from workspace")
+
+    # CUSTOM.md — the agent-writable custom prompt section (#24), maintained
+    # via the confirmation-gated update_system_prompt tool. Same gating as
+    # USER.md: agent dir only, and only when present with non-empty content.
+    custom_file = agent_dir / "CUSTOM.md"
+    if custom_file.exists():
+        text = custom_file.read_text().strip()
+        wrapped = wrap_xml("custom_context", text)
+        if wrapped:
+            sections.append(wrapped)
+            log.info("Loaded CUSTOM.md from workspace")
 
     # Discover skills and append catalog
     skills = discover_skills(config, rejections=rejections)

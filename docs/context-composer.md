@@ -12,9 +12,15 @@ Assembled from markdown files at startup. Admin-level files override bundled.
 |-------|------|--------|---------|
 | 1 | `SOUL.md` | `src/decafclaw/prompts/` or admin override | Identity, personality, behavioral guidelines |
 | 2 | `AGENT.md` | `src/decafclaw/prompts/` or admin override | Capabilities, tool guidance, memory instructions |
-| 3 | `USER.md` | Workspace only | User-specific context (optional) |
+| 3 | `USER.md` | Agent dir only | User-specific context (optional) |
+| 4 | `CUSTOM.md` | Agent dir only | Custom standing instructions the agent maintains via `update_system_prompt` (#24, optional) |
 
-Override path: `data/{agent_id}/{SOUL,AGENT,USER}.md` (admin-level, read-only to agent)
+Override path: `data/{agent_id}/{SOUL,AGENT,USER,CUSTOM}.md`. All four are
+admin-level (read-only to the agent via file tools), but `USER.md` and
+`CUSTOM.md` are additionally updatable by the agent through the
+confirmation-gated `update_system_prompt` tool
+([Tools → Prompt Sections](tools.md#prompt-sectionstoolsprompt_toolspy));
+`SOUL.md` is guarded against agent modification.
 
 #### Section delimiters
 
@@ -29,6 +35,7 @@ deferred-tool catalog is wrapped in `build_deferred_list_text`).
 | `<soul>` | `SOUL.md` | Always present (bundled default or admin override) |
 | `<agent_role>` | `AGENT.md` | Always present (bundled default or admin override) |
 | `<user_context>` | `USER.md` | Only when the file exists in the agent dir and has non-empty content |
+| `<custom_context>` | `CUSTOM.md` | Only when the file exists in the agent dir and has non-empty content (agent-maintained via `update_system_prompt`, #24) |
 | `<skill_catalog>` | `build_catalog_text` output (listing of Active + Available skills) | Only when at least one skill was discovered |
 | `<loaded_skills>` | Bodies of always-loaded bundled skills, one nested `<skill name="…">` block per body | Only when at least one bundled always-loaded skill exists |
 | `<deferred_tools>` | `build_deferred_list_text` output (separate system message) | Only when at least one deferred tool entry is emitted |
@@ -74,6 +81,8 @@ the slice guidance still lives in the system prompt via the addendum.
 │ - SOUL.md (identity, personality)       │
 │ - AGENT.md (tools, memory guidance)     │
 │ - USER.md (user context, if present)    │
+│ - CUSTOM.md (custom instructions, if    │
+│   present — agent-writable, #24)        │
 │ - Skill catalog (name + description)    │
 │ - Deferred tools list (if over budget)  │
 │ - Vault guide (AGENTS.md, if present)   │
