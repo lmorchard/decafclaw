@@ -133,24 +133,26 @@ When the subagent goes over `MemoryMax`, the kernel's cgroup OOM killer kills th
 
 | Setting | Default | Env var |
 |---|---|---|
+| `opencode` cap enabled | `true` | `OPENCODE_MEMORY_CAP_ENABLED` |
 | `opencode` memory cap (hard) | `50%` | `OPENCODE_MEMORY_MAX` |
 | `opencode` memory threshold (soft) | `40%` | `OPENCODE_MEMORY_HIGH` |
+| `claude_code` cap enabled | `true` | `CLAUDE_CODE_MEMORY_CAP_ENABLED` |
 | `claude_code` memory cap (hard) | `50%` | `CLAUDE_CODE_MEMORY_MAX` |
 | `claude_code` memory threshold (soft) | `40%` | `CLAUDE_CODE_MEMORY_HIGH` |
 
 Values are systemd memory specs: a percentage of physical memory or an absolute size (e.g. `2G`, `300M`). `MemoryHigh` is the soft threshold where the kernel starts reclaiming pressure; `MemoryMax` is the hard limit where the OOM killer fires.
 
-**Turning the cap off.** Set both values to empty in `config.json`, per skill:
+**Turning the cap off.** The canonical switch is `memory_cap_enabled`, per skill, in `config.json` or via its env var:
 
 ```json
 {
   "skills": {
-    "opencode": { "memory_max": "", "memory_high": "" }
+    "opencode": { "memory_cap_enabled": false }
   }
 }
 ```
 
-Note: an empty *env var* is treated as unset by the config layer (project-wide convention), so the config.json form is the way to disable a cap.
+(`OPENCODE_MEMORY_CAP_ENABLED=false` / `CLAUDE_CODE_MEMORY_CAP_ENABLED=false` work from the environment as well.) An explicitly disabled cap runs the CLI uncapped with no warning. As an alternative, set both limit values to empty in `config.json` per skill (e.g. `"memory_max": "", "memory_high": ""`); an empty *env var* is treated as unset by the config layer (project-wide convention), so the config.json form is the way to disable via empty limits.
 
 **Examining delegation.** The cap only applies when the user systemd instance has delegated the memory controller:
 

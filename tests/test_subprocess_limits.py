@@ -79,6 +79,8 @@ def test_prefix_empty_when_memory_controller_not_delegated(monkeypatch, caplog):
     warnings = _cap_warnings(caplog)
     assert len(warnings) == 1
     assert "memory controller is not delegated" in warnings[0].getMessage()
+    # The doc pointer names the deployment.md heading verbatim.
+    assert "Subagent Memory Limits" in warnings[0].getMessage()
 
 
 def test_prefix_empty_when_both_limits_empty(caplog):

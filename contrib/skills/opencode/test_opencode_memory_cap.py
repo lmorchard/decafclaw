@@ -4,6 +4,7 @@ Uses a fake subprocess — no real opencode or systemd-run is executed.
 """
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -114,6 +115,27 @@ async def test_no_cap_runs_plain_command(monkeypatch, session, ctx):
     assert captured["args"][:2] == ("opencode", "run")
     assert result.data is not None
     assert result.data["exit_status"] == "success"
+
+
+async def test_cap_disabled_by_bool_runs_plain_command_without_warning(monkeypatch, session, ctx, caplog):
+    # memory_cap_enabled=False -> no prefix and no "cap unavailable" warning,
+    # even on a host that cannot apply caps (an explicit disable is not a
+    # missing capability; the helper is never called).
+    monkeypatch.setattr(subprocess_limits.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        opencode_tools,
+        "_skill_config",
+        opencode_tools.SkillConfig(memory_cap_enabled=False),
+    )
+    captured = _patch_exec(monkeypatch, _FakeProc(returncode=0))
+
+    with caplog.at_level(logging.WARNING, logger="decafclaw.subprocess_limits"):
+        result = await opencode_tools.tool_opencode_send(ctx, session.session_id, "do a thing", include_diff=False)
+
+    assert captured["args"][:2] == ("opencode", "run")
+    assert result.data is not None
+    assert result.data["exit_status"] == "success"
+    assert [r for r in caplog.records if "Memory cap requested" in r.getMessage()] == []
 
 
 async def test_sigkill_returncode_gives_error_result(monkeypatch, session, ctx):

@@ -177,3 +177,20 @@ async def test_no_transport_passed_when_cap_disabled(monkeypatch, session, ctx):
     assert result.data is not None
     assert result.data["exit_status"] == "success"
     assert captured["transport"] is None
+
+
+async def test_no_transport_when_cap_disabled_by_bool(monkeypatch, enabled_cap, session, ctx):
+    # memory_cap_enabled=False -> no transport even on a host that supports
+    # caps (an explicit disable is not a missing capability).
+    monkeypatch.setattr(
+        claude_code_tools,
+        "_skill_config",
+        claude_code_tools.SkillConfig(memory_cap_enabled=False),
+    )
+    captured = _patch_query(monkeypatch)
+
+    result = await claude_code_tools.tool_claude_code_send(ctx, session.session_id, "do a thing", include_diff=False)
+
+    assert result.data is not None
+    assert result.data["exit_status"] == "success"
+    assert captured["transport"] is None

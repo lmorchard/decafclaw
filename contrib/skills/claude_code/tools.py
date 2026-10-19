@@ -69,6 +69,11 @@ class SkillConfig:
     budget_default: float = field(default=2.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_DEFAULT"})
     budget_max: float = field(default=10.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_MAX"})
     session_timeout: str = field(default="30m", metadata={"env_alias": "CLAUDE_CODE_SESSION_TIMEOUT"})
+    # Master switch for the memory cap below: False runs the CLI uncapped
+    # with no warning, even on a host that could apply a cap (an explicit
+    # disable is not a missing capability). Empty limits are a second,
+    # alternative disable.
+    memory_cap_enabled: bool = field(default=True, metadata={"env_alias": "CLAUDE_CODE_MEMORY_CAP_ENABLED"})
     # Memory cap for the claude CLI child (systemd scope). Values are systemd
     # memory specs (e.g. "50%", "2G"); both empty disables the cap.
     memory_max: str = field(default="50%", metadata={"env_alias": "CLAUDE_CODE_MEMORY_MAX"})
@@ -679,9 +684,11 @@ async def tool_claude_code_send(
         # maps to the same clean error result as before the cap existed.
         await ctx.publish("tool_status", tool="claude_code_send", message=f"Sending to Claude Code ({session.cwd})...")
         try:
+            # An explicit disable (memory_cap_enabled=False) skips the helper
+            # entirely, so it logs no "cap unavailable" warning.
             cap_prefix = (
                 memory_cap_prefix(_skill_config.memory_max, _skill_config.memory_high, label="claude_code_send")
-                if _skill_config is not None
+                if _skill_config is not None and _skill_config.memory_cap_enabled
                 else []
             )
             transport = (

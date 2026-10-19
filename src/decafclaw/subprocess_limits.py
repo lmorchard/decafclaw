@@ -85,7 +85,10 @@ def memory_cap_prefix(memory_max: str, memory_high: str, label: str = "") -> lis
 
     In the latter two cases a single warning is logged per process lifetime.
     Either limit may be empty on its own; the scope then gets only the
-    non-empty one.
+    non-empty one. Callers with an explicit disable (a skill's
+    ``memory_cap_enabled`` switch) should not call this function at all, so
+    no "cap unavailable" warning is logged: an explicit disable is not a
+    missing capability.
     """
     if not memory_max and not memory_high:
         return []
@@ -100,7 +103,7 @@ def memory_cap_prefix(memory_max: str, memory_high: str, label: str = "") -> lis
             memory_high,
             label,
             "the memory controller is not delegated to the user systemd instance "
-            "(see docs/deployment.md, 'Subagent memory limits')",
+            "(see docs/deployment.md, 'Subagent Memory Limits')",
         )
         return []
 

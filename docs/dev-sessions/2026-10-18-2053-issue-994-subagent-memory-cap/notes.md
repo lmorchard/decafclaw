@@ -3,11 +3,13 @@
 ## Resume here
 
 - Issue: https://github.com/lmorchard/decafclaw/issues/994
+- PR: https://github.com/lmorchard/decafclaw/pull/1085 (DRAFT, open, CI green at head)
 - Worktree: /Users/lmorchard/devel/mine/decafclaw/.claude/worktrees/issue-994-subagent-memory-cap
 - Branch: issue-994-subagent-memory-cap
 - Base: origin/main at 288fa0581f4a4dcbe692f1ee418f202e5f009af2
-- Status: implementation complete, gates green, committed; publishing as DRAFT PR (same session, per handoff).
-- Next action: publish draft via submit-pr; independent review is a LATER handoff (do not mark PR ready in this run).
+- Published head: 1a6b47b516b32b423a47ad860b1fd578cc9f58e4 (sole commit; verify-commit --pr-head clean)
+- Status: implement-issue + draft publication COMPLETE. Notes edits below are uncommitted on purpose (no notes-only commit; PR description carries the record).
+- Next action (LATER handoff): independent local review of head 1a6b47b5 per review-changes; then `pr ready` with board move to In review. This run must not mark ready or request review.
 
 ## Log
 
@@ -79,3 +81,35 @@ Checks (on the committed change):
 Evals: skipped per project convention — no tool description changed (verified TOOL_DEFINITIONS untouched).
 
 Note: the implementation commit bundles the code, tests, docs, and these notes together (no separate notes-only commit). It is the sole commit on this branch; its final hash is recorded in the PR description (a commit cannot record its own hash).
+
+### 2026-10-19 — Draft publication (same session, per handoff)
+
+- Commit authored/committed as MokaGnome (amended under `ghflow exec` before push): final head `1a6b47b516b32b423a47ad860b1fd578cc9f58e4`, parent `288fa058` (base).
+- Identity: `ghflow identity` ready (login MokaGnome, source ~/.config/ghflow/identity.json); `gh api user` under the identity returned `MokaGnome` before the first GitHub write.
+- No existing PR for the head branch (`gh pr list --json` → `[]`).
+- Pushed `issue-994-subagent-memory-cap`; `verify-commit ... --on issue-994-subagent-memory-cap` clean (on_branch true, no errors).
+- Draft PR created: https://github.com/lmorchard/decafclaw/pull/1085 (head issue-994-subagent-memory-cap → base main, `--draft`). Body via `ghflow pr body` (summary + commits + checks + `Closes #994`), read back (5014 chars, sections present). `verify-commit ... --pr-head` clean (is_pr_head true).
+- `pr-state` at head `1a6b47b5`: CI green — lint-and-test passed (required), js-test passed (required), check-tui passed; no review requests, no reviews, no comments; mergeable.
+- Board left In progress (ready submission is a later handoff); `triage:ready` label left in place; PR left DRAFT; no review requested — all per handoff limits.
+- Body file: /Users/lmorchard/.local/state/ghflow/notes/2026-10-18-issue-994-resume/pr-body.md (summary at pr-summary.md in the same dir).
+
+### 2026-10-19 — Correction pass (review findings F1 + N2)
+
+Independent review of head `1a6b47b5` (fresh context, user-approved same-model exception) settled one finding and one note. Implemented exactly per the decisions file:
+
+- **F1 (USER DECISION, attended 2026-10-19): explicit boolean to disable the cap.** Spec success criterion #4 (empty env values → no prefix) is superseded. Added `memory_cap_enabled: bool = True` to both skills' `SkillConfig` (env aliases `OPENCODE_MEMORY_CAP_ENABLED` / `CLAUDE_CODE_MEMORY_CAP_ENABLED`). Both `*_send` tools skip `memory_cap_prefix` entirely when the switch is `False` → no prefix, and no "cap unavailable" warning (explicit disable ≠ missing capability). The helper's "both values empty → off" rule is kept; its docstring now records the not-call-the-helper contract for explicit disables. Docs: deployment.md defaults table + "Turning the cap off" (the boolean is the canonical documented switch, env and config.json forms; empty limits remain the alternative), both SKILL.md config tables + trailing paragraphs.
+- **N2 (accepted, fix it):** the helper's not-delegated warning pointed at `'Subagent memory limits'`; the real heading (deployment.md L122, both SKILL.md references) is `'Subagent Memory Limits'`. Aligned.
+
+Tests: 2 new — opencode: disabled-by-bool → plain command and no warning on a host that cannot apply caps; claude_code: disabled-by-bool → no transport on a host that can. Plus a heading-casing assertion in `test_prefix_empty_when_memory_controller_not_delegated`. Specificity verified: all three new/changed tests FAIL against the stashed pre-change implementation (the N2 failure log shows the old lowercase heading).
+
+`load_sub_config` verified in the worktree venv (py3.13): env alias `false`/`true` per skill, config.json `false`, default `true`, env overrides config.json (documented priority). One false alarm during verification: a first snippet left `OPENCODE_MEMORY_CAP_ENABLED=true` set while asserting the config.json path; env priority made the code correct and the snippet wrong.
+
+Checks (pre-commit, worktree):
+- Targeted (3 test files): 21 passed (0.35s).
+- `make fmt`: 440 files left unchanged.
+- `make test` (full): **4596 passed, 2 skipped** (23.1s; +2 over `1a6b47b5`'s 4594 = the two new per-skill tests).
+- `make check` (full gate): **PASS** (pyright 0 errors, 0 warnings).
+
+Evals: skipped per project convention — no tool description changed (TOOL_DEFINITIONS untouched).
+
+Publish: new commit on top of `1a6b47b5` on the same branch (no force-push), pushed, same draft PR #1085 refreshed (disable section now documents the boolean; F1 recorded as an attended user decision). PR stays DRAFT; board stays In progress; reviewer re-reviews the new head.
