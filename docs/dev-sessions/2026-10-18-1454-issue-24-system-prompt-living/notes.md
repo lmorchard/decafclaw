@@ -9,9 +9,17 @@
 - Flow: implement → publish draft PR (submit-pr, same session) → keep working → final commits to same draft. NO merge, NO ready-mark, NO review request. Unattended: take supported recommended answers, record in PR description.
 - Baseline: `make test` green at 288fa058 — 4575 passed, 2 skipped (50.14s).
 - Board: Ready → In progress (readback matches).
-- Implementation COMPLETE. All checks green at working tree (about to commit).
-- Next action: commit → publish draft PR via submit-pr → (evals: connection-failed,
-  see Log) → final report.
+- Implementation COMPLETE. Committed 4c05a2fdd7152364c46aa71c5ebaea95358611ec,
+  published as DRAFT PR https://github.com/lmorchard/decafclaw/pull/1084.
+- Hosted CI GREEN at 4c05a2f: lint-and-test (required) passed, js-test
+  (required) passed, check-tui passed. mergeable: MERGEABLE, base 0 behind.
+- DO NOT mark ready / request review (handoff limit). Board stays In progress
+  while the PR is a draft.
+- Next action (coordinator): dispatch independent local review (fresh context,
+  same local model — user-approved exception) of head 4c05a2f, then `pr ready`
+  with --issue/--owner/--project, then review follow-up. No merge (flow limit).
+- Uncommitted: this notes file only (kept in working tree; no notes-only
+  commit while the draft is up).
 
 ## Confirmed scope (from handoff; authoritative)
 
@@ -143,3 +151,64 @@
   code failure. Loadout confirmed correct: "101 tool(s) loaded" (new tool
   present). Did not retry (environment limit; hosted CI settles the gates —
   evals are outside `make check`/CI anyway).
+- 2026-10-18 1655: Committed 4c05a2fd (15 files, +1048/−22): feature + tests
+  + evals + docs + these notes, one cohesive commit.
+- 2026-10-18 1700: Published DRAFT PR #1084 (MokaGnome, base main, head
+  issue-24-system-prompt-living @ 4c05a2fdd7152364c46aa71c5ebaea95358611ec;
+  no pre-existing PR for the branch; verify-commit --on branch and
+  --pr-head both clean; is_pr_head: true). Body: summary + review (not
+  performed, draft) + "## Decisions taken unattended" (secret-policy
+  interaction, empty-content, new action type) + commits + checks +
+  "Closes #24". Body file:
+  /private/var/folders/8p/p5kz_p794bbbwgg2_hgn34nw0000gn/T/opencode/issue24-body-full.md
+- 2026-10-18 1705: pr-state: CI green at 4c05a2f — lint-and-test (required)
+  passed, js-test (required) passed, check-tui passed; mergeable MERGEABLE;
+  base_behind_by 0. Description refreshed to the green state. Board stays
+  "In progress" (draft PR does not qualify for In review).
+
+## Post-review correction (handoff correction-24.md)
+
+Independent review (fresh context, same local model under the user-approved
+exception) found one actionable defect + two accepted notes.
+
+- 2026-10-18 1800s: **F1 (actionable) — recovery path never applied an
+  approved write.** `UpdateSystemPromptHandler.on_approve` read
+  `action_data.get("section")`, but the shared machinery
+  (`admin_tools._confirm_admin_mutation`) persists the section under the key
+  **`path`** — verified in code (admin_tools.py:333-339; AdminMutationHandler
+  reads `action_data.get("path")` at :803/:837). No code ever writes a
+  `section` key, so 100% of legitimate recoveries were dropped with a
+  confusing `section '' is not a valid prompt section name` cancel. The old
+  recovery tests passed because they hand-built `action_data` with a `section`
+  key — the shape I assumed, not the shape the flow persists (shape drift).
+  Fix: `on_approve` reads `action_data.get("path") or ""`; `on_deny` reads
+  `action_data.get("path", "file")` (mirrors AdminMutationHandler.on_deny —
+  also fixes accepted Note 1, the literal-'section' denial message).
+- 2026-10-18: **Note 2 (accepted) — description overstated timing.**
+  "picked up by load_system_prompt on the next prompt assembly" → "on the
+  next server restart or skill refresh (system prompt assembly is not
+  per-turn)". Verified: `config.system_prompt` is assembled at startup
+  (decafclaw/__init__.py:59) and reassembled only on skill refresh
+  (skill_tools.py:1160-1168, `refresh_skills` + activate_skill catalog-miss).
+  One-liner added to docs/tools.md Prompt Sections. Notes 3 (declined) and
+  4 (no action) per coordinator settlement.
+- 2026-10-18: **Recovery tests now drive the real persistence shape.** New
+  `_capture_pending` helper: runs the interactive tool with a capturing
+  confirmation that simulates process death while pending (no write), then
+  round-trips the captured request through
+  `ConfirmationRequest.to_archive_message`/`from_archive_message` — exactly
+  what `_scan_archive_for_pending` does on restart. Rebuilt 4 of 5 recovery
+  tests on it (approve-apply, stale, deny, + new contract test
+  `test_interactive_request_persists_section_under_path_key`); 2 tests
+  (SOUL.md revalidation, marker) stay hand-built — the interactive flow can
+  never emit those shapes — but now use the real `path` key.
+- 2026-10-18 1915: **Red check (test teeth).** Temporarily reverted the
+  handler to the buggy `section` reads: 4/6 recovery tests fail, reproducing
+  F1's exact symptom (`section '' is not a valid prompt section name`),
+  incl. the denial-message test. Fix re-applied; all green.
+- 2026-10-18 1925: Checks at the fix: tests/test_prompts.py 41 passed (was
+  40 — +1 contract test); test_admin_tools/test_tool_timeout/test_tool_registry
+  125 passed; `make test` 4601 passed / 2 skipped; `make check` exit 0
+  (install-js, check-npm-policy, check-message-types, fmt-check, lint,
+  typecheck, check-js, check-browser-assets). `make eval-tools` still not
+  runnable (endpoint unreachable) — evidence limit unchanged.

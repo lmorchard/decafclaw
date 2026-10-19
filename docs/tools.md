@@ -116,6 +116,10 @@ revalidation).
 |------|:------:|--------------|
 | `update_system_prompt` | | Rewrite `USER.md` (user context) or `CUSTOM.md` (custom standing instructions) in `data/{agent_id}/` (requires confirmation). `SOUL.md` is guarded and rejected; any other name is rejected as an invalid section |
 
+Updated text is picked up by `load_system_prompt` on the next server restart
+or skill refresh — system prompt assembly is not per-turn
+([Context Composer → System prompt](context-composer.md#system-prompt)).
+
 ## Vault (`skills/vault/tools.py`)
 
 Always-activated skill for the unified knowledge base. See [Vault](vault.md).

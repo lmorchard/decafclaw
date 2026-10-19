@@ -204,7 +204,11 @@ class UpdateSystemPromptHandler:
 
     async def on_approve(self, ctx: Any, request: "ConfirmationRequest", response: "ConfirmationResponse") -> dict:
         action_data = request.action_data or {}
-        section = action_data.get("section") or ""
+        # The shared confirmation machinery (_confirm_admin_mutation) persists
+        # the section under the "path" key — the same key AdminMutationHandler
+        # reads. The archive round-trip (_scan_archive_for_pending) preserves
+        # exactly this shape, so reading anything else drops every recovery.
+        section = action_data.get("path") or ""
         payload = action_data.get("payload") or {}
         content = payload.get("content")
         snapshot_data = action_data.get("snapshot") or {}
@@ -261,7 +265,8 @@ class UpdateSystemPromptHandler:
 
     async def on_deny(self, ctx: Any, request: "ConfirmationRequest", response: "ConfirmationResponse") -> dict:
         action_data = request.action_data or {}
-        section = action_data.get("section", "section")
+        # Same "path" key the shared machinery persists (see on_approve).
+        section = action_data.get("path", "file")
         msg = f"[update_system_prompt for '{section}' was denied by user]"
         if ctx is not None and getattr(ctx, "conv_id", None):
             from ..archive import append_message
@@ -307,7 +312,8 @@ PROMPT_TOOL_DEFINITIONS = [
                 "Update a mutable section of the agent's own system prompt — USER.md (who the user is) "
                 "or CUSTOM.md (custom standing instructions) in data/{agent_id}/. Use when the user "
                 "explicitly asks to update your user context or standing instructions; the new text is "
-                "picked up by load_system_prompt on the next prompt assembly. "
+                "picked up by load_system_prompt on the next server restart or skill refresh "
+                "(system prompt assembly is not per-turn). "
                 "SOUL.md is guarded and CANNOT be updated through this tool. "
                 "REQUIRES INTERACTIVE USER CONFIRMATION showing a unified diff preview. "
                 "Blocked on unattended turns and child agents. "

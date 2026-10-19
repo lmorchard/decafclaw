@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from decafclaw.config_types import SecretPolicyConfig
-from decafclaw.confirmations import ConfirmationResponse
+from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest, ConfirmationResponse
 from decafclaw.media import ToolResult
 from decafclaw.prompts import load_system_prompt, wrap_xml
 from decafclaw.skills import _BUNDLED_SKILLS_DIR, SkillInfo
@@ -295,6 +295,28 @@ def _mock_confirm(approved: bool = True):
     return AsyncMock(return_value=ConfirmationResponse(confirmation_id="c1", approved=approved))
 
 
+async def _capture_pending(ctx, section: str, content: str) -> ConfirmationRequest:
+    """Run the interactive tool with a capturing confirmation that then
+    simulates the process dying while the request is pending (no write).
+    Returns the captured request round-tripped through the archive —
+    ``to_archive_message`` / ``from_archive_message`` — exactly the shape
+    ``_scan_archive_for_pending`` reconstructs on restart. Driving the
+    real persisted shape is the point: a hand-built ``action_data`` would
+    silently drift from what ``_confirm_admin_mutation`` actually stores."""
+
+    captured = {}
+
+    async def fake_confirm(req):
+        captured["req"] = req
+        raise RuntimeError("simulated process death while confirmation pending")
+
+    ctx.request_confirmation = AsyncMock(side_effect=fake_confirm)
+    with pytest.raises(RuntimeError, match="simulated process death"):
+        await tool_update_system_prompt(ctx, section, content)
+
+    return ConfirmationRequest.from_archive_message(captured["req"].to_archive_message())
+
+
 @pytest.fixture(autouse=True)
 def _ensure_agent_path_exists(config):
     config.agent_path.mkdir(parents=True, exist_ok=True)
@@ -509,162 +531,136 @@ class TestUpdateSystemPrompt:
 class TestUpdateSystemPromptRecovery:
     """The UPDATE_SYSTEM_PROMPT confirmation handler (recovery path) must
     inherit every guard the interactive tool has — a pending approval that
-    arrives after a restart is re-applied without the agent loop."""
+    arrives after a restart is re-applied without the agent loop.
+
+    The tests drive the *real* persisted request shape (see
+    ``_capture_pending``): hand-built ``action_data`` is reserved for
+    shapes the interactive flow can never emit (a tampered archive entry),
+    and those use the real keys — the shared machinery stores the section
+    under ``"path"``, and a handler that reads anything else drops every
+    legitimate recovery."""
 
     @pytest.mark.asyncio
-    async def test_recovery_approve_applies_write(self, config):
-        from unittest.mock import MagicMock
+    async def test_interactive_request_persists_section_under_path_key(self, ctx):
+        """Contract between the tool and the recovery handler: the shared
+        machinery stores the section under the ``"path"`` key, and the
+        handler reads exactly that key. This fails if either side moves to
+        a bespoke key."""
+        req = await _capture_pending(ctx, "USER.md", "x\n")
 
-        from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+        assert req.action_data["path"] == "USER.md"
+        assert req.action_data["tool_name"] == "update_system_prompt"
+        assert req.action_data["payload"] == {"content": "x\n"}
+        assert "section" not in req.action_data
+
+    @pytest.mark.asyncio
+    async def test_recovery_approve_applies_write(self, ctx):
+        """A pending approval that survives a restart is applied on
+        recovery — driven by the real persisted request."""
         from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
 
         handler = UpdateSystemPromptHandler()
-        target = config.agent_path / "USER.md"
+        target = ctx.config.agent_path / "USER.md"
         target.write_text("before\n")
 
-        mock_ctx = MagicMock()
-        mock_ctx.config = config
-        mock_ctx.conv_id = "test-conv"
+        req = await _capture_pending(ctx, "USER.md", "after\n")
+        assert target.read_text() == "before\n"  # died before the write
 
-        req = ConfirmationRequest(
-            action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
-            action_data={
-                "tool_name": "update_system_prompt",
-                "section": "USER.md",
-                "payload": {"content": "after\n"},
-                "snapshot": {
-                    "resolved": str(target.resolve()),
-                    "exists": True,
-                    "is_dir": False,
-                    "content": "before\n",
-                },
-            },
-        )
         resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
+        result = await handler.on_approve(ctx, req, resp)
 
-        result = await handler.on_approve(mock_ctx, req, resp)
         assert "Updated 'USER.md'" in result["inject_message"]
+        assert result["continue_loop"] is False
         assert target.read_text() == "after\n"
 
     @pytest.mark.asyncio
-    async def test_recovery_approve_revalidates_section(self, config):
-        """Stored action_data is not trusted: SOUL.md must still be
-        refused on the recovery path (the guard is inherited, #1013)."""
-        from unittest.mock import MagicMock
-
-        from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    async def test_recovery_approve_revalidates_section(self, ctx):
+        """Stored action_data is not trusted: a tampered archive entry
+        naming SOUL.md must still be refused on the recovery path (the
+        guard is inherited, #1013). The interactive flow can never emit
+        this shape — SOUL.md is refused before confirmation — so the
+        request is hand-built, in the real persisted shape."""
         from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
 
         handler = UpdateSystemPromptHandler()
-        soul = config.agent_path / "SOUL.md"
+        soul = ctx.config.agent_path / "SOUL.md"
         soul.write_text("identity\n")
-
-        mock_ctx = MagicMock()
-        mock_ctx.config = config
-        mock_ctx.conv_id = "test-conv"
 
         req = ConfirmationRequest(
             action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
             action_data={
                 "tool_name": "update_system_prompt",
-                "section": "SOUL.md",
+                "path": "SOUL.md",
                 "payload": {"content": "hijacked\n"},
             },
         )
         resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
 
-        result = await handler.on_approve(mock_ctx, req, resp)
+        result = await handler.on_approve(ctx, req, resp)
         assert "error" in result
         assert "core identity file" in result["error"]
         assert soul.read_text() == "identity\n"
 
     @pytest.mark.asyncio
-    async def test_recovery_approve_refuses_marker(self, config):
-        """The redaction-marker guard is inherited on the recovery path."""
-        from unittest.mock import MagicMock
-
-        from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    async def test_recovery_approve_refuses_marker(self, ctx):
+        """The redaction-marker guard is inherited on the recovery path.
+        Hand-built in the real persisted shape: the interactive flow
+        refuses the marker before confirmation, so it can never emit this
+        request itself."""
         from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
 
         handler = UpdateSystemPromptHandler()
-
-        mock_ctx = MagicMock()
-        mock_ctx.config = config
-        mock_ctx.conv_id = "test-conv"
 
         req = ConfirmationRequest(
             action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
             action_data={
                 "tool_name": "update_system_prompt",
-                "section": "USER.md",
+                "path": "USER.md",
                 "payload": {"content": "key: <redacted>\n"},
             },
         )
         resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
 
-        result = await handler.on_approve(mock_ctx, req, resp)
+        result = await handler.on_approve(ctx, req, resp)
         assert "error" in result
         assert "redaction marker" in result["error"]
-        assert not (config.agent_path / "USER.md").exists()
+        assert not (ctx.config.agent_path / "USER.md").exists()
 
     @pytest.mark.asyncio
-    async def test_recovery_approve_aborts_if_stale(self, config):
-        """A file modified on disk while the confirmation was pending must
-        abort the recovery apply, like the admin mutation recovery path."""
-        from unittest.mock import MagicMock
-
-        from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    async def test_recovery_approve_aborts_if_stale(self, ctx):
+        """A file modified on disk while the confirmation was pending
+        (here: while the process was down) must abort the recovery apply,
+        like the admin mutation recovery path. Driven by the real flow:
+        the captured snapshot is from before the offline edit."""
         from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
 
         handler = UpdateSystemPromptHandler()
-        target = config.agent_path / "CUSTOM.md"
+        target = ctx.config.agent_path / "CUSTOM.md"
+        target.write_text("old content before offline edit\n")
+
+        req = await _capture_pending(ctx, "CUSTOM.md", "agent's version\n")
+        # Simulate an edit landing while the process was down.
         target.write_text("edited on disk while agent was offline\n")
 
-        mock_ctx = MagicMock()
-        mock_ctx.config = config
-        mock_ctx.conv_id = "test-conv"
-
-        req = ConfirmationRequest(
-            action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
-            action_data={
-                "tool_name": "update_system_prompt",
-                "section": "CUSTOM.md",
-                "payload": {"content": "should not write\n"},
-                "snapshot": {
-                    "resolved": str(target.resolve()),
-                    "exists": True,
-                    "is_dir": False,
-                    "content": "old content before offline edit\n",
-                },
-            },
-        )
         resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
+        result = await handler.on_approve(ctx, req, resp)
 
-        result = await handler.on_approve(mock_ctx, req, resp)
         assert "error" in result
         assert target.read_text() == "edited on disk while agent was offline\n"
 
     @pytest.mark.asyncio
-    async def test_recovery_deny(self, config):
-        from unittest.mock import MagicMock
-
-        from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    async def test_recovery_deny(self, ctx):
+        """A recovered denial names the real section (persisted under
+        ``"path"``), not a placeholder."""
         from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
 
         handler = UpdateSystemPromptHandler()
-        mock_ctx = MagicMock()
-        mock_ctx.config = config
-        mock_ctx.conv_id = "test-conv"
+        req = await _capture_pending(ctx, "USER.md", "denied content\n")
+        assert not (ctx.config.agent_path / "USER.md").exists()
 
-        req = ConfirmationRequest(
-            action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
-            action_data={
-                "tool_name": "update_system_prompt",
-                "section": "USER.md",
-            },
-        )
         resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=False)
+        result = await handler.on_deny(ctx, req, resp)
 
-        result = await handler.on_deny(mock_ctx, req, resp)
-        assert "denied by user" in result["inject_message"]
-        assert not (config.agent_path / "USER.md").exists()
+        assert result["inject_message"] == "[update_system_prompt for 'USER.md' was denied by user]"
+        assert result["continue_loop"] is False
+        assert not (ctx.config.agent_path / "USER.md").exists()
