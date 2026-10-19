@@ -164,6 +164,21 @@ Closes a session and reports final cost.
 
 Shows all active sessions with ID, working directory, age, and cost so far.
 
+## Configuration
+
+Each field resolves from env var, then `config.skills.claude_code` in config.json, then the default:
+
+| Field | Default | Env var | Meaning |
+|---|---|---|---|
+| `model` | *(empty — CLI default)* | `CLAUDE_CODE_MODEL` | Model passed to the Claude Code CLI |
+| `budget_default` | `2.0` | `CLAUDE_CODE_BUDGET_DEFAULT` | Default per-session budget (USD) |
+| `budget_max` | `10.0` | `CLAUDE_CODE_BUDGET_MAX` | Max per-session budget (USD) |
+| `session_timeout` | `30m` | `CLAUDE_CODE_SESSION_TIMEOUT` | Idle session expiry |
+| `memory_max` | `50%` | `CLAUDE_CODE_MEMORY_MAX` | Hard memory cap for the claude CLI child (systemd scope). Empty disables the cap. |
+| `memory_high` | `40%` | `CLAUDE_CODE_MEMORY_HIGH` | Soft memory threshold for the claude CLI child. Empty disables. |
+
+The memory cap only applies on hosts where the user systemd instance delegates the memory controller (see `docs/deployment.md`, "Subagent Memory Limits"); otherwise the CLI runs uncapped with a one-time warning. A killed run (SIGKILL) returns an error result naming the kill and the memory cap as a probable cause.
+
 ## Workflow
 
 ### Autonomous (preferred)

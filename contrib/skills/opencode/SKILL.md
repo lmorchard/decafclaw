@@ -166,6 +166,21 @@ Closes a session and reports final cost.
 
 Shows all active sessions with ID, working directory, age, and cost so far.
 
+## Configuration
+
+Each field resolves from env var, then `config.skills.opencode` in config.json, then the default:
+
+| Field | Default | Env var | Meaning |
+|---|---|---|---|
+| `model` | *(empty — CLI default)* | `OPENCODE_MODEL` | Model passed to `opencode run` |
+| `budget_default` | `2.0` | `OPENCODE_BUDGET_DEFAULT` | Default per-session budget (USD) |
+| `budget_max` | `10.0` | `OPENCODE_BUDGET_MAX` | Max per-session budget (USD) |
+| `session_timeout` | `30m` | `OPENCODE_SESSION_TIMEOUT` | Idle session expiry |
+| `memory_max` | `50%` | `OPENCODE_MEMORY_MAX` | Hard memory cap for the opencode CLI child (systemd scope). Empty disables the cap. |
+| `memory_high` | `40%` | `OPENCODE_MEMORY_HIGH` | Soft memory threshold for the opencode CLI child. Empty disables. |
+
+The memory cap only applies on hosts where the user systemd instance delegates the memory controller (see `docs/deployment.md`, "Subagent Memory Limits"); otherwise the CLI runs uncapped with a one-time warning. A killed run (SIGKILL) returns an error result naming the kill and the memory cap as a probable cause.
+
 ## Workflow
 
 ### Autonomous (preferred)
