@@ -230,6 +230,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `web/static/components/canvas-panel.js`, `web/static/lib/canvas-state.js`
 - `web/static/components/sticky-slot.js`, `web/static/lib/sticky-state.js` — sticky slot (pinned display-only widget above chat input)
 - `terminals.py` — human-only PTY session registry backing the web terminal ([docs/web-terminal.md](docs/web-terminal.md))
+- `subprocess_limits.py` — systemd memory-cap command prefix for heavy subagent CLIs (opencode / claude_code skills); fail-open with one warning when `systemd-run` or memory delegation is missing
 - `util.py`, `eval/`
 
 ## Running

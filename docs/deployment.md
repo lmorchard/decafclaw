@@ -119,6 +119,51 @@ MCP server subprocesses (stdio) are managed by DecafClaw and start/stop with the
 
 Skills in `data/decafclaw/workspace/skills/` are discovered on startup. Community skills from ClawHub can be installed there.
 
+## Subagent Memory Limits
+
+The `opencode_send` and `claude_code_send` subagent CLIs run as child processes of the daemon. A runaway subagent (an LSP index, a test run) can otherwise exhaust host memory, and the kernel OOM killer can then select the daemon itself. Each subagent process therefore runs in its own transient systemd scope with a memory cap:
+
+```
+systemd-run --user --scope --quiet -p MemoryMax=50% -p MemoryHigh=40% -- <cli>
+```
+
+When the subagent goes over `MemoryMax`, the kernel's cgroup OOM killer kills the subagent's processes, and the daemon — outside the scope — keeps running. The tool call that started the killed process returns an error result that names the kill.
+
+**Defaults** (percentages of host memory, so they do not depend on VM size):
+
+| Setting | Default | Env var |
+|---|---|---|
+| `opencode` cap enabled | `true` | `OPENCODE_MEMORY_CAP_ENABLED` |
+| `opencode` memory cap (hard) | `50%` | `OPENCODE_MEMORY_MAX` |
+| `opencode` memory threshold (soft) | `40%` | `OPENCODE_MEMORY_HIGH` |
+| `claude_code` cap enabled | `true` | `CLAUDE_CODE_MEMORY_CAP_ENABLED` |
+| `claude_code` memory cap (hard) | `50%` | `CLAUDE_CODE_MEMORY_MAX` |
+| `claude_code` memory threshold (soft) | `40%` | `CLAUDE_CODE_MEMORY_HIGH` |
+
+Values are systemd memory specs: a percentage of physical memory or an absolute size (e.g. `2G`, `300M`). `MemoryHigh` is the soft threshold where the kernel starts reclaiming pressure; `MemoryMax` is the hard limit where the OOM killer fires.
+
+**Turning the cap off.** The canonical switch is `memory_cap_enabled`, per skill, in `config.json` or via its env var:
+
+```json
+{
+  "skills": {
+    "opencode": { "memory_cap_enabled": false }
+  }
+}
+```
+
+(`OPENCODE_MEMORY_CAP_ENABLED=false` / `CLAUDE_CODE_MEMORY_CAP_ENABLED=false` work from the environment as well.) An explicitly disabled cap runs the CLI uncapped with no warning. As an alternative, set both limit values to empty in `config.json` per skill (e.g. `"memory_max": "", "memory_high": ""`); an empty *env var* is treated as unset by the config layer (project-wide convention), so the config.json form is the way to disable via empty limits.
+
+**Examining delegation.** The cap only applies when the user systemd instance has delegated the memory controller:
+
+```bash
+cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers
+```
+
+`memory` should be listed. If it is not, delegation is a host setup task (out of scope for this repo); DecafClaw logs one warning and runs the subagent uncapped. If you see the warning on a host where `memory` *is* listed, check that `XDG_RUNTIME_DIR` is set in the service environment (the user manager bus that `systemd-run --user` needs).
+
+**Why the service unit has no `MemoryMax`.** Setting `MemoryMax` on `decafclaw.service` would put the daemon inside the same cap as its subagents: the cgroup OOM killer could then select the daemon, and the default `OOMPolicy=stop` would stop the whole unit. Per-child scopes keep the daemon outside every cap.
+
 ## Updating the Systemd Unit
 
 If you modify `deploy/decafclaw.service`:
