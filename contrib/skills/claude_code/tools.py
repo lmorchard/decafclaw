@@ -4,13 +4,15 @@ import asyncio
 import logging
 import shutil
 import time
+from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from claude_code_sdk import (
     AssistantMessage,
     ClaudeCodeOptions,
+    ProcessError,
     ResultMessage,
     TextBlock,
     ToolResultBlock,
@@ -19,14 +21,46 @@ from claude_code_sdk import (
     query,
 )
 
+# SubprocessCLITransport is an internal SDK API (claude_code_sdk._internal).
+# The SDK documents that this may change or be removed in a future release; we
+# only subclass it to prepend a systemd memory-cap prefix to the CLI command
+# (see memory_cap_prefix). If the SDK removes it, update or drop the cap for
+# claude_code_send.
+from claude_code_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+
 from contrib.skills.claude_code.output import SessionLogger
 from contrib.skills.claude_code.sessions import SessionManager
 from decafclaw.media import ToolResult
+from decafclaw.subprocess_limits import memory_cap_prefix
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
+
+
+class _CappedSubprocessCLITransport(SubprocessCLITransport):
+    """SubprocessCLITransport that prepends a command prefix to the CLI.
+
+    The prefix (from memory_cap_prefix) wraps the Claude Code CLI in a
+    transient systemd scope with a memory cap. Everything after the prefix is
+    the SDK's own command, so _build_command() is unchanged apart from the
+    prepended arguments.
+    """
+
+    def __init__(
+        self,
+        prompt: str | AsyncIterable[dict[str, Any]],
+        options: ClaudeCodeOptions,
+        cli_path: str | Path | None = None,
+        *,
+        command_prefix: list[str] | None = None,
+    ):
+        super().__init__(prompt=prompt, options=options, cli_path=cli_path)
+        self._command_prefix = list(command_prefix) if command_prefix else []
+
+    def _build_command(self) -> list[str]:
+        return [*self._command_prefix, *super()._build_command()]
 
 
 @dataclass
@@ -35,6 +69,15 @@ class SkillConfig:
     budget_default: float = field(default=2.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_DEFAULT"})
     budget_max: float = field(default=10.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_MAX"})
     session_timeout: str = field(default="30m", metadata={"env_alias": "CLAUDE_CODE_SESSION_TIMEOUT"})
+    # Master switch for the memory cap below: False runs the CLI uncapped
+    # with no warning, even on a host that could apply a cap (an explicit
+    # disable is not a missing capability). Empty limits are a second,
+    # alternative disable.
+    memory_cap_enabled: bool = field(default=True, metadata={"env_alias": "CLAUDE_CODE_MEMORY_CAP_ENABLED"})
+    # Memory cap for the claude CLI child (systemd scope). Values are systemd
+    # memory specs (e.g. "50%", "2G"); both empty disables the cap.
+    memory_max: str = field(default="50%", metadata={"env_alias": "CLAUDE_CODE_MEMORY_MAX"})
+    memory_high: str = field(default="40%", metadata={"env_alias": "CLAUDE_CODE_MEMORY_HIGH"})
 
 
 # Module state, populated by init()
@@ -399,6 +442,22 @@ async def tool_claude_code_start(
     return ToolResult(text="\n".join(parts), data=data)
 
 
+def _describe_claude_error(e: Exception) -> str:
+    """Build the error text for a failed claude_code_send, naming OOM kills.
+
+    The SDK raises ProcessError with the CLI's exit code when it exits
+    non-zero. A SIGKILL exit (negative -9 from waitpid, or 128+9=137) is the
+    signature of a cgroup OOM kill when a memory cap is active.
+    """
+    if isinstance(e, ProcessError) and e.exit_code in (-9, 137):
+        return (
+            "[error: Claude Code run was killed (SIGKILL). If a memory cap is active "
+            "(memory_max), that is a probable cause. The session is still active; "
+            "send a new task to retry.]"
+        )
+    return f"[error: Claude Code failed: {e}]"
+
+
 def _send_error_data(exit_status: str, **extra) -> dict:
     """Build a consistent structured data dict for send error paths."""
     data = {
@@ -617,10 +676,32 @@ async def tool_claude_code_send(
                 "session_id": session.sdk_session_id or "default",
             }
 
-        # Stream messages from the SDK
+        # Stream messages from the SDK. When a memory cap applies, route the
+        # CLI through a transient systemd scope via a transport subclass that
+        # prepends the cap prefix to the SDK's own command. With no cap, the
+        # SDK's default transport is used (transport=None). Transport
+        # construction is inside the try so a missing CLI (CLINotFoundError)
+        # maps to the same clean error result as before the cap existed.
         await ctx.publish("tool_status", tool="claude_code_send", message=f"Sending to Claude Code ({session.cwd})...")
         try:
-            async for message in query(prompt=prompt_stream(), options=options):
+            # An explicit disable (memory_cap_enabled=False) skips the helper
+            # entirely, so it logs no "cap unavailable" warning.
+            cap_prefix = (
+                memory_cap_prefix(_skill_config.memory_max, _skill_config.memory_high, label="claude_code_send")
+                if _skill_config is not None and _skill_config.memory_cap_enabled
+                else []
+            )
+            transport = (
+                _CappedSubprocessCLITransport(
+                    prompt=prompt_stream(),
+                    options=options,
+                    command_prefix=cap_prefix,
+                )
+                if cap_prefix
+                else None
+            )
+
+            async for message in query(prompt=prompt_stream(), options=options, transport=transport):
                 log.debug(f"Claude Code message: {type(message).__name__}")
                 logger.log_message(message)
 
@@ -666,7 +747,7 @@ async def tool_claude_code_send(
         except Exception as e:
             log.error(f"Claude Code SDK error: {e}", exc_info=True)
             return ToolResult(
-                text=f"[error: Claude Code failed: {e}]",
+                text=_describe_claude_error(e),
                 data=_send_error_data("error", errors=[{"message": str(e)}]),
             )
     finally:

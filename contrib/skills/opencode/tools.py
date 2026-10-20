@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from decafclaw.media import ToolResult
+from decafclaw.subprocess_limits import memory_cap_prefix
 
 log = logging.getLogger(__name__)
 
@@ -344,6 +345,15 @@ class SkillConfig:
     budget_default: float = field(default=2.0, metadata={"env_alias": "OPENCODE_BUDGET_DEFAULT"})
     budget_max: float = field(default=10.0, metadata={"env_alias": "OPENCODE_BUDGET_MAX"})
     session_timeout: str = field(default="30m", metadata={"env_alias": "OPENCODE_SESSION_TIMEOUT"})
+    # Master switch for the memory cap below: False runs the CLI uncapped
+    # with no warning, even on a host that could apply a cap (an explicit
+    # disable is not a missing capability). Empty limits are a second,
+    # alternative disable.
+    memory_cap_enabled: bool = field(default=True, metadata={"env_alias": "OPENCODE_MEMORY_CAP_ENABLED"})
+    # Memory cap for the opencode CLI child (systemd scope). Values are
+    # systemd memory specs (e.g. "50%", "2G"); both empty disables the cap.
+    memory_max: str = field(default="50%", metadata={"env_alias": "OPENCODE_MEMORY_MAX"})
+    memory_high: str = field(default="40%", metadata={"env_alias": "OPENCODE_MEMORY_HIGH"})
 
 
 # Module state, populated by init()
@@ -823,7 +833,19 @@ async def tool_opencode_send(
 
     await ctx.publish("tool_status", tool="opencode_send", message=f"Sending to OpenCode ({session.cwd})...")
 
+    # Run the CLI under a per-child systemd memory cap when one is configured
+    # and the host supports it (see decafclaw.subprocess_limits). The prefix is
+    # empty when the cap is disabled or unavailable, so the command runs as
+    # before. An explicit disable (memory_cap_enabled=False) skips the helper
+    # entirely, so it logs no "cap unavailable" warning.
+    cap_prefix = (
+        memory_cap_prefix(_skill_config.memory_max, _skill_config.memory_high, label="opencode_send")
+        if _skill_config is not None and _skill_config.memory_cap_enabled
+        else []
+    )
+
     proc = await asyncio.create_subprocess_exec(
+        *cap_prefix,
         *cmd_args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -894,6 +916,20 @@ async def tool_opencode_send(
 
     if proc.returncode != 0:
         log.warning(f"OpenCode run exited with {proc.returncode}")
+        if proc.returncode == -9:
+            # Killed by SIGKILL. With a memory cap active the cgroup OOM
+            # killer is a probable cause; the daemon itself stays up.
+            text = (
+                "[error: OpenCode run was killed (SIGKILL). If a memory cap is active "
+                "(memory_max), that is a probable cause. The session is still active; "
+                "send a new task to retry.]"
+            )
+        else:
+            text = f"[error: OpenCode run exited with code {proc.returncode}]"
+        return ToolResult(
+            text=text,
+            data=_send_error_data("error", exit_code=proc.returncode),
+        )
 
     session.send_count += 1
     manager.touch(session_id)
