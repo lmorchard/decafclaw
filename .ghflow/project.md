@@ -1,9 +1,9 @@
 ---
 ghflow_project_facts: 1
-written: 2026-10-16
+written: 2026-10-20
 sources:
-  - AGENTS.md c0bd3ac248b8642d99f1d66996b345c003f9c03e
-  - CLAUDE.md c0bd3ac248b8642d99f1d66996b345c003f9c03e
+  - AGENTS.md a6b8f57b5e827f8727c5684d979f345cc110267a
+  - CLAUDE.md a6b8f57b5e827f8727c5684d979f345cc110267a
   - Makefile 457995d835091b7e747bb8640cc0cf74752a385d
   - .github/workflows/ci.yml 2de18948e0afc3ee4c14570649660a08aea316d5
   - conftest.py fb46496f6536760ece617b135afc7aef3c6eac93
@@ -37,8 +37,8 @@ sources:
 ## Session notes
 - `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `plan.md`, `notes.md`. Session docs are committed.
 
-## Never run
-- `make run`, `make dev`, `make debug`, `make run-pro`: one bot instance per Mattermost account, and Les usually has `make dev` running.
+## Running the app
+- Run only from a worktree with `DATA_HOME` set to a worktree-local directory seeded with only a copy of `data/decafclaw/config.json`, and with `MATTERMOST_ENABLED=false`, `EMAIL_ENABLED=false`, `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED=false`, `HTTP_ENABLED=true`, and the worktree's `HTTP_PORT`. Mattermost stays off unless an issue calls for it, and then only attended with Les's go-ahead.
 
 ## Commits and PRs
 - Subjects mostly `type(scope): summary`, for example `fix(agent): ...`. Every change goes through a PR. `Closes #N` closes the issue on merge.
