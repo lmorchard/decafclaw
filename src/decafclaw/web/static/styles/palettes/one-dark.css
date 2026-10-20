@@ -1,0 +1,55 @@
+/* One Dark palette — dark base.
+ * Reference: Atom One Dark by Daniel Gamage (https://github.com/atom/one-dark-ui)
+ *
+ * Applied when <html data-palette="one-dark"> (set alongside
+ * data-theme="dark" by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="one-dark"] {
+  --pico-background-color: #282c34;
+  --pico-color: #abb2bf;
+  --pico-muted-color: #5c6370;
+
+  --pico-card-background-color: #2c313a;
+  --pico-card-sectioning-background-color: #2c313a;
+  --pico-form-element-background-color: #21252b;
+  --pico-muted-border-color: #3e4451;
+
+  --pico-primary: #61aeee;
+  --pico-primary-hover: #7cbbf1;
+  --pico-primary-focus: rgba(97, 174, 238, 0.35);
+  --pico-primary-background: #61aeee;
+  --pico-primary-inverse: #21252b;
+
+  --pico-code-background-color: #21252b;
+  --pico-mark-background-color: #e5c07b;
+  --pico-mark-color: #21252b;
+  --pico-del-color: #e06c75;
+  --pico-ins-color: #98c379;
+
+  --cm-foreground: #abb2bf;
+  --cm-background: #282c34;
+  --cm-cursor-color: #61aeee;
+  --cm-gutter-color: #5c6370;
+  --cm-gutter-bg: #2c313a;
+  --cm-gutter-active-color: #abb2bf;
+  --cm-active-line-bg: #2c313c;
+  --cm-selection-bg: rgba(97, 174, 238, 0.15);
+  --cm-selection-border: #61aeee;
+  --cm-match-bg: #3e4451;
+  --cm-match-color: #abb2bf;
+
+  --cm-keyword: #c678dd;
+  --cm-atom: #d19a66;
+  --cm-number: #d19a66;
+  --cm-string: #98c379;
+  --cm-comment: #5c6370;
+  --cm-variable: #e06c75;
+  --cm-type: #e5c07b;
+  --cm-class: #e5c07b;
+  --cm-property: #61aeee;
+  --cm-literal: #56b6c2;
+  --cm-regexp: #98c379;
+  --cm-special: #c678dd;
+  --cm-meta: #5c6370;
+  --cm-invalid: #e06c75;
+}

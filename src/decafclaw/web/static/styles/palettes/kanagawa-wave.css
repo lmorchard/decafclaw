@@ -1,0 +1,55 @@
+/* Kanagawa Wave palette — dark base.
+ * Reference: Tommaso Laurenzi's Kanagawa (https://github.com/rebelot/kanagawa.nvim)
+ *
+ * Applied when <html data-palette="kanagawa-wave"> (set alongside
+ * data-theme="dark" by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="kanagawa-wave"] {
+  --pico-background-color: #1f1f28;
+  --pico-color: #dcd7ba;
+  --pico-muted-color: #727169;
+
+  --pico-card-background-color: #2a2a37;
+  --pico-card-sectioning-background-color: #2a2a37;
+  --pico-form-element-background-color: #16161d;
+  --pico-muted-border-color: #363646;
+
+  --pico-primary: #7e9cd8;
+  --pico-primary-hover: #93afed;
+  --pico-primary-focus: rgba(126, 156, 216, 0.35);
+  --pico-primary-background: #7e9cd8;
+  --pico-primary-inverse: #16161d;
+
+  --pico-code-background-color: #16161d;
+  --pico-mark-background-color: #c0a36e;
+  --pico-mark-color: #16161d;
+  --pico-del-color: #c34043;
+  --pico-ins-color: #76946a;
+
+  --cm-foreground: #dcd7ba;
+  --cm-background: #1f1f28;
+  --cm-cursor-color: #7e9cd8;
+  --cm-gutter-color: #54546d;
+  --cm-gutter-bg: #252535;
+  --cm-gutter-active-color: #dcd7ba;
+  --cm-active-line-bg: #282737;
+  --cm-selection-bg: rgba(126, 156, 216, 0.18);
+  --cm-selection-border: #7e9cd8;
+  --cm-match-bg: #363646;
+  --cm-match-color: #dcd7ba;
+
+  --cm-keyword: #957fb8;
+  --cm-atom: #d27e99;
+  --cm-number: #d27e99;
+  --cm-string: #98bb6c;
+  --cm-comment: #727169;
+  --cm-variable: #e6c384;
+  --cm-type: #7aa89f;
+  --cm-class: #7aa89f;
+  --cm-property: #7e9cd8;
+  --cm-literal: #ffa066;
+  --cm-regexp: #98bb6c;
+  --cm-special: #957fb8;
+  --cm-meta: #717c7c;
+  --cm-invalid: #e82424;
+}

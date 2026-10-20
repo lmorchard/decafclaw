@@ -26,11 +26,25 @@ export const DEFAULT_THEME = 'system';
 
 /** @type {ThemeDescriptor[]} — ordered for UI rendering. */
 export const THEMES = [
-  { name: 'light',           label: 'Light',           kind: 'base',    dataTheme: 'light', dataPalette: null,              icon: '☀️' },
-  { name: 'dark',            label: 'Dark',            kind: 'base',    dataTheme: 'dark',  dataPalette: null,              icon: '🌙' },
-  { name: 'system',          label: 'System',          kind: 'base',    dataTheme: null,    dataPalette: null,              icon: '💻' },
-  { name: 'dracula',         label: 'Dracula',         kind: 'palette', dataTheme: 'dark',  dataPalette: 'dracula',         dot: '#bd93f9' },
-  { name: 'solarized-light', label: 'Solarized Light', kind: 'palette', dataTheme: 'light', dataPalette: 'solarized-light', dot: '#268bd2' },
+  { name: 'light',                label: 'Light',                kind: 'base',    dataTheme: 'light', dataPalette: null,                   icon: '☀️' },
+  { name: 'dark',                 label: 'Dark',                 kind: 'base',    dataTheme: 'dark',  dataPalette: null,                   icon: '🌙' },
+  { name: 'system',               label: 'System',               kind: 'base',    dataTheme: null,    dataPalette: null,                   icon: '💻' },
+  { name: 'dracula',              label: 'Dracula',              kind: 'palette', dataTheme: 'dark',  dataPalette: 'dracula',              dot: '#bd93f9' },
+  { name: 'solarized-light',      label: 'Solarized Light',      kind: 'palette', dataTheme: 'light', dataPalette: 'solarized-light',      dot: '#268bd2' },
+  { name: 'solarized-dark',       label: 'Solarized Dark',       kind: 'palette', dataTheme: 'dark',  dataPalette: 'solarized-dark',       dot: '#268bd2' },
+  { name: 'nord',                 label: 'Nord',                 kind: 'palette', dataTheme: 'dark',  dataPalette: 'nord',                 dot: '#88c0d0' },
+  { name: 'tokyo-night-storm',    label: 'Tokyo Night Storm',    kind: 'palette', dataTheme: 'dark',  dataPalette: 'tokyo-night-storm',    dot: '#7aa2f7' },
+  { name: 'github-dark-dimmed',   label: 'GitHub Dark Dimmed',   kind: 'palette', dataTheme: 'dark',  dataPalette: 'github-dark-dimmed',   dot: '#539bf5' },
+  { name: 'one-dark',             label: 'One Dark',             kind: 'palette', dataTheme: 'dark',  dataPalette: 'one-dark',             dot: '#61aeee' },
+  { name: 'gruvbox-dark',         label: 'Gruvbox Dark',         kind: 'palette', dataTheme: 'dark',  dataPalette: 'gruvbox-dark',         dot: '#fe8019' },
+  { name: 'everforest-dark',      label: 'Everforest Dark',      kind: 'palette', dataTheme: 'dark',  dataPalette: 'everforest-dark',      dot: '#a7c080' },
+  { name: 'kanagawa-wave',        label: 'Kanagawa Wave',        kind: 'palette', dataTheme: 'dark',  dataPalette: 'kanagawa-wave',        dot: '#7e9cd8' },
+  { name: 'catppuccin-mocha',     label: 'Catppuccin Mocha',     kind: 'palette', dataTheme: 'dark',  dataPalette: 'catppuccin-mocha',     dot: '#cba6f7' },
+  { name: 'catppuccin-macchiato', label: 'Catppuccin Macchiato', kind: 'palette', dataTheme: 'dark',  dataPalette: 'catppuccin-macchiato', dot: '#c6a0f6' },
+  { name: 'rose-pine-moon',       label: 'Rosé Pine Moon',       kind: 'palette', dataTheme: 'dark',  dataPalette: 'rose-pine-moon',       dot: '#ea9a97' },
+  { name: 'material-palenight',   label: 'Material Palenight',   kind: 'palette', dataTheme: 'dark',  dataPalette: 'material-palenight',   dot: '#82aaff' },
+  { name: 'night-owl',            label: 'Night Owl',            kind: 'palette', dataTheme: 'dark',  dataPalette: 'night-owl',            dot: '#7fdbca' },
+  { name: 'ayu-mirage',           label: 'Ayu Mirage',           kind: 'palette', dataTheme: 'dark',  dataPalette: 'ayu-mirage',           dot: '#ffcc66' },
 ];
 
 const THEME_BY_NAME = new Map(THEMES.map((t) => [t.name, t]));

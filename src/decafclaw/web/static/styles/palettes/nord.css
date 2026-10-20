@@ -1,0 +1,55 @@
+/* Nord palette — dark base. Arctic, north-bluish palette.
+ * Reference: https://www.nordtheme.com/
+ *
+ * Applied when <html data-palette="nord"> (set alongside data-theme="dark"
+ * by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="nord"] {
+  --pico-background-color: #2e3440;
+  --pico-color: #eceff4;
+  --pico-muted-color: #8892b0;
+
+  --pico-card-background-color: #3b4252;
+  --pico-card-sectioning-background-color: #3b4252;
+  --pico-form-element-background-color: #242933;
+  --pico-muted-border-color: #434c5e;
+
+  --pico-primary: #88c0d0;
+  --pico-primary-hover: #81a1c1;
+  --pico-primary-focus: rgba(136, 192, 208, 0.35);
+  --pico-primary-background: #88c0d0;
+  --pico-primary-inverse: #2e3440;
+
+  --pico-code-background-color: #242933;
+  --pico-mark-background-color: #ebcb8b;
+  --pico-mark-color: #2e3440;
+  --pico-del-color: #bf616a;
+  --pico-ins-color: #a3be8c;
+
+  --cm-foreground: #eceff4;
+  --cm-background: #2e3440;
+  --cm-cursor-color: #88c0d0;
+  --cm-gutter-color: #616e88;
+  --cm-gutter-bg: #3b4252;
+  --cm-gutter-active-color: #d8dee9;
+  --cm-active-line-bg: #353c4a;
+  --cm-selection-bg: rgba(136, 192, 208, 0.15);
+  --cm-selection-border: #88c0d0;
+  --cm-match-bg: #434c5e;
+  --cm-match-color: #eceff4;
+
+  --cm-keyword: #81a1c1;
+  --cm-atom: #b48ead;
+  --cm-number: #b48ead;
+  --cm-string: #a3be8c;
+  --cm-comment: #616e88;
+  --cm-variable: #d8dee9;
+  --cm-type: #8fbcbb;
+  --cm-class: #8fbcbb;
+  --cm-property: #88c0d0;
+  --cm-literal: #81a1c1;
+  --cm-regexp: #ebcb8b;
+  --cm-special: #ebcb8b;
+  --cm-meta: #5e81ac;
+  --cm-invalid: #bf616a;
+}

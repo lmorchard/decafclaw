@@ -1,0 +1,55 @@
+/* Everforest Dark palette — dark base.
+ * Reference: Sainnhe Park's Everforest (https://github.com/sainnhe/everforest)
+ *
+ * Applied when <html data-palette="everforest-dark"> (set alongside
+ * data-theme="dark" by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="everforest-dark"] {
+  --pico-background-color: #2d353b;
+  --pico-color: #d3c6aa;
+  --pico-muted-color: #859289;
+
+  --pico-card-background-color: #343f44;
+  --pico-card-sectioning-background-color: #343f44;
+  --pico-form-element-background-color: #232a2e;
+  --pico-muted-border-color: #475258;
+
+  --pico-primary: #a7c080;
+  --pico-primary-hover: #b9d292;
+  --pico-primary-focus: rgba(167, 192, 128, 0.35);
+  --pico-primary-background: #a7c080;
+  --pico-primary-inverse: #232a2e;
+
+  --pico-code-background-color: #232a2e;
+  --pico-mark-background-color: #dbbc7f;
+  --pico-mark-color: #232a2e;
+  --pico-del-color: #e67e80;
+  --pico-ins-color: #a7c080;
+
+  --cm-foreground: #d3c6aa;
+  --cm-background: #2d353b;
+  --cm-cursor-color: #a7c080;
+  --cm-gutter-color: #7a8478;
+  --cm-gutter-bg: #343f44;
+  --cm-gutter-active-color: #d3c6aa;
+  --cm-active-line-bg: #333c43;
+  --cm-selection-bg: rgba(167, 192, 128, 0.15);
+  --cm-selection-border: #a7c080;
+  --cm-match-bg: #475258;
+  --cm-match-color: #d3c6aa;
+
+  --cm-keyword: #e67e80;
+  --cm-atom: #d699b6;
+  --cm-number: #d699b6;
+  --cm-string: #a7c080;
+  --cm-comment: #7a8478;
+  --cm-variable: #7fbbb3;
+  --cm-type: #dbbc7f;
+  --cm-class: #dbbc7f;
+  --cm-property: #7fbbb3;
+  --cm-literal: #d699b6;
+  --cm-regexp: #a7c080;
+  --cm-special: #e69875;
+  --cm-meta: #83c092;
+  --cm-invalid: #e67e80;
+}
