@@ -5,16 +5,26 @@ import {
 } from './theme.js';
 
 describe('THEMES registry', () => {
-  it('exposes the five expected themes in order', () => {
+  it('exposes the expected themes in order', () => {
     expect(THEMES.map((t) => t.name)).toEqual([
       'light', 'dark', 'system', 'dracula', 'solarized-light',
+      'solarized-dark', 'nord', 'tokyo-night-storm', 'github-dark-dimmed',
+      'one-dark', 'gruvbox-dark', 'everforest-dark', 'kanagawa-wave',
+      'catppuccin-mocha', 'catppuccin-macchiato', 'rose-pine-moon',
+      'material-palenight', 'night-owl', 'ayu-mirage',
     ]);
   });
   it('classifies base vs palette themes', () => {
     expect(THEMES.filter((t) => t.kind === 'base').map((t) => t.name))
       .toEqual(['light', 'dark', 'system']);
     expect(THEMES.filter((t) => t.kind === 'palette').map((t) => t.name))
-      .toEqual(['dracula', 'solarized-light']);
+      .toEqual([
+        'dracula', 'solarized-light', 'solarized-dark', 'nord',
+        'tokyo-night-storm', 'github-dark-dimmed', 'one-dark',
+        'gruvbox-dark', 'everforest-dark', 'kanagawa-wave',
+        'catppuccin-mocha', 'catppuccin-macchiato', 'rose-pine-moon',
+        'material-palenight', 'night-owl', 'ayu-mirage',
+      ]);
   });
 });
 

@@ -1,0 +1,55 @@
+/* Solarized Dark palette — dark base. Ethan Schoonover's published palette
+ * (https://ethanschoonover.com/solarized/), MIT-licensed.
+ *
+ * Applied when <html data-palette="solarized-dark"> (set alongside
+ * data-theme="dark" by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="solarized-dark"] {
+  --pico-background-color: #002b36;   /* base03 */
+  --pico-color: #839496;              /* base0  */
+  --pico-muted-color: #586e75;        /* base01 */
+
+  --pico-card-background-color: #073642;            /* base02 */
+  --pico-card-sectioning-background-color: #073642; /* base02 */
+  --pico-form-element-background-color: #00212b;
+  --pico-muted-border-color: #0d4352;
+
+  --pico-primary: #268bd2;            /* blue */
+  --pico-primary-hover: #3ca1e8;
+  --pico-primary-focus: rgba(38, 139, 210, 0.35);
+  --pico-primary-background: #268bd2;
+  --pico-primary-inverse: #002b36;
+
+  --pico-code-background-color: #073642;
+  --pico-mark-background-color: #b58900;
+  --pico-mark-color: #002b36;
+  --pico-del-color: #dc322f;
+  --pico-ins-color: #859900;
+
+  --cm-foreground: #839496;
+  --cm-background: #002b36;
+  --cm-cursor-color: #268bd2;
+  --cm-gutter-color: #586e75;
+  --cm-gutter-bg: #073642;
+  --cm-gutter-active-color: #93a1a1;
+  --cm-active-line-bg: #073642;
+  --cm-selection-bg: rgba(38, 139, 210, 0.15);
+  --cm-selection-border: #268bd2;
+  --cm-match-bg: #073642;
+  --cm-match-color: #93a1a1;
+
+  --cm-keyword: #859900;
+  --cm-atom: #2aa198;
+  --cm-number: #d33682;
+  --cm-string: #2aa198;
+  --cm-comment: #586e75;
+  --cm-variable: #268bd2;
+  --cm-type: #b58900;
+  --cm-class: #b58900;
+  --cm-property: #268bd2;
+  --cm-literal: #2aa198;
+  --cm-regexp: #cb4b16;
+  --cm-special: #cb4b16;
+  --cm-meta: #586e75;
+  --cm-invalid: #dc322f;
+}

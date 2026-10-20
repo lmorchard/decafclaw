@@ -1,0 +1,55 @@
+/* Ayu Mirage palette — dark base.
+ * Reference: Ayu theme (https://github.com/ayu-theme/ayu-colors)
+ *
+ * Applied when <html data-palette="ayu-mirage"> (set alongside
+ * data-theme="dark" by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="ayu-mirage"] {
+  --pico-background-color: #1f2430;
+  --pico-color: #cbccc6;
+  --pico-muted-color: #707a8c;
+
+  --pico-card-background-color: #242936;
+  --pico-card-sectioning-background-color: #242936;
+  --pico-form-element-background-color: #191e2a;
+  --pico-muted-border-color: #333b4d;
+
+  --pico-primary: #ffcc66;
+  --pico-primary-hover: #ffd985;
+  --pico-primary-focus: rgba(255, 204, 102, 0.35);
+  --pico-primary-background: #ffcc66;
+  --pico-primary-inverse: #1f2430;
+
+  --pico-code-background-color: #191e2a;
+  --pico-mark-background-color: #ffcc66;
+  --pico-mark-color: #1f2430;
+  --pico-del-color: #f28779;
+  --pico-ins-color: #bae67e;
+
+  --cm-foreground: #cbccc6;
+  --cm-background: #1f2430;
+  --cm-cursor-color: #ffcc66;
+  --cm-gutter-color: #60697b;
+  --cm-gutter-bg: #242936;
+  --cm-gutter-active-color: #cbccc6;
+  --cm-active-line-bg: #252b39;
+  --cm-selection-bg: rgba(255, 204, 102, 0.15);
+  --cm-selection-border: #ffcc66;
+  --cm-match-bg: #333b4d;
+  --cm-match-color: #cbccc6;
+
+  --cm-keyword: #ffa759;
+  --cm-atom: #d4bfff;
+  --cm-number: #d4bfff;
+  --cm-string: #bae67e;
+  --cm-comment: #5c6773;
+  --cm-variable: #f28779;
+  --cm-type: #73b8ff;
+  --cm-class: #73b8ff;
+  --cm-property: #5ccfe6;
+  --cm-literal: #d4bfff;
+  --cm-regexp: #95e6cb;
+  --cm-special: #ffa759;
+  --cm-meta: #707a8c;
+  --cm-invalid: #f28779;
+}
