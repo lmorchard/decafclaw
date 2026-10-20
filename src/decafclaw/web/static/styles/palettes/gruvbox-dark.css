@@ -1,0 +1,55 @@
+/* Gruvbox Dark palette — dark base.
+ * Reference: Pavel Pertsev's Gruvbox (https://github.com/morhetz/gruvbox)
+ *
+ * Applied when <html data-palette="gruvbox-dark"> (set alongside
+ * data-theme="dark" by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="gruvbox-dark"] {
+  --pico-background-color: #282828;
+  --pico-color: #ebdbb2;
+  --pico-muted-color: #a89984;
+
+  --pico-card-background-color: #3c3836;
+  --pico-card-sectioning-background-color: #3c3836;
+  --pico-form-element-background-color: #1d2021;
+  --pico-muted-border-color: #504945;
+
+  --pico-primary: #fe8019;
+  --pico-primary-hover: #ff9538;
+  --pico-primary-focus: rgba(254, 128, 25, 0.35);
+  --pico-primary-background: #fe8019;
+  --pico-primary-inverse: #282828;
+
+  --pico-code-background-color: #1d2021;
+  --pico-mark-background-color: #fabd2f;
+  --pico-mark-color: #282828;
+  --pico-del-color: #fb4934;
+  --pico-ins-color: #b8bb26;
+
+  --cm-foreground: #ebdbb2;
+  --cm-background: #282828;
+  --cm-cursor-color: #fe8019;
+  --cm-gutter-color: #928374;
+  --cm-gutter-bg: #32302f;
+  --cm-gutter-active-color: #ebdbb2;
+  --cm-active-line-bg: #32302f;
+  --cm-selection-bg: rgba(254, 128, 25, 0.15);
+  --cm-selection-border: #fe8019;
+  --cm-match-bg: #504945;
+  --cm-match-color: #ebdbb2;
+
+  --cm-keyword: #fb4934;
+  --cm-atom: #d3869b;
+  --cm-number: #d3869b;
+  --cm-string: #b8bb26;
+  --cm-comment: #928374;
+  --cm-variable: #83a598;
+  --cm-type: #fabd2f;
+  --cm-class: #fabd2f;
+  --cm-property: #83a598;
+  --cm-literal: #d3869b;
+  --cm-regexp: #b8bb26;
+  --cm-special: #fe8019;
+  --cm-meta: #8ec07c;
+  --cm-invalid: #fb4934;
+}

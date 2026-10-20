@@ -1,0 +1,55 @@
+/* Material Palenight palette — dark base.
+ * Reference: Material Theme Palenight (https://material-theme.com/)
+ *
+ * Applied when <html data-palette="material-palenight"> (set alongside
+ * data-theme="dark" by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="material-palenight"] {
+  --pico-background-color: #292d3e;
+  --pico-color: #a6accd;
+  --pico-muted-color: #717cb4;
+
+  --pico-card-background-color: #32374d;
+  --pico-card-sectioning-background-color: #32374d;
+  --pico-form-element-background-color: #212432;
+  --pico-muted-border-color: #444267;
+
+  --pico-primary: #82aaff;
+  --pico-primary-hover: #9bbdff;
+  --pico-primary-focus: rgba(130, 170, 255, 0.35);
+  --pico-primary-background: #82aaff;
+  --pico-primary-inverse: #212432;
+
+  --pico-code-background-color: #212432;
+  --pico-mark-background-color: #ffcb6b;
+  --pico-mark-color: #212432;
+  --pico-del-color: #ff5370;
+  --pico-ins-color: #c3e88d;
+
+  --cm-foreground: #a6accd;
+  --cm-background: #292d3e;
+  --cm-cursor-color: #82aaff;
+  --cm-gutter-color: #676e95;
+  --cm-gutter-bg: #32374d;
+  --cm-gutter-active-color: #a6accd;
+  --cm-active-line-bg: #30344a;
+  --cm-selection-bg: rgba(130, 170, 255, 0.15);
+  --cm-selection-border: #82aaff;
+  --cm-match-bg: #444267;
+  --cm-match-color: #a6accd;
+
+  --cm-keyword: #c792ea;
+  --cm-atom: #f78c6c;
+  --cm-number: #f78c6c;
+  --cm-string: #c3e88d;
+  --cm-comment: #676e95;
+  --cm-variable: #ff5370;
+  --cm-type: #ffcb6b;
+  --cm-class: #ffcb6b;
+  --cm-property: #82aaff;
+  --cm-literal: #f78c6c;
+  --cm-regexp: #89ddff;
+  --cm-special: #bb80b3;
+  --cm-meta: #717cb4;
+  --cm-invalid: #ff5370;
+}

@@ -1,0 +1,55 @@
+/* Tokyo Night Storm palette — dark base.
+ * Reference: https://github.com/folke/tokyonight.nvim
+ *
+ * Applied when <html data-palette="tokyo-night-storm"> (set alongside
+ * data-theme="dark" by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="tokyo-night-storm"] {
+  --pico-background-color: #24283b;
+  --pico-color: #c0caf5;
+  --pico-muted-color: #7982a9;
+
+  --pico-card-background-color: #292e42;
+  --pico-card-sectioning-background-color: #292e42;
+  --pico-form-element-background-color: #1f2335;
+  --pico-muted-border-color: #383e5a;
+
+  --pico-primary: #7aa2f7;
+  --pico-primary-hover: #89b4fa;
+  --pico-primary-focus: rgba(122, 162, 247, 0.35);
+  --pico-primary-background: #7aa2f7;
+  --pico-primary-inverse: #1f2335;
+
+  --pico-code-background-color: #1f2335;
+  --pico-mark-background-color: #e0af68;
+  --pico-mark-color: #1f2335;
+  --pico-del-color: #f7768e;
+  --pico-ins-color: #9ece6a;
+
+  --cm-foreground: #c0caf5;
+  --cm-background: #24283b;
+  --cm-cursor-color: #c0caf5;
+  --cm-gutter-color: #565f89;
+  --cm-gutter-bg: #292e42;
+  --cm-gutter-active-color: #c0caf5;
+  --cm-active-line-bg: #2a2f47;
+  --cm-selection-bg: rgba(122, 162, 247, 0.18);
+  --cm-selection-border: #7aa2f7;
+  --cm-match-bg: #3b4261;
+  --cm-match-color: #c0caf5;
+
+  --cm-keyword: #bb9af7;
+  --cm-atom: #ff9e64;
+  --cm-number: #ff9e64;
+  --cm-string: #9ece6a;
+  --cm-comment: #565f89;
+  --cm-variable: #7aa2f7;
+  --cm-type: #2ac3de;
+  --cm-class: #2ac3de;
+  --cm-property: #73daca;
+  --cm-literal: #ff9e64;
+  --cm-regexp: #b4f9f8;
+  --cm-special: #bb9af7;
+  --cm-meta: #7aa2f7;
+  --cm-invalid: #f7768e;
+}

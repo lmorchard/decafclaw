@@ -365,6 +365,8 @@ conversation-sidebar .logout-btn:hover {
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   min-width: 9rem;
+  max-height: min(24rem, 80vh);
+  overflow-y: auto;
 }
 
 .theme-palette-menu .theme-palette-item {

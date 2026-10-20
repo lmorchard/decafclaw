@@ -1,0 +1,55 @@
+/* Catppuccin Mocha palette — dark base.
+ * Reference: https://github.com/catppuccin/catppuccin
+ *
+ * Applied when <html data-palette="catppuccin-mocha"> (set alongside
+ * data-theme="dark" by lib/theme.js). Overrides color tokens on top of Pico's dark base. */
+
+:root[data-palette="catppuccin-mocha"] {
+  --pico-background-color: #1e1e2e;
+  --pico-color: #cdd6f4;
+  --pico-muted-color: #9399b2;
+
+  --pico-card-background-color: #28283d;
+  --pico-card-sectioning-background-color: #28283d;
+  --pico-form-element-background-color: #181825;
+  --pico-muted-border-color: #45475a;
+
+  --pico-primary: #cba6f7;
+  --pico-primary-hover: #d8b9fc;
+  --pico-primary-focus: rgba(203, 166, 247, 0.35);
+  --pico-primary-background: #cba6f7;
+  --pico-primary-inverse: #1e1e2e;
+
+  --pico-code-background-color: #181825;
+  --pico-mark-background-color: #f9e2af;
+  --pico-mark-color: #1e1e2e;
+  --pico-del-color: #f38ba8;
+  --pico-ins-color: #a6e3a1;
+
+  --cm-foreground: #cdd6f4;
+  --cm-background: #1e1e2e;
+  --cm-cursor-color: #cba6f7;
+  --cm-gutter-color: #6c7086;
+  --cm-gutter-bg: #28283d;
+  --cm-gutter-active-color: #cdd6f4;
+  --cm-active-line-bg: #26263a;
+  --cm-selection-bg: rgba(203, 166, 247, 0.16);
+  --cm-selection-border: #cba6f7;
+  --cm-match-bg: #45475a;
+  --cm-match-color: #cdd6f4;
+
+  --cm-keyword: #cba6f7;
+  --cm-atom: #fab387;
+  --cm-number: #fab387;
+  --cm-string: #a6e3a1;
+  --cm-comment: #6c7086;
+  --cm-variable: #f38ba8;
+  --cm-type: #89b4fa;
+  --cm-class: #89b4fa;
+  --cm-property: #94e2d5;
+  --cm-literal: #fab387;
+  --cm-regexp: #f5c2e7;
+  --cm-special: #f5e0dc;
+  --cm-meta: #b4befe;
+  --cm-invalid: #f38ba8;
+}
