@@ -39,7 +39,7 @@ See [docs/tools.md](docs/tools.md), [docs/tool-priority.md](docs/tool-priority.m
 - **Group tools by noun, not verb.** `conversation_search` + `conversation_compact` in one module.
 - **Tool descriptions are a control surface.** Wording changes ("MUST", "NEVER", checklists) measurably change LLM behavior. Run `make eval-tools` to validate disambiguation between overlapping tools.
 - **Shell approval via shared `check_shell_approval()`** in `shell_tools.py`. Don't duplicate the approval checks.
-- **Per-tool timeout** wraps every non-MCP tool call (default 180s, env `TOOL_TIMEOUT_SEC`). Override via `timeout` key in `TOOL_DEFINITIONS`; `None` opts out. Confirmation-gated tools (`shell`, `shell_background_start`, `activate_skill`, `shell_guidance`, `admin_*`, `http_request`, `send_email`, `vault_*` mutations) and unbounded tools (`delegate_task`, `conversation_compact`, `claude_code_send`) opt out. Additionally, interactive confirmation pauses any tool watchdog while awaiting user response. MCP tools use their own per-server timeout.
+- **Per-tool timeout** wraps every non-MCP tool call (default 180s, env `TOOL_TIMEOUT_SEC`). Override via `timeout` key in `TOOL_DEFINITIONS`; `None` opts out. Confirmation-gated tools (`shell`, `shell_background_start`, `activate_skill`, `shell_guidance`, `admin_*`, `update_system_prompt`, `http_request`, `send_email`, `vault_*` mutations) and unbounded tools (`delegate_task`, `conversation_compact`, `claude_code_send`) opt out. Additionally, interactive confirmation pauses any tool watchdog while awaiting user response. MCP tools use their own per-server timeout.
 - **`end_turn=True` on `ToolResult`** mechanically ends the turn (one final no-tools LLM call, then return). For review gates use `end_turn=EndTurnConfirm(message=..., on_approve=..., on_deny=...)`. For input widgets (`accepts_input=true`), pair with `end_turn=True` and the loop auto-promotes to a `WidgetInputPause` that pauses via the confirmation infra and resumes with the user's selection injected as a synthetic user message. Priority in one batch: `WidgetInputPause` > `EndTurnConfirm` > `True`.
 - **Checklist tools (`checklist_create/_step_done/_abort/_status`)** are always-loaded. Iteration happens within a single turn: do step → step_done → next. Create/step_done/abort auto-emit a `progress_tracker` into the sticky slot (fail-open), see [docs/widgets.md](docs/widgets.md#progress_tracker-widget).
 - **Events for progress.** Tools publish `tool_status` via `ctx.publish()`.
@@ -75,8 +75,8 @@ See [docs/skills.md](docs/skills.md).
 See [docs/config.md](docs/config.md), [docs/data-layout.md](docs/data-layout.md), [docs/providers.md](docs/providers.md), [docs/model-selection.md](docs/model-selection.md).
 
 - **Resolution order:** dataclass defaults → `data/{agent_id}/config.json` → env vars (highest priority). Dataclasses in `config.py` / `config_types.py`.
-- **Agent data layout.** Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.json) at `data/{agent_id}/` root, read-only to agent. Agent read/write at `workspace/`.
-- **System prompt assembly.** SOUL.md + AGENT.md bundled in code, overridable per-agent. Each section wrapped in XML tags (`<soul>`, `<agent_role>`, `<user_context>`, `<skill_catalog>`, `<loaded_skills>`, `<deferred_tools>`) — wrapping is additive in `load_system_prompt`/`build_deferred_list_text`. Source files stay plain markdown. See [docs/context-composer.md](docs/context-composer.md#section-delimiters).
+- **Agent data layout.** Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.json) at `data/{agent_id}/` root, read-only to agent file tools — except `USER.md`/`CUSTOM.md`, which the agent can rewrite via the confirmation-gated `update_system_prompt` tool (SOUL.md is guarded against agent modification). Agent read/write at `workspace/`.
+- **System prompt assembly.** SOUL.md + AGENT.md bundled in code, overridable per-agent. Each section wrapped in XML tags (`<soul>`, `<agent_role>`, `<user_context>`, `<custom_context>`, `<skill_catalog>`, `<loaded_skills>`, `<deferred_tools>`) — wrapping is additive in `load_system_prompt`/`build_deferred_list_text`. Source files stay plain markdown. See [docs/context-composer.md](docs/context-composer.md#section-delimiters).
 - **Vault** — unified knowledge base ([docs/vault.md](docs/vault.md)). Pages = curated knowledge (`vault_write`); journal = episodic (`vault_journal_append`); dream skill distills journal → pages. Obsidian-compatible.
 - **Multi-provider LLM** ([docs/providers.md](docs/providers.md)): two layers — `providers` (connection) + `model_configs` (named model + provider ref). Users switch models via UI; agent can't change its own model (cost control).
 - **MCP servers** ([docs/mcp-servers.md](docs/mcp-servers.md)) globally available, configured in `data/{agent_id}/mcp_servers.json`. Tools namespaced `mcp__<server>__<tool>`. Stdio servers auto-restart with backoff.
@@ -206,7 +206,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 ### Tools
 - `tools/tool_registry.py` — Priority-based classification, deferred catalog
 - `tools/search_tools.py` — `tool_search`
-- `tools/{core,admin_tools,workspace_tools,conversation_tools,checklist_tools,notes_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools,sticky_tools}.py`
+- `tools/{core,admin_tools,prompt_tools,workspace_tools,conversation_tools,checklist_tools,notes_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools,sticky_tools}.py`
 - `preempt_search.py` — Keyword-match for pre-emptive tool promotion
 
 ### Skills (bundled)

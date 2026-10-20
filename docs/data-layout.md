@@ -6,9 +6,10 @@ DecafClaw uses a file-based data layout with a clear trust boundary between admi
 
 ```
 data/{agent_id}/                    # Admin-level (read-only to agent)
-  SOUL.md                           # Identity prompt override
+  SOUL.md                           # Identity prompt override (guarded from agent updates)
   AGENT.md                          # Capabilities prompt override
-  USER.md                           # Per-deployment user context
+  USER.md                           # Per-deployment user context (agent-updatable via update_system_prompt)
+  CUSTOM.md                         # Custom standing instructions (agent-updatable via update_system_prompt, #24)
   COMPACTION.md                     # Custom compaction prompt
   REFLECTION.md                     # Custom reflection judge prompt
   MEMORY_SWEEP.md                   # Pre-compaction memory sweep prompt
@@ -97,7 +98,8 @@ on pre-#576 conversations.)
 ## Secret files
 
 Some admin files *are* secret stores — the value in the file is the secret itself.
-The six admin tools refuse the agent's access to these on a shared rule (one place
+The six admin tools — and `update_system_prompt`, the agent's other writer under
+this directory — refuse the agent's access to these on a shared rule (one place
 that decides, not per-tool checks). The default refuse set (glob patterns relative
 to `data/{agent_id}/`) is:
 
