@@ -420,4 +420,47 @@
     auto-approval presets and promoted tool profiles is shell_guidance
     with action='set_mode', mode='dev'.
 
+# -- update_system_prompt vs admin_write / workspace_write / vault (#24) ------
+# update_system_prompt rewrites the agent's own prompt sections (USER.md /
+# CUSTOM.md) in data/{agent_id}/. The near-misses are the generic file tools
+# that can also reach that directory, and the vault for "remember this" asks.
+
+- name: update-system-prompt-user-context
+  scenario: "Update your user context: I work at Mozilla on the platform team, and I prefer short, direct answers."
+  expected: update_system_prompt
+  near_miss: [admin_write, vault_journal_append]
+  notes: |
+    "Update your user context" names the USER.md prompt section directly —
+    that is update_system_prompt(section='USER.md'), not the generic
+    admin_write file tool, and not a vault journal entry (which records
+    episodic facts, not the standing user-profile section of the prompt).
+
+- name: update-system-prompt-custom-instructions
+  scenario: "Add a standing instruction to your custom prompt section: always confirm before deleting anything."
+  expected: update_system_prompt
+  near_miss: [admin_write, workspace_write]
+  notes: |
+    "Standing instruction" + "custom prompt section" = CUSTOM.md, which only
+    update_system_prompt targets. admin_write could reach the file but the
+    dedicated tool is the sanctioned path (it guards SOUL.md and names the
+    allowed sections). workspace_write is the wrong directory entirely.
+
+- name: admin-write-vs-update-system-prompt-config
+  scenario: "Set the agent tool timeout to 300 seconds in my agent's config.json."
+  expected: admin_write
+  near_miss: [update_system_prompt]
+  notes: |
+    config.json is configuration, not a prompt section — update_system_prompt
+    would reject it (allowed sections are USER.md and CUSTOM.md). Editing an
+    admin config file is admin_write.
+
+- name: workspace-write-vs-update-system-prompt-notes-file
+  scenario: "Save these meeting notes to notes/meeting-2026-10-18.md in the workspace."
+  expected: workspace_write
+  near_miss: [update_system_prompt]
+  notes: |
+    A markdown file at an explicit workspace path is workspace_write.
+    update_system_prompt only rewrites the two prompt sections
+    (USER.md / CUSTOM.md) — a named file path is not a section.
+
 

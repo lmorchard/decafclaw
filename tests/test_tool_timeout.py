@@ -272,6 +272,7 @@ def test_confirmation_gated_tools_have_timeout_none():
         "admin_replace_lines",
         "admin_edit",
         "admin_delete",
+        "update_system_prompt",
         "http_request",
         "send_email",
     ]

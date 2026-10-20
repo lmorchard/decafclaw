@@ -21,6 +21,7 @@ class ConfirmationAction(str, Enum):
     WIDGET_RESPONSE = "widget_response"
     WORKFLOW_USER_INPUT = "workflow_user_input"
     ADMIN_MUTATION = "admin_mutation"
+    UPDATE_SYSTEM_PROMPT = "update_system_prompt"
 
 
 @dataclass
