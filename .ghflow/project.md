@@ -38,7 +38,7 @@ sources:
 - `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `plan.md`, `notes.md`. Session docs are committed.
 
 ## Running the app
-- Run only from a worktree with `DATA_HOME` set to a worktree-local directory seeded with only a copy of `data/decafclaw/config.json`, and with `MATTERMOST_ENABLED=false`, `EMAIL_ENABLED=false`, `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED=false`, `HTTP_ENABLED=true`, and the worktree's `HTTP_PORT`. Mattermost stays off unless an issue calls for it, and then only attended with Les's go-ahead.
+- Run only from a worktree with `DATA_HOME` set to `data-dev/` at the worktree root seeded with only a copy of `data/decafclaw/config.json`, and with `MATTERMOST_ENABLED=false`, `EMAIL_ENABLED=false`, `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED=false`, `HEARTBEAT_INTERVAL=0` (interval of 0 disables the heartbeat timer), `HTTP_ENABLED=true`, and the worktree's `HTTP_PORT`. Start it with `uv run decafclaw`. Mattermost stays off unless an issue calls for it, and then only attended with Les's go-ahead.
 
 ## Commits and PRs
 - Subjects mostly `type(scope): summary`, for example `fix(agent): ...`. Every change goes through a PR. `Closes #N` closes the issue on merge.
