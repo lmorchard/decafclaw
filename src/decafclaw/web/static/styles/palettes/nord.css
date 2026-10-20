@@ -17,8 +17,9 @@
   --pico-primary: #88c0d0;
   --pico-primary-hover: #81a1c1;
   --pico-primary-focus: rgba(136, 192, 208, 0.35);
-  --pico-primary-background: #88c0d0;
-  --pico-primary-inverse: #2e3440;
+  --pico-primary-background: #3b566e;
+  --pico-primary-hover-background: #466582;
+  --pico-primary-inverse: #eceff4;
 
   --pico-code-background-color: #242933;
   --pico-mark-background-color: #ebcb8b;
