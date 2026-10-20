@@ -212,3 +212,66 @@ exception) found one actionable defect + two accepted notes.
   (install-js, check-npm-policy, check-message-types, fmt-check, lint,
   typecheck, check-js, check-browser-assets). `make eval-tools` still not
   runnable (endpoint unreachable) — evidence limit unchanged.
+- 2026-10-18 1937: Committed a9fd6838e1c077b44daeea1e895208b3ba5eae14
+  "fix(prompts): apply recovered prompt updates — read the persisted
+  \"path\" key (#24)" (4 files, +173/−98; code + these notes together);
+  pushed to issue-24-system-prompt-living; verify-commit clean on both
+  --on branch and --pr-head (is_pr_head: true).
+- 2026-10-18 1941: CI green at a9fd6838 — `gh run list --branch` shows the
+  CI run on headSha a9fd6838... completed success (created 02:35:28Z);
+  pr-state: lint-and-test (required) passed, js-test (required) passed,
+  check-tui passed; mergeable MERGEABLE; base_behind_by 0.
+- 2026-10-18 1943: PR description refreshed (pr body → gh pr edit, NOT
+  marked ready, no review request): body v2 at
+  /private/var/folders/8p/p5kz_p794bbbwgg2_hgn34nw0000gn/T/opencode/issue24-body-v2.md
+  — 2 commits, "Checks at `a9fd683`" green, Review section now records the
+  performed review + F1 + fix + "Delta review of `a9fd683` pending".
+  Read-back: isDraft true, head a9fd6838, body updated. Board stays "In
+  progress" (draft PR does not qualify for In review).
+- 2026-10-18 1945: Correction complete. Remaining for the coordinator:
+  delta review of a9fd6838 (fresh context, same local model exception),
+  then `pr ready --issue ... --owner lmorchard --project 6` (moves issue
+  In review), then user review. No merge (flow limit). Notes-only entries
+  after this line (publication log) intentionally left uncommitted per the
+  no-notes-only-commit constraint.
+
+## Ready submission (handoff ready-24.md)
+
+- 2026-10-18 2330s: Delta review of `4c05a2f..a9fd683` reported favorable
+  (F1 resolved end-to-end via reviewer's own reproduction; rebuilt recovery
+  tests verified with teeth — independent red check 4/6 fail under the bug;
+  no new actionable findings). Full coverage of head a9fd683.
+- 2026-10-18: Final PR description assembled (pr body →
+  issue24-body-final.md): 2 commits, checks at a9fd683 green, Review
+  section = base review (F1 + 4 notes) + correction + favorable delta
+  review + **declined note recorded with reason** (stale-test assertion
+  improvement — routine, non-blocking; correction cycle + re-review +
+  ready did not fit before the 22:31 PDT queue deadline, so reviewed head
+  a9fd683 reaches the endpoint) + model evidence (llama-local same-model
+  under the user-approved exception; independence via fresh-context
+  reviewer) + new "## Evidence limits" section (eval-tools unexecuted,
+  endpoint unreachable; 4 committed tool_choice cases to run when
+  reachable) + existing Decisions taken unattended + Closes #24.
+- 2026-10-18: `pr ready` executed: description confirmed, ready confirmed
+  (before is_draft true → after false, OPEN), expected_head_matches true
+  (a9fd6838), board In progress → In review (readback_matches true,
+  item PVTI_lAHNVLfOAUg5p84J7FOq).
+- 2026-10-18: Independent read-backs: gh pr view — isDraft false, state
+  OPEN, head a9fd6838, live body contains all final sections (grep on
+  ## headers + key lines); board GraphQL read — issue #24 "System prompt
+  as a living document" Status = In review; gh run list --branch — CI run
+  on headSha a9fd6838 completed success; pr-state — lint-and-test
+  (required) passed, js-test (required) passed, check-tui passed,
+  MERGEABLE, base 0 behind, no review requests, no reviews.
+- Endpoint reached: PR #1084 open, ready for review, issue #24 In review.
+  Remaining is the user's review (no merge, no reviewer request — flow
+  limits). Worktree: only notes.md uncommitted (publication + ready logs),
+  intentionally no notes-only commit.
+
+## Review follow-up (Copilot comments r4310672115, r4310672146)
+
+- 2026-10-20: Addressed symlink / redirection bypasses in `update_system_prompt` and its recovery handler:
+  - Added `_check_section_target(config, canonical)`: rejects pre-existing symlinks before reading/snapshotting, checks resolved destination against `_GUARDED_SECTIONS` (`SOUL.md`) and `is_refused` (`web_tokens.json`), and retains section-name refusal.
+  - In `UpdateSystemPromptHandler.on_approve`: applied `_check_section_target` to on-disk state AND added destination/redirection checks on the persisted `snapshot.resolved`.
+  - Added 6 regression tests in `tests/test_prompts.py` covering symlink destinations (`SOUL.md`, `web_tokens.json`, arbitrary file) for both interactive and recovery paths.
+  - All 47 prompt tests passed; full test suite (4607 tests) and `make check` passed cleanly.

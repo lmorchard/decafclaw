@@ -32,12 +32,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..media import ToolResult
 from ..secret_policy import is_refused, marker_in, marker_message, refusal_message
 from .admin_tools import (
     _AdminFileSnapshot,
+    _agent_rel,
     _capture_snapshot,
     _confirm_admin_mutation,
     _file_error,
@@ -114,6 +116,79 @@ def _validate_section(section: str) -> tuple[str, None] | tuple[None, ToolResult
     return canonical, None
 
 
+def _check_section_target(config: Any, canonical: str) -> tuple[Path | None, ToolResult | None]:
+    """Resolve and verify that a prompt section is a plain file, not a symlink or redirected target.
+
+    Guards against symlink evasions where USER.md or CUSTOM.md points to a secret
+    store (e.g. web_tokens.json) or a guarded core identity file (SOUL.md).
+    Returns (resolved_path, error_result).
+    """
+    # Retain the section-name refusal check (e.g. if USER.md itself is in refuse_paths)
+    if is_refused(canonical, config):
+        return None, ToolResult(text=refusal_message(canonical))
+
+    target = config.agent_path / canonical
+
+    # Direct symlink check on the section entry in the agent directory
+    if target.is_symlink():
+        resolved, _ = _resolve_admin_path(config, canonical)
+        if resolved is not None:
+            dest_rel = _agent_rel(resolved, config)
+            if resolved.name.upper() in _GUARDED_SECTIONS or dest_rel.upper() in _GUARDED_SECTIONS:
+                return None, ToolResult(
+                    text=(
+                        f"[error: '{canonical}' is a symlink pointing to guarded core identity file "
+                        f"'{resolved.name}' and cannot be modified with update_system_prompt. "
+                        f"Ask the user to edit it directly (data/{{agent_id}}/{resolved.name}).]"
+                    )
+                )
+            if is_refused(dest_rel, config):
+                return None, ToolResult(text=refusal_message(dest_rel))
+        return None, ToolResult(
+            text=f"[error: prompt section '{canonical}' is a symlink and cannot be modified with update_system_prompt]"
+        )
+
+    resolved, res_err = _resolve_admin_path(config, canonical)
+    if res_err:
+        return None, ToolResult(text=res_err)
+    assert resolved is not None
+
+    expected = (config.agent_path.resolve() / canonical).resolve()
+    if resolved.resolve() != expected:
+        dest_rel = _agent_rel(resolved, config)
+        if resolved.name.upper() in _GUARDED_SECTIONS or dest_rel.upper() in _GUARDED_SECTIONS:
+            return None, ToolResult(
+                text=(
+                    f"[error: '{canonical}' is redirected to guarded core identity file "
+                    f"'{resolved.name}' and cannot be modified with update_system_prompt. "
+                    f"Ask the user to edit it directly (data/{{agent_id}}/{resolved.name}).]"
+                )
+            )
+        if is_refused(dest_rel, config):
+            return None, ToolResult(text=refusal_message(dest_rel))
+        return None, ToolResult(
+            text=f"[error: prompt section '{canonical}' is redirected and cannot be modified with update_system_prompt]"
+        )
+
+    # Check the resolved path itself against guarded sections and secret policy
+    dest_rel = _agent_rel(resolved, config)
+    if resolved.name.upper() in _GUARDED_SECTIONS or dest_rel.upper() in _GUARDED_SECTIONS:
+        return None, ToolResult(
+            text=(
+                f"[error: '{canonical}' points to guarded core identity file "
+                f"'{resolved.name}' and cannot be modified with update_system_prompt. "
+                f"Ask the user to edit it directly (data/{{agent_id}}/{resolved.name}).]"
+            )
+        )
+    if is_refused(dest_rel, config):
+        return None, ToolResult(text=refusal_message(dest_rel))
+
+    if resolved.is_dir():
+        return None, ToolResult(text=f"[error: '{canonical}' is a directory, not a file]")
+
+    return resolved, None
+
+
 async def tool_update_system_prompt(ctx: "Context", section: str, content: str) -> str | ToolResult:
     """Update a mutable system prompt section (USER.md or CUSTOM.md) in the agent admin directory."""
     log.info(f"[tool:update_system_prompt] section={section!r}")
@@ -124,28 +199,16 @@ async def tool_update_system_prompt(ctx: "Context", section: str, content: str) 
     assert canonical is not None
 
     config = ctx.config
-    # Containment + workspace exclusion, same as the admin tools. The
-    # canonical name comes from the allowlist, so this is defense in depth
-    # against a future allowlist entry that isn't a plain file name.
-    resolved, res_err = _resolve_admin_path(config, canonical)
-    if res_err:
-        return ToolResult(text=res_err)
+    resolved, res_err = _check_section_target(config, canonical)
+    if res_err is not None:
+        return res_err
     assert resolved is not None
 
-    # The one shared secret rule (secret_policy.py): an admin-widened
-    # refuse_paths entry covering this file blocks the write. USER.md /
-    # CUSTOM.md are not in the default refuse set and are not redactable
-    # (not JSON config), so the redaction tier does not apply to them.
-    if is_refused(canonical, config):
-        return ToolResult(text=refusal_message(canonical))
     # Marker guard: a payload holding the <redacted> placeholder would
     # clobber a real secret value if the agent round-tripped a redacted
     # read back through this tool.
     if marker_in(content):
         return ToolResult(text=marker_message(canonical))
-
-    if resolved.is_dir():
-        return ToolResult(text=f"[error: '{canonical}' is a directory, not a file]")
 
     snapshot, snap_err = _capture_snapshot(resolved)
     if snap_err:
@@ -224,17 +287,36 @@ class UpdateSystemPromptHandler:
         assert canonical is not None
 
         config = ctx.config
-        target = config.agent_path / canonical
-
-        # Secret-path refusal: the same rule every other admin writer consults.
-        if is_refused(canonical, config):
-            return await self._cancel(ctx, canonical, refusal_message(canonical))
+        resolved, target_err = _check_section_target(config, canonical)
+        if target_err is not None:
+            return await self._cancel(ctx, canonical, target_err.text)
+        assert resolved is not None
 
         # Marker guard: the write payload is the only content to guard.
         if marker_in(content):
             return await self._cancel(ctx, canonical, marker_message(canonical))
 
+        target = config.agent_path / canonical
         snapshot = _AdminFileSnapshot.from_dict(snapshot_data, default_path=target)
+
+        # Destination checks on the snapshot: a persisted request captured before
+        # a symlink was detected or from a tampered archive must not be allowed
+        # to overwrite a guarded or refused target.
+        snap_rel = _agent_rel(snapshot.resolved, config)
+        if snapshot.resolved.name.upper() in _GUARDED_SECTIONS or snap_rel.upper() in _GUARDED_SECTIONS:
+            return await self._cancel(
+                ctx,
+                canonical,
+                f"[error: persisted snapshot targets guarded core identity file '{snapshot.resolved.name}']",
+            )
+        if is_refused(snap_rel, config):
+            return await self._cancel(ctx, canonical, refusal_message(snap_rel))
+        if snapshot.resolved.resolve() != (config.agent_path.resolve() / canonical).resolve():
+            return await self._cancel(
+                ctx,
+                canonical,
+                f"[error: persisted snapshot targets redirected destination '{snap_rel}']",
+            )
 
         try:
             async with file_lock(target):

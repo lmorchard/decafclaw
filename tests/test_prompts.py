@@ -527,6 +527,59 @@ class TestUpdateSystemPrompt:
         assert "while confirmation was pending" in _text(result)
         assert target.read_text() == "tweaked on disk while pending\n"
 
+    @pytest.mark.asyncio
+    async def test_update_symlink_to_soul_md_refused(self, ctx):
+        """A USER.md symlink pointing to SOUL.md must be refused before reading
+        it — preventing overwriting guarded identity files via redirection."""
+        ctx.request_confirmation = _mock_confirm(approved=True)
+        soul = ctx.config.agent_path / "SOUL.md"
+        soul.write_text("protected identity\n")
+
+        user_md = ctx.config.agent_path / "USER.md"
+        user_md.symlink_to(soul)
+
+        result = await tool_update_system_prompt(ctx, "USER.md", "hijacked\n")
+
+        text = _text(result)
+        assert "core identity file" in text or "symlink" in text
+        assert soul.read_text() == "protected identity\n"
+        assert ctx.request_confirmation.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_update_symlink_to_secret_file_refused(self, ctx):
+        """A USER.md symlink pointing to a secret file (e.g. web_tokens.json)
+        must be refused before reading it — secret contents must not be copied
+        into confirmation preview/snapshot or overwritten."""
+        ctx.request_confirmation = _mock_confirm(approved=True)
+        tokens = ctx.config.agent_path / "web_tokens.json"
+        tokens.write_text('{"secret": "token_val"}\n')
+
+        user_md = ctx.config.agent_path / "USER.md"
+        user_md.symlink_to(tokens)
+
+        result = await tool_update_system_prompt(ctx, "USER.md", "clobbered\n")
+
+        text = _text(result)
+        assert "protected secret" in text or "symlink" in text
+        assert tokens.read_text() == '{"secret": "token_val"}\n'
+        assert ctx.request_confirmation.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_update_arbitrary_symlink_refused(self, ctx):
+        """Any symlink for a prompt section is refused before confirmation."""
+        ctx.request_confirmation = _mock_confirm(approved=True)
+        other = ctx.config.agent_path / "other.txt"
+        other.write_text("other\n")
+
+        custom_md = ctx.config.agent_path / "CUSTOM.md"
+        custom_md.symlink_to(other)
+
+        result = await tool_update_system_prompt(ctx, "CUSTOM.md", "new\n")
+
+        assert "symlink" in _text(result)
+        assert other.read_text() == "other\n"
+        assert ctx.request_confirmation.call_count == 0
+
 
 class TestUpdateSystemPromptRecovery:
     """The UPDATE_SYSTEM_PROMPT confirmation handler (recovery path) must
@@ -664,3 +717,105 @@ class TestUpdateSystemPromptRecovery:
         assert result["inject_message"] == "[update_system_prompt for 'USER.md' was denied by user]"
         assert result["continue_loop"] is False
         assert not (ctx.config.agent_path / "USER.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_recovery_approve_refuses_symlink_destination_to_soul(self, ctx):
+        """Recovery handler rejects a persisted request targeting SOUL.md via
+        symlink or snapshot redirection, protecting core identity files."""
+        from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
+
+        handler = UpdateSystemPromptHandler()
+        soul = ctx.config.agent_path / "SOUL.md"
+        soul.write_text("protected soul\n")
+
+        # Hand-built persisted request whose snapshot targets SOUL.md
+        req = ConfirmationRequest(
+            action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
+            action_data={
+                "tool_name": "update_system_prompt",
+                "path": "USER.md",
+                "payload": {"content": "tampered\n"},
+                "snapshot": {
+                    "resolved": str(soul),
+                    "exists": True,
+                    "content": "protected soul\n",
+                    "mtime_ns": 12345,
+                    "size": len("protected soul\n"),
+                    "is_dir": False,
+                },
+            },
+        )
+        resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
+        result = await handler.on_approve(ctx, req, resp)
+
+        assert "error" in result
+        assert "core identity file" in result["error"]
+        assert soul.read_text() == "protected soul\n"
+
+    @pytest.mark.asyncio
+    async def test_recovery_approve_refuses_symlink_destination_to_secret(self, ctx):
+        """Recovery handler rejects a persisted request targeting a secret file
+        such as web_tokens.json, protecting secret stores on restart recovery."""
+        from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
+
+        handler = UpdateSystemPromptHandler()
+        tokens = ctx.config.agent_path / "web_tokens.json"
+        tokens.write_text('{"token": "secret"}\n')
+
+        req = ConfirmationRequest(
+            action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
+            action_data={
+                "tool_name": "update_system_prompt",
+                "path": "USER.md",
+                "payload": {"content": "tampered\n"},
+                "snapshot": {
+                    "resolved": str(tokens),
+                    "exists": True,
+                    "content": '{"token": "secret"}\n',
+                    "mtime_ns": 12345,
+                    "size": len('{"token": "secret"}\n'),
+                    "is_dir": False,
+                },
+            },
+        )
+        resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
+        result = await handler.on_approve(ctx, req, resp)
+
+        assert "error" in result
+        assert "protected secret" in result["error"]
+        assert tokens.read_text() == '{"token": "secret"}\n'
+
+    @pytest.mark.asyncio
+    async def test_recovery_approve_refuses_on_disk_symlink(self, ctx):
+        """Recovery handler rejects when target on disk is a symlink."""
+        from decafclaw.tools.prompt_tools import UpdateSystemPromptHandler
+
+        handler = UpdateSystemPromptHandler()
+        other = ctx.config.agent_path / "other.txt"
+        other.write_text("other\n")
+
+        user_md = ctx.config.agent_path / "USER.md"
+        user_md.symlink_to(other)
+
+        req = ConfirmationRequest(
+            action_type=ConfirmationAction.UPDATE_SYSTEM_PROMPT,
+            action_data={
+                "tool_name": "update_system_prompt",
+                "path": "USER.md",
+                "payload": {"content": "tampered\n"},
+                "snapshot": {
+                    "resolved": str(user_md),
+                    "exists": True,
+                    "content": "other\n",
+                    "mtime_ns": 12345,
+                    "size": len("other\n"),
+                    "is_dir": False,
+                },
+            },
+        )
+        resp = ConfirmationResponse(confirmation_id=req.confirmation_id, approved=True)
+        result = await handler.on_approve(ctx, req, resp)
+
+        assert "error" in result
+        assert "symlink" in result["error"]
+        assert other.read_text() == "other\n"
