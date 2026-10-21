@@ -1816,6 +1816,46 @@ class TestHistoryArchivedRemap:
         )
 
     @pytest.mark.asyncio
+    async def test_archived_compaction_message_ignored_by_composer(
+        self,
+        ctx,
+        config,
+    ):
+        """#1094 — an archived role: 'compaction' message in history must be ignored
+        by compose(): not counted in history tokens and omitted from LLM messages."""
+        composer = ContextComposer()
+        history = [
+            {"role": "user", "content": "earlier user message"},
+            {"role": "assistant", "content": "earlier reply"},
+            {
+                "role": "compaction",
+                "content": "Conversation compacted (10s, 10 -> 5 messages)",
+                "data": {"before_messages": 10, "after_messages": 5, "success": True},
+            },
+        ]
+
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+        ):
+            composed = await composer.compose(
+                ctx,
+                "current user message",
+                history,
+                mode=ComposerMode.INTERACTIVE,
+            )
+
+        history_entries = [s for s in composed.sources if s.source == "history"]
+        assert len(history_entries) == 1
+        # Only the 2 user/assistant messages should be counted in history items_included
+        assert history_entries[0].items_included == 2
+
+        # 'compaction' role must not appear in composed messages sent to LLM
+        roles = [m.get("role") for m in composed.messages]
+        assert "compaction" not in roles
+        assert all("Conversation compacted" not in str(m.get("content", "")) for m in composed.messages)
+
+    @pytest.mark.asyncio
     async def test_source_entries_account_for_all_llm_content(
         self,
         ctx,

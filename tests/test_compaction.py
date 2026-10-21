@@ -253,6 +253,83 @@ class TestCompactHistory:
         assert ctx.tokens.last_compaction_estimate is None
 
     @pytest.mark.asyncio
+    async def test_compaction_persists_to_archive_on_success(self, ctx, populated_archive):
+        """#1094 — on successful compaction, a role: 'compaction' record is persisted
+        to archive.jsonl with shared notice text and detailed metrics."""
+        from decafclaw.archive import read_archive
+
+        ctx.config.compaction.preserve_turns = 5
+        history = [{"role": "user", "content": f"message {i}"} for i in range(8)]
+
+        mock_response = {
+            "content": "Summary of earlier conversation.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        conv_id = ctx.conv_id or "test-conv"
+        archived = read_archive(ctx.config, conv_id)
+        compaction_msgs = [m for m in archived if m.get("role") == "compaction"]
+        assert len(compaction_msgs) == 1
+        msg = compaction_msgs[0]
+        assert "Conversation compacted" in msg["content"]
+        assert msg["data"]["success"] is True
+        assert msg["data"]["before_messages"] == 8
+        assert msg["data"]["after_messages"] > 0
+        assert msg["data"]["estimated_tokens_after"] is not None
+        assert "elapsed_sec" in msg["data"]
+
+    @pytest.mark.asyncio
+    async def test_compaction_persists_to_archive_on_failure(self, ctx, populated_archive):
+        """#1094 — on failed compaction, a role: 'compaction' record is persisted
+        to archive.jsonl indicating failure."""
+        from decafclaw.archive import read_archive
+
+        ctx.config.compaction.preserve_turns = 5
+        history = [{"role": "user", "content": "test"}]
+
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, side_effect=Exception("LLM error")):
+            result = await compact_history(ctx, history)
+
+        assert result is False
+        conv_id = ctx.conv_id or "test-conv"
+        archived = read_archive(ctx.config, conv_id)
+        compaction_msgs = [m for m in archived if m.get("role") == "compaction"]
+        assert len(compaction_msgs) == 1
+        msg = compaction_msgs[0]
+        assert "Compaction failed" in msg["content"]
+        assert msg["data"]["success"] is False
+        assert msg["data"]["estimated_tokens_after"] is None
+
+    def test_split_into_turns_and_flatten_ignore_metadata_roles(self):
+        """#1094 — compaction, model, and mode metadata roles must be ignored by
+        turn splitting and message flattening so they never leak into LLM prompts."""
+        messages = [
+            {"role": "user", "content": "turn 1"},
+            {"role": "assistant", "content": "reply 1"},
+            {"role": "compaction", "content": "Conversation compacted (10s)"},
+            {"role": "model", "content": "gemini-2.5-pro"},
+            {"role": "mode", "content": "code"},
+            {"role": "user", "content": "turn 2"},
+            {"role": "assistant", "content": "reply 2"},
+        ]
+        turns = _split_into_turns(messages)
+        assert len(turns) == 2
+        flat_turn_roles = [m.get("role") for turn in turns for m in turn]
+        assert "compaction" not in flat_turn_roles
+        assert "model" not in flat_turn_roles
+        assert "mode" not in flat_turn_roles
+
+        flattened = flatten_messages(messages)
+        assert "Conversation compacted" not in flattened
+        assert "gemini-2.5-pro" not in flattened
+
+    @pytest.mark.asyncio
     async def test_persist_failure_leaves_history_untouched(self, ctx, populated_archive):
         """#1005 — a failed sidecar write must leave the live history intact
         and report the compaction as not successful. The rebuilt list is

@@ -79,6 +79,8 @@ The two consumers are independent: a later reload (or a fresh page load) does **
 
 `compaction_end` / `COMPACTION_DONE` also carry a `success` flag: when the summarization fails the `finally:` no longer reports a successful compaction, and every consumer that renders a compaction notice — the web store, the Mattermost post, and the terminal — reads a failure notice instead of the misleading `N → N` "compacted". The two Python transports share their wording via `compaction_display.compaction_notice()` (#1053); the web store and TUI keep their own copies and are read against that helper in review.
 
+Compaction outcomes (both success and failure) are persisted to `archive.jsonl` under `role: "compaction"` with structured metadata (`data`: message counts, token estimates, elapsed time, success flag). The web UI reloads compaction notices from the archive and renders them as distinct cards with metric chips, surviving page refreshes and conversation switches (#1094). Compaction records are treated as metadata and excluded from prompt assembly by `ContextComposer`.
+
 ### Configuration
 
 Compaction is configured via the `compaction` section in `config.json` or environment variables:

@@ -219,12 +219,14 @@ def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
     A turn starts with a user or vault_retrieval message and includes
     everything until the next turn boundary. vault_retrieval is treated
     as a turn start because it's injected before the user message it
-    belongs to.
+    belongs to. Metadata messages (compaction, model, mode) are ignored.
     """
     turns = []
     current_turn = []
     for msg in messages:
         role = msg.get("role")
+        if role in ("compaction", "model", "mode"):
+            continue
         if role in ("user", "vault_retrieval") and current_turn:
             turns.append(current_turn)
             current_turn = []
@@ -256,7 +258,9 @@ def flatten_messages(messages: list[dict]) -> str:
         role = msg.get("role", "unknown")
         content = msg.get("content") or ""
 
-        if role == "user":
+        if role in ("compaction", "model", "mode"):
+            continue
+        elif role == "user":
             lines.append(f"User: {content}")
         elif role == "assistant":
             tool_calls = msg.get("tool_calls")
@@ -654,3 +658,29 @@ async def compact_history(ctx: "Context", history: list) -> bool:
             estimated_tokens_before=estimated,
             estimated_tokens_after=estimated_tokens_after,
         )
+        try:
+            from .archive import append_message
+            from .compaction_display import compaction_notice
+
+            notice_text = compaction_notice(
+                succeeded,
+                before=before_messages,
+                after=after_messages,
+                elapsed=elapsed,
+                est_tokens=estimated,
+            )
+            compaction_record = {
+                "role": "compaction",
+                "content": notice_text,
+                "data": {
+                    "before_messages": before_messages,
+                    "after_messages": after_messages,
+                    "estimated_tokens_before": estimated,
+                    "estimated_tokens_after": estimated_tokens_after,
+                    "elapsed_sec": round(elapsed, 1),
+                    "success": succeeded,
+                },
+            }
+            append_message(config, conv_id, compaction_record)
+        except Exception as exc:
+            log.warning("Failed to record compaction to archive for %s: %s", conv_id, exc)

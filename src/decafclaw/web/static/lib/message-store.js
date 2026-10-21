@@ -149,6 +149,14 @@ export class MessageStore {
             if (m.role === 'background_event') {
               return { role: 'background_event', record: m, timestamp: m.timestamp };
             }
+            if (m.role === 'compaction') {
+              return {
+                role: 'compaction',
+                content: m.content,
+                record: m.data || m.record || null,
+                timestamp: m.timestamp,
+              };
+            }
             return m;
           });
           this.#currentMessages = [...this.#mergeToolMessages(newMsgs), ...this.#currentMessages];
@@ -219,13 +227,37 @@ export class MessageStore {
           // #1005 — the event now carries a success flag; a failed compaction
           // leaves history unchanged, so the old unconditional "compacted"
           // notice was misleading (N → N messages).
+          // #1094 — match compaction_display.py wording with elapsed duration
+          // and token metrics.
           const failed = msg.success === false;
-          const detail = failed
-            ? 'Compaction failed (no change to conversation)'
-            : `Conversation compacted: ${msg.before_messages} → ${msg.after_messages} messages`;
+          let detail;
+          if (failed) {
+            detail = 'Compaction failed — conversation unchanged';
+          } else if (msg.elapsed_sec != null || msg.estimated_tokens_before != null) {
+            const elapsed = msg.elapsed_sec || 0;
+            const duration = elapsed < 60 ? `${Math.round(elapsed)}s` : `${(elapsed / 60).toFixed(1)}m`;
+            let parts = duration;
+            if (msg.before_messages && msg.after_messages) {
+              parts += `, ${msg.before_messages} → ${msg.after_messages} messages`;
+            }
+            if (msg.estimated_tokens_before) {
+              parts += `, ~${msg.estimated_tokens_before.toLocaleString()} tokens compacted`;
+            }
+            detail = `Conversation compacted (${parts})`;
+          } else {
+            detail = `Conversation compacted: ${msg.before_messages} → ${msg.after_messages} messages`;
+          }
           this.#currentMessages.push({
             role: 'compaction',
             content: detail,
+            record: {
+              before_messages: msg.before_messages,
+              after_messages: msg.after_messages,
+              estimated_tokens_before: msg.estimated_tokens_before,
+              estimated_tokens_after: msg.estimated_tokens_after,
+              elapsed_sec: msg.elapsed_sec,
+              success: msg.success,
+            },
             timestamp: new Date().toISOString(),
           });
         }

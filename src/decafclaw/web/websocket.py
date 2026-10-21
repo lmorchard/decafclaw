@@ -1169,6 +1169,12 @@ def _subscribe_to_conv(state, conv_id):
                 "after_messages": event.get("after_messages", 0),
                 "success": event.get("success", True),
             }
+            if "elapsed_sec" in event and event["elapsed_sec"] is not None:
+                compaction_done["elapsed_sec"] = int(round(event["elapsed_sec"]))
+            if "estimated_tokens_before" in event and event["estimated_tokens_before"] is not None:
+                compaction_done["estimated_tokens_before"] = event["estimated_tokens_before"]
+            if "estimated_tokens_after" in event and event["estimated_tokens_after"] is not None:
+                compaction_done["estimated_tokens_after"] = event["estimated_tokens_after"]
             await ws_send(compaction_done)
 
     sub_id = manager.subscribe(conv_id, on_conv_event)

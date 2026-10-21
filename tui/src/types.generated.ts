@@ -40,6 +40,9 @@ export interface SrvCompactionDone {
   success: boolean;
   before_messages: number;
   after_messages: number;
+  elapsed_sec?: number;
+  estimated_tokens_before?: number;
+  estimated_tokens_after?: number;
 }
 
 export interface SrvConfirmRequest {

@@ -126,17 +126,39 @@ chat-view .empty-state {
 
 /* Compaction notice */
 .compaction-notice {
-  text-align: center;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
   font-size: 0.75rem;
   color: var(--pico-muted-color);
-  padding: 0.25rem 1rem;
+  padding: 0.35rem 1rem;
   margin: 0.5rem 0;
   border-top: 1px solid var(--pico-muted-border-color);
   border-bottom: 1px solid var(--pico-muted-border-color);
 }
 
-/* Background job event card */
-chat-message .chat-event.background-event {
+.compaction-notice .compaction-icon {
+  font-size: 0.85rem;
+}
+
+.compaction-notice .compaction-metrics {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.compaction-notice .metric-chip {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  background: var(--pico-card-background-color, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--pico-muted-border-color);
+}
+
+/* Chat events (background job, cancel, abort) */
+chat-message .chat-event {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -150,12 +172,25 @@ chat-message .chat-event.background-event {
   background: var(--pico-card-background-color, transparent);
 }
 
-chat-message .chat-event.background-event .icon {
+chat-message .chat-event.cancel-marker {
+  border-left-color: var(--pico-del-color, #c0392b);
+}
+
+chat-message .chat-event.turn-aborted {
+  border-left-color: var(--pico-del-color, #e67e22);
+}
+
+chat-message .chat-event .icon {
   font-size: 0.9rem;
 }
 
-chat-message .chat-event.background-event .title {
+chat-message .chat-event .title {
   font-weight: 600;
+}
+
+chat-message .chat-event .detail {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
 }
 
 chat-message .chat-event.background-event .command {
