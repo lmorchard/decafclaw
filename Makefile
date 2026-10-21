@@ -16,6 +16,15 @@ debug:
 run-pro:
 	LLM_MODEL=gemini-2.5-pro uv run decafclaw
 
+# Run the app from a *worktree* with no external side effects (#1096):
+# refuses to run from the main clone, seeds the worktree's gitignored
+# data-dev/ dir with a copy of the main clone's data/{agent}/config.json
+# (config.json only), then runs `uv run decafclaw` with DATA_HOME pointed
+# at it, Mattermost/email/DMs/heartbeat disabled, and the web UI on the
+# worktree's HTTP_PORT (from the worktree's .env, default 18880).
+run-dev:
+	uv run python scripts/run_dev.py
+
 # Lint with ruff
 lint:
 	uv run ruff check src/ tests/ scripts/ contrib/
