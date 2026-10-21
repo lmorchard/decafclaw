@@ -8,8 +8,9 @@ Backs the `make run-dev` target. It:
    git worktrees are accepted.
 2. Seeds the worktree's gitignored `data-dev/` directory if missing, with
    a copy of the main clone's `data/{agent_id}/config.json` only (no vault,
-   no conversations, no secrets) — enough for the app to find its
-   providers/model config.
+   no conversations, no other admin files) — enough for the app to find its
+   providers/model config. config.json may itself hold provider keys; the
+   copy stays in the gitignored worktree dir on the same machine.
 3. Launches `uv run decafclaw` with:
    - DATA_HOME pointed at the seeded data dir (this real env var wins over
      the .env file, since dotenv loads without overriding existing vars),
