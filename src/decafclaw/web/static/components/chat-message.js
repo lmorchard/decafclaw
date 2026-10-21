@@ -98,8 +98,8 @@ export class ChatMessage extends LitElement {
       const rec = this.record?.data || this.record || {};
       const beforeMsgs = rec.before_messages;
       const afterMsgs = rec.after_messages;
-      const beforeTokens = rec.estimated_tokens_before;
-      const afterTokens = rec.estimated_tokens_after;
+      const beforeTokens = rec.history_tokens_before ?? rec.estimated_tokens_before;
+      const afterTokens = rec.history_tokens_after ?? rec.estimated_tokens_after;
       const elapsed = rec.elapsed_sec;
       let tokenReduction = null;
       if (beforeTokens && afterTokens && beforeTokens > afterTokens) {

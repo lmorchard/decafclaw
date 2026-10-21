@@ -1175,6 +1175,10 @@ def _subscribe_to_conv(state, conv_id):
                 compaction_done["estimated_tokens_before"] = event["estimated_tokens_before"]
             if "estimated_tokens_after" in event and event["estimated_tokens_after"] is not None:
                 compaction_done["estimated_tokens_after"] = event["estimated_tokens_after"]
+            if "history_tokens_before" in event and event["history_tokens_before"] is not None:
+                compaction_done["history_tokens_before"] = event["history_tokens_before"]
+            if "history_tokens_after" in event and event["history_tokens_after"] is not None:
+                compaction_done["history_tokens_after"] = event["history_tokens_after"]
             await ws_send(compaction_done)
 
     sub_id = manager.subscribe(conv_id, on_conv_event)

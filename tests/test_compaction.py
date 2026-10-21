@@ -281,8 +281,67 @@ class TestCompactHistory:
         assert msg["data"]["success"] is True
         assert msg["data"]["before_messages"] == 8
         assert msg["data"]["after_messages"] > 0
+        assert msg["data"]["history_tokens_before"] is not None
+        assert msg["data"]["history_tokens_after"] is not None
         assert msg["data"]["estimated_tokens_after"] is not None
         assert "elapsed_sec" in msg["data"]
+
+    @pytest.mark.asyncio
+    async def test_repeated_compaction_with_accumulated_compaction_notices(self, ctx, config):
+        """#1094 / Copilot review — repeated compaction must correctly identify newly-old turns
+        even when earlier compaction notices have accumulated in the archive."""
+        conv_id = "test-conv"
+        ctx.config.compaction.preserve_turns = 1
+
+        # Turn 0
+        append_message(config, conv_id, {"role": "user", "content": "msg 0"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 0"})
+        # Turn 1
+        append_message(config, conv_id, {"role": "user", "content": "msg 1"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 1"})
+
+        history = [
+            {"role": "user", "content": "msg 0"},
+            {"role": "assistant", "content": "resp 0"},
+            {"role": "user", "content": "msg 1"},
+            {"role": "assistant", "content": "resp 1"},
+        ]
+
+        mock_resp1 = {
+            "content": "Summary of turn 0.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_resp1):
+            assert await compact_history(ctx, history)
+
+        # First compaction appended a role: "compaction" record to archive.
+        # Now add turn 2 and turn 3.
+        append_message(config, conv_id, {"role": "user", "content": "msg 2"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 2"})
+        append_message(config, conv_id, {"role": "user", "content": "msg 3"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 3"})
+
+        from decafclaw.archive import restore_history
+
+        history = restore_history(config, conv_id) or []
+        mock_resp2 = {
+            "content": "Summary of turns 0-2.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_resp2) as mock_llm:
+            assert await compact_history(ctx, history)
+
+        # Verify incremental summarization got turn 1 and turn 2 in <new_messages>
+        call_args = mock_llm.call_args
+        messages = call_args[0][1]
+        user_content = messages[1]["content"]
+        assert "msg 1" in user_content
+        assert "msg 2" in user_content
+        assert "msg 3" not in user_content  # turn 3 is preserved recent turn
 
     @pytest.mark.asyncio
     async def test_compaction_persists_to_archive_on_failure(self, ctx, populated_archive):

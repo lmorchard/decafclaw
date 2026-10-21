@@ -153,6 +153,8 @@ class SrvCompactionDone(TypedDict):
     elapsed_sec: NotRequired[int]
     estimated_tokens_before: NotRequired[int]
     estimated_tokens_after: NotRequired[int]
+    history_tokens_before: NotRequired[int]
+    history_tokens_after: NotRequired[int]
 
 
 class SrvConfirmRequest(TypedDict):

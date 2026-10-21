@@ -113,4 +113,26 @@ describe('chat-message role rendering', () => {
     expect(card?.textContent).toContain('10.2s');
     el.remove();
   });
+
+  it('computes token reduction using whole-history estimates when present', async () => {
+    const el = document.createElement('chat-message');
+    el.role = 'compaction';
+    el.content = 'Conversation compacted (10s, 50 → 20 messages, ~10,000 tokens compacted)';
+    el.record = {
+      before_messages: 50,
+      after_messages: 20,
+      estimated_tokens_before: 10000, // summarizer input
+      history_tokens_before: 15000,   // whole history before
+      history_tokens_after: 6000,     // whole history after
+      elapsed_sec: 10.0,
+      success: true,
+    };
+    document.body.append(el);
+    await el.updateComplete;
+
+    const card = el.querySelector('.compaction-notice');
+    expect(card).not.toBeNull();
+    expect(card?.textContent).toContain('-60% tokens');
+    el.remove();
+  });
 });

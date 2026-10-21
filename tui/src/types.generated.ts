@@ -43,6 +43,8 @@ export interface SrvCompactionDone {
   elapsed_sec?: number;
   estimated_tokens_before?: number;
   estimated_tokens_after?: number;
+  history_tokens_before?: number;
+  history_tokens_after?: number;
 }
 
 export interface SrvConfirmRequest {

@@ -255,6 +255,8 @@ export class MessageStore {
               after_messages: msg.after_messages,
               estimated_tokens_before: msg.estimated_tokens_before,
               estimated_tokens_after: msg.estimated_tokens_after,
+              history_tokens_before: msg.history_tokens_before,
+              history_tokens_after: msg.history_tokens_after,
               elapsed_sec: msg.elapsed_sec,
               success: msg.success,
             },

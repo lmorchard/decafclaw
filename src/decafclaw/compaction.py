@@ -522,6 +522,12 @@ async def compact_history(ctx: "Context", history: list) -> bool:
         log.debug("No archive found, skipping compaction")
         return False
 
+    # Filter out archive-level metadata that does not belong to conversation turns
+    archive = [m for m in archive if m.get("role") not in ("compaction", "model", "mode")]
+    if not archive:
+        log.debug("No valid turn messages found, skipping compaction")
+        return False
+
     # Split into turns
     turns = _split_into_turns(archive)
     preserve = config.compaction.preserve_turns
@@ -561,6 +567,7 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     import time as _time
 
     before_messages = len(history)
+    history_tokens_before = estimate_tokens(flatten_messages(history))
     compact_start_time = _time.monotonic()
     # #1005 — the context meter reads this as the post-compaction prompt
     # size. Set only on a successful compaction; a failed compaction leaves
@@ -657,6 +664,8 @@ async def compact_history(ctx: "Context", history: list) -> bool:
             elapsed_sec=round(elapsed, 1),
             estimated_tokens_before=estimated,
             estimated_tokens_after=estimated_tokens_after,
+            history_tokens_before=history_tokens_before,
+            history_tokens_after=estimated_tokens_after,
         )
         try:
             from .archive import append_message
@@ -675,6 +684,8 @@ async def compact_history(ctx: "Context", history: list) -> bool:
                 "data": {
                     "before_messages": before_messages,
                     "after_messages": after_messages,
+                    "history_tokens_before": history_tokens_before,
+                    "history_tokens_after": estimated_tokens_after,
                     "estimated_tokens_before": estimated,
                     "estimated_tokens_after": estimated_tokens_after,
                     "elapsed_sec": round(elapsed, 1),
