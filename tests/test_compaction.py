@@ -510,6 +510,35 @@ class TestCompactHistory:
         result = await compact_history(ctx, history)
         assert result is False
 
+    @pytest.mark.asyncio
+    async def test_incremental_skips_with_legacy_metadata_in_sidecar(self, ctx, config):
+        """#1094 / Copilot review — legacy compacted sidecars containing metadata records
+        (e.g. 'model' or 'mode') must not misalign prev_recent_count and trigger false compaction."""
+        conv_id = "test-conv"
+        # 2 turns in archive
+        append_message(config, conv_id, {"role": "user", "content": "msg 0"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 0"})
+        append_message(config, conv_id, {"role": "user", "content": "msg 1"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 1"})
+
+        ctx.config.compaction.preserve_turns = 1
+
+        # Legacy sidecar with metadata record included at the end
+        write_compacted_history(
+            config,
+            conv_id,
+            [
+                {"role": "user", "content": f"{SUMMARY_PREFIX}Summary of turn 0."},
+                {"role": "user", "content": "msg 1"},
+                {"role": "assistant", "content": "resp 1"},
+                {"role": "model", "content": "gemini-2.5-pro"},
+            ],
+        )
+
+        history = [{"role": "user", "content": "placeholder"}]
+        result = await compact_history(ctx, history)
+        assert result is False
+
 
 class TestTurnHasProtectedTool:
     def test_detects_activate_skill(self):

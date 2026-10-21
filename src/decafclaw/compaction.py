@@ -426,7 +426,7 @@ def _determine_compaction_mode(
             non_summary = compacted[1:]
             compacted_turns = _split_into_turns(non_summary)
             protected_msg_count = sum(len(turn) for turn in compacted_turns if _turn_has_protected_tool(turn))
-            prev_recent_count = len(compacted) - 1 - protected_msg_count
+            prev_recent_count = sum(len(turn) for turn in compacted_turns) - protected_msg_count
         else:
             prev_recent_count = 0
         prev_old_msg_count = prev_archive_len - prev_recent_count
