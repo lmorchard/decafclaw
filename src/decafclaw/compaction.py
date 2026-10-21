@@ -636,6 +636,8 @@ async def compact_history(ctx: "Context", history: list) -> bool:
         # and the COMPACTION_DONE wire message (via the event below).
         estimated_tokens_after = estimate_tokens(flatten_messages(history))
         ctx.tokens.last_compaction_estimate = estimated_tokens_after
+        if hasattr(ctx, "composer") and ctx.composer is not None:
+            ctx.composer.reset_for_compaction()
         return True
 
     except Exception as e:

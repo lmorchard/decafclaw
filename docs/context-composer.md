@@ -443,7 +443,7 @@ Config dataclass: `VaultGuideConfig` in `config_types.py`. Settable in `data/{ag
 
 - The reader (`read_recent_journal_entries` in `skills/vault/tools.py`, colocated with `vault_journal_append`) reads only the daily files (`<journal_dir>/YYYY/YYYY-MM-DD.md`) whose dates fall in the window, so a 24h window touches at most two files and crossing midnight is handled. Entry timestamps come from the `## YYYY-MM-DD HH:MM` headers, parsed as naive local datetimes to match how entries are written (`datetime.now()`).
 - The window is the last `max_hours`, capped at the most recent `max_entries`, whichever is tighter.
-- A **high-water mark** on `ComposerState` (`last_recent_journal_ts`, the newest entry surfaced this conversation) filters out already-seen entries, so each entry is injected at most once and a long conversation doesn't keep re-surfacing the same block. The mark is in-memory only — a server restart re-surfaces at most one window.
+- A **high-water mark** on `ComposerState` (`last_recent_journal_ts`, the newest entry surfaced this conversation) filters out already-seen entries, so each entry is injected at most once and a long conversation doesn't keep re-surfacing the same block. The mark persists across interactive turns via `PersistedTurnState` (#1111) and is reset on compaction so the next session starts with a full baseline.
 - The formatted block (`format_recent_journal_for_context`) is emitted as a `recent_journal` role message, added to `ROLE_REMAP` → `user`. If the block overflows `max_tokens`, the oldest entries are dropped first (the newest is always kept).
 
 ### Skip conditions
@@ -524,6 +524,16 @@ The rebuilt history's summary message looks like:
 
 Earlier turns covered ... (prose summary)
 ```
+
+## Prompt caching prefix stability (append-only between compactions)
+
+Provider prompt caching (OpenAI automatic, Gemini 2.5+ implicit, Anthropic prompt caching) discounts requests that share an exact matching prefix with an earlier request. Billing discounts apply up to the first byte that differs; everything after that point is full price.
+
+To maximize prompt cache hits (#1111, #1116):
+- **Append-only between compactions**: Once context has been sent, it remains byte-identical across later turns and iterations. New content (scratchpad notes deltas, recent journal entries, pre-emptive skill hints, context status notes) is appended at the tail, never rewritten or inserted ahead of archived history.
+- **Delta-only injections**: Conversation scratchpad notes and recent journal entries inject their full baseline on turn 1 (and after compaction), and inject only newly added delta entries on subsequent turns.
+- **Status line and skill hints at the tail**: Pre-emptive skill hints are appended as tail messages (`role: "preempt_skill_hint"` remapped to `user`) rather than placed in the system prompt prefix. The context status note (`[Context: ...]`) is emitted as `role: "user"` at the very tail so providers like Vertex do not pull it into `systemInstruction` where it would invalidate prefix caching on every turn.
+- **Compaction starts a fresh cache session**: A full prefix rebuild is expected after compaction. Compaction resets high-water marks and injected paths (`ComposerState.reset_for_compaction()`) so the next turn starts with a complete baseline.
 
 ## Context inspection
 

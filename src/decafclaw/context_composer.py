@@ -173,9 +173,11 @@ class ComposerState:
     # Recency high-water mark for auto-surfaced journal entries (#306):
     # timestamp of the newest entry already injected this conversation.
     # Only entries newer than this are surfaced on later turns, so each
-    # appears at most once. In-memory only — resets on restart (at worst
-    # one window re-surfaces).
+    # appears at most once. Persisted across turns (#1111).
     last_recent_journal_ts: datetime | None = None
+    # High-water mark for auto-injected scratchpad notes (#1111):
+    # number of note lines already surfaced this conversation.
+    last_notes_count: int = 0
     # Track the baseline system context to detect mid-conversation changes (#776)
     baseline_system_context: str | None = None
     # Cumulative tool-result clearing stats for this conversation
@@ -183,6 +185,19 @@ class ComposerState:
     # represents a fresh in-memory view.
     cleanup_cleared_count: int = 0
     cleanup_cleared_bytes: int = 0
+
+    def reset_for_compaction(self) -> None:
+        """Reset conversation-scoped injection state on compaction (#1111, #1116).
+
+        After compaction, summarized content replaces original history.
+        Reset high-water marks and injected paths so the next turn starts
+        with a fresh baseline.
+        """
+        self.injected_paths.clear()
+        self.last_recent_journal_ts = None
+        self.last_notes_count = 0
+        self.cleanup_cleared_count = 0
+        self.cleanup_cleared_bytes = 0
 
 
 # -- Sidecar persistence ------------------------------------------------------
@@ -672,9 +687,11 @@ class ContextComposer:
             messages.append({"role": "system", "content": deferred_text})
         if guidance_text:
             messages.append({"role": "system", "content": guidance_text})
-        if preempt_skill_text:
-            messages.append({"role": "system", "content": preempt_skill_text})
         messages.extend(llm_history)
+
+        # -- Pre-emptive skill hint (tail message to avoid busting system prefix cache, #1116) --
+        if preempt_skill_text:
+            messages.append({"role": "user", "content": preempt_skill_text})
 
         # -- Publish memory context event (after user message for UI ordering) --
         if mc_results and config.vault_retrieval.show_in_ui:
@@ -684,6 +701,9 @@ class ContextComposer:
         total_tokens = sum(s.tokens_estimated for s in sources)
 
         # -- Context status note (for agent self-regulation) --
+        # Emitted as role: "user" at the very tail so providers like Vertex
+        # do not pull it into systemInstruction, which would bust the prefix cache
+        # on every turn (#1116).
         if config.agent.show_context_status:
             effective_window = self._get_context_window_size(config, ctx)
             status_line = self._build_context_status(
@@ -692,7 +712,7 @@ class ContextComposer:
                 history_msg_count,
             )
             if status_line:
-                messages.append({"role": "system", "content": status_line})
+                messages.append({"role": "user", "content": status_line})
 
         # -- Update state --
         self.state.last_sources = sources
@@ -1269,10 +1289,13 @@ class ContextComposer:
         """Auto-inject the per-conversation scratchpad (#299).
 
         Reads the most recent N notes (capped by char budget) and emits
-        a single ``conversation_notes`` role message that gets remapped
-        to ``user`` for the LLM. Skipped in non-interactive modes
+        a ``conversation_notes`` role message that gets remapped to
+        ``user`` for the LLM. Skipped in non-interactive modes
         (heartbeat / scheduled / child agent) and when notes are
         disabled.
+
+        Only newly added notes since the previous injection are surfaced
+        (delta injection, #1111) to avoid duplicate injections across turns.
         """
         if not config.notes.enabled:
             return [], None
@@ -1290,12 +1313,19 @@ class ContextComposer:
         if not items:
             return [], None
 
-        text = format_notes_for_context(items)
+        last_count = ctx.composer.last_notes_count
+        new_items = items[last_count:] if last_count > 0 else items
+        ctx.composer.last_notes_count = len(items)
+
+        if not new_items:
+            return [], None
+
+        text = format_notes_for_context(new_items)
         msg = {"role": "conversation_notes", "content": text}
         entry = SourceEntry(
             source="notes",
             tokens_estimated=estimate_tokens(text),
-            items_included=len(items),
+            items_included=len(new_items),
             items_truncated=0,
         )
         return [msg], entry

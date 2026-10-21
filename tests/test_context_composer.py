@@ -1479,6 +1479,27 @@ class TestComposePreemptSkillMatches:
 
 class TestCompose:
     @pytest.mark.asyncio
+    async def test_preempt_skill_hint_injected_at_tail(self, ctx, config):
+        config.system_prompt = "You are a test agent."
+        config.discovered_skills = [_make_skill_info("background", "Run background processes")]
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 1000000
+        composer = ContextComposer()
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+        ):
+            result = await composer.compose(ctx, "run background job", [], mode=ComposerMode.INTERACTIVE)
+
+        # Preempt skill hint should not be in system prompt prefix messages
+        system_msgs = [m for m in result.messages if m.get("role") == "system"]
+        assert not any("<preempt_skill_hint>" in m.get("content", "") for m in system_msgs)
+
+        # Hint should be present as a tail user message
+        user_msgs = [m for m in result.messages if m.get("role") == "user"]
+        assert any("<preempt_skill_hint>" in m.get("content", "") for m in user_msgs)
+
+    @pytest.mark.asyncio
     async def test_produces_valid_composed_context(self, ctx, config):
         config.system_prompt = "You are a test agent."
         config.agent.tool_context_budget_pct = 1.0
@@ -1516,7 +1537,11 @@ class TestCompose:
             assert result.messages[1]["role"] == "system"
             assert "tool_search" in result.messages[1]["content"]
             # User message before context status
-            user_msgs = [m for m in result.messages if m.get("role") == "user"]
+            user_msgs = [
+                m
+                for m in result.messages
+                if m.get("role") == "user" and not m.get("content", "").startswith("[Context:")
+            ]
             assert user_msgs[-1]["content"] == "hello"
 
     @pytest.mark.asyncio
@@ -1532,7 +1557,11 @@ class TestCompose:
             composer = ContextComposer()
             long_msg = "x" * 200
             result = await composer.compose(ctx, long_msg, [], mode=ComposerMode.INTERACTIVE)
-            user_msgs = [m for m in result.messages if m.get("role") == "user"]
+            user_msgs = [
+                m
+                for m in result.messages
+                if m.get("role") == "user" and not m.get("content", "").startswith("[Context:")
+            ]
             assert "[truncated at" in user_msgs[-1]["content"]
 
     @pytest.mark.asyncio
@@ -2325,9 +2354,9 @@ class TestContextStatusInCompose:
         ):
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
-            # Last message should be the context status
+            # Last message should be the context status (emitted as role: "user" to prevent Vertex pulling it into systemInstruction, #1116)
             last = result.messages[-1]
-            assert last["role"] == "system"
+            assert last["role"] == "user"
             assert "[Context:" in last["content"]
             assert "100,000" in last["content"]
             assert "messages" in last["content"]
@@ -2632,6 +2661,24 @@ class TestComposeRecentJournal:
         assert "old entry" not in msgs[0]["content"]
         assert entry.items_included == 1
 
+    def test_compaction_resets_recent_journal_high_water_mark(self, ctx, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "entry one")])
+        composer = ContextComposer()
+        with patch("decafclaw.context_composer._now", return_value=now):
+            composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        assert ctx.composer.last_recent_journal_ts == datetime(2026, 7, 23, 14, 30)
+
+        # Compaction reset
+        ctx.composer.reset_for_compaction()
+        assert ctx.composer.last_recent_journal_ts is None
+
+        # Next turn re-surfaces full baseline
+        with patch("decafclaw.context_composer._now", return_value=now):
+            msgs, entry = composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        assert len(msgs) == 1
+        assert "entry one" in msgs[0]["content"]
+
     def test_skips_when_disabled(self, ctx, config):
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "entry")])
@@ -2734,6 +2781,72 @@ class TestLastRequestSidecar:
         write_last_request_sidecar(config, "test-conv", call2)
         assert read_last_request_sidecar(config, "test-conv")["model"] == "model-2"
         assert read_last_request_sidecar(config, "test-conv")["messages"][0]["content"] == "second"
+
+
+class TestPromptCachePrefixStability:
+    @pytest.mark.asyncio
+    async def test_composed_messages_prefix_identical_across_turns(self, ctx, config):
+        """Between compactions, request N's prompt prefix must be an exact prefix
+        of request N+1's prompt, across turns (#1116).
+        """
+        config.system_prompt = "You are a test assistant."
+        config.agent.tool_context_budget_pct = 1.0
+        config.agent.show_context_status = True
+        config.compaction.max_tokens = 100000
+
+        composer = ContextComposer(state=ctx.composer)
+
+        history: list[dict] = []
+
+        # Turn 1
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+        ):
+            res1 = await composer.compose(ctx, "Hello turn 1", history, mode=ComposerMode.INTERACTIVE)
+
+        # Simulate archiving and history updates as agent.py does
+        for m in res1.messages_to_archive:
+            history.append(m)
+        history.append({"role": "assistant", "content": "Assistant reply 1"})
+
+        # Turn 2
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+        ):
+            res2 = await composer.compose(ctx, "Hello turn 2", history, mode=ComposerMode.INTERACTIVE)
+
+        # Verify that all messages of turn 1 (except the trailing context status line)
+        # form a strict, identical prefix of turn 2's messages!
+        t1_prefix = [
+            m for m in res1.messages if not (m.get("role") == "user" and m.get("content", "").startswith("[Context:"))
+        ]
+        assert len(t1_prefix) < len(res2.messages)
+        for i, expected_msg in enumerate(t1_prefix):
+            actual_msg = res2.messages[i]
+            assert actual_msg["role"] == expected_msg["role"], f"Role mismatch at index {i}"
+            assert actual_msg["content"] == expected_msg["content"], f"Content mismatch at index {i}"
+
+        for m in res2.messages_to_archive:
+            history.append(m)
+        history.append({"role": "assistant", "content": "Assistant reply 2"})
+
+        # Turn 3
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+        ):
+            res3 = await composer.compose(ctx, "Hello turn 3", history, mode=ComposerMode.INTERACTIVE)
+
+        t2_prefix = [
+            m for m in res2.messages if not (m.get("role") == "user" and m.get("content", "").startswith("[Context:"))
+        ]
+        assert len(t2_prefix) < len(res3.messages)
+        for i, expected_msg in enumerate(t2_prefix):
+            actual_msg = res3.messages[i]
+            assert actual_msg["role"] == expected_msg["role"], f"Role mismatch at index {i}"
+            assert actual_msg["content"] == expected_msg["content"], f"Content mismatch at index {i}"
 
     def test_read_missing_returns_none(self, config):
         from decafclaw.context_composer import read_last_request_sidecar

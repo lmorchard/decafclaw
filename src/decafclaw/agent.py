@@ -191,12 +191,9 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None
         try:
             await compaction.compact_history(ctx, history)
             # After compaction, summarized content replaces originals —
-            # allow previously-injected pages to be re-injected if relevant,
-            # and reset cleanup accounting since the new in-memory view
-            # supersedes the previous one.
-            ctx.composer.injected_paths.clear()
-            ctx.composer.cleanup_cleared_count = 0
-            ctx.composer.cleanup_cleared_bytes = 0
+            # reset injection state and cleanup accounting so the post-compaction
+            # turn starts with a fresh baseline.
+            ctx.composer.reset_for_compaction()
         except Exception as e:
             log.error(f"Compaction failed: {e}", exc_info=True)
 
@@ -849,9 +846,7 @@ class TurnRunner:
 
                 await compaction.compact_history(self.ctx, self.history)
                 # After compaction, summarized content replaces originals
-                self.ctx.composer.injected_paths.clear()
-                self.ctx.composer.cleanup_cleared_count = 0
-                self.ctx.composer.cleanup_cleared_bytes = 0
+                self.ctx.composer.reset_for_compaction()
                 # Re-compose to pick up the compacted history
                 await self._compose()
                 return _Continue()

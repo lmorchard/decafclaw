@@ -1,6 +1,7 @@
 """Tests for the conversation manager."""
 
 import asyncio
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2053,6 +2054,9 @@ def test_save_restore_round_trip(manager, config):
     save_ctx.skills.activated = {"sentinel_skill": ""}
     save_ctx.skip_vault_retrieval = True
     save_ctx.active_mode = "sentinel-mode"
+    sentinel_ts = datetime(2026, 7, 23, 14, 30)
+    save_ctx.composer.last_recent_journal_ts = sentinel_ts
+    save_ctx.composer.last_notes_count = 5
     manager.set_flag("rt-conv", "active_model", "sentinel-model")
 
     manager._save_conversation_state(state, save_ctx)
@@ -2067,6 +2071,8 @@ def test_save_restore_round_trip(manager, config):
     assert restore_ctx.skip_vault_retrieval is True
     assert restore_ctx.active_mode == "sentinel-mode"
     assert restore_ctx.active_model == "sentinel-model"
+    assert restore_ctx.composer.last_recent_journal_ts == sentinel_ts
+    assert restore_ctx.composer.last_notes_count == 5
 
 
 def test_save_does_not_overwrite_externally_driven_fields(manager, config):
