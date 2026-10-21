@@ -95,7 +95,50 @@ export class ChatMessage extends LitElement {
     }
 
     if (this.role === 'compaction') {
-      return html`<div class="compaction-notice">${this.content}</div>`;
+      const rec = this.record?.data || this.record || {};
+      const beforeMsgs = rec.before_messages;
+      const afterMsgs = rec.after_messages;
+      const beforeTokens = rec.history_tokens_before ?? rec.estimated_tokens_before;
+      const afterTokens = rec.history_tokens_after ?? rec.estimated_tokens_after;
+      const elapsed = rec.elapsed_sec;
+      let tokenReduction = null;
+      if (beforeTokens && afterTokens && beforeTokens > afterTokens) {
+        tokenReduction = Math.round(((beforeTokens - afterTokens) / beforeTokens) * 100);
+      }
+      const hasMetrics = beforeMsgs != null || tokenReduction != null || elapsed != null;
+      return html`
+        <div class="compaction-notice">
+          <span class="compaction-icon">📦</span>
+          <span class="compaction-text">${this.content}</span>
+          ${hasMetrics ? html`
+            <div class="compaction-metrics">
+              ${beforeMsgs != null && afterMsgs != null ? html`<span class="metric-chip">${beforeMsgs} → ${afterMsgs} msgs</span>` : ''}
+              ${tokenReduction != null ? html`<span class="metric-chip">-${tokenReduction}% tokens</span>` : ''}
+              ${elapsed != null ? html`<span class="metric-chip">${elapsed}s</span>` : ''}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    if (this.role === 'cancel_marker') {
+      return html`
+        <div class="chat-event cancel-marker">
+          <span class="icon">🛑</span>
+          <span class="title">Turn cancelled</span>
+          ${this.content ? html`<span class="detail">${this.content}</span>` : ''}
+        </div>
+      `;
+    }
+
+    if (this.role === 'turn_aborted') {
+      return html`
+        <div class="chat-event turn-aborted">
+          <span class="icon">⚠️</span>
+          <span class="title">Turn aborted</span>
+          ${this.content ? html`<span class="detail">${this.content}</span>` : ''}
+        </div>
+      `;
     }
 
     if (this.role === 'shell_approval') {
@@ -114,6 +157,22 @@ export class ChatMessage extends LitElement {
 
     if (this.role === 'vault_references') {
       return html`<tool-message .tool=${'vault_references'} .content=${this.content} .icon=${'\u{1f4d6}'}></tool-message>`;
+    }
+
+    if (this.role === 'conversation_notes') {
+      return html`<tool-message .tool=${'conversation_notes'} .content=${this.content} .icon=${'📝'}></tool-message>`;
+    }
+
+    if (this.role === 'recent_journal') {
+      return html`<tool-message .tool=${'recent_journal'} .content=${this.content} .icon=${'📓'}></tool-message>`;
+    }
+
+    if (this.role === 'workspace_references') {
+      return html`<tool-message .tool=${'workspace_references'} .content=${this.content} .icon=${'📁'}></tool-message>`;
+    }
+
+    if (this.role === 'mcp_references') {
+      return html`<tool-message .tool=${'mcp_references'} .content=${this.content} .icon=${'🔌'}></tool-message>`;
     }
 
     if (this.role === 'tool_call') {

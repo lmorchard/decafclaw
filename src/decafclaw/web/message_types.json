@@ -30,7 +30,7 @@
     "compaction_done": {
       "direction": "server_to_client",
       "description": "Conversation history compaction finished (success or failure); client should reload history. `success` is false when the summarization failed, in which case the conversation is unchanged (#1005).",
-      "fields": {"conv_id": "string", "success": "boolean", "before_messages": "number", "after_messages": "number"}
+      "fields": {"conv_id": "string", "success": "boolean", "before_messages": "number", "after_messages": "number", "elapsed_sec": "number?", "estimated_tokens_before": "number?", "estimated_tokens_after": "number?", "history_tokens_before": "number?", "history_tokens_after": "number?"}
     },
     "confirm_request": {
       "direction": "server_to_client",
