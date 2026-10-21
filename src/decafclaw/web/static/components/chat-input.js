@@ -397,11 +397,21 @@ export class ChatInput extends LitElement {
     this.#clearAttachments();
   }
 
-  /** Auto-resize textarea and re-evaluate the command menu */
+  /**
+   * Auto-resize textarea and re-evaluate the command menu.
+   *
+   * The floor is the row's height while the textarea is at its natural size
+   * — i.e. the flanking buttons' height. Once this handler sets an explicit
+   * height, the row's `align-items: stretch` can no longer grow the textarea
+   * to match the buttons, so without the floor a single line of text left
+   * the textarea visibly shorter than its buttons (#1073).
+   */
   #handleInput(e) {
     const textarea = e.target;
     textarea.style.height = 'auto';
-    textarea.style.height = Math.min(textarea.scrollHeight, 128) + 'px';
+    const row = this.querySelector('.input-row');
+    const floor = row ? row.getBoundingClientRect().height : 0;
+    textarea.style.height = Math.max(Math.min(textarea.scrollHeight, 128), floor) + 'px';
     this.#syncMenu();
   }
 
