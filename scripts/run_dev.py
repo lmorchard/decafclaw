@@ -23,8 +23,8 @@ Backs the `make run-dev` target. It:
 
 The worktree's .env (the standard copy from the main clone) still supplies
 provider credentials to the app via dotenv. The agent id follows the
-app's own bootstrap (AGENT_ID env, default "decafclaw") so the seed lands
-where load_config() looks for config.json.
+app's own bootstrap (AGENT_ID from the env or the worktree .env, default
+"decafclaw") so the seed lands where load_config() looks for config.json.
 """
 
 from __future__ import annotations
@@ -100,28 +100,46 @@ def seed_data_dir(checkout_root: Path, main_root: Path, agent_id: str) -> tuple[
     return target, True
 
 
-def http_port_from_env_file(env_file: Path, default: int = DEFAULT_HTTP_PORT) -> int:
-    """Read HTTP_PORT from a dotenv-style file; fall back to the default.
+def env_file_value(env_file: Path, key: str) -> str | None:
+    """Read one key from a dotenv-style file; None when the file or key is absent.
 
-    Handles the plain `KEY=value` lines the worktree .env uses; quoted and
-    non-numeric values fall back rather than crash a launch.
+    Handles the plain `KEY=value` lines the worktree .env uses, stripping
+    surrounding quotes.
     """
     if not env_file.is_file():
-        return default
+        return None
     for line in env_file.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        key, _, value = line.partition("=")
-        if key.strip() != "HTTP_PORT":
-            continue
-        port_text = value.strip().strip("\"'")
-        try:
-            port = int(port_text)
-        except ValueError:
-            return default
-        return port if 0 < port < 65536 else default
-    return default
+        name, _, value = line.partition("=")
+        if name.strip() == key:
+            return value.strip().strip("\"'")
+    return None
+
+
+def http_port_from_env_file(env_file: Path, default: int = DEFAULT_HTTP_PORT) -> int:
+    """Read HTTP_PORT from a dotenv-style file; fall back to the default.
+
+    Missing and non-numeric values fall back rather than crash a launch.
+    """
+    port_text = env_file_value(env_file, "HTTP_PORT")
+    if port_text is None:
+        return default
+    try:
+        port = int(port_text)
+    except ValueError:
+        return default
+    return port if 0 < port < 65536 else default
+
+
+def resolve_agent_id(env_file: Path) -> str:
+    """Resolve the agent id the way the app's bootstrap does.
+
+    The app calls load_dotenv() (which never overrides real env vars) before
+    reading AGENT_ID, so: real env, then the worktree .env, then the default.
+    """
+    return os.environ.get("AGENT_ID") or env_file_value(env_file, "AGENT_ID") or DEFAULT_AGENT_ID
 
 
 def launch_app(env: dict[str, str]) -> None:
@@ -151,7 +169,8 @@ def main() -> int:
         )
         return 1
 
-    agent_id = os.environ.get("AGENT_ID", DEFAULT_AGENT_ID)
+    env_file = checkout_root / ".env"
+    agent_id = resolve_agent_id(env_file)
     try:
         target, created = seed_data_dir(checkout_root, main_root, agent_id)
     except FileNotFoundError as exc:
@@ -162,8 +181,8 @@ def main() -> int:
     else:
         print(f"run-dev: data dir already seeded; leaving {target} as-is")
 
-    port = http_port_from_env_file(checkout_root / ".env")
-    if not (checkout_root / ".env").is_file():
+    port = http_port_from_env_file(env_file)
+    if not env_file.is_file():
         print(
             "run-dev: warning: no .env in the worktree root (expected the standard copy "
             "from the main clone); provider credentials will be missing",

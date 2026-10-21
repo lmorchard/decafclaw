@@ -194,3 +194,20 @@ def test_agent_id_follows_bootstrap_env(main_clone: Path, tmp_path: Path):
     seeded = worktree / "data-dev" / "custom-agent" / "config.json"
     assert seeded.read_text(encoding="utf-8") == config.read_text(encoding="utf-8")
     assert f"DATA_HOME={worktree / 'data-dev'}" in result.stdout
+
+
+def test_agent_id_from_worktree_env_file(main_clone: Path, tmp_path: Path):
+    # The app reads AGENT_ID after load_dotenv(), so a .env value must steer the seed too.
+    worktree = add_worktree(main_clone, tmp_path)
+    agent_dir = main_clone / "data" / "dotenv-agent"
+    agent_dir.mkdir(parents=True)
+    config = agent_dir / "config.json"
+    config.write_text('{"agent": {"id": "dotenv-agent"}}', encoding="utf-8")
+    (worktree / ".env").write_text("AGENT_ID=dotenv-agent\nHTTP_PORT=18885\n", encoding="utf-8")
+
+    env = add_fake_uv(tmp_path)
+    result = run_script(worktree, env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    seeded = worktree / "data-dev" / "dotenv-agent" / "config.json"
+    assert seeded.read_text(encoding="utf-8") == config.read_text(encoding="utf-8")
