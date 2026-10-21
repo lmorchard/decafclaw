@@ -22,6 +22,7 @@ from .confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
+from .context_composer import InjectionCursors
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
 from .media import ToolResult
@@ -155,8 +156,7 @@ class PersistedTurnState:
     disabled_aux_approval_presets: list = field(default_factory=list, metadata={"replaceable": True})
     aux_approval_guidance: list = field(default_factory=list, metadata={"replaceable": True})
     llm_approved_shell_patterns: list = field(default_factory=list, metadata={"replaceable": True})
-    last_recent_journal_ts: datetime | None = field(default=None, metadata={"replaceable": True})
-    last_notes_timestamp: str = field(default="", metadata={"replaceable": True})
+    injection_cursors: InjectionCursors = field(default_factory=InjectionCursors, metadata={"replaceable": True})
 
 
 # Per-field reader/writer bindings between PersistedTurnState and the
@@ -206,19 +206,9 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
         lambda ctx: ctx.tools.llm_approved_shell_patterns,
         lambda ctx, v: setattr(ctx.tools, "llm_approved_shell_patterns", list(v)),
     ),
-    "last_recent_journal_ts": (
-        lambda ctx: getattr(getattr(ctx, "composer", None), "last_recent_journal_ts", None),
-        lambda ctx, v: (
-            setattr(ctx.composer, "last_recent_journal_ts", v) if getattr(ctx, "composer", None) is not None else None
-        ),
-    ),
-    "last_notes_timestamp": (
-        lambda ctx: getattr(getattr(ctx, "composer", None), "last_notes_timestamp", "") or "",
-        lambda ctx, v: (
-            setattr(ctx.composer, "last_notes_timestamp", v or "")
-            if getattr(ctx, "composer", None) is not None
-            else None
-        ),
+    "injection_cursors": (
+        lambda ctx: ctx.composer.injection_cursors,
+        lambda ctx, v: setattr(ctx.composer, "injection_cursors", v),
     ),
 }
 
@@ -237,8 +227,7 @@ _CTX_DRIVEN_FIELDS: frozenset[str] = frozenset(
         "disabled_aux_approval_presets",
         "aux_approval_guidance",
         "llm_approved_shell_patterns",
-        "last_recent_journal_ts",
-        "last_notes_timestamp",
+        "injection_cursors",
     }
 )
 

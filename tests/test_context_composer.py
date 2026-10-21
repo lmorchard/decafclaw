@@ -1,5 +1,6 @@
 """Tests for the context composer module."""
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
@@ -11,6 +12,7 @@ from decafclaw.context_composer import (
     ComposerMode,
     ComposerState,
     ContextComposer,
+    InjectionCursors,
     SourceEntry,
     _expand_background_event,
 )
@@ -91,7 +93,7 @@ class TestComposerState:
         assert state.last_prompt_tokens_actual == 0
         assert state.last_completion_tokens_actual == 0
         assert state.injected_paths == set()
-        assert state.last_recent_journal_ts is None
+        assert state.injection_cursors == InjectionCursors()
 
 
 # -- ContextComposer ----------------------------------------------------------
@@ -2632,7 +2634,7 @@ class TestComposeRecentJournal:
         assert "just thinking about X" in msgs[0]["content"]
         assert entry is not None and entry.items_included == 1
         # High-water mark advanced to the newest surfaced entry.
-        assert ctx.composer.last_recent_journal_ts == datetime(2026, 7, 23, 14, 30)
+        assert ctx.composer.injection_cursors.journal_ts == datetime(2026, 7, 23, 14, 30)
 
     def test_second_turn_skips_when_no_new_entries(self, ctx, config):
         now = datetime(2026, 7, 23, 15, 0)
@@ -2661,17 +2663,38 @@ class TestComposeRecentJournal:
         assert "old entry" not in msgs[0]["content"]
         assert entry.items_included == 1
 
+    def test_same_minute_entry_surfaces_on_later_turn(self, ctx, config):
+        """Journal headers have minute resolution; a later entry in the same
+        minute must still surface after the cursor carries into a fresh turn."""
+        from decafclaw.context import Context
+
+        now = datetime(2026, 7, 23, 14, 30, 20)
+        _write_journal_file(config, now, [("14:30", "first entry")])
+        with patch("decafclaw.context_composer._now", return_value=now):
+            ContextComposer()._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+
+        # Next turn: fresh context carrying the persisted cursor.
+        next_ctx = Context(config=config, event_bus=ctx.event_bus)
+        next_ctx.composer.injection_cursors = ctx.composer.injection_cursors
+        later = datetime(2026, 7, 23, 14, 30, 50)
+        _write_journal_file(config, later, [("14:30", "first entry"), ("14:30", "second entry")])
+        with patch("decafclaw.context_composer._now", return_value=later):
+            msgs, entry = ContextComposer()._compose_recent_journal(next_ctx, config, ComposerMode.INTERACTIVE)
+        assert len(msgs) == 1
+        assert "second entry" in msgs[0]["content"]
+        assert "first entry" not in msgs[0]["content"]
+
     def test_compaction_resets_recent_journal_high_water_mark(self, ctx, config):
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "entry one")])
         composer = ContextComposer()
         with patch("decafclaw.context_composer._now", return_value=now):
             composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
-        assert ctx.composer.last_recent_journal_ts == datetime(2026, 7, 23, 14, 30)
+        assert ctx.composer.injection_cursors.journal_ts == datetime(2026, 7, 23, 14, 30)
 
         # Compaction reset
         ctx.composer.reset_for_compaction()
-        assert ctx.composer.last_recent_journal_ts is None
+        assert ctx.composer.injection_cursors.journal_ts is None
 
         # Next turn re-surfaces full baseline
         with patch("decafclaw.context_composer._now", return_value=now):
@@ -2734,7 +2757,7 @@ class TestComposeRecentJournal:
         assert "newest keep-me" in msgs[0]["content"]
         assert entry.items_truncated > 0
         # Mark still reflects the newest entry, not a trimmed one.
-        assert ctx.composer.last_recent_journal_ts == datetime(2026, 7, 23, 14, 45)
+        assert ctx.composer.injection_cursors.journal_ts == datetime(2026, 7, 23, 14, 45)
 
 
 class TestComposeRecentJournalIntegration:
@@ -2785,6 +2808,41 @@ class TestComposeRecentJournalIntegration:
         # Turn 2 outgoing messages must still include the fact from turn 1 via history!
         user_content_t2 = " ".join(str(m.get("content", "")) for m in res2.messages if m.get("role") == "user")
         assert "retained journal fact" in user_content_t2
+
+    @pytest.mark.asyncio
+    async def test_cancelled_compose_rolls_back_cursors(self, ctx, config):
+        """Cancellation after the injection helpers ran must not advance the
+        cursors, or the next turn skips context that was never delivered."""
+        from decafclaw.notes import append_note
+
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "undelivered journal")])
+        append_note(config, ctx.conv_id, "undelivered note", now="2026-07-23T14:31:00Z")
+        history: list[dict] = []
+        composer = ContextComposer(state=ctx.composer)
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch(
+                "decafclaw.context_composer.retrieve_memory_context",
+                new_callable=AsyncMock,
+                side_effect=asyncio.CancelledError,
+            ),
+            patch("decafclaw.context_composer._now", return_value=now),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await composer.compose(ctx, "turn 1", history, mode=ComposerMode.INTERACTIVE)
+        assert ctx.composer.injection_cursors == InjectionCursors()
+        assert history == []
+
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch("decafclaw.context_composer._now", return_value=now),
+        ):
+            result = await composer.compose(ctx, "turn 1 again", history, mode=ComposerMode.INTERACTIVE)
+        user_content = " ".join(str(m.get("content", "")) for m in result.messages if m.get("role") == "user")
+        assert "undelivered journal" in user_content
+        assert "undelivered note" in user_content
 
 
 class TestLastRequestSidecar:
