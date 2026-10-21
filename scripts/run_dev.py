@@ -75,8 +75,9 @@ def locate_checkouts() -> tuple[Path, Path] | None:
     if not (top and git_dir and common_dir):
         return None
     checkout = Path(top)
+    git_dir_resolved = Path(git_dir).resolve()
     common = Path(common_dir).resolve()
-    if Path(git_dir) == common:
+    if git_dir_resolved == common:
         return checkout, checkout
     return checkout, common.parent
 
