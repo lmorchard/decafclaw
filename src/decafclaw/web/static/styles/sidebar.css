@@ -354,7 +354,7 @@ conversation-sidebar .logout-btn:hover {
 .theme-palette-menu {
   position: absolute;
   bottom: calc(100% + 4px);   /* toggle sits in the sidebar footer — open upward */
-  right: 0;
+  left: 0;                    /* wrap sits at the footer's left edge — open rightward into the sidebar */
   z-index: 10;
   display: flex;
   flex-direction: column;
