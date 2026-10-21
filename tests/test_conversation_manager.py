@@ -2056,7 +2056,7 @@ def test_save_restore_round_trip(manager, config):
     save_ctx.active_mode = "sentinel-mode"
     sentinel_ts = datetime(2026, 7, 23, 14, 30)
     save_ctx.composer.last_recent_journal_ts = sentinel_ts
-    save_ctx.composer.last_notes_count = 5
+    save_ctx.composer.last_notes_timestamp = "2026-07-23T14:30:00Z"
     manager.set_flag("rt-conv", "active_model", "sentinel-model")
 
     manager._save_conversation_state(state, save_ctx)
@@ -2072,7 +2072,15 @@ def test_save_restore_round_trip(manager, config):
     assert restore_ctx.active_mode == "sentinel-mode"
     assert restore_ctx.active_model == "sentinel-model"
     assert restore_ctx.composer.last_recent_journal_ts == sentinel_ts
-    assert restore_ctx.composer.last_notes_count == 5
+    assert restore_ctx.composer.last_notes_timestamp == "2026-07-23T14:30:00Z"
+
+    # Reset cursors to None / empty (e.g. after compaction) and verify they persist and restore
+    save_ctx.composer.reset_for_compaction()
+    manager._save_conversation_state(state, save_ctx)
+    restore_ctx2 = Context(config=config, event_bus=manager.event_bus)
+    manager._restore_per_conv_state(state, restore_ctx2)
+    assert restore_ctx2.composer.last_recent_journal_ts is None
+    assert restore_ctx2.composer.last_notes_timestamp == ""
 
 
 def test_save_does_not_overwrite_externally_driven_fields(manager, config):

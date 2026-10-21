@@ -2755,6 +2755,37 @@ class TestComposeRecentJournalIntegration:
         assert "recently journaled fact" in user_content
         assert "recent_journal" not in [m.get("role") for m in result.messages]
 
+    @pytest.mark.asyncio
+    async def test_recent_journal_retained_in_live_history(self, ctx, config):
+        """recent_journal messages must be appended to history so turn 2 retains them (#1117)."""
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "retained journal fact")])
+        history: list[dict] = []
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch("decafclaw.context_composer._now", return_value=now),
+        ):
+            composer = ContextComposer(state=ctx.composer)
+            await composer.compose(ctx, "turn 1", history, mode=ComposerMode.INTERACTIVE)
+
+        # history must contain the injected recent_journal message
+        journal_in_hist = [m for m in history if m.get("role") == "recent_journal"]
+        assert len(journal_in_hist) == 1
+        assert "retained journal fact" in journal_in_hist[0]["content"]
+
+        # Turn 2: compose with the same live history
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch("decafclaw.context_composer._now", return_value=now),
+        ):
+            res2 = await composer.compose(ctx, "turn 2", history, mode=ComposerMode.INTERACTIVE)
+
+        # Turn 2 outgoing messages must still include the fact from turn 1 via history!
+        user_content_t2 = " ".join(str(m.get("content", "")) for m in res2.messages if m.get("role") == "user")
+        assert "retained journal fact" in user_content_t2
+
 
 class TestLastRequestSidecar:
     def test_write_and_read(self, config):

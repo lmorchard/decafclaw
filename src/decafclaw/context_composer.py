@@ -176,8 +176,8 @@ class ComposerState:
     # appears at most once. Persisted across turns (#1111).
     last_recent_journal_ts: datetime | None = None
     # High-water mark for auto-injected scratchpad notes (#1111):
-    # number of note lines already surfaced this conversation.
-    last_notes_count: int = 0
+    # ISO-8601 timestamp of the newest note already surfaced.
+    last_notes_timestamp: str = ""
     # Track the baseline system context to detect mid-conversation changes (#776)
     baseline_system_context: str | None = None
     # Cumulative tool-result clearing stats for this conversation
@@ -195,7 +195,7 @@ class ComposerState:
         """
         self.injected_paths.clear()
         self.last_recent_journal_ts = None
-        self.last_notes_count = 0
+        self.last_notes_timestamp = ""
         self.cleanup_cleared_count = 0
         self.cleanup_cleared_bytes = 0
 
@@ -723,6 +723,7 @@ class ContextComposer:
         # injections in the same order as `combined` above.
         history.extend(wiki_msgs)
         history.extend(notes_msgs)
+        history.extend(recent_journal_msgs)
         history.extend(memory_msgs)
         history.append(user_msg)
 
@@ -1313,9 +1314,13 @@ class ContextComposer:
         if not items:
             return [], None
 
-        last_count = ctx.composer.last_notes_count
-        new_items = items[last_count:] if last_count > 0 else items
-        ctx.composer.last_notes_count = len(items)
+        last_ts = ctx.composer.last_notes_timestamp
+        if last_ts:
+            new_items = [n for n in items if n.timestamp > last_ts]
+        else:
+            new_items = items
+
+        ctx.composer.last_notes_timestamp = items[-1].timestamp
 
         if not new_items:
             return [], None

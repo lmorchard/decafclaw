@@ -72,39 +72,55 @@ class TestComposeNotes:
         assert "note-0" not in msgs[0]["content"]
 
     def test_delta_injection_multi_turn(self, ctx):
-        append_note(ctx.config, ctx.conv_id, "note 1")
+        append_note(ctx.config, ctx.conv_id, "note 1", now="2026-01-01T00:00:00Z")
         composer = ContextComposer(state=ctx.composer)
         msgs, entry = composer._compose_notes(ctx, ctx.config, ComposerMode.INTERACTIVE)
         assert len(msgs) == 1
         assert "note 1" in msgs[0]["content"]
-        assert ctx.composer.last_notes_count == 1
+        assert ctx.composer.last_notes_timestamp == "2026-01-01T00:00:00Z"
 
         # Turn 2: no new notes -> nothing injected
         msgs, entry = composer._compose_notes(ctx, ctx.config, ComposerMode.INTERACTIVE)
         assert msgs == []
         assert entry is None
-        assert ctx.composer.last_notes_count == 1
+        assert ctx.composer.last_notes_timestamp == "2026-01-01T00:00:00Z"
 
         # Add a new note -> Turn 3 only injects the new note
-        append_note(ctx.config, ctx.conv_id, "note 2")
+        append_note(ctx.config, ctx.conv_id, "note 2", now="2026-01-02T00:00:00Z")
         msgs, entry = composer._compose_notes(ctx, ctx.config, ComposerMode.INTERACTIVE)
         assert len(msgs) == 1
         assert "note 2" in msgs[0]["content"]
         assert "note 1" not in msgs[0]["content"]
-        assert ctx.composer.last_notes_count == 2
+        assert ctx.composer.last_notes_timestamp == "2026-01-02T00:00:00Z"
+
+    def test_notes_delta_when_window_limit_reached(self, ctx):
+        ctx.config.notes.context_max_entries = 3
+        for i in range(3):
+            append_note(ctx.config, ctx.conv_id, f"note-{i}", now=f"2026-01-{i + 1:02d}T00:00:00Z")
+
+        composer = ContextComposer(state=ctx.composer)
+        msgs, entry = composer._compose_notes(ctx, ctx.config, ComposerMode.INTERACTIVE)
+        assert entry.items_included == 3
+
+        # Add note 4 (file now has 4 notes, but read_notes only returns the last 3: note-1, note-2, note-3)
+        append_note(ctx.config, ctx.conv_id, "note-3", now="2026-01-04T00:00:00Z")
+        msgs, entry = composer._compose_notes(ctx, ctx.config, ComposerMode.INTERACTIVE)
+        assert len(msgs) == 1
+        assert "note-3" in msgs[0]["content"]
+        assert "note-2" not in msgs[0]["content"]
 
     def test_compaction_resets_notes_delta(self, ctx):
-        append_note(ctx.config, ctx.conv_id, "note 1")
+        append_note(ctx.config, ctx.conv_id, "note 1", now="2026-01-01T00:00:00Z")
         composer = ContextComposer(state=ctx.composer)
         composer._compose_notes(ctx, ctx.config, ComposerMode.INTERACTIVE)
-        assert ctx.composer.last_notes_count == 1
+        assert ctx.composer.last_notes_timestamp == "2026-01-01T00:00:00Z"
 
         # Simulate compaction
         ctx.composer.reset_for_compaction()
-        assert ctx.composer.last_notes_count == 0
+        assert ctx.composer.last_notes_timestamp == ""
 
         # Next turn re-injects full baseline
         msgs, entry = composer._compose_notes(ctx, ctx.config, ComposerMode.INTERACTIVE)
         assert len(msgs) == 1
         assert "note 1" in msgs[0]["content"]
-        assert ctx.composer.last_notes_count == 1
+        assert ctx.composer.last_notes_timestamp == "2026-01-01T00:00:00Z"
