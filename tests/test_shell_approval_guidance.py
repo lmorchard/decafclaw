@@ -8,6 +8,7 @@ import pytest
 from decafclaw.config import load_sub_config
 from decafclaw.config_types import ShellConfig
 from decafclaw.context import Context, SkillState, ToolState
+from decafclaw.context_composer import ComposerState
 from decafclaw.media import ToolResult
 from decafclaw.security_monitor import SecurityDecision, SecurityStatus
 from decafclaw.tools.shell_tools import (
@@ -33,6 +34,7 @@ def _make_mock_ctx(tmp_path: Path):
     ctx.config.shell = ShellConfig(aux_approval_enabled=True)
     ctx.tools = ToolState()
     ctx.skills = SkillState()
+    ctx.composer = ComposerState()
     ctx.skip_vault_retrieval = False
     ctx.is_unattended = False
     ctx.task_mode = ""
