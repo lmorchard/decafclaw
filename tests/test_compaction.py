@@ -261,6 +261,142 @@ class TestCompactHistory:
         assert ctx.tokens.last_compaction_estimate is None
 
     @pytest.mark.asyncio
+    async def test_compaction_persists_to_archive_on_success(self, ctx, populated_archive):
+        """#1094 — on successful compaction, a role: 'compaction' record is persisted
+        to archive.jsonl with shared notice text and detailed metrics."""
+        from decafclaw.archive import read_archive
+
+        ctx.config.compaction.preserve_turns = 5
+        history = [{"role": "user", "content": f"message {i}"} for i in range(8)]
+
+        mock_response = {
+            "content": "Summary of earlier conversation.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        conv_id = ctx.conv_id or "test-conv"
+        archived = read_archive(ctx.config, conv_id)
+        compaction_msgs = [m for m in archived if m.get("role") == "compaction"]
+        assert len(compaction_msgs) == 1
+        msg = compaction_msgs[0]
+        assert "Conversation compacted" in msg["content"]
+        assert msg["data"]["success"] is True
+        assert msg["data"]["before_messages"] == 8
+        assert msg["data"]["after_messages"] > 0
+        assert msg["data"]["history_tokens_before"] is not None
+        assert msg["data"]["history_tokens_after"] is not None
+        assert msg["data"]["estimated_tokens_after"] is not None
+        assert "elapsed_sec" in msg["data"]
+
+    @pytest.mark.asyncio
+    async def test_repeated_compaction_with_accumulated_compaction_notices(self, ctx, config):
+        """#1094 / Copilot review — repeated compaction must correctly identify newly-old turns
+        even when earlier compaction notices have accumulated in the archive."""
+        conv_id = "test-conv"
+        ctx.config.compaction.preserve_turns = 1
+
+        # Turn 0
+        append_message(config, conv_id, {"role": "user", "content": "msg 0"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 0"})
+        # Turn 1
+        append_message(config, conv_id, {"role": "user", "content": "msg 1"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 1"})
+
+        history = [
+            {"role": "user", "content": "msg 0"},
+            {"role": "assistant", "content": "resp 0"},
+            {"role": "user", "content": "msg 1"},
+            {"role": "assistant", "content": "resp 1"},
+        ]
+
+        mock_resp1 = {
+            "content": "Summary of turn 0.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_resp1):
+            assert await compact_history(ctx, history)
+
+        # First compaction appended a role: "compaction" record to archive.
+        # Now add turn 2 and turn 3.
+        append_message(config, conv_id, {"role": "user", "content": "msg 2"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 2"})
+        append_message(config, conv_id, {"role": "user", "content": "msg 3"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 3"})
+
+        from decafclaw.archive import restore_history
+
+        history = restore_history(config, conv_id) or []
+        mock_resp2 = {
+            "content": "Summary of turns 0-2.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_resp2) as mock_llm:
+            assert await compact_history(ctx, history)
+
+        # Verify incremental summarization got turn 1 and turn 2 in <new_messages>
+        call_args = mock_llm.call_args
+        messages = call_args[0][1]
+        user_content = messages[1]["content"]
+        assert "msg 1" in user_content
+        assert "msg 2" in user_content
+        assert "msg 3" not in user_content  # turn 3 is preserved recent turn
+
+    @pytest.mark.asyncio
+    async def test_compaction_persists_to_archive_on_failure(self, ctx, populated_archive):
+        """#1094 — on failed compaction, a role: 'compaction' record is persisted
+        to archive.jsonl indicating failure."""
+        from decafclaw.archive import read_archive
+
+        ctx.config.compaction.preserve_turns = 5
+        history = [{"role": "user", "content": "test"}]
+
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, side_effect=Exception("LLM error")):
+            result = await compact_history(ctx, history)
+
+        assert result is False
+        conv_id = ctx.conv_id or "test-conv"
+        archived = read_archive(ctx.config, conv_id)
+        compaction_msgs = [m for m in archived if m.get("role") == "compaction"]
+        assert len(compaction_msgs) == 1
+        msg = compaction_msgs[0]
+        assert "Compaction failed" in msg["content"]
+        assert msg["data"]["success"] is False
+        assert msg["data"]["estimated_tokens_after"] is None
+
+    def test_split_into_turns_and_flatten_ignore_metadata_roles(self):
+        """#1094 — compaction, model, and mode metadata roles must be ignored by
+        turn splitting and message flattening so they never leak into LLM prompts."""
+        messages = [
+            {"role": "user", "content": "turn 1"},
+            {"role": "assistant", "content": "reply 1"},
+            {"role": "compaction", "content": "Conversation compacted (10s)"},
+            {"role": "model", "content": "gemini-2.5-pro"},
+            {"role": "mode", "content": "code"},
+            {"role": "user", "content": "turn 2"},
+            {"role": "assistant", "content": "reply 2"},
+        ]
+        turns = _split_into_turns(messages)
+        assert len(turns) == 2
+        flat_turn_roles = [m.get("role") for turn in turns for m in turn]
+        assert "compaction" not in flat_turn_roles
+        assert "model" not in flat_turn_roles
+        assert "mode" not in flat_turn_roles
+
+        flattened = flatten_messages(messages)
+        assert "Conversation compacted" not in flattened
+        assert "gemini-2.5-pro" not in flattened
+
+    @pytest.mark.asyncio
     async def test_persist_failure_leaves_history_untouched(self, ctx, populated_archive):
         """#1005 — a failed sidecar write must leave the live history intact
         and report the compaction as not successful. The rebuilt list is
@@ -378,6 +514,35 @@ class TestCompactHistory:
         )
 
         # No new messages added — same 8 turns, same boundary.
+        history = [{"role": "user", "content": "placeholder"}]
+        result = await compact_history(ctx, history)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_incremental_skips_with_legacy_metadata_in_sidecar(self, ctx, config):
+        """#1094 / Copilot review — legacy compacted sidecars containing metadata records
+        (e.g. 'model' or 'mode') must not misalign prev_recent_count and trigger false compaction."""
+        conv_id = "test-conv"
+        # 2 turns in archive
+        append_message(config, conv_id, {"role": "user", "content": "msg 0"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 0"})
+        append_message(config, conv_id, {"role": "user", "content": "msg 1"})
+        append_message(config, conv_id, {"role": "assistant", "content": "resp 1"})
+
+        ctx.config.compaction.preserve_turns = 1
+
+        # Legacy sidecar with metadata record included at the end
+        write_compacted_history(
+            config,
+            conv_id,
+            [
+                {"role": "user", "content": f"{SUMMARY_PREFIX}Summary of turn 0."},
+                {"role": "user", "content": "msg 1"},
+                {"role": "assistant", "content": "resp 1"},
+                {"role": "model", "content": "gemini-2.5-pro"},
+            ],
+        )
+
         history = [{"role": "user", "content": "placeholder"}]
         result = await compact_history(ctx, history)
         assert result is False

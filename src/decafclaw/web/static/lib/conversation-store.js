@@ -20,6 +20,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {Array<{text: string, timestamp: string}>} [statusHistory]
  * @property {{prompt_tokens: number, completion_tokens: number, total_tokens: number}|null} [usage]
  * @property {object} [record]
+ * @property {object} [data]
  * @property {{widget_type: string, target: string, data: object}|null} [widget]
  * @property {boolean} [submitted]
  * @property {object} [response]

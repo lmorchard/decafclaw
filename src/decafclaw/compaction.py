@@ -219,12 +219,14 @@ def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
     A turn starts with a user or vault_retrieval message and includes
     everything until the next turn boundary. vault_retrieval is treated
     as a turn start because it's injected before the user message it
-    belongs to.
+    belongs to. Metadata messages (compaction, model, mode) are ignored.
     """
     turns = []
     current_turn = []
     for msg in messages:
         role = msg.get("role")
+        if role in ("compaction", "model", "mode"):
+            continue
         if role in ("user", "vault_retrieval") and current_turn:
             turns.append(current_turn)
             current_turn = []
@@ -256,7 +258,9 @@ def flatten_messages(messages: list[dict]) -> str:
         role = msg.get("role", "unknown")
         content = msg.get("content") or ""
 
-        if role == "user":
+        if role in ("compaction", "model", "mode"):
+            continue
+        elif role == "user":
             lines.append(f"User: {content}")
         elif role == "assistant":
             tool_calls = msg.get("tool_calls")
@@ -422,7 +426,7 @@ def _determine_compaction_mode(
             non_summary = compacted[1:]
             compacted_turns = _split_into_turns(non_summary)
             protected_msg_count = sum(len(turn) for turn in compacted_turns if _turn_has_protected_tool(turn))
-            prev_recent_count = len(compacted) - 1 - protected_msg_count
+            prev_recent_count = sum(len(turn) for turn in compacted_turns) - protected_msg_count
         else:
             prev_recent_count = 0
         prev_old_msg_count = prev_archive_len - prev_recent_count
@@ -518,6 +522,12 @@ async def compact_history(ctx: "Context", history: list) -> bool:
         log.debug("No archive found, skipping compaction")
         return False
 
+    # Filter out archive-level metadata that does not belong to conversation turns
+    archive = [m for m in archive if m.get("role") not in ("compaction", "model", "mode")]
+    if not archive:
+        log.debug("No valid turn messages found, skipping compaction")
+        return False
+
     # Split into turns
     turns = _split_into_turns(archive)
     preserve = config.compaction.preserve_turns
@@ -557,6 +567,7 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     import time as _time
 
     before_messages = len(history)
+    history_tokens_before = estimate_tokens(flatten_messages(history))
     compact_start_time = _time.monotonic()
     # #1005 — the context meter reads this as the post-compaction prompt
     # size. Set only on a successful compaction; a failed compaction leaves
@@ -655,4 +666,34 @@ async def compact_history(ctx: "Context", history: list) -> bool:
             elapsed_sec=round(elapsed, 1),
             estimated_tokens_before=estimated,
             estimated_tokens_after=estimated_tokens_after,
+            history_tokens_before=history_tokens_before,
+            history_tokens_after=estimated_tokens_after,
         )
+        try:
+            from .archive import append_message
+            from .compaction_display import compaction_notice
+
+            notice_text = compaction_notice(
+                succeeded,
+                before=before_messages,
+                after=after_messages,
+                elapsed=elapsed,
+                est_tokens=estimated,
+            )
+            compaction_record = {
+                "role": "compaction",
+                "content": notice_text,
+                "data": {
+                    "before_messages": before_messages,
+                    "after_messages": after_messages,
+                    "history_tokens_before": history_tokens_before,
+                    "history_tokens_after": estimated_tokens_after,
+                    "estimated_tokens_before": estimated,
+                    "estimated_tokens_after": estimated_tokens_after,
+                    "elapsed_sec": round(elapsed, 1),
+                    "success": succeeded,
+                },
+            }
+            append_message(config, conv_id, compaction_record)
+        except Exception as exc:
+            log.warning("Failed to record compaction to archive for %s: %s", conv_id, exc)

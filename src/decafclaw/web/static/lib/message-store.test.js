@@ -150,7 +150,71 @@ describe('MessageStore', () => {
                 after_messages: 10,
             }, '1');
             expect(store.currentMessages[0].role).toBe('compaction');
-            expect(store.currentMessages[0].content).toBe('Compaction failed (no change to conversation)');
+            expect(store.currentMessages[0].content).toBe('Compaction failed — conversation unchanged');
+        });
+
+        it('formats COMPACTION_DONE with elapsed duration and token metrics matching compaction_display.py (#1094)', () => {
+            const store = new MessageStore(() => {});
+            store.handleMessage({
+                type: MESSAGE_TYPES.COMPACTION_DONE,
+                conv_id: '1',
+                success: true,
+                before_messages: 50,
+                after_messages: 25,
+                elapsed_sec: 12.4,
+                estimated_tokens_before: 12345,
+                estimated_tokens_after: 6000,
+            }, '1');
+            expect(store.currentMessages[0].role).toBe('compaction');
+            expect(store.currentMessages[0].content).toBe('Conversation compacted (12s, 50 → 25 messages, ~12,345 tokens compacted)');
+            expect(store.currentMessages[0].record).toMatchObject({
+                before_messages: 50,
+                after_messages: 25,
+                elapsed_sec: 12.4,
+                estimated_tokens_before: 12345,
+                estimated_tokens_after: 6000,
+                success: true,
+            });
+        });
+
+        it('retains compaction records and internal context roles in CONV_HISTORY (#1089, #1094)', () => {
+            const store = new MessageStore(() => {});
+            store.handleMessage({
+                type: MESSAGE_TYPES.CONV_HISTORY,
+                conv_id: '1',
+                has_more: false,
+                messages: [
+                    { role: 'user', content: 'hello', timestamp: 't1' },
+                    { role: 'conversation_notes', content: 'note 1', timestamp: 't2' },
+                    { role: 'recent_journal', content: 'journal 1', timestamp: 't3' },
+                    { role: 'workspace_references', content: 'file 1', timestamp: 't4' },
+                    { role: 'mcp_references', content: 'mcp 1', timestamp: 't5' },
+                    {
+                        role: 'compaction',
+                        content: 'Conversation compacted (10s, 20 → 10 messages)',
+                        data: { before_messages: 20, after_messages: 10, success: true },
+                        timestamp: 't6',
+                    },
+                    { role: 'cancel_marker', content: '[User cancelled]', timestamp: 't7' },
+                    { role: 'turn_aborted', content: '[Turn failed]', timestamp: 't8' },
+                ],
+            }, '1');
+
+            expect(store.currentMessages.map(m => m.role)).toEqual([
+                'user',
+                'conversation_notes',
+                'recent_journal',
+                'workspace_references',
+                'mcp_references',
+                'compaction',
+                'cancel_marker',
+                'turn_aborted',
+            ]);
+            expect(store.currentMessages[5].record).toEqual({
+                before_messages: 20,
+                after_messages: 10,
+                success: true,
+            });
         });
 
         it('preserves queued user messages in CONV_HISTORY and dedupes on USER_MESSAGE', () => {

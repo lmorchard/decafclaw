@@ -94,14 +94,20 @@ def read_archive(config, conv_id: str) -> list[dict]:
 def restore_history(config, conv_id: str) -> list[dict] | None:
     """Load history from compacted sidecar + newer archive entries, or full archive.
 
+    Metadata records (compaction, model, mode) are excluded from restored history.
     Returns the restored message list, or None if no archive exists.
     """
     compacted = read_compacted_history(config, conv_id)
     if compacted:
         full = read_archive(config, conv_id)
         last_ts = compacted[-1].get("timestamp", "")
-        newer = [m for m in full if m.get("timestamp", "") > last_ts]
+        newer = [
+            m for m in full if m.get("timestamp", "") > last_ts and m.get("role") not in ("compaction", "model", "mode")
+        ]
         return compacted + newer
 
     archived = read_archive(config, conv_id)
-    return archived if archived else None
+    if not archived:
+        return None
+    restored = [m for m in archived if m.get("role") not in ("compaction", "model", "mode")]
+    return restored if restored else None

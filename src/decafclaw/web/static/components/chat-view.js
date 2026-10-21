@@ -158,7 +158,7 @@ export class ChatView extends LitElement {
           .usage=${m.usage || null}
           .timestamp=${m.timestamp || ''}
           .attachments=${m.attachments || null}
-          .record=${m.record || null}
+          .record=${m.record || m.data || null}
           .widget=${m.widget || null}
           .submitted=${!!m.submitted}
           .response=${m.response || null}
