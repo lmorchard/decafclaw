@@ -2,8 +2,8 @@
 ghflow_project_facts: 1
 written: 2026-10-20
 sources:
-  - AGENTS.md a6b8f57b5e827f8727c5684d979f345cc110267a
-  - CLAUDE.md a6b8f57b5e827f8727c5684d979f345cc110267a
+  - AGENTS.md 7cecf5fe544abc071f9e8c5070876493bf6ff17f
+  - CLAUDE.md 7cecf5fe544abc071f9e8c5070876493bf6ff17f
   - Makefile 457995d835091b7e747bb8640cc0cf74752a385d
   - .github/workflows/ci.yml 2de18948e0afc3ee4c14570649660a08aea316d5
   - conftest.py fb46496f6536760ece617b135afc7aef3c6eac93
