@@ -1671,3 +1671,43 @@ def test_browser_shell_command_and_result(built_static, chromium, config):
         details = page.locator("#shell-test-view .tool-result-detail pre").all_text_contents()
         assert details == ["echo <hello>", "<hello>"]
         assert page.locator("#shell-test-view hello").count() == 0
+
+
+def test_browser_chat_input_height_alignment(built_static, chromium, config):
+    """The textarea and its flanking buttons share one border-box height (#1073).
+
+    The row is a flex container with `align-items: stretch`, which equalizes
+    the textarea and the buttons while the textarea's height is auto. The
+    auto-resize handler sets an explicit height on every input, which opts
+    the textarea out of stretch — so the heights must be re-checked after
+    typing and after clearing the text (the state the user left it in).
+    """
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        page.goto(scenario.base + "/")
+        page.wait_for_selector("chat-input textarea", timeout=15000)
+
+        def input_row_heights():
+            return page.evaluate(
+                """() => {
+                const ci = document.querySelector('chat-input');
+                const row = ci.querySelector('.input-row');
+                const ta = ci.querySelector('textarea');
+                const btns = [...ci.querySelectorAll('.input-row > button')];
+                const heights = (el) => el.getBoundingClientRect().height;
+                return {row: heights(row), textarea: heights(ta), buttons: btns.map(heights)};
+            }"""
+            )
+
+        def assert_aligned(label):
+            heights = input_row_heights()
+            all_heights = [heights["row"], heights["textarea"], *heights["buttons"]]
+            spread = max(all_heights) - min(all_heights)
+            assert spread < 0.5, f"{label}: row/textarea/buttons disagree: {heights}"
+
+        assert_aligned("initial render")
+        page.locator("chat-input textarea").focus()
+        page.keyboard.type("hello")
+        assert_aligned("after single-line input")
+        page.locator("chat-input textarea").fill("")
+        assert_aligned("after clearing the text")
