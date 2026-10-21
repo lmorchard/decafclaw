@@ -12,7 +12,7 @@ import enum
 import html
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -155,6 +155,46 @@ class ComposedContext:
 # -- Per-conversation state ---------------------------------------------------
 
 
+@dataclass(frozen=True)
+class InjectionCursors:
+    """High-water marks for delta injections of notes and journal (#1111).
+
+    Each source keeps the timestamp of the newest entry already surfaced
+    plus the texts of the surfaced entries carrying exactly that timestamp.
+    Notes have second resolution and journal headers minute resolution, so
+    a later entry can share the boundary timestamp; the texts let it
+    through instead of being skipped by a strict ``>`` comparison.
+
+    Frozen so ``ContextComposer.compose`` can snapshot and restore the whole
+    value when composition fails or is cancelled.
+    """
+
+    notes_ts: str = ""
+    notes_boundary: frozenset[str] = frozenset()
+    journal_ts: datetime | None = None
+    journal_boundary: frozenset[str] = frozenset()
+
+
+def _select_unseen(items: list, last_ts: Any, boundary: frozenset[str]) -> tuple[list, Any, frozenset[str]]:
+    """Return ``(unseen, new_ts, new_boundary)`` for chronological ``items``.
+
+    ``items`` carry ``.timestamp`` and ``.text``. An item is unseen when it
+    is newer than ``last_ts``, or shares ``last_ts`` but its text is not in
+    ``boundary``. The returned cursor is unchanged when nothing is unseen.
+    """
+    if not last_ts:
+        unseen = list(items)
+    else:
+        unseen = [i for i in items if i.timestamp > last_ts or (i.timestamp == last_ts and i.text not in boundary)]
+    if not unseen:
+        return [], last_ts, boundary
+    new_ts = unseen[-1].timestamp
+    new_boundary = frozenset(i.text for i in unseen if i.timestamp == new_ts)
+    if new_ts == last_ts:
+        new_boundary |= boundary
+    return unseen, new_ts, new_boundary
+
+
 @dataclass
 class ComposerState:
     """State carried between turns for a single conversation.
@@ -170,12 +210,9 @@ class ComposerState:
     last_completion_tokens_actual: int = 0
     last_cached_prompt_tokens_actual: int = 0  # prompt tokens served from provider cache (#480)
     injected_paths: set[str] = field(default_factory=set)  # file_paths already in context; cleared on compaction
-    # Recency high-water mark for auto-surfaced journal entries (#306):
-    # timestamp of the newest entry already injected this conversation.
-    # Only entries newer than this are surfaced on later turns, so each
-    # appears at most once. In-memory only — resets on restart (at worst
-    # one window re-surfaces).
-    last_recent_journal_ts: datetime | None = None
+    # High-water marks for delta-injected notes and journal entries
+    # (#306, #1111). Persisted across turns; reset on compaction.
+    injection_cursors: InjectionCursors = field(default_factory=InjectionCursors)
     # Track the baseline system context to detect mid-conversation changes (#776)
     baseline_system_context: str | None = None
     # Cumulative tool-result clearing stats for this conversation
@@ -183,6 +220,18 @@ class ComposerState:
     # represents a fresh in-memory view.
     cleanup_cleared_count: int = 0
     cleanup_cleared_bytes: int = 0
+
+    def reset_for_compaction(self) -> None:
+        """Reset conversation-scoped injection state on compaction (#1111, #1116).
+
+        After compaction, summarized content replaces original history.
+        Reset high-water marks and injected paths so the next turn starts
+        with a fresh baseline.
+        """
+        self.injected_paths.clear()
+        self.injection_cursors = InjectionCursors()
+        self.cleanup_cleared_count = 0
+        self.cleanup_cleared_bytes = 0
 
 
 # -- Sidecar persistence ------------------------------------------------------
@@ -375,7 +424,16 @@ class ContextComposer:
         with self._tracer.start_as_current_span("ContextComposer.compose") as span:
             span.set_attribute("conversation.id", ctx.conv_id)
             span.set_attribute("composer.mode", str(mode))
-            return await self._compose_impl(ctx, user_message, history, mode=mode, attachments=attachments)
+            # Injection helpers advance the cursors before the injected
+            # messages reach history and the archive. If composition fails or
+            # is cancelled after that, roll the cursors back so the next turn
+            # re-surfaces what was never delivered.
+            cursors_before = ctx.composer.injection_cursors
+            try:
+                return await self._compose_impl(ctx, user_message, history, mode=mode, attachments=attachments)
+            except BaseException:
+                ctx.composer.injection_cursors = cursors_before
+                raise
 
     async def _compose_impl(
         self,
@@ -672,9 +730,11 @@ class ContextComposer:
             messages.append({"role": "system", "content": deferred_text})
         if guidance_text:
             messages.append({"role": "system", "content": guidance_text})
-        if preempt_skill_text:
-            messages.append({"role": "system", "content": preempt_skill_text})
         messages.extend(llm_history)
+
+        # -- Pre-emptive skill hint (tail message to avoid busting system prefix cache, #1116) --
+        if preempt_skill_text:
+            messages.append({"role": "user", "content": preempt_skill_text})
 
         # -- Publish memory context event (after user message for UI ordering) --
         if mc_results and config.vault_retrieval.show_in_ui:
@@ -684,6 +744,9 @@ class ContextComposer:
         total_tokens = sum(s.tokens_estimated for s in sources)
 
         # -- Context status note (for agent self-regulation) --
+        # Emitted as role: "user" at the very tail so providers like Vertex
+        # do not pull it into systemInstruction, which would bust the prefix cache
+        # on every turn (#1116).
         if config.agent.show_context_status:
             effective_window = self._get_context_window_size(config, ctx)
             status_line = self._build_context_status(
@@ -692,7 +755,7 @@ class ContextComposer:
                 history_msg_count,
             )
             if status_line:
-                messages.append({"role": "system", "content": status_line})
+                messages.append({"role": "user", "content": status_line})
 
         # -- Update state --
         self.state.last_sources = sources
@@ -703,6 +766,7 @@ class ContextComposer:
         # injections in the same order as `combined` above.
         history.extend(wiki_msgs)
         history.extend(notes_msgs)
+        history.extend(recent_journal_msgs)
         history.extend(memory_msgs)
         history.append(user_msg)
 
@@ -1269,10 +1333,13 @@ class ContextComposer:
         """Auto-inject the per-conversation scratchpad (#299).
 
         Reads the most recent N notes (capped by char budget) and emits
-        a single ``conversation_notes`` role message that gets remapped
-        to ``user`` for the LLM. Skipped in non-interactive modes
+        a ``conversation_notes`` role message that gets remapped to
+        ``user`` for the LLM. Skipped in non-interactive modes
         (heartbeat / scheduled / child agent) and when notes are
         disabled.
+
+        Only newly added notes since the previous injection are surfaced
+        (delta injection, #1111) to avoid duplicate injections across turns.
         """
         if not config.notes.enabled:
             return [], None
@@ -1290,12 +1357,19 @@ class ContextComposer:
         if not items:
             return [], None
 
-        text = format_notes_for_context(items)
+        cursors = ctx.composer.injection_cursors
+        new_items, notes_ts, notes_boundary = _select_unseen(items, cursors.notes_ts, cursors.notes_boundary)
+        ctx.composer.injection_cursors = replace(cursors, notes_ts=notes_ts, notes_boundary=notes_boundary)
+
+        if not new_items:
+            return [], None
+
+        text = format_notes_for_context(new_items)
         msg = {"role": "conversation_notes", "content": text}
         entry = SourceEntry(
             source="notes",
             tokens_estimated=estimate_tokens(text),
-            items_included=len(items),
+            items_included=len(new_items),
             items_truncated=0,
         )
         return [msg], entry
@@ -1316,7 +1390,7 @@ class ContextComposer:
         similarity score.
 
         Only entries newer than the newest one already surfaced this
-        conversation (``ComposerState.last_recent_journal_ts``) are
+        conversation (``ComposerState.injection_cursors``) are
         injected, so each entry appears at most once. Emits a
         ``recent_journal`` role message remapped to ``user`` for the LLM.
         Skipped in non-interactive modes (heartbeat / scheduled / child
@@ -1338,17 +1412,13 @@ class ContextComposer:
         if not entries:
             return [], None
 
-        # High-water mark: drop entries at/before the newest already surfaced.
-        last_ts = ctx.composer.last_recent_journal_ts
-        if last_ts is not None:
-            entries = [e for e in entries if e.timestamp > last_ts]
+        # High-water mark: drop entries already surfaced. Trimming below
+        # only drops oldest, so the newest — and thus the mark — is unaffected.
+        cursors = ctx.composer.injection_cursors
+        entries, journal_ts, journal_boundary = _select_unseen(entries, cursors.journal_ts, cursors.journal_boundary)
         if not entries:
             return [], None
-
-        # Advance the mark to the newest entry surfaced (entries are
-        # chronological, so the last one is newest). Trimming below only
-        # drops oldest, so the newest — and thus the mark — is unaffected.
-        ctx.composer.last_recent_journal_ts = entries[-1].timestamp
+        ctx.composer.injection_cursors = replace(cursors, journal_ts=journal_ts, journal_boundary=journal_boundary)
 
         # Trim to the token budget by dropping oldest entries first.
         truncated = 0

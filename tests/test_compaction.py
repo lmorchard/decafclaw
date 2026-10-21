@@ -1,5 +1,6 @@
 """Tests for conversation compaction."""
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -19,6 +20,7 @@ from decafclaw.compaction import (
     estimate_tokens,
     flatten_messages,
 )
+from decafclaw.context_composer import InjectionCursors
 
 
 class TestSplitIntoTurns:
@@ -153,16 +155,19 @@ class TestCompactHistory:
 
     @pytest.mark.asyncio
     async def test_skips_when_too_few_turns(self, ctx, config):
-        """With fewer turns than preserve, should skip."""
+        """With fewer turns than preserve, should skip and preserve cursors."""
         conv_id = "test-conv"
         append_message(config, conv_id, {"role": "user", "content": "hello"})
         append_message(config, conv_id, {"role": "assistant", "content": "hi"})
 
         ctx.config.compaction.preserve_turns = 5
         history = [{"role": "user", "content": "hello"}]
+        cursors = InjectionCursors(notes_ts="2026-01-01T00:00:00Z", journal_ts=datetime(2026, 7, 23, 14, 30))
+        ctx.composer.injection_cursors = cursors
 
         result = await compact_history(ctx, history)
         assert result is False
+        assert ctx.composer.injection_cursors == cursors
 
     @pytest.mark.asyncio
     async def test_skips_on_empty_archive(self, ctx):
@@ -173,16 +178,19 @@ class TestCompactHistory:
 
     @pytest.mark.asyncio
     async def test_handles_llm_failure(self, ctx, populated_archive):
-        """If LLM call fails, should return False and not modify history."""
+        """If LLM call fails, should return False, preserve history and cursors."""
         ctx.config.compaction.preserve_turns = 5
         history = [{"role": "user", "content": "test"}]
         original_len = len(history)
+        cursors = InjectionCursors(notes_ts="2026-01-01T00:00:00Z", journal_ts=datetime(2026, 7, 23, 14, 30))
+        ctx.composer.injection_cursors = cursors
 
         with patch("decafclaw.context.call_llm", new_callable=AsyncMock, side_effect=Exception("LLM error")):
             result = await compact_history(ctx, history)
 
         assert result is False
         assert len(history) == original_len
+        assert ctx.composer.injection_cursors == cursors
 
     @pytest.mark.asyncio
     async def test_handles_empty_summary(self, ctx, populated_archive):

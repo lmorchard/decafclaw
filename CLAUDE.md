@@ -138,6 +138,9 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
   Note `pyright` exits 0 when it reports only warnings — adding a path to
   `pyrightconfig.json` makes it report without failing.
 - **Bug fix = test first.** Reproduce with a failing test, then fix.
+- **Search discipline & bounded investigation.** Never execute rapid, repetitive `grep` or `read` calls hunting for the same fact across variations. If 2–3 targeted queries do not locate what you need, STOP searching:
+  - When diagnosing a test failure, inspect the failure traceback and actual output directly (e.g. `pytest -vv -s` or inspect the failure data structure) rather than grepping for all potential callers or assumptions across the tree.
+  - If you find yourself formulating a 3rd or 4th grep for the same concept, pause and read the relevant caller/callee function top-to-bottom.
 - **Commit after each logical step.** Lint and test before committing.
 - **Run `make fmt` before you commit or open a PR.** `make check` (and so CI) runs `make fmt-check`, which fails on any file that `ruff format` would change. The tree was formatted in one mechanical commit (#857); it is listed in `.git-blame-ignore-revs`, so run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone to skip it in `git blame`.
 - **Iterative changes go in a branch.** Don't push rapid-fire fixes directly to main — regressions compound (especially in UX-sensitive code like streaming/placeholder logic).

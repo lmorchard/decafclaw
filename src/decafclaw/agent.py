@@ -190,13 +190,6 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None
         log.info(f"Token budget exceeded ({prompt_tokens} > {config.compaction.max_tokens}), triggering compaction")
         try:
             await compaction.compact_history(ctx, history)
-            # After compaction, summarized content replaces originals —
-            # allow previously-injected pages to be re-injected if relevant,
-            # and reset cleanup accounting since the new in-memory view
-            # supersedes the previous one.
-            ctx.composer.injected_paths.clear()
-            ctx.composer.cleanup_cleared_count = 0
-            ctx.composer.cleanup_cleared_bytes = 0
         except Exception as e:
             log.error(f"Compaction failed: {e}", exc_info=True)
 
@@ -848,10 +841,6 @@ class TurnRunner:
                 self.ctx.config = self.config
 
                 await compaction.compact_history(self.ctx, self.history)
-                # After compaction, summarized content replaces originals
-                self.ctx.composer.injected_paths.clear()
-                self.ctx.composer.cleanup_cleared_count = 0
-                self.ctx.composer.cleanup_cleared_bytes = 0
                 # Re-compose to pick up the compacted history
                 await self._compose()
                 return _Continue()

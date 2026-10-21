@@ -22,6 +22,7 @@ from .confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
+from .context_composer import InjectionCursors
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
 from .media import ToolResult
@@ -155,6 +156,7 @@ class PersistedTurnState:
     disabled_aux_approval_presets: list = field(default_factory=list, metadata={"replaceable": True})
     aux_approval_guidance: list = field(default_factory=list, metadata={"replaceable": True})
     llm_approved_shell_patterns: list = field(default_factory=list, metadata={"replaceable": True})
+    injection_cursors: InjectionCursors = field(default_factory=InjectionCursors, metadata={"replaceable": True})
 
 
 # Per-field reader/writer bindings between PersistedTurnState and the
@@ -204,6 +206,10 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
         lambda ctx: ctx.tools.llm_approved_shell_patterns,
         lambda ctx, v: setattr(ctx.tools, "llm_approved_shell_patterns", list(v)),
     ),
+    "injection_cursors": (
+        lambda ctx: ctx.composer.injection_cursors,
+        lambda ctx, v: setattr(ctx.composer, "injection_cursors", v),
+    ),
 }
 
 
@@ -221,12 +227,13 @@ _CTX_DRIVEN_FIELDS: frozenset[str] = frozenset(
         "disabled_aux_approval_presets",
         "aux_approval_guidance",
         "llm_approved_shell_patterns",
+        "injection_cursors",
     }
 )
 
-# Derive collection fields where replacement semantics apply from field metadata
-# so adding a new user-mutable collection to PersistedTurnState cannot drift.
-_REPLACEABLE_COLLECTION_FIELDS: frozenset[str] = frozenset(
+# Derive fields where replacement semantics apply from field metadata
+# (including collections and cursors that can be reset to empty/None).
+_REPLACEABLE_FIELDS: frozenset[str] = frozenset(
     f.name for f in dc_fields(PersistedTurnState) if f.metadata.get("replaceable", False)
 )
 # All declared PersistedTurnState field names — precomputed once at
@@ -1882,8 +1889,11 @@ class ConversationManager:
         for f in dc_fields(PersistedTurnState):
             _, writer = _PERSISTED_BINDINGS[f.name]
             value = getattr(persisted, f.name)
-            if f.name in _REPLACEABLE_COLLECTION_FIELDS:
-                writer(ctx, list(value) if value is not None else [])
+            if f.name in _REPLACEABLE_FIELDS:
+                if isinstance(value, list):
+                    writer(ctx, list(value) if value is not None else [])
+                else:
+                    writer(ctx, value)
             elif not value:
                 continue
             else:
@@ -1900,6 +1910,9 @@ class ConversationManager:
         Truthy-only writes preserve the sticky semantics that the
         previous inline save logic had: once a ctx-driven flag becomes
         True for a conversation, save never flips it back to False.
+        Replaceable fields (marked with metadata replaceable=True, such as
+        collections and compaction-resettable cursors) use exact value
+        replacement including empty lists and None.
         """
         persisted = state.persisted
         for f in dc_fields(PersistedTurnState):
@@ -1907,8 +1920,11 @@ class ConversationManager:
                 continue
             reader, _ = _PERSISTED_BINDINGS[f.name]
             value = reader(ctx)
-            if f.name in _REPLACEABLE_COLLECTION_FIELDS:
-                setattr(persisted, f.name, list(value) if value is not None else [])
+            if f.name in _REPLACEABLE_FIELDS:
+                if isinstance(value, list):
+                    setattr(persisted, f.name, list(value) if value is not None else [])
+                else:
+                    setattr(persisted, f.name, value)
             elif value:
                 setattr(persisted, f.name, value)
 
