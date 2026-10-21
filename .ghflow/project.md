@@ -4,7 +4,7 @@ written: 2026-10-20
 sources:
   - AGENTS.md 7cecf5fe544abc071f9e8c5070876493bf6ff17f
   - CLAUDE.md 7cecf5fe544abc071f9e8c5070876493bf6ff17f
-  - Makefile 457995d835091b7e747bb8640cc0cf74752a385d
+  - Makefile 5dbbaa53e9ea4c486b3ed9fcd44b58c7c9b56a20
   - .github/workflows/ci.yml 2de18948e0afc3ee4c14570649660a08aea316d5
   - conftest.py fb46496f6536760ece617b135afc7aef3c6eac93
   - tests/conftest.py 40eed4d3c579e8ac92c078611042f0b3fdfd909d
@@ -38,7 +38,7 @@ sources:
 - `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `plan.md`, `notes.md`. Session docs are committed.
 
 ## Running the app
-- Run only from a worktree with `DATA_HOME` set to `data-dev/` at the worktree root seeded with only a copy of `data/decafclaw/config.json`, and with `MATTERMOST_ENABLED=false`, `EMAIL_ENABLED=false`, `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED=false`, `HEARTBEAT_INTERVAL=0` (interval of 0 disables the heartbeat timer), `HTTP_ENABLED=true`, and the worktree's `HTTP_PORT`. Start it with `uv run decafclaw`. Mattermost stays off unless an issue calls for it, and then only attended with Les's go-ahead.
+- `make run-dev` from a worktree (#1096): refuses to run from the main clone, seeds the worktree's `data-dev/` (gitignored) with a copy of the main clone's `data/decafclaw/config.json` only, and runs `uv run decafclaw` with `DATA_HOME` set to it, `MATTERMOST_ENABLED=false`, `EMAIL_ENABLED=false`, `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED=false`, `HEARTBEAT_INTERVAL=0` (interval of 0 disables the heartbeat timer), `HTTP_ENABLED=true`, and the worktree's `HTTP_PORT` (from the worktree's `.env`; default 18880). Mattermost stays off unless an issue calls for it, and then only attended with Les's go-ahead.
 
 ## Commits and PRs
 - Subjects mostly `type(scope): summary`, for example `fix(agent): ...`. Every change goes through a PR. `Closes #N` closes the issue on merge.
