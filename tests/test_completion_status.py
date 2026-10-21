@@ -19,6 +19,7 @@ import pytest
 from decafclaw.agent import run_agent_turn
 from decafclaw.config import Config
 from decafclaw.config_types import LlmConfig
+from decafclaw.context_composer import ContextComposer
 from decafclaw.llm.providers.openai_compat import OpenAICompatProvider
 from decafclaw.llm.types import (
     FINISH_REASON_CANCELLED,
@@ -28,6 +29,16 @@ from decafclaw.llm.types import (
     FINISH_REASON_TOOL_CALLS,
 )
 from decafclaw.media import ToolResult
+
+
+@pytest.fixture(autouse=True)
+def _no_tail_notes(config, monkeypatch):
+    """These tests assert the exact shape of history and the archive. The
+    per-turn skill hint and context status note are archived in place
+    (#1116) and covered in test_context_composer.py, so leave them out here.
+    Tool promotion from pre-emptive search still runs."""
+    config.agent.show_context_status = False
+    monkeypatch.setattr(ContextComposer, "_compose_preempt_skill_matches", lambda *a, **k: (None, None))
 
 
 class FakeSSEEvent:

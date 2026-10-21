@@ -75,6 +75,8 @@ ROLE_REMAP: dict[str, str] = {
     "recent_journal": "user",
     "cancel_marker": "user",
     "turn_aborted": "user",
+    "skill_hint": "user",
+    "context_status": "user",
 }
 
 
@@ -732,9 +734,15 @@ class ContextComposer:
             messages.append({"role": "system", "content": guidance_text})
         messages.extend(llm_history)
 
-        # -- Pre-emptive skill hint (tail message to avoid busting system prefix cache, #1116) --
+        # -- Tail notes (#1116) --
+        # The skill hint and context status go after the user message rather
+        # than in the system prefix (Vertex folds system messages into
+        # systemInstruction, which would bust the prefix cache every turn).
+        # They are archived and kept in history at this position, so later
+        # turns replay them where they were sent and the cached prefix holds.
+        tail_msgs: list[dict] = []
         if preempt_skill_text:
-            messages.append({"role": "user", "content": preempt_skill_text})
+            tail_msgs.append({"role": "skill_hint", "content": preempt_skill_text})
 
         # -- Publish memory context event (after user message for UI ordering) --
         if mc_results and config.vault_retrieval.show_in_ui:
@@ -744,9 +752,6 @@ class ContextComposer:
         total_tokens = sum(s.tokens_estimated for s in sources)
 
         # -- Context status note (for agent self-regulation) --
-        # Emitted as role: "user" at the very tail so providers like Vertex
-        # do not pull it into systemInstruction, which would bust the prefix cache
-        # on every turn (#1116).
         if config.agent.show_context_status:
             effective_window = self._get_context_window_size(config, ctx)
             status_line = self._build_context_status(
@@ -755,7 +760,11 @@ class ContextComposer:
                 history_msg_count,
             )
             if status_line:
-                messages.append({"role": "user", "content": status_line})
+                tail_msgs.append({"role": "context_status", "content": status_line})
+
+        for tm in tail_msgs:
+            messages.append({**tm, "role": ROLE_REMAP[tm["role"]]})
+            to_archive.append(tm)
 
         # -- Update state --
         self.state.last_sources = sources
@@ -769,6 +778,7 @@ class ContextComposer:
         history.extend(recent_journal_msgs)
         history.extend(memory_msgs)
         history.append(user_msg)
+        history.extend(tail_msgs)
 
         return ComposedContext(
             messages=messages,

@@ -13,11 +13,22 @@ from decafclaw.archive import append_message, restore_history
 from decafclaw.compaction import compact_history, flatten_messages
 from decafclaw.config_types import ModelConfig, ProviderConfig, ReflectionConfig
 from decafclaw.context_cleanup import clear_old_tool_results
+from decafclaw.context_composer import ContextComposer
 from decafclaw.llm import init_providers
 from decafclaw.llm.history import assistant_message
 from decafclaw.llm.providers.openai_responses import OpenAIResponsesProvider, _ResponsesState
 from decafclaw.media import EndTurnConfirm, ToolResult
 from decafclaw.reflection import ReflectionResult
+
+
+@pytest.fixture(autouse=True)
+def _no_tail_notes(config, monkeypatch):
+    """These tests assert the exact shape of history and the archive. The
+    per-turn skill hint and context status note are archived in place
+    (#1116) and covered in test_context_composer.py, so leave them out here.
+    Tool promotion from pre-emptive search still runs."""
+    config.agent.show_context_status = False
+    monkeypatch.setattr(ContextComposer, "_compose_preempt_skill_matches", lambda *a, **k: (None, None))
 
 
 def wire(text="Done", calls=False, status="completed"):

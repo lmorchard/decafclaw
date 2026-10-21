@@ -22,7 +22,7 @@ The match runs once at turn start. `_build_tool_list` reuses the same set across
 
 Right after the tool match, `ContextComposer._compose_preempt_skill_matches` runs the same tokenization against the discovered skill catalog. Skills already in `ctx.skills.activated` (which includes always-loaded bundled skills like `vault`, `background`, `mcp` that auto-activate at turn start) are excluded from the candidate pool — surfacing them again would be noise.
 
-For each remaining skill, score is `|input_tokens ∩ tokenize(name + description)|`. Top matches (capped by the same `max_matches`) land on `ctx.skills.preempt_matches` and a short system message is appended to the prompt:
+For each remaining skill, score is `|input_tokens ∩ tokenize(name + description)|`. Top matches (capped by the same `max_matches`) land on `ctx.skills.preempt_matches` and a short hint is appended after the user message (archived as `role: "skill_hint"`, remapped to `user`; see [context-composer.md](context-composer.md#prompt-caching-prefix-stability-append-only-between-compactions)):
 
 ```
 <preempt_skill_hint>

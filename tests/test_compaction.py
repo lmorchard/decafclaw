@@ -82,6 +82,18 @@ class TestFlattenMessages:
         assert "User: hello" in result
         assert "Assistant: hi there" in result
 
+    def test_skips_tail_notes(self):
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "skill_hint", "content": "<preempt_skill_hint>x</preempt_skill_hint>"},
+            {"role": "context_status", "content": "[Context: ~10 / 100 tokens (10%), 1 messages]"},
+            {"role": "assistant", "content": "hi there"},
+        ]
+        result = flatten_messages(messages)
+        assert "preempt_skill_hint" not in result
+        assert "[Context:" not in result
+        assert "User: hello" in result
+
     def test_tool_calls_and_results(self):
         messages = [
             {"role": "user", "content": "run ls"},

@@ -262,7 +262,16 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         limit = 50
     before = msg.get("before", "")
     # Metadata roles that should not be rendered as chat messages
-    _HIDDEN_ROLES = {"effort", "model", "mode", "confirmation_request", "confirmation_response", "wake_trigger"}
+    _HIDDEN_ROLES = {
+        "effort",
+        "model",
+        "mode",
+        "confirmation_request",
+        "confirmation_response",
+        "wake_trigger",
+        "skill_hint",
+        "context_status",
+    }
 
     # Read archive once and reuse for history, token estimation, and model scan
     from ..archive import read_archive as _read_archive

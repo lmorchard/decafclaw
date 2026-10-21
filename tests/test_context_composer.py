@@ -2875,8 +2875,9 @@ class TestLastRequestSidecar:
 class TestPromptCachePrefixStability:
     @pytest.mark.asyncio
     async def test_composed_messages_prefix_identical_across_turns(self, ctx, config):
-        """Between compactions, request N's prompt prefix must be an exact prefix
-        of request N+1's prompt, across turns (#1116).
+        """Between compactions, request N (including its tail skill hint and
+        context status) must be an exact prefix of request N+1, both from the
+        live history and from history rebuilt out of the archive (#1116).
         """
         config.system_prompt = "You are a test assistant."
         config.agent.tool_context_budget_pct = 1.0
@@ -2884,58 +2885,58 @@ class TestPromptCachePrefixStability:
         config.compaction.max_tokens = 100000
 
         composer = ContextComposer(state=ctx.composer)
+        live_history: list[dict] = []
+        archived: list[dict] = []
+        # Turn 1 matches a skill; turns 2 and 3 do not.
+        hints = iter([(None, "<preempt_skill_hint>\ntry: vault\n</preempt_skill_hint>"), (None, None), (None, None)])
 
-        history: list[dict] = []
+        async def run_turn(text: str) -> ComposedContext:
+            with (
+                patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+                patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+                patch.object(
+                    ContextComposer, "_compose_preempt_skill_matches", side_effect=lambda *a, **k: next(hints)
+                ),
+            ):
+                result = await composer.compose(ctx, text, live_history, mode=ComposerMode.INTERACTIVE)
+            archived.extend(result.messages_to_archive)
+            # The agent loop appends its own messages to both.
+            turn_tail = [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"id": f"call-{text}", "function": {"name": "think", "arguments": "{}"}}],
+                },
+                {"role": "tool", "tool_call_id": f"call-{text}", "content": "ok"},
+                {"role": "assistant", "content": f"reply to {text}"},
+            ]
+            live_history.extend(turn_tail)
+            archived.extend(turn_tail)
+            return result
 
-        # Turn 1
+        def assert_prefix(earlier: ComposedContext, later: ComposedContext) -> None:
+            assert len(earlier.messages) < len(later.messages)
+            for i, expected in enumerate(earlier.messages):
+                assert later.messages[i]["role"] == expected["role"], f"Role mismatch at index {i}"
+                assert later.messages[i]["content"] == expected["content"], f"Content mismatch at index {i}"
+
+        res1 = await run_turn("turn 1")
+        assert any("<preempt_skill_hint>" in m["content"] for m in res1.messages)
+        assert res1.messages[-1]["content"].startswith("[Context:")
+        res2 = await run_turn("turn 2")
+        assert_prefix(res1, res2)
+        res3 = await run_turn("turn 3")
+        assert_prefix(res2, res3)
+
+        # A restart rebuilds history from the archive; it must match the live view.
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
         ):
-            res1 = await composer.compose(ctx, "Hello turn 1", history, mode=ComposerMode.INTERACTIVE)
-
-        # Simulate archiving and history updates as agent.py does
-        for m in res1.messages_to_archive:
-            history.append(m)
-        history.append({"role": "assistant", "content": "Assistant reply 1"})
-
-        # Turn 2
-        with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
-        ):
-            res2 = await composer.compose(ctx, "Hello turn 2", history, mode=ComposerMode.INTERACTIVE)
-
-        # Verify that all messages of turn 1 (except the trailing context status line)
-        # form a strict, identical prefix of turn 2's messages!
-        t1_prefix = [
-            m for m in res1.messages if not (m.get("role") == "user" and m.get("content", "").startswith("[Context:"))
-        ]
-        assert len(t1_prefix) < len(res2.messages)
-        for i, expected_msg in enumerate(t1_prefix):
-            actual_msg = res2.messages[i]
-            assert actual_msg["role"] == expected_msg["role"], f"Role mismatch at index {i}"
-            assert actual_msg["content"] == expected_msg["content"], f"Content mismatch at index {i}"
-
-        for m in res2.messages_to_archive:
-            history.append(m)
-        history.append({"role": "assistant", "content": "Assistant reply 2"})
-
-        # Turn 3
-        with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
-        ):
-            res3 = await composer.compose(ctx, "Hello turn 3", history, mode=ComposerMode.INTERACTIVE)
-
-        t2_prefix = [
-            m for m in res2.messages if not (m.get("role") == "user" and m.get("content", "").startswith("[Context:"))
-        ]
-        assert len(t2_prefix) < len(res3.messages)
-        for i, expected_msg in enumerate(t2_prefix):
-            actual_msg = res3.messages[i]
-            assert actual_msg["role"] == expected_msg["role"], f"Role mismatch at index {i}"
-            assert actual_msg["content"] == expected_msg["content"], f"Content mismatch at index {i}"
+            from_archive = await ContextComposer(state=ctx.composer).compose(
+                ctx, "turn 4", list(archived), mode=ComposerMode.INTERACTIVE
+            )
+        assert_prefix(res3, from_archive)
 
     def test_read_missing_returns_none(self, config):
         from decafclaw.context_composer import read_last_request_sidecar

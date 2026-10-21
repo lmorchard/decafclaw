@@ -83,6 +83,28 @@ async def test_load_history_detects_custom_mode(ws_context):
 
 
 @pytest.mark.asyncio
+async def test_load_history_hides_tail_notes(ws_context):
+    """Archived skill hints and context status notes are LLM-only (#1116)."""
+    from decafclaw.archive import append_message
+
+    state, index, sent, manager, config = ws_context
+    for msg in (
+        {"role": "user", "content": "hello"},
+        {"role": "skill_hint", "content": "<preempt_skill_hint>x</preempt_skill_hint>"},
+        {"role": "context_status", "content": "[Context: ~10 / 100 tokens (10%), 1 messages]"},
+        {"role": "assistant", "content": "hi"},
+    ):
+        append_message(config, "conv-1", msg)
+
+    ws_mock = AsyncMock(side_effect=lambda m: sent.append(m))
+    state["ws_send"] = ws_mock
+    await _handle_load_history(ws_mock, index, "alice", {"conv_id": "conv-1"}, state)
+
+    history_msg = next(m for m in sent if m.get("type") == WSMessageType.CONV_HISTORY)
+    assert [m["role"] for m in history_msg["messages"]] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
 async def test_set_mode_validation(ws_context):
     state, index, sent, manager, config = ws_context
 

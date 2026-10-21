@@ -16,10 +16,22 @@ from decafclaw.agent import (
     run_agent_turn,
 )
 from decafclaw.config_types import ReflectionConfig
+from decafclaw.context_composer import ContextComposer
 from decafclaw.media import EndTurnConfirm, ToolResult, WidgetInputPause
 from decafclaw.reflection import ReflectionResult
 from decafclaw.tool_definitions import build_tool_list, refresh_dynamic_tools
 from decafclaw.tool_execution import execute_tool_calls
+
+
+@pytest.fixture(autouse=True)
+def _no_tail_notes(config, monkeypatch):
+    """These tests assert the exact shape of history and the archive. The
+    per-turn skill hint and context status note are archived in place
+    (#1116) and covered in test_context_composer.py, so leave them out here.
+    Tool promotion from pre-emptive search still runs."""
+    config.agent.show_context_status = False
+    monkeypatch.setattr(ContextComposer, "_compose_preempt_skill_matches", lambda *a, **k: (None, None))
+
 
 # -- Helper tests --------------------------------------------------------------
 
