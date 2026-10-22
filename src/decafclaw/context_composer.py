@@ -495,6 +495,7 @@ class ContextComposer:
             self.state.baseline_system_context = config.system_prompt
             system_update_msg = {
                 "role": "user",
+                "source": "system_update",
                 "content": "[System Update: The system context or available tools have changed.]",
             }
             to_archive.append(system_update_msg)

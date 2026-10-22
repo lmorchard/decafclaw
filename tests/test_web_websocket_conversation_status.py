@@ -55,6 +55,20 @@ class TestConversationStatusForwarder:
         assert sent == []
 
     @pytest.mark.asyncio
+    async def test_filters_username_prefix_collisions(self, config):
+        sent, send = self._capture()
+        index = MagicMock()
+        forward = _make_conversation_status_forwarder(send, config, index, "testuser")
+        await forward(
+            {
+                "type": "conversation_status",
+                "conv_id": "web-testuser-team-secret",
+                "status": "busy",
+            }
+        )
+        assert sent == []
+
+    @pytest.mark.asyncio
     async def test_ignores_other_event_types(self, config):
         sent, send = self._capture()
         index = MagicMock()

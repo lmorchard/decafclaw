@@ -11,6 +11,7 @@ export const MESSAGE_TYPES = Object.freeze({
   CONFIRM_REQUEST: 'confirm_request',
   CONFIRMATION_RESPONSE: 'confirmation_response',
   CONV_HISTORY: 'conv_history',
+  CONV_RENAMED: 'conv_renamed',
   CONV_SELECTED: 'conv_selected',
   CONVERSATION_STATUS: 'conversation_status',
   ERROR: 'error',

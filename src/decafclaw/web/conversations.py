@@ -58,6 +58,22 @@ def _classify_conv_id(conv_id: str) -> tuple[str, str]:
     return "unknown", conv_id
 
 
+def is_web_conv_for_user(conv_id: str, username: str) -> bool:
+    """Return True if ``conv_id`` is a web conversation belonging to ``username``.
+
+    Web conv_ids have the shape ``web-{username}-{suffix}`` (optionally with
+    ``--child-{hex}`` for delegated tasks). The username is compared in full
+    after stripping the leading ``web-`` and the trailing generated suffix,
+    preventing prefix collisions between usernames (e.g. ``alice`` and
+    ``alice-team``, #1132).
+    """
+    if not username or not conv_id.startswith("web-"):
+        return False
+    base = conv_id.split("--child-", 1)[0]
+    user_part, sep, suffix = base[4:].rpartition("-")
+    return bool(sep and suffix) and user_part == username
+
+
 def list_system_conversations(config, username: str = "", limit: int = 100) -> list[dict]:
     """Discover system conversations from the archive directory.
 
@@ -73,7 +89,7 @@ def list_system_conversations(config, username: str = "", limit: int = 100) -> l
             continue
         # Filter delegated children to current user only
         if "--child-" in conv_id and username:
-            if not conv_id.startswith(f"web-{username}-"):
+            if not is_web_conv_for_user(conv_id, username):
                 continue
         conv_type, title = _classify_conv_id(conv_id)
         mtime = path.stat().st_mtime
@@ -123,6 +139,7 @@ class ConversationMeta:
     created_at: str  # ISO timestamp
     updated_at: str  # ISO timestamp
     archived: bool = False
+    custom_title: bool = False  # user renamed manually; auto-titling must not overwrite (#1072)
 
     def to_dict(self) -> dict:
         """Serialize to dict for API/websocket responses (excludes internal fields)."""
@@ -196,13 +213,24 @@ class ConversationIndex:
                 return ConversationMeta(**d)
         return None
 
-    def rename(self, conv_id: str, title: str) -> ConversationMeta | None:
-        """Rename a conversation. Returns updated metadata or None."""
+    def rename(self, conv_id: str, title: str, *, manual: bool = False) -> ConversationMeta | None:
+        """Rename a conversation. Returns updated metadata or None.
+
+        ``manual=True`` (user rename via REST or websocket command) marks the
+        title as user-customized (``custom_title``) and applies it
+        unconditionally. ``manual=False`` (automated periodic retitle, #1072)
+        is refused for conversations the user already renamed — the index
+        keeps the user's title and returns None.
+        """
         data = self._load()
         for d in data:
             if d.get("conv_id") == conv_id:
+                if not manual and d.get("custom_title"):
+                    return None
                 d["title"] = title
                 d["updated_at"] = datetime.now(timezone.utc).isoformat()
+                if manual:
+                    d["custom_title"] = True
                 self._save(data)
                 return ConversationMeta(**d)
         return None
