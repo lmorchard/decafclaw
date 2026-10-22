@@ -64,6 +64,7 @@ async def tool_schedule_turn(
             user_id=getattr(ctx, "user_id", "") or "",
             channel_id=getattr(ctx, "channel_id", "") or "",
             thread_id=getattr(ctx, "thread_id", "") or "",
+            transport=getattr(ctx, "transport", "") or "",
         )
         return ToolResult(
             text=(

@@ -336,3 +336,84 @@ async def test_manager_shutdown_cancels_timers_when_idle(config):
 
     # The wake timer task was cancelled cleanly
     assert len(manager.scheduled_wakes._tasks) == 0
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_wake_re_arms_timer_and_preserves_sidecar(config, mock_manager):
+    """When a wake turn is rate-limited, the schedule is re-armed and retained in sidecar (#1119 review)."""
+    rate_limited_fut = asyncio.get_running_loop().create_future()
+    rate_limited_fut.set_result(None)
+    rate_limited_fut.rate_limited = True
+    mock_manager.enqueue_turn.return_value = rate_limited_fut
+
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    wake = await wake_mgr.schedule(conv_id="conv-rate-limit", delay_seconds=1, reason="Check build")
+
+    # Let timer fire
+    task = wake_mgr._tasks.get(wake.schedule_id)
+    assert task is not None
+    await task
+
+    # The schedule must still be in the sidecar!
+    schedules = load_scheduled_wakes(config, "conv-rate-limit")
+    assert len(schedules) == 1
+    assert schedules[0].schedule_id == wake.schedule_id
+
+    # And a new timer task was re-armed
+    assert wake.schedule_id in wake_mgr._tasks
+
+    # Clean up
+    await wake_mgr.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejects_new_schedules(config, mock_manager):
+    """Scheduling a new timer after shutdown begins must be rejected cleanly (#1119 review)."""
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    await wake_mgr.shutdown()
+
+    with pytest.raises(RuntimeError, match="shutting down"):
+        await wake_mgr.schedule(conv_id="conv-reject", delay_seconds=10, reason="Too late")
+
+
+@pytest.mark.asyncio
+async def test_composed_context_setup_preserves_media_handler(config, mock_manager):
+    """Composed context_setup preserves inherited handler and sets routing (#1119 review)."""
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    wake = await wake_mgr.schedule(
+        conv_id="conv-media-preserve",
+        delay_seconds=1,
+        reason="Media check",
+        channel_id="ch-orig-123",
+        thread_id="th-orig-456",
+        transport="mattermost",
+    )
+
+    # Attach a state with inherited last_context_setup to mock_manager
+    fake_state = MagicMock()
+    mock_manager.get_state.return_value = fake_state
+
+    handler_sentinel = object()
+
+    def fake_base_setup(ctx):
+        ctx.media_handler = handler_sentinel
+
+    fake_state.last_context_setup = fake_base_setup
+
+    # Fire wake
+    task = wake_mgr._tasks.get(wake.schedule_id)
+    assert task is not None
+    await task
+
+    # Assert context_setup was called and preserved media_handler
+    mock_manager.enqueue_turn.assert_awaited_once()
+    context_setup = mock_manager.enqueue_turn.await_args.kwargs["context_setup"]
+    assert context_setup is not None
+
+    test_ctx = MagicMock()
+    test_ctx.media_handler = None
+    context_setup(test_ctx)
+    assert test_ctx.media_handler is handler_sentinel
+    assert test_ctx.channel_id == "ch-orig-123"
+    assert test_ctx.thread_id == "th-orig-456"
+    assert test_ctx.transport == "mattermost"

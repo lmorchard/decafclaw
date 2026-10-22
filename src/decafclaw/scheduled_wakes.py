@@ -43,6 +43,7 @@ class ScheduledWake:
     user_id: str = ""
     channel_id: str = ""
     thread_id: str = ""
+    transport: str = ""
 
 
 def load_scheduled_wakes(config, conv_id: str) -> list[ScheduledWake]:
@@ -84,6 +85,7 @@ class ScheduledWakeManager:
         self.manager = manager
         self._tasks: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
+        self._shutting_down = False
 
     async def schedule(
         self,
@@ -94,8 +96,11 @@ class ScheduledWakeManager:
         user_id: str = "",
         channel_id: str = "",
         thread_id: str = "",
+        transport: str = "",
     ) -> ScheduledWake:
         """Schedule a wake turn after delay_seconds."""
+        if self._shutting_down:
+            raise RuntimeError("ScheduledWakeManager is shutting down")
         if delay_seconds < 1:
             raise ValueError(f"delay_seconds must be >= 1 (got {delay_seconds})")
         if delay_seconds > MAX_DELAY_SECONDS:
@@ -121,6 +126,7 @@ class ScheduledWakeManager:
             user_id=user_id,
             channel_id=channel_id,
             thread_id=thread_id,
+            transport=transport,
         )
 
         async with self._lock:
@@ -201,6 +207,9 @@ class ScheduledWakeManager:
 
     async def _fire_wake(self, entry: ScheduledWake) -> None:
         """Enqueue TurnKind.WAKE on manager and clear sidecar only after acceptance."""
+        if self._shutting_down:
+            return
+
         async with self._lock:
             schedules = load_scheduled_wakes(self.config, entry.conv_id)
             if not any(s.schedule_id == entry.schedule_id for s in schedules):
@@ -230,18 +239,54 @@ class ScheduledWakeManager:
             "then respond to the user or reply with BACKGROUND_WAKE_OK to remain silent "
             "if nothing requires attention."
         )
-        wake_meta = {"schedule_id": entry.schedule_id, **entry.metadata}
-        context_setup = self._make_context_setup(entry.channel_id, entry.thread_id)
+        wake_meta = {
+            "schedule_id": entry.schedule_id,
+            "channel_id": entry.channel_id,
+            "thread_id": entry.thread_id,
+            "transport": entry.transport,
+            **entry.metadata,
+        }
+
+        # Compose context setup: preserve existing/inherited setup (media handlers, etc.)
+        state = self.manager.get_state(entry.conv_id)
+        base_setup = state.last_context_setup if state else None
+
+        def composed_setup(ctx):
+            if base_setup:
+                base_setup(ctx)
+            if entry.channel_id:
+                ctx.channel_id = entry.channel_id
+            if entry.thread_id:
+                ctx.thread_id = entry.thread_id
+            if entry.transport:
+                ctx.transport = entry.transport
+            if entry.transport == "mattermost" and getattr(ctx, "media_handler", None) is None and entry.channel_id:
+                mm_client = getattr(self.manager, "mm_client", None)
+                if mm_client and getattr(mm_client, "_http", None):
+                    from .media import MattermostMediaHandler
+
+                    ctx.media_handler = MattermostMediaHandler(mm_client._http, channel_id=entry.channel_id)
 
         try:
-            await self.manager.enqueue_turn(
+            future = await self.manager.enqueue_turn(
                 conv_id=entry.conv_id,
                 kind=TurnKind.WAKE,
                 prompt=prompt,
                 metadata=wake_meta,
                 user_id=entry.user_id,
-                context_setup=context_setup,
+                context_setup=composed_setup,
             )
+
+            # Check if rate-limited: do NOT drop the wake! Re-arm and retry (#1119 review).
+            if getattr(future, "rate_limited", None) is True:
+                log.info("Wake %s rate-limited; re-arming in 10s", entry.schedule_id)
+                entry.fire_at_ts = time.time() + 10.0
+                async with self._lock:
+                    if not self._shutting_down:
+                        task = asyncio.create_task(self._run_timer(entry))
+                        self._tasks[entry.schedule_id] = task
+                return
+
             log.info("Dispatched wake turn for schedule %s (conv %s)", entry.schedule_id, entry.conv_id[:8])
 
             # Remove from sidecar and task registry only once enqueue succeeds
@@ -302,6 +347,7 @@ class ScheduledWakeManager:
 
     async def shutdown(self) -> None:
         """Cancel all in-flight timer tasks on shutdown without altering sidecar state."""
+        self._shutting_down = True
         async with self._lock:
             tasks = list(self._tasks.values())
             for t in tasks:

@@ -418,6 +418,7 @@ class ConversationManager:
         self.event_bus = event_bus
         self.confirmation_registry = confirmation_registry or ConfirmationRegistry()
         self.terminal_registry = terminal_registry
+        self.mm_client: Any | None = None
 
         # Workflow user-input resumes via the confirmation recovery path.
         from .workflow.resume import WorkflowUserInputHandler
@@ -529,9 +530,11 @@ class ConversationManager:
                         len(state.wake_times),
                         self._wake_window_sec,
                     )
+                    setattr(future, "rate_limited", True)
                     future.set_result(None)
                     return future
                 state.wake_times.append(now)
+                setattr(future, "rate_limited", False)
 
             # USER-kind only: circuit breaker check + user_message event emission.
             if kind is TurnKind.USER:
@@ -1106,18 +1109,18 @@ class ConversationManager:
         Called during graceful shutdown so running turns can finish
         rather than being abandoned.
         """
-        try:
-            tasks = [s.agent_task for s in self._conversations.values() if s.agent_task and not s.agent_task.done()]
-            if tasks:
-                log.info("Waiting for %d in-flight agent turn(s)...", len(tasks))
-                done, pending = await asyncio.wait(tasks, timeout=timeout)
-                if pending:
-                    log.warning("Shutdown timeout: cancelling %d agent turn(s)", len(pending))
-                    for task in pending:
-                        task.cancel()
-                    await asyncio.gather(*pending, return_exceptions=True)
-        finally:
-            await self.scheduled_wakes.shutdown()
+        # Stop timers first so idle conversations cannot spawn new turns during shutdown (#1119 review)
+        await self.scheduled_wakes.shutdown()
+
+        tasks = [s.agent_task for s in self._conversations.values() if s.agent_task and not s.agent_task.done()]
+        if tasks:
+            log.info("Waiting for %d in-flight agent turn(s)...", len(tasks))
+            done, pending = await asyncio.wait(tasks, timeout=timeout)
+            if pending:
+                log.warning("Shutdown timeout: cancelling %d agent turn(s)", len(pending))
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
 
     def get_state(self, conv_id: str) -> ConversationState | None:
         """Get current conversation state, or None if not tracked."""
@@ -1796,7 +1799,8 @@ class ConversationManager:
                     },
                 )
                 if kind is TurnKind.WAKE and not suppress and not state.subscribers:
-                    if ctx.channel_id or getattr(ctx, "thread_id", None):
+                    transport = getattr(ctx, "transport", "")
+                    if transport == "mattermost" or (ctx.channel_id and ctx.channel_id != conv_id):
                         await self.event_bus.publish(
                             {
                                 "type": "wake_delivery",
@@ -1804,6 +1808,7 @@ class ConversationManager:
                                 "channel_id": ctx.channel_id,
                                 "thread_id": getattr(ctx, "thread_id", ""),
                                 "user_id": user_id,
+                                "transport": transport or "mattermost",
                                 "text": response_text,
                                 "media": response_media,
                             }
@@ -2054,6 +2059,20 @@ class ConversationManager:
 
                 tid = q.get("turn_id")
                 inmem = state.inmemory_turn_data.pop(tid, {})
+                drain_setup = inmem.get("context_setup")
+                meta = q.get("metadata") or {}
+                if drain_setup is None and (meta.get("channel_id") or meta.get("thread_id") or meta.get("transport")):
+                    ch = meta.get("channel_id", "")
+                    th = meta.get("thread_id", "")
+                    tr = meta.get("transport", "")
+
+                    def drain_setup(ctx, _ch=ch, _th=th, _tr=tr):
+                        if _ch:
+                            ctx.channel_id = _ch
+                        if _th:
+                            ctx.thread_id = _th
+                        if _tr:
+                            ctx.transport = _tr
 
                 log.info("Draining queued %s turn for conv %s", q["kind"], state.conv_id[:8])
                 await self._start_turn(
@@ -2061,7 +2080,7 @@ class ConversationManager:
                     q["text"],
                     kind=get_kind(q["kind"]),
                     user_id=q.get("user_id", ""),
-                    context_setup=inmem.get("context_setup"),
+                    context_setup=drain_setup,
                     archive_text=q.get("archive_text", ""),
                     attachments=inmem.get("attachments"),
                     command_ctx=inmem.get("command_ctx"),
@@ -2117,9 +2136,13 @@ class ConversationManager:
                 await self._drain_pending(state)
 
         # Phase 4: Resume pending scheduled wakes (#1103)
-        await self.scheduled_wakes.startup_scan()
+        await self.startup_scan_scheduled_wakes()
 
         return recovered
+
+    async def startup_scan_scheduled_wakes(self) -> int:
+        """Scan and resume pending scheduled wakes after transports are ready."""
+        return await self.scheduled_wakes.startup_scan()
 
     async def startup_scan_workflows(self) -> int:
         """Recover workflows in status='running' by re-enqueueing them (#581).

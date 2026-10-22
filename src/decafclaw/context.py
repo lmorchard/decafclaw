@@ -153,6 +153,7 @@ class Context:
         self.channel_name: str = ""
         self.thread_id: str = ""
         self.conv_id: str = ""
+        self.transport: str = ""
 
         # Grouped state
         self.tokens = TokenUsage()

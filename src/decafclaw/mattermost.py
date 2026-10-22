@@ -58,6 +58,7 @@ class MattermostClient:
         self.require_mention = config.mattermost.require_mention
         self.user_rate_limit_ms = config.mattermost.user_rate_limit_ms
         self.channel_blocklist = set(config.mattermost.channel_blocklist)
+        self._connected_event = asyncio.Event()
         self._http = httpx.AsyncClient(
             base_url=self.url + "/api/v4",
             headers={
@@ -73,6 +74,7 @@ class MattermostClient:
         me = resp.json()
         self.bot_user_id = me["id"]
         self.bot_username = me.get("username", self.bot_username)
+        self._connected_event.set()
         log.info(f"Authenticated as @{self.bot_username} ({self.bot_user_id})")
 
     async def send(self, channel_id, message, root_id=None, attachments=None):
@@ -658,6 +660,12 @@ class MattermostClient:
                 if cd and final_text:
                     cd._text_buffer = final_text
                     cd._text_has_content = True
+                elif not cd and final_text and channel_id:
+                    # Autonomous/wake turn arrived with no active interactive display (#1119 review)
+                    try:
+                        await client.send(channel_id, final_text, root_id=root_id)
+                    except Exception as exc:
+                        log.warning("Failed to post autonomous wake response to Mattermost: %s", exc)
 
                 # Post any response media (workspace image refs, etc.)
                 media = event.get("media") or []
@@ -769,16 +777,36 @@ class MattermostClient:
         async def on_wake_delivery(event):
             if event.get("type") != "wake_delivery":
                 return
+            if event.get("transport") != "mattermost":
+                return
             channel_id = event.get("channel_id")
             if not channel_id:
                 return
             text = event.get("text", "")
             root_id = event.get("thread_id") or None
-            if text:
+            media = event.get("media") or []
+
+            # Wait for connection to be ready if waking during server startup (#1119 review)
+            if not self._connected_event.is_set():
                 try:
+                    await asyncio.wait_for(self._connected_event.wait(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    log.warning("Mattermost client did not connect within 10s; dropping wake delivery")
+                    return
+
+            try:
+                if media:
+                    from .media import MattermostMediaHandler, upload_and_collect
+
+                    handler = MattermostMediaHandler(self._http, channel_id=channel_id)
+                    file_ids = await upload_and_collect(handler, channel_id, media)
+                    if file_ids:
+                        await handler.send_with_media(channel_id, text, file_ids, root_id=root_id)
+                        return
+                if text:
                     await self.send(channel_id, text, root_id=root_id)
-                except Exception as e:
-                    log.warning("Failed to deliver wake response to Mattermost channel %s: %s", channel_id, e)
+            except Exception as e:
+                log.warning("Failed to deliver wake response to Mattermost channel %s: %s", channel_id, e)
 
         wake_sub_id = app_ctx.event_bus.subscribe(on_wake_delivery)
 
