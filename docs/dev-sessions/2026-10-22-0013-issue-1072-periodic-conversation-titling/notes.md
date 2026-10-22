@@ -60,6 +60,9 @@
   gen-api-client + tsc clean, static module graph 2 passed).
 - `make test-js`: 49 files / 540 tests passed.
 - Full `make test` on final head: 4682 passed, 2 skipped.
+- CI caught the TUI exhaustive-switch break (check-tui): added `conv_renamed`
+  no-op case + test to tui/src/dispatcher.ts (a72d9b21). CI then fully green
+  on a72d9b21 (lint-and-test, js-test, check-tui all passed).
 - Status: implementation complete, draft PR open (left draft per handoff).
   Next: independent local review (same-model, user-approved exception), then
   `pr ready` (PR left open for the user's review; no merge).
