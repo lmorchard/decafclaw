@@ -657,6 +657,7 @@ async def test_run_agent_turn_end_turn_confirm_denied_no_summary_directive(ctx):
     assert len(captured_calls) == 3
     final_call_messages = captured_calls[2]
     assert all("All steps are complete" not in (m.get("content") or "") for m in final_call_messages)
+    assert all("Please provide a concise summary" not in (m.get("content") or "") for m in final_call_messages)
     assert any("[User selected 'Change plan'" in (m.get("content") or "") for m in final_call_messages)
 
 
