@@ -144,6 +144,11 @@ export function dispatch(s: State, m: ServerMessage): State {
       return { ...s, model: m.active_model ?? s.model, transcript: [...items, ...s.transcript] };
     }
 
+    case "conv_renamed":
+      // #1072 — auto-titling refreshes the web UI's conversation listing;
+      // the TUI shows a single conversation, so this is a no-op here.
+      return s;
+
     // #1005 — a failed compaction leaves the conversation unchanged, so the old
     // unconditional "[compaction complete]" was misleading. Mirror the web UI:
     // mark failure distinctly and report the before/after counts on success.
