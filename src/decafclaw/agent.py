@@ -1010,10 +1010,18 @@ class TurnRunner:
 
         if end_turn_signal:
             log.info("Tool signalled end_turn — making final no-tools LLM call")
+            final_messages = list(self.messages)
+            if not (final_messages and final_messages[-1].get("content", "").startswith("[User selected '")):
+                final_messages.append(
+                    {
+                        "role": "user",
+                        "content": "All steps are complete. Please provide a concise summary of what was accomplished and any relevant results.",
+                    }
+                )
             final_response = await _call_llm_with_events(
                 self.ctx,
                 self.config,
-                self.messages,
+                final_messages,
                 [],
                 **self.model_override,
             )

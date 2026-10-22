@@ -549,6 +549,57 @@ async def test_run_agent_turn_with_tool_call(ctx):
 
 
 @pytest.mark.asyncio
+async def test_run_agent_turn_end_turn_summary_directive(ctx):
+    """When a tool signals end_turn=True, a summary prompt is injected into final_messages,
+    yielding a summary assistant response, without polluting history or archive (#1092)."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+
+    tool_call_response = _mock_llm_response(
+        content=None,
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "checklist_step_done",
+                    "arguments": "{}",
+                },
+            }
+        ],
+    )
+    final_response = _mock_llm_response("Here is the summary of what was accomplished.")
+
+    captured_calls = []
+
+    async def fake_call_llm(conf, messages, tools, **kwargs):
+        captured_calls.append(list(messages))
+        if len(captured_calls) == 1:
+            return tool_call_response
+        return final_response
+
+    async def fake_execute_tool(call_ctx, name, args):
+        return ToolResult(text="All 3 checklist steps are complete.", end_turn=True)
+
+    with (
+        patch("decafclaw.agent.call_llm", side_effect=fake_call_llm),
+        patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool),
+    ):
+        history = []
+        result = await run_agent_turn(ctx, "finish checklist", history)
+
+    assert result.text == "Here is the summary of what was accomplished."
+    # Final call messages must include the synthetic summary directive
+    assert len(captured_calls) == 2
+    final_call_messages = captured_calls[1]
+    assert final_call_messages[-1]["role"] == "user"
+    assert "All steps are complete. Please provide a concise summary" in final_call_messages[-1]["content"]
+
+    # History must NOT include the synthetic directive
+    assert all("Please provide a concise summary" not in (m.get("content") or "") for m in history)
+    assert len(history) == 4
+
+
+@pytest.mark.asyncio
 async def test_run_agent_turn_overwrites_last_request_sidecar(ctx):
     """Each LLM call in a turn overwrites last_request.json, and the last call wins."""
     from decafclaw.context_composer import read_last_request_sidecar
