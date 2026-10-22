@@ -76,7 +76,7 @@ Pipe syntax for display text: `[[Tempest (arcade game)|Tempest arcade game]]`
 
 Link resolution: closest match in the same folder subtree first, then any match across the vault. Explicit paths work too: `[[agent/pages/DecafClaw]]`.
 
-In the web UI editor, clicking a link opens a popover to edit its target and display text without retyping the syntax (double-click navigates instead).
+In the web UI editor, clicking a link navigates to its target page; Alt/Option+click opens a popover to edit its target and display text without retyping the syntax (the popover also carries a link to navigate to the target).
 
 ## Page Frontmatter
 
