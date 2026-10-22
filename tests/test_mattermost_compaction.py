@@ -10,7 +10,7 @@ edited to. #1053 — these pin the full user-visible string (emoji prefix
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -167,3 +167,38 @@ async def test_mattermost_delivers_wake_delivery_event():
 
     client.send.assert_awaited_once_with("ch-wake-99", "Scheduled task finished!", root_id="root-wake-11")
     event_bus.unsubscribe(sub_id)
+
+
+@pytest.mark.asyncio
+async def test_mattermost_renders_confirmation_request_when_display_is_none(config):
+    """Confirmation requests arriving on idle Mattermost subscriptions create a display to prompt (#1119 review)."""
+    client = _make_client()
+    client._poll_confirmation_manager = AsyncMock()
+    mm_state = MattermostConvState()
+    assert mm_state.conv_display is None
+
+    captured = {}
+
+    def subscribe(conv_id, callback):
+        captured["cb"] = callback
+        return "sub-1"
+
+    app_ctx = SimpleNamespace(config=config, event_bus=None)
+    manager = SimpleNamespace(subscribe=subscribe, unsubscribe=lambda *a, **kw: None)
+    client._ensure_subscribed(mm_state, "conv1", "channel-confirm-1", "root-confirm-1", app_ctx, manager)
+    on_event = captured["cb"]
+
+    with patch(
+        "decafclaw.mattermost_display.ConversationDisplay.on_confirm_request", new_callable=AsyncMock
+    ) as mock_ocr:
+        mock_ocr.return_value = "post-confirm-id"
+        await on_event(
+            {
+                "type": "confirmation_request",
+                "confirmation_id": "conf-123",
+                "action_type": "run_shell_command",
+                "action_data": {"command": "npm test", "tool_name": "shell"},
+            }
+        )
+        mock_ocr.assert_awaited_once()
+        client._poll_confirmation_manager.assert_called_once()

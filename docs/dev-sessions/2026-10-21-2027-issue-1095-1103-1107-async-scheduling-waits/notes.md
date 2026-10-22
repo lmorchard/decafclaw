@@ -26,6 +26,12 @@
   3. Made `_start_turn` and wake turn handoff cancellation-safe with rollback of `state.busy` if interrupted during startup/status publication, and shielded enqueue in `_fire_wake`.
   4. Explicitly assigned `ctx.transport = "mattermost"` in Mattermost's `context_setup` so unthreaded/DM conversations (`conv_id == channel_id`) are correctly routed and delivered.
   5. Handled queued wake routing restoration in `ConversationManager._drain_pending` from durable inbox `metadata`.
+- Addressed third round of Copilot review feedback:
+  1. Rejected `schedule_turn` from unattended callers (`ctx.is_unattended` or `ctx.is_child`).
+  2. Removed `asyncio.shield` so cancellation of timer tasks cancels in-flight enqueues cleanly without leaving unmanaged tasks.
+  3. Rendered confirmation requests and uploaded tool media during display-less / autonomous wake turns in Mattermost.
+  4. Rendered autonomous wake completions directly in `interactive_terminal.py` when idle at the prompt.
+
 
 
 

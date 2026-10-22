@@ -82,14 +82,21 @@ async def test_schedule_turn_validation_errors(ctx):
 
 
 @pytest.mark.asyncio
-async def test_schedule_turn_rejects_child_agents(ctx):
-    """Child agents must not schedule autonomous wake turns (#1119 review)."""
+async def test_schedule_turn_rejects_child_agents_and_unattended(ctx):
+    """Child agents and unattended turns must not schedule autonomous wake turns (#1119 review)."""
     ctx.conv_id = "conv-child"
     ctx.is_child = True
 
     result = await tool_schedule_turn(ctx, delay_seconds=60, reason="Check something")
-    assert "[error: Child agents cannot schedule autonomous wake turns]" in result.text
-    assert result.data["error"] == "child_agent_not_permitted"
+    assert "[error: schedule_turn is only available in interactive user conversations]" in result.text
+    assert result.data["error"] == "unattended_or_child_not_permitted"
+
+    ctx.is_child = False
+    ctx.task_mode = "scheduled"
+    assert ctx.is_unattended is True
+    result2 = await tool_schedule_turn(ctx, delay_seconds=60, reason="Check something")
+    assert "[error: schedule_turn is only available in interactive user conversations]" in result2.text
+    assert result2.data["error"] == "unattended_or_child_not_permitted"
 
 
 @pytest.mark.asyncio

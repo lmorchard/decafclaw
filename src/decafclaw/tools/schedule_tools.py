@@ -28,10 +28,10 @@ async def tool_schedule_turn(
     metadata: dict[str, Any] | None = None,
 ) -> ToolResult:
     """Schedule an autonomous future wake turn in this conversation after a delay."""
-    if getattr(ctx, "is_child", False):
+    if getattr(ctx, "is_unattended", False) or getattr(ctx, "is_child", False):
         return ToolResult(
-            text="[error: Child agents cannot schedule autonomous wake turns]",
-            data={"error": "child_agent_not_permitted"},
+            text="[error: schedule_turn is only available in interactive user conversations]",
+            data={"error": "unattended_or_child_not_permitted"},
         )
 
     conv_id = ctx.conv_id

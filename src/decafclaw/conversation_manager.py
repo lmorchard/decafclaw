@@ -394,6 +394,9 @@ class ConversationState:
     # pass an explicit context_setup when enqueuing WAKE turns.
     last_user_id: str = ""
     last_context_setup: Callable | None = None
+    last_channel_id: str = ""
+    last_thread_id: str = ""
+    last_transport: str = ""
 
     # Event stream subscribers: sub_id -> callback
     subscribers: dict[str, Callable] = field(default_factory=dict)
@@ -1297,6 +1300,24 @@ class ConversationManager:
         state.confirmation_response = None
         self._promote_next_confirmation_unlocked(state, conv_id)
 
+    async def _emit_confirmation_request(
+        self,
+        state: "ConversationState",
+        conv_id: str,
+        request: ConfirmationRequest,
+    ) -> None:
+        payload = _confirmation_request_payload(request)
+        await self.emit(conv_id, payload)
+        if not state.subscribers and getattr(state, "last_transport", "") == "mattermost":
+            await self.event_bus.publish(
+                {
+                    **payload,
+                    "channel_id": getattr(state, "last_channel_id", ""),
+                    "thread_id": getattr(state, "last_thread_id", ""),
+                    "transport": "mattermost",
+                }
+            )
+
     async def request_confirmation(
         self,
         conv_id: str,
@@ -1357,7 +1378,7 @@ class ConversationManager:
             # transports to render UI (outside the lock — emit awaits
             # subscribers).
             request.timestamp = datetime.now(timezone.utc).isoformat()
-            await self.emit(conv_id, _confirmation_request_payload(request))
+            await self._emit_confirmation_request(state, conv_id, request)
         else:
             # Queued path: wait (no timeout) for promotion. The promote
             # helper will assign state.confirmation_event for our turn
@@ -1390,7 +1411,7 @@ class ConversationManager:
             # caller could null the field (Copilot review on this PR).
             event = queued.active_event
             request.timestamp = datetime.now(timezone.utc).isoformat()
-            await self.emit(conv_id, _confirmation_request_payload(request))
+            await self._emit_confirmation_request(state, conv_id, request)
 
         await self._publish_status(conv_id, "waiting")
         # By either path (active or queued-then-promoted) ``event`` is
@@ -1639,6 +1660,11 @@ class ConversationManager:
                 await context_setup(ctx)
             else:
                 context_setup(ctx)
+
+        if kind is TurnKind.USER or kind is TurnKind.WAKE:
+            state.last_channel_id = getattr(ctx, "channel_id", "")
+            state.last_thread_id = getattr(ctx, "thread_id", "")
+            state.last_transport = getattr(ctx, "transport", "")
 
         # Reset cancel/partial accounting so this turn starts clean and
         # a subsequent cancel only persists what we actually streamed.

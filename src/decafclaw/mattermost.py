@@ -512,13 +512,19 @@ class MattermostClient:
                     display_short_text=event.get("display_short_text"),
                 )
 
-            elif event_type == "tool_media_uploaded" and cd:
-                await cd.on_tool_media_uploaded(
-                    event.get("file_ids", []),
-                    tool_call_id=event.get("tool_call_id", ""),
-                )
+            elif event_type == "tool_media_uploaded":
+                if cd:
+                    await cd.on_tool_media_uploaded(
+                        event.get("file_ids", []),
+                        tool_call_id=event.get("tool_call_id", ""),
+                    )
+                elif channel_id:
+                    from .media import MattermostMediaHandler
 
-            elif event_type == "confirmation_request" and cd:
+                    handler = MattermostMediaHandler(client._http, channel_id=channel_id)
+                    await handler.send_with_media(channel_id, "", event.get("file_ids", []), root_id=root_id)
+
+            elif event_type == "confirmation_request":
                 confirmation_id = event.get("confirmation_id", "")
                 action_data = event.get("action_data", {})
                 command = action_data.get("command", event.get("message", ""))
@@ -541,12 +547,27 @@ class MattermostClient:
                     )
                     return
 
+                display = cd
+                if display is None and channel_id:
+                    from .mattermost_display import ConversationDisplay
+
+                    display = ConversationDisplay(
+                        client,
+                        channel_id,
+                        root_id=root_id,
+                        config=config,
+                        conv_id=conv_id,
+                    )
+
+                if display is None:
+                    return
+
                 approve_label = event.get("approve_label", "")
                 deny_label = event.get("deny_label", "")
                 display_tool = action_data.get("tool_name", action_type)
                 decline_reason = action_data.get("decline_reason", "")
                 suggested_rule = action_data.get("suggested_rule", "")
-                confirm_post_id = await cd.on_confirm_request(
+                confirm_post_id = await display.on_confirm_request(
                     display_tool,
                     command,
                     suggested_pattern,
@@ -715,16 +736,15 @@ class MattermostClient:
         """Run the bot: connect, listen for messages, and dispatch to the agent."""
 
         async def on_wake_delivery(event):
-            if event.get("type") != "wake_delivery":
+            event_type = event.get("type", "")
+            if event_type not in ("wake_delivery", "confirmation_request"):
                 return
             if event.get("transport") != "mattermost":
                 return
             channel_id = event.get("channel_id")
             if not channel_id:
                 return
-            text = event.get("text", "")
             root_id = event.get("thread_id") or None
-            media = event.get("media") or []
 
             # Wait for connection to be ready if waking during server startup (#1119 review)
             if not self._connected_event.is_set():
@@ -733,6 +753,53 @@ class MattermostClient:
                 except asyncio.TimeoutError:
                     log.warning("Mattermost client did not connect within 15s; dropping wake delivery")
                     return
+
+            if event_type == "confirmation_request":
+                action_data = event.get("action_data", {})
+                action_type = event.get("action_type", "")
+                if action_type == "widget_response":
+                    return
+
+                from .mattermost_display import ConversationDisplay
+
+                display = ConversationDisplay(
+                    self,
+                    channel_id,
+                    root_id=root_id,
+                    config=app_ctx.config,
+                    conv_id=event.get("conv_id", ""),
+                )
+                confirm_post_id = await display.on_confirm_request(
+                    action_data.get("tool_name", action_type),
+                    action_data.get("command", event.get("message", "")),
+                    action_data.get("suggested_pattern", ""),
+                    app_ctx.event_bus,
+                    "",
+                    tool_call_id=event.get("tool_call_id", ""),
+                    conv_id=event.get("conv_id", ""),
+                    confirmation_id=event.get("confirmation_id", ""),
+                    approve_label=event.get("approve_label", ""),
+                    deny_label=event.get("deny_label", ""),
+                    decline_reason=action_data.get("decline_reason", ""),
+                    suggested_rule=action_data.get("suggested_rule", ""),
+                )
+                if confirm_post_id and manager:
+                    asyncio.create_task(
+                        self._poll_confirmation_manager(
+                            confirm_post_id,
+                            manager,
+                            event.get("conv_id", ""),
+                            event.get("confirmation_id", ""),
+                            action_type,
+                            timeout=event.get("timeout"),
+                            allow_always=not bool(event.get("approve_label")),
+                            suggested_rule=action_data.get("suggested_rule", ""),
+                        )
+                    )
+                return
+
+            text = event.get("text", "")
+            media = event.get("media") or []
 
             try:
                 if media:
