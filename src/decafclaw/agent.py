@@ -964,6 +964,7 @@ class TurnRunner:
                 _archive(self.ctx, synthetic)
                 return _Continue()
 
+        confirm_denied = False
         if isinstance(end_turn_signal, EndTurnConfirm):
             log.info("EndTurnConfirm — making presentation LLM call before confirmation")
             present_response = await _call_llm_with_events(
@@ -1007,11 +1008,12 @@ class TurnRunner:
                 self.history.append({"role": "user", "content": note})
                 self.messages.append({"role": "user", "content": note})
                 end_turn_signal = True
+                confirm_denied = True
 
         if end_turn_signal:
             log.info("Tool signalled end_turn — making final no-tools LLM call")
             final_messages = list(self.messages)
-            if not (final_messages and final_messages[-1].get("content", "").startswith("[User selected '")):
+            if not confirm_denied:
                 final_messages.append(
                     {
                         "role": "user",

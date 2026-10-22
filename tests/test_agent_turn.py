@@ -594,9 +594,66 @@ async def test_run_agent_turn_end_turn_summary_directive(ctx):
     assert final_call_messages[-1]["role"] == "user"
     assert "All steps are complete. Please provide a concise summary" in final_call_messages[-1]["content"]
 
-    # History must NOT include the synthetic directive
+    # History and archive must NOT include the synthetic directive
     assert all("Please provide a concise summary" not in (m.get("content") or "") for m in history)
     assert len(history) == 4
+    from decafclaw.archive import restore_history
+
+    restored = restore_history(ctx.config, ctx.conv_id)
+    assert all("Please provide a concise summary" not in (m.get("content") or "") for m in restored)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_end_turn_confirm_denied_no_summary_directive(ctx):
+    """When EndTurnConfirm is denied, the denial instruction is passed to the final LLM call
+    without injecting the 'All steps are complete' summary directive (#1092)."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+
+    action = EndTurnConfirm(message="Review plan", approve_label="OK", deny_label="Change plan")
+
+    tool_call_response = _mock_llm_response(
+        content=None,
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "project_submit_plan",
+                    "arguments": "{}",
+                },
+            }
+        ],
+    )
+    presentation_response = _mock_llm_response("Here is the plan for review.")
+    final_response = _mock_llm_response("What would you like changed?")
+
+    captured_calls = []
+
+    async def fake_call_llm(conf, messages, tools, **kwargs):
+        captured_calls.append(list(messages))
+        if len(captured_calls) == 1:
+            return tool_call_response
+        elif len(captured_calls) == 2:
+            return presentation_response
+        return final_response
+
+    async def fake_execute_tool(call_ctx, name, args):
+        return ToolResult(text="Plan submitted.", end_turn=action)
+
+    with (
+        patch("decafclaw.agent.call_llm", side_effect=fake_call_llm),
+        patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool),
+        patch("decafclaw.agent._handle_end_turn_confirm", new_callable=AsyncMock, return_value=False),
+    ):
+        history = []
+        result = await run_agent_turn(ctx, "submit plan", history)
+
+    assert result.text == "What would you like changed?"
+    # Final call (3rd) must NOT contain "All steps are complete"
+    assert len(captured_calls) == 3
+    final_call_messages = captured_calls[2]
+    assert all("All steps are complete" not in (m.get("content") or "") for m in final_call_messages)
+    assert any("[User selected 'Change plan'" in (m.get("content") or "") for m in final_call_messages)
 
 
 @pytest.mark.asyncio
