@@ -46,6 +46,7 @@ from .skills.vault._events import (
     publish_vault_changed,
 )
 from .tags import collect_all_tags
+from .web.bookmarks import KINDS_BY_TARGET, BookmarkStore, validate_bookmark_path
 from .web.workspace_paths import (
     IMAGE_EXTENSIONS,
     detect_kind,
@@ -266,6 +267,24 @@ class VaultTagEntry(BaseModel):
 
 class VaultTagsResponse(BaseModel):
     tags: list[VaultTagEntry]
+
+
+class BookmarkEntry(BaseModel):
+    path: str
+    label: str
+    kind: Literal["file", "dir", "page", "folder"]
+
+
+class BookmarksResponse(BaseModel):
+    files: list[BookmarkEntry]
+    vault: list[BookmarkEntry]
+
+
+class BookmarkAddRequest(BaseModel):
+    target: Literal["files", "vault"]
+    path: str
+    label: str | None = None
+    kind: Literal["file", "dir", "page", "folder"]
 
 
 class VaultCreateRequest(BaseModel):
@@ -1958,6 +1977,79 @@ async def vault_tags(request: Request, username: str) -> JSONResponse:
     ordered = sorted(tag_map.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
     tags = [{"tag": info["display"], "count": info["count"], "pages": info["pages"]} for _, info in ordered]
     return JSONResponse({"tags": tags})
+
+
+@_authenticated
+async def bookmarks_list(request: Request, username: str) -> JSONResponse:
+    """GET /api/bookmarks — the agent's current bookmarks."""
+    config = request.app.state.config
+    data = await BookmarkStore(config).list()
+    return JSONResponse(data)
+
+
+@_authenticated
+async def bookmarks_add(request: Request, username: str) -> JSONResponse:
+    """POST /api/bookmarks — add (or update) a bookmark.
+
+    Body: ``{"target": "files"|"vault", "path": str, "label"?: str,
+    "kind": "file"|"dir"|"page"|"folder"}``. Returns the updated payload.
+    """
+    config = request.app.state.config
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    target = body.get("target")
+    path = body.get("path")
+    label = body.get("label")
+    kind = body.get("kind")
+    if target not in KINDS_BY_TARGET:
+        return JSONResponse({"error": "target must be 'files' or 'vault'"}, status_code=400)
+    if not isinstance(path, str):
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    err = validate_bookmark_path(path)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    if kind not in KINDS_BY_TARGET[target]:
+        return JSONResponse(
+            {"error": f"kind must be one of {list(KINDS_BY_TARGET[target])} for target '{target}'"},
+            status_code=400,
+        )
+    if label is not None and not isinstance(label, str):
+        return JSONResponse({"error": "label must be a string"}, status_code=400)
+    data = await BookmarkStore(config).add(target, path, kind, label)
+    return JSONResponse(data)
+
+
+@_authenticated
+async def bookmarks_delete(request: Request, username: str) -> JSONResponse:
+    """DELETE /api/bookmarks?target=...&path=... — remove a bookmark.
+
+    ``target`` and ``path`` come from the query string; a JSON body with
+    the same keys is accepted as a fallback. Returns the updated payload;
+    404 when the bookmark is not present.
+    """
+    config = request.app.state.config
+    target = request.query_params.get("target")
+    path = request.query_params.get("path")
+    if target is None or path is None:
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            body = None
+        if isinstance(body, dict):
+            target = body.get("target") if target is None else target
+            path = body.get("path") if path is None else path
+    if target not in KINDS_BY_TARGET:
+        return JSONResponse({"error": "target must be 'files' or 'vault'"}, status_code=400)
+    if not path:
+        return JSONResponse({"error": "path query parameter is required"}, status_code=400)
+    data = await BookmarkStore(config).remove(target, path)
+    if data is None:
+        return JSONResponse({"error": "bookmark not found"}, status_code=404)
+    return JSONResponse(data)
 
 
 @_authenticated
@@ -3680,6 +3772,38 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute("/vault/{page:path}", serve_vault_page, methods=["GET"]),
+        APIRoute("/api/bookmarks", bookmarks_list, methods=["GET"], response_model=BookmarksResponse),
+        APIRoute(
+            "/api/bookmarks",
+            bookmarks_add,
+            methods=["POST"],
+            response_model=BookmarksResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": BookmarkAddRequest.model_json_schema()},
+                    },
+                }
+            },
+        ),
+        APIRoute(
+            "/api/bookmarks",
+            bookmarks_delete,
+            methods=["DELETE"],
+            response_model=BookmarksResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "target",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["files", "vault"]},
+                    },
+                    {"name": "path", "in": "query", "required": True, "schema": {"type": "string"}},
+                ]
+            },
+        ),
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
         APIRoute("/api/wiki", vault_list, methods=["GET"]),
         APIRoute("/api/wiki/{page:path}", vault_read, methods=["GET"]),

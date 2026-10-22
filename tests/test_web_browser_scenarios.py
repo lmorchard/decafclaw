@@ -314,6 +314,7 @@ def test_browser_workspace_reads(built_static, chromium, config):
             return filePage._content === 'second browser content' && !filePage._loading;
         }""")
         assert [(request.path, request.query, request.authenticated) for request in scenario.requests] == [
+            ("/api/bookmarks", [], True),
             ("/api/workspace", [("folder", workspace_folder)], True),
             (f"/api/workspace-file/{workspace_rel_path}", [], True),
             ("/api/autocomplete", [("q", "Browser")], True),
@@ -431,6 +432,7 @@ def test_browser_workspace_file_writes(built_static, chromium, config):
             for request in scenario.requests
             if request.method == "GET"
         ] == [
+            ("/api/bookmarks", [], True),
             ("/api/workspace", [("folder", workspace_folder)], True),
             (f"/api/workspace-file/{workspace_rel_path}", [], True),
             (f"/api/workspace-file/{workspace_rel_path}", [], True),
@@ -1005,6 +1007,7 @@ def test_browser_vault_sidebars(built_static, chromium, config):
             for request in scenario.requests
             if request.method == "GET"
         ] == [
+            ("/api/bookmarks", [], True),
             ("/api/vault", [("folder", "agent/pages")], True),
             ("/api/vault/tags", [], True),
             ("/api/vault/recent", [], True),
@@ -1641,6 +1644,7 @@ def test_browser_auth_logout_redirects_guard(built_static, chromium, config):
         assert base + "/api/auth/me" in scenario.failed_requests
         assert set(scenario.failed_requests) <= {
             base + "/api/auth/me",
+            base + "/api/bookmarks",
             base + "/api/vault/agent/pages/Browser%20%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E",
         }, scenario.failed_requests
         scenario.failed_requests.clear()

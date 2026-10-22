@@ -12,6 +12,7 @@ import { renderMarkdown } from '../lib/markdown.js';
 import { encodePagePath } from '../lib/utils.js';
 import { WikiWriteMutex } from '../lib/wiki-page-write-mutex.js';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
+import { isBookmarked, load as loadBookmarks, subscribe as subscribeBookmarks, toggle as toggleBookmark } from '../lib/bookmarks-store.js';
 import './wiki-editor.js';
 import './wiki-metadata.js';
 
@@ -54,6 +55,7 @@ export class WikiPage extends LitElement {
     _modified: { state: true },
     _loading: { state: true },
     _error: { state: true },
+    _bookmarked: { state: true },
     _editing: { state: true },
     _renaming: { state: true },
     _renameValue: { state: true },
@@ -90,6 +92,7 @@ export class WikiPage extends LitElement {
     /** @type {number} */ this._modified = 0;
     this._loading = false;
     /** @type {string} */ this._error = '';
+    /** @type {boolean} */ this._bookmarked = false;
     // Default to edit mode, persisted in localStorage
     this._editing = localStorage.getItem(EDIT_MODE_KEY) !== 'false';
     this._renaming = false;
@@ -102,6 +105,20 @@ export class WikiPage extends LitElement {
   #metaTimer = null;
   /** @type {WikiWriteMutex} */
   #mutex;
+
+  connectedCallback() {
+    super.connectedCallback();
+    // Bookmark toggle in the toolbar (#1086): shared store.
+    this._unsubBookmarks = subscribeBookmarks(snap => {
+      if (this.page) this._bookmarked = isBookmarked('vault', this.page);
+    });
+    void loadBookmarks();
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._unsubBookmarks) this._unsubBookmarks();
+  }
 
   /** @param {Map<string, unknown>} changed */
   willUpdate(changed) {
@@ -124,6 +141,7 @@ export class WikiPage extends LitElement {
     // rather than bailing early is the point: the debounce timer would
     // otherwise fire 600ms later and PUT to whatever page opens next.
     if (this.page) this._fetchPage();
+    if (this.page) this._bookmarked = isBookmarked('vault', this.page);
   }
 
   /** @param {CustomEvent} e */
@@ -366,6 +384,32 @@ export class WikiPage extends LitElement {
     }
   }
 
+
+  // ── Bookmark toggle (#1086) ───────────────────────────────────────────
+  async #togglePageBookmark() {
+    if (!this.page) return;
+    const label = this.page.split('/').pop();
+    try {
+      await toggleBookmark('vault', this.page, 'page', label);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        console.debug('wiki-page: bookmark toggle failed', error.status);
+      } else {
+        console.debug('wiki-page: bookmark toggle failed', error);
+      }
+    }
+  }
+
+  #renderBookmarkBtn() {
+    const title = this._bookmarked ? 'Remove bookmark' : 'Bookmark this page';
+    return html`
+      <button class="wiki-bookmark-btn dc-icon-btn ${this._bookmarked ? 'active' : ''}"
+        @click=${() => void this.#togglePageBookmark()} title=${title} aria-label=${title}>
+        ${this._bookmarked ? '★' : '☆'}
+      </button>
+    `;
+  }
+
   async #deletePage() {
     if (!confirm(`Delete "${this.page}"?`)) return;
     try {
@@ -449,6 +493,7 @@ export class WikiPage extends LitElement {
     const rightButtons = html`
       <button class="wiki-edit-btn dc-icon-btn" @click=${() => this._toggleMode()} title=${modeTitle} aria-label=${modeTitle}>${modeIcon}</button>
       <button class="wiki-delete-btn dc-icon-btn" @click=${() => this.#deletePage()} title="Delete page" aria-label="Delete page">\u{1F5D1}</button>
+      ${this.#renderBookmarkBtn()}
       <a href=${newTabUrl} target="_blank" rel="noopener" class="wiki-open-tab dc-icon-btn" title="Open in new tab" aria-label="Open in new tab">&#8599;</a>
       ${closeBtn}
     `;
