@@ -31,6 +31,7 @@ export class ChatView extends LitElement {
     this._hasMore = false;
     this._loadingMore = false;
     this._savedScrollHeight = 0;
+    this._resizeObserver = null;
   }
 
   connectedCallback() {
@@ -88,11 +89,21 @@ export class ChatView extends LitElement {
         this.#handleLoadMore();
       }
     });
+    if (typeof ResizeObserver !== 'undefined') {
+      this._resizeObserver = new ResizeObserver(() => {
+        if (!this._showScrollBtn) {
+          this.#scrollToBottom();
+        }
+      });
+      this._resizeObserver.observe(this);
+    }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.store?.removeEventListener('change', this._onStoreChange);
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
   }
 
   updated(changedProps) {
@@ -107,6 +118,8 @@ export class ChatView extends LitElement {
   }
 
   #scrollToBottom() {
+    this.scrollTop = this.scrollHeight;
+    this._showScrollBtn = false;
     requestAnimationFrame(() => {
       this.scrollTop = this.scrollHeight;
       this._showScrollBtn = false;
