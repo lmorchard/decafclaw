@@ -42,6 +42,11 @@ describe('workspace generated read callers', () => {
     await vi.waitFor(() => expect(el._folders).toEqual([{ name: 'notes', path: 'notes' }]));
     expect(fetchSpy).toHaveBeenNthCalledWith(
       1,
+      '/api/bookmarks',
+      expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),
+    );
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
       '/api/workspace',
       expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),
     );
@@ -50,7 +55,7 @@ describe('workspace generated read callers', () => {
     await vi.waitFor(() => expect(el._files).toEqual([file]));
     expect(el._folders).toEqual([folder]);
     expect(fetchSpy).toHaveBeenNthCalledWith(
-      2,
+      3,
       '/api/workspace?folder=notes%2F%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F',
       expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),
     );
@@ -60,7 +65,7 @@ describe('workspace generated read callers', () => {
     recent.click();
     await vi.waitFor(() => expect(el._recentFiles).toEqual([file]));
     expect(fetchSpy).toHaveBeenNthCalledWith(
-      3,
+      4,
       '/api/workspace/recent',
       expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),
     );
@@ -69,6 +74,7 @@ describe('workspace generated read callers', () => {
   it('loads and reloads encoded text paths through the generated operation', async () => {
     const path = 'notes/日本語 #?.md';
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ files: [], vault: [] }))
       .mockResolvedValueOnce(jsonResponse({ content: 'first', modified: 10, readonly: true }))
       .mockResolvedValueOnce(jsonResponse({ content: 'second', modified: 20, readonly: true }));
 
@@ -82,8 +88,8 @@ describe('workspace generated read callers', () => {
     await el.reload();
     expect(el._content).toBe('second');
     expect(el._modified).toBe(20);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    for (const call of fetchSpy.mock.calls) {
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    for (const call of fetchSpy.mock.calls.slice(1)) {
       expect(call).toEqual([
         '/api/workspace-file/notes/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F.md',
         expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),

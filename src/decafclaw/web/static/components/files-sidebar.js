@@ -288,7 +288,7 @@ export class FilesSidebar extends LitElement {
       <div class="bookmark-section">
         <div class="bookmark-section-header">\u{1F516} Bookmarks</div>
         ${entries.map(b => html`
-          <div class="conv-item wiki-item bookmark-row" title=${b.path}
+          <div class="bookmark-row" title=${b.path}
             tabindex="0"
             aria-label=${b.kind === 'dir' ? `Open folder ${b.label}` : `Open file ${b.label}`}
             @click=${() => this.#openBookmark(b)}

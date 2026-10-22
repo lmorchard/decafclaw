@@ -30,9 +30,19 @@ function _publish() {
   }
 }
 
-/** @returns {BookmarksPayload} */
+/**
+ * Entries without a non-empty string path are dropped so subscribers can
+ * never see a payload shaped by a different endpoint's response.
+ * @returns {BookmarksPayload}
+ */
 function snapshot() {
-  return _state.data ?? { files: [], vault: [] };
+  const d = _state.data;
+  /** @param {unknown} list */
+  const pick = (list) =>
+    Array.isArray(list)
+      ? list.filter(b => b && typeof b.path === 'string' && b.path)
+      : [];
+  return { files: pick(d?.files), vault: pick(d?.vault) };
 }
 
 /**

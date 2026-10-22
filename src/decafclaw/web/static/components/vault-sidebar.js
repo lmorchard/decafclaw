@@ -258,7 +258,7 @@ export class VaultSidebar extends LitElement {
       <div class="bookmark-section">
         <div class="bookmark-section-header">\u{1F516} Bookmarks</div>
         ${entries.map(b => html`
-          <div class="conv-item wiki-item bookmark-row" title=${b.path}
+          <div class="bookmark-row" title=${b.path}
             tabindex="0"
             aria-label=${b.kind === 'folder' ? `Open folder ${b.label}` : `Open page ${b.label}`}
             @click=${() => this.#openBookmark(b)}
