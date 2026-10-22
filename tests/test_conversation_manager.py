@@ -1098,6 +1098,34 @@ async def test_startup_scan_empty_archive(manager):
     assert recovered == 0
 
 
+@pytest.mark.asyncio
+async def test_startup_scan_resumes_scheduled_wakes(manager):
+    """Startup scan resumes pending scheduled wakes (#1103)."""
+    from datetime import datetime, timedelta, timezone
+
+    from decafclaw.scheduled_wakes import ScheduledWake, save_scheduled_wakes
+
+    conv_id = "conv-wake-startup"
+    now = datetime.now(timezone.utc)
+    future_dt = now + timedelta(seconds=120)
+    wake = ScheduledWake(
+        schedule_id="wake_start_1",
+        conv_id=conv_id,
+        delay_seconds=120,
+        reason="Verify deploy",
+        scheduled_at=now.isoformat(),
+        fire_at=future_dt.isoformat(),
+        fire_at_ts=future_dt.timestamp(),
+        metadata={},
+    )
+    save_scheduled_wakes(manager.config, conv_id, [wake])
+
+    await manager.startup_scan()
+    assert "wake_start_1" in manager.scheduled_wakes._tasks
+
+    await manager.shutdown()
+
+
 # -- Workflow startup recovery -------------------------------------------------
 
 

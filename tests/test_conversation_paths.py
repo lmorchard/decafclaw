@@ -178,3 +178,11 @@ def test_last_request_path(tmp_path):
     cfg = _cfg(tmp_path)
     p = last_request_path(cfg, "conv-123")
     assert p == conversations_root(cfg) / "conv-123" / "last_request.json"
+
+
+def test_scheduled_wakes_path(tmp_path):
+    from decafclaw.conversation_paths import scheduled_wakes_path
+
+    cfg = _cfg(tmp_path)
+    p = scheduled_wakes_path(cfg, "conv-123")
+    assert p == conversations_root(cfg) / "conv-123" / "scheduled_wakes.json"

@@ -443,6 +443,10 @@ class ConversationManager:
         self._wake_max_per_window = bg.wake_max_per_window if bg else 20
         self._wake_window_sec = bg.wake_window_sec if bg else 60
 
+        from .scheduled_wakes import ScheduledWakeManager
+
+        self.scheduled_wakes = ScheduledWakeManager(self.config, self)
+
     def _get_or_create(self, conv_id: str) -> ConversationState:
         """Get existing conversation state or create a new one."""
         if conv_id not in self._conversations:
@@ -1112,6 +1116,8 @@ class ConversationManager:
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+
+        await self.scheduled_wakes.shutdown()
 
     def get_state(self, conv_id: str) -> ConversationState | None:
         """Get current conversation state, or None if not tracked."""
@@ -2096,6 +2102,9 @@ class ConversationManager:
                 # We can't await _drain_pending directly in a synchronous context,
                 # but startup_scan is async!
                 await self._drain_pending(state)
+
+        # Phase 4: Resume pending scheduled wakes (#1103)
+        await self.scheduled_wakes.startup_scan()
 
         return recovered
 

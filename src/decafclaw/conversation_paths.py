@@ -31,6 +31,7 @@ SIDECAR_FILENAMES: tuple[tuple[str, str], ...] = (
     (".skills.json", "skills.json"),
     (".skill_data.json", "skill_data.json"),
     (".vault_grants.json", "vault_grants.json"),
+    (".scheduled_wakes.json", "scheduled_wakes.json"),
 )
 
 
@@ -107,3 +108,8 @@ def delete_conversation_files(config, conv_id: str) -> None:
 def last_request_path(config, conv_id: str) -> Path:
     """Resolve the last LLM request sidecar at conversations/{conv_id}/last_request.json."""
     return sidecar_path(config, conv_id, "last_request.json")
+
+
+def scheduled_wakes_path(config, conv_id: str) -> Path:
+    """Resolve the scheduled wakes sidecar at conversations/{conv_id}/scheduled_wakes.json."""
+    return sidecar_path(config, conv_id, "scheduled_wakes.json")
