@@ -692,4 +692,28 @@ describe('wiki-editor wiki-link popover', () => {
 
     expect(el._linkEdit).toBe(before); // still open — no close/reopen
   });
+
+  it('clamps popover left to margin on a narrow viewport', async () => {
+    setupFixture(el, schema, { target: 'Target', display: 'Display' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+
+    vi.spyOn(link, 'getBoundingClientRect').mockReturnValue(/** @type {DOMRect} */ ({
+      left: 100,
+      right: 150,
+      top: 50,
+      bottom: 70,
+      width: 50,
+      height: 20,
+    }));
+    const innerWidthSpy = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(320);
+
+    try {
+      await openPopover(el, link);
+      expect(el._linkEdit).not.toBeNull();
+      // On 320px viewport with LINK_EDIT_MARGIN = 8, left clamps to 8
+      expect(el._linkEdit.left).toBe(8);
+    } finally {
+      innerWidthSpy.mockRestore();
+    }
+  });
 });

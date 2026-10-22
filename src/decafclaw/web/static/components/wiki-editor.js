@@ -625,8 +625,9 @@ export class WikiEditor extends LitElement {
     // text itself, which is what the field should show.
     const target = link.getAttribute('data-wiki-page') || display;
     const rect = link.getBoundingClientRect();
+    const popoverWidth = Math.min(LINK_EDIT_WIDTH, Math.max(0, window.innerWidth - LINK_EDIT_MARGIN * 2));
     const left = Math.max(LINK_EDIT_MARGIN,
-      Math.min(rect.left, window.innerWidth - LINK_EDIT_WIDTH - LINK_EDIT_MARGIN));
+      Math.min(rect.left, window.innerWidth - popoverWidth - LINK_EDIT_MARGIN));
     let top = rect.bottom + LINK_EDIT_GAP;
     if (top + LINK_EDIT_ESTIMATED_HEIGHT > window.innerHeight) {
       top = Math.max(LINK_EDIT_MARGIN, rect.top - LINK_EDIT_ESTIMATED_HEIGHT - LINK_EDIT_GAP);
