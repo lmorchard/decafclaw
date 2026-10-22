@@ -325,26 +325,25 @@ class ScheduledWakeManager:
         return recovered
 
     async def startup_scan(self) -> int:
-        """Scan all conversation sidecars for pending scheduled wakes and resume them.
+        """Scan all conversation files in data/{agent_id}/scheduled_wakes/ and resume them.
 
         Wakes whose fire time has already passed while offline are dispatched immediately.
         Returns the number of resumed timers.
         """
-        convs_dir = (self.config.workspace_path / "conversations").resolve()
-        if not convs_dir.exists():
+        wakes_dir = (self.config.agent_path / "scheduled_wakes").resolve()
+        if not wakes_dir.exists():
             return 0
 
         recovered = 0
         try:
-            children = sorted(convs_dir.iterdir())
+            files = sorted(wakes_dir.glob("*.json"))
         except OSError as exc:
-            log.warning("Failed to list conversations dir for scheduled wakes scan: %s", exc)
+            log.warning("Failed to list scheduled_wakes dir for scan: %s", exc)
             return 0
 
-        for child in children:
-            if not child.is_dir():
-                continue
-            recovered += await self.startup_scan_conversation(child.name)
+        for file in files:
+            conv_id = file.stem
+            recovered += await self.startup_scan_conversation(conv_id)
 
         if recovered:
             log.info("Startup scan: resumed %d scheduled wake timer(s)", recovered)

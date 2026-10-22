@@ -35,6 +35,11 @@
   1. Included originating `conv_id` in fallback `confirmation_request` event bus payload so un-subscribed / recovered wake confirmations can be properly resolved.
   2. Forwarded `tool_media_uploaded_fallback` events to the event bus when no conversation subscriber is live, and handled them in `MattermostClient`.
   3. Added conversation-scoped wake timer recovery in `interactive_terminal.py` upon launch and shutdown cleanup on exit.
+- Applied higher-level architectural redesign per user decision:
+  1. Moved persistent scheduled wake storage outside the agent-writable workspace to `data/{agent_id}/scheduled_wakes/{conv_id}.json` (scoped per-conversation). Enforced trust boundary: workspace file tools cannot read or forge scheduled wakes.
+  2. Classified wake turns as unattended (`background_wake` in `UNATTENDED_TASK_MODES` and `request_confirmation` fails-fast when `is_unattended=True`). Auto-approvals (allow-patterns and aux-LLM auto-approvals) proceed as normal; dangerous tools fail-fast rather than stalling unattended conversations or competing for terminal stdin.
+  3. Simplified wake timer recovery to scan `data/{agent_id}/scheduled_wakes/*.json` directly.
+
 
 
 

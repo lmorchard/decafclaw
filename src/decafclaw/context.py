@@ -216,7 +216,7 @@ class Context:
     # timeout (or indefinitely) and is then synthesized into a denial. Deliberately NOT
     # `task_mode != ""` — child_agent inherits the parent's request_confirmation,
     # so a child of an interactive turn does have someone who can answer.
-    UNATTENDED_TASK_MODES = frozenset({"heartbeat", "scheduled"})
+    UNATTENDED_TASK_MODES = frozenset({"heartbeat", "scheduled", "background_wake"})
 
     @property
     def is_unattended(self) -> bool:

@@ -104,6 +104,14 @@ def delete_conversation_files(config, conv_id: str) -> None:
             except OSError as exc:
                 log.warning("Failed to remove legacy sidecar %s: %s", p, exc)
 
+    if hasattr(config, "agent_path"):
+        wake_file = scheduled_wakes_path(config, conv_id)
+        if wake_file.exists():
+            try:
+                wake_file.unlink()
+            except OSError as exc:
+                log.warning("Failed to remove scheduled wakes file %s: %s", wake_file, exc)
+
 
 def last_request_path(config, conv_id: str) -> Path:
     """Resolve the last LLM request sidecar at conversations/{conv_id}/last_request.json."""
@@ -111,5 +119,10 @@ def last_request_path(config, conv_id: str) -> Path:
 
 
 def scheduled_wakes_path(config, conv_id: str) -> Path:
-    """Resolve the scheduled wakes sidecar at conversations/{conv_id}/scheduled_wakes.json."""
-    return sidecar_path(config, conv_id, "scheduled_wakes.json")
+    """Resolve the per-conversation scheduled wakes file under the admin data dir:
+    data/{agent_id}/scheduled_wakes/{conv_id}.json.
+    Stored outside the agent-writable workspace to prevent unauthorized wake scheduling or forgery (#1119).
+    """
+    base = (config.agent_path / "scheduled_wakes").resolve()
+    safe = _safe_conv_id(conv_id)
+    return base / f"{safe}.json"

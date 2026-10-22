@@ -231,6 +231,19 @@ async def test_request_confirmation_timeout(manager):
 
 
 @pytest.mark.asyncio
+async def test_request_confirmation_fails_fast_on_unattended_turn(ctx):
+    """Tools requesting confirmation during unattended turns fail fast with denial (#1119)."""
+    from decafclaw.tools.confirmation import request_confirmation
+
+    ctx.task_mode = "background_wake"
+    assert ctx.is_unattended is True
+
+    result = await request_confirmation(ctx, "shell", "rm -rf /", "Allow delete?")
+    assert result["approved"] is False
+    assert "interactive confirmations are not available on unattended turns" in result["reason"]
+
+
+@pytest.mark.asyncio
 async def test_confirmation_emits_request_event(manager):
     conv_id = "conv-1"
     events = []

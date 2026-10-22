@@ -155,7 +155,7 @@ Per-conversation step-by-step execution loop. Storage is markdown checkboxes at 
 
 ## Turn Scheduling (`tools/schedule_tools.py`)
 
-Tools for scheduling asynchronous wake turns in long-running workflows (#1103). Triggers an autonomous wake turn (`TurnKind.WAKE`) in the current conversation after a specified delay without blocking the active turn. State is persisted in `{workspace}/conversations/{conv_id}/scheduled_wakes.json` and resumes across server restarts.
+Tools for scheduling asynchronous wake turns in long-running workflows (#1103). Triggers an autonomous wake turn (`TurnKind.WAKE`) in the current conversation after a specified delay without blocking the active turn. State is persisted per-conversation in `data/{agent_id}/scheduled_wakes/{conv_id}.json` outside the agent-writable workspace, and resumes across server restarts. Wakes run as unattended turns (`is_unattended = True`), executing automated/allow-listed commands while failing-fast on interactive confirmations.
 
 | Tool | Always | What it does |
 |------|:------:|--------------|
