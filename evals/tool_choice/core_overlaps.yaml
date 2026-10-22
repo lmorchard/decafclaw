@@ -466,7 +466,7 @@
 # -- shell_background_start vs shell / wait / schedule_turn (#1095, #1103) ------
 
 - name: background-start-vs-shell-long-runner
-  scenario: "Start the local development web server and file watcher in the background so it stays running while we work."
+  scenario: "Start the local development web server 'npm run dev' in the background so it stays running while we work."
   expected: shell_background_start
   near_miss: [shell]
   notes: |
