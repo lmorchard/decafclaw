@@ -1341,6 +1341,7 @@ class TurnRunner:
 
             critique_msg = {
                 "role": "user",
+                "source": "reflection_retry",
                 "content": (
                     "[reflection] Your previous response may not fully "
                     "address the user's request.\n"

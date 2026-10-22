@@ -191,14 +191,14 @@ def build_prior_turn_summary(
 
     prior = history[:turn_start_index]
 
-    # Find turn boundaries (indices of real user messages, not reflection
-    # critiques and not in-flight synthetic widget responses).
+    # Find turn boundaries (indices of real user messages, not synthetic
+    # responses like widget responses, reflection critiques, or system updates).
     turn_starts = [
         i
         for i, msg in enumerate(prior)
         if msg.get("role") == "user"
-        and msg.get("source") != "widget_response"
-        and not str(msg.get("content", "")).startswith("[reflection]")
+        and msg.get("source") not in ("widget_response", "reflection_retry", "system_update")
+        and not str(msg.get("content", "")).startswith(("[reflection]", "[System Update:"))
     ]
     if not turn_starts:
         return ""

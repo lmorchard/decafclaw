@@ -49,22 +49,34 @@ MAX_MESSAGE_CHARS = 400
 # attempt already started or completed. The check-and-reserve below is sync
 # (no await), so it is atomic within the event loop.
 _attempted: dict[str, set[int]] = {}
+# Highest cadence point completed for each conversation. Out-of-order
+# results from older cadence attempts are discarded (#1132).
+_latest_cadence: dict[str, int] = {}
 # conv_ids whose turn count has passed the last cadence point: no later
 # turn can ever be due, so skip the archive read entirely. Per-process;
 # a restart clears the sentinel, which bounds the residual cost.
 _exhausted: set[str] = set()
 
+_SYNTHETIC_SOURCES = {"widget_response", "reflection_retry", "system_update"}
+_SYNTHETIC_PREFIXES = ("[reflection]", "[System Update:")
+
+
+def is_synthetic_user_message(msg: dict) -> bool:
+    """Return True if ``msg`` is a synthetic user-role message from the runtime."""
+    if msg.get("source") in _SYNTHETIC_SOURCES:
+        return True
+    content = str(msg.get("content", "")).strip()
+    return content.startswith(_SYNTHETIC_PREFIXES)
+
 
 def count_user_turns(config, conv_id: str) -> int:
-    """Number of user turns in the conversation archive.
+    """Number of actual user turns in the conversation archive.
 
-    Widget responses (``source: "widget_response"``) are synthetic user-role
-    messages injected by the input-widget pause, not real user turns, so the
-    cadence stays aligned with actual user turns (#1072).
+    Synthetic user-role messages injected by the runtime (widget responses,
+    reflection retries, mid-conversation system updates) are excluded so the
+    cadence stays aligned with actual user turns (#1072, #1132).
     """
-    return sum(
-        1 for m in read_archive(config, conv_id) if m.get("role") == "user" and m.get("source") != "widget_response"
-    )
+    return sum(1 for m in read_archive(config, conv_id) if m.get("role") == "user" and not is_synthetic_user_message(m))
 
 
 def _history_text(config, conv_id: str) -> str:
@@ -73,6 +85,8 @@ def _history_text(config, conv_id: str) -> str:
     for m in read_archive(config, conv_id)[-MAX_HISTORY_MESSAGES:]:
         role = m.get("role")
         if role not in ("user", "assistant"):
+            continue
+        if role == "user" and is_synthetic_user_message(m):
             continue
         content = (m.get("content") or "").strip()
         if not content:
@@ -150,6 +164,14 @@ async def maybe_auto_title(config, conv_id: str, event_bus) -> None:
             _exhausted.add(conv_id)
 
         title = await _generate_title(config, conv_id)
+        if turns < _latest_cadence.get(conv_id, 0):
+            # Superseded by a newer cadence that already resolved (#1132).
+            return
+        _latest_cadence[conv_id] = max(_latest_cadence.get(conv_id, 0), turns)
+
+        conv = index.get(conv_id)
+        if conv is None or conv.custom_title:
+            return
         if not title or not _differs(conv.title, title):
             return
 

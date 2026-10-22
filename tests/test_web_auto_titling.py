@@ -25,9 +25,11 @@ from decafclaw.web.conversations import ConversationIndex
 def _reset_dedup():
     auto_titling._attempted.clear()
     auto_titling._exhausted.clear()
+    auto_titling._latest_cadence.clear()
     yield
     auto_titling._attempted.clear()
     auto_titling._exhausted.clear()
+    auto_titling._latest_cadence.clear()
 
 
 def _seed(config, conv_id: str, user_turns: int) -> None:
@@ -292,6 +294,129 @@ async def test_widget_response_does_not_reach_cadence(config, stub_llm):
     assert index.get(conv.conv_id).title == "Opening scaffolding message"
 
 
+@pytest.mark.asyncio
+async def test_synthetic_messages_excluded_from_turn_count(config, stub_llm):
+    """Reflection retries and system updates (both marked with source and
+    legacy unmarked) do not count as user turns (#1132)."""
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Opening scaffolding message")
+    _seed(config, conv.conv_id, 1)
+
+    # 1 real user turn + marked reflection retry = 1 turn (not 2)
+    append_message(
+        config,
+        conv.conv_id,
+        {"role": "user", "source": "reflection_retry", "content": "[reflection] Try again"},
+    )
+    # Marked system update
+    append_message(
+        config,
+        conv.conv_id,
+        {"role": "user", "source": "system_update", "content": "[System Update: tools changed]"},
+    )
+    # Legacy unmarked reflection
+    append_message(
+        config,
+        conv.conv_id,
+        {"role": "user", "content": "[reflection] Legacy critique"},
+    )
+    # Legacy unmarked system update
+    append_message(
+        config,
+        conv.conv_id,
+        {"role": "user", "content": "[System Update: prompt changed]"},
+    )
+
+    stub_llm.response = {"content": "Should not apply"}
+    await maybe_auto_title(config, conv.conv_id, EventBus())
+
+    assert stub_llm == []
+    assert index.get(conv.conv_id).title == "Opening scaffolding message"
+
+    # Now add a 2nd real turn; now count is 2 and cadence fires
+    _seed(config, conv.conv_id, 1)
+    stub_llm.response = {"content": "Real turn 2 title"}
+    await maybe_auto_title(config, conv.conv_id, EventBus())
+
+    assert len(stub_llm) == 1
+    assert index.get(conv.conv_id).title == "Real turn 2 title"
+
+
+def test_synthetic_messages_excluded_from_history_text(config):
+    """Synthetic runtime messages are omitted from the history summary
+    passed to the titling prompt (#1132)."""
+    conv_id = "web-alice-00000000"
+    append_message(config, conv_id, {"role": "user", "content": "Real prompt"})
+    append_message(config, conv_id, {"role": "assistant", "content": "Assistant answer"})
+    append_message(
+        config,
+        conv_id,
+        {"role": "user", "source": "reflection_retry", "content": "[reflection] Critique"},
+    )
+    append_message(
+        config,
+        conv_id,
+        {"role": "user", "source": "system_update", "content": "[System Update: info]"},
+    )
+    append_message(
+        config,
+        conv_id,
+        {"role": "user", "source": "widget_response", "content": "button clicked"},
+    )
+
+    history = auto_titling._history_text(config, conv_id)
+    assert "Real prompt" in history
+    assert "Assistant answer" in history
+    assert "[reflection]" not in history
+    assert "[System Update:" not in history
+    assert "button clicked" not in history
+
+
+@pytest.mark.asyncio
+async def test_superseded_older_cadence_discarded_when_resolved_out_of_order(config, monkeypatch):
+    """If a titling request for turn 15 finishes after a request for turn 20,
+    the turn 15 result is discarded rather than overwriting the newer title (#1132)."""
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Opening scaffolding message")
+    bus, events = _bus_with_recorder()
+
+    _seed(config, conv.conv_id, 15)
+
+    turn_15_paused = asyncio.Event()
+    turn_15_continue = asyncio.Event()
+
+    async def fake_call_llm(cfg, messages, **kwargs):
+        if not turn_15_paused.is_set():
+            turn_15_paused.set()
+            await turn_15_continue.wait()
+            return {"content": "Turn 15 Title"}
+        return {"content": "Turn 20 Title"}
+
+    monkeypatch.setattr("decafclaw.llm.call_llm", fake_call_llm)
+
+    # Launch turn 15 titling in background
+    task_15 = asyncio.create_task(maybe_auto_title(config, conv.conv_id, bus))
+    await turn_15_paused.wait()
+
+    # Advance conversation to turn 20 while turn 15 is paused
+    _seed(config, conv.conv_id, 5)
+
+    # Run turn 20 titling to completion
+    await maybe_auto_title(config, conv.conv_id, bus)
+
+    assert index.get(conv.conv_id).title == "Turn 20 Title"
+    assert len(events) == 1
+    assert events[0]["title"] == "Turn 20 Title"
+
+    # Now let turn 15 finish
+    turn_15_continue.set()
+    await task_15
+
+    # Title must still be Turn 20 Title, and no superseded event published
+    assert index.get(conv.conv_id).title == "Turn 20 Title"
+    assert len(events) == 1
+
+
 # -- title normalization --------------------------------------------------------
 
 
@@ -380,3 +505,38 @@ async def test_conv_renamed_forwarder_filters_by_user(config):
     await forward({"type": "conv_renamed", "conv_id": "system-20260101-000000", "title": "System", "updated_at": "t3"})
 
     assert sent == [{"type": "conv_renamed", "conv_id": "web-alice-12345678", "title": "Mine", "updated_at": "t1"}]
+
+
+@pytest.mark.asyncio
+async def test_conv_renamed_forwarder_colliding_usernames(config):
+    """A socket for 'alice' must never receive events for 'alice-team' (#1132)."""
+    alice_sent = []
+    team_sent = []
+
+    async def alice_ws(msg):
+        alice_sent.append(msg)
+
+    async def team_ws(msg):
+        team_sent.append(msg)
+
+    alice_forward = websocket._make_conv_renamed_forwarder(alice_ws, "alice")
+    team_forward = websocket._make_conv_renamed_forwarder(team_ws, "alice-team")
+
+    team_event = {
+        "type": "conv_renamed",
+        "conv_id": "web-alice-team-12345678",
+        "title": "Team Secret Discussion",
+        "updated_at": "t1",
+    }
+    await alice_forward(team_event)
+    await team_forward(team_event)
+
+    assert alice_sent == []
+    assert team_sent == [
+        {
+            "type": "conv_renamed",
+            "conv_id": "web-alice-team-12345678",
+            "title": "Team Secret Discussion",
+            "updated_at": "t1",
+        }
+    ]

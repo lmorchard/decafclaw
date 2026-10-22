@@ -13,7 +13,7 @@ from decafclaw.archive import append_message
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.web.auth import create_token
-from decafclaw.web.conversations import ConversationIndex, ConversationMeta
+from decafclaw.web.conversations import ConversationIndex, ConversationMeta, is_web_conv_for_user
 
 # -- ConversationIndex tests ---------------------------------------------------
 
@@ -25,6 +25,25 @@ def test_create_conversation(config):
     assert conv.conv_id.startswith("web-alice-")
     assert conv.title == "Test chat"
     assert conv.user_id == "alice"
+
+
+def test_is_web_conv_for_user():
+    # Exact owner match
+    assert is_web_conv_for_user("web-alice-12345678", "alice")
+    assert is_web_conv_for_user("web-alice-team-12345678", "alice-team")
+    assert is_web_conv_for_user("web-alice-12345678--child-abcdef12", "alice")
+    assert is_web_conv_for_user("web-alice-team-12345678--child-abcdef12", "alice-team")
+
+    # Username prefix collision guard (#1132)
+    assert not is_web_conv_for_user("web-alice-team-12345678", "alice")
+    assert not is_web_conv_for_user("web-alice-team-12345678--child-abcdef12", "alice")
+    assert not is_web_conv_for_user("web-alice-12345678", "alice-team")
+
+    # Invalid / non-web shapes
+    assert not is_web_conv_for_user("", "alice")
+    assert not is_web_conv_for_user("web-alice", "alice")
+    assert not is_web_conv_for_user("schedule-daily-20260101-000000", "alice")
+    assert not is_web_conv_for_user("web-alice-12345678", "")
 
 
 def test_create_default_title(config):

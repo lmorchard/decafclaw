@@ -78,3 +78,17 @@
   synthetics; docs/web-ui.md gained the auto-titling / custom_title /
   conv_renamed section; +5 tests in test_web_auto_titling.py. Notes 1 and 4
   settled by the coordinator (no code change). Re-pushed to PR #1132.
+- 2026-10-22: review feedback addressed for PR #1132:
+  1. Prefix collision fix: replaced `.startswith(f"web-{username}-")` with
+     `is_web_conv_for_user(conv_id, username)` parsing full username portion
+     without suffix, preventing cross-user event leakage between colliding
+     usernames like `alice` and `alice-team`.
+  2. Synthetic messages excluded from turn count: marked reflection retries
+     (`source: "reflection_retry"`) in `agent.py` and system update notices
+     (`source: "system_update"`) in `context_composer.py`; excluded synthetic
+     user messages from `count_user_turns` and `_history_text` in `auto_titling.py`.
+  3. Out-of-order cadence protection: added `_latest_cadence` tracking in
+     `auto_titling.py` to discard superseded older cadence results when
+     cadence passes resolve in reverse order.
+  4. Added regression tests across `test_web_auto_titling.py`,
+     `test_web_conversations.py`, and `test_web_websocket_conversation_status.py`.
