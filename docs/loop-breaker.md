@@ -289,7 +289,8 @@ nested dataclass's env vars if its JSON key is present:
     "enabled": true,
     "repeat_threshold": 3,
     "error_threshold": 4,
-    "error_window": 6
+    "error_window": 6,
+    "exempt_tools": ["wait", "shell_background_status"]
   }
 }
 ```
@@ -300,11 +301,15 @@ nested dataclass's env vars if its JSON key is present:
 | `repeat_threshold` | int | `3` | `LOOP_BREAKER_REPEAT_THRESHOLD` |
 | `error_threshold` | int | `4` | `LOOP_BREAKER_ERROR_THRESHOLD` |
 | `error_window` | int | `6` | `LOOP_BREAKER_ERROR_WINDOW` |
+| `exempt_tools` | list[str] / tuple | `["wait", "shell_background_status"]` | `LOOP_BREAKER_EXEMPT_TOOLS` |
 
 Defaults sit slightly above "a single legitimate retry" so normal retry
-behavior doesn't trip the breaker. Set `enabled: false` to disable the
-mechanism entirely (the `AGENT.md` prompt guardrails still apply either
-way).
+behavior doesn't trip the breaker. Polling and sleep tools in `exempt_tools`
+(default `wait` and `shell_background_status`, #1107) are exempt from repeat-argument
+trip detection so long build checks or sleep intervals don't cause false positives;
+errors on exempt tools still accumulate toward the error surge threshold. Set
+`enabled: false` to disable the mechanism entirely (the `AGENT.md` prompt guardrails
+still apply either way).
 
 `error_threshold` is used twice by the error signal — as the size of the
 rolling `error_window` slice that must be errors (density) *and* as the

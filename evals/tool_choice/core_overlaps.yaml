@@ -463,4 +463,33 @@
     update_system_prompt only rewrites the two prompt sections
     (USER.md / CUSTOM.md) — a named file path is not a section.
 
+# -- shell_background_start vs shell / wait / schedule_turn (#1095, #1103) ------
+
+- name: background-start-vs-shell-long-runner
+  scenario: "Start the local development web server and file watcher in the background so it stays running while we work."
+  expected: shell_background_start
+  near_miss: [shell]
+  notes: |
+    A long-running daemon/server or watcher that must stay running without blocking
+    the turn is shell_background_start. A regular shell call would block until
+    timeout or hang the session.
+
+- name: wait-vs-schedule-turn-short-poll
+  scenario: "We just kicked off a test build in the background. Wait 10 seconds before we check its output."
+  expected: wait
+  near_miss: [schedule_turn, shell]
+  notes: |
+    A brief in-turn pause of 10 seconds to wait for immediate output is wait(seconds=10).
+    schedule_turn is for multi-minute or cross-turn delays where the agent yields the turn cleanly.
+
+- name: schedule-turn-vs-wait-long-check
+  scenario: "The full test matrix takes 20 minutes to compile and run. Schedule a check to wake up and inspect the results in 1200 seconds instead of blocking this turn."
+  expected: schedule_turn
+  near_miss: [wait, shell_background_start]
+  notes: |
+    A multi-minute delay (1200s / 20 mins) that explicitly wants to yield the turn
+    cleanly and wake up later is schedule_turn. wait() caps at 300 seconds and
+    would block the interactive session.
+
+
 

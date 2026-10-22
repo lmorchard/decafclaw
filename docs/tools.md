@@ -10,7 +10,7 @@ Tools marked **critical** (✓) are always sent to the LLM — these are the min
 |------|:------:|--------------|
 | `web_fetch` | ✓ | Fetch raw HTML from a URL |
 | `current_time` | ✓ | Get current date and time |
-| `wait` | | Pause the agent for a specified number of seconds |
+| `wait` | | Pause briefly within current turn before checking output (max 300s; exempt from loop-breaker repeat limits; prefer `schedule_turn` for cross-turn delays) |
 | `debug_context` | | Dump current context as JSON file attachments |
 | `context_stats` | | Show token budget breakdown and diagnostics |
 
@@ -152,6 +152,16 @@ Per-conversation step-by-step execution loop. Storage is markdown checkboxes at 
 | `checklist_status` | ✓ | Show current checklist state |
 
 `checklist_create`/`checklist_step_done`/`checklist_abort` also mirror the checklist into the sticky slot above the chat input as a `progress_tracker` widget (fail-open), so the user sees live progress without the agent calling `widget_pin_sticky` directly. The slot clears once all steps are done or on abort. See [widgets.md](widgets.md#progress_tracker-widget).
+
+## Turn Scheduling (`tools/schedule_tools.py`)
+
+Tools for scheduling asynchronous wake turns in long-running workflows (#1103). Triggers an autonomous wake turn (`TurnKind.WAKE`) in the current conversation after a specified delay without blocking the active turn. State is persisted in `{workspace}/conversations/{conv_id}/scheduled_wakes.json` and resumes across server restarts.
+
+| Tool | Always | What it does |
+|------|:------:|--------------|
+| `schedule_turn` | | Schedule a future wake turn in this conversation after a delay (seconds) |
+| `schedule_cancel` | | Cancel a pending scheduled wake turn by schedule_id |
+| `schedule_list` | | List all pending scheduled wake turns for the current conversation |
 
 ## Shell (`tools/shell_tools.py`)
 
