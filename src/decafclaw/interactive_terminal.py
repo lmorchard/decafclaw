@@ -202,6 +202,9 @@ async def run_interactive(ctx: "Context"):
         ctx_arg.channel_name = "interactive"
         ctx_arg.transport = "terminal"
 
+    # Recover pending wake timers for this interactive conversation (#1119 review)
+    await manager.scheduled_wakes.startup_scan_conversation(conv_id)
+
     # Start heartbeat timer
     shutdown_event = asyncio.Event()
     # `config.heartbeat_suppress_ok` (no such attribute) raised AttributeError
@@ -275,4 +278,5 @@ async def run_interactive(ctx: "Context"):
             await heartbeat_task
         except asyncio.CancelledError:
             pass
+        await manager.shutdown()
         await shutdown_mcp()

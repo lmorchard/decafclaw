@@ -737,7 +737,7 @@ class MattermostClient:
 
         async def on_wake_delivery(event):
             event_type = event.get("type", "")
-            if event_type not in ("wake_delivery", "confirmation_request"):
+            if event_type not in ("wake_delivery", "confirmation_request", "tool_media_uploaded_fallback"):
                 return
             if event.get("transport") != "mattermost":
                 return
@@ -753,6 +753,18 @@ class MattermostClient:
                 except asyncio.TimeoutError:
                     log.warning("Mattermost client did not connect within 15s; dropping wake delivery")
                     return
+
+            if event_type == "tool_media_uploaded_fallback":
+                file_ids = event.get("file_ids", [])
+                if file_ids and channel_id:
+                    try:
+                        from .media import MattermostMediaHandler
+
+                        handler = MattermostMediaHandler(self._http, channel_id=channel_id)
+                        await handler.send_with_media(channel_id, "", file_ids, root_id=root_id)
+                    except Exception as e:
+                        log.warning("Failed to deliver uploaded media to Mattermost channel %s: %s", channel_id, e)
+                return
 
             if event_type == "confirmation_request":
                 action_data = event.get("action_data", {})

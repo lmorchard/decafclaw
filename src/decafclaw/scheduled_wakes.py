@@ -299,6 +299,31 @@ class ScheduledWakeManager:
             log.warning("Failed to enqueue wake turn for schedule %s: %s", entry.schedule_id, exc)
             raise
 
+    async def startup_scan_conversation(self, conv_id: str) -> int:
+        """Scan and resume pending scheduled wakes for a specific conversation."""
+        schedules = load_scheduled_wakes(self.config, conv_id)
+        if not schedules:
+            return 0
+
+        recovered = 0
+        now_ts = time.time()
+        for entry in schedules:
+            async with self._lock:
+                if entry.schedule_id in self._tasks:
+                    continue
+                task = asyncio.create_task(self._run_timer(entry))
+                self._tasks[entry.schedule_id] = task
+                recovered += 1
+
+            delay = max(0.0, entry.fire_at_ts - now_ts)
+            log.info(
+                "Startup scan: resumed scheduled wake %s for conv %s (due in %.1fs)",
+                entry.schedule_id,
+                conv_id[:8],
+                delay,
+            )
+        return recovered
+
     async def startup_scan(self) -> int:
         """Scan all conversation sidecars for pending scheduled wakes and resume them.
 
@@ -316,30 +341,10 @@ class ScheduledWakeManager:
             log.warning("Failed to list conversations dir for scheduled wakes scan: %s", exc)
             return 0
 
-        now_ts = time.time()
         for child in children:
             if not child.is_dir():
                 continue
-            conv_id = child.name
-            schedules = load_scheduled_wakes(self.config, conv_id)
-            if not schedules:
-                continue
-
-            for entry in schedules:
-                async with self._lock:
-                    if entry.schedule_id in self._tasks:
-                        continue
-                    task = asyncio.create_task(self._run_timer(entry))
-                    self._tasks[entry.schedule_id] = task
-                    recovered += 1
-
-                delay = max(0.0, entry.fire_at_ts - now_ts)
-                log.info(
-                    "Startup scan: resumed scheduled wake %s for conv %s (due in %.1fs)",
-                    entry.schedule_id,
-                    conv_id[:8],
-                    delay,
-                )
+            recovered += await self.startup_scan_conversation(child.name)
 
         if recovered:
             log.info("Startup scan: resumed %d scheduled wake timer(s)", recovered)

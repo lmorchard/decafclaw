@@ -1561,9 +1561,39 @@ async def test_unthreaded_mattermost_wake_delivers_response(manager, config, mon
 
     deliveries = [e for e in received_events if e.get("type") == "wake_delivery"]
     assert len(deliveries) == 1
+    assert deliveries[0]["conv_id"] == conv_id
     assert deliveries[0]["channel_id"] == conv_id
     assert deliveries[0]["transport"] == "mattermost"
     assert deliveries[0]["text"] == "Top-level wake done"
+
+
+@pytest.mark.asyncio
+async def test_fallback_confirmation_request_includes_conv_id(manager, config):
+    """Fallback confirmation_request published on event bus must include conv_id (#1119 review)."""
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+
+    conv_id = "conv-conf-fallback"
+    state = manager._get_or_create(conv_id)
+    state.last_transport = "mattermost"
+    state.last_channel_id = "ch-conf-88"
+    state.last_thread_id = "th-conf-99"
+
+    received_events = []
+    manager.event_bus.subscribe(lambda e: received_events.append(e))
+
+    req = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls -la"},
+    )
+    # emit with no per-conversation subscribers
+    await manager._emit_confirmation_request(state, conv_id, req)
+
+    confs = [e for e in received_events if e.get("type") == "confirmation_request"]
+    assert len(confs) == 1
+    assert confs[0]["conv_id"] == conv_id
+    assert confs[0]["channel_id"] == "ch-conf-88"
+    assert confs[0]["thread_id"] == "th-conf-99"
+    assert confs[0]["transport"] == "mattermost"
 
 
 @pytest.mark.asyncio

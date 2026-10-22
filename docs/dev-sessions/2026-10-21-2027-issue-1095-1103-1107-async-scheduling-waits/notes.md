@@ -31,6 +31,11 @@
   2. Removed `asyncio.shield` so cancellation of timer tasks cancels in-flight enqueues cleanly without leaving unmanaged tasks.
   3. Rendered confirmation requests and uploaded tool media during display-less / autonomous wake turns in Mattermost.
   4. Rendered autonomous wake completions directly in `interactive_terminal.py` when idle at the prompt.
+- Addressed fourth round of Copilot review feedback:
+  1. Included originating `conv_id` in fallback `confirmation_request` event bus payload so un-subscribed / recovered wake confirmations can be properly resolved.
+  2. Forwarded `tool_media_uploaded_fallback` events to the event bus when no conversation subscriber is live, and handled them in `MattermostClient`.
+  3. Added conversation-scoped wake timer recovery in `interactive_terminal.py` upon launch and shutdown cleanup on exit.
+
 
 
 

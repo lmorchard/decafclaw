@@ -1312,6 +1312,7 @@ class ConversationManager:
             await self.event_bus.publish(
                 {
                     **payload,
+                    "conv_id": conv_id,
                     "channel_id": getattr(state, "last_channel_id", ""),
                     "thread_id": getattr(state, "last_thread_id", ""),
                     "transport": "mattermost",
@@ -1746,6 +1747,18 @@ class ConversationManager:
 
             async def _forward():
                 await self.emit(conv_id, event)
+                if not state.subscribers and getattr(state, "last_transport", "") == "mattermost":
+                    if event.get("type") == "tool_media_uploaded":
+                        await self.event_bus.publish(
+                            {
+                                "type": "tool_media_uploaded_fallback",
+                                "conv_id": conv_id,
+                                "file_ids": event.get("file_ids", []),
+                                "channel_id": getattr(state, "last_channel_id", ""),
+                                "thread_id": getattr(state, "last_thread_id", ""),
+                                "transport": "mattermost",
+                            }
+                        )
 
             task = asyncio.create_task(_forward())
             forward_tasks.add(task)
