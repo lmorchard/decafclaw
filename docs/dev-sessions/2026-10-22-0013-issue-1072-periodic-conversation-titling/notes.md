@@ -7,7 +7,7 @@
 - Branch: issue-1072-periodic-conversation-titling
 - Base: origin/main at ff99d3f23337218287cc8b31f844161cc42ac9ff
 - Port: HTTP_PORT=18996 (added to worktree .env)
-- Next action: implementation COMPLETE — draft PR #1132 open; remaining: independent local review, then `pr ready`.
+- Next action: review corrections applied on the same branch; PR re-published for re-review.
 
 ## Decisions
 
@@ -23,7 +23,13 @@
   branch (fire-and-forget `asyncio.create_task`), which the spec allows ("or
   post-turn hook").
 - Cadence `TITLING_TURNS = (2, 5, 10, 15, 20)` (turn 2, then every 5, up to 20).
-  Turn number = count of `role == "user"` messages in the archive.
+  Turn number = count of `role == "user"` archive messages, excluding
+  `source == "widget_response"` synthetics (real user turns only).
+- Review correction (F1): `maybe_auto_title` now runs the cheap index guards
+  before any archive read (`index.get`, `custom_title` check), and a
+  per-process `_exhausted` sentinel records convs whose last cadence point
+  was attempted (or whose count already passed turn 20) so later turns
+  skip the turn count entirely; the sentinel resets on restart.
 - Model: the configured default model via `decafclaw.llm.call_llm` (default is
   the fast `gemini-2.5-flash`); no hard-coded model name.
 - Dedup: module-level `_attempted: dict[conv_id, set[turn]]`; check-and-reserve
@@ -66,3 +72,9 @@
 - Status: implementation complete, draft PR open (left draft per handoff).
   Next: independent local review (same-model, user-approved exception), then
   `pr ready` (PR left open for the user's review; no merge).
+- 2026-10-22: review corrections (independent local review of head cd0fec6e,
+  same-model, user-approved exception): F1 guard-order + `_exhausted`
+  sentinel in auto_titling.py; turn-count excludes widget_response
+  synthetics; docs/web-ui.md gained the auto-titling / custom_title /
+  conv_renamed section; +5 tests in test_web_auto_titling.py. Notes 1 and 4
+  settled by the coordinator (no code change). Re-pushed to PR #1132.
