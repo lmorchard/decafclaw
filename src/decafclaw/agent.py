@@ -316,6 +316,14 @@ async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause) -
         pending_callbacks,
     )
 
+    if getattr(ctx, "is_unattended", False):
+        log.warning(
+            "WidgetInputPause received on unattended turn (%s) — cannot pause, dropping callback and ending turn",
+            getattr(ctx, "task_mode", ""),
+        )
+        pending_callbacks.pop(signal.tool_call_id, None)
+        return None
+
     request_confirmation = ctx.request_confirmation
     if request_confirmation is None:
         log.warning(

@@ -115,6 +115,7 @@ async def run_all(app_ctx):
             from .mattermost import MattermostClient
 
             mm_client = MattermostClient(config)
+            manager.mm_client = mm_client
             mattermost_task = asyncio.create_task(mm_client.run(app_ctx, shutdown_event, manager=manager))
             log.info("Mattermost client starting")
 
@@ -179,6 +180,9 @@ async def run_all(app_ctx):
 
         schedule_task = asyncio.create_task(run_schedule_timer(config, app_ctx.event_bus, manager, shutdown_event))
         log.info("Schedule timer started")
+
+        # Resume pending scheduled wake timers now that transports are listening (#1119 review)
+        await manager.startup_scan_scheduled_wakes()
 
         # Wait for shutdown
         await shutdown_event.wait()

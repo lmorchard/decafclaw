@@ -231,6 +231,19 @@ async def test_request_confirmation_timeout(manager):
 
 
 @pytest.mark.asyncio
+async def test_request_confirmation_fails_fast_on_unattended_turn(ctx):
+    """Tools requesting confirmation during unattended turns fail fast with denial (#1119)."""
+    from decafclaw.tools.confirmation import request_confirmation
+
+    ctx.task_mode = "background_wake"
+    assert ctx.is_unattended is True
+
+    result = await request_confirmation(ctx, "shell", "rm -rf /", "Allow delete?")
+    assert result["approved"] is False
+    assert "interactive confirmations are not available on unattended turns" in result["reason"]
+
+
+@pytest.mark.asyncio
 async def test_confirmation_emits_request_event(manager):
     conv_id = "conv-1"
     events = []
@@ -1098,6 +1111,34 @@ async def test_startup_scan_empty_archive(manager):
     assert recovered == 0
 
 
+@pytest.mark.asyncio
+async def test_startup_scan_resumes_scheduled_wakes(manager):
+    """Startup scan resumes pending scheduled wakes (#1103)."""
+    from datetime import datetime, timedelta, timezone
+
+    from decafclaw.scheduled_wakes import ScheduledWake, save_scheduled_wakes
+
+    conv_id = "conv-wake-startup"
+    now = datetime.now(timezone.utc)
+    future_dt = now + timedelta(seconds=120)
+    wake = ScheduledWake(
+        schedule_id="wake_start_1",
+        conv_id=conv_id,
+        delay_seconds=120,
+        reason="Verify deploy",
+        scheduled_at=now.isoformat(),
+        fire_at=future_dt.isoformat(),
+        fire_at_ts=future_dt.timestamp(),
+        metadata={},
+    )
+    save_scheduled_wakes(manager.config, conv_id, [wake])
+
+    await manager.startup_scan()
+    assert "wake_start_1" in manager.scheduled_wakes._tasks
+
+    await manager.shutdown()
+
+
 # -- Workflow startup recovery -------------------------------------------------
 
 
@@ -1466,6 +1507,192 @@ async def test_enqueue_turn_wake_kind_defaults_to_background_wake_mode(manager, 
     )
     await future
     assert seen_ctx["task_mode"] == "background_wake"
+
+
+@pytest.mark.asyncio
+async def test_wake_turn_publishes_wake_delivery_when_no_subscribers(manager, config, monkeypatch):
+    """When a WAKE turn finishes without subscribers, fallback event is published (#1119 review)."""
+    from decafclaw.media import ToolResult
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        return ToolResult(text="Build succeeded on wake")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    received_events = []
+    manager.event_bus.subscribe(lambda e: received_events.append(e))
+
+    def setup_channel(ctx):
+        ctx.channel_id = "mm-channel-123"
+        ctx.thread_id = "mm-root-456"
+
+    future = await manager.enqueue_turn(
+        conv_id="c-wake-delivery",
+        kind=TurnKind.WAKE,
+        prompt="wake nudge",
+        context_setup=setup_channel,
+        user_id="user_alice",
+    )
+    await future
+
+    deliveries = [e for e in received_events if e.get("type") == "wake_delivery"]
+    assert len(deliveries) == 1
+    assert deliveries[0]["channel_id"] == "mm-channel-123"
+    assert deliveries[0]["thread_id"] == "mm-root-456"
+    assert deliveries[0]["text"] == "Build succeeded on wake"
+    assert deliveries[0]["user_id"] == "user_alice"
+
+
+@pytest.mark.asyncio
+async def test_unthreaded_mattermost_wake_delivers_response(manager, config, monkeypatch):
+    """Unthreaded Mattermost conversations (conv_id == channel_id) still deliver wake responses (#1119 review)."""
+    from decafclaw.media import ToolResult
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        return ToolResult(text="Top-level wake done")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    received_events = []
+    manager.event_bus.subscribe(lambda e: received_events.append(e))
+
+    conv_id = "mm-top-channel-888"
+
+    def setup_channel(ctx):
+        ctx.channel_id = conv_id
+        ctx.thread_id = ""
+        ctx.transport = "mattermost"
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.WAKE,
+        prompt="wake nudge",
+        context_setup=setup_channel,
+        user_id="user_bob",
+    )
+    await future
+
+    deliveries = [e for e in received_events if e.get("type") == "wake_delivery"]
+    assert len(deliveries) == 1
+    assert deliveries[0]["conv_id"] == conv_id
+    assert deliveries[0]["channel_id"] == conv_id
+    assert deliveries[0]["transport"] == "mattermost"
+    assert deliveries[0]["text"] == "Top-level wake done"
+
+
+@pytest.mark.asyncio
+async def test_fallback_confirmation_request_includes_conv_id(manager, config):
+    """Fallback confirmation_request published on event bus must include conv_id (#1119 review)."""
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+
+    conv_id = "conv-conf-fallback"
+    state = manager._get_or_create(conv_id)
+    state.last_transport = "mattermost"
+    state.last_channel_id = "ch-conf-88"
+    state.last_thread_id = "th-conf-99"
+
+    received_events = []
+    manager.event_bus.subscribe(lambda e: received_events.append(e))
+
+    req = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls -la"},
+    )
+    # emit with no per-conversation subscribers
+    await manager._emit_confirmation_request(state, conv_id, req)
+
+    confs = [e for e in received_events if e.get("type") == "confirmation_request"]
+    assert len(confs) == 1
+    assert confs[0]["conv_id"] == conv_id
+    assert confs[0]["channel_id"] == "ch-conf-88"
+    assert confs[0]["thread_id"] == "th-conf-99"
+    assert confs[0]["transport"] == "mattermost"
+
+
+@pytest.mark.asyncio
+async def test_start_turn_rollback_on_cancelled_status_publication(manager, config, monkeypatch):
+    """If turn start is cancelled during status publication, state.busy is rolled back (#1119 review)."""
+    state = manager._get_or_create("c-cancel-start")
+
+    async def mock_publish_status(conv_id, status):
+        if status == "busy":
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(manager, "_publish_status", mock_publish_status)
+
+    with pytest.raises(asyncio.CancelledError):
+        await manager._start_turn(state, "hello", kind=TurnKind.USER)
+
+    # Must NOT be left stuck in busy=True
+    assert state.busy is False
+    assert state.agent_task is None
+
+
+@pytest.mark.asyncio
+async def test_queued_wake_metadata_restores_context_setup_after_restart(manager, config, monkeypatch):
+    """Inbox recovery of queued wake turns restores routing only from authoritative scheduled_wakes (#1119 review)."""
+    from decafclaw.inbox import _write_inbox
+    from decafclaw.media import ToolResult
+    from decafclaw.scheduled_wakes import ScheduledWake, load_scheduled_wakes, save_scheduled_wakes
+
+    conv_id = "c-inbox-recover"
+    state = manager._get_or_create(conv_id)
+
+    # Save the authoritative schedule record outside the workspace
+    wake = ScheduledWake(
+        schedule_id="wake-123",
+        conv_id=conv_id,
+        delay_seconds=60,
+        reason="Test",
+        scheduled_at="2026-10-22T00:00:00Z",
+        fire_at="2026-10-22T00:01:00Z",
+        fire_at_ts=1792644881.0,
+        channel_id="ch-restored-456",
+        thread_id="th-restored-789",
+        transport="mattermost",
+    )
+    save_scheduled_wakes(config, conv_id, [wake])
+
+    # Simulate an inbox entry queued behind a busy turn before server restarted
+    _write_inbox(
+        config,
+        conv_id,
+        [
+            {
+                "turn_id": "turn-wake-1",
+                "kind": "wake",
+                "text": "Wake prompt",
+                "user_id": "user_alice",
+                "metadata": {
+                    "schedule_id": "wake-123",
+                    "channel_id": "ch-forged-999",  # Attempted override in inbox
+                    "thread_id": "th-forged-999",
+                    "transport": "mattermost",
+                },
+            }
+        ],
+    )
+
+    seen_ctx = {}
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen_ctx["channel_id"] = ctx.channel_id
+        seen_ctx["thread_id"] = ctx.thread_id
+        seen_ctx["transport"] = ctx.transport
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    await manager._drain_pending(state)
+    if state.agent_task:
+        await state.agent_task
+
+    # Verifies routing came from the authoritative wake record, NOT the forged inbox fields
+    assert seen_ctx["channel_id"] == "ch-restored-456"
+    assert seen_ctx["thread_id"] == "th-restored-789"
+    assert seen_ctx["transport"] == "mattermost"
+    # And verifies the queued record was consumed upon turn start
+    assert load_scheduled_wakes(config, conv_id) == []
 
 
 @pytest.mark.asyncio

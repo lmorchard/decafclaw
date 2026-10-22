@@ -55,6 +55,13 @@ class TestDefaultLoad:
             assert f"<{tag}>" in prompt
             assert f"</{tag}>" in prompt
 
+    def test_agent_role_contains_background_lifecycle_guardrails(self, config):
+        prompt, _ = load_system_prompt(config)
+        assert "## Background Operations & Lifecycle" in prompt
+        assert "No conversational fiction about future actions." in prompt
+        assert "shell_background_start" in prompt
+        assert "schedule_turn" in prompt
+
 
 # -- USER.md gating ------------------------------------------------------------
 

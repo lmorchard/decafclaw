@@ -672,10 +672,11 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "shell_background_start",
             "description": (
-                "Start a long-running background process (server, watcher, etc.). "
-                "Returns immediately with a job_id. Use shell_background_status to "
-                "check output, shell_background_stop to terminate. REQUIRES USER "
-                "CONFIRMATION unless the command matches an allow pattern. "
+                "Start a long-running command or background process (server, watcher, build, progress monitor). "
+                "Returns immediately with a job_id. Use when a command runs longer than a few seconds. "
+                "Use shell_background_status to monitor progress and check back on output, "
+                "shell_background_stop to terminate. Pair with wait or schedule_turn to check status without "
+                "busy-looping. REQUIRES USER CONFIRMATION unless the command matches an allow pattern. "
                 "Jobs auto-expire after 10 minutes."
             ),
             "parameters": {
@@ -705,9 +706,9 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "shell_background_status",
             "description": (
-                "Check the status of a background job. Returns running/completed/"
-                "error/expired/stopped status, exit code, and the last 500 lines of "
-                "stdout and stderr."
+                "Check the status and monitor progress of a background job or running build. "
+                "Returns running/completed/error/expired/stopped status, exit code, and the last 500 lines of "
+                "stdout and stderr. Use to watch progress and check back on output."
             ),
             "parameters": {
                 "type": "object",

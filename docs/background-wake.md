@@ -67,6 +67,17 @@ before enqueueing the wake turn:
 `stopped`. Both the archive record and the inbox notification fire regardless
 of whether the wake turn is rate-limited.
 
+## Scheduled Turn Wakes (`schedule_turn`)
+
+In addition to process-exit wakes, agents can schedule future autonomous wake turns on demand via `schedule_turn(delay_seconds=..., reason=...)` ([#1103](https://github.com/lmorchard/decafclaw/issues/1103)).
+
+These also fire as `TurnKind.WAKE` turns:
+- Timers are persisted per-conversation in `data/{agent_id}/scheduled_wakes/{conv_id}.json` outside the workspace, so they survive server restarts and cannot be forged by workspace tools.
+- Wake turns execute in unattended mode (`is_unattended = True`): pre-approved or aux-LLM auto-approved commands execute, while interactive confirmations fail-fast rather than hanging.
+- When the timer expires, `ConversationManager.enqueue_turn(kind=TurnKind.WAKE, ...)` triggers an autonomous wake with the schedule's reason.
+- During the wake turn, the agent can inspect history/output and notify the user, or reply with `BACKGROUND_WAKE_OK` to remain silent if no action is needed.
+- Pending wake timers can be inspected via `schedule_list` and cancelled via `schedule_cancel(schedule_id=...)`.
+
 ## History rendering — tool-result framing
 
 The `background_event` archive role is not a native LLM role. At

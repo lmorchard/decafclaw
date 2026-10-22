@@ -551,3 +551,34 @@ async def test_nudge_self_identifies_as_automated(ctx):
 
     # Attribution: the text says outright that the user didn't write it.
     assert "the user did not send this" in nudge["content"].lower()
+
+
+@pytest.mark.asyncio
+async def test_turn_runner_does_not_trip_on_exempt_polling_tool(ctx):
+    """Calling an exempt tool (like 'wait') repeatedly does not trip the loop breaker (#1107)."""
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 10
+    ctx.config.loop_breaker.repeat_threshold = 2
+    ctx.config.loop_breaker.error_threshold = 99
+
+    wait_call = _mock_llm_response(
+        content=None,
+        tool_calls=[
+            {
+                "id": "tc-wait",
+                "function": {"name": "wait", "arguments": '{"seconds": 1}'},
+            }
+        ],
+    )
+    final_response = _mock_llm_response(content="Build completed successfully.")
+
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.tools.core.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        # 4 identical calls to wait (exceeding repeat_threshold=2), then final response
+        mock_llm.side_effect = [wait_call, wait_call, wait_call, wait_call, final_response]
+        result = await run_agent_turn(ctx, "poll the build", [])
+
+    assert result.text == "Build completed successfully."
+    assert "[loop-breaker]" not in result.text

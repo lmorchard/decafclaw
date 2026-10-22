@@ -394,6 +394,9 @@ class ConversationState:
     # pass an explicit context_setup when enqueuing WAKE turns.
     last_user_id: str = ""
     last_context_setup: Callable | None = None
+    last_channel_id: str = ""
+    last_thread_id: str = ""
+    last_transport: str = ""
 
     # Event stream subscribers: sub_id -> callback
     subscribers: dict[str, Callable] = field(default_factory=dict)
@@ -418,6 +421,7 @@ class ConversationManager:
         self.event_bus = event_bus
         self.confirmation_registry = confirmation_registry or ConfirmationRegistry()
         self.terminal_registry = terminal_registry
+        self.mm_client: Any | None = None
 
         # Workflow user-input resumes via the confirmation recovery path.
         from .workflow.resume import WorkflowUserInputHandler
@@ -442,6 +446,10 @@ class ConversationManager:
         bg = getattr(config, "background", None)
         self._wake_max_per_window = bg.wake_max_per_window if bg else 20
         self._wake_window_sec = bg.wake_window_sec if bg else 60
+
+        from .scheduled_wakes import ScheduledWakeManager
+
+        self.scheduled_wakes = ScheduledWakeManager(self.config, self)
 
     def _get_or_create(self, conv_id: str) -> ConversationState:
         """Get existing conversation state or create a new one."""
@@ -525,9 +533,11 @@ class ConversationManager:
                         len(state.wake_times),
                         self._wake_window_sec,
                     )
+                    setattr(future, "rate_limited", True)
                     future.set_result(None)
                     return future
                 state.wake_times.append(now)
+                setattr(future, "rate_limited", False)
 
             # USER-kind only: circuit breaker check + user_message event emission.
             if kind is TurnKind.USER:
@@ -601,7 +611,10 @@ class ConversationManager:
                     state.steer_event.set()
 
                 log.info("Conv %s busy, queued message", conv_id[:8])
+                setattr(future, "queued", True)
                 return future
+
+            setattr(future, "queued", False)
 
             # Not busy. Start turn immediately.
             # But wait, we appended it to inbox.jsonl. We need to pop it!
@@ -1102,16 +1115,18 @@ class ConversationManager:
         Called during graceful shutdown so running turns can finish
         rather than being abandoned.
         """
+        # Stop timers first so idle conversations cannot spawn new turns during shutdown (#1119 review)
+        await self.scheduled_wakes.shutdown()
+
         tasks = [s.agent_task for s in self._conversations.values() if s.agent_task and not s.agent_task.done()]
-        if not tasks:
-            return
-        log.info("Waiting for %d in-flight agent turn(s)...", len(tasks))
-        done, pending = await asyncio.wait(tasks, timeout=timeout)
-        if pending:
-            log.warning("Shutdown timeout: cancelling %d agent turn(s)", len(pending))
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+        if tasks:
+            log.info("Waiting for %d in-flight agent turn(s)...", len(tasks))
+            done, pending = await asyncio.wait(tasks, timeout=timeout)
+            if pending:
+                log.warning("Shutdown timeout: cancelling %d agent turn(s)", len(pending))
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
 
     def get_state(self, conv_id: str) -> ConversationState | None:
         """Get current conversation state, or None if not tracked."""
@@ -1288,6 +1303,25 @@ class ConversationManager:
         state.confirmation_response = None
         self._promote_next_confirmation_unlocked(state, conv_id)
 
+    async def _emit_confirmation_request(
+        self,
+        state: "ConversationState",
+        conv_id: str,
+        request: ConfirmationRequest,
+    ) -> None:
+        payload = _confirmation_request_payload(request)
+        await self.emit(conv_id, payload)
+        if not state.subscribers and getattr(state, "last_transport", "") == "mattermost":
+            await self.event_bus.publish(
+                {
+                    **payload,
+                    "conv_id": conv_id,
+                    "channel_id": getattr(state, "last_channel_id", ""),
+                    "thread_id": getattr(state, "last_thread_id", ""),
+                    "transport": "mattermost",
+                }
+            )
+
     async def request_confirmation(
         self,
         conv_id: str,
@@ -1348,7 +1382,7 @@ class ConversationManager:
             # transports to render UI (outside the lock — emit awaits
             # subscribers).
             request.timestamp = datetime.now(timezone.utc).isoformat()
-            await self.emit(conv_id, _confirmation_request_payload(request))
+            await self._emit_confirmation_request(state, conv_id, request)
         else:
             # Queued path: wait (no timeout) for promotion. The promote
             # helper will assign state.confirmation_event for our turn
@@ -1381,7 +1415,7 @@ class ConversationManager:
             # caller could null the field (Copilot review on this PR).
             event = queued.active_event
             request.timestamp = datetime.now(timezone.utc).isoformat()
-            await self.emit(conv_id, _confirmation_request_payload(request))
+            await self._emit_confirmation_request(state, conv_id, request)
 
         await self._publish_status(conv_id, "waiting")
         # By either path (active or queued-then-promoted) ``event`` is
@@ -1556,7 +1590,12 @@ class ConversationManager:
         state.busy = True
         state.cancel_event = asyncio.Event()
         state.steer_event = asyncio.Event()
-        await self._publish_status(conv_id, "busy")
+        try:
+            await self._publish_status(conv_id, "busy")
+        except BaseException:
+            state.busy = False
+            state.agent_task = None
+            raise
         # -- Persist / inherit transport context --------------------------------
         # USER turns save their user_id and context_setup so that subsequent
         # WAKE turns (which have no transport of their own) can inherit them.
@@ -1626,6 +1665,11 @@ class ConversationManager:
             else:
                 context_setup(ctx)
 
+        if kind is TurnKind.USER or kind is TurnKind.WAKE:
+            state.last_channel_id = getattr(ctx, "channel_id", "")
+            state.last_thread_id = getattr(ctx, "thread_id", "")
+            state.last_transport = getattr(ctx, "transport", "")
+
         # Reset cancel/partial accounting so this turn starts clean and
         # a subsequent cancel only persists what we actually streamed.
         state.partial_assistant_chunks = []
@@ -1670,6 +1714,22 @@ class ConversationManager:
         # Set up manager-based confirmation on the context so tools
         # route through the manager instead of the event bus
         async def ctx_request_confirmation(request: ConfirmationRequest) -> ConfirmationResponse:
+            if getattr(ctx, "is_unattended", False):
+                action_name = (
+                    request.action_type.value if hasattr(request.action_type, "value") else str(request.action_type)
+                )
+                log.warning(
+                    "Confirmation requested on unattended turn (%s, action: %s); denying immediately",
+                    getattr(ctx, "task_mode", ""),
+                    action_name,
+                )
+                return ConfirmationResponse(
+                    confirmation_id=request.confirmation_id,
+                    approved=False,
+                    data={
+                        "reason": f"Interactive confirmation unavailable on unattended turn ({getattr(ctx, 'task_mode', '')})"
+                    },
+                )
             return await self.request_confirmation(conv_id, request)
 
         ctx.request_confirmation = ctx_request_confirmation
@@ -1706,6 +1766,18 @@ class ConversationManager:
 
             async def _forward():
                 await self.emit(conv_id, event)
+                if not state.subscribers and getattr(state, "last_transport", "") == "mattermost":
+                    if event.get("type") == "tool_media_uploaded":
+                        await self.event_bus.publish(
+                            {
+                                "type": "tool_media_uploaded_fallback",
+                                "conv_id": conv_id,
+                                "file_ids": event.get("file_ids", []),
+                                "channel_id": getattr(state, "last_channel_id", ""),
+                                "thread_id": getattr(state, "last_thread_id", ""),
+                                "transport": "mattermost",
+                            }
+                        )
 
             task = asyncio.create_task(_forward())
             forward_tasks.add(task)
@@ -1789,6 +1861,21 @@ class ConversationManager:
                         "context_limit": self.config.compaction.max_tokens,
                     },
                 )
+                if kind is TurnKind.WAKE and not suppress and not state.subscribers:
+                    transport = getattr(ctx, "transport", "")
+                    if transport == "mattermost" or (ctx.channel_id and ctx.channel_id != conv_id):
+                        await self.event_bus.publish(
+                            {
+                                "type": "wake_delivery",
+                                "conv_id": conv_id,
+                                "channel_id": ctx.channel_id,
+                                "thread_id": getattr(ctx, "thread_id", ""),
+                                "user_id": user_id,
+                                "transport": transport or "mattermost",
+                                "text": response_text,
+                                "media": response_media,
+                            }
+                        )
             except asyncio.CancelledError:
                 log.info("Agent turn cancelled for conv %s", conv_id[:8])
                 result_holder.append(ToolResult(text="[cancelled]", termination_reason="cancelled"))
@@ -2035,6 +2122,34 @@ class ConversationManager:
 
                 tid = q.get("turn_id")
                 inmem = state.inmemory_turn_data.pop(tid, {})
+                drain_setup = inmem.get("context_setup")
+                meta = q.get("metadata") or {}
+                sched_id = meta.get("schedule_id")
+                if sched_id:
+                    # Consume the queued record upon execution (both live and recovered) (#1119 review)
+                    from .scheduled_wakes import load_scheduled_wakes, save_scheduled_wakes
+
+                    schedules = load_scheduled_wakes(self.config, state.conv_id)
+                    sched = next((s for s in schedules if s.schedule_id == sched_id), None)
+                    if sched:
+                        remaining = [s for s in schedules if s.schedule_id != sched.schedule_id]
+                        try:
+                            save_scheduled_wakes(self.config, state.conv_id, remaining)
+                        except OSError:
+                            pass
+
+                        if drain_setup is None:
+                            ch = sched.channel_id
+                            th = sched.thread_id
+                            tr = sched.transport
+
+                            def drain_setup(ctx, _ch=ch, _th=th, _tr=tr):
+                                if _ch:
+                                    ctx.channel_id = _ch
+                                if _th:
+                                    ctx.thread_id = _th
+                                if _tr:
+                                    ctx.transport = _tr
 
                 log.info("Draining queued %s turn for conv %s", q["kind"], state.conv_id[:8])
                 await self._start_turn(
@@ -2042,7 +2157,7 @@ class ConversationManager:
                     q["text"],
                     kind=get_kind(q["kind"]),
                     user_id=q.get("user_id", ""),
-                    context_setup=inmem.get("context_setup"),
+                    context_setup=drain_setup,
                     archive_text=q.get("archive_text", ""),
                     attachments=inmem.get("attachments"),
                     command_ctx=inmem.get("command_ctx"),
@@ -2097,7 +2212,14 @@ class ConversationManager:
                 # but startup_scan is async!
                 await self._drain_pending(state)
 
+        # Phase 4: Resume pending scheduled wakes (#1103)
+        await self.startup_scan_scheduled_wakes()
+
         return recovered
+
+    async def startup_scan_scheduled_wakes(self) -> int:
+        """Scan and resume pending scheduled wakes after transports are ready."""
+        return await self.scheduled_wakes.startup_scan()
 
     async def startup_scan_workflows(self) -> int:
         """Recover workflows in status='running' by re-enqueueing them (#581).
