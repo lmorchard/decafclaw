@@ -1711,6 +1711,22 @@ class ConversationManager:
         # Set up manager-based confirmation on the context so tools
         # route through the manager instead of the event bus
         async def ctx_request_confirmation(request: ConfirmationRequest) -> ConfirmationResponse:
+            if getattr(ctx, "is_unattended", False):
+                action_name = (
+                    request.action_type.value if hasattr(request.action_type, "value") else str(request.action_type)
+                )
+                log.warning(
+                    "Confirmation requested on unattended turn (%s, action: %s); denying immediately",
+                    getattr(ctx, "task_mode", ""),
+                    action_name,
+                )
+                return ConfirmationResponse(
+                    confirmation_id=request.confirmation_id,
+                    approved=False,
+                    data={
+                        "reason": f"Interactive confirmation unavailable on unattended turn ({getattr(ctx, 'task_mode', '')})"
+                    },
+                )
             return await self.request_confirmation(conv_id, request)
 
         ctx.request_confirmation = ctx_request_confirmation
@@ -2105,18 +2121,24 @@ class ConversationManager:
                 inmem = state.inmemory_turn_data.pop(tid, {})
                 drain_setup = inmem.get("context_setup")
                 meta = q.get("metadata") or {}
-                if drain_setup is None and (meta.get("channel_id") or meta.get("thread_id") or meta.get("transport")):
-                    ch = meta.get("channel_id", "")
-                    th = meta.get("thread_id", "")
-                    tr = meta.get("transport", "")
+                if drain_setup is None and meta.get("schedule_id"):
+                    # Validate routing against host-owned authoritative scheduled_wakes (#1119)
+                    from .scheduled_wakes import load_scheduled_wakes
 
-                    def drain_setup(ctx, _ch=ch, _th=th, _tr=tr):
-                        if _ch:
-                            ctx.channel_id = _ch
-                        if _th:
-                            ctx.thread_id = _th
-                        if _tr:
-                            ctx.transport = _tr
+                    schedules = load_scheduled_wakes(self.config, state.conv_id)
+                    sched = next((s for s in schedules if s.schedule_id == meta.get("schedule_id")), None)
+                    if sched:
+                        ch = sched.channel_id
+                        th = sched.thread_id
+                        tr = sched.transport
+
+                        def drain_setup(ctx, _ch=ch, _th=th, _tr=tr):
+                            if _ch:
+                                ctx.channel_id = _ch
+                            if _th:
+                                ctx.thread_id = _th
+                            if _tr:
+                                ctx.transport = _tr
 
                 log.info("Draining queued %s turn for conv %s", q["kind"], state.conv_id[:8])
                 await self._start_turn(

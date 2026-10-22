@@ -1630,12 +1630,28 @@ async def test_start_turn_rollback_on_cancelled_status_publication(manager, conf
 
 @pytest.mark.asyncio
 async def test_queued_wake_metadata_restores_context_setup_after_restart(manager, config, monkeypatch):
-    """Inbox recovery of queued wake turns restores routing from metadata (#1119 review)."""
+    """Inbox recovery of queued wake turns restores routing only from authoritative scheduled_wakes (#1119 review)."""
     from decafclaw.inbox import _write_inbox
     from decafclaw.media import ToolResult
+    from decafclaw.scheduled_wakes import ScheduledWake, save_scheduled_wakes
 
     conv_id = "c-inbox-recover"
     state = manager._get_or_create(conv_id)
+
+    # Save the authoritative schedule record outside the workspace
+    wake = ScheduledWake(
+        schedule_id="wake-123",
+        conv_id=conv_id,
+        delay_seconds=60,
+        reason="Test",
+        scheduled_at="2026-10-22T00:00:00Z",
+        fire_at="2026-10-22T00:01:00Z",
+        fire_at_ts=1792644881.0,
+        channel_id="ch-restored-456",
+        thread_id="th-restored-789",
+        transport="mattermost",
+    )
+    save_scheduled_wakes(config, conv_id, [wake])
 
     # Simulate an inbox entry queued behind a busy turn before server restarted
     _write_inbox(
@@ -1649,8 +1665,8 @@ async def test_queued_wake_metadata_restores_context_setup_after_restart(manager
                 "user_id": "user_alice",
                 "metadata": {
                     "schedule_id": "wake-123",
-                    "channel_id": "ch-restored-456",
-                    "thread_id": "th-restored-789",
+                    "channel_id": "ch-forged-999",  # Attempted override in inbox
+                    "thread_id": "th-forged-999",
                     "transport": "mattermost",
                 },
             }
@@ -1671,6 +1687,7 @@ async def test_queued_wake_metadata_restores_context_setup_after_restart(manager
     if state.agent_task:
         await state.agent_task
 
+    # Verifies routing came from the authoritative wake record, NOT the forged inbox fields
     assert seen_ctx["channel_id"] == "ch-restored-456"
     assert seen_ctx["thread_id"] == "th-restored-789"
     assert seen_ctx["transport"] == "mattermost"
