@@ -122,6 +122,18 @@ var OpenAPI = {
   ENCODE_PATH: void 0
 };
 
+// src/decafclaw/web/static/lib/api-client/models/BookmarkEntry.ts
+var BookmarkEntry;
+((BookmarkEntry2) => {
+  let kind;
+  ((kind2) => {
+    kind2["FILE"] = "file";
+    kind2["DIR"] = "dir";
+    kind2["PAGE"] = "page";
+    kind2["FOLDER"] = "folder";
+  })(kind = BookmarkEntry2.kind || (BookmarkEntry2.kind = {}));
+})(BookmarkEntry || (BookmarkEntry = {}));
+
 // src/decafclaw/web/static/lib/api-client/models/ConfigFileEntry.ts
 var ConfigFileEntry;
 ((ConfigFileEntry2) => {
@@ -1268,6 +1280,48 @@ var DefaultService = class {
   }
   /**
    * Wrapper
+   * @returns BookmarksResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiBookmarksGet() {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/bookmarks"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns BookmarksResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiBookmarksPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/bookmarks",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param target
+   * @param path
+   * @returns BookmarksResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiBookmarksDelete(target, path) {
+    return request2(OpenAPI, {
+      method: "DELETE",
+      url: "/api/bookmarks",
+      query: {
+        "target": target,
+        "path": path
+      }
+    });
+  }
+  /**
+   * Wrapper
    * @returns any Successful Response
    * @throws ApiError
    */
@@ -1437,6 +1491,7 @@ var buildNativeWorkspaceUrl = (path, mode = "segments") => {
 };
 export {
   ApiError,
+  BookmarkEntry,
   CancelError,
   CancelablePromise,
   ConfigFileEntry,
