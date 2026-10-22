@@ -592,7 +592,11 @@ async def test_run_agent_turn_end_turn_summary_directive(ctx):
     assert len(captured_calls) == 2
     final_call_messages = captured_calls[1]
     assert final_call_messages[-1]["role"] == "user"
-    assert "All steps are complete. Please provide a concise summary" in final_call_messages[-1]["content"]
+    assert (
+        "Please provide a concise summary of what was accomplished, any relevant results, and any outstanding input"
+        in final_call_messages[-1]["content"]
+    )
+    assert "All steps are complete" not in final_call_messages[-1]["content"]
 
     # History and archive must NOT include the synthetic directive
     assert all("Please provide a concise summary" not in (m.get("content") or "") for m in history)
@@ -654,6 +658,69 @@ async def test_run_agent_turn_end_turn_confirm_denied_no_summary_directive(ctx):
     final_call_messages = captured_calls[2]
     assert all("All steps are complete" not in (m.get("content") or "") for m in final_call_messages)
     assert any("[User selected 'Change plan'" in (m.get("content") or "") for m in final_call_messages)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_unanswered_widget_summary_directive(ctx):
+    """When a tool emits an input widget that is unanswered (e.g. no confirmation handler),
+    the final LLM call receives the neutral summary directive without falsely asserting
+    'All steps are complete' (#1092)."""
+    from decafclaw.media import WidgetInputPause
+
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+
+    pause_signal = WidgetInputPause(tool_call_id="tc1", widget_payload={"widget_type": "text_input"})
+
+    tool_call_response = _mock_llm_response(
+        content=None,
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {
+                    "name": "ask_user",
+                    "arguments": "{}",
+                },
+            }
+        ],
+    )
+    final_response = _mock_llm_response("Input is needed to continue.")
+
+    captured_calls = []
+
+    async def fake_call_llm(conf, messages, tools, **kwargs):
+        captured_calls.append(list(messages))
+        if len(captured_calls) == 1:
+            return tool_call_response
+        return final_response
+
+    async def fake_execute_tool(call_ctx, name, args):
+        return ToolResult(text="Please answer prompt.", end_turn=pause_signal)
+
+    with (
+        patch("decafclaw.agent.call_llm", side_effect=fake_call_llm),
+        patch("decafclaw.tool_execution.execute_tool", side_effect=fake_execute_tool),
+        patch("decafclaw.agent._handle_widget_input_pause", new_callable=AsyncMock, return_value=None),
+    ):
+        history = []
+        result = await run_agent_turn(ctx, "ask user", history)
+
+    assert result.text == "Input is needed to continue."
+    assert len(captured_calls) == 2
+    final_call_messages = captured_calls[1]
+    assert final_call_messages[-1]["role"] == "user"
+    assert (
+        "Please provide a concise summary of what was accomplished, any relevant results, and any outstanding input."
+        == final_call_messages[-1]["content"]
+    )
+    assert "All steps are complete" not in final_call_messages[-1]["content"]
+
+    # History and archive must NOT contain the synthetic directive
+    assert all("Please provide a concise summary" not in (m.get("content") or "") for m in history)
+    from decafclaw.archive import restore_history
+
+    restored = restore_history(ctx.config, ctx.conv_id)
+    assert all("Please provide a concise summary" not in (m.get("content") or "") for m in restored)
 
 
 @pytest.mark.asyncio

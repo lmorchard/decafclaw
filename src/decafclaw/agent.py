@@ -1017,7 +1017,7 @@ class TurnRunner:
                 final_messages.append(
                     {
                         "role": "user",
-                        "content": "All steps are complete. Please provide a concise summary of what was accomplished and any relevant results.",
+                        "content": "Please provide a concise summary of what was accomplished, any relevant results, and any outstanding input.",
                     }
                 )
             final_response = await _call_llm_with_events(
