@@ -1201,6 +1201,11 @@ async def delete_conversation(request: Request, id: str) -> JSONResponse:
     terminal_registry = request.app.state.terminal_registry
     await terminal_registry.kill_sessions_for_conv(conv_id)
 
+    # Cancel any active in-memory wake timers for this conversation
+    manager = getattr(request.app.state, "manager", None)
+    if manager and hasattr(manager, "scheduled_wakes"):
+        await manager.scheduled_wakes.cancel_all_for_conversation(conv_id)
+
     # Remove the {id}/ dir (archive, sidecars, uploads, workflow.json) and
     # any leftover flat legacy sidecar files.
     delete_conversation_files(config, conv_id)

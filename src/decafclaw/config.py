@@ -109,6 +109,8 @@ def _coerce(value: str, field_type) -> object:
             return _coerce(value, args[0])
     if origin is list:
         return _parse_list(value)
+    if origin is tuple:
+        return tuple(_parse_list(value))
     if origin is dict or field_type is dict:
         return _parse_dict(value)
     if field_type is bool:
@@ -181,6 +183,8 @@ def load_sub_config(
                     nested_env_prefix,
                 )
             # JSON already has correct types for most things
+            elif isinstance(json_val, list) and get_origin(field_type) is tuple:
+                kwargs[f.name] = tuple(json_val)
             elif isinstance(json_val, str) and field_type not in (str, "str"):
                 kwargs[f.name] = _coerce(json_val, field_type)
             else:

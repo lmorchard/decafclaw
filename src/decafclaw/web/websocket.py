@@ -459,6 +459,7 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
             ctx.media_handler = LocalFileMediaHandler(state["config"])
             ctx.channel_name = "web"
             ctx.thread_id = ""
+            ctx.transport = "web"
 
         _subscribe_to_conv(state, conv_id)
         # Persist the user's invocation so a conversation reload renders
@@ -556,6 +557,7 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         ctx.media_handler = LocalFileMediaHandler(state["config"])
         ctx.channel_name = "web"
         ctx.thread_id = ""
+        ctx.transport = "web"
 
     # Send message through the manager — it handles queueing and turn lifecycle
     await manager.send_message(
