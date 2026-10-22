@@ -1,5 +1,6 @@
 """Core tools — web fetch, debug, time, context stats, ask_user_multiple_choice."""
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -134,8 +135,6 @@ async def tool_wait(ctx: "Context", seconds: int = 30) -> str | ToolResult:
     to complete. Avoids burning iterations polling in a tight loop.
     Maximum wait time is 300 seconds (5 minutes).
     """
-    import asyncio
-
     max_wait = 300
     seconds = max(1, min(seconds, max_wait))
     log.info(f"[tool:wait] sleeping {seconds}s")
