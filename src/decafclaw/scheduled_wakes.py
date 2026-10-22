@@ -44,6 +44,7 @@ class ScheduledWake:
     channel_id: str = ""
     thread_id: str = ""
     transport: str = ""
+    status: str = "pending"
 
 
 def load_scheduled_wakes(config, conv_id: str) -> list[ScheduledWake]:
@@ -289,11 +290,19 @@ class ScheduledWakeManager:
 
             log.info("Dispatched wake turn for schedule %s (conv %s)", entry.schedule_id, entry.conv_id[:8])
 
-            # Remove from sidecar and task registry only once enqueue succeeds
+            # If the conversation was busy and the turn queued, mark as "queued"
+            # so the authoritative routing record survives a crash until drained (#1119 review).
+            # If it started immediately, delete it.
+            is_queued = state is not None and getattr(state, "busy", False) is True
             async with self._lock:
                 self._tasks.pop(entry.schedule_id, None)
                 schedules = load_scheduled_wakes(self.config, entry.conv_id)
-                schedules = [s for s in schedules if s.schedule_id != entry.schedule_id]
+                if is_queued:
+                    for s in schedules:
+                        if s.schedule_id == entry.schedule_id:
+                            s.status = "queued"
+                else:
+                    schedules = [s for s in schedules if s.schedule_id != entry.schedule_id]
                 save_scheduled_wakes(self.config, entry.conv_id, schedules)
         except Exception as exc:
             log.warning("Failed to enqueue wake turn for schedule %s: %s", entry.schedule_id, exc)
@@ -308,6 +317,9 @@ class ScheduledWakeManager:
         recovered = 0
         now_ts = time.time()
         for entry in schedules:
+            if getattr(entry, "status", "pending") == "queued":
+                continue  # Handled by inbox recovery if queued before restart (#1119)
+
             async with self._lock:
                 if entry.schedule_id in self._tasks:
                     continue

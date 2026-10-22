@@ -1633,7 +1633,7 @@ async def test_queued_wake_metadata_restores_context_setup_after_restart(manager
     """Inbox recovery of queued wake turns restores routing only from authoritative scheduled_wakes (#1119 review)."""
     from decafclaw.inbox import _write_inbox
     from decafclaw.media import ToolResult
-    from decafclaw.scheduled_wakes import ScheduledWake, save_scheduled_wakes
+    from decafclaw.scheduled_wakes import ScheduledWake, load_scheduled_wakes, save_scheduled_wakes
 
     conv_id = "c-inbox-recover"
     state = manager._get_or_create(conv_id)
@@ -1691,6 +1691,8 @@ async def test_queued_wake_metadata_restores_context_setup_after_restart(manager
     assert seen_ctx["channel_id"] == "ch-restored-456"
     assert seen_ctx["thread_id"] == "th-restored-789"
     assert seen_ctx["transport"] == "mattermost"
+    # And verifies the queued record was consumed upon turn start
+    assert load_scheduled_wakes(config, conv_id) == []
 
 
 @pytest.mark.asyncio

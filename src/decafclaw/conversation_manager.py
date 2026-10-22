@@ -2123,7 +2123,7 @@ class ConversationManager:
                 meta = q.get("metadata") or {}
                 if drain_setup is None and meta.get("schedule_id"):
                     # Validate routing against host-owned authoritative scheduled_wakes (#1119)
-                    from .scheduled_wakes import load_scheduled_wakes
+                    from .scheduled_wakes import load_scheduled_wakes, save_scheduled_wakes
 
                     schedules = load_scheduled_wakes(self.config, state.conv_id)
                     sched = next((s for s in schedules if s.schedule_id == meta.get("schedule_id")), None)
@@ -2131,6 +2131,12 @@ class ConversationManager:
                         ch = sched.channel_id
                         th = sched.thread_id
                         tr = sched.transport
+                        # Consume the queued record upon execution (#1119)
+                        remaining = [s for s in schedules if s.schedule_id != sched.schedule_id]
+                        try:
+                            save_scheduled_wakes(self.config, state.conv_id, remaining)
+                        except OSError:
+                            pass
 
                         def drain_setup(ctx, _ch=ch, _th=th, _tr=tr):
                             if _ch:
