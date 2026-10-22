@@ -126,6 +126,16 @@ Page of historical messages for a conversation.
 - `turn_active` — boolean?
 - `pending_confirmation` — object?
 
+### `conv_renamed`
+
+A conversation's sidebar title was updated in the background by the periodic auto-titling task (#1072); update the tab in place.
+
+**Fields:**
+
+- `conv_id` — string
+- `title` — string
+- `updated_at` — string
+
 ### `conv_selected`
 
 Confirmation that a select_conv subscribed this socket to the named conversation. May include initial conversation state.

@@ -123,6 +123,7 @@ class ConversationMeta:
     created_at: str  # ISO timestamp
     updated_at: str  # ISO timestamp
     archived: bool = False
+    custom_title: bool = False  # user renamed manually; auto-titling must not overwrite (#1072)
 
     def to_dict(self) -> dict:
         """Serialize to dict for API/websocket responses (excludes internal fields)."""
@@ -196,13 +197,24 @@ class ConversationIndex:
                 return ConversationMeta(**d)
         return None
 
-    def rename(self, conv_id: str, title: str) -> ConversationMeta | None:
-        """Rename a conversation. Returns updated metadata or None."""
+    def rename(self, conv_id: str, title: str, *, manual: bool = False) -> ConversationMeta | None:
+        """Rename a conversation. Returns updated metadata or None.
+
+        ``manual=True`` (user rename via REST or websocket command) marks the
+        title as user-customized (``custom_title``) and applies it
+        unconditionally. ``manual=False`` (automated periodic retitle, #1072)
+        is refused for conversations the user already renamed — the index
+        keeps the user's title and returns None.
+        """
         data = self._load()
         for d in data:
             if d.get("conv_id") == conv_id:
+                if not manual and d.get("custom_title"):
+                    return None
                 d["title"] = title
                 d["updated_at"] = datetime.now(timezone.utc).isoformat()
+                if manual:
+                    d["custom_title"] = True
                 self._save(data)
                 return ConversationMeta(**d)
         return None

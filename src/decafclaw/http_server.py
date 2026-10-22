@@ -989,7 +989,7 @@ async def rename_conversation(request: Request, id: str) -> JSONResponse:
                 return JSONResponse({"error": "Folder does not exist"}, status_code=400)
     title = body.get("title")
     if title is not None:
-        updated = index.rename(conv_id, title)
+        updated = index.rename(conv_id, title, manual=True)
         if not updated:
             return JSONResponse({"error": "not found"}, status_code=404)
         conv = updated

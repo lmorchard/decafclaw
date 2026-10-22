@@ -20,6 +20,7 @@ from decafclaw.commands import list_invokable_commands
 from decafclaw.conversation_manager import TurnKind
 from decafclaw.llm.history import without_provider_data
 from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
+from decafclaw.web.auto_titling import maybe_auto_title
 from decafclaw.web.message_types import (
     ServerMessage,
     SrvCanvasUpdate,
@@ -1097,6 +1098,11 @@ def _subscribe_to_conv(state, conv_id):
         elif event_type == "turn_complete":
             streaming_buffer["text"] = ""
             await ws_send({"type": WSMessageType.TURN_COMPLETE, "conv_id": event_conv_id})
+            # #1072 — refine the sidebar title in the background after the
+            # turn. Fire-and-forget: titling must not add latency to turn
+            # delivery. The task self-dedupes across tabs of the same
+            # conversation and skips titles the user set manually.
+            asyncio.create_task(maybe_auto_title(config, event_conv_id, state["event_bus"]))
 
         elif event_type == "error":
             await ws_send(
@@ -1303,6 +1309,32 @@ def _make_conversation_status_forwarder(ws_send: WSSendCallable, config, index, 
     return _forward
 
 
+def _make_conv_renamed_forwarder(ws_send: WSSendCallable, username: str):
+    """Forward `conv_renamed` events from the global bus to a single socket.
+
+    Auto-titling (#1072) only renames web conversations, whose conv_ids are
+    namespaced per user (``web-{username}-{hex}``), so the prefix check is
+    the cross-user visibility guard.
+    """
+
+    async def _forward(event: dict):
+        if event.get("type") != "conv_renamed":
+            return
+        conv_id = event.get("conv_id", "")
+        if not conv_id.startswith(f"web-{username}-"):
+            return
+        await ws_send(
+            {
+                "type": WSMessageType.CONV_RENAMED,
+                "conv_id": conv_id,
+                "title": event.get("title", ""),
+                "updated_at": event.get("updated_at", ""),
+            }
+        )
+
+    return _forward
+
+
 # -- Main WebSocket handler ----------------------------------------------------
 
 
@@ -1374,6 +1406,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     notif_sub_id = event_bus.subscribe(_make_notification_forwarder(ws_send))
     vault_sub_id = event_bus.subscribe(_make_vault_change_forwarder(ws_send))
     status_sub_id = event_bus.subscribe(_make_conversation_status_forwarder(ws_send, config, index, username))
+    renamed_sub_id = event_bus.subscribe(_make_conv_renamed_forwarder(ws_send, username))
 
     try:
         while True:
@@ -1400,6 +1433,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
         event_bus.unsubscribe(notif_sub_id)
         event_bus.unsubscribe(vault_sub_id)
         event_bus.unsubscribe(status_sub_id)
+        event_bus.unsubscribe(renamed_sub_id)
         _unsubscribe_all(state)
 
 

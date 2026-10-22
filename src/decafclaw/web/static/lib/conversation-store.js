@@ -673,6 +673,21 @@ export class ConversationStore extends EventTarget {
         break;
       }
 
+      case MESSAGE_TYPES.CONV_RENAMED: {
+        // #1072 — background auto-titling renamed a conversation; patch the
+        // in-memory listing so the sidebar re-renders without a refetch.
+        const convId = msg.conv_id;
+        const conv = convId ? this.#conversations.find((c) => c.conv_id === convId) : undefined;
+        if (conv && msg.title) {
+          conv.title = msg.title;
+          if (msg.updated_at) {
+            conv.updated_at = msg.updated_at;
+            this.#conversations.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+          }
+        }
+        break;
+      }
+
       case MESSAGE_TYPES.TURN_START:
         if (msg.conv_id) {
           this.#setConversationStatus(msg.conv_id, 'busy');
