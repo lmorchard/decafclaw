@@ -86,11 +86,12 @@ WYSIWYG markdown editor for vault pages, accessible from the sidebar:
 - **Recent pages** list for quick access
 - Open pages are automatically injected as context in the active conversation
 - `@[[PageName]]` mentions in messages also inject page content
-- **Wiki links in edit mode**: a single click on a `[[link]]` opens a small
-  popover with editable **Target** and **Display text** fields (both commit on
-  **Apply** or Enter; Cancel/Escape/outside-click discards). A plain `[[text]]`
-  link shows its text as the target, and clearing the target stores the plain
-  form. Double-click still navigates to the target page.
+- **Wiki links in edit mode**: a plain click on a `[[link]]` navigates to the
+  target page; Alt/Option+click opens a small popover with a link that
+  navigates to the target and editable **Target** and **Display text** fields
+  (both commit on **Apply** or Enter; Cancel/Escape/outside-click discards).
+  A plain `[[text]]` link shows its text as the target, and clearing the
+  target stores the plain form.
 - **Frontmatter editing**: a metadata strip above the body shows `summary` and
   tags in view mode; edit mode swaps it for typed controls plus a raw-YAML
   escape hatch. See [Editing frontmatter in the web UI](vault.md#editing-frontmatter-in-the-web-ui).

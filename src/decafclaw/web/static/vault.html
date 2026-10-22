@@ -44,23 +44,54 @@
   <script type="module">
     import '/static/components/wiki-page.js';
     import { checkVaultSession } from '/static/lib/vault-auth.js';
+    import { encodePagePath } from '/static/lib/utils.js';
 
     // Extract page name from URL: /vault/Page%20Name
-    const path = decodeURIComponent(window.location.pathname.replace(/^\/vault\//, ''));
+    function getPageFromUrl() {
+      return decodeURIComponent(window.location.pathname.replace(/^\/vault\/?/, ''));
+    }
+
     const wikiPage = document.querySelector('wiki-page');
+    const path = getPageFromUrl();
     if (wikiPage && path) {
       wikiPage.page = path;
       // Update title when content loads
-      const origTitle = document.title;
       const observer = new MutationObserver(() => {
         const title = wikiPage.querySelector('.wiki-page-title');
         if (title?.textContent) {
           document.title = title.textContent + ' — DecafClaw Vault';
-          observer.disconnect();
         }
       });
       observer.observe(wikiPage, { childList: true, subtree: true });
     }
+
+    async function navigateTo(targetPage, replace = false) {
+      if (!targetPage || !wikiPage) return;
+      if (typeof wikiPage.flushSave === 'function') {
+        await wikiPage.flushSave();
+      }
+      const page = targetPage.replace(/^\/vault\/?/, '');
+      wikiPage.page = page;
+      const targetUrl = '/vault/' + encodePagePath(page);
+      if (replace) {
+        history.replaceState(null, '', targetUrl);
+      } else {
+        history.pushState(null, '', targetUrl);
+      }
+      document.title = page + ' — DecafClaw Vault';
+    }
+
+    wikiPage?.addEventListener('wiki-navigate', (e) => {
+      const page = /** @type {CustomEvent} */ (e).detail?.page;
+      if (page) void navigateTo(page);
+    });
+
+    window.addEventListener('popstate', () => {
+      const page = getPageFromUrl();
+      if (page && wikiPage && wikiPage.page !== page) {
+        void navigateTo(page, true);
+      }
+    });
 
     // Auth check — redirect to login if not authenticated
     checkVaultSession();

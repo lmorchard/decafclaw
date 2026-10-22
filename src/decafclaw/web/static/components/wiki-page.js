@@ -266,7 +266,7 @@ export class WikiPage extends LitElement {
   async _toggleMode() {
     if (this._editing) {
       // Flush editor save before switching to view mode
-      await this.#flushMetadata();
+      await this.flushSave();
       // A failed flush leaves an unresolved _metaError with its
       // Reload/Overwrite/Retry affordance. Switching to view mode now would
       // call _fetchPage(), which unconditionally wipes #pendingFields and
@@ -274,15 +274,25 @@ export class WikiPage extends LitElement {
       // discarding the edit and the only visible sign anything went wrong.
       // Stay in edit mode so the conflict banner remains visible instead.
       if (this._metaError) return;
-      /** @type {import('./wiki-editor.js').WikiEditor|null} */
-      const editor = this.querySelector('wiki-editor');
-      if (editor) await editor.flushSave();
       this._editing = false;
       await this._fetchPage();
     } else {
       this._editing = true;
     }
     localStorage.setItem(EDIT_MODE_KEY, String(this._editing));
+  }
+
+  /**
+   * Flush pending metadata and editor content immediately.
+   * Resolves when all writes complete.
+   */
+  async flushSave() {
+    await this.#flushMetadata();
+    /** @type {import('./wiki-editor.js').WikiEditor|null} */
+    const editor = this.querySelector('wiki-editor');
+    if (editor && typeof editor.flushSave === 'function') {
+      await editor.flushSave();
+    }
   }
 
   /** Public method to force edit mode (called from app.js for new pages). */

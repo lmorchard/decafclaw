@@ -6,6 +6,21 @@ describe('wiki-page component', () => {
         const el = document.createElement('wiki-page');
         expect(el).toBeDefined();
     });
+
+    it('flushSave flushes pending metadata and editor writes', async () => {
+        const el = /** @type {any} */ (document.createElement('wiki-page'));
+        document.body.append(el);
+        const editor = document.createElement('div');
+        const flushEditor = vi.fn().mockResolvedValue(undefined);
+        /** @type {any} */ (editor).flushSave = flushEditor;
+        vi.spyOn(el, 'querySelector').mockImplementation((/** @type {string} */ sel) => {
+            if (sel === 'wiki-editor') return editor;
+            return null;
+        });
+        await el.flushSave();
+        expect(flushEditor).toHaveBeenCalled();
+        el.remove();
+    });
 });
 
 import { WikiWriteMutex } from '../lib/wiki-page-write-mutex.js';
