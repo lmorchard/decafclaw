@@ -1565,7 +1565,12 @@ class ConversationManager:
         state.busy = True
         state.cancel_event = asyncio.Event()
         state.steer_event = asyncio.Event()
-        await self._publish_status(conv_id, "busy")
+        try:
+            await self._publish_status(conv_id, "busy")
+        except BaseException:
+            state.busy = False
+            state.agent_task = None
+            raise
         # -- Persist / inherit transport context --------------------------------
         # USER turns save their user_id and context_setup so that subsequent
         # WAKE turns (which have no transport of their own) can inherit them.

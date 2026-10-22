@@ -240,11 +240,11 @@ class ScheduledWakeManager:
             "if nothing requires attention."
         )
         wake_meta = {
+            **(entry.metadata or {}),
             "schedule_id": entry.schedule_id,
             "channel_id": entry.channel_id,
             "thread_id": entry.thread_id,
             "transport": entry.transport,
-            **entry.metadata,
         }
 
         # Compose context setup: preserve existing/inherited setup (media handlers, etc.)
@@ -268,13 +268,15 @@ class ScheduledWakeManager:
                     ctx.media_handler = MattermostMediaHandler(mm_client._http, channel_id=entry.channel_id)
 
         try:
-            future = await self.manager.enqueue_turn(
-                conv_id=entry.conv_id,
-                kind=TurnKind.WAKE,
-                prompt=prompt,
-                metadata=wake_meta,
-                user_id=entry.user_id,
-                context_setup=composed_setup,
+            future = await asyncio.shield(
+                self.manager.enqueue_turn(
+                    conv_id=entry.conv_id,
+                    kind=TurnKind.WAKE,
+                    prompt=prompt,
+                    metadata=wake_meta,
+                    user_id=entry.user_id,
+                    context_setup=composed_setup,
+                )
             )
 
             # Check if rate-limited: do NOT drop the wake! Re-arm and retry (#1119 review).

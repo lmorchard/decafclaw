@@ -1531,6 +1531,109 @@ async def test_wake_turn_publishes_wake_delivery_when_no_subscribers(manager, co
 
 
 @pytest.mark.asyncio
+async def test_unthreaded_mattermost_wake_delivers_response(manager, config, monkeypatch):
+    """Unthreaded Mattermost conversations (conv_id == channel_id) still deliver wake responses (#1119 review)."""
+    from decafclaw.media import ToolResult
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        return ToolResult(text="Top-level wake done")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    received_events = []
+    manager.event_bus.subscribe(lambda e: received_events.append(e))
+
+    conv_id = "mm-top-channel-888"
+
+    def setup_channel(ctx):
+        ctx.channel_id = conv_id
+        ctx.thread_id = ""
+        ctx.transport = "mattermost"
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.WAKE,
+        prompt="wake nudge",
+        context_setup=setup_channel,
+        user_id="user_bob",
+    )
+    await future
+
+    deliveries = [e for e in received_events if e.get("type") == "wake_delivery"]
+    assert len(deliveries) == 1
+    assert deliveries[0]["channel_id"] == conv_id
+    assert deliveries[0]["transport"] == "mattermost"
+    assert deliveries[0]["text"] == "Top-level wake done"
+
+
+@pytest.mark.asyncio
+async def test_start_turn_rollback_on_cancelled_status_publication(manager, config, monkeypatch):
+    """If turn start is cancelled during status publication, state.busy is rolled back (#1119 review)."""
+    state = manager._get_or_create("c-cancel-start")
+
+    async def mock_publish_status(conv_id, status):
+        if status == "busy":
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(manager, "_publish_status", mock_publish_status)
+
+    with pytest.raises(asyncio.CancelledError):
+        await manager._start_turn(state, "hello", kind=TurnKind.USER)
+
+    # Must NOT be left stuck in busy=True
+    assert state.busy is False
+    assert state.agent_task is None
+
+
+@pytest.mark.asyncio
+async def test_queued_wake_metadata_restores_context_setup_after_restart(manager, config, monkeypatch):
+    """Inbox recovery of queued wake turns restores routing from metadata (#1119 review)."""
+    from decafclaw.inbox import _write_inbox
+    from decafclaw.media import ToolResult
+
+    conv_id = "c-inbox-recover"
+    state = manager._get_or_create(conv_id)
+
+    # Simulate an inbox entry queued behind a busy turn before server restarted
+    _write_inbox(
+        config,
+        conv_id,
+        [
+            {
+                "turn_id": "turn-wake-1",
+                "kind": "wake",
+                "text": "Wake prompt",
+                "user_id": "user_alice",
+                "metadata": {
+                    "schedule_id": "wake-123",
+                    "channel_id": "ch-restored-456",
+                    "thread_id": "th-restored-789",
+                    "transport": "mattermost",
+                },
+            }
+        ],
+    )
+
+    seen_ctx = {}
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen_ctx["channel_id"] = ctx.channel_id
+        seen_ctx["thread_id"] = ctx.thread_id
+        seen_ctx["transport"] = ctx.transport
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    await manager._drain_pending(state)
+    if state.agent_task:
+        await state.agent_task
+
+    assert seen_ctx["channel_id"] == "ch-restored-456"
+    assert seen_ctx["thread_id"] == "th-restored-789"
+    assert seen_ctx["transport"] == "mattermost"
+
+
+@pytest.mark.asyncio
 async def test_enqueue_turn_wake_kind_restores_skill_state(manager, config, monkeypatch):
     """WAKE fires on a persistent conv, so activated skills / preserved
     flags / active_model must carry forward onto the ctx."""

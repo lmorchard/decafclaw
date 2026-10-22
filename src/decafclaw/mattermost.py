@@ -430,6 +430,7 @@ class MattermostClient:
             ctx.channel_name = ""
             ctx.thread_id = root_id or ""
             ctx.user_id = app_ctx.config.agent.user_id
+            ctx.transport = "mattermost"
 
         # Start the turn via the manager
         await manager.send_message(
@@ -712,67 +713,6 @@ class MattermostClient:
 
     async def run(self, app_ctx, shutdown_event, manager=None):
         """Run the bot: connect, listen for messages, and dispatch to the agent."""
-        await self.connect()
-
-        agent_tasks = set()
-        mm_conversations: dict[str, MattermostConvState] = {}
-        user_last_msg_time: dict[str, float] = {}
-
-        debounce_sec = self.debounce_ms / 1000.0
-        user_rate_sec = self.user_rate_limit_ms / 1000.0
-
-        def _conv_id_for_msg(msg):
-            return msg["root_id"] or msg["channel_id"]
-
-        async def on_message(msg):
-            channel_id = msg["channel_id"]
-            user_id = msg["user_id"]
-            conv_id = _conv_id_for_msg(msg)
-
-            # Per-user rate limit
-            now = time.monotonic()
-            last_user_time = user_last_msg_time.get(user_id, 0)
-            if (now - last_user_time) < user_rate_sec:
-                log.info(f"Rate limit: dropping message from {msg['sender_name']}")
-                return
-            user_last_msg_time[user_id] = now
-
-            mm_state = self._get_mm_state(mm_conversations, conv_id)
-            log.info(f"Message from {msg['sender_name']} in {conv_id[:8]}: {msg['text'][:50]}")
-
-            # Accumulate message by conversation
-            mm_state.pending_msgs.append(msg)
-
-            # Reset debounce timer for this conversation
-            if mm_state.debounce_timer:
-                mm_state.debounce_timer.cancel()
-
-            async def debounce_and_process():
-                await asyncio.sleep(debounce_sec)
-                mm_inner = self._get_mm_state(mm_conversations, conv_id)
-                msgs = mm_inner.pending_msgs
-                mm_inner.pending_msgs = []
-                mm_inner.debounce_timer = None
-                if msgs:
-                    task = asyncio.current_task()
-                    agent_tasks.add(task)
-                    try:
-                        await self._process_conversation(
-                            conv_id,
-                            channel_id,
-                            msgs,
-                            app_ctx,
-                            mm_conversations,
-                            manager,
-                        )
-                    finally:
-                        agent_tasks.discard(task)
-
-            mm_state.debounce_timer = asyncio.create_task(debounce_and_process())
-
-        # Wrap the sync callback from WebSocket into async
-        def on_message_sync(msg):
-            asyncio.get_running_loop().create_task(on_message(msg))
 
         async def on_wake_delivery(event):
             if event.get("type") != "wake_delivery":
@@ -789,9 +729,9 @@ class MattermostClient:
             # Wait for connection to be ready if waking during server startup (#1119 review)
             if not self._connected_event.is_set():
                 try:
-                    await asyncio.wait_for(self._connected_event.wait(), timeout=10.0)
+                    await asyncio.wait_for(self._connected_event.wait(), timeout=15.0)
                 except asyncio.TimeoutError:
-                    log.warning("Mattermost client did not connect within 10s; dropping wake delivery")
+                    log.warning("Mattermost client did not connect within 15s; dropping wake delivery")
                     return
 
             try:
@@ -811,10 +751,72 @@ class MattermostClient:
         wake_sub_id = app_ctx.event_bus.subscribe(on_wake_delivery)
 
         try:
+            await self.connect()
+
+            agent_tasks = set()
+            mm_conversations: dict[str, MattermostConvState] = {}
+            user_last_msg_time: dict[str, float] = {}
+
+            debounce_sec = self.debounce_ms / 1000.0
+            user_rate_sec = self.user_rate_limit_ms / 1000.0
+
+            def _conv_id_for_msg(msg):
+                return msg["root_id"] or msg["channel_id"]
+
+            async def on_message(msg):
+                channel_id = msg["channel_id"]
+                user_id = msg["user_id"]
+                conv_id = _conv_id_for_msg(msg)
+
+                # Per-user rate limit
+                now = time.monotonic()
+                last_user_time = user_last_msg_time.get(user_id, 0)
+                if (now - last_user_time) < user_rate_sec:
+                    log.info(f"Rate limit: dropping message from {msg['sender_name']}")
+                    return
+                user_last_msg_time[user_id] = now
+
+                mm_state = self._get_mm_state(mm_conversations, conv_id)
+                log.info(f"Message from {msg['sender_name']} in {conv_id[:8]}: {msg['text'][:50]}")
+
+                # Accumulate message by conversation
+                mm_state.pending_msgs.append(msg)
+
+                # Reset debounce timer for this conversation
+                if mm_state.debounce_timer:
+                    mm_state.debounce_timer.cancel()
+
+                async def debounce_and_process():
+                    await asyncio.sleep(debounce_sec)
+                    mm_inner = self._get_mm_state(mm_conversations, conv_id)
+                    msgs = mm_inner.pending_msgs
+                    mm_inner.pending_msgs = []
+                    mm_inner.debounce_timer = None
+                    if msgs:
+                        task = asyncio.current_task()
+                        agent_tasks.add(task)
+                        try:
+                            await self._process_conversation(
+                                conv_id,
+                                channel_id,
+                                msgs,
+                                app_ctx,
+                                mm_conversations,
+                                manager,
+                            )
+                        finally:
+                            agent_tasks.discard(task)
+
+                mm_state.debounce_timer = asyncio.create_task(debounce_and_process())
+
+            # Wrap the sync callback from WebSocket into async
+            def on_message_sync(msg):
+                asyncio.get_running_loop().create_task(on_message(msg))
+
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
             app_ctx.event_bus.unsubscribe(wake_sub_id)
-            if agent_tasks:
+            if "agent_tasks" in locals() and agent_tasks:
                 log.info(f"Waiting for {len(agent_tasks)} in-flight agent turn(s)...")
                 await asyncio.gather(*agent_tasks, return_exceptions=True)
             await self.close()

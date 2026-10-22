@@ -193,6 +193,7 @@ async def run_interactive(ctx: "Context"):
     def terminal_context_setup(ctx_arg):
         ctx_arg.media_handler = LocalFileMediaHandler(config)
         ctx_arg.channel_name = "interactive"
+        ctx_arg.transport = "terminal"
 
     # Start heartbeat timer
     shutdown_event = asyncio.Event()

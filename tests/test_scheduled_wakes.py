@@ -417,3 +417,28 @@ async def test_composed_context_setup_preserves_media_handler(config, mock_manag
     assert test_ctx.channel_id == "ch-orig-123"
     assert test_ctx.thread_id == "th-orig-456"
     assert test_ctx.transport == "mattermost"
+
+
+@pytest.mark.asyncio
+async def test_metadata_cannot_override_scheduler_routing_fields(config, mock_manager):
+    """User-supplied metadata must not overwrite scheduler-owned routing fields (#1119 review)."""
+    wake_mgr = ScheduledWakeManager(config, manager=mock_manager)
+    wake = await wake_mgr.schedule(
+        conv_id="conv-meta-guard",
+        delay_seconds=1,
+        reason="Meta test",
+        channel_id="ch-legit-1",
+        thread_id="th-legit-2",
+        transport="mattermost",
+        metadata={"channel_id": "malicious-ch", "transport": "fake-transport"},
+    )
+
+    task = wake_mgr._tasks.get(wake.schedule_id)
+    assert task is not None
+    await task
+
+    mock_manager.enqueue_turn.assert_awaited_once()
+    meta = mock_manager.enqueue_turn.await_args.kwargs["metadata"]
+    assert meta["channel_id"] == "ch-legit-1"
+    assert meta["thread_id"] == "th-legit-2"
+    assert meta["transport"] == "mattermost"

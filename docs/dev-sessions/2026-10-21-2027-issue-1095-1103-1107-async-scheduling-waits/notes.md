@@ -20,5 +20,12 @@
   5. Propagated `OSError` in `save_scheduled_wakes` and tools.
   6. Prevented cross-conversation cancellation in `ScheduledWakeManager.cancel`.
   7. Retained wake in sidecar and task registry until `enqueue_turn` succeeds.
+- Addressed further review feedback on PR #1119:
+  1. Gated Mattermost wake delivery on connection readiness (`_connected_event`) and registered the delivery listener before `connect()`.
+  2. Prevented caller-supplied `metadata` from overriding scheduler-owned routing fields (`metadata` unpacked first).
+  3. Made `_start_turn` and wake turn handoff cancellation-safe with rollback of `state.busy` if interrupted during startup/status publication, and shielded enqueue in `_fire_wake`.
+  4. Explicitly assigned `ctx.transport = "mattermost"` in Mattermost's `context_setup` so unthreaded/DM conversations (`conv_id == channel_id`) are correctly routed and delivered.
+  5. Handled queued wake routing restoration in `ConversationManager._drain_pending` from durable inbox `metadata`.
+
 
 
