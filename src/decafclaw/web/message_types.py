@@ -22,6 +22,7 @@ class WSMessageType(StrEnum):
     CONFIRM_REQUEST = "confirm_request"
     CONFIRMATION_RESPONSE = "confirmation_response"
     CONV_HISTORY = "conv_history"
+    CONV_RENAMED = "conv_renamed"
     CONV_SELECTED = "conv_selected"
     CONVERSATION_STATUS = "conversation_status"
     ERROR = "error"
@@ -67,6 +68,7 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.CONFIRM_REQUEST,
         WSMessageType.CONFIRMATION_RESPONSE,
         WSMessageType.CONV_HISTORY,
+        WSMessageType.CONV_RENAMED,
         WSMessageType.CONV_SELECTED,
         WSMessageType.CONVERSATION_STATUS,
         WSMessageType.ERROR,
@@ -199,6 +201,13 @@ class SrvConvHistory(TypedDict):
     available_modes: NotRequired[list[dict[str, object]]]
     turn_active: NotRequired[bool]
     pending_confirmation: NotRequired[dict[str, object]]
+
+
+class SrvConvRenamed(TypedDict):
+    type: Literal[WSMessageType.CONV_RENAMED]
+    conv_id: str
+    title: str
+    updated_at: str
 
 
 class SrvConvSelected(TypedDict):
@@ -419,6 +428,7 @@ ServerMessage = (
     | SrvConfirmRequest
     | SrvConfirmationResponse
     | SrvConvHistory
+    | SrvConvRenamed
     | SrvConvSelected
     | SrvConversationStatus
     | SrvError

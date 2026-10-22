@@ -91,6 +91,13 @@ export interface SrvConvHistory {
   pending_confirmation?: Record<string, unknown>;
 }
 
+export interface SrvConvRenamed {
+  type: "conv_renamed";
+  conv_id: string;
+  title: string;
+  updated_at: string;
+}
+
 export interface SrvConvSelected {
   type: "conv_selected";
   conv_id: string;
@@ -307,6 +314,7 @@ export type ServerMessage =
   | SrvConfirmRequest
   | SrvConfirmationResponse
   | SrvConvHistory
+  | SrvConvRenamed
   | SrvConvSelected
   | SrvConversationStatus
   | SrvError

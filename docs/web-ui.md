@@ -77,6 +77,21 @@ The sidebar lists conversations organized into folders:
 - **Virtual folders**: Archived (preserving folder structure) and System (heartbeat, scheduled, delegated)
 - Folder structure is per-user metadata — archive files stay in place
 
+**Periodic auto-titling (#1072).** New conversations start with the first
+100 characters of the opening message as their title, which is often
+scaffolding. After each completed agent turn the server checks in the
+background whether that conversation's user-turn count has just hit a
+cadence point (turns 2, 5, 10, 15, 20 — each attempted at most once per
+server process). When it has, a short LLM call refines the title and the
+result is pushed to open clients as a `conv_renamed` WebSocket event, so
+the sidebar entry updates in place (re-sorted by `updated_at`) without a
+refetch. Only web conversations known to the index are eligible — system
+and child conversations are never retitled. A user rename (sidebar or
+`PATCH /api/conversations/{id}`) is a **permanent opt-out**: it is recorded
+as `custom_title`, the index refuses non-manual renames for such
+conversations, and the titler checks it before any LLM call, so a title
+the user set is never overwritten.
+
 ### Vault editor
 
 WYSIWYG markdown editor for vault pages, accessible from the sidebar:
@@ -393,6 +408,7 @@ Conversation management is REST-only. WebSocket handles only real-time operation
 - Model switching
 - Turn cancellation
 - Tool confirmation responses
+- Conversation title updates (`conv_renamed`, pushed from background auto-titling)
 
 #### Subscriptions are per-socket, and re-established on reconnect
 
