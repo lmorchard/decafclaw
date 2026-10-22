@@ -7,7 +7,7 @@
 - Branch: issue-1072-periodic-conversation-titling
 - Base: origin/main at ff99d3f23337218287cc8b31f844161cc42ac9ff
 - Port: HTTP_PORT=18996 (added to worktree .env)
-- Next action: implementation in flight — see Log.
+- Next action: implementation COMPLETE — draft PR #1132 open; remaining: independent local review, then `pr ready`.
 
 ## Decisions
 
@@ -42,15 +42,24 @@
 ## Log
 
 - 2026-10-22: worktree created (uv sync ok), .env copied, HTTP_PORT=18996.
-- Baseline `make test` (pre-change): 4658 passed, 2 skipped.
-- `make install-js` ok. Baseline `make test-js`: green.
-- Implementation complete across: conversations.py (flag + guarded rename),
-  http_server.py (REST rename manual=True), auto_titling.py (new),
-  websocket.py (trigger + forwarder + subscribe), message_types.json +
-  regenerated artifacts, conversation-store.js (CONV_RENAMED handling),
-  tests: test_web_conversations.py (+4 index tests), test_web_auto_titling.py
-  (new, 14 tests), conversation-store.test.js (+4 tests).
-- Targeted JS run after paren fix: 49 files / 540 tests passed.
-- Targeted Python run: tests/test_web_auto_titling.py + tests/test_web_conversations.py (result pending).
-- Remaining: `make check` gate, full `make test` re-run, self-review, commit
-  checkpoint, publish draft PR (handoff authorizes), final self-review + push.
+- Baseline `make test` (pre-change): 4658 passed, 2 skipped. `make install-js` ok.
+- Implementation: conversations.py (flag + guarded rename), http_server.py
+  (REST rename manual=True), auto_titling.py (new), websocket.py (trigger +
+  forwarder + subscribe), message_types.json + regenerated artifacts,
+  conversation-store.js (CONV_RENAMED handling), tests: test_web_conversations.py
+  (+4 index tests), test_web_auto_titling.py (new, 20 tests),
+  conversation-store.test.js (+4 tests).
+- Test-fix note: `stub_llm` shares the test's monkeypatch instance, so
+  `monkeypatch.undo()` in the websocket-hook test was restoring the real LLM
+  seam before the background task ran (real HTTP attempt, swallowed by the
+  fail-open path) — undo moved after `asyncio.gather`.
+- Commit 57ba8354 published as draft PR #1132 (verify-commit --on BRANCH and
+  --pr-head both clean).
+- `make check` on committed head: green (npm policy OK, message-types
+  regenerate+diff clean, fmt-check 445 files, ruff clean, pyright 0 errors,
+  gen-api-client + tsc clean, static module graph 2 passed).
+- `make test-js`: 49 files / 540 tests passed.
+- Full `make test` on final head: 4682 passed, 2 skipped.
+- Status: implementation complete, draft PR open (left draft per handoff).
+  Next: independent local review (same-model, user-approved exception), then
+  `pr ready` (PR left open for the user's review; no merge).
