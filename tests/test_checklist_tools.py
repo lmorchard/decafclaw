@@ -66,7 +66,7 @@ async def test_checklist_step_done_all_complete(ctx):
     await tool_checklist_create(ctx, steps=["Only step"])
     result = await tool_checklist_step_done(ctx)
     assert result.end_turn is True
-    assert "complete" in result.text.lower()
+    assert result.text == "All 1 checklist steps are complete."
 
 
 @pytest.mark.asyncio

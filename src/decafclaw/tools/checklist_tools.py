@@ -101,7 +101,7 @@ async def tool_checklist_step_done(ctx: "Context", note: str = "") -> ToolResult
     if next_item is None:
         done = sum(1 for i in items if i["done"])
         return ToolResult(
-            text=f"All {done} steps complete! Summarize what was accomplished.",
+            text=f"All {done} checklist steps are complete.",
             end_turn=True,
         )
     return ToolResult(
