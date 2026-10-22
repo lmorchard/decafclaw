@@ -156,12 +156,24 @@ class ScheduledWakeManager:
             if not matching:
                 return False
 
+            sched = matching[0]
             schedules = [s for s in schedules if s.schedule_id != schedule_id]
             save_scheduled_wakes(self.config, conv_id, schedules)
 
             task = self._tasks.pop(schedule_id, None)
             if task and not task.done():
                 task.cancel()
+
+            # If it was already queued in the conversation inbox, clean up the inbox entry (#1119 review)
+            if getattr(sched, "status", "pending") == "queued" and self.manager is not None:
+                from .inbox import _read_inbox, _write_inbox
+
+                conv_state = self.manager._get_or_create(conv_id)
+                async with conv_state.lock:
+                    messages = _read_inbox(self.config, conv_id)
+                    filtered = [m for m in messages if m.get("metadata", {}).get("schedule_id") != schedule_id]
+                    if len(filtered) != len(messages):
+                        _write_inbox(self.config, conv_id, filtered)
 
             log.info("Cancelled scheduled wake %s for conv %s", schedule_id, conv_id[:8])
             return True
@@ -290,10 +302,8 @@ class ScheduledWakeManager:
 
             log.info("Dispatched wake turn for schedule %s (conv %s)", entry.schedule_id, entry.conv_id[:8])
 
-            # If the conversation was busy and the turn queued, mark as "queued"
-            # so the authoritative routing record survives a crash until drained (#1119 review).
-            # If it started immediately, delete it.
-            is_queued = state is not None and getattr(state, "busy", False) is True
+            # Check whether enqueue_turn started the turn immediately or queued it in inbox (#1119 review).
+            is_queued = getattr(future, "queued", False) is True
             async with self._lock:
                 self._tasks.pop(entry.schedule_id, None)
                 schedules = load_scheduled_wakes(self.config, entry.conv_id)

@@ -449,3 +449,40 @@ async def test_metadata_cannot_override_scheduler_routing_fields(config, mock_ma
     assert meta["channel_id"] == "ch-legit-1"
     assert meta["thread_id"] == "th-legit-2"
     assert meta["transport"] == "mattermost"
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_wake_removes_inbox_entry_and_schedule(config):
+    """Cancelling a queued wake removes both the schedule record and the inbox entry (#1119 review)."""
+    from decafclaw.conversation_manager import ConversationManager
+    from decafclaw.inbox import _append_inbox, _read_inbox
+
+    manager = ConversationManager(config, None)
+    conv_id = "c-queued-cancel"
+
+    # Schedule a wake and seed it as "queued"
+    wake = await manager.scheduled_wakes.schedule(conv_id=conv_id, delay_seconds=100, reason="To queue")
+    schedules = load_scheduled_wakes(config, conv_id)
+    schedules[0].status = "queued"
+    save_scheduled_wakes(config, conv_id, schedules)
+
+    # Put a queued turn into the inbox
+    _append_inbox(
+        config,
+        conv_id,
+        {
+            "turn_id": "tid-1",
+            "kind": "wake",
+            "text": "test",
+            "metadata": {"schedule_id": wake.schedule_id},
+        },
+    )
+    assert len(_read_inbox(config, conv_id)) == 1
+
+    # Now cancel the schedule
+    cancelled = await manager.scheduled_wakes.cancel(conv_id, wake.schedule_id)
+    assert cancelled is True
+
+    # Both schedule record and inbox entry are gone!
+    assert load_scheduled_wakes(config, conv_id) == []
+    assert len(_read_inbox(config, conv_id)) == 0

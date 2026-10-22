@@ -611,7 +611,10 @@ class ConversationManager:
                     state.steer_event.set()
 
                 log.info("Conv %s busy, queued message", conv_id[:8])
+                setattr(future, "queued", True)
                 return future
+
+            setattr(future, "queued", False)
 
             # Not busy. Start turn immediately.
             # But wait, we appended it to inbox.jsonl. We need to pop it!
@@ -2121,30 +2124,32 @@ class ConversationManager:
                 inmem = state.inmemory_turn_data.pop(tid, {})
                 drain_setup = inmem.get("context_setup")
                 meta = q.get("metadata") or {}
-                if drain_setup is None and meta.get("schedule_id"):
-                    # Validate routing against host-owned authoritative scheduled_wakes (#1119)
+                sched_id = meta.get("schedule_id")
+                if sched_id:
+                    # Consume the queued record upon execution (both live and recovered) (#1119 review)
                     from .scheduled_wakes import load_scheduled_wakes, save_scheduled_wakes
 
                     schedules = load_scheduled_wakes(self.config, state.conv_id)
-                    sched = next((s for s in schedules if s.schedule_id == meta.get("schedule_id")), None)
+                    sched = next((s for s in schedules if s.schedule_id == sched_id), None)
                     if sched:
-                        ch = sched.channel_id
-                        th = sched.thread_id
-                        tr = sched.transport
-                        # Consume the queued record upon execution (#1119)
                         remaining = [s for s in schedules if s.schedule_id != sched.schedule_id]
                         try:
                             save_scheduled_wakes(self.config, state.conv_id, remaining)
                         except OSError:
                             pass
 
-                        def drain_setup(ctx, _ch=ch, _th=th, _tr=tr):
-                            if _ch:
-                                ctx.channel_id = _ch
-                            if _th:
-                                ctx.thread_id = _th
-                            if _tr:
-                                ctx.transport = _tr
+                        if drain_setup is None:
+                            ch = sched.channel_id
+                            th = sched.thread_id
+                            tr = sched.transport
+
+                            def drain_setup(ctx, _ch=ch, _th=th, _tr=tr):
+                                if _ch:
+                                    ctx.channel_id = _ch
+                                if _th:
+                                    ctx.thread_id = _th
+                                if _tr:
+                                    ctx.transport = _tr
 
                 log.info("Draining queued %s turn for conv %s", q["kind"], state.conv_id[:8])
                 await self._start_turn(
