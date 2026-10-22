@@ -1,8 +1,10 @@
 """Tests for periodic auto-titling of web UI conversations (#1072).
 
-Covers the cadence/trigger logic, the custom-title guard, the "material
-change" rule, the conv_renamed bus event, cross-tab dedup, and the
-websocket post-turn hook that fires the background task.
+Covers the cadence/trigger logic, the guard order (cheap index lookups
+before any archive read), the custom-title guard, the "material change"
+rule, the turn-count exclusion of widget-response synthetics, the
+conv_renamed bus event, cross-tab dedup, and the websocket post-turn hook
+that fires the background task.
 """
 
 from __future__ import annotations
@@ -22,8 +24,10 @@ from decafclaw.web.conversations import ConversationIndex
 @pytest.fixture(autouse=True)
 def _reset_dedup():
     auto_titling._attempted.clear()
+    auto_titling._exhausted.clear()
     yield
     auto_titling._attempted.clear()
+    auto_titling._exhausted.clear()
 
 
 def _seed(config, conv_id: str, user_turns: int) -> None:
@@ -38,6 +42,19 @@ def _bus_with_recorder() -> tuple[EventBus, list]:
     bus = EventBus()
     bus.subscribe(events.append)
     return bus, events
+
+
+def _spy_archive_reads(monkeypatch) -> list:
+    """Record every archive read the titling path performs."""
+    calls: list = []
+    real = auto_titling.read_archive
+
+    def spy(config, conv_id):
+        calls.append(conv_id)
+        return real(config, conv_id)
+
+    monkeypatch.setattr(auto_titling, "read_archive", spy)
+    return calls
 
 
 # -- cadence and guards --------------------------------------------------------
@@ -181,6 +198,98 @@ async def test_dedup_across_concurrent_triggers(config, stub_llm):
     assert len(stub_llm) == 1
     assert index.get(conv.conv_id).title == "Deduped title"
     assert len(events) == 1
+
+
+# -- guard order and turn counting ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_custom_title_skips_archive_read(config, stub_llm, monkeypatch):
+    """The user-rename guard bails out before any archive read (#1072 F1)."""
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Opening scaffolding message")
+    index.rename(conv.conv_id, "User kept this", manual=True)
+    _seed(config, conv.conv_id, 2)
+    calls = _spy_archive_reads(monkeypatch)
+
+    await maybe_auto_title(config, conv.conv_id, EventBus())
+
+    assert calls == []
+    assert stub_llm == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_conv_skips_archive_read(config, stub_llm, monkeypatch):
+    """Conversations absent from the web index bail before any archive read."""
+    _seed(config, "web-alice-00000000", 2)
+    calls = _spy_archive_reads(monkeypatch)
+
+    await maybe_auto_title(config, "web-alice-00000000", EventBus())
+
+    assert calls == []
+    assert stub_llm == []
+
+
+@pytest.mark.asyncio
+async def test_exhausted_conv_skips_archive_read(config, stub_llm, monkeypatch):
+    """Once the last cadence point was attempted, later turns skip the
+    archive read entirely (#1072 F1)."""
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Opening scaffolding message")
+    _seed(config, conv.conv_id, 20)
+    stub_llm.response = {"content": "Final title"}
+
+    await maybe_auto_title(config, conv.conv_id, EventBus())
+    assert len(stub_llm) == 1
+
+    _seed(config, conv.conv_id, 1)  # a later turn brings the total to 21
+    calls = _spy_archive_reads(monkeypatch)
+    await maybe_auto_title(config, conv.conv_id, EventBus())
+    await maybe_auto_title(config, conv.conv_id, EventBus())
+
+    assert calls == []
+    assert len(stub_llm) == 1
+    assert index.get(conv.conv_id).title == "Final title"
+
+
+@pytest.mark.asyncio
+async def test_widget_response_reaches_cadence(config, stub_llm):
+    """Two real user turns plus one widget response counts as 2 turns, so
+    the turn-2 cadence fires (#1072 note 2)."""
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Opening scaffolding message")
+    _seed(config, conv.conv_id, 2)
+    append_message(
+        config,
+        conv.conv_id,
+        {"role": "user", "source": "widget_response", "content": "widget pick"},
+    )
+    stub_llm.response = {"content": "Real turn title"}
+
+    await maybe_auto_title(config, conv.conv_id, EventBus())
+
+    assert len(stub_llm) == 1
+    assert index.get(conv.conv_id).title == "Real turn title"
+
+
+@pytest.mark.asyncio
+async def test_widget_response_does_not_reach_cadence(config, stub_llm):
+    """One real user turn plus one widget response is 1 turn, not 2: no
+    turn-2 attempt."""
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Opening scaffolding message")
+    _seed(config, conv.conv_id, 1)
+    append_message(
+        config,
+        conv.conv_id,
+        {"role": "user", "source": "widget_response", "content": "widget pick"},
+    )
+    stub_llm.response = {"content": "Should not apply"}
+
+    await maybe_auto_title(config, conv.conv_id, EventBus())
+
+    assert stub_llm == []
+    assert index.get(conv.conv_id).title == "Opening scaffolding message"
 
 
 # -- title normalization --------------------------------------------------------

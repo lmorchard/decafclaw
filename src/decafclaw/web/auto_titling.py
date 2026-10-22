@@ -5,16 +5,19 @@ Sidebar tabs start with the first 100 characters of the opening message
 caller may fire ``maybe_auto_title`` as a background task; when the turn count
 hits a cadence point the title is refined with a short LLM-generated title.
 
-Guards:
+Guards, in cost order (cheap index lookups before any archive read):
 
 - Conversations the user renamed (``custom_title``) are never overwritten —
   the index refuses ``manual=False`` renames for them, and the check here
-  saves the LLM call.
+  saves the LLM call and the archive read.
 - Each cadence point is attempted at most once (module-level dedup), so
   multiple open tabs of one conversation do not multiply LLM calls.
-- The caller must not await this on the turn-completion path; it is designed
-  to run as a fire-and-forget background task so titling adds no latency to
-  the main turn.
+- Once the last cadence point has been attempted, the conversation is
+  marked exhausted in memory: later turns skip the turn count entirely
+  (the sentinel is per-process and cleared on restart).
+- The caller must not await this on the turn-completion path; it is
+  designed to run as a fire-and-forget background task so titling adds no
+  latency to the main turn.
 """
 
 from __future__ import annotations
@@ -46,11 +49,22 @@ MAX_MESSAGE_CHARS = 400
 # attempt already started or completed. The check-and-reserve below is sync
 # (no await), so it is atomic within the event loop.
 _attempted: dict[str, set[int]] = {}
+# conv_ids whose turn count has passed the last cadence point: no later
+# turn can ever be due, so skip the archive read entirely. Per-process;
+# a restart clears the sentinel, which bounds the residual cost.
+_exhausted: set[str] = set()
 
 
 def count_user_turns(config, conv_id: str) -> int:
-    """Number of user turns in the conversation archive."""
-    return sum(1 for m in read_archive(config, conv_id) if m.get("role") == "user")
+    """Number of user turns in the conversation archive.
+
+    Widget responses (``source: "widget_response"``) are synthetic user-role
+    messages injected by the input-widget pause, not real user turns, so the
+    cadence stays aligned with actual user turns (#1072).
+    """
+    return sum(
+        1 for m in read_archive(config, conv_id) if m.get("role") == "user" and m.get("source") != "widget_response"
+    )
 
 
 def _history_text(config, conv_id: str) -> str:
@@ -104,22 +118,36 @@ async def maybe_auto_title(config, conv_id: str, event_bus) -> None:
     guard) and publishes a ``conv_renamed`` event so connected clients can
     refresh their sidebar in real time.
 
+    The cheap index guards run before any archive read: the turn count is
+    only taken for indexed conversations without a custom title that have
+    not exhausted the cadence, so renamed, system, and long conversations
+    cost one small index lookup per turn, not a full archive parse.
+
     Fail-open: any error is logged and swallowed — titling must never break
     the turn that triggered it.
     """
     try:
+        if conv_id in _exhausted:
+            return
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        if conv is None or conv.custom_title:
+            return
+
         turns = count_user_turns(config, conv_id)
+        if turns > TITLING_TURNS[-1]:
+            _exhausted.add(conv_id)
+            return
         if turns not in TITLING_TURNS:
             return
         attempted = _attempted.setdefault(conv_id, set())
         if turns in attempted:
             return
         attempted.add(turns)
-
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        if conv is None or conv.custom_title:
-            return
+        if turns == TITLING_TURNS[-1]:
+            # The last cadence point has now been attempted: no later turn
+            # can ever be due, so subsequent turns skip the count.
+            _exhausted.add(conv_id)
 
         title = await _generate_title(config, conv_id)
         if not title or not _differs(conv.title, title):
