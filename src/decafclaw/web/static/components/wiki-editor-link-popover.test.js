@@ -499,6 +499,25 @@ describe('wiki-editor wiki-link popover', () => {
     expect(fakeView.dispatches).toHaveLength(0);
   });
 
+  it('the popover Open link label follows the live Target field value', async () => {
+    setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+
+    await openPopover(el, link);
+    expect(/** @type {HTMLButtonElement} */ (document.querySelector('.wiki-link-popover-goto')).textContent.trim())
+      .toBe('Open "Old Target"');
+
+    setField('target', 'New Target');
+    await el.updateComplete;
+
+    expect(/** @type {HTMLButtonElement} */ (document.querySelector('.wiki-link-popover-goto')).textContent.trim())
+      .toBe('Open "New Target"');
+    // The re-render must not steal focus or re-select the field mid-typing.
+    const target = /** @type {HTMLInputElement} */ (
+      document.querySelector('.wiki-link-popover input[data-field="target"]'));
+    expect(document.activeElement).toBe(target);
+  });
+
   it('the popover Open link with an empty target closes without navigating', async () => {
     setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
     link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));

@@ -682,6 +682,11 @@ export class WikiEditor extends LitElement {
     const field = input.dataset.field;
     if (field === 'target') edit.target = input.value;
     else if (field === 'display') edit.display = input.value;
+    // Re-render so the Open button label follows the live Target field.
+    // A bare requestUpdate() leaves changed without '_linkEdit', so
+    // updated() does not re-focus the field, and the .value bindings
+    // re-commit the same value the input already holds.
+    this.requestUpdate();
   }
 
   /**
