@@ -12,4 +12,13 @@
 - Phase 2 (#1103): Added `scheduled_wakes.py` (`ScheduledWake`, `ScheduledWakeManager`), sidecar `.scheduled_wakes.json`, and tools `schedule_turn`, `schedule_cancel`, `schedule_list`. Wired into `ConversationManager` startup scan and shutdown. Added unit tests and startup recovery tests.
 - Phase 3 (#1095): Added `## Background Operations & Lifecycle` section to `src/decafclaw/prompts/AGENT.md`. Sharpened tool descriptions for `wait`, `shell_background_start`, and `shell_background_status`. Added preemptive tool search tests and tool choice disambiguation cases in `evals/tool_choice/core_overlaps.yaml`.
 - Phase 4: Updated documentation in `docs/tools.md`, `docs/background-wake.md`, `docs/loop-breaker.md`, and `CLAUDE.md`. Full test suite: 4675 passed, 2 skipped. Full `make check` passed.
+- Addressed Copilot review feedback on PR #1119:
+  1. Handled deleted conversation timers in `_fire_wake` and added `cancel_all_for_conversation` wired into `http_server.py`.
+  2. Blocked child agents from scheduling wake turns (`is_child` check in `tool_schedule_turn`).
+  3. Ensured `scheduled_wakes.shutdown()` runs on `ConversationManager.shutdown()` even when idle (`try ... finally`).
+  4. Restored transport context (`user_id`, `channel_id`, `thread_id`) on wake dispatch and added `wake_delivery` fallback routing when no per-conversation subscribers exist.
+  5. Propagated `OSError` in `save_scheduled_wakes` and tools.
+  6. Prevented cross-conversation cancellation in `ScheduledWakeManager.cancel`.
+  7. Retained wake in sidecar and task registry until `enqueue_turn` succeeds.
+
 

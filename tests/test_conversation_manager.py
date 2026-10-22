@@ -1497,6 +1497,40 @@ async def test_enqueue_turn_wake_kind_defaults_to_background_wake_mode(manager, 
 
 
 @pytest.mark.asyncio
+async def test_wake_turn_publishes_wake_delivery_when_no_subscribers(manager, config, monkeypatch):
+    """When a WAKE turn finishes without subscribers, fallback event is published (#1119 review)."""
+    from decafclaw.media import ToolResult
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        return ToolResult(text="Build succeeded on wake")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    received_events = []
+    manager.event_bus.subscribe(lambda e: received_events.append(e))
+
+    def setup_channel(ctx):
+        ctx.channel_id = "mm-channel-123"
+        ctx.thread_id = "mm-root-456"
+
+    future = await manager.enqueue_turn(
+        conv_id="c-wake-delivery",
+        kind=TurnKind.WAKE,
+        prompt="wake nudge",
+        context_setup=setup_channel,
+        user_id="user_alice",
+    )
+    await future
+
+    deliveries = [e for e in received_events if e.get("type") == "wake_delivery"]
+    assert len(deliveries) == 1
+    assert deliveries[0]["channel_id"] == "mm-channel-123"
+    assert deliveries[0]["thread_id"] == "mm-root-456"
+    assert deliveries[0]["text"] == "Build succeeded on wake"
+    assert deliveries[0]["user_id"] == "user_alice"
+
+
+@pytest.mark.asyncio
 async def test_enqueue_turn_wake_kind_restores_skill_state(manager, config, monkeypatch):
     """WAKE fires on a persistent conv, so activated skills / preserved
     flags / active_model must carry forward onto the ctx."""

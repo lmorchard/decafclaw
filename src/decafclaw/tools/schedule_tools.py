@@ -28,6 +28,12 @@ async def tool_schedule_turn(
     metadata: dict[str, Any] | None = None,
 ) -> ToolResult:
     """Schedule an autonomous future wake turn in this conversation after a delay."""
+    if getattr(ctx, "is_child", False):
+        return ToolResult(
+            text="[error: Child agents cannot schedule autonomous wake turns]",
+            data={"error": "child_agent_not_permitted"},
+        )
+
     conv_id = ctx.conv_id
     if not conv_id:
         return ToolResult(
@@ -55,6 +61,9 @@ async def tool_schedule_turn(
             delay_seconds=int(delay_seconds),
             reason=reason_str,
             metadata=metadata,
+            user_id=getattr(ctx, "user_id", "") or "",
+            channel_id=getattr(ctx, "channel_id", "") or "",
+            thread_id=getattr(ctx, "thread_id", "") or "",
         )
         return ToolResult(
             text=(
@@ -65,6 +74,9 @@ async def tool_schedule_turn(
         )
     except ValueError as exc:
         return ToolResult(text=f"[error: {exc}]", data={"error": str(exc)})
+    except OSError as exc:
+        log.warning("Persistence error scheduling turn: %s", exc)
+        return ToolResult(text=f"[error: Failed to persist schedule: {exc}]", data={"error": "persistence_failure"})
     except Exception as exc:
         log.warning("Unexpected error scheduling turn: %s", exc)
         return ToolResult(text=f"[error: Failed to schedule turn: {exc}]", data={"error": str(exc)})
@@ -87,7 +99,13 @@ async def tool_schedule_cancel(ctx: "Context", schedule_id: str) -> ToolResult:
 
     sched_id = str(schedule_id).strip()
     mgr = _get_wake_manager(ctx)
-    cancelled = await mgr.cancel(conv_id=conv_id, schedule_id=sched_id)
+    try:
+        cancelled = await mgr.cancel(conv_id=conv_id, schedule_id=sched_id)
+    except OSError as exc:
+        log.warning("Persistence error cancelling schedule %s: %s", sched_id, exc)
+        return ToolResult(
+            text=f"[error: Failed to update schedule sidecar: {exc}]", data={"error": "persistence_failure"}
+        )
 
     if cancelled:
         return ToolResult(

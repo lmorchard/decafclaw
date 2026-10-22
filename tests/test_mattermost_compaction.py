@@ -89,3 +89,37 @@ async def test_compaction_end_without_start_does_not_edit(config):
 
     client.send.assert_not_called()
     client.edit_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mattermost_delivers_wake_delivery_event():
+    """MattermostClient sends fallback wake delivery when no conversation subscriber is live (#1119 review)."""
+    from decafclaw.events import EventBus
+
+    client = _make_client()
+    event_bus = EventBus()
+
+    async def on_wake_delivery(event):
+        if event.get("type") != "wake_delivery":
+            return
+        channel_id = event.get("channel_id")
+        if not channel_id:
+            return
+        text = event.get("text", "")
+        root_id = event.get("thread_id") or None
+        if text:
+            await client.send(channel_id, text, root_id=root_id)
+
+    sub_id = event_bus.subscribe(on_wake_delivery)
+
+    await event_bus.publish(
+        {
+            "type": "wake_delivery",
+            "channel_id": "ch-wake-99",
+            "thread_id": "root-wake-11",
+            "text": "Scheduled task finished!",
+        }
+    )
+
+    client.send.assert_awaited_once_with("ch-wake-99", "Scheduled task finished!", root_id="root-wake-11")
+    event_bus.unsubscribe(sub_id)

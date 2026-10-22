@@ -40,6 +40,9 @@ class ScheduledWake:
     fire_at: str  # ISO-8601 UTC
     fire_at_ts: float  # Unix timestamp
     metadata: dict[str, Any] = field(default_factory=dict)
+    user_id: str = ""
+    channel_id: str = ""
+    thread_id: str = ""
 
 
 def load_scheduled_wakes(config, conv_id: str) -> list[ScheduledWake]:
@@ -70,6 +73,7 @@ def save_scheduled_wakes(config, conv_id: str, schedules: list[ScheduledWake]) -
         os.replace(tmp, path)
     except OSError as exc:
         log.warning("Failed to save scheduled wakes for conv %s: %s", conv_id, exc)
+        raise
 
 
 class ScheduledWakeManager:
@@ -87,6 +91,9 @@ class ScheduledWakeManager:
         delay_seconds: int,
         reason: str,
         metadata: dict[str, Any] | None = None,
+        user_id: str = "",
+        channel_id: str = "",
+        thread_id: str = "",
     ) -> ScheduledWake:
         """Schedule a wake turn after delay_seconds."""
         if delay_seconds < 1:
@@ -111,6 +118,9 @@ class ScheduledWakeManager:
             fire_at=fire_dt.isoformat(),
             fire_at_ts=fire_ts,
             metadata=metadata or {},
+            user_id=user_id,
+            channel_id=channel_id,
+            thread_id=thread_id,
         )
 
         async with self._lock:
@@ -134,25 +144,47 @@ class ScheduledWakeManager:
     async def cancel(self, conv_id: str, schedule_id: str) -> bool:
         """Cancel a pending scheduled wake. Returns True if found and cancelled."""
         async with self._lock:
+            schedules = load_scheduled_wakes(self.config, conv_id)
+            matching = [s for s in schedules if s.schedule_id == schedule_id]
+            if not matching:
+                return False
+
+            schedules = [s for s in schedules if s.schedule_id != schedule_id]
+            save_scheduled_wakes(self.config, conv_id, schedules)
+
             task = self._tasks.pop(schedule_id, None)
             if task and not task.done():
                 task.cancel()
 
+            log.info("Cancelled scheduled wake %s for conv %s", schedule_id, conv_id[:8])
+            return True
+
+    async def cancel_all_for_conversation(self, conv_id: str) -> None:
+        """Cancel all pending in-memory timers for a conversation (e.g. on deletion)."""
+        async with self._lock:
             schedules = load_scheduled_wakes(self.config, conv_id)
-            initial_count = len(schedules)
-            schedules = [s for s in schedules if s.schedule_id != schedule_id]
-
-            if len(schedules) != initial_count:
-                save_scheduled_wakes(self.config, conv_id, schedules)
-                log.info("Cancelled scheduled wake %s for conv %s", schedule_id, conv_id[:8])
-                return True
-
-        return False
+            for s in schedules:
+                task = self._tasks.pop(s.schedule_id, None)
+                if task and not task.done():
+                    task.cancel()
 
     def list_schedules(self, conv_id: str) -> list[ScheduledWake]:
         """List all pending scheduled wakes for a conversation, sorted by fire time."""
         schedules = load_scheduled_wakes(self.config, conv_id)
         return sorted(schedules, key=lambda s: s.fire_at_ts)
+
+    @staticmethod
+    def _make_context_setup(channel_id: str, thread_id: str):
+        if not channel_id and not thread_id:
+            return None
+
+        def setup(ctx):
+            if channel_id:
+                ctx.channel_id = channel_id
+            if thread_id:
+                ctx.thread_id = thread_id
+
+        return setup
 
     async def _run_timer(self, entry: ScheduledWake) -> None:
         """Sleep until fire_at_ts, then dispatch the wake turn."""
@@ -168,15 +200,27 @@ class ScheduledWakeManager:
             log.warning("Error running wake timer for %s: %s", entry.schedule_id, exc)
 
     async def _fire_wake(self, entry: ScheduledWake) -> None:
-        """Remove from sidecar and enqueue TurnKind.WAKE on the manager."""
+        """Enqueue TurnKind.WAKE on manager and clear sidecar only after acceptance."""
         async with self._lock:
-            self._tasks.pop(entry.schedule_id, None)
             schedules = load_scheduled_wakes(self.config, entry.conv_id)
-            schedules = [s for s in schedules if s.schedule_id != entry.schedule_id]
-            save_scheduled_wakes(self.config, entry.conv_id, schedules)
+            if not any(s.schedule_id == entry.schedule_id for s in schedules):
+                # Dropped if schedule was cancelled or conversation files deleted (#1119 review)
+                self._tasks.pop(entry.schedule_id, None)
+                log.debug(
+                    "Scheduled wake %s not in sidecar for conv %s; dropping fire", entry.schedule_id, entry.conv_id[:8]
+                )
+                return
 
         if self.manager is None:
             log.debug("No manager attached to ScheduledWakeManager; wake %s dropped", entry.schedule_id)
+            async with self._lock:
+                self._tasks.pop(entry.schedule_id, None)
+                schedules = load_scheduled_wakes(self.config, entry.conv_id)
+                schedules = [s for s in schedules if s.schedule_id != entry.schedule_id]
+                try:
+                    save_scheduled_wakes(self.config, entry.conv_id, schedules)
+                except OSError:
+                    pass
             return
 
         from .conversation_manager import TurnKind
@@ -187,6 +231,7 @@ class ScheduledWakeManager:
             "if nothing requires attention."
         )
         wake_meta = {"schedule_id": entry.schedule_id, **entry.metadata}
+        context_setup = self._make_context_setup(entry.channel_id, entry.thread_id)
 
         try:
             await self.manager.enqueue_turn(
@@ -194,10 +239,20 @@ class ScheduledWakeManager:
                 kind=TurnKind.WAKE,
                 prompt=prompt,
                 metadata=wake_meta,
+                user_id=entry.user_id,
+                context_setup=context_setup,
             )
             log.info("Dispatched wake turn for schedule %s (conv %s)", entry.schedule_id, entry.conv_id[:8])
+
+            # Remove from sidecar and task registry only once enqueue succeeds
+            async with self._lock:
+                self._tasks.pop(entry.schedule_id, None)
+                schedules = load_scheduled_wakes(self.config, entry.conv_id)
+                schedules = [s for s in schedules if s.schedule_id != entry.schedule_id]
+                save_scheduled_wakes(self.config, entry.conv_id, schedules)
         except Exception as exc:
             log.warning("Failed to enqueue wake turn for schedule %s: %s", entry.schedule_id, exc)
+            raise
 
     async def startup_scan(self) -> int:
         """Scan all conversation sidecars for pending scheduled wakes and resume them.

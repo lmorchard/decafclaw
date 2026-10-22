@@ -1106,18 +1106,18 @@ class ConversationManager:
         Called during graceful shutdown so running turns can finish
         rather than being abandoned.
         """
-        tasks = [s.agent_task for s in self._conversations.values() if s.agent_task and not s.agent_task.done()]
-        if not tasks:
-            return
-        log.info("Waiting for %d in-flight agent turn(s)...", len(tasks))
-        done, pending = await asyncio.wait(tasks, timeout=timeout)
-        if pending:
-            log.warning("Shutdown timeout: cancelling %d agent turn(s)", len(pending))
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-
-        await self.scheduled_wakes.shutdown()
+        try:
+            tasks = [s.agent_task for s in self._conversations.values() if s.agent_task and not s.agent_task.done()]
+            if tasks:
+                log.info("Waiting for %d in-flight agent turn(s)...", len(tasks))
+                done, pending = await asyncio.wait(tasks, timeout=timeout)
+                if pending:
+                    log.warning("Shutdown timeout: cancelling %d agent turn(s)", len(pending))
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+        finally:
+            await self.scheduled_wakes.shutdown()
 
     def get_state(self, conv_id: str) -> ConversationState | None:
         """Get current conversation state, or None if not tracked."""
@@ -1795,6 +1795,19 @@ class ConversationManager:
                         "context_limit": self.config.compaction.max_tokens,
                     },
                 )
+                if kind is TurnKind.WAKE and not suppress and not state.subscribers:
+                    if ctx.channel_id or getattr(ctx, "thread_id", None):
+                        await self.event_bus.publish(
+                            {
+                                "type": "wake_delivery",
+                                "conv_id": conv_id,
+                                "channel_id": ctx.channel_id,
+                                "thread_id": getattr(ctx, "thread_id", ""),
+                                "user_id": user_id,
+                                "text": response_text,
+                                "media": response_media,
+                            }
+                        )
             except asyncio.CancelledError:
                 log.info("Agent turn cancelled for conv %s", conv_id[:8])
                 result_holder.append(ToolResult(text="[cancelled]", termination_reason="cancelled"))

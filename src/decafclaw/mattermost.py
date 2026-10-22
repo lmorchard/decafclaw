@@ -766,9 +766,26 @@ class MattermostClient:
         def on_message_sync(msg):
             asyncio.get_running_loop().create_task(on_message(msg))
 
+        async def on_wake_delivery(event):
+            if event.get("type") != "wake_delivery":
+                return
+            channel_id = event.get("channel_id")
+            if not channel_id:
+                return
+            text = event.get("text", "")
+            root_id = event.get("thread_id") or None
+            if text:
+                try:
+                    await self.send(channel_id, text, root_id=root_id)
+                except Exception as e:
+                    log.warning("Failed to deliver wake response to Mattermost channel %s: %s", channel_id, e)
+
+        wake_sub_id = app_ctx.event_bus.subscribe(on_wake_delivery)
+
         try:
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
+            app_ctx.event_bus.unsubscribe(wake_sub_id)
             if agent_tasks:
                 log.info(f"Waiting for {len(agent_tasks)} in-flight agent turn(s)...")
                 await asyncio.gather(*agent_tasks, return_exceptions=True)
