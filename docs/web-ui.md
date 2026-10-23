@@ -151,6 +151,30 @@ The **Tags** tab lists every tag in use across the vault, with usage counts, sor
 - The page open in the wiki pane is highlighted in any tag's page list that contains it; closing the pane clears the highlight
 - Backed by `GET /api/vault/tags`
 
+### Bookmarks
+
+Pin the files, folders, vault pages, and vault folders you reach for
+often. Bookmarks are stored server-side, per-agent, at
+`data/{agent_id}/bookmarks.json` (outside the workspace), so they sync
+across desktop, tablet, and mobile sessions.
+
+- **Pinned Bookmarks section** in the Files and Vault sidebars, above
+  the Browse/Recent view toggle. Each row shows a 📁 or 📄 icon plus
+  the label; clicking (or Enter/Space) opens the target — folder rows
+  navigate the sidebar, file rows open the file viewer, and vault page
+  rows open the wiki pane.
+- **☆/★ toggle on folder rows** in both sidebars — bookmark the folder
+  the listing is currently showing.
+- **☆/★ toggle in the viewer toolbars** (`<file-page>` and
+  `<wiki-page>`) — bookmark the file or page you have open.
+- A section renders only when its target has at least one bookmark; an
+  empty section would be dead chrome.
+- All components share one client cache (`lib/bookmarks-store.js`): one
+  `GET /api/bookmarks` per page load, in-flight dedupe, subscribe for
+  live updates after each toggle.
+
+The endpoints are listed in the [REST API](#rest-api) section below.
+
 ### Keyboard navigation
 
 The sidebar list rows in the Chats, Vault, Files, Tags, and Schedules tabs work from the keyboard:
@@ -488,6 +512,23 @@ block is preserved verbatim), `frontmatter` (dict patch), or `frontmatter_raw`
 response carries `modified` and the resulting `frontmatter` — `wiki-page` pushes
 that `modified` into `<wiki-editor>` so the body autosave doesn't 409.
 
+### Bookmarks
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/bookmarks` | List the agent's bookmarks: `{files: [...], vault: [...]}` |
+| `POST` | `/api/bookmarks` | Add or update a bookmark. Body `{target: "files"\|"vault", path, kind, label?}`; returns the updated payload |
+| `DELETE` | `/api/bookmarks?target=...&path=...` | Remove a bookmark; returns the updated payload, 404 when absent |
+
+Each entry is `{path, label, kind}`. `kind` must match `target` — `file`
+or `dir` for `files`, `page` or `folder` for `vault` (400 otherwise).
+`label` defaults to the path's last segment when omitted. POST is an
+upsert keyed on `(target, path)`: re-POSTing updates `label`/`kind` and
+never duplicates. Paths must be non-empty, relative, and free of `..`
+and empty segments (400 otherwise).
+
+See [Bookmarks](#bookmarks) for the UI.
+
 ### Uploads
 
 | Method | Endpoint | Description |
@@ -553,6 +594,7 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 - `src/decafclaw/web/auth.py` — Token-based auth, `decafclaw-token` CLI
 - `src/decafclaw/web/conversations.py` — Conversation index metadata
 - `src/decafclaw/web/conversation_folders.py` — Per-user folder management
+- `src/decafclaw/web/bookmarks.py` — Per-agent bookmark index (`data/{agent_id}/bookmarks.json`)
 - `src/decafclaw/web/websocket.py` — WebSocket message handlers
 - `src/decafclaw/web/static/` — Frontend components and service layer
 
