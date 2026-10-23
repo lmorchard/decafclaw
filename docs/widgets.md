@@ -587,7 +587,7 @@ or pinned above the chat input.
 ### Auto-emit
 
 The widget is rarely constructed directly by the agent — it's mirrored
-automatically into the sticky slot by two producers:
+automatically into the sticky slot by three producers:
 
 - **Checklist tools** (`tools/checklist_tools.py`) — every
   `checklist_create` / `checklist_step_done` / `checklist_abort` call
@@ -597,6 +597,11 @@ automatically into the sticky slot by two producers:
   `executing` phase, plan-mutating tools mirror the plan's steps as a
   `progress_tracker` snapshot; the slot clears on completion or when the
   project leaves `executing` (e.g. `project_advance` back to planning).
+- **Background skill** (`skills/background/tools.py`) — a background job
+  started with `pin_sticky=True` streams its live output into the slot: an
+  initial in-progress pin, throttled updates as output lines arrive, and a
+  final done/failed pin on exit (the slot clears when the job is stopped or
+  expires). See [background-wake.md](background-wake.md#pin_sticky-parameter).
 
 Both producers are fail-open (a sticky-mirror failure never breaks the
 underlying tool call) and use `sticky.py`'s `set_sticky` / `clear_sticky`
@@ -627,7 +632,8 @@ occupant (single slot); `widget_unpin_sticky()` clears it. Both are
 normal-priority tools in the base registry (`src/decafclaw/tools/sticky_tools.py`).
 As of #414, the checklist tools and the project skill also drive the sticky
 slot directly (bypassing these two tools) to auto-emit a `progress_tracker`
-snapshot as steps complete — see [progress_tracker](#progress_tracker-widget).
+snapshot as steps complete, and as of #1104 the background skill streams
+`pin_sticky` jobs into the slot — see [progress_tracker](#progress_tracker-widget).
 
 **Collapse to summary.** The header shows a one-line summary (the widget's
 `summary` or `title` field, falling back to the widget type name) with a
@@ -644,6 +650,13 @@ collapsed state persists per-conversation in `localStorage`
 before any live events arrive. Live updates ride the `sticky_set` /
 `sticky_clear` WebSocket message types — see
 [websocket-messages.md](websocket-messages.md) for the wire shape.
+
+**External progress updates.** `POST /api/sticky/{conv_id}` (body
+`{"widget_type": "...", "data": {...}}`) pins a widget and
+`DELETE /api/sticky/{conv_id}` clears the slot, letting external scripts or
+CLI tools push live progress for a conversation without an agent turn. Both
+require the same auth and conversation-ownership as `GET` and run through the
+same `set_sticky` / `clear_sticky` validation.
 
 ## Out-of-scope
 

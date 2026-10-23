@@ -2666,6 +2666,64 @@ async def get_sticky_state(request: Request, conv_id: str) -> StickyResponse | J
     )
 
 
+class StickySetRequest(BaseModel):
+    widget_type: str
+    data: dict[str, object]
+
+
+async def post_sticky_state(request: Request, conv_id: str) -> JSONResponse:
+    """Pin a widget into the conversation's sticky slot. Backs external
+    progress updates (e.g. long-running scripts posting live status)."""
+    from . import sticky as sticky_mod
+
+    config = request.app.state.config
+    manager = request.app.state.manager
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    widget_type = body.get("widget_type")
+    data = body.get("data")
+    if not isinstance(widget_type, str) or not widget_type:
+        return JSONResponse({"error": "widget_type must be a non-empty string"}, status_code=400)
+    if not isinstance(data, dict):
+        return JSONResponse({"error": "data must be a JSON object"}, status_code=400)
+    emit = manager.emit if manager else None
+    result = await sticky_mod.set_sticky(config, conv_id, widget_type, data, emit=emit)
+    if not result.ok:
+        return JSONResponse({"error": result.error}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+async def delete_sticky_state(request: Request, conv_id: str) -> JSONResponse:
+    """Clear the conversation's sticky slot."""
+    from . import sticky as sticky_mod
+
+    config = request.app.state.config
+    manager = request.app.state.manager
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    emit = manager.emit if manager else None
+    result = await sticky_mod.clear_sticky(config, conv_id, emit=emit)
+    if not result.ok:
+        return JSONResponse({"error": result.error}, status_code=500)
+    return JSONResponse({"ok": True})
+
+
 async def post_canvas_new_tab(request: Request, conv_id: str) -> JSONResponse:
     """Create a new canvas tab. Backs the inline 'Open in Canvas' button."""
     from . import canvas as canvas_mod
@@ -3692,6 +3750,18 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/widgets/{tier}/{name}/widget.js", serve_widget_js, methods=["GET"]),
         APIRoute("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"], response_model=CanvasStateResponse),
         APIRoute("/api/sticky/{conv_id}", get_sticky_state, methods=["GET"], response_model=StickyResponse),
+        APIRoute(
+            "/api/sticky/{conv_id}",
+            post_sticky_state,
+            methods=["POST"],
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": StickySetRequest.model_json_schema()}},
+                }
+            },
+        ),
+        APIRoute("/api/sticky/{conv_id}", delete_sticky_state, methods=["DELETE"]),
         APIRoute(
             "/api/canvas/{conv_id}/new_tab",
             post_canvas_new_tab,

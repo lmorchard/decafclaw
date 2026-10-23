@@ -672,3 +672,211 @@ async def test_completion_tail_lines_defaults_from_config(ctx, monkeypatch):
     assert job.completion_tail_lines == 123
 
     await mgr.cleanup_all()
+
+
+# ---------------------------------------------------------------------------
+# Task 7: pin_sticky — live progress streaming to the sticky slot (#1104)
+# ---------------------------------------------------------------------------
+
+
+class _StickyCapturingManager:
+    """Stands in for ConversationManager: records per-conv emit events."""
+
+    def __init__(self):
+        self.events: list[tuple[str, dict]] = []
+
+    async def emit(self, conv_id: str, event: dict) -> None:
+        self.events.append((conv_id, event))
+
+    @property
+    def sticky_events(self) -> list[dict]:
+        return [event for _cid, event in self.events if event.get("type") in ("sticky_set", "sticky_clear")]
+
+
+@pytest.fixture
+def sticky_registry(config, monkeypatch):
+    """Load the bundled widget registry so progress_tracker validates."""
+    import decafclaw.widgets as widgets_module
+    from decafclaw.widgets import init_widgets
+
+    monkeypatch.setattr(widgets_module, "_registry", init_widgets(config))
+    return widgets_module._registry
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_streams_running_then_completed(tmp_path, config, sticky_registry):
+    """pin_sticky=True pins an in-progress tracker on start and a done
+    tracker when the job exits cleanly."""
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    job = await manager.start(
+        "echo hello",
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky",
+        manager=fake,
+        pin_sticky=True,
+    )
+
+    # Initial "Running" pin lands before the first output line.
+    events = fake.sticky_events
+    assert events, "expected at least the initial running pin"
+    first = events[0]
+    assert first["type"] == "sticky_set"
+    assert first["widget_type"] == "progress_tracker"
+    assert first["data"]["steps"][0]["status"] == "in_progress"
+    assert first["data"]["steps"][0]["label"] == "echo hello"
+
+    await job.reader_task
+
+    events = fake.sticky_events
+    assert len(events) >= 2, "expected a final sticky state after exit"
+    final = events[-1]
+    assert final["type"] == "sticky_set"
+    assert final["data"]["steps"][0]["status"] == "done"
+    assert "exit 0" in final["data"]["steps"][0]["note"]
+
+    # The final pin must be persisted for reload recovery.
+    from decafclaw import sticky as sticky_mod
+
+    state = sticky_mod.read_sticky_state(config, "conv-sticky")
+    assert state["widget_type"] == "progress_tracker"
+    assert state["data"]["steps"][0]["status"] == "done"
+
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_failed_job_shows_failed_state(tmp_path, config, sticky_registry):
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    job = await manager.start(
+        "exit 3",
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-fail",
+        manager=fake,
+        pin_sticky=True,
+    )
+    await job.reader_task
+
+    final = fake.sticky_events[-1]
+    assert final["type"] == "sticky_set"
+    assert final["data"]["steps"][0]["status"] == "failed"
+    assert "exit 3" in final["data"]["steps"][0]["note"]
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_throttles_burst_output(tmp_path, config, sticky_registry):
+    """A burst of output lines produces a bounded number of sticky updates,
+    never one per line."""
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    job = await manager.start(
+        "seq 1 200",
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-burst",
+        manager=fake,
+        pin_sticky=True,
+    )
+    await job.reader_task
+
+    assert len(job.stdout_buffer) == 200, "the hook must not drop buffered output"
+    events = fake.sticky_events
+    # initial pin + bounded throttled line updates + final state.
+    assert 2 <= len(events) < 20, f"expected throttled updates, got {len(events)} sticky events"
+    assert events[-1]["data"]["steps"][0]["status"] == "done"
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_disabled_emits_nothing(tmp_path, config, sticky_registry):
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    job = await manager.start(
+        "echo hi",
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-off",
+        manager=fake,
+        pin_sticky=False,
+    )
+    await job.reader_task
+    assert fake.sticky_events == []
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_stopped_job_clears_slot(tmp_path, config, sticky_registry):
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    job = await manager.start(
+        "sleep 30",
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-stop",
+        manager=fake,
+        pin_sticky=True,
+    )
+    assert fake.sticky_events and fake.sticky_events[0]["type"] == "sticky_set"
+    await manager.stop(job.job_id)
+    assert fake.sticky_events[-1]["type"] == "sticky_clear"
+
+    from decafclaw import sticky as sticky_mod
+
+    assert sticky_mod.read_sticky_state(config, "conv-sticky-stop") == sticky_mod.empty_sticky_state()
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_failure_is_fail_open(tmp_path, config, sticky_registry, monkeypatch):
+    """A sticky publish failure must never break job monitoring."""
+    import decafclaw.sticky as sticky_mod
+
+    async def boom(*a, **k):
+        raise RuntimeError("sticky boom")
+
+    monkeypatch.setattr(sticky_mod, "set_sticky", boom)
+    monkeypatch.setattr(sticky_mod, "clear_sticky", boom)
+
+    manager = BackgroundJobManager()
+    job = await manager.start(
+        "echo hi",
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-boom",
+        manager=None,
+        pin_sticky=True,
+    )
+    await job.reader_task
+    assert job.status == "completed"
+    assert job.exit_code == 0
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_plumbs_to_job(ctx, monkeypatch):
+    """pin_sticky passed to the tool propagates into BackgroundJob."""
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    from decafclaw.skills.background.tools import (
+        _get_job_manager,
+        tool_shell_background_start,
+    )
+
+    result = await tool_shell_background_start(ctx, command="true", pin_sticky=True)
+    mgr = _get_job_manager(ctx)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    assert job.pin_sticky is True
+
+    # Default stays False.
+    result = await tool_shell_background_start(ctx, command="true")
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    assert job.pin_sticky is False
+
+    await mgr.cleanup_all()

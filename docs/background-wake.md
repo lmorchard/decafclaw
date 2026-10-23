@@ -140,6 +140,39 @@ The in-memory deques (`_OUTPUT_BUFFER_SIZE = 500`) remain the authoritative
 source for richer data via a live `shell_background_status` call during the
 job's lifetime.
 
+## `pin_sticky` parameter
+
+`shell_background_start` accepts an optional `pin_sticky` parameter
+([#1104](https://github.com/lmorchard/decafclaw/issues/1104)):
+
+```python
+await tool_shell_background_start(
+    ctx,
+    command="python scripts/train.py",
+    pin_sticky=True,  # stream live progress to the web UI sticky slot
+)
+```
+
+With `pin_sticky=True`, the job's output is mirrored into the conversation's
+sticky slot above the chat input as a `progress_tracker` widget
+([widgets.md](widgets.md#sticky-slot)) — out-of-band over WebSocket, with no
+conversational turns, no LLM tokens, and no archive writes during streaming:
+
+- **On start:** an initial `in_progress` pin ("Running: …"), so the slot
+  appears even before the first output line.
+- **While running:** new output lines re-pin the tracker, throttled to at
+  most one update per 0.5 s; the collapsed slot line shows the latest output
+  line.
+- **On exit:** the slot shows a final `done` (exit 0) or `failed` (non-zero
+  exit) state with the exit code. A job that is stopped or expires clears the
+  slot.
+
+All sticky mirroring is fail-open: a sticky failure never affects job
+monitoring, the archive record, the inbox notification, or the wake turn.
+Non-web transports ignore sticky events (the `sticky.json` sidecar is still
+written). External scripts can push the same surface without a job:
+`POST /api/sticky/{conv_id}` / `DELETE /api/sticky/{conv_id}`.
+
 ## `BACKGROUND_WAKE_OK` sentinel
 
 If the agent's final text response starts with `BACKGROUND_WAKE_OK`

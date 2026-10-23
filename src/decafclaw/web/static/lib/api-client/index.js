@@ -1349,6 +1349,48 @@ var DefaultService = class {
       }
     });
   }
+  /**
+   * Post Sticky State
+   * Pin a widget into the conversation's sticky slot. Backs external
+   * progress updates (e.g. long-running scripts posting live status).
+   * @param convId
+   * @param requestBody
+   * @returns any Successful Response
+   * @throws ApiError
+   */
+  static postStickyStateApiStickyConvIdPost(convId, requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/sticky/{conv_id}",
+      path: {
+        "conv_id": convId
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
+   * Delete Sticky State
+   * Clear the conversation's sticky slot.
+   * @param convId
+   * @returns any Successful Response
+   * @throws ApiError
+   */
+  static deleteStickyStateApiStickyConvIdDelete(convId) {
+    return request2(OpenAPI, {
+      method: "DELETE",
+      url: "/api/sticky/{conv_id}",
+      path: {
+        "conv_id": convId
+      },
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
   static postCanvasNewTabApiCanvasConvIdNewTabPost(convId, requestBody, discardResponse = false) {
     return request2(OpenAPI, {
       discardResponse,
