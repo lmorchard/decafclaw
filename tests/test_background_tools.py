@@ -880,3 +880,117 @@ async def test_pin_sticky_plumbs_to_job(ctx, monkeypatch):
     assert job.pin_sticky is False
 
     await mgr.cleanup_all()
+
+
+class _BlockingStickyManager:
+    """Allow the initial sticky pin, then block later emits until released."""
+
+    def __init__(self):
+        self.events: list[tuple[str, dict]] = []
+        self.release = asyncio.Event()
+        self.emit_started = asyncio.Event()
+
+    async def emit(self, conv_id: str, event: dict) -> None:
+        self.events.append((conv_id, event))
+        if len(self.events) == 1:
+            return
+        self.emit_started.set()
+        await self.release.wait()
+
+
+class _StickyTrailingManager:
+    """Capture sticky events and signal when a specific output line is published."""
+
+    def __init__(self):
+        self.events: list[tuple[str, dict]] = []
+        self.sticky_event = asyncio.Event()
+
+    async def emit(self, conv_id: str, event: dict) -> None:
+        self.events.append((conv_id, event))
+        if event.get("type") != "sticky_set":
+            return
+        data = event.get("data") or {}
+        steps = data.get("steps") or []
+        if steps and steps[0].get("note") == "second":
+            self.sticky_event.set()
+
+    @property
+    def sticky_events(self) -> list[dict]:
+        return [event for _cid, event in self.events if event.get("type") in ("sticky_set", "sticky_clear")]
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_emit_timeout_does_not_block_reader(tmp_path, config, sticky_registry, monkeypatch):
+    """A slow sticky subscriber cannot block the subprocess output reader."""
+    monkeypatch.setattr(tools, "_STICKY_THROTTLE_SEC", 0.01)
+    monkeypatch.setattr(tools, "_STICKY_EMIT_TIMEOUT_SEC", 0.05)
+
+    manager = BackgroundJobManager()
+    fake = _BlockingStickyManager()
+    job = await manager.start(
+        "echo hi; sleep 2",
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-timeout",
+        manager=fake,
+        pin_sticky=True,
+    )
+    assert fake.events, "expected initial sticky pin"
+    assert job.reader_task is not None
+    assert not job.reader_task.done()
+
+    await fake.emit_started.wait()
+    task = job.sticky_publish_task
+    assert task is not None
+    assert not task.done()
+    await asyncio.wait_for(task, timeout=1)
+    assert task.done()
+    fake.release.set()
+    await manager.stop(job.job_id)
+    assert job.reader_task is not None
+    assert job.reader_task.done()
+    assert job.status in ("completed", "stopped")
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_tracks_latest_output_line_across_streams(tmp_path, config, sticky_registry):
+    """A stderr line after stdout must become the latest sticky output line."""
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    job = await manager.start(
+        'bash -c "echo stdout-line; echo stderr-line >&2; exit 3"',
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-mixed",
+        manager=fake,
+        pin_sticky=True,
+    )
+    await job.reader_task
+
+    final = fake.sticky_events[-1]
+    assert final["data"]["steps"][0]["status"] == "failed"
+    assert "stderr-line" in final["data"]["steps"][0]["note"]
+    assert "stdout-line" not in final["data"]["steps"][0]["note"]
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_schedules_trailing_update_after_burst(tmp_path, config, sticky_registry, monkeypatch):
+    """Suppressed throttled lines coalesce into a trailing update."""
+    monkeypatch.setattr(tools, "_STICKY_THROTTLE_SEC", 0.2)
+
+    manager = BackgroundJobManager()
+    fake = _StickyTrailingManager()
+    job = await manager.start(
+        'bash -c "echo first; echo second; sleep 2"',
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-trailing",
+        manager=fake,
+        pin_sticky=True,
+    )
+    await fake.sticky_event.wait()
+    assert fake.sticky_events[-1]["data"]["steps"][0]["note"] == "second"
+    await manager.stop(job.job_id)
+    await manager.cleanup_all()

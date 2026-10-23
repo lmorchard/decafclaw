@@ -20,6 +20,7 @@ _OUTPUT_BUFFER_SIZE = 500
 _DEFAULT_MAX_LIFETIME = 600  # 10 minutes
 _STOP_GRACE_PERIOD = 2  # seconds between SIGTERM and SIGKILL
 _STICKY_THROTTLE_SEC = 0.5  # min interval between sticky-slot progress updates
+_STICKY_EMIT_TIMEOUT_SEC = 2.0  # delivery timeout for background sticky updates
 _STICKY_NOTE_MAX = 200  # max chars of a single output line shown in the sticky slot
 
 
@@ -44,8 +45,10 @@ class BackgroundJob:
     event_bus: Any = None
     completion_tail_lines: int = 50
     pin_sticky: bool = False  # stream live output to the sticky slot (#1104)
+    last_output_line: str = ""  # latest stdout/stderr line observed (#1104)
     finalized: bool = False
     manager: Any = None
+    sticky_publish_task: asyncio.Task | None = None
 
 
 async def _read_stream(
@@ -185,11 +188,8 @@ def _cmd_preview(command: str) -> str:
 
 
 def _last_output_line(job: BackgroundJob) -> str:
-    """Most recent stdout line, falling back to stderr; '' when both empty."""
-    for buffer in (job.stdout_buffer, job.stderr_buffer):
-        if buffer:
-            return buffer[-1]
-    return ""
+    """Most recent output line observed across stdout/stderr; '' when both empty."""
+    return job.last_output_line
 
 
 def _running_sticky_data(job: BackgroundJob) -> dict:
@@ -232,9 +232,35 @@ async def _publish_job_sticky(job: BackgroundJob) -> None:
         from decafclaw import sticky as sticky_mod
 
         emit = job.manager.emit if job.manager is not None else None
-        await sticky_mod.set_sticky(job.config, job.conv_id, "progress_tracker", _running_sticky_data(job), emit=emit)
+        await asyncio.wait_for(
+            sticky_mod.set_sticky(job.config, job.conv_id, "progress_tracker", _running_sticky_data(job), emit=emit),
+            timeout=_STICKY_EMIT_TIMEOUT_SEC,
+        )
     except Exception:
         log.warning("Failed to publish sticky update for background job %s", job.job_id, exc_info=True)
+
+
+async def _sticky_publish_when_due(job: BackgroundJob, due_at: float) -> None:
+    """Publish the latest sticky snapshot once the throttle interval has elapsed."""
+    delay = due_at - time.monotonic()
+    if delay > 0:
+        await asyncio.sleep(delay)
+    if job.finalized:
+        return
+    await _publish_job_sticky(job)
+
+
+async def _cancel_sticky_publish(job: BackgroundJob) -> None:
+    """Cancel a pending throttled sticky publish before finalization."""
+    task = job.sticky_publish_task
+    job.sticky_publish_task = None
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 async def _finish_job_sticky(job: BackgroundJob) -> None:
@@ -242,6 +268,7 @@ async def _finish_job_sticky(job: BackgroundJob) -> None:
     a completed/error exit, cleared for stopped/expired. Fail-open."""
     if not job.pin_sticky or job.config is None or not job.conv_id:
         return
+    await _cancel_sticky_publish(job)
     try:
         from decafclaw import sticky as sticky_mod
 
@@ -254,20 +281,22 @@ async def _finish_job_sticky(job: BackgroundJob) -> None:
         log.warning("Failed to finalize sticky slot for background job %s", job.job_id, exc_info=True)
 
 
-def _sticky_line_hook(job: BackgroundJob):
-    """on_line callback for _read_stream: re-pin the running status,
-    throttled to at most one sticky update per _STICKY_THROTTLE_SEC.
-    Returns None when the job does not stream to the sticky slot."""
+def _sticky_line_hook(job: BackgroundJob) -> Callable[[str], Awaitable[None]] | None:
+    """Build a throttled sticky output callback that schedules publishes off the reader."""
     if not job.pin_sticky:
         return None
     last = {"t": 0.0}
 
     async def on_line(line: str) -> None:
+        job.last_output_line = line
         now = time.monotonic()
         if now - last["t"] < _STICKY_THROTTLE_SEC:
             return
         last["t"] = now
-        await _publish_job_sticky(job)
+        task = job.sticky_publish_task
+        if task is not None and not task.done():
+            return
+        job.sticky_publish_task = asyncio.create_task(_sticky_publish_when_due(job, now))
 
     return on_line
 
