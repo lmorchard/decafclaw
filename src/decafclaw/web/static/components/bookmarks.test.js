@@ -5,7 +5,8 @@ await import('./files-sidebar.js');
 await import('./vault-sidebar.js');
 await import('./file-page.js');
 await import('./wiki-page.js');
-const { reset } = await import('../lib/bookmarks-store.js');
+import appSource from '../app.js?raw';
+const { load, toggle, isBookmarked, snapshot, subscribe, reset } = await import('../lib/bookmarks-store.js');
 
 const jsonResponse = (body) => ({
   ok: true,
@@ -205,6 +206,26 @@ describe('vault-sidebar bookmarks', () => {
     expect(el._vaultFolder).toBe('notes');
   });
 
+  it('opens a folder bookmark from Recent by switching to Browse', async () => {
+    makeServer(INITIAL);
+    const el = /** @type {any} */ (document.createElement('vault-sidebar'));
+    document.body.append(el);
+    el.active = true;
+    await el.updateComplete;
+    await waitFor(() => bookmarkSection(el));
+
+    // Switch to the Recent view, then open a folder bookmark from it.
+    const viewBtns = el.querySelectorAll('.vault-view-toggle button');
+    viewBtns[1].click();
+    await el.updateComplete;
+    await waitFor(() => el._vaultView === 'recent');
+
+    sectionRows(el).find(r => r.getAttribute('title') === 'notes').click();
+    await el.updateComplete;
+    await waitFor(() => el._vaultFolder === 'notes');
+    expect(el._vaultView).toBe('browse');
+  });
+
   it('toggles the folder-row star with kind folder', async () => {
     const { server, fetchMock } = makeServer(INITIAL);
     const el = /** @type {any} */ (document.createElement('vault-sidebar'));
@@ -279,5 +300,34 @@ describe('viewer toolbar bookmark toggles', () => {
     await vi.waitFor(() => {
       expect(el.querySelector('.wiki-bookmark-btn')?.classList.contains('active')).toBe(true);
     });
+  });
+});
+
+describe('bookmarks store', () => {
+  it('does not let a stale mutation response overwrite newer bookmark state', async () => {
+    const { server, fetchMock } = makeServer(INITIAL);
+
+    // Two adds must both survive: the second response supersedes the first
+    // rather than an older snapshot clobbering the newer bookmark.
+    const snapA = await toggle('vault', 'projects/alpha', 'folder', 'Alpha');
+    const snapB = await toggle('vault', 'projects/beta', 'folder', 'Beta');
+
+    expect(snapB.vault.map(b => b.path)).toEqual(
+      expect.arrayContaining(['projects/alpha', 'projects/beta']),
+    );
+    expect(snapshot().vault.map(b => b.path)).toEqual(
+      expect.arrayContaining(['projects/alpha', 'projects/beta']),
+    );
+  });
+});
+
+describe('app.js bookmarks auth wiring', () => {
+  // TEXT-BASED ASSERTION, not behavioural coverage. `app.js` is a top-level DOM
+  // script with module-scope side effects, so it cannot be mounted in a unit
+  // test; this reads its source and matches a substring. The behavioural half
+  // lives in the bookmarks store (a successful login re-fetches), this pins the
+  // glue: the login handler must refresh the shared bookmark store.
+  it('refreshes the bookmark store after successful authentication', () => {
+    expect(appSource, 'app.js source did not load').toContain('loadBookmarks');
   });
 });

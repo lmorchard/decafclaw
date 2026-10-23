@@ -2010,14 +2010,17 @@ async def bookmarks_add(request: Request, username: str) -> JSONResponse:
     path = body.get("path")
     label = body.get("label")
     kind = body.get("kind")
-    if target not in KINDS_BY_TARGET:
+    # `target` may arrive as a JSON array/object (malformed); an unhashable
+    # value would blow up the dict membership test below with a TypeError, so
+    # check the type before comparing.
+    if not isinstance(target, str) or target not in KINDS_BY_TARGET:
         return JSONResponse({"error": "target must be 'files' or 'vault'"}, status_code=400)
     if not isinstance(path, str):
         return JSONResponse({"error": "path is required"}, status_code=400)
     err = validate_bookmark_path(path)
     if err:
         return JSONResponse({"error": err}, status_code=400)
-    if kind not in KINDS_BY_TARGET[target]:
+    if not isinstance(kind, str) or kind not in KINDS_BY_TARGET[target]:
         return JSONResponse(
             {"error": f"kind must be one of {list(KINDS_BY_TARGET[target])} for target '{target}'"},
             status_code=400,
@@ -2047,9 +2050,12 @@ async def bookmarks_delete(request: Request, username: str) -> JSONResponse:
         if isinstance(body, dict):
             target = body.get("target") if target is None else target
             path = body.get("path") if path is None else path
-    if target not in KINDS_BY_TARGET:
+    # Same as POST: a malformed (array/object) `target` from the query-string
+    # fallback body must be a 400, not an unhandled TypeError from the
+    # unhashable-key dict lookup below.
+    if not isinstance(target, str) or target not in KINDS_BY_TARGET:
         return JSONResponse({"error": "target must be 'files' or 'vault'"}, status_code=400)
-    if not path:
+    if not isinstance(path, str) or not path:
         return JSONResponse({"error": "path query parameter is required"}, status_code=400)
     data = await BookmarkStore(config).remove(target, path)
     if data is None:

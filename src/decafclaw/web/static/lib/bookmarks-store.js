@@ -21,6 +21,8 @@ const _state = {
   inFlight: null,
   /** @type {Set<(snap: BookmarksPayload) => void>} */
   subscribers: new Set(),
+  /** Monotonic token for the latest logical bookmark operation. */
+  seq: 0,
 };
 
 function _publish() {
@@ -54,29 +56,61 @@ function isBookmarked(target, path) {
   return snapshot()[target].some(b => b.path === path);
 }
 
+let _tail = Promise.resolve();
+
+/**
+ * Serialize bookmark operations so overlapping toggles can't interleave a
+ * read/mutate cycle. Each task checks its own logical-operation token before
+ * applying state, so a superseded task (or a slow older response) is a no-op.
+ * @param {() => Promise<BookmarksPayload>} task
+ * @returns {Promise<BookmarksPayload>}
+ */
+function _runExclusive(task) {
+  const result = _tail.then(task, task);
+  _tail = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+/**
+ * Fetch the bookmark payload (reusing an in-flight GET) and resolve with it,
+ * publishing only when the supplied logical-operation token is still current.
+ * @param {number} seq
+ * @returns {Promise<BookmarksPayload>}
+ */
+async function fetchLatest(seq) {
+  if (!_state.inFlight) {
+    _state.inFlight = (async () => {
+      try {
+        _state.data = await DefaultService.wrapperApiBookmarksGet();
+      } catch (e) {
+        if (e instanceof ApiError) {
+          console.debug('bookmarks: fetch got non-ok response', e.status);
+        } else {
+          console.debug('bookmarks: fetch failed', e);
+        }
+      } finally {
+        _state.inFlight = null;
+      }
+      if (seq === _state.seq) _publish();
+      return snapshot();
+    })();
+  }
+  const snap = await _state.inFlight;
+  if (seq !== _state.seq) return snapshot();
+  return snap;
+}
+
 /**
  * Fetch (and cache) the bookmark payload. Reuses an in-flight request so
- * several components mounting at once trigger a single GET.
+ * several components mounting at once trigger a single GET. Responses from
+ * superseded operations are dropped so a slow older response can't clobber
+ * newer state.
  * @returns {Promise<BookmarksPayload>}
  */
 function load() {
+  const seq = ++_state.seq;
   if (_state.inFlight) return _state.inFlight;
-  _state.inFlight = (async () => {
-    try {
-      _state.data = await DefaultService.wrapperApiBookmarksGet();
-    } catch (e) {
-      if (e instanceof ApiError) {
-        console.debug('bookmarks: fetch got non-ok response', e.status);
-      } else {
-        console.debug('bookmarks: fetch failed', e);
-      }
-    } finally {
-      _state.inFlight = null;
-    }
-    _publish();
-    return snapshot();
-  })();
-  return _state.inFlight;
+  return fetchLatest(seq);
 }
 
 /**
@@ -88,20 +122,24 @@ function load() {
  * @param {string} [label] - defaults server-side to the path's last segment
  * @returns {Promise<BookmarksPayload>}
  */
-async function toggle(target, path, kind, label) {
-  await load();
-  if (isBookmarked(target, path)) {
-    _state.data = await DefaultService.wrapperApiBookmarksDelete(target, path);
-  } else {
-    _state.data = await DefaultService.wrapperApiBookmarksPost({
-      target,
-      path,
-      label: label ?? null,
-      kind,
-    });
-  }
-  _publish();
-  return snapshot();
+function toggle(target, path, kind, label) {
+  const seq = ++_state.seq;
+  const result = _runExclusive(async () => {
+    if (seq !== _state.seq) return snapshot();
+    const data = await fetchLatest(seq);
+    const next = isBookmarked(target, path)
+      ? await DefaultService.wrapperApiBookmarksDelete(target, path)
+      : await DefaultService.wrapperApiBookmarksPost({
+          target,
+          path,
+          label: label ?? null,
+          kind,
+        });
+    if (seq === _state.seq) _state.data = next;
+    _publish();
+    return snapshot();
+  });
+  return result;
 }
 
 /**
@@ -119,7 +157,7 @@ function reset() {
   _state.data = null;
   _state.inFlight = null;
   _state.subscribers.clear();
+  _state.seq += 1;
 }
-
 
 export { load, toggle, isBookmarked, snapshot, subscribe, reset };

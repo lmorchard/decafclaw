@@ -112,6 +112,9 @@ export class VaultSidebar extends LitElement {
   /** @param {string} folderPath */
   #navigateToFolder(folderPath) {
     this._vaultFolder = folderPath;
+    // Opening a folder means showing it — switch off `recent` if that view is
+    // currently rendered (e.g. a folder bookmark clicked from the Recent list).
+    if (this._vaultView !== 'browse') this._vaultView = 'browse';
     this.#fetchWikiPages();
   }
 

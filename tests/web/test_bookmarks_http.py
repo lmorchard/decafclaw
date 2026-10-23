@@ -131,6 +131,18 @@ async def test_bookmarks_add_invalid_json(client):
     assert resp.status_code == 400
 
 
+@pytest.mark.asyncio
+async def test_bookmarks_add_malformed_target_rejected(client):
+    """A JSON array/object `target` must be a 400, not an unhandled TypeError."""
+    resp = await client.post("/api/bookmarks", json={"target": [], "path": "notes.md", "kind": "file"})
+    assert resp.status_code == 400
+    assert "target" in resp.json()["error"]
+
+    resp = await client.post("/api/bookmarks", json={"target": {}, "path": "notes.md", "kind": "file"})
+    assert resp.status_code == 400
+    assert "target" in resp.json()["error"]
+
+
 # -- DELETE ------------------------------------------------------------------
 
 
@@ -172,6 +184,27 @@ async def test_bookmarks_delete_accepts_body(client):
     )
     assert resp.status_code == 200
     assert resp.json()["files"] == []
+
+
+@pytest.mark.asyncio
+async def test_bookmarks_delete_malformed_target_rejected(client):
+    """A malformed `target` via the DELETE-body fallback must be a 400, not a 500."""
+    resp = await client.request(
+        "DELETE",
+        "/api/bookmarks",
+        content=json.dumps({"target": {}, "path": "notes.md"}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+    assert "target" in resp.json()["error"]
+
+    resp = await client.request(
+        "DELETE",
+        "/api/bookmarks",
+        content=json.dumps({"target": "files", "path": []}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
 
 
 # -- persistence across "restarts" --------------------------------------------
