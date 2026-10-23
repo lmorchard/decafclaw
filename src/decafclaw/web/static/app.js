@@ -8,6 +8,7 @@ import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
 import { MESSAGE_TYPES, KNOWN_MESSAGE_TYPES } from './lib/message-types.js';
+import { load as loadBookmarks } from './lib/bookmarks-store.js';
 import { setupResizeHandle } from './lib/utils.js';
 import { shouldFocusChatInput } from './lib/chat-focus.js';
 import { showToast } from './lib/toast.js';
@@ -564,7 +565,13 @@ function showLogin() {
   ws.disconnect();
 }
 
-auth.addEventListener('login', () => showChat());
+auth.addEventListener('login', () => {
+  showChat();
+  // The signed-out mount-time bookmark GETs 401'd and left the shared cache
+  // empty; refresh now that the session is (re)established so pinned
+  // bookmarks and toolbar stars appear without a manual reload.
+  void loadBookmarks();
+});
 auth.addEventListener('logout', () => showLogin());
 
 // -- URL state ----------------------------------------------------------------

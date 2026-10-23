@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
+import { isBookmarked, load as loadBookmarks, subscribe as subscribeBookmarks, toggle as toggleBookmark } from '../lib/bookmarks-store.js';
 
 /**
  * @typedef {import('../lib/api-client/index.js').WorkspaceFileEntry} FileEntry
@@ -19,6 +20,7 @@ export class FilesSidebar extends LitElement {
     _showHidden: { type: Boolean, state: true },
     _openFilePath: { type: String, state: true },
     _everActivated: { type: Boolean, state: true },
+    _bookmarks: { type: Object, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -41,6 +43,8 @@ export class FilesSidebar extends LitElement {
     // Set to true on first Files-tab activation. Gates the workspace-file-deleted
     // listener so it doesn't fire before the user has opened the Files tab.
     this._everActivated = false;
+    /** @type {import('../lib/api-client/index.js').BookmarksResponse} */
+    this._bookmarks = { files: [], vault: [] };
   }
 
   connectedCallback() {
@@ -60,12 +64,16 @@ export class FilesSidebar extends LitElement {
       this.#refresh({ silent: true });
     };
     window.addEventListener('turn-complete', this._onTurnComplete);
+    // Pinned Bookmarks section (#1086): shared store, one GET per session.
+    this._unsubBookmarks = subscribeBookmarks(snap => { this._bookmarks = snap; });
+    void loadBookmarks();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('workspace-file-deleted', this._onFileDeleted);
     window.removeEventListener('turn-complete', this._onTurnComplete);
+    if (this._unsubBookmarks) this._unsubBookmarks();
   }
 
   /** @param {Map} changedProps */
@@ -257,6 +265,77 @@ export class FilesSidebar extends LitElement {
     `;
   }
 
+  // ── Bookmarks (#1086) ─────────────────────────────────────────────────
+
+  /** @param {import('../lib/api-client/index.js').BookmarkEntry} b */
+  #openBookmark(b) {
+    if (b.kind === 'dir') {
+      this.#navigateToFolder(b.path);
+      return;
+    }
+    // No kind in the detail: app.js infers text/image/binary from the path.
+    this.dispatchEvent(new CustomEvent('file-open', {
+      detail: { path: b.path },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  #renderBookmarks() {
+    const entries = this._bookmarks.files;
+    if (!entries.length) return nothing;
+    return html`
+      <div class="bookmark-section">
+        <div class="bookmark-section-header">\u{1F516} Bookmarks</div>
+        ${entries.map(b => html`
+          <div class="bookmark-row" title=${b.path}
+            tabindex="0"
+            aria-label=${b.kind === 'dir' ? `Open folder ${b.label}` : `Open file ${b.label}`}
+            @click=${() => this.#openBookmark(b)}
+            @keydown=${activateOnEnterOrSpace(() => this.#openBookmark(b))}>
+            <span class="conv-title">${b.kind === 'dir' ? '\u{1F4C1}' : '\u{1F4C4}'} ${b.label}</span>
+          </div>
+        `)}
+      </div>
+    `;
+  }
+
+  /**
+   * ☆/★ toggle rendered on folder rows.
+   * @param {import('../lib/bookmarks-store.js').BookmarkTarget} target
+   * @param {string} folderPath
+   * @param {string} folderName
+   */
+  #folderBookmarkBtn(target, folderPath, folderName) {
+    const on = this._bookmarks[target].some(b => b.path === folderPath);
+    const title = on ? 'Remove bookmark' : 'Bookmark this folder';
+    return html`
+      <button type="button" class="folder-bm-btn dc-icon-btn ${on ? 'active' : ''}"
+        title=${title} aria-label=${`${on ? 'Remove' : 'Add'} bookmark for ${folderName}`}
+        @click=${(/** @type {Event} */ e) => { e.stopPropagation(); void this.#toggleFolderBookmark(target, folderPath, folderName); }}>
+        ${on ? '★' : '☆'}
+      </button>
+    `;
+  }
+
+  /**
+   * @param {import('../lib/bookmarks-store.js').BookmarkTarget} target
+   * @param {string} folderPath
+   * @param {string} folderName
+   */
+  async #toggleFolderBookmark(target, folderPath, folderName) {
+    try {
+      await toggleBookmark(target, folderPath, target === 'files' ? 'dir' : 'folder', folderName);
+    } catch (e) {
+      if (e instanceof ApiError) {
+        console.debug('files-sidebar: bookmark toggle failed', e.status);
+      } else {
+        console.debug('files-sidebar: bookmark toggle failed', e);
+      }
+    }
+  }
+
+
   #renderBrowse() {
     const folders = this._showHidden
       ? this._folders
@@ -273,6 +352,7 @@ export class FilesSidebar extends LitElement {
           @click=${() => this.#navigateToFolder(f.path)}
           @keydown=${activateOnEnterOrSpace(() => this.#navigateToFolder(f.path))}>
           <span class="conv-title">\u{1F4C1} ${f.name}</span>
+          ${this.#folderBookmarkBtn('files', f.path, f.name)}
         </div>
       `)}
       ${files.map(f => {
@@ -333,6 +413,7 @@ export class FilesSidebar extends LitElement {
   render() {
     return html`
       <div class="conv-list">
+        ${this.#renderBookmarks()}
         <div class="vault-view-toggle">
           <button class="${this._view === 'browse' ? 'active' : ''}"
             @click=${() => this.#switchView('browse')}>Browse</button>

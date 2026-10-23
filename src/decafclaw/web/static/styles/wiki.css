@@ -67,7 +67,9 @@ a.wiki-open-tab,
 button.wiki-close-btn,
 button.file-edit-btn,
 button.file-delete-btn,
-button.file-close-btn {
+button.file-close-btn,
+button.file-bookmark-btn,
+button.wiki-bookmark-btn {
   font-size: 1rem;
   padding: 0.2rem 0.4rem;
   margin-left: 0.25rem;
@@ -86,7 +88,15 @@ a.wiki-open-tab:hover,
 button.wiki-close-btn:hover,
 button.file-edit-btn:hover,
 button.file-delete-btn:hover,
-button.file-close-btn:hover {
+button.file-close-btn:hover,
+button.file-bookmark-btn:hover,
+button.wiki-bookmark-btn:hover {
+  color: var(--pico-primary);
+}
+
+/* Bookmarked state (#1086): filled star in the accent color. */
+button.file-bookmark-btn.active,
+button.wiki-bookmark-btn.active {
   color: var(--pico-primary);
 }
 
