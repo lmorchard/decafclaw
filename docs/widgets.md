@@ -603,7 +603,7 @@ automatically into the sticky slot by three producers:
   final done/failed pin on exit (the slot clears when the job is stopped or
   expires). See [background-wake.md](background-wake.md#pin_sticky-parameter).
 
-Both producers are fail-open (a sticky-mirror failure never breaks the
+All three producers are fail-open (a sticky-mirror failure never breaks the
 underlying tool call) and use `sticky.py`'s `set_sticky` / `clear_sticky`
 directly rather than a `WidgetRequest`/`ToolResult`. It can also be pinned
 manually via `widget_pin_sticky(widget_type="progress_tracker", data={...})`
