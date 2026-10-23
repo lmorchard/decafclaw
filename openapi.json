@@ -1987,6 +1987,129 @@
         }
       }
     },
+    "/api/bookmarks": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_bookmarks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarksResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_bookmarks_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarksResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "target": {
+                    "enum": [
+                      "files",
+                      "vault"
+                    ],
+                    "title": "Target",
+                    "type": "string"
+                  },
+                  "path": {
+                    "title": "Path",
+                    "type": "string"
+                  },
+                  "label": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Label"
+                  },
+                  "kind": {
+                    "enum": [
+                      "file",
+                      "dir",
+                      "page",
+                      "folder"
+                    ],
+                    "title": "Kind",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "path",
+                  "kind"
+                ],
+                "title": "BookmarkAddRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_bookmarks_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookmarksResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "target",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "files",
+                "vault"
+              ]
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/wiki": {
       "get": {
         "summary": "Wrapper",
@@ -2430,6 +2553,59 @@
           "results"
         ],
         "title": "AutocompleteResponse"
+      },
+      "BookmarkEntry": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "file",
+              "dir",
+              "page",
+              "folder"
+            ],
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "label",
+          "kind"
+        ],
+        "title": "BookmarkEntry"
+      },
+      "BookmarksResponse": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/BookmarkEntry"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "vault": {
+            "items": {
+              "$ref": "#/components/schemas/BookmarkEntry"
+            },
+            "type": "array",
+            "title": "Vault"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files",
+          "vault"
+        ],
+        "title": "BookmarksResponse"
       },
       "CanvasMutationResponse": {
         "properties": {

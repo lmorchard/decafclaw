@@ -5,6 +5,7 @@ import { textRequest as __textRequest } from '../core/request';
 /* eslint-disable */
 import type { AttachmentResponse } from '../models/AttachmentResponse';
 import type { AutocompleteResponse } from '../models/AutocompleteResponse';
+import type { BookmarksResponse } from '../models/BookmarksResponse';
 import type { CanvasMutationResponse } from '../models/CanvasMutationResponse';
 import type { CanvasNewTabResponse } from '../models/CanvasNewTabResponse';
 import type { CanvasStateResponse } from '../models/CanvasStateResponse';
@@ -1259,6 +1260,58 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/vault/{page}',
+        });
+    }
+    /**
+     * Wrapper
+     * @returns BookmarksResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiBookmarksGet(): CancelablePromise<BookmarksResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/bookmarks',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns BookmarksResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiBookmarksPost(
+        requestBody: {
+            target: 'files' | 'vault';
+            path: string;
+            label?: (string | null);
+            kind: 'file' | 'dir' | 'page' | 'folder';
+        },
+    ): CancelablePromise<BookmarksResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/bookmarks',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param target
+     * @param path
+     * @returns BookmarksResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiBookmarksDelete(
+        target: 'files' | 'vault',
+        path: string,
+    ): CancelablePromise<BookmarksResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/bookmarks',
+            query: {
+                'target': target,
+                'path': path,
+            },
         });
     }
     /**

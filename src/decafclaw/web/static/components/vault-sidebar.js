@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
+import { isBookmarked, load as loadBookmarks, subscribe as subscribeBookmarks, toggle as toggleBookmark } from '../lib/bookmarks-store.js';
 
 /** @param {unknown} body */
 function responseError(body) {
@@ -18,6 +19,7 @@ export class VaultSidebar extends LitElement {
     _openWikiPage: { type: String, state: true },
     _vaultView: { type: String, state: true },
     _recentPages: { type: Array, state: true },
+    _bookmarks: { type: Object, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -36,6 +38,8 @@ export class VaultSidebar extends LitElement {
     this._vaultView = 'browse'; // 'browse' | 'recent'
     /** @type {import('../lib/api-client/index.js').VaultPageListEntry[]} */
     this._recentPages = [];
+    /** @type {import('../lib/api-client/index.js').BookmarksResponse} */
+    this._bookmarks = { files: [], vault: [] };
   }
 
   connectedCallback() {
@@ -45,11 +49,15 @@ export class VaultSidebar extends LitElement {
       else this.#fetchWikiPages();
     };
     window.addEventListener('vault-changed', this._onVaultChanged);
+    // Pinned Bookmarks section (#1086): shared store, one GET per session.
+    this._unsubBookmarks = subscribeBookmarks(snap => { this._bookmarks = snap; });
+    void loadBookmarks();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('vault-changed', this._onVaultChanged);
+    if (this._unsubBookmarks) this._unsubBookmarks();
   }
 
   /** @param {Map} changedProps */
@@ -104,6 +112,9 @@ export class VaultSidebar extends LitElement {
   /** @param {string} folderPath */
   #navigateToFolder(folderPath) {
     this._vaultFolder = folderPath;
+    // Opening a folder means showing it — switch off `recent` if that view is
+    // currently rendered (e.g. a folder bookmark clicked from the Recent list).
+    if (this._vaultView !== 'browse') this._vaultView = 'browse';
     this.#fetchWikiPages();
   }
 
@@ -228,6 +239,75 @@ export class VaultSidebar extends LitElement {
     return new Date(mtime * 1000).toLocaleDateString();
   }
 
+  // ── Bookmarks (#1086) ─────────────────────────────────────────────────
+
+  /** @param {import('../lib/api-client/index.js').BookmarkEntry} b */
+  #openBookmark(b) {
+    if (b.kind === 'folder') {
+      this.#navigateToFolder(b.path);
+      return;
+    }
+    this.dispatchEvent(new CustomEvent('wiki-open', {
+      detail: { page: b.path },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  #renderBookmarks() {
+    const entries = this._bookmarks.vault;
+    if (!entries.length) return nothing;
+    return html`
+      <div class="bookmark-section">
+        <div class="bookmark-section-header">\u{1F516} Bookmarks</div>
+        ${entries.map(b => html`
+          <div class="bookmark-row" title=${b.path}
+            tabindex="0"
+            aria-label=${b.kind === 'folder' ? `Open folder ${b.label}` : `Open page ${b.label}`}
+            @click=${() => this.#openBookmark(b)}
+            @keydown=${activateOnEnterOrSpace(() => this.#openBookmark(b))}>
+            <span class="conv-title">${b.kind === 'folder' ? '\u{1F4C1}' : '\u{1F4C4}'} ${b.label}</span>
+          </div>
+        `)}
+      </div>
+    `;
+  }
+
+  /**
+   * ☆/★ toggle rendered on folder rows.
+   * @param {import('../lib/bookmarks-store.js').BookmarkTarget} target
+   * @param {string} folderPath
+   * @param {string} folderName
+   */
+  #folderBookmarkBtn(target, folderPath, folderName) {
+    const on = this._bookmarks[target].some(b => b.path === folderPath);
+    const title = on ? 'Remove bookmark' : 'Bookmark this folder';
+    return html`
+      <button type="button" class="folder-bm-btn dc-icon-btn ${on ? 'active' : ''}"
+        title=${title} aria-label=${`${on ? 'Remove' : 'Add'} bookmark for ${folderName}`}
+        @click=${(/** @type {Event} */ e) => { e.stopPropagation(); void this.#toggleFolderBookmark(target, folderPath, folderName); }}>
+        ${on ? '★' : '☆'}
+      </button>
+    `;
+  }
+
+  /**
+   * @param {import('../lib/bookmarks-store.js').BookmarkTarget} target
+   * @param {string} folderPath
+   * @param {string} folderName
+   */
+  async #toggleFolderBookmark(target, folderPath, folderName) {
+    try {
+      await toggleBookmark(target, folderPath, target === 'files' ? 'dir' : 'folder', folderName);
+    } catch (e) {
+      if (e instanceof ApiError) {
+        console.debug('vault-sidebar: bookmark toggle failed', e.status);
+      } else {
+        console.debug('vault-sidebar: bookmark toggle failed', e);
+      }
+    }
+  }
+
   #renderVaultBrowse() {
     const hasContent = this._vaultFolders.length > 0 || this._wikiPages.length > 0;
     return html`
@@ -242,6 +322,7 @@ export class VaultSidebar extends LitElement {
           @click=${() => this.#navigateToFolder(f.path)}
           @keydown=${activateOnEnterOrSpace(() => this.#navigateToFolder(f.path))}>
           <span class="conv-title">\u{1F4C1} ${f.name}</span>
+          ${this.#folderBookmarkBtn('vault', f.path, f.name)}
         </div>
       `)}
       ${this._wikiPages.map(p => {
@@ -294,6 +375,7 @@ export class VaultSidebar extends LitElement {
     // first-load gives feedback. Refetches with existing data update in place.
     return html`
       <div class="conv-list">
+        ${this.#renderBookmarks()}
         <div class="vault-view-toggle">
           <button class="${this._vaultView === 'browse' ? 'active' : ''}"
             @click=${() => this.#switchVaultView('browse')}>Browse</button>

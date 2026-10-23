@@ -9,6 +9,8 @@ export type { OpenAPIConfig } from './core/OpenAPI';
 
 export type { AttachmentResponse } from './models/AttachmentResponse';
 export type { AutocompleteResponse } from './models/AutocompleteResponse';
+export { BookmarkEntry } from './models/BookmarkEntry';
+export type { BookmarksResponse } from './models/BookmarksResponse';
 export type { CanvasMutationResponse } from './models/CanvasMutationResponse';
 export type { CanvasNewTabResponse } from './models/CanvasNewTabResponse';
 export type { CanvasStateResponse } from './models/CanvasStateResponse';

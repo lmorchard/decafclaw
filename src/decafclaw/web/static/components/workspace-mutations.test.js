@@ -139,7 +139,7 @@ describe('workspace generated mutation callers', () => {
     await submitRename(page, newPath);
     await vi.waitFor(() => expect(opened).toHaveBeenCalledOnce());
 
-    const [url, options] = fetchSpy.mock.calls[0];
+    const [url, options] = fetchSpy.mock.calls[1];
     expect(url).toBe('/api/workspace/notes/old%20%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F.md'
       + '?rename_to=archive%2Fnew%20%E6%97%A5%E6%9C%AC%E8%AA%9E%20%26%20%23%3F.md');
     expect(options).toEqual(expect.objectContaining({ method: 'PUT', credentials: 'same-origin' }));
@@ -187,7 +187,7 @@ describe('workspace generated mutation callers', () => {
     page.querySelector('.file-delete-btn')?.click();
     await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
 
-    const [url, options] = fetchSpy.mock.calls[0];
+    const [url, options] = fetchSpy.mock.calls[1];
     expect(url).toBe('/api/workspace/notes/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F.md');
     expect(options).toEqual(expect.objectContaining({ method: 'DELETE', credentials: 'same-origin' }));
     expect(options.body).toBeUndefined();

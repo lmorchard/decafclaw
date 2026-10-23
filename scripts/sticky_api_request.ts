@@ -48,7 +48,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && (options.method !== 'GET' || (!sticky && !listing))) {
+    const bookmarks = options.url === '/api/bookmarks';
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {

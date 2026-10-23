@@ -122,6 +122,18 @@ var OpenAPI = {
   ENCODE_PATH: void 0
 };
 
+// src/decafclaw/web/static/lib/api-client/models/BookmarkEntry.ts
+var BookmarkEntry;
+((BookmarkEntry2) => {
+  let kind;
+  ((kind2) => {
+    kind2["FILE"] = "file";
+    kind2["DIR"] = "dir";
+    kind2["PAGE"] = "page";
+    kind2["FOLDER"] = "folder";
+  })(kind = BookmarkEntry2.kind || (BookmarkEntry2.kind = {}));
+})(BookmarkEntry || (BookmarkEntry = {}));
+
 // src/decafclaw/web/static/lib/api-client/models/ConfigFileEntry.ts
 var ConfigFileEntry;
 ((ConfigFileEntry2) => {
@@ -453,7 +465,8 @@ var request2 = (config, options) => {
   const create = options.method === "POST" && options.url === "/api/conversations";
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && (options.method !== "GET" || !sticky && !listing)) {
+  const bookmarks = options.url === "/api/bookmarks";
+  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
@@ -1268,6 +1281,48 @@ var DefaultService = class {
   }
   /**
    * Wrapper
+   * @returns BookmarksResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiBookmarksGet() {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/bookmarks"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns BookmarksResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiBookmarksPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/bookmarks",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param target
+   * @param path
+   * @returns BookmarksResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiBookmarksDelete(target, path) {
+    return request2(OpenAPI, {
+      method: "DELETE",
+      url: "/api/bookmarks",
+      query: {
+        "target": target,
+        "path": path
+      }
+    });
+  }
+  /**
+   * Wrapper
    * @returns any Successful Response
    * @throws ApiError
    */
@@ -1437,6 +1492,7 @@ var buildNativeWorkspaceUrl = (path, mode = "segments") => {
 };
 export {
   ApiError,
+  BookmarkEntry,
   CancelError,
   CancelablePromise,
   ConfigFileEntry,
