@@ -577,6 +577,9 @@ async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
                     break
 
     # Restore active mode from archive if not already set or non-default.
+    # Legacy fallback (#1160): the manager now restores the mode from the
+    # approval_state file; this scan only matters for conversations whose
+    # mode was recorded before that file existed.
     from .modes import get_all_modes
 
     all_modes = get_all_modes(config)

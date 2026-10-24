@@ -15,6 +15,14 @@ from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
 
+from .approval_state import (
+    APPROVAL_STATE_FIELDS,
+    ApprovalState,
+    apply_approval_state,
+    approval_state_from,
+    load_approval_state,
+    save_approval_state,
+)
 from .archive import append_message
 from .confirmations import (
     ConfirmationAction,
@@ -379,6 +387,13 @@ class ConversationState:
     # interact with it.
     persisted: PersistedTurnState = field(default_factory=PersistedTurnState)
 
+    # Last approval state known to be on disk (#1160) — loaded from the
+    # approval_state sidecar when the state is created, updated on each
+    # successful write. ``None`` means no sidecar exists for this
+    # conversation yet (a fresh or pre-#1160 conversation). Used to skip
+    # unchanged writes and to gate the legacy archived-mode fallback.
+    approval_state_saved: ApprovalState | None = None
+
     # Circuit breaker state (rate-limiting turns per conversation)
     turn_times: list = field(default_factory=list)
     paused_until: float = 0
@@ -454,8 +469,34 @@ class ConversationManager:
     def _get_or_create(self, conv_id: str) -> ConversationState:
         """Get existing conversation state or create a new one."""
         if conv_id not in self._conversations:
-            self._conversations[conv_id] = ConversationState(conv_id=conv_id)
+            state = ConversationState(conv_id=conv_id)
+            loaded = load_approval_state(self.config, conv_id)
+            if loaded is not None:
+                apply_approval_state(state.persisted, loaded)
+                state.approval_state_saved = loaded
+            self._conversations[conv_id] = state
         return self._conversations[conv_id]
+
+    def ensure_state(self, conv_id: str) -> ConversationState:
+        """Get conversation state, creating it (and loading durable
+        per-conversation state such as approval settings) if needed."""
+        return self._get_or_create(conv_id)
+
+    def _persist_approval_state(self, state: ConversationState) -> None:
+        """Write the approval-state sidecar if it changed (#1160).
+
+        Skips the write when the state matches what is already on disk,
+        and when a conversation without a sidecar still has default
+        state (no file for conversations that never touched approvals).
+        Fail-open: a failed write logs and leaves the snapshot unchanged
+        so the next change retries.
+        """
+        current = approval_state_from(state.persisted)
+        saved = state.approval_state_saved
+        if current == saved or (saved is None and current == ApprovalState()):
+            return
+        if save_approval_state(self.config, state.conv_id, current):
+            state.approval_state_saved = current
 
     def _circuit_breaker_tripped(self, state: ConversationState) -> bool:
         """Check if the circuit breaker has tripped for a conversation.
@@ -1173,6 +1214,8 @@ class ConversationManager:
         state = self._get_or_create(conv_id)
         if key in _PERSISTED_FIELD_NAMES:
             setattr(state.persisted, key, value)
+            if key in APPROVAL_STATE_FIELDS:
+                self._persist_approval_state(state)
             return
         if hasattr(state, key):
             setattr(state, key, value)
@@ -2014,6 +2057,7 @@ class ConversationManager:
                     setattr(persisted, f.name, value)
             elif value:
                 setattr(persisted, f.name, value)
+        self._persist_approval_state(state)
 
     async def _drain_pending(self, state: ConversationState) -> None:
         """Process queued entries one batch at a time.

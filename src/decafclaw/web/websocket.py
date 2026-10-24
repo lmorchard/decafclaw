@@ -376,17 +376,24 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
 
     manager = state.get("manager")
     if manager:
-        conv_state = manager.get_state(conv_id)
+        # ensure_state loads the approval-state sidecar (#1160), which is
+        # the source of truth for the mode.
+        conv_state = manager.ensure_state(conv_id)
         if conv_state:
-            # If the manager state is pristine (default mode with empty presets)
-            # but the archive recorded a mode, hydrate manager state from the archive.
+            # Legacy fallback: conversations written before #1160 have no
+            # approval-state sidecar, only archived `role: "mode"` records.
+            # If there is no sidecar and the manager state is pristine
+            # (default mode with empty presets) but the archive recorded a
+            # mode, hydrate manager state from the archive. set_flag also
+            # writes the sidecar, so this migration runs once.
             if (
-                conv_state.persisted.active_mode == "default"
+                conv_state.approval_state_saved is None
+                and conv_state.persisted.active_mode == "default"
                 and not conv_state.persisted.active_aux_approval_presets
                 and active_mode
             ):
-                conv_state.persisted.active_mode = active_mode
-                conv_state.persisted.active_aux_approval_presets = list(all_modes[active_mode].presets)
+                manager.set_flag(conv_id, "active_mode", active_mode)
+                manager.set_flag(conv_id, "active_aux_approval_presets", list(all_modes[active_mode].presets))
 
             persisted_mode = conv_state.persisted.active_mode or "default"
             active_presets = set(conv_state.persisted.active_aux_approval_presets)
