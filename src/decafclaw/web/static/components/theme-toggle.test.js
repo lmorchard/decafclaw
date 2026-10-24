@@ -99,6 +99,7 @@ describe('theme-toggle consolidated control', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     await el.updateComplete;
     expect(el.querySelector('.theme-palette-menu')).toBeNull();
+    expect(document.activeElement).toBe(byLabel(el, 'Select theme'));
 
     // Reopen and outside click
     byLabel(el, 'Select theme').click();
