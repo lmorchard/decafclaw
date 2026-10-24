@@ -160,7 +160,8 @@ export class ChatView extends LitElement {
         if (m.role !== 'assistant') return true;
         const hasContent = (m.content || '').trim().length > 0;
         const hasToolCalls = Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
-        return hasContent || hasToolCalls;
+        const hasThinking = (m.thinking || '').trim().length > 0;
+        return hasContent || hasToolCalls || hasThinking;
       }).map(m => html`
         <chat-message
           .role=${m.role}

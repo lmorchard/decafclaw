@@ -92,7 +92,7 @@ export class AssistantMessage extends LitElement {
           <details class="thought-block" ?open=${this.streaming && !this.content}>
             <summary>
               Thought process
-              ${this.streaming ? html`<span class="thought-spinner"></span>` : nothing}
+              ${this.streaming && !this.content ? html`<span class="thought-spinner"></span>` : nothing}
             </summary>
             <div class="thought-body">
               ${unsafeHTML(renderMarkdown(this.thinking))}

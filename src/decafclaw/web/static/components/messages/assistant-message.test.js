@@ -77,4 +77,15 @@ describe('assistant-message thinking block (#154)', () => {
     const spinner = block.querySelector('summary .thought-spinner');
     expect(spinner).toBeTruthy();
   });
+
+  it('hides thought spinner once content starts streaming', async () => {
+    const msg = await mount({
+      content: 'Here is the response text',
+      thinking: 'Finished thoughts',
+      streaming: true,
+    });
+    const block = msg.querySelector('.thought-block');
+    expect(block).toBeTruthy();
+    expect(block.querySelector('summary .thought-spinner')).toBeNull();
+  });
 });

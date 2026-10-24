@@ -139,4 +139,30 @@ describe('chat-view scroll following on resize (#1090)', () => {
     expect(assistant.querySelector('.thought-spinner')).toBeTruthy();
     expect(el.querySelector('.thinking-indicator')).toBeNull();
   });
+
+  it('does not filter out completed assistant message with thinking even if content is empty (#154 finding 1)', async () => {
+    const store = createFakeStore({
+      currentMessages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: '', thinking: 'Internal thought with no content' },
+      ],
+    });
+    const el = /** @type {any} */ (document.createElement('chat-view'));
+    document.body.appendChild(el);
+    el.store = store;
+    await el.updateComplete;
+    await el.updateComplete;
+
+    const messages = /** @type {any[]} */ ([...el.querySelectorAll('chat-message')]);
+    expect(messages).toHaveLength(2);
+    const assistantMsg = messages[1];
+    expect(assistantMsg.role).toBe('assistant');
+    expect(assistantMsg.thinking).toBe('Internal thought with no content');
+
+    await assistantMsg.updateComplete;
+    const assistant = assistantMsg.querySelector('assistant-message');
+    expect(assistant).toBeTruthy();
+    await assistant.updateComplete;
+    expect(assistant.querySelector('.thought-block')).toBeTruthy();
+  });
 });
