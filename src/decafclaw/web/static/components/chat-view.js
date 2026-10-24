@@ -7,6 +7,7 @@ export class ChatView extends LitElement {
     store: { type: Object, attribute: false },
     _messages: { type: Array, state: true },
     _streamingText: { type: String, state: true },
+    _streamingThinking: { type: String, state: true },
     _busy: { type: Boolean, state: true },
     _toolStatus: { type: String, state: true },
     _pendingConfirms: { type: Array, state: true },
@@ -22,6 +23,7 @@ export class ChatView extends LitElement {
     this.store = null;
     this._messages = [];
     this._streamingText = '';
+    this._streamingThinking = '';
     this._busy = false;
     this._toolStatus = null;
     this._showScrollBtn = false;
@@ -48,6 +50,7 @@ export class ChatView extends LitElement {
       const prevMsgCount = this._messages.length;
       this._messages = this.store?.currentMessages || [];
       this._streamingText = this.store?.streamingText || '';
+      this._streamingThinking = this.store?.streamingThinking || '';
       this._busy = this.store?.isBusy || false;
       this._toolStatus = this.store?.toolStatus;
       this._pendingConfirms = [...(this.store?.pendingConfirms || [])];
@@ -162,6 +165,7 @@ export class ChatView extends LitElement {
         <chat-message
           .role=${m.role}
           .content=${m.content || ''}
+          .thinking=${m.thinking || ''}
           .tool=${m.tool || ''}
           .command=${m.command || ''}
           .display_short_text=${m.display_short_text || ''}
@@ -178,15 +182,16 @@ export class ChatView extends LitElement {
         ></chat-message>
       `)}
 
-      ${this._streamingText ? html`
+      ${(this._streamingText || this._streamingThinking) ? html`
         <chat-message
           .role=${'assistant'}
-          .content=${this._streamingText}
+          .content=${this._streamingText || ''}
+          .thinking=${this._streamingThinking || ''}
           .streaming=${true}
         ></chat-message>
       ` : ''}
 
-      ${this._busy && !this._streamingText && !this._toolStatus ? html`
+      ${this._busy && !this._streamingText && !this._streamingThinking && !this._toolStatus ? html`
         <div class="thinking-indicator">
           <span></span><span></span><span></span>
         </div>

@@ -10,6 +10,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @typedef {object} ChatMessage
  * @property {string} role
  * @property {string} [content]
+ * @property {string} [thinking]
  * @property {string} [timestamp]
  * @property {string} [tool]
  * @property {string} [command]
@@ -160,6 +161,8 @@ export class ConversationStore extends EventTarget {
   get currentMessages() { return this.#messageStore.currentMessages; }
   /** @returns {string} */
   get streamingText() { return this.#messageStore.streamingText; }
+  /** @returns {string} */
+  get streamingThinking() { return this.#messageStore.streamingThinking; }
   /** @returns {boolean} */
   get isBusy() { return this.#busy; }
   /** @returns {boolean} */

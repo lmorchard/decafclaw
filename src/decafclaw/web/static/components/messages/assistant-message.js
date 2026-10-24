@@ -8,6 +8,7 @@ import hljs from 'hljs';
 export class AssistantMessage extends LitElement {
   static properties = {
     content: { type: String },
+    thinking: { type: String },
     streaming: { type: Boolean },
     usage: { type: Object, attribute: false },
     timestamp: { type: String },
@@ -19,6 +20,7 @@ export class AssistantMessage extends LitElement {
     super();
     this.content = '';
     this.streaming = false;
+    this.thinking = '';
     /** @type {object|null} */
     this.usage = null;
     this.timestamp = '';
@@ -82,9 +84,21 @@ export class AssistantMessage extends LitElement {
   }
 
   render() {
+    const hasThinking = Boolean(this.thinking && this.thinking.trim());
     return html`
       <div class="message assistant">
         <div class="role">assistant</div>
+        ${hasThinking ? html`
+          <details class="thought-block" ?open=${this.streaming && !this.content}>
+            <summary>
+              Thought process
+              ${this.streaming ? html`<span class="thought-spinner"></span>` : nothing}
+            </summary>
+            <div class="thought-body">
+              ${unsafeHTML(renderMarkdown(this.thinking))}
+            </div>
+          </details>
+        ` : nothing}
         <div class="content">
           ${unsafeHTML(renderMarkdown(this.content))}
           ${this.streaming ? html`<span class="streaming-indicator"></span>` : nothing}

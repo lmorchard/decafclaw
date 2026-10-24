@@ -12,6 +12,8 @@ export class MessageStore {
   #currentMessages = [];
   /** @type {string} */
   #streamingText = '';
+  /** @type {string} */
+  #streamingThinking = '';
   /** @type {boolean} */
   #hasMore = false;
   /** @type {() => void} */
@@ -28,6 +30,8 @@ export class MessageStore {
   get currentMessages() { return this.#currentMessages; }
   /** @returns {string} */
   get streamingText() { return this.#streamingText; }
+  /** @returns {string} */
+  get streamingThinking() { return this.#streamingThinking; }
   /** @returns {boolean} */
   get hasMore() { return this.#hasMore; }
 
@@ -37,9 +41,9 @@ export class MessageStore {
   clear() {
     this.#currentMessages = [];
     this.#streamingText = '';
+    this.#streamingThinking = '';
     this.#hasMore = false;
   }
-
   /** @param {ChatMessage} msg */
   pushMessage(msg) {
     this.#currentMessages.push(msg);
@@ -128,6 +132,7 @@ export class MessageStore {
 
   clearStreamingText() {
     this.#streamingText = '';
+    this.#streamingThinking = '';
   }
 
   /**
@@ -166,7 +171,12 @@ export class MessageStore {
 
       case MESSAGE_TYPES.CHUNK:
         if (msg.conv_id === currentConvId) {
-          this.#streamingText += msg.text;
+          if (msg.thinking) {
+            this.#streamingThinking += msg.thinking;
+          }
+          if (msg.text) {
+            this.#streamingText += msg.text;
+          }
         }
         return true;
 
@@ -175,10 +185,12 @@ export class MessageStore {
           this.#currentMessages.push({
             role: msg.role || 'assistant',
             content: msg.text,
+            thinking: msg.thinking || this.#streamingThinking || '',
             timestamp: new Date().toISOString(),
             usage: msg.usage || null,
           });
           this.#streamingText = '';
+          this.#streamingThinking = '';
         }
         return true;
 

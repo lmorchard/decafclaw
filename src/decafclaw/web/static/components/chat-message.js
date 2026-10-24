@@ -8,6 +8,7 @@ export class ChatMessage extends LitElement {
   static properties = {
     role: { type: String },
     content: { type: String },
+    thinking: { type: String },
     streaming: { type: Boolean },
     tool: { type: String },
     command: { type: String },
@@ -30,6 +31,7 @@ export class ChatMessage extends LitElement {
     super();
     this.role = 'user';
     this.content = '';
+    this.thinking = '';
     this.streaming = false;
     this.tool = '';
     this.command = '';
@@ -194,6 +196,7 @@ export class ChatMessage extends LitElement {
     if (this.role === 'assistant') {
       return html`<assistant-message
         .content=${this.content}
+        .thinking=${this.thinking}
         .streaming=${this.streaming}
         .usage=${this.usage}
         .timestamp=${this.timestamp}

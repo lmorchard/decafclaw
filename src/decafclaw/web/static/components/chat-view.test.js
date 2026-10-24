@@ -115,4 +115,28 @@ describe('chat-view scroll following on resize (#1090)', () => {
     expect(el.scrollTop).toBe(200);
     expect(el._showScrollBtn).toBe(true);
   });
+
+  it('displays streaming thinking block with active spinner during streaming thought deltas (#154)', async () => {
+    const store = createFakeStore({
+      isBusy: true,
+      streamingText: '',
+      streamingThinking: 'Reasoning through the problem...',
+    });
+    const el = /** @type {any} */ (document.createElement('chat-view'));
+    document.body.appendChild(el);
+    el.store = store;
+    await el.updateComplete;
+    await el.updateComplete;
+    const messages = /** @type {any[]} */ ([...el.querySelectorAll('chat-message')]);
+    const streamingMsg = messages.find((m) => m.streaming);
+    expect(streamingMsg).toBeTruthy();
+    expect(streamingMsg.thinking).toBe('Reasoning through the problem...');
+    await streamingMsg.updateComplete;
+    const assistant = streamingMsg.querySelector('assistant-message');
+    expect(assistant).toBeTruthy();
+    await assistant.updateComplete;
+    expect(assistant.querySelector('.thought-block')).toBeTruthy();
+    expect(assistant.querySelector('.thought-spinner')).toBeTruthy();
+    expect(el.querySelector('.thinking-indicator')).toBeNull();
+  });
 });
