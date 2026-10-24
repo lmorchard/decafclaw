@@ -17,6 +17,7 @@ from decafclaw.retrieval_telemetry import (
     aggregate,
     build_report,
     format_report,
+    load_records,
     make_retrieval_telemetry_subscriber,
     record_from_event,
     vault_health,
@@ -127,6 +128,57 @@ def test_aggregate_counts_retrieval_include_and_drop():
     assert b["drop_budget"] == 0
 
 
+def test_aggregate_counts_already_injected_drops():
+    records = [
+        {
+            "conv_id": "c1",
+            "candidates": [
+                {
+                    "file_path": "pages/a.md",
+                    "source_type": "page",
+                    "included": False,
+                    "drop_reason": "already_injected",
+                },
+            ],
+        },
+    ]
+    stats = aggregate(records)
+    a = stats["pages/a.md"]
+    assert a["retrieval_count"] == 1
+    assert a["include_count"] == 0
+    assert a["drop_already_injected"] == 1
+
+
+@pytest.mark.asyncio
+async def test_subscriber_and_aggregate_all_suppressed_event(config):
+    """When an event has only already_injected drops, telemetry captures it."""
+    handler = make_retrieval_telemetry_subscriber(config)
+    event = {
+        "type": "retrieval_event",
+        "conv_id": "c1",
+        "candidates": [
+            {
+                "file_path": "pages/a.md",
+                "source_type": "page",
+                "similarity": 0.9,
+                "recency": 0.8,
+                "importance": 0.5,
+                "composite_score": 0.77,
+                "included": False,
+                "drop_reason": "already_injected",
+            },
+        ],
+    }
+    await handler(event)
+    records = load_records(config)
+    assert len(records) == 1
+    stats = aggregate(records)
+    a = stats["pages/a.md"]
+    assert a["retrieval_count"] == 1
+    assert a["include_count"] == 0
+    assert a["drop_already_injected"] == 1
+
+
 def test_format_report_lists_pages_and_health():
     stats = {
         "pages/a.md": {
@@ -135,6 +187,7 @@ def test_format_report_lists_pages_and_health():
             "include_rate": 0.5,
             "drop_score": 0,
             "drop_budget": 1,
+            "drop_already_injected": 0,
             "source_type": "page",
         },
     }

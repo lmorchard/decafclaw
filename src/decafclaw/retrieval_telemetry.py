@@ -7,8 +7,9 @@ via ``config.telemetry``). Each event carries the *full* scored candidate
 list considered during a turn's memory retrieval — not just what got
 injected — tagged with an ``included`` verdict and, for dropped candidates,
 a ``drop_reason`` (``"score"`` for below the composite-score threshold,
-``"budget"`` for trimmed by the token budget). Published once per
-interactive turn from ``ContextComposer._compose_vault_retrieval``.
+``"budget"`` for trimmed by the token budget, ``"already_injected"`` for
+suppressed because the conversation already surfaced that page). Published
+once per interactive turn from ``ContextComposer._compose_vault_retrieval``.
 
 This is Phase 0 of #197: later phases (notably Phase 5's importance
 formula) consume the aggregated form of this stream to learn which vault
@@ -109,6 +110,7 @@ def aggregate(records: list[dict]) -> dict[str, dict]:
     include_count: dict[str, int] = defaultdict(int)
     drop_score: dict[str, int] = defaultdict(int)
     drop_budget: dict[str, int] = defaultdict(int)
+    drop_already_injected: dict[str, int] = defaultdict(int)
     source_type: dict[str, str] = {}
     for r in records:
         for c in r.get("candidates", []):
@@ -125,6 +127,8 @@ def aggregate(records: list[dict]) -> dict[str, dict]:
                     drop_score[path] += 1
                 elif reason == "budget":
                     drop_budget[path] += 1
+                elif reason == "already_injected":
+                    drop_already_injected[path] += 1
     stats = {}
     for path in retrieval_count:
         n = retrieval_count[path]
@@ -134,6 +138,7 @@ def aggregate(records: list[dict]) -> dict[str, dict]:
             "include_rate": include_count[path] / n if n else 0.0,
             "drop_score": drop_score[path],
             "drop_budget": drop_budget[path],
+            "drop_already_injected": drop_already_injected[path],
             "source_type": source_type.get(path, ""),
         }
     return stats
@@ -215,13 +220,15 @@ def format_report(stats: dict[str, dict], health: dict) -> str:
     lines.append(f"Total candidate appearances: {total} across {len(stats)} pages")
     lines.append("")
     lines.append(
-        f"{'file_path':<40} {'retrieved':>9} {'included':>9} {'inc%':>6} {'drop-score':>10} {'drop-budget':>11}"
+        f"{'file_path':<40} {'retrieved':>9} {'included':>9} {'inc%':>6} "
+        f"{'drop-score':>10} {'drop-budget':>11} {'drop-already-injected':>18}"
     )
-    lines.append("-" * 90)
+    lines.append("-" * 110)
     for path, s in sorted(stats.items(), key=lambda kv: kv[1]["retrieval_count"], reverse=True):
         lines.append(
             f"{path:<40} {s['retrieval_count']:>9} {s['include_count']:>9} "
-            f"{s['include_rate'] * 100:>5.0f}% {s['drop_score']:>10} {s['drop_budget']:>11}"
+            f"{s['include_rate'] * 100:>5.0f}% {s['drop_score']:>10} {s['drop_budget']:>11} "
+            f"{s['drop_already_injected']:>18}"
         )
     lines.append("")
     lines.append("## Vault health")
