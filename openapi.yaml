@@ -1383,6 +1383,72 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      summary: Post Sticky State
+      description: 'Pin a widget into the conversation''s sticky slot. Backs external
+
+        progress updates (e.g. long-running scripts posting live status).'
+      operationId: post_sticky_state_api_sticky__conv_id__post
+      parameters:
+      - name: conv_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conv Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                widget_type:
+                  title: Widget Type
+                  type: string
+                data:
+                  additionalProperties: true
+                  title: Data
+                  type: object
+              required:
+              - widget_type
+              - data
+              title: StickySetRequest
+              type: object
+    delete:
+      summary: Delete Sticky State
+      description: Clear the conversation's sticky slot.
+      operationId: delete_sticky_state_api_sticky__conv_id__delete
+      parameters:
+      - name: conv_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conv Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/canvas/{conv_id}/new_tab:
     post:
       summary: Post Canvas New Tab

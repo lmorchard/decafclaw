@@ -1402,6 +1402,56 @@ export class DefaultService {
         });
     }
     /**
+     * Post Sticky State
+     * Pin a widget into the conversation's sticky slot. Backs external
+     * progress updates (e.g. long-running scripts posting live status).
+     * @param convId
+     * @param requestBody
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static postStickyStateApiStickyConvIdPost(
+        convId: string,
+        requestBody: {
+            widget_type: string;
+            data: Record<string, JsonValue>;
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/sticky/{conv_id}',
+            path: {
+                'conv_id': convId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete Sticky State
+     * Clear the conversation's sticky slot.
+     * @param convId
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static deleteStickyStateApiStickyConvIdDelete(
+        convId: string,
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/sticky/{conv_id}',
+            path: {
+                'conv_id': convId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
      * Post Canvas New Tab
      * Create a new canvas tab. Backs the inline 'Open in Canvas' button.
      * @param convId

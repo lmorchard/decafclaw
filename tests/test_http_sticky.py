@@ -165,3 +165,146 @@ async def test_get_sticky_preserves_heterogeneous_payload(authed_client, http_co
     resp = await authed_client.get(f"/api/sticky/{owned_conv}")
     assert resp.status_code == 200
     assert resp.json() == {"widget_type": "markdown_document", "data": data}
+
+
+# ---------------------------------------------------------------------------
+# POST / DELETE /api/sticky/{conv_id} — external progress updates (#1104)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_post_sticky_pins_and_emits(authed_client, http_config, owned_conv, manager_mock):
+    resp = await authed_client.post(
+        f"/api/sticky/{owned_conv}",
+        json={"widget_type": "markdown_document", "data": {"content": "# Live progress"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+    from decafclaw import sticky as sticky_mod
+
+    state = sticky_mod.read_sticky_state(http_config, owned_conv)
+    assert state["widget_type"] == "markdown_document"
+    assert state["data"] == {"content": "# Live progress"}
+
+    emitted = [call.args[1] for call in manager_mock.emit.await_args_list]
+    assert emitted == [
+        {
+            "type": "sticky_set",
+            "widget_type": "markdown_document",
+            "data": {"content": "# Live progress"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_post_sticky_requires_auth(unauthed_client, owned_conv):
+    resp = await unauthed_client.post(
+        f"/api/sticky/{owned_conv}", json={"widget_type": "markdown_document", "data": {}}
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_post_sticky_other_user_conv_404(authed_client, other_user_conv):
+    resp = await authed_client.post(
+        f"/api/sticky/{other_user_conv}",
+        json={"widget_type": "markdown_document", "data": {"content": "x"}},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_post_sticky_invalid_conv_id_400(authed_client):
+    resp = await authed_client.post("/api/sticky/bad!id", json={"widget_type": "markdown_document", "data": {}})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_post_sticky_missing_conversation_404(authed_client):
+    resp = await authed_client.post(
+        "/api/sticky/missing-conversation", json={"widget_type": "markdown_document", "data": {}}
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"not json",
+        b"[1, 2]",
+        b"{}",
+        b'{"widget_type": ""}',
+        b'{"data": {"content": "x"}}',
+        b'{"widget_type": "markdown_document"}',
+        b'{"widget_type": "markdown_document", "data": "nope"}',
+    ],
+)
+async def test_post_sticky_rejects_malformed_bodies(authed_client, owned_conv, body):
+    resp = await authed_client.post(f"/api/sticky/{owned_conv}", content=body)
+    assert resp.status_code == 400
+    assert "error" in resp.json()
+
+
+@pytest.mark.asyncio
+async def test_post_sticky_rejects_unknown_widget(authed_client, owned_conv):
+    resp = await authed_client.post(f"/api/sticky/{owned_conv}", json={"widget_type": "no_such_widget", "data": {}})
+    assert resp.status_code == 400
+    assert "not registered" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_post_sticky_rejects_schema_violation(authed_client, owned_conv):
+    # markdown_document requires "content".
+    resp = await authed_client.post(f"/api/sticky/{owned_conv}", json={"widget_type": "markdown_document", "data": {}})
+    assert resp.status_code == 400
+    assert "schema validation failed" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_post_sticky_does_not_leak_state_on_rejection(authed_client, http_config, owned_conv):
+    from decafclaw import sticky as sticky_mod
+
+    resp = await authed_client.post(f"/api/sticky/{owned_conv}", json={"widget_type": "no_such_widget", "data": {}})
+    assert resp.status_code == 400
+    assert sticky_mod.read_sticky_state(http_config, owned_conv) == sticky_mod.empty_sticky_state()
+
+
+@pytest.mark.asyncio
+async def test_delete_sticky_clears_and_emits(authed_client, http_config, owned_conv, manager_mock):
+    from decafclaw import sticky as sticky_mod
+
+    result = await sticky_mod.set_sticky(http_config, owned_conv, "markdown_document", {"content": "# hi"})
+    assert result.ok
+    resp = await authed_client.delete(f"/api/sticky/{owned_conv}")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert sticky_mod.read_sticky_state(http_config, owned_conv) == sticky_mod.empty_sticky_state()
+
+    emitted = [call.args[1] for call in manager_mock.emit.await_args_list]
+    assert emitted == [{"type": "sticky_clear"}]
+
+
+@pytest.mark.asyncio
+async def test_delete_sticky_requires_auth(unauthed_client, owned_conv):
+    resp = await unauthed_client.delete(f"/api/sticky/{owned_conv}")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_sticky_other_user_conv_404(authed_client, other_user_conv):
+    resp = await authed_client.delete(f"/api/sticky/{other_user_conv}")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_sticky_invalid_conv_id_400(authed_client):
+    resp = await authed_client.delete("/api/sticky/bad!id")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_delete_sticky_missing_conversation_404(authed_client):
+    resp = await authed_client.delete("/api/sticky/missing-conversation")
+    assert resp.status_code == 404
