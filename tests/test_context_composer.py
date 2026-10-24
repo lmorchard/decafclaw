@@ -397,6 +397,11 @@ class TestComposeMemoryContext:
             assert entry2.tokens_estimated == 0
             assert entry2.items_included == 0
             assert entry2.details.get("injection_skipped") is True
+            assert entry2.details.get("drop_reason") == "already_injected"
+            assert entry2.details.get("suppressed") == 1
+            assert entry2.details.get("candidates_considered") == 1
+            assert entry2.details.get("token_budget") == config.vault_retrieval.max_tokens
+            assert entry2.details.get("budget_source") == "fixed"
 
     @pytest.mark.asyncio
     async def test_retrieval_suppressed_across_turns_from_history(self, ctx, config):
@@ -445,6 +450,55 @@ class TestComposeMemoryContext:
             result2 = await composer2.compose(ctx, "hello again", history, mode=ComposerMode.INTERACTIVE)
             assert result2.retrieved_context_text == ""
             assert not any("memory entry" in (m.get("content") or "") for m in result2.messages)
+
+    @pytest.mark.asyncio
+    async def test_retrieval_event_observes_already_injected_candidates(self, ctx, config):
+        """#1157: retrieval events must observe already-injected candidates so
+        dedupe-based drops are accounted for in telemetry."""
+        events = []
+
+        async def cap(e):
+            if e.get("type") == "retrieval_event":
+                events.append(e)
+
+        ctx.event_bus.subscribe(cap)
+        composer = ContextComposer()
+        injected_candidate = {
+            "file_path": "pages/first.md",
+            "source_type": "page",
+            "entry_text": "x",
+            "similarity": 0.9,
+            "modified_at": "",
+            "importance": 0.9,
+        }
+        fresh_candidate = {
+            "file_path": "pages/other.md",
+            "source_type": "page",
+            "entry_text": "y",
+            "similarity": 0.8,
+            "modified_at": "",
+            "importance": 0.8,
+        }
+        config.relevance.min_composite_score = 0.0
+        config.vault_retrieval.max_results = 10
+        with patch(
+            "decafclaw.context_composer.retrieve_memory_context",
+            new_callable=AsyncMock,
+            return_value=[injected_candidate],
+        ):
+            await composer._compose_vault_retrieval(ctx, config, "hello", ComposerMode.INTERACTIVE)
+        with patch(
+            "decafclaw.context_composer.retrieve_memory_context",
+            new_callable=AsyncMock,
+            return_value=[injected_candidate, fresh_candidate],
+        ):
+            await composer._compose_vault_retrieval(ctx, config, "hello again", ComposerMode.INTERACTIVE)
+        assert len(events) == 2
+        second = events[1]
+        paths = {c["file_path"]: c for c in second["candidates"]}
+        assert paths["pages/first.md"]["included"] is False
+        assert paths["pages/first.md"]["drop_reason"] == "already_injected"
+        assert paths["pages/other.md"]["included"] is True
 
     @pytest.mark.asyncio
     async def test_retrieval_event_published_with_drop_verdicts(self, ctx, config):

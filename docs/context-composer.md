@@ -348,7 +348,9 @@ importance-formula rework) build on.
 Once per interactive turn, after `_score_candidates` produces the full
 scored candidate list and before the `min_composite_score` threshold and
 token-budget trim are applied, `_compose_vault_retrieval` publishes a
-`retrieval_event` on the event bus:
+`retrieval_event` on the event bus. The full scored list includes
+already-injected candidates, which are tagged with
+`drop_reason: "already_injected"` instead of being silently absent (#1157).
 
 ```python
 {
@@ -363,7 +365,7 @@ token-budget trim are applied, `_compose_vault_retrieval` publishes a
             "importance": float,
             "composite_score": float,
             "included": bool,            # survived score threshold AND budget trim
-            "drop_reason": str | None,   # None | "score" | "budget"
+            "drop_reason": str | None,   # None | "score" | "budget" | "already_injected"
         },
         ...
     ],
@@ -403,7 +405,7 @@ By default, every interactive turn auto-injects scored full-body candidates from
 
 `@[[Page]]` mentions inject regardless of mode (those are user-driven explicit references, not auto-retrieval).
 
-**Empty result sets** (no candidates, all suppressed because already-injected, or all below `relevance.min_composite_score`) emit a `SourceEntry` with `mode` and `injection_skipped: true` so the context inspector can show retrieval ran but didn't inject.
+**Empty result sets** (no candidates, all suppressed because already-injected, or all below `relevance.min_composite_score`) emit a `SourceEntry` with `mode` and `injection_skipped: true` so the context inspector can show retrieval ran but didn't inject. When the cause is already-injected suppression, the entry also records `drop_reason: "already_injected"`, the suppressed count, `candidates_considered`, and the token budget that was evaluated.
 
 **Headlines format** uses each result's `summary` frontmatter field when present, falls back to a truncated body excerpt. Configurable cap via `vault_retrieval.headline_summary_max_chars` (default 120).
 

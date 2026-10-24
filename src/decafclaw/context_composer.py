@@ -898,6 +898,15 @@ class ContextComposer:
                 )
                 return [], "", [], entry
 
+            # Select by token budget (score order replaces similarity order)
+            budget = token_budget if token_budget is not None else config.vault_retrieval.max_tokens
+
+            # Score the full retrieved candidate pool before the already-injected
+            # dedupe filter runs, so suppressed (already-injected) candidates
+            # remain observable in retrieval telemetry (#197/#1157).
+            all_scored = self._score_candidates(list(results), config)
+            total_candidates = len(all_scored)
+
             # Filter out candidates already injected in this conversation
             # (they're already in history — re-injecting wastes tokens). The
             # already-injected set is rebuilt from archived history each turn
@@ -905,27 +914,28 @@ class ContextComposer:
             # earlier turns; unioned with this turn's in-flight injections.
             already_injected = get_already_injected_pages(history) if history is not None else set()
             already_injected |= self.state.injected_paths
-            if already_injected:
-                before = len(results)
-                results = [r for r in results if r.get("file_path", "") not in already_injected]
-                suppressed = before - len(results)
-                if suppressed:
-                    log.debug("Memory context: suppressed %d already-injected candidates", suppressed)
+            results = [r for r in all_scored if r.get("file_path", "") not in already_injected]
+            suppressed = total_candidates - len(results)
+            if suppressed:
+                log.debug("Memory context: suppressed %d already-injected candidates", suppressed)
 
             if not results:
                 entry = SourceEntry(
                     source="memory",
                     tokens_estimated=0,
                     items_included=0,
-                    items_truncated=0,
-                    details={"mode": retrieval_mode, "injection_skipped": True},
+                    items_truncated=suppressed,
+                    details={
+                        "mode": retrieval_mode,
+                        "injection_skipped": True,
+                        "drop_reason": "already_injected",
+                        "suppressed": suppressed,
+                        "candidates_considered": total_candidates,
+                        "token_budget": budget,
+                        "budget_source": "dynamic" if token_budget is not None else "fixed",
+                    },
                 )
                 return [], "", [], entry
-
-            # Score and rank candidates
-            total_candidates = len(results)
-            results = self._score_candidates(results, config)
-            all_scored = list(results)  # full scored list, before threshold/budget drops
 
             # Drop candidates below minimum score threshold
             score_threshold = config.relevance.min_composite_score
@@ -936,8 +946,6 @@ class ContextComposer:
             if max_results and max_results > 0:
                 results = results[:max_results]
 
-            # Select by token budget (score order replaces similarity order)
-            budget = token_budget if token_budget is not None else config.vault_retrieval.max_tokens
             log.debug(
                 "Memory context: %d candidates, budget=%d tokens (%s, mode=%s)",
                 total_candidates,
@@ -970,6 +978,10 @@ class ContextComposer:
                     included = path in survived_paths
                     if included:
                         drop_reason = None
+                    elif path in already_injected:
+                        # Already injected this conversation — suppressed as a
+                        # repeat rather than by score/budget (#1157).
+                        drop_reason = "already_injected"
                     elif c.get("composite_score", 0) < score_threshold:
                         drop_reason = "score"
                     else:
