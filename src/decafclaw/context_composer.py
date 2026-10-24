@@ -31,6 +31,7 @@ from .memory_context import (
     format_memory_context,
     format_memory_headlines,
     get_already_injected_pages,
+    get_already_retrieved_paths,
     parse_bare_mentions,
     parse_wiki_references,
     read_wiki_page,
@@ -900,6 +901,7 @@ class ContextComposer:
 
             # Select by token budget (score order replaces similarity order)
             budget = token_budget if token_budget is not None else config.vault_retrieval.max_tokens
+            score_threshold = config.relevance.min_composite_score
 
             # Score the full retrieved candidate pool before the already-injected
             # dedupe filter runs, so suppressed (already-injected) candidates
@@ -909,10 +911,10 @@ class ContextComposer:
 
             # Filter out candidates already injected in this conversation
             # (they're already in history — re-injecting wastes tokens). The
-            # already-injected set is rebuilt from archived history each turn
+            # already-retrieved set is rebuilt from archived history each turn
             # (#1157) so a fresh composer state still suppresses repeats from
             # earlier turns; unioned with this turn's in-flight injections.
-            already_injected = get_already_injected_pages(history) if history is not None else set()
+            already_injected = get_already_retrieved_paths(history) if history is not None else set()
             already_injected |= self.state.injected_paths
             results = [r for r in all_scored if r.get("file_path", "") not in already_injected]
             suppressed = total_candidates - len(results)
@@ -920,6 +922,13 @@ class ContextComposer:
                 log.debug("Memory context: suppressed %d already-injected candidates", suppressed)
 
             if not results:
+                await self._publish_retrieval_telemetry(
+                    ctx,
+                    all_scored=all_scored,
+                    survived_paths=set(),
+                    already_injected=already_injected,
+                    score_threshold=score_threshold,
+                )
                 entry = SourceEntry(
                     source="memory",
                     tokens_estimated=0,
@@ -938,7 +947,6 @@ class ContextComposer:
                 return [], "", [], entry
 
             # Drop candidates below minimum score threshold
-            score_threshold = config.relevance.min_composite_score
             results = [r for r in results if r.get("composite_score", 0) >= score_threshold]
 
             # Cap candidate count to max_results (#1048)
@@ -970,41 +978,13 @@ class ContextComposer:
             # scored candidate list — not just what got injected — tagged
             # with include/drop verdicts. Fail-open: telemetry must never
             # break retrieval.
-            try:
-                survived_paths = {r.get("file_path", "") for r in results}
-                candidates_payload = []
-                for c in all_scored:
-                    path = c.get("file_path", "")
-                    included = path in survived_paths
-                    if included:
-                        drop_reason = None
-                    elif path in already_injected:
-                        # Already injected this conversation — suppressed as a
-                        # repeat rather than by score/budget (#1157).
-                        drop_reason = "already_injected"
-                    elif c.get("composite_score", 0) < score_threshold:
-                        drop_reason = "score"
-                    else:
-                        drop_reason = "budget"
-                    candidates_payload.append(
-                        {
-                            "file_path": path,
-                            "source_type": c.get("source_type", ""),
-                            "similarity": c.get("similarity", 0.0),
-                            "recency": c.get("recency", 0.0),
-                            "importance": c.get("importance", 0.0),
-                            "composite_score": c.get("composite_score", 0.0),
-                            "included": included,
-                            "drop_reason": drop_reason,
-                        }
-                    )
-                await ctx.publish(
-                    "retrieval_event",
-                    conv_id=ctx.conv_id,
-                    candidates=candidates_payload,
-                )
-            except Exception as exc:
-                log.debug("Retrieval telemetry emit failed: %s", exc)
+            await self._publish_retrieval_telemetry(
+                ctx,
+                all_scored=all_scored,
+                survived_paths={r.get("file_path", "") for r in results},
+                already_injected=already_injected,
+                score_threshold=score_threshold,
+            )
 
             # Compute per-candidate token estimates for diagnostics
             for r in results:
@@ -1070,6 +1050,53 @@ class ContextComposer:
             raw,
         )
         return "always"
+
+    @staticmethod
+    async def _publish_retrieval_telemetry(
+        ctx,
+        all_scored: list[dict],
+        survived_paths: set[str],
+        already_injected: set[str],
+        score_threshold: float,
+    ) -> None:
+        """Publish full scored candidate list tagged with include/drop verdicts.
+
+        Fail-open: telemetry must never break retrieval (#197 Phase 0).
+        """
+        try:
+            candidates_payload = []
+            for c in all_scored:
+                path = c.get("file_path", "")
+                included = path in survived_paths
+                if included:
+                    drop_reason = None
+                elif path in already_injected:
+                    # Already injected this conversation — suppressed as a
+                    # repeat rather than by score/budget (#1157).
+                    drop_reason = "already_injected"
+                elif c.get("composite_score", 0) < score_threshold:
+                    drop_reason = "score"
+                else:
+                    drop_reason = "budget"
+                candidates_payload.append(
+                    {
+                        "file_path": path,
+                        "source_type": c.get("source_type", ""),
+                        "similarity": c.get("similarity", 0.0),
+                        "recency": c.get("recency", 0.0),
+                        "importance": c.get("importance", 0.0),
+                        "composite_score": c.get("composite_score", 0.0),
+                        "included": included,
+                        "drop_reason": drop_reason,
+                    }
+                )
+            await ctx.publish(
+                "retrieval_event",
+                conv_id=ctx.conv_id,
+                candidates=candidates_payload,
+            )
+        except Exception as exc:
+            log.debug("Retrieval telemetry emit failed: %s", exc)
 
     def _compose_vault_references(
         self,

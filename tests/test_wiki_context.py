@@ -4,6 +4,7 @@ import pytest
 
 from decafclaw.memory_context import (
     get_already_injected_pages,
+    get_already_retrieved_paths,
     parse_wiki_references,
     read_wiki_page,
 )
@@ -85,7 +86,7 @@ def test_read_wiki_page_no_vault_dir(config):
     assert read_wiki_page(config, "Anything") is None
 
 
-# -- get_already_injected_pages -----------------------------------------------
+# -- get_already_injected_pages / get_already_retrieved_paths -----------------
 
 
 def test_already_injected_empty():
@@ -102,23 +103,34 @@ def test_already_injected_finds_vault_references():
     assert get_already_injected_pages(history) == {"Page1", "Page2"}
 
 
-def test_already_injected_finds_vault_retrieval():
-    """Archived ``vault_retrieval`` messages contribute their injected paths."""
+def test_already_injected_ignores_vault_retrieval_and_other_roles():
+    """Explicit-reference dedupe must ignore proactive vault_retrieval (#1157)."""
+    history = [
+        {"role": "user", "content": "hi"},
+        {"role": "vault_retrieval", "content": "...", "file_paths": ["pages/Page1.md"]},
+        {"role": "assistant", "content": "ok"},
+    ]
+    assert get_already_injected_pages(history) == set()
+
+
+def test_already_retrieved_paths_finds_vault_retrieval():
+    """Archived ``vault_retrieval`` messages contribute their injected paths (#1157)."""
     history = [
         {"role": "user", "content": "hi"},
         {"role": "vault_retrieval", "content": "...", "file_paths": ["pages/Page1.md"]},
         {"role": "assistant", "content": "ok"},
         {"role": "vault_retrieval", "content": "...", "file_paths": ["journal/Page2.md"]},
     ]
-    assert get_already_injected_pages(history) == {"pages/Page1.md", "journal/Page2.md"}
+    assert get_already_retrieved_paths(history) == {"pages/Page1.md", "journal/Page2.md"}
 
 
-def test_already_injected_ignores_other_roles():
+def test_already_retrieved_paths_ignores_other_roles():
     history = [
         {"role": "user", "content": "hi"},
+        {"role": "vault_references", "content": "...", "wiki_page": "Page1"},
         {"role": "vault_retrieval", "content": "..."},
     ]
-    assert get_already_injected_pages(history) == set()
+    assert get_already_retrieved_paths(history) == set()
 
 
 # -- Integration: wiki context via ContextComposer --------------------------------
@@ -211,3 +223,36 @@ def test_compose_wiki_context_missing_page(ctx):
     )
     assert len(msgs) == 1
     assert "[Wiki page 'NonExistent' not found]" in msgs[0]["content"]
+
+
+def test_compose_wiki_context_allows_explicit_reference_after_headline_retrieval(ctx):
+    """#1157: an explicit @[[Page]] reference must not be suppressed by an earlier
+    proactive vault_retrieval (e.g. headlines mode), even if the path matches."""
+    from decafclaw.context_composer import ComposerMode, ContextComposer
+
+    vault_dir = ctx.config.vault_root
+    pages_dir = vault_dir / "pages"
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    (pages_dir / "Foo.md").write_text("full body of Foo")
+
+    history = [
+        {
+            "role": "vault_retrieval",
+            "content": "### Foo\nHeadline only summary.",
+            "file_paths": ["pages/Foo.md"],
+        },
+    ]
+    composer = ContextComposer()
+    msgs, entry = composer._compose_vault_references(
+        ctx,
+        ctx.config,
+        "tell me about @[[pages/Foo.md]]",
+        history,
+        ComposerMode.INTERACTIVE,
+    )
+    assert len(msgs) == 1
+    assert "full body of Foo" in msgs[0]["content"]
+    assert msgs[0]["wiki_page"] == "pages/Foo.md"
+    assert entry is not None
+    assert entry.items_included == 1
+    assert entry.items_truncated == 0

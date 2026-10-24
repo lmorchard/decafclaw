@@ -515,6 +515,59 @@ class TestComposeMemoryContext:
         assert paths["pages/other.md"]["included"] is True
 
     @pytest.mark.asyncio
+    async def test_retrieval_event_published_when_all_candidates_suppressed(self, ctx, config):
+        """#1157: when every candidate is suppressed by already-injected dedupe,
+        a retrieval_event must still be published so telemetry accounts for
+        the appearance (retrieval_count) and drop (drop_already_injected)."""
+        events = []
+
+        async def cap(e):
+            if e.get("type") == "retrieval_event":
+                events.append(e)
+
+        ctx.event_bus.subscribe(cap)
+        composer = ContextComposer()
+        candidate = {
+            "file_path": "pages/first.md",
+            "source_type": "page",
+            "entry_text": "x",
+            "similarity": 0.9,
+            "modified_at": "",
+            "importance": 0.9,
+        }
+        config.relevance.min_composite_score = 0.0
+        config.vault_retrieval.max_results = 10
+        history = [
+            {
+                "role": "vault_retrieval",
+                "content": "earlier injection",
+                "file_paths": ["pages/first.md"],
+            },
+            {"role": "user", "content": "hello again"},
+        ]
+        with patch(
+            "decafclaw.context_composer.retrieve_memory_context",
+            new_callable=AsyncMock,
+            return_value=[candidate],
+        ):
+            msgs, text, results, entry = await composer._compose_vault_retrieval(
+                ctx, config, "hello again", ComposerMode.INTERACTIVE, history=history
+            )
+
+        assert msgs == []
+        assert text == ""
+        assert results == []
+        assert entry.details.get("injection_skipped") is True
+        assert entry.details.get("drop_reason") == "already_injected"
+        assert len(events) == 1
+        ev = events[0]
+        assert len(ev["candidates"]) == 1
+        c = ev["candidates"][0]
+        assert c["file_path"] == "pages/first.md"
+        assert c["included"] is False
+        assert c["drop_reason"] == "already_injected"
+
+    @pytest.mark.asyncio
     async def test_retrieval_event_published_with_drop_verdicts(self, ctx, config):
         """A ``retrieval_event`` carries the *full* scored candidate list
         (not just what got injected), tagged with include/drop verdicts —
