@@ -330,6 +330,16 @@ export class ConversationStore extends EventTarget {
     }
   }
 
+  /**
+   * Request an on-demand title regeneration for a conversation (#1156).
+   * Server-side side-effect command handled via websocket like /retitle.
+   * @param {string} convId
+   */
+  retitleConversation(convId) {
+    if (!convId) return;
+    this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: convId, text: '/retitle' });
+  }
+
   /** @param {string} convId @param {string} folder */
   async moveConversation(convId, folder) {
     try {
@@ -489,15 +499,18 @@ export class ConversationStore extends EventTarget {
       this.createConversation('', this.#activeModel, this.#currentFolder);
       return;
     }
-    // `/terminal` is a human-only side-effect command (#442): it opens a
-    // canvas tab via the separate canvas channel and runs NO agent turn, so
-    // it must not engage the conversation's busy/turn machinery. Sending it
-    // like a normal message would set `#busy` with nothing to clear it (the
-    // server sends no MESSAGE_COMPLETE for it) — a perpetual spinner. Fire it
-    // off without the busy flag or an optimistic user echo. Mirrors the
-    // server-side guard in _handle_send.
+    // `/terminal` and `/retitle` are human-only side-effect commands (#442, #1156):
+    // they run NO agent turn, so they must not engage the conversation's busy/turn
+    // machinery. Sending them like a normal message would set `#busy` with nothing
+    // to clear it (the server sends no MESSAGE_COMPLETE for them) — a perpetual
+    // spinner. Fire them off without the busy flag or an optimistic user echo.
+    // Mirrors the server-side guards in _handle_send.
     const trimmed = text.trim();
-    if (trimmed === '/terminal' || trimmed.startsWith('/terminal ')) {
+    if (
+      trimmed === '/terminal' || trimmed.startsWith('/terminal ') ||
+      trimmed === '/retitle' || trimmed.startsWith('/retitle ') ||
+      trimmed === '!retitle' || trimmed.startsWith('!retitle ')
+    ) {
       this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text });
       return;
     }

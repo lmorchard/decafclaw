@@ -17,7 +17,7 @@ import pytest
 from decafclaw.archive import append_message
 from decafclaw.events import EventBus
 from decafclaw.web import auto_titling, websocket
-from decafclaw.web.auto_titling import _clean_title, maybe_auto_title
+from decafclaw.web.auto_titling import _clean_title, maybe_auto_title, retitle_conversation
 from decafclaw.web.conversations import ConversationIndex
 
 
@@ -540,3 +540,121 @@ async def test_conv_renamed_forwarder_colliding_usernames(config):
             "updated_at": "t1",
         }
     ]
+
+
+# -- on-demand retitling (#1156) ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_demand_retitle_success(config, stub_llm):
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Original title")
+    _seed(config, conv.conv_id, 3)
+
+    bus, events = _bus_with_recorder()
+    stub_llm.response = {"content": "Fresh Summary Title"}
+
+    ok, title = await auto_titling.retitle_conversation(config, conv.conv_id, bus)
+    assert ok is True
+    assert title == "Fresh Summary Title"
+
+    updated = index.get(conv.conv_id)
+    assert updated is not None
+    assert updated.title == "Fresh Summary Title"
+    assert updated.custom_title is False
+
+    assert len(events) == 1
+    assert events[0]["type"] == "conv_renamed"
+    assert events[0]["conv_id"] == conv.conv_id
+    assert events[0]["title"] == "Fresh Summary Title"
+
+
+@pytest.mark.asyncio
+async def test_on_demand_retitle_bypasses_cadence_and_exhausted(config, stub_llm):
+    """An on-demand retitle runs regardless of turn count or exhausted state."""
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Original title")
+    _seed(config, conv.conv_id, 25)
+    auto_titling._exhausted.add(conv.conv_id)
+
+    bus, events = _bus_with_recorder()
+    stub_llm.response = {"content": "Bypassed Cadence Title"}
+
+    ok, title = await auto_titling.retitle_conversation(config, conv.conv_id, bus)
+    assert ok is True
+    assert title == "Bypassed Cadence Title"
+    assert index.get(conv.conv_id).title == "Bypassed Cadence Title"
+
+
+@pytest.mark.asyncio
+async def test_on_demand_retitle_clears_custom_title_and_restores_periodic_cadence(config, stub_llm):
+    """An on-demand retitle overrides custom_title and clears it so periodic refinement continues."""
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Original")
+    _seed(config, conv.conv_id, 3)
+
+    # User manually renamed it earlier:
+    index.rename(conv.conv_id, "User Renamed Manually", manual=True)
+    assert index.get(conv.conv_id).custom_title is True
+
+    bus, events = _bus_with_recorder()
+    stub_llm.response = {"content": "Regenerated Title"}
+
+    ok, title = await auto_titling.retitle_conversation(config, conv.conv_id, bus)
+    assert ok is True
+    assert title == "Regenerated Title"
+    assert index.get(conv.conv_id).custom_title is False
+
+    # Periodic auto-titling at next cadence (turn 5) is no longer blocked:
+    _seed(config, conv.conv_id, 2)
+    stub_llm.response = {"content": "Turn 5 Refined Title"}
+    await maybe_auto_title(config, conv.conv_id, bus)
+    assert index.get(conv.conv_id).title == "Turn 5 Refined Title"
+
+
+@pytest.mark.asyncio
+async def test_on_demand_retitle_fails_open_on_llm_error(config, monkeypatch):
+    """Fails open with error message without raising or mutating title."""
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Original title")
+    _seed(config, conv.conv_id, 2)
+
+    async def broken_llm(*args, **kwargs):
+        raise RuntimeError("API timeout")
+
+    monkeypatch.setattr("decafclaw.llm.call_llm", broken_llm)
+
+    bus, events = _bus_with_recorder()
+    ok, err = await auto_titling.retitle_conversation(config, conv.conv_id, bus)
+    assert ok is False
+    assert "Failed to generate title" in err
+    assert index.get(conv.conv_id).title == "Original title"
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_on_demand_retitle_empty_history(config, stub_llm):
+    """Fails open when conversation has no messages."""
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Opening message")
+
+    bus, events = _bus_with_recorder()
+    ok, err = await auto_titling.retitle_conversation(config, conv.conv_id, bus)
+    assert ok is False
+    assert "Not enough conversation history" in err
+    assert index.get(conv.conv_id).title == "Opening message"
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_on_demand_retitle_unknown_conv(config):
+    bus, events = _bus_with_recorder()
+    ok, err = await auto_titling.retitle_conversation(config, "web-alice-missing", bus)
+    assert ok is False
+    assert "Conversation not found" in err
+    assert events == []

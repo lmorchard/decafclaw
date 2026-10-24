@@ -123,6 +123,46 @@ async def _generate_title(config, conv_id: str) -> str:
     return _clean_title(response.get("content") or "")
 
 
+async def retitle_conversation(config, conv_id: str, event_bus) -> tuple[bool, str]:
+    """Run an on-demand retitle pass for this conversation (#1156).
+
+    Bypasses cadence and dedup guards (TITLING_TURNS, _attempted, _exhausted).
+    On success:
+      - generates a title from recent conversation history via _generate_title.
+      - renames through ConversationIndex(config) with manual=False and clear_custom=True,
+        so custom_title is cleared and subsequent periodic auto-titling can continue.
+      - publishes a 'conv_renamed' event on the event_bus so every open tab updates.
+    Returns (True, new_title) on success, or (False, error_message) on failure.
+    Fails open: on error, title is unchanged and returns (False, err).
+    """
+    try:
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        if conv is None:
+            return False, "Conversation not found."
+
+        title = await _generate_title(config, conv_id)
+        if not title:
+            return False, "Not enough conversation history to generate a title."
+
+        updated = index.rename(conv_id, title, manual=False, clear_custom=True)
+        if updated is None:
+            return False, "Could not update conversation title."
+
+        await event_bus.publish(
+            {
+                "type": "conv_renamed",
+                "conv_id": conv_id,
+                "title": updated.title,
+                "updated_at": updated.updated_at,
+            }
+        )
+        return True, updated.title
+    except Exception as exc:
+        log.warning("On-demand retitle failed for conv %s: %s", conv_id[:8], exc, exc_info=True)
+        return False, "Failed to generate title."
+
+
 async def maybe_auto_title(config, conv_id: str, event_bus) -> None:
     """Run one auto-titling pass if this conversation is due.
 

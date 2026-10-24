@@ -320,7 +320,7 @@ describe('conversation-sidebar row keyboard access', () => {
     }
 
     for (const [name, rowSelector, labels] of [
-      ['conversation', '.conv-list .conv-item:not(.wiki-folder-item)', ['Archive conversation']],
+      ['conversation', '.conv-list .conv-item:not(.wiki-folder-item)', ['Regenerate title', 'Archive conversation']],
       ['chat folder', '.conv-list .wiki-folder-item', ['Delete folder']],
     ]) {
       it(`shows the ${name} row buttons while focus is in the row, with their labels`, async () => {

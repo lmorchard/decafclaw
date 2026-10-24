@@ -92,6 +92,15 @@ as `custom_title`, the index refuses non-manual renames for such
 conversations, and the titler checks it before any LLM call, so a title
 the user set is never overwritten.
 
+**On-demand retitling (#1156).** Users can trigger title regeneration on demand
+via the `/retitle` chat command or the "Regenerate title" (✨) action button on
+active conversation rows in the sidebar. Both run as server-side side-effect
+commands (no agent turn and no archive write), bypass cadence and exhaustion
+sentinels, and update the index with `manual=False`. An explicit on-demand retitle
+clears `custom_title` so subsequent periodic refinements continue running on
+their normal cadence. On failure (e.g. empty conversation history or LLM error),
+the command fails open with an error toast while preserving the existing title.
+
 ### Vault editor
 
 WYSIWYG markdown editor for vault pages, accessible from the sidebar:

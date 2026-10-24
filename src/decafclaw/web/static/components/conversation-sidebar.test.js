@@ -290,3 +290,48 @@ describe('conversation-sidebar activity indicators', () => {
     expect(row.querySelector('.conv-status')).toBeNull();
   });
 });
+
+describe('conversation-sidebar on-demand retitle action', () => {
+  let sidebar;
+
+  afterEach(() => {
+    sidebar?.remove();
+  });
+
+  it('renders a Regenerate title button on active conversation rows and invokes store.retitleConversation', async () => {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'c1',
+      conversations: [
+        { conv_id: 'c1', title: 'Trip planning' },
+        { conv_id: 'c2', title: 'Coding task' },
+      ],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 0,
+      contextLimit: 0,
+      activeModel: '',
+      availableModels: [],
+      defaultModel: '',
+      retitleConversation: vi.fn(),
+      selectConversation: vi.fn(),
+      listConversations: vi.fn(),
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    await sidebar.updateComplete;
+    await sidebar.updateComplete;
+
+    const row = sidebar.querySelector('.conv-item[title*="Trip planning"]');
+    expect(row).toBeTruthy();
+    const retitleBtn = row.querySelector('button[title="Regenerate title"]');
+    expect(retitleBtn).toBeTruthy();
+    expect(retitleBtn.textContent).toBe('✨');
+
+    retitleBtn.click();
+    expect(store.retitleConversation).toHaveBeenCalledWith('c1');
+  });
+});

@@ -504,6 +504,14 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         await _handle_terminal_command(ws_send, conv_id, text, username, state)
         return
 
+    # -- /retitle side-effect command (#1156): regenerate conversation title
+    # via LLM summary with NO agent turn and NO archive write.
+    if (text.startswith("/retitle") and (text == "/retitle" or text[8:9].isspace())) or (
+        text.startswith("!retitle") and (text == "!retitle" or text[8:9].isspace())
+    ):
+        await _handle_retitle_command(ws_send, index, conv_id, username, state)
+        return
+
     # -- Command dispatch (centralized in commands.py) --
     from ..commands import dispatch_command
     from ..context import Context
@@ -674,6 +682,39 @@ async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, usern
     # path runs no agent turn, so nothing would ever clear it (perpetual
     # "Running skill: terminal" spinner). See _handle_send / conversation
     # store: the client also skips the busy flag + user echo for /terminal.
+
+
+async def _handle_retitle_command(ws_send: WSSendCallable, index, conv_id: str, username: str, state: dict) -> None:
+    """`/retitle`: regenerate conversation title via LLM summary (#1156).
+
+    No agent turn, no archive write — this is a server-side side-effect command
+    like `/terminal`.
+    """
+    from .auto_titling import retitle_conversation
+    from .conversations import can_read_conversation
+
+    config = state["config"]
+    event_bus = state["event_bus"]
+
+    if not can_read_conversation(config, index, conv_id, username):
+        await ws_send(
+            {
+                "type": WSMessageType.ERROR,
+                "message": "Not authorized to retitle this conversation.",
+                "conv_id": conv_id,
+            }
+        )
+        return
+
+    ok, result = await retitle_conversation(config, conv_id, event_bus)
+    if not ok:
+        await ws_send(
+            {
+                "type": WSMessageType.ERROR,
+                "message": result,
+                "conv_id": conv_id,
+            }
+        )
 
 
 async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:
