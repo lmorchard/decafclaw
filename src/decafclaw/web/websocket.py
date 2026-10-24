@@ -18,6 +18,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from decafclaw.commands import list_invokable_commands
 from decafclaw.conversation_manager import TurnKind
+from decafclaw.conversation_paths import approval_state_path
 from decafclaw.llm.history import without_provider_data
 from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
 from decafclaw.web.auto_titling import maybe_auto_title
@@ -382,12 +383,15 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         if conv_state:
             # Legacy fallback: conversations written before #1160 have no
             # approval-state sidecar, only archived `role: "mode"` records.
-            # If there is no sidecar and the manager state is pristine
+            # If there is no sidecar file and the manager state is pristine
             # (default mode with empty presets) but the archive recorded a
-            # mode, hydrate manager state from the archive. set_flag also
+            # mode, hydrate manager state from the archive. Gated on actual
+            # file absence so a corrupt sidecar fails open to defaults
+            # rather than reviving an older archived mode. set_flag also
             # writes the sidecar, so this migration runs once.
             if (
-                conv_state.approval_state_saved is None
+                not approval_state_path(manager.config, conv_id).exists()
+                and conv_state.approval_state_saved is None
                 and conv_state.persisted.active_mode == "default"
                 and not conv_state.persisted.active_aux_approval_presets
                 and active_mode

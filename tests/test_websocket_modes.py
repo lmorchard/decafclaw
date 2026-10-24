@@ -182,3 +182,17 @@ async def test_load_history_sidecar_wins_over_archived_mode(ws_context):
 
     assert await _load_history_mode(state, index, sent) == "default"
     assert manager.get_state("conv-1").persisted.active_mode == "default"
+
+
+@pytest.mark.asyncio
+async def test_load_history_corrupt_sidecar_retains_defaults_despite_archived_mode(ws_context):
+    """A corrupt sidecar fails open to defaults; it must not be treated as a legacy conversation."""
+    state, index, sent, manager, config = ws_context
+    append_message(config, "conv-1", {"role": "mode", "content": "dev"})
+    path = approval_state_path(config, "conv-1")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json {{{", encoding="utf-8")
+
+    assert await _load_history_mode(state, index, sent) == "default"
+    assert manager.get_state("conv-1").persisted.active_mode == "default"
+    assert path.read_text(encoding="utf-8") == "not json {{{"
