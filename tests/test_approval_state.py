@@ -173,3 +173,40 @@ def test_approval_fields_mirror_persisted_turn_state():
     for f in fields(ApprovalState):
         assert f.name in persisted
     assert "llm_approved_shell_patterns" not in {f.name for f in fields(ApprovalState)}
+
+
+async def _setup_agent_turn(config, conv_id, active_mode="default"):
+    """Run agent.py's per-turn state setup (incl. the legacy archive mode scan)."""
+    from decafclaw.agent import _setup_turn_state
+    from decafclaw.context import Context
+
+    ctx = Context(config=config, event_bus=EventBus())
+    ctx.conv_id = conv_id
+    ctx.active_mode = active_mode
+    await _setup_turn_state(ctx, config, [])
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_agent_path_sidecar_default_mode_wins_over_archived_mode(config):
+    from decafclaw.archive import append_message
+
+    # Archive recorded "dev" (legacy), but the user since switched back to
+    # default, which the sidecar records. The sidecar is the source of truth.
+    append_message(config, "conv-a", {"role": "mode", "content": "dev"})
+    assert save_approval_state(config, "conv-a", ApprovalState(aux_approval_guidance=[RULE]))
+
+    ctx = await _setup_agent_turn(config, "conv-a")
+
+    assert ctx.active_mode == "default"
+
+
+@pytest.mark.asyncio
+async def test_agent_path_legacy_archived_mode_restored_without_sidecar(config):
+    from decafclaw.archive import append_message
+
+    append_message(config, "conv-a", {"role": "mode", "content": "dev"})
+
+    ctx = await _setup_agent_turn(config, "conv-a")
+
+    assert ctx.active_mode == "dev"

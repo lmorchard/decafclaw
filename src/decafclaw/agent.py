@@ -32,6 +32,7 @@ from .config_types import LoopBreakerConfig
 from .context import TurnLifecycle
 from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
+from .conversation_paths import approval_state_path
 from .iteration_budget import IterationBudget
 from .llm import call_llm
 from .llm.history import assistant_message
@@ -578,12 +579,17 @@ async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
 
     # Restore active mode from archive if not already set or non-default.
     # Legacy fallback (#1160): the manager now restores the mode from the
-    # approval_state file; this scan only matters for conversations whose
-    # mode was recorded before that file existed.
+    # approval_state file, which is the source of truth whenever it exists
+    # (including a recorded "default"). This scan runs only for
+    # conversations whose mode was recorded before that file existed.
     from .modes import get_all_modes
 
     all_modes = get_all_modes(config)
-    if getattr(ctx, "active_mode", "default") == "default" and conv_id:
+    if (
+        getattr(ctx, "active_mode", "default") == "default"
+        and conv_id
+        and not approval_state_path(config, conv_id).exists()
+    ):
         from .archive import read_archive
 
         for msg in reversed(read_archive(config, conv_id)):
