@@ -266,7 +266,14 @@ class TestComposeMemoryContext:
     @pytest.mark.asyncio
     async def test_returns_results_when_available(self, ctx, config):
         mock_results = [
-            {"entry_text": "some memory", "source_type": "page", "similarity": 0.8},
+            {
+                "entry_text": "some memory",
+                "source_type": "page",
+                "similarity": 0.8,
+                "file_path": "pages/first.md",
+                "modified_at": "",
+                "importance": 0.5,
+            },
         ]
         with (
             patch(
@@ -285,6 +292,8 @@ class TestComposeMemoryContext:
             assert msgs[0]["role"] == "vault_retrieval"
             assert text == "formatted memory"
             assert len(raw) == 1
+            assert [r["file_path"] for r in raw] == ["pages/first.md"]
+            assert msgs[0]["file_paths"] == ["pages/first.md"]
             assert entry is not None
             assert entry.source == "memory"
             assert entry.items_included == 1
@@ -335,12 +344,13 @@ class TestComposeMemoryContext:
             patch("decafclaw.context_composer.format_memory_context", return_value="formatted"),
         ):
             composer = ContextComposer()
-            await composer._compose_vault_retrieval(
+            msgs, _, _, _ = await composer._compose_vault_retrieval(
                 ctx,
                 config,
                 "hello",
                 ComposerMode.INTERACTIVE,
             )
+            assert msgs[0]["file_paths"] == ["pages/first.md", "journal/second.md"]
             assert "pages/first.md" in composer.state.injected_paths
             assert "journal/second.md" in composer.state.injected_paths
 
@@ -536,6 +546,7 @@ class TestComposeMemoryContext:
             assert len(msgs) == 1
             assert len(raw) == 2
             assert [r["file_path"] for r in raw] == ["pages/1.md", "pages/2.md"]
+            assert msgs[0]["file_paths"] == ["pages/1.md", "pages/2.md"]
             assert entry.items_included == 2
             assert entry.items_truncated == 2
 
