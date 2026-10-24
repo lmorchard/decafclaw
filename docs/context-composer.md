@@ -210,6 +210,18 @@ Before each interactive turn, the composer automatically surfaces relevant vault
 
 The context is archived for auditability and persists in conversation history.
 
+### Deduplication across turns (#1157)
+
+Automatic proactive retrieval is deduplicated per conversation: a vault page that an earlier turn already surfaced is not surfaced again.
+
+1. After injection, the composer records the injected vault file paths on the `vault_retrieval` message it archives (`file_paths`).
+2. On each later turn, the composer rebuilds the already-injected set from archived history via `get_already_injected_pages` (which also covers `@[[Page]]` `vault_references` messages) and filters retrieval candidates against it.
+3. The live `ComposerState.injected_paths` set is still unioned in for in-flight injections within a turn.
+
+Explicit `vault_search` tool results are not deduplicated — the agent asked for those, so they are delivered in full.
+
+Compaction resets the in-memory injected paths (`ComposerState.reset_for_compaction()`), and a compacted history replaces the archived turns, so pages can surface again after compaction.
+
 ### Configuration
 
 All settings live under the `vault_retrieval` section in `config.json`:

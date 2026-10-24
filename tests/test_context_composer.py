@@ -389,6 +389,54 @@ class TestComposeMemoryContext:
             assert entry2.details.get("injection_skipped") is True
 
     @pytest.mark.asyncio
+    async def test_retrieval_suppressed_across_turns_from_history(self, ctx, config):
+        """#1157: automatic proactive retrieval must not re-inject pages an
+        earlier turn already surfaced. The composer rebuilds the
+        already-injected set from archived ``vault_retrieval`` history instead
+        of relying on per-turn composer state (fresh every turn)."""
+        config.system_prompt = "System."
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 1000000
+        mock_results = [
+            {
+                "entry_text": "memory entry",
+                "source_type": "page",
+                "similarity": 0.8,
+                "file_path": "pages/first.md",
+                "modified_at": "",
+                "importance": 0.5,
+            },
+        ]
+        with (
+            patch(
+                "decafclaw.context_composer.collect_all_tool_defs",
+                return_value=[],
+            ),
+            patch(
+                "decafclaw.context_composer.retrieve_memory_context",
+                new_callable=AsyncMock,
+                return_value=mock_results,
+            ),
+            patch("decafclaw.context_composer.format_memory_context", return_value="formatted memory"),
+        ):
+            composer = ContextComposer()
+            result1 = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+            assert result1.retrieved_context_text == "formatted memory"
+
+            composer2 = ContextComposer()
+            history = [
+                {
+                    "role": "vault_retrieval",
+                    "content": "formatted memory",
+                    "file_paths": ["pages/first.md"],
+                },
+                {"role": "user", "content": "hello again"},
+            ]
+            result2 = await composer2.compose(ctx, "hello again", history, mode=ComposerMode.INTERACTIVE)
+            assert result2.retrieved_context_text == ""
+            assert not any("memory entry" in (m.get("content") or "") for m in result2.messages)
+
+    @pytest.mark.asyncio
     async def test_retrieval_event_published_with_drop_verdicts(self, ctx, config):
         """A ``retrieval_event`` carries the *full* scored candidate list
         (not just what got injected), tagged with include/drop verdicts —

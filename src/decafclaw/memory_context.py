@@ -401,11 +401,25 @@ def read_wiki_page(config, page_name: str) -> str | None:
 
 
 def get_already_injected_pages(history: list) -> set[str]:
-    """Scan history for vault_references messages and return set of page names."""
+    """Scan history for already-injected context messages and return the set
+    of pages that were surfaced to the conversation.
+
+    Covers ``vault_references`` (``@[[Page]]`` mentions / open wiki pages) and
+    ``vault_retrieval`` (automatic proactive memory retrieval) messages. The
+    latter carries the injected vault file paths under ``file_paths`` so a
+    fresh composer state can rebuild what an earlier turn already surfaced
+    (#1157).
+    """
     pages: set[str] = set()
     for msg in history:
-        if msg.get("role") == "vault_references":
+        role = msg.get("role")
+        if role == "vault_references":
             page = msg.get("wiki_page")
             if page:
                 pages.add(page)
+        elif role == "vault_retrieval":
+            file_paths = msg.get("file_paths") or []
+            for path in file_paths:
+                if path:
+                    pages.add(path)
     return pages

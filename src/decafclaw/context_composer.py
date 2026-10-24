@@ -665,6 +665,7 @@ class ContextComposer:
             user_message,
             mode,
             token_budget=memory_budget,
+            history=history,
         )
         for mm in memory_msgs:
             to_archive.append(mm)
@@ -841,12 +842,15 @@ class ContextComposer:
         user_message: str,
         mode: ComposerMode,
         token_budget: int | None = None,
+        history: list | None = None,
     ) -> tuple[list[dict], str, list[dict], SourceEntry | None]:
         """Retrieve and format memory context for injection.
 
         Args:
             token_budget: Dynamic budget from composer. If None, falls back
                 to config.vault_retrieval.max_tokens for backward compatibility.
+            history: Archived conversation history to rebuild the
+                already-injected page set from (``#1157``). None means no history.
 
         Returns (messages_to_inject, formatted_text, raw_results, source_entry).
         Retrieval candidates are scored by composite relevance and selected
@@ -895,10 +899,15 @@ class ContextComposer:
                 return [], "", [], entry
 
             # Filter out candidates already injected in this conversation
-            # (they're already in history — re-injecting wastes tokens)
-            if self.state.injected_paths:
+            # (they're already in history — re-injecting wastes tokens). The
+            # already-injected set is rebuilt from archived history each turn
+            # (#1157) so a fresh composer state still suppresses repeats from
+            # earlier turns; unioned with this turn's in-flight injections.
+            already_injected = get_already_injected_pages(history) if history is not None else set()
+            already_injected |= self.state.injected_paths
+            if already_injected:
                 before = len(results)
-                results = [r for r in results if r.get("file_path", "") not in self.state.injected_paths]
+                results = [r for r in results if r.get("file_path", "") not in already_injected]
                 suppressed = before - len(results)
                 if suppressed:
                     log.debug("Memory context: suppressed %d already-injected candidates", suppressed)
@@ -999,7 +1008,10 @@ class ContextComposer:
                 )
             else:
                 formatted = format_memory_context(results)
-            msg = {"role": "vault_retrieval", "content": formatted}
+            msg: dict = {"role": "vault_retrieval", "content": formatted}
+            # Record which vault pages this injection surfaced so later turns
+            # can rebuild the already-injected set from archived history (#1157).
+            msg["file_paths"] = [r.get("file_path", "") for r in results if r.get("file_path")]
 
             # Track injected paths so they're suppressed in future turns.
             # In headlines mode the model only saw the headline (not the

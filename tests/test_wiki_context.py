@@ -102,6 +102,17 @@ def test_already_injected_finds_vault_references():
     assert get_already_injected_pages(history) == {"Page1", "Page2"}
 
 
+def test_already_injected_finds_vault_retrieval():
+    """Archived ``vault_retrieval`` messages contribute their injected paths."""
+    history = [
+        {"role": "user", "content": "hi"},
+        {"role": "vault_retrieval", "content": "...", "file_paths": ["pages/Page1.md"]},
+        {"role": "assistant", "content": "ok"},
+        {"role": "vault_retrieval", "content": "...", "file_paths": ["journal/Page2.md"]},
+    ]
+    assert get_already_injected_pages(history) == {"pages/Page1.md", "journal/Page2.md"}
+
+
 def test_already_injected_ignores_other_roles():
     history = [
         {"role": "user", "content": "hi"},
