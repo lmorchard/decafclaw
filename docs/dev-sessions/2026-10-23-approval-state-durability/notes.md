@@ -36,4 +36,4 @@
 - Finding 2 (doc only, code change declined): `docs/tools.md` now says rules added during a turn are saved at turn
   end, including cancelled/errored turns (`_save_conversation_state` runs in the turn's `finally` for USER/WAKE
   kinds), so a mid-turn restart loses only that turn's additions.
-- Sidecar location deviation still awaits Les's ruling; unchanged.
+- Sidecar location confirmed by Les: `data/{agent_id}/approval_state/{conv_id}.json` (#1160, comment 6377611573).
