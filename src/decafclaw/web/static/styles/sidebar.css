@@ -435,6 +435,30 @@ conversation-sidebar .logout-btn:hover {
   border: 1px solid var(--pico-muted-border-color);
 }
 
+.theme-palette-icon {
+  width: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  flex: 0 0 auto;
+}
+
+.theme-menu-divider {
+  border-top: 1px solid var(--pico-muted-border-color);
+  margin: 0.25rem 0;
+}
+
+.theme-menu-section-header {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--pico-muted-color);
+  padding: 0.35rem 0.5rem 0.15rem;
+  user-select: none;
+}
+
 /* Config gear button */
 conversation-sidebar .config-btn {
   background: none;

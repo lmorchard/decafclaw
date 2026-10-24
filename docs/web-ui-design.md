@@ -64,9 +64,11 @@ base mode (Dracula → dark, Solarized Light → light) and nonsensical combos a
 unrepresentable. The active name persists under localStorage `decafclaw-theme`
 (backward compatible with the legacy `light`/`dark`/`system` values).
 
-The `theme-toggle` component surfaces this as base light/dark/system buttons plus
-a 🎨 palette popover. It's one logical selection: clicking a base button clears
-any palette; picking a palette supersedes the base.
+The `theme-toggle` component surfaces this as a consolidated theme control: a
+single button showing the active theme's icon (☀️/🌙/💻 for base modes, 🎨 for
+color palettes) that opens an upward disclosure popover menu containing both the
+base modes and all available color palettes. It's one logical selection: clicking
+a base mode clears any custom palette; picking a palette supersedes the base.
 
 ### The primary-family exception
 
