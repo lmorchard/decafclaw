@@ -454,7 +454,10 @@ class TestComposeMemoryContext:
     @pytest.mark.asyncio
     async def test_retrieval_event_observes_already_injected_candidates(self, ctx, config):
         """#1157: retrieval events must observe already-injected candidates so
-        dedupe-based drops are accounted for in telemetry."""
+        dedupe-based drops are accounted for in telemetry. The second call uses
+        a fresh composer plus archived ``vault_retrieval`` history, so the
+        ``already_injected`` drop comes from the cross-turn rebuild rather than
+        the in-memory state."""
         events = []
 
         async def cap(e):
@@ -492,7 +495,18 @@ class TestComposeMemoryContext:
             new_callable=AsyncMock,
             return_value=[injected_candidate, fresh_candidate],
         ):
-            await composer._compose_vault_retrieval(ctx, config, "hello again", ComposerMode.INTERACTIVE)
+            history = [
+                {
+                    "role": "vault_retrieval",
+                    "content": "earlier injection",
+                    "file_paths": ["pages/first.md"],
+                },
+                {"role": "user", "content": "hello again"},
+            ]
+            composer2 = ContextComposer()
+            await composer2._compose_vault_retrieval(
+                ctx, config, "hello again", ComposerMode.INTERACTIVE, history=history
+            )
         assert len(events) == 2
         second = events[1]
         paths = {c["file_path"]: c for c in second["candidates"]}

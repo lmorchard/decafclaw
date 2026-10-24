@@ -215,7 +215,7 @@ The context is archived for auditability and persists in conversation history.
 Automatic proactive retrieval is deduplicated per conversation: a vault page that an earlier turn already surfaced is not surfaced again.
 
 1. After injection, the composer records the injected vault file paths on the `vault_retrieval` message it archives (`file_paths`).
-2. On each later turn, the composer rebuilds the already-injected set from archived history via `get_already_injected_pages` (which also covers `@[[Page]]` `vault_references` messages) and filters retrieval candidates against it.
+2. On each later turn, the composer rebuilds the already-injected set from archived history via `get_already_injected_pages` and filters retrieval candidates (keyed on `file_path`) against it. The same function also collects `@[[Page]]` `vault_references` page names, which serve the mention-based dedupe in `_compose_vault_references`; they are inert against file-path-keyed retrieval candidates (page names and vault-relative paths are distinct namespaces), so a mention-injected page can still be auto-reinjected — a pre-existing gap outside #1157.
 3. The live `ComposerState.injected_paths` set is still unioned in for in-flight injections within a turn.
 
 Explicit `vault_search` tool results are not deduplicated — the agent asked for those, so they are delivered in full.
