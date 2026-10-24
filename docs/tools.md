@@ -190,7 +190,7 @@ Modes can be selected in the Web UI sidebar dropdown above the Model picker, or 
 - **`developer`**: Auto-approves test runners (`pytest`, `npm test`), linters/formatters (`ruff`, `eslint`), typecheckers (`pyright`, `mypy`), environment task runners (`uv run`, `poetry run`, `npm run`, `cargo test/check/build`), non-destructive local git operations (`git status`, `git diff`, `git add`, `git commit`, `git checkout`), non-destructive remote operations (`git fetch`, `git pull`, pushing to `feat/*`, `fix/*`, `test/*`), and safe sequential `&&` chaining. Rejects destructive operations and package installations.
 - **`github`**: Auto-approves GitHub CLI inspection and workflow management (`gh issue list/view/create`, `gh pr list/view/diff/checkout/create/checks`, `gh run list/view/watch`). Rejects destructive operations like repo deletion.
 
-Background process management (`shell_background_start/status/stop/list`) lives in the bundled `background` skill (auto-activates) — see [Skills](skills.md).
+Background process management (`shell_background_start/status/stop/list`) lives in the bundled `background` skill (auto-activates) — see [Skills](skills.md). With `pin_sticky=True` on `shell_background_start`, a job streams live progress into the web UI sticky slot without conversational turns — see [Background Job Agent Wake](background-wake.md#pin_sticky-parameter).
 
 ### Approval sources
 

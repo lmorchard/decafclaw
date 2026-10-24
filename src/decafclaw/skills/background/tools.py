@@ -6,7 +6,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import uuid4
 
 from decafclaw.media import ToolResult
@@ -19,6 +19,9 @@ log = logging.getLogger(__name__)
 _OUTPUT_BUFFER_SIZE = 500
 _DEFAULT_MAX_LIFETIME = 600  # 10 minutes
 _STOP_GRACE_PERIOD = 2  # seconds between SIGTERM and SIGKILL
+_STICKY_THROTTLE_SEC = 0.5  # min interval between sticky-slot progress updates
+_STICKY_EMIT_TIMEOUT_SEC = 2.0  # delivery timeout for background sticky updates
+_STICKY_NOTE_MAX = 200  # max chars of a single output line shown in the sticky slot
 
 
 @dataclass
@@ -41,28 +44,46 @@ class BackgroundJob:
     conv_id: str = ""
     event_bus: Any = None
     completion_tail_lines: int = 50
+    pin_sticky: bool = False  # stream live output to the sticky slot (#1104)
+    last_output_line: str = ""  # latest stdout/stderr line observed (#1104)
     finalized: bool = False
     manager: Any = None
+    sticky_publish_task: asyncio.Task | None = None
 
 
-async def _read_stream(stream: asyncio.StreamReader | None, buffer: deque) -> None:
-    """Read lines from an async stream into a deque until EOF."""
+async def _read_stream(
+    stream: asyncio.StreamReader | None,
+    buffer: deque,
+    on_line: Callable[[str], Awaitable[None]] | None = None,
+) -> None:
+    """Read lines from an async stream into a deque until EOF.
+
+    When ``on_line`` is given it is awaited for each decoded line, after the
+    line is buffered. Fail-open: a hook error is logged and reading continues.
+    """
     if stream is None:
         return
     while True:
         line = await stream.readline()
         if not line:
             break
-        buffer.append(line.decode(errors="replace").rstrip("\n"))
+        text = line.decode(errors="replace").rstrip("\n")
+        buffer.append(text)
+        if on_line is not None:
+            try:
+                await on_line(text)
+            except Exception:
+                log.warning("on_line hook raised while reading stream; continuing", exc_info=True)
 
 
 async def _run_reader(job: BackgroundJob) -> None:
     """Read stdout/stderr until process exits, then capture exit code."""
     cancelled = False
+    hook = _sticky_line_hook(job)
     try:
         await asyncio.gather(
-            _read_stream(job.process.stdout, job.stdout_buffer),
-            _read_stream(job.process.stderr, job.stderr_buffer),
+            _read_stream(job.process.stdout, job.stdout_buffer, on_line=hook),
+            _read_stream(job.process.stderr, job.stderr_buffer, on_line=hook),
         )
         await job.process.wait()
         job.exit_code = job.process.returncode
@@ -161,10 +182,129 @@ async def _enqueue_wake(job: BackgroundJob) -> None:
         log.warning(f"Failed to enqueue wake turn for {job.job_id}: {e}")
 
 
+def _cmd_preview(command: str) -> str:
+    """Short command preview for sticky-slot labels."""
+    return command[:80] + ("..." if len(command) > 80 else "")
+
+
+def _last_output_line(job: BackgroundJob) -> str:
+    """Most recent output line observed across stdout/stderr; '' when both empty."""
+    return job.last_output_line
+
+
+def _running_sticky_data(job: BackgroundJob) -> dict:
+    """progress_tracker payload for a running job."""
+    last_line = _last_output_line(job)[:_STICKY_NOTE_MAX]
+    step = {"label": _cmd_preview(job.command), "status": "in_progress"}
+    if last_line:
+        step["note"] = last_line
+    return {
+        "title": "Background job",
+        "summary": last_line or f"Running: {_cmd_preview(job.command)}",
+        "steps": [step],
+    }
+
+
+def _final_sticky_data(job: BackgroundJob) -> dict:
+    """progress_tracker payload for a completed or failed job."""
+    last_line = _last_output_line(job)
+    if job.status == "completed":
+        step_status = "done"
+        summary = f"Completed: {_cmd_preview(job.command)} (exit {job.exit_code})"
+        note = f"exit {job.exit_code}"
+    else:
+        step_status = "failed"
+        summary = f"Failed: {_cmd_preview(job.command)} (exit {job.exit_code})"
+        note = f"exit {job.exit_code}" + (f" — {last_line[:120]}" if last_line else "")
+    return {
+        "title": "Background job",
+        "summary": summary,
+        "steps": [{"label": _cmd_preview(job.command), "status": step_status, "note": note}],
+    }
+
+
+async def _publish_job_sticky(job: BackgroundJob) -> None:
+    """Pin the job's running status into the sticky slot. Fail-open: a
+    sticky failure must never break job monitoring."""
+    if not job.pin_sticky or job.config is None or not job.conv_id:
+        return
+    try:
+        from decafclaw import sticky as sticky_mod
+
+        emit = job.manager.emit if job.manager is not None else None
+        await asyncio.wait_for(
+            sticky_mod.set_sticky(job.config, job.conv_id, "progress_tracker", _running_sticky_data(job), emit=emit),
+            timeout=_STICKY_EMIT_TIMEOUT_SEC,
+        )
+    except Exception:
+        log.warning("Failed to publish sticky update for background job %s", job.job_id, exc_info=True)
+
+
+async def _sticky_publish_when_due(job: BackgroundJob, due_at: float) -> None:
+    """Publish the latest sticky snapshot once the throttle interval has elapsed."""
+    delay = due_at - time.monotonic()
+    if delay > 0:
+        await asyncio.sleep(delay)
+    if job.finalized:
+        return
+    await _publish_job_sticky(job)
+
+
+async def _cancel_sticky_publish(job: BackgroundJob) -> None:
+    """Cancel a pending throttled sticky publish before finalization."""
+    task = job.sticky_publish_task
+    job.sticky_publish_task = None
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+async def _finish_job_sticky(job: BackgroundJob) -> None:
+    """Transition the sticky slot to the job's final state: done/failed for
+    a completed/error exit, cleared for stopped/expired. Fail-open."""
+    if not job.pin_sticky or job.config is None or not job.conv_id:
+        return
+    await _cancel_sticky_publish(job)
+    try:
+        from decafclaw import sticky as sticky_mod
+
+        emit = job.manager.emit if job.manager is not None else None
+        if job.status in ("completed", "error"):
+            await sticky_mod.set_sticky(job.config, job.conv_id, "progress_tracker", _final_sticky_data(job), emit=emit)
+        else:
+            await sticky_mod.clear_sticky(job.config, job.conv_id, emit=emit)
+    except Exception:
+        log.warning("Failed to finalize sticky slot for background job %s", job.job_id, exc_info=True)
+
+
+def _sticky_line_hook(job: BackgroundJob) -> Callable[[str], Awaitable[None]] | None:
+    """Build a throttled sticky output callback that schedules publishes off the reader."""
+    if not job.pin_sticky:
+        return None
+    last = {"t": 0.0}
+
+    async def on_line(line: str) -> None:
+        job.last_output_line = line
+        now = time.monotonic()
+        if now - last["t"] < _STICKY_THROTTLE_SEC:
+            return
+        last["t"] = now
+        task = job.sticky_publish_task
+        if task is not None and not task.done():
+            return
+        job.sticky_publish_task = asyncio.create_task(_sticky_publish_when_due(job, now))
+
+    return on_line
+
+
 async def _finalize_job(job: BackgroundJob) -> None:
-    """Run the post-exit sequence: append archive record, emit inbox
-    notification, enqueue a wake turn. Called EXACTLY ONCE per job at the
-    moment status transitions out of 'running'.
+    """Run the post-exit sequence: append archive record, finalize the sticky
+    slot, emit inbox notification, enqueue a wake turn. Called EXACTLY ONCE
+    per job at the moment status transitions out of 'running'.
     """
     if job.finalized:
         return
@@ -219,10 +359,14 @@ async def _finalize_job(job: BackgroundJob) -> None:
     except Exception as e:
         log.warning(f"Failed to append background_event for {job.job_id}: {e}")
 
-    # 2. User-facing inbox notification.
+    # 2. Finalize the sticky slot if this job was streaming progress there
+    #    (#1104): done/failed on a normal exit, cleared when stopped/expired.
+    await _finish_job_sticky(job)
+
+    # 3. User-facing inbox notification.
     await _notify_job_exit(job)
 
-    # 3. Enqueue wake turn.
+    # 4. Enqueue wake turn.
     await _enqueue_wake(job)
 
 
@@ -341,12 +485,14 @@ class BackgroundJobManager:
         event_bus: Any = None,
         completion_tail_lines: int = 50,
         manager: Any = None,
+        pin_sticky: bool = False,
     ) -> BackgroundJob:
         """Start a background process. Returns immediately.
 
-        ``config``, ``conv_id``, ``event_bus``, and ``manager`` are carried
-        into the job so the reader task can emit an inbox notification (and fan
-        out to channel adapters) and enqueue a WAKE turn when the process exits.
+        ``config``, ``conv_id``, ``event_bus``, ``manager``, and ``pin_sticky``
+        are carried into the job so the reader task can emit an inbox
+        notification (and fan out to channel adapters), stream progress to the
+        sticky slot, and enqueue a WAKE turn when the process exits.
         """
         process = await asyncio.create_subprocess_shell(
             command,
@@ -368,10 +514,15 @@ class BackgroundJobManager:
             event_bus=event_bus,
             completion_tail_lines=completion_tail_lines,
             manager=manager,
+            pin_sticky=pin_sticky,
         )
         job.reader_task = asyncio.create_task(_run_reader(job))
         self.jobs[job.job_id] = job
         log.info(f"Started background job {job.job_id}: pid={job.pid}, command={command[:80]}")
+        if job.pin_sticky:
+            # Initial "Running" pin so the slot appears before the first
+            # output line arrives.
+            await _publish_job_sticky(job)
         return job
 
     def get(self, job_id: str) -> BackgroundJob | None:
@@ -474,7 +625,7 @@ def _get_job_manager(ctx: "Context") -> BackgroundJobManager:
 
 
 async def tool_shell_background_start(
-    ctx: "Context", command: str, completion_tail_lines: int | None = None
+    ctx: "Context", command: str, completion_tail_lines: int | None = None, pin_sticky: bool = False
 ) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
@@ -512,6 +663,7 @@ async def tool_shell_background_start(
             event_bus=ctx.event_bus,
             completion_tail_lines=clamped_tail_lines,
             manager=conv_manager,
+            pin_sticky=pin_sticky,
         )
     except Exception as e:
         return ToolResult(
@@ -693,6 +845,17 @@ TOOL_DEFINITIONS = [
                             "in the archive record when the job exits. "
                             "Optional; default from config.background."
                             "default_completion_tail_lines; clamped to [0, 500]."
+                        ),
+                    },
+                    "pin_sticky": {
+                        "type": "boolean",
+                        "description": (
+                            "Stream the job's live output to the sticky slot "
+                            "above the chat input (progress_tracker widget: "
+                            "throttled updates while running, final "
+                            "completed/failed state on exit). Use for long "
+                            "jobs the user should watch instead of polling. "
+                            "Optional; default false."
                         ),
                     },
                 },
