@@ -213,7 +213,14 @@ class ConversationIndex:
                 return ConversationMeta(**d)
         return None
 
-    def rename(self, conv_id: str, title: str, *, manual: bool = False) -> ConversationMeta | None:
+    def rename(
+        self,
+        conv_id: str,
+        title: str,
+        *,
+        manual: bool = False,
+        clear_custom: bool = False,
+    ) -> ConversationMeta | None:
         """Rename a conversation. Returns updated metadata or None.
 
         ``manual=True`` (user rename via REST or websocket command) marks the
@@ -221,16 +228,22 @@ class ConversationIndex:
         unconditionally. ``manual=False`` (automated periodic retitle, #1072)
         is refused for conversations the user already renamed — the index
         keeps the user's title and returns None.
+
+        ``clear_custom=True`` (#1156) overrides an existing custom title and
+        clears the ``custom_title`` flag so automated periodic retitling can
+        continue refining it.
         """
         data = self._load()
         for d in data:
             if d.get("conv_id") == conv_id:
-                if not manual and d.get("custom_title"):
+                if not manual and not clear_custom and d.get("custom_title"):
                     return None
                 d["title"] = title
                 d["updated_at"] = datetime.now(timezone.utc).isoformat()
                 if manual:
                     d["custom_title"] = True
+                elif clear_custom:
+                    d.pop("custom_title", None)
                 self._save(data)
                 return ConversationMeta(**d)
         return None

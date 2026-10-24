@@ -531,6 +531,29 @@ describe('conversation activity status tracking', () => {
     store.sendMessage('hello');
     expect(store.getConversationStatus('c1')).toBe('busy');
   });
+
+  it('sends /retitle without engaging busy state or adding user message', () => {
+    store.selectConversation('c1');
+    expect(store.getConversationStatus('c1')).toBe('idle');
+
+    store.sendMessage('/retitle');
+    expect(store.getConversationStatus('c1')).toBe('idle');
+    expect(store.currentMessages).toHaveLength(0);
+    expect(ws.sent).toContainEqual({
+      type: MESSAGE_TYPES.SEND,
+      conv_id: 'c1',
+      text: '/retitle',
+    });
+  });
+
+  it('retitleConversation sends /retitle for specified conversation', () => {
+    store.retitleConversation('c2');
+    expect(ws.sent).toContainEqual({
+      type: MESSAGE_TYPES.SEND,
+      conv_id: 'c2',
+      text: '/retitle',
+    });
+  });
   it('does not overwrite newer websocket transition with delayed REST response', async () => {
     let resolveRest;
     const restPromise = new Promise(resolve => { resolveRest = resolve; });
