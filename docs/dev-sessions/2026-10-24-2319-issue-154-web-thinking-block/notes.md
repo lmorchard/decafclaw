@@ -33,3 +33,20 @@
   - `src/decafclaw/web/static/components/messages/assistant-message.test.js`: verifies `.thought-block` rendering when thinking has text, omission when empty, collapsed by default when complete, markdown formatting inside `.thought-body`, and active spinner during streaming.
   - `src/decafclaw/web/static/components/chat-view.test.js`: verifies streaming thinking block display with active spinner.
   - `src/decafclaw/web/static/lib/message-store.test.js`: verifies `chunk` and `message_complete` with thinking.
+
+## Review Follow-up (PR 1166 Review Comments)
+
+- **Tool-call thinking support**:
+  - `src/decafclaw/web/static/components/messages/tool-call-message.js`: Added `thinking` property and rendered `<details class="thought-block">` inside `<div class="message assistant">` alongside the tool-result header.
+  - `src/decafclaw/web/static/components/chat-message.js`: Forwarded `.thinking` to `<tool-call-message>`.
+  - Added tests in `src/decafclaw/web/static/components/messages/tool-call-message.test.js` and `chat-message.test.js`.
+- **Backend reasoning propagation**:
+  - `src/decafclaw/llm/providers/openai_compat.py`: Captured `reasoning_content` in streaming deltas and non-streaming choices, emitted `thinking` chunks, and stripped `thinking` from API request messages.
+  - `src/decafclaw/llm/providers/vertex.py`: Captured `thought: true` parts in Gemini streaming and non-streaming responses, and emitted `thinking` chunks.
+  - `src/decafclaw/llm/providers/openai_responses.py`: Captured reasoning items and deltas, emitted `thinking` chunks, and extracted reasoning text into `thinking`.
+  - `src/decafclaw/llm/history.py`: Preserved `thinking` in `assistant_message` for history and archives.
+  - `src/decafclaw/media.py`: Added `thinking: str | None = None` to `ToolResult`.
+  - `src/decafclaw/agent.py`: Passed `thinking` to `ToolResult` on completion, and included `thinking` on `text_before_tools` for intermediate tool calls.
+  - `src/decafclaw/conversation_manager.py`: Emitted `{"type": "chunk", "thinking": data}` on stream chunks and included `thinking` in `message_complete`.
+  - `src/decafclaw/web/websocket.py`: Tracked `thinking` in `streaming_buffer` and forwarded in `WSMessageType.CHUNK` and `WSMessageType.MESSAGE_COMPLETE`.
+  - Added comprehensive server-to-client regression suite in `tests/test_websocket_thinking.py`.

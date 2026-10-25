@@ -12,6 +12,8 @@ def assistant_message(response: dict[str, Any], content: str | None = None) -> d
     """
     original = response.get("content")
     message = {"role": "assistant", "content": original if content is None else content}
+    if response.get("thinking"):
+        message["thinking"] = response["thinking"]
     if response.get("tool_calls"):
         message["tool_calls"] = deepcopy(response["tool_calls"])
     if response.get("provider_data") and (message["content"] or "") == (original or ""):

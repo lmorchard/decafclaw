@@ -189,6 +189,7 @@ export class ChatMessage extends LitElement {
       return html`<tool-call-message
         variant="tool_calls_history"
         .content=${this.content || ''}
+        .thinking=${this.thinking || ''}
         .toolCalls=${this.toolCalls}
       ></tool-call-message>`;
     }

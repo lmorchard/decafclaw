@@ -135,4 +135,20 @@ describe('chat-message role rendering', () => {
     expect(card?.textContent).toContain('-60% tokens');
     el.remove();
   });
+
+  it('forwards thinking to tool-call-message when assistant message has tool_calls', async () => {
+    const el = document.createElement('chat-message');
+    el.role = 'assistant';
+    el.content = 'Calling tool...';
+    el.thinking = 'Reasoning before tool';
+    el.toolCalls = [{ function: { name: 'shell' } }];
+    document.body.append(el);
+    await el.updateComplete;
+
+    const toolCallMsg = el.querySelector('tool-call-message');
+    expect(toolCallMsg).not.toBeNull();
+    expect(toolCallMsg.thinking).toBe('Reasoning before tool');
+    expect(toolCallMsg.content).toBe('Calling tool...');
+    el.remove();
+  });
 });
