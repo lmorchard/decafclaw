@@ -674,6 +674,10 @@ same `set_sticky` / `clear_sticky` validation.
 - postMessage→widget-response from inside iframe_sandbox — future.
 - Hot-reload of widget catalog without server restart — future.
 
+## Tool widget opportunities
+
+For a comprehensive audit of existing built-in and capability tools that can leverage bundled widgets or benefit from proposed new widgets, see [Tool Widget Opportunities](tool-widget-opportunities.md).
+
 ## Related files
 
 - `src/decafclaw/widgets.py` — registry scan + validation
