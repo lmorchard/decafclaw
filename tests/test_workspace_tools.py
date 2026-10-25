@@ -1006,6 +1006,73 @@ def test_write_does_not_note_a_nested_workspace_dir(ctx):
     assert "did you mean" not in text.lower()
 
 
+def test_workspace_edit_attaches_diff_view_widget(ctx):
+    tool_workspace_write(ctx, "hello.py", "def greet():\n    print('hello')\n")
+    result = tool_workspace_edit(ctx, "hello.py", "hello", "world")
+    assert isinstance(result, ToolResult)
+    assert "Edited hello.py: replaced 1 occurrence(s)" in result.text
+    assert isinstance(result.widget, WidgetRequest)
+    assert result.widget.widget_type == "diff_view"
+    assert result.widget.target == "inline"
+    assert result.widget.data["filename"] == "hello.py"
+    assert result.widget.data["before"] == "def greet():\n    print('hello')\n"
+    assert result.widget.data["after"] == "def greet():\n    print('world')\n"
+    assert result.widget.data["view"] == "unified"
+
+
+def test_workspace_diff_attaches_diff_view_widget(ctx):
+    tool_workspace_write(ctx, "a.py", "x = 1\n")
+    tool_workspace_write(ctx, "b.py", "x = 2\n")
+    result = tool_workspace_diff(ctx, "a.py", "b.py")
+    assert isinstance(result, ToolResult)
+    assert "-x = 1" in result.text
+    assert "+x = 2" in result.text
+    assert isinstance(result.widget, WidgetRequest)
+    assert result.widget.widget_type == "diff_view"
+    assert result.widget.target == "inline"
+    assert result.widget.data["filename"] == "a.py ↔ b.py"
+    assert result.widget.data["before"] == "x = 1\n"
+    assert result.widget.data["after"] == "x = 2\n"
+    assert result.widget.data["view"] == "unified"
+
+
+def test_workspace_diff_identical_files_has_no_widget(ctx):
+    tool_workspace_write(ctx, "same1.py", "x = 1\n")
+    tool_workspace_write(ctx, "same2.py", "x = 1\n")
+    result = tool_workspace_diff(ctx, "same1.py", "same2.py")
+    assert "identical" in _text(result).lower()
+    if isinstance(result, ToolResult):
+        assert result.widget is None
+
+
+def test_workspace_list_attaches_data_table_widget(ctx):
+    tool_workspace_write(ctx, "dir1/file1.txt", "content")
+    result = tool_workspace_list(ctx, "dir1")
+    assert isinstance(result, ToolResult)
+    assert "file1.txt" in result.text
+    assert isinstance(result.widget, WidgetRequest)
+    assert result.widget.widget_type == "data_table"
+    assert result.widget.target == "inline"
+    assert "dir1" in result.widget.data["caption"]
+    assert result.widget.data["columns"] == [
+        {"key": "name", "label": "Name"},
+        {"key": "type", "label": "Type"},
+        {"key": "size", "label": "Size"},
+    ]
+    assert len(result.widget.data["rows"]) == 1
+    assert result.widget.data["rows"][0]["name"] == "file1.txt"
+    assert result.widget.data["rows"][0]["type"] == "file"
+
+
+def test_workspace_list_empty_directory_has_no_widget(ctx):
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    (ctx.config.workspace_path / "emptydir").mkdir()
+    result = tool_workspace_list(ctx, "emptydir")
+    assert isinstance(result, ToolResult)
+    assert result.text == "(empty directory)"
+    assert result.widget is None
+
+
 class TestWorkspaceToolPromptGuidelines:
     def test_workspace_tools_define_prompt_guidelines(self):
         from decafclaw.tools.workspace_tools import WORKSPACE_TOOL_DEFINITIONS

@@ -319,9 +319,35 @@ def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
                 }
             )
         text = "\n".join(lines) if lines else "(empty directory)"
+        widget = None
+        if data_entries:
+            count_str = f"{len(data_entries)} item" if len(data_entries) == 1 else f"{len(data_entries)} items"
+            caption = f"workspace_list: {path} ({count_str})"
+            table_rows = [
+                {
+                    "name": f"{e['name']}/" if e["is_dir"] else e["name"],
+                    "type": "directory" if e["is_dir"] else "file",
+                    "size": f"{e['size']} B" if e["size"] is not None else "—",
+                }
+                for e in data_entries
+            ]
+            widget = WidgetRequest(
+                widget_type="data_table",
+                data={
+                    "caption": caption,
+                    "columns": [
+                        {"key": "name", "label": "Name"},
+                        {"key": "type", "label": "Type"},
+                        {"key": "size", "label": "Size"},
+                    ],
+                    "rows": table_rows,
+                },
+                target="inline",
+            )
         return ToolResult(
             text=text,
             data={"path": path, "entries": data_entries},
+            widget=widget,
         )
     except PermissionError as e:
         return _file_error(e, path)
@@ -543,9 +569,25 @@ def tool_workspace_edit(
         resolved.write_text(new_content, newline="")
         summary = f"Edited {path}: replaced {count} occurrence(s)"
         diff = _mini_diff(normalized, new_normalized, path)
-        if diff:
-            return f"{summary}\n\n{diff}"
-        return summary
+        text = f"{summary}\n\n{diff}" if diff else summary
+        widget = (
+            WidgetRequest(
+                widget_type="diff_view",
+                data={
+                    "before": normalized,
+                    "after": new_normalized,
+                    "filename": path,
+                    "view": "unified",
+                },
+                target="inline",
+            )
+            if diff
+            else None
+        )
+        return ToolResult(
+            text=text,
+            widget=widget,
+        )
 
 
 def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: str) -> str | ToolResult:
@@ -675,7 +717,19 @@ def tool_workspace_diff(ctx: "Context", path1: str, path2: str, context_lines: i
     )
     if not diff:
         return f"Files are identical: {path1} and {path2}"
-    return "".join(diff)
+    return ToolResult(
+        text="".join(diff),
+        widget=WidgetRequest(
+            widget_type="diff_view",
+            data={
+                "before": "".join(lines1),
+                "after": "".join(lines2),
+                "filename": f"{path1} ↔ {path2}",
+                "view": "unified",
+            },
+            target="inline",
+        ),
+    )
 
 
 def tool_workspace_search(
