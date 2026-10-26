@@ -6,7 +6,8 @@
 - Worktree: /home/lmorchard/devel/decafclaw/.claude/worktrees/feat-1135-workspace-outlines
 - Branch: feat-1135-workspace-outlines
 - Base: origin/main at 875f2b7ab70a001000b0f8d67814d57ed8a91dd2
-- Status: In progress
+- Status: Complete, draft PR published
+- PR: https://github.com/lmorchard/decafclaw/pull/1176
 
 ## Baseline
 
@@ -20,6 +21,16 @@
 - Enhance `tool_workspace_read` to support `section=None` for targeted section retrieval.
 - Invalidate outline cache on content version hash changes and explicit invalidation on workspace write/edit/delete/move/copy tools.
 - Explicit fallbacks with line-numbered file content for malformed (SyntaxError) and unsupported file formats.
-- Bound outline and section outputs to MAX_OUTLINE_ITEMS and MAX_READ_LINES.
+- Bound outline and section outputs to MAX_OUTLINE_ITEMS (200) and MAX_READ_LINES (200).
+- Tool choice eval cases in `evals/tool_choice/core_overlaps.yaml` for outline vs full/targeted reads.
+
+## Changes
+
+- `src/decafclaw/tools/workspace_outlines.py`: Outline parser (Python AST & Markdown headings), caching with content-hash invalidation, section resolver, formatter.
+- `src/decafclaw/tools/workspace_tools.py`: Added `tool_workspace_outline`, added `section` support to `tool_workspace_read`, cache invalidation in mutating tools, registered in `WORKSPACE_TOOLS` and `WORKSPACE_TOOL_DEFINITIONS`.
+- `src/decafclaw/eval/diagnostics.py`: Registered `workspace_outline` in `READ_TOOL_ARGS`.
+- `evals/tool_choice/core_overlaps.yaml`: Added outline vs read disambiguation test cases.
+- `docs/tools.md` & `docs/tool-priority.md`: Documented `workspace_outline` and updated `workspace_read`.
+- `tests/test_workspace_tools.py`: Added 20 test cases covering classes/functions, signatures, nesting, markdown headings/fences, Unicode, targeted section retrieval, candidate hints, ambiguity, malformed code, unsupported types, empty files, path boundaries, bounded output, cache invalidation, and `workspace_read` section integration.
 
 ## Log

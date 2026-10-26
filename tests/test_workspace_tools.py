@@ -20,6 +20,7 @@ from decafclaw.tools.workspace_tools import (
     tool_workspace_list,
     tool_workspace_mkdir,
     tool_workspace_move,
+    tool_workspace_outline,
     tool_workspace_preview_markdown,
     tool_workspace_read,
     tool_workspace_replace_lines,
@@ -1142,3 +1143,276 @@ class TestWorkspaceToolPromptGuidelines:
         assert "workspace_replace_lines / workspace_insert" not in agent_md
         assert "workspace_search / workspace_glob" not in agent_md
         assert "Prefer surgical edits to full rewrites." in agent_md
+
+
+class TestWorkspaceOutline:
+    def test_python_classes_functions_and_signatures(self, ctx):
+        code = (
+            "class Greeter:\n"
+            "    '''Docstring.'''\n"
+            "    def __init__(self, greeting: str = 'hello'):\n"
+            "        self.greeting = greeting\n"
+            "\n"
+            "    @property\n"
+            "    def ready(self) -> bool:\n"
+            "        return True\n"
+            "\n"
+            "    async def greet(self, name: str) -> str:\n"
+            "        return f'{self.greeting}, {name}'\n"
+            "\n"
+            "def standalone_func(x: int, y: int = 0) -> int:\n"
+            "    return x + y\n"
+        )
+        tool_workspace_write(ctx, "greeter.py", code)
+        res = tool_workspace_outline(ctx, "greeter.py")
+        assert isinstance(res, ToolResult)
+        assert res.data["outline"] is True
+        assert res.data["symbols"] == 5
+        assert "1-11: class Greeter: ..." in res.text
+        assert "3-4: def __init__(self, greeting: str='hello'): ..." in res.text
+        assert "6-8: @property def ready(self) -> bool: ..." in res.text
+        assert "10-11: async def greet(self, name: str) -> str: ..." in res.text
+        assert "13-14: def standalone_func(x: int, y: int=0) -> int: ..." in res.text
+
+    def test_python_nested_definitions(self, ctx):
+        code = (
+            "class Outer:\n"
+            "    class InnerClass:\n"
+            "        def inner_method(self):\n"
+            "            pass\n"
+            "\n"
+            "    def outer_method(self):\n"
+            "        def helper():\n"
+            "            return 1\n"
+            "        return helper()\n"
+        )
+        tool_workspace_write(ctx, "nested.py", code)
+        res = tool_workspace_outline(ctx, "nested.py")
+        assert isinstance(res, ToolResult)
+        assert "1-9: class Outer:" in res.text
+        assert "  2-4: class InnerClass:" in res.text
+        assert "    3-4: def inner_method(self): ..." in res.text
+        assert "  6-9: def outer_method(self): ..." in res.text
+        assert "    7-8: def helper(): ..." in res.text
+
+    def test_markdown_headings_and_fences(self, ctx):
+        doc = (
+            "# Main Document\n"
+            "Intro text.\n"
+            "\n"
+            "```python\n"
+            "# This is a python comment, not a heading\n"
+            "def foo():\n"
+            "    pass\n"
+            "```\n"
+            "\n"
+            "## First Section\n"
+            "Section body.\n"
+            "\n"
+            "### Subsection 1.1\n"
+            "Subsection body.\n"
+            "\n"
+            "## Second Section\n"
+            "Final section.\n"
+        )
+        tool_workspace_write(ctx, "doc.md", doc)
+        res = tool_workspace_outline(ctx, "doc.md")
+        assert isinstance(res, ToolResult)
+        assert "not a heading" not in res.text
+        assert "1-17: # Main Document ..." in res.text
+        assert "  10-15: ## First Section ..." in res.text
+        assert "    13-15: ### Subsection 1.1 ..." in res.text
+        assert "  16-17: ## Second Section ..." in res.text
+
+    def test_unicode_support(self, ctx):
+        code = (
+            "# Unicode in code and markdown\n"
+            "class Données:\n"
+            "    def résumé(self, texte: str) -> str:\n"
+            "        return texte[:10]\n"
+            "\n"
+            "def 计算(x: int) -> int:\n"
+            "    return x * 2\n"
+        )
+        tool_workspace_write(ctx, "unicode_test.py", code)
+        res = tool_workspace_outline(ctx, "unicode_test.py")
+        assert "2-4: class Données:" in res.text
+        assert "3-4: def résumé(self, texte: str) -> str: ..." in res.text
+        assert "6-7: def 计算(x: int) -> int: ..." in res.text
+
+        md = "# 🚀 Features Overview\nDescription.\n## 概要\nDetails.\n"
+        tool_workspace_write(ctx, "unicode_doc.md", md)
+        res_md = tool_workspace_outline(ctx, "unicode_doc.md")
+        assert "# 🚀 Features Overview" in res_md.text
+        assert "## 概要" in res_md.text
+
+    def test_targeted_section_retrieval_python(self, ctx):
+        code = (
+            "class Service:\n"
+            "    def start(self):\n"
+            "        self.running = True\n"
+            "\n"
+            "    def stop(self):\n"
+            "        self.running = False\n"
+        )
+        tool_workspace_write(ctx, "service.py", code)
+        # By full method path
+        res_full = tool_workspace_outline(ctx, "service.py", section="Service.stop")
+        assert isinstance(res_full, ToolResult)
+        assert "Lines 5-6 of 6 (section 'stop'):" in res_full.text
+        assert "5|     def stop(self):" in res_full.text
+        assert "6|         self.running = False" in res_full.text
+
+        # By suffix
+        res_suffix = tool_workspace_outline(ctx, "service.py", section="start")
+        assert "Lines 2-3 of 6 (section 'start'):" in res_suffix.text
+        assert "2|     def start(self):" in res_suffix.text
+
+        # By class
+        res_class = tool_workspace_outline(ctx, "service.py", section="Service")
+        assert "Lines 1-6 of 6 (section 'Service'):" in res_class.text
+        assert "1| class Service:" in res_class.text
+
+    def test_targeted_section_retrieval_markdown(self, ctx):
+        doc = "# Project\nOverview\n## Setup\nRun pip install.\n## Usage\nRun python main.py.\n"
+        tool_workspace_write(ctx, "readme.md", doc)
+        res = tool_workspace_outline(ctx, "readme.md", section="Setup")
+        assert "Lines 3-4 of 6 (section 'Setup'):" in res.text
+        assert "3| ## Setup" in res.text
+        assert "4| Run pip install." in res.text
+
+    def test_targeted_section_not_found_lists_candidates(self, ctx):
+        code = "class Worker:\n    def do_work(self):\n        pass\n"
+        tool_workspace_write(ctx, "worker.py", code)
+        res = tool_workspace_outline(ctx, "worker.py", section="nonexistent")
+        assert "[error: section 'nonexistent' not found in 'worker.py'. Known sections:" in res.text
+        assert "Worker" in res.text
+        assert "Worker.do_work" in res.text
+
+    def test_targeted_section_ambiguous(self, ctx):
+        code = "class WorkerA:\n    def run(self):\n        pass\n\nclass WorkerB:\n    def run(self):\n        pass\n"
+        tool_workspace_write(ctx, "ambiguous.py", code)
+        res = tool_workspace_outline(ctx, "ambiguous.py", section="run")
+        assert "[error: section 'run' is ambiguous in 'ambiguous.py'. Matching candidates:" in res.text
+        assert "WorkerA.run" in res.text
+        assert "WorkerB.run" in res.text
+
+    def test_malformed_python_syntax_error_fallback(self, ctx):
+        bad_code = "def broken(\n    print('missing close paren')\n"
+        tool_workspace_write(ctx, "bad.py", bad_code)
+        res = tool_workspace_outline(ctx, "bad.py")
+        assert isinstance(res, ToolResult)
+        assert res.data["outline"] is False
+        assert res.data["fallback"] == "syntax_error"
+        assert "[Note: File contains syntax errors and cannot be parsed into an outline" in res.text
+        assert "1| def broken(" in res.text
+        assert "2|     print('missing close paren')" in res.text
+
+        # Trying to retrieve section from malformed file gives explicit error
+        sec_res = tool_workspace_outline(ctx, "bad.py", section="broken")
+        assert "[error: cannot retrieve section 'broken': file contains syntax error" in sec_res.text
+
+    def test_unsupported_file_fallback(self, ctx):
+        json_content = '{\n  "name": "decafclaw",\n  "version": "1.0.0"\n}\n'
+        tool_workspace_write(ctx, "package.json", json_content)
+        res = tool_workspace_outline(ctx, "package.json")
+        assert isinstance(res, ToolResult)
+        assert res.data["outline"] is False
+        assert res.data["fallback"] == "unsupported_type"
+        assert "[Note: No structural outline available for '.json' files. Showing file contents:]" in res.text
+        assert "1| {" in res.text
+        assert '2|   "name": "decafclaw",' in res.text
+
+        # Trying to retrieve section from unsupported file gives explicit error
+        sec_res = tool_workspace_outline(ctx, "package.json", section="version")
+        assert (
+            "[error: cannot retrieve section 'version': file does not have a structural outline (unsupported type '.json')]"
+            in sec_res.text
+        )
+
+    def test_empty_file(self, ctx):
+        tool_workspace_write(ctx, "empty.py", "")
+        res = tool_workspace_outline(ctx, "empty.py")
+        assert res.text == "(empty file)"
+
+    def test_no_symbols_fallback(self, ctx):
+        code = "a = 1\nb = 2\nc = a + b\n"
+        tool_workspace_write(ctx, "vars.py", code)
+        res = tool_workspace_outline(ctx, "vars.py")
+        assert "[Note: No classes, functions, or headings found in 'vars.py'. Showing file contents:]" in res.text
+        assert "1| a = 1" in res.text
+
+    def test_path_boundary_enforcement(self, ctx):
+        res = tool_workspace_outline(ctx, "../secret.txt")
+        assert "[error: path '../secret.txt' is outside the workspace]" in res.text
+
+    def test_directory_error(self, ctx):
+        tool_workspace_mkdir(ctx, "mydir")
+        res = tool_workspace_outline(ctx, "mydir")
+        assert "[error: 'mydir' is a directory, not a file]" in res.text
+
+    def test_bounded_output(self, ctx):
+        # Generate file with 250 functions
+        lines = [f"def func_{i}():\n    pass\n" for i in range(250)]
+        tool_workspace_write(ctx, "large_funcs.py", "".join(lines))
+        res = tool_workspace_outline(ctx, "large_funcs.py")
+        assert res.data["truncated"] is True
+        assert "[Outline truncated: showing first 200 of 250 items." in res.text
+
+    def test_cache_invalidation_on_content_change(self, ctx):
+        tool_workspace_write(ctx, "evolving.py", "def first():\n    pass\n")
+        res1 = tool_workspace_outline(ctx, "evolving.py")
+        assert "def first()" in res1.text
+        assert "def second()" not in res1.text
+
+        # External edit (directly via file on disk, bypassing tool)
+        file_path = ctx.config.workspace_path / "evolving.py"
+        file_path.write_text("def second():\n    pass\n")
+        res2 = tool_workspace_outline(ctx, "evolving.py")
+        assert "def second()" in res2.text
+        assert "def first()" not in res2.text
+
+    def test_cache_invalidation_on_workspace_mutations(self, ctx):
+        tool_workspace_write(ctx, "mutating.py", "def initial():\n    pass\n")
+        res1 = tool_workspace_outline(ctx, "mutating.py")
+        assert "def initial()" in res1.text
+
+        # tool_workspace_edit
+        tool_workspace_edit(ctx, "mutating.py", "def initial():", "def updated():")
+        res2 = tool_workspace_outline(ctx, "mutating.py")
+        assert "def updated()" in res2.text
+        assert "def initial()" not in res2.text
+
+        # tool_workspace_append
+        tool_workspace_append(ctx, "mutating.py", "\ndef appended():\n    pass\n")
+        res3 = tool_workspace_outline(ctx, "mutating.py")
+        assert "def appended()" in res3.text
+
+    def test_workspace_read_with_section(self, ctx):
+        code = (
+            "class Greeter:\n"
+            "    def hello(self):\n"
+            "        return 'hello'\n"
+            "\n"
+            "    def goodbye(self):\n"
+            "        return 'goodbye'\n"
+        )
+        tool_workspace_write(ctx, "greeter.py", code)
+        res = tool_workspace_read(ctx, "greeter.py", section="Greeter.hello")
+        assert isinstance(res, ToolResult)
+        assert "Lines 2-3 of 6 (section 'hello'):" in res.text
+        assert "2|     def hello(self):" in res.text
+        assert "3|         return 'hello'" in res.text
+
+    def test_workspace_read_section_mutually_exclusive_with_line_numbers(self, ctx):
+        tool_workspace_write(ctx, "foo.py", "def foo():\n    pass\n")
+        res = tool_workspace_read(ctx, "foo.py", start_line=1, section="foo")
+        assert "[error: cannot specify both 'section' and 'start_line'/'end_line']" in res.text
+
+    def test_workspace_read_section_large_bounded(self, ctx):
+        body = "\n".join(f"        x = {i}" for i in range(250))
+        code = f"def giant_func():\n{body}\n"
+        tool_workspace_write(ctx, "giant.py", code)
+        res = tool_workspace_read(ctx, "giant.py", section="giant_func")
+        assert res.data["truncated"] is True
+        assert "showing first 200. Use start_line/end_line to read specific ranges." in res.text

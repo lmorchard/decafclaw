@@ -90,6 +90,31 @@
     reaches for vault_read here it's confused — the vault is for
     knowledge content, not runtime configuration.
 
+
+# -- workspace_outline vs workspace_read -------------------------------------
+
+- name: workspace-outline-python-symbols
+  scenario: "What classes and functions are defined in src/decafclaw/agent.py? Give me their signatures and line numbers."
+  expected: workspace_outline
+  near_miss: [workspace_read]
+  notes: |
+    Asking for the class/function outline, signatures, or structural layout of a code
+    file calls workspace_outline rather than reading the entire file body.
+
+- name: workspace-outline-markdown-structure
+  scenario: "Show me the section headings and outline for docs/architecture.md."
+  expected: workspace_outline
+  near_miss: [workspace_read]
+  notes: |
+    Inspecting the headings and structural outline of a large markdown document calls
+    workspace_outline to locate sections before reading specific content.
+
+- name: workspace-read-direct-file
+  scenario: "Read workspace/scripts/setup.sh so I can review the whole script."
+  expected: workspace_read
+  near_miss: [workspace_outline]
+  notes: |
+    Directly reading the content of a file should use workspace_read.
 # -- web_fetch vs http_request -----------------------------------------------
 
 - name: web-fetch-vs-http-article
