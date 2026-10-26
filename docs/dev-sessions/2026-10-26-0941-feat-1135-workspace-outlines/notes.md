@@ -51,4 +51,13 @@
 - Capped ambiguity candidate list at 20 with an omission notice (`... and N more omitted`).
 - Added 5 regression tests in `tests/test_workspace_tools.py` covering statement containers, embedded fences, duplicate heading line ranges, candidate capping, and cache concurrency.
 
+## Review Follow-up (PR #1176 Round 3)
+
+- Maintained Markdown heading path components as tuples so headings with literal dots (e.g. `1.0 Overview`) are not confused with hierarchy boundaries.
+- Replaced `str.splitlines()` with `split_physical_lines` across `workspace_outlines.py` and `workspace_tools.py` so Unicode line separators (like `\u2028`) do not desynchronize AST line numbers.
+- Included `type_params` (Python 3.12 generics) and class `keywords` (metaclass, etc.) in Python signatures.
+- Implemented linear-time monotonic stack algorithm for computing Markdown heading section ends.
+- Added omission marker (`...`) to one-line Python definitions (`def`, `class`).
+- Added 4 regression tests in `tests/test_workspace_tools.py` covering heading literal dots, physical newline splitting with `\u2028`, Python 3.12 type parameters / keywords, and one-line definition omission markers.
+
 ## Log

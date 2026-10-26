@@ -1533,3 +1533,56 @@ class TestWorkspaceOutline:
             futures = [executor.submit(worker) for _ in range(8)]
             for f in concurrent.futures.as_completed(futures):
                 f.result()
+
+    def test_markdown_heading_literal_dots(self, ctx):
+        doc = "# 1.0 Overview\nOverview text.\n\n## 1.1 Details\nDetails text.\n"
+        tool_workspace_write(ctx, "versioned.md", doc)
+        res1 = tool_workspace_outline(ctx, "versioned.md", section="1.0 Overview")
+        assert "Lines 1-5 of 5 (section '1.0 Overview'):" in res1.text
+        assert "1| # 1.0 Overview" in res1.text
+
+        res2 = tool_workspace_outline(ctx, "versioned.md", section="1.1 Details")
+        assert "Lines 4-5 of 5 (section '1.1 Details'):" in res2.text
+        assert "4| ## 1.1 Details" in res2.text
+
+        res3 = tool_workspace_outline(ctx, "versioned.md", section="1.0 Overview/1.1 Details")
+        assert "Lines 4-5 of 5 (section '1.1 Details'):" in res3.text
+
+    def test_physical_newlines_unicode_separator(self, ctx):
+        code = 'banner = "first\u2028second"\n\ndef hello():\n    return 42\n'
+        tool_workspace_write(ctx, "unicode_nl.py", code)
+        res = tool_workspace_outline(ctx, "unicode_nl.py", section="hello")
+        assert "Lines 3-4 of 4 (section 'hello'):" in res.text
+        assert "3| def hello():" in res.text
+        assert "4|     return 42" in res.text
+
+        read_res = tool_workspace_read(ctx, "unicode_nl.py", section="hello")
+        assert "Lines 3-4 of 4 (section 'hello'):" in read_res.text
+        assert "3| def hello():" in read_res.text
+
+    def test_python_type_params_and_class_keywords(self, ctx):
+        code = (
+            "class Meta(type):\n"
+            "    pass\n"
+            "\n"
+            "class Cache[T, K: str](object, metaclass=Meta):\n"
+            "    pass\n"
+            "\n"
+            "def identity[T](val: T) -> T:\n"
+            "    return val\n"
+            "\n"
+            "async def async_fetch[T](key: T) -> None:\n"
+            "    pass\n"
+        )
+        tool_workspace_write(ctx, "generics.py", code)
+        res = tool_workspace_outline(ctx, "generics.py")
+        assert "class Cache[T, K: str](object, metaclass=Meta): ..." in res.text
+        assert "def identity[T](val: T) -> T: ..." in res.text
+        assert "async def async_fetch[T](key: T) -> None: ..." in res.text
+
+    def test_oneline_python_definitions_omitted_marker(self, ctx):
+        code = "def answer(): return 42\nclass Empty: pass\n"
+        tool_workspace_write(ctx, "oneline.py", code)
+        res = tool_workspace_outline(ctx, "oneline.py")
+        assert "1: def answer(): ..." in res.text
+        assert "2: class Empty: ..." in res.text

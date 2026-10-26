@@ -29,6 +29,16 @@ OPEN_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 CLOSE_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*$")
 
 
+def split_physical_lines(text: str) -> list[str]:
+    """Split text on physical newlines (\r\n, \r, \n) only, preserving Python AST line numbering."""
+    if not text:
+        return []
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    if normalized.endswith("\n"):
+        normalized = normalized[:-1]
+    return normalized.split("\n")
+
+
 @dataclass
 class OutlineItem:
     """A structural item (class, function, method, or markdown heading)."""
@@ -125,8 +135,15 @@ def _extract_py_items(parent: ast.AST, depth: int = 0) -> list[OutlineItem]:
         if isinstance(node, ast.ClassDef):
             start = node.decorator_list[0].lineno if node.decorator_list else node.lineno
             end = getattr(node, "end_lineno", node.lineno)
+            type_params = getattr(node, "type_params", [])
+            tp_str = f"[{', '.join(ast.unparse(tp) for tp in type_params)}]" if type_params else ""
             bases = [ast.unparse(b) for b in node.bases]
-            base_str = f"({', '.join(bases)})" if bases else ""
+            keywords = [
+                f"{kw.arg}={ast.unparse(kw.value)}" if kw.arg else f"**{ast.unparse(kw.value)}"
+                for kw in getattr(node, "keywords", [])
+            ]
+            args_parts = bases + keywords
+            base_str = f"({', '.join(args_parts)})" if args_parts else ""
             decs = [f"@{ast.unparse(d)}" for d in node.decorator_list]
             dec_prefix = f"{' '.join(decs)} " if decs else ""
             item = OutlineItem(
@@ -135,7 +152,7 @@ def _extract_py_items(parent: ast.AST, depth: int = 0) -> list[OutlineItem]:
                 start_line=start,
                 end_line=end,
                 heading_line=node.lineno,
-                signature=f"{dec_prefix}class {node.name}{base_str}:",
+                signature=f"{dec_prefix}class {node.name}{tp_str}{base_str}:",
                 level=depth,
             )
             item.children = _extract_py_items(node, depth + 1)
@@ -144,6 +161,8 @@ def _extract_py_items(parent: ast.AST, depth: int = 0) -> list[OutlineItem]:
             start = node.decorator_list[0].lineno if node.decorator_list else node.lineno
             end = getattr(node, "end_lineno", node.lineno)
             prefix = "async def " if isinstance(node, ast.AsyncFunctionDef) else "def "
+            type_params = getattr(node, "type_params", [])
+            tp_str = f"[{', '.join(ast.unparse(tp) for tp in type_params)}]" if type_params else ""
             args_str = ast.unparse(node.args)
             ret_str = f" -> {ast.unparse(node.returns)}" if node.returns else ""
             decs = [f"@{ast.unparse(d)}" for d in node.decorator_list]
@@ -154,7 +173,7 @@ def _extract_py_items(parent: ast.AST, depth: int = 0) -> list[OutlineItem]:
                 start_line=start,
                 end_line=end,
                 heading_line=node.lineno,
-                signature=f"{dec_prefix}{prefix}{node.name}({args_str}){ret_str}:",
+                signature=f"{dec_prefix}{prefix}{node.name}{tp_str}({args_str}){ret_str}:",
                 level=depth,
             )
             item.children = _extract_py_items(node, depth + 1)
@@ -189,7 +208,7 @@ def parse_markdown_outline(content: str) -> list[OutlineItem]:
     Fenced code blocks are tracked with delimiter character and length
     to properly handle embedded code fences.
     """
-    lines = content.splitlines()
+    lines = split_physical_lines(content)
     active_fence_char: str | None = None
     active_fence_len: int = 0
     flat_headings: list[dict] = []
@@ -225,16 +244,19 @@ def parse_markdown_outline(content: str) -> list[OutlineItem]:
                 }
             )
 
-    # Compute content end lines
-    for idx, sec in enumerate(flat_headings):
-        for later in flat_headings[idx + 1 :]:
-            if later["level"] <= sec["level"]:
-                sec["end"] = later["start"] - 1
-                break
+    # Compute content end lines in linear time via a monotonic stack
+    end_stack: list[dict] = []
+    for h in flat_headings:
+        while end_stack and end_stack[-1]["level"] >= h["level"]:
+            popped = end_stack.pop()
+            popped["end"] = h["start"] - 1
+        end_stack.append(h)
+    while end_stack:
+        end_stack.pop()["end"] = len(lines)
 
     # Build hierarchy
     items: list[OutlineItem] = []
-    stack: list[OutlineItem] = []
+    tree_stack: list[OutlineItem] = []
 
     for h in flat_headings:
         hashes = "#" * h["level"]
@@ -247,13 +269,13 @@ def parse_markdown_outline(content: str) -> list[OutlineItem]:
             signature=f"{hashes} {h['title']}",
             level=h["level"] - 1,
         )
-        while stack and stack[-1].level >= item.level:
-            stack.pop()
-        if stack:
-            stack[-1].children.append(item)
+        while tree_stack and tree_stack[-1].level >= item.level:
+            tree_stack.pop()
+        if tree_stack:
+            tree_stack[-1].children.append(item)
         else:
             items.append(item)
-        stack.append(item)
+        tree_stack.append(item)
 
     return items
 
@@ -328,15 +350,18 @@ def get_outline(resolved_path: Path, content: str) -> OutlineResult:
 # ---------------------------------------------------------------------------
 
 
-def flatten_items(items: Sequence[OutlineItem], parent_path: str = "") -> list[tuple[OutlineItem, str]]:
-    """Flatten items into document order with their full hierarchical paths."""
-    result: list[tuple[OutlineItem, str]] = []
+def flatten_items(
+    items: Sequence[OutlineItem], parent_components: tuple[str, ...] = ()
+) -> list[tuple[OutlineItem, str, tuple[str, ...]]]:
+    """Flatten items into document order with display paths and component tuples."""
+    result: list[tuple[OutlineItem, str, tuple[str, ...]]] = []
     for item in items:
+        current_components = parent_components + (item.name,)
         sep = "." if item.kind != "heading" else "/"
-        current_path = f"{parent_path}{sep}{item.name}" if parent_path else item.name
-        result.append((item, current_path))
+        current_path = sep.join(current_components)
+        result.append((item, current_path, current_components))
         if item.children:
-            result.extend(flatten_items(item.children, current_path))
+            result.extend(flatten_items(item.children, current_components))
     return result
 
 
@@ -351,15 +376,17 @@ def format_outline(items: Sequence[OutlineItem], max_items: int = MAX_OUTLINE_IT
     selected = flat[:max_items]
 
     lines = []
-    for item, _path in selected:
+    for item, _path, _comps in selected:
         indent = "  " * item.level
         if item.start_line == item.end_line:
             range_str = f"{item.start_line}:"
         else:
             range_str = f"{item.start_line}-{item.end_line}:"
 
-        # Clearly identify omitted body lines
-        has_omitted_body = item.end_line > item.heading_line
+        if item.kind in ("class", "function", "async_function"):
+            has_omitted_body = True
+        else:
+            has_omitted_body = item.end_line > item.heading_line
         omitted = " ..." if has_omitted_body else ""
         lines.append(f"{indent}{range_str} {item.signature}{omitted}")
 
@@ -372,13 +399,6 @@ def format_outline(items: Sequence[OutlineItem], max_items: int = MAX_OUTLINE_IT
     return text, truncated
 
 
-def normalize_lookup(name: str) -> str:
-    """Normalize a section lookup query, stripping markdown hashes and whitespace."""
-    parts = [p.strip().lstrip("#").strip() for p in name.split("/") if p.strip()]
-    cleaned = ".".join(parts) if parts else name.strip().lstrip("#").strip()
-    return cleaned.lower()
-
-
 def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem | None, list[str], list[str]]:
     """Find a section by exact full path or unique suffix.
 
@@ -388,8 +408,7 @@ def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem 
     - Not found: (None, [], known_sections)
     """
     flat = flatten_items(items)
-    normalized_query = normalize_lookup(query)
-    all_paths = [p for _, p in flat]
+    all_paths = [p for _, p, _ in flat]
 
     def _cap_list(candidates: list[str], max_items: int = 20) -> list[str]:
         if len(candidates) > max_items:
@@ -397,19 +416,36 @@ def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem 
             return candidates[:max_items] + [f"... and {omitted} more omitted"]
         return candidates
 
-    # 1. Exact match (case-insensitive)
-    exact_matches = [(item, path) for item, path in flat if normalize_lookup(path) == normalized_query]
+    if not items:
+        return None, [], []
+
+    is_markdown = any(item.kind == "heading" for item, _, _ in flat)
+
+    if is_markdown:
+        parts = [p.strip().lstrip("#").strip().lower() for p in query.split("/") if p.strip()]
+        query_components = tuple(parts) if parts else (query.strip().lstrip("#").strip().lower(),)
+        norm_item_components = [
+            (item, path, tuple(c.strip().lstrip("#").strip().lower() for c in comps)) for item, path, comps in flat
+        ]
+    else:
+        parts = [p.strip().lower() for p in query.replace("/", ".").split(".") if p.strip()]
+        query_components = tuple(parts) if parts else (query.strip().lower(),)
+        norm_item_components = [(item, path, tuple(c.strip().lower() for c in comps)) for item, path, comps in flat]
+
+    # 1. Exact match on full components
+    exact_matches = [(item, path) for item, path, comps in norm_item_components if comps == query_components]
     if len(exact_matches) == 1:
         return exact_matches[0][0], [], []
     if len(exact_matches) > 1:
         ambig_cands = [f"{path} (lines {item.start_line}-{item.end_line})" for item, path in exact_matches]
         return None, _cap_list(ambig_cands), []
 
-    # 2. Suffix match
+    # 2. Suffix match on components tuple
+    q_len = len(query_components)
     suffix_matches = [
         (item, path)
-        for item, path in flat
-        if normalize_lookup(path).endswith(f".{normalized_query}") or normalize_lookup(item.name) == normalized_query
+        for item, path, comps in norm_item_components
+        if len(comps) >= q_len and comps[-q_len:] == query_components
     ]
 
     if len(suffix_matches) == 1:
@@ -429,5 +465,4 @@ def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem 
         ]
         return None, _cap_list(ambig_cands), []
 
-    # Not found — return known candidates capped at 20 with omission notice
     return None, [], _cap_list(all_paths)

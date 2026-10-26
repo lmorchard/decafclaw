@@ -26,7 +26,7 @@ from .workspace_outlines import (
     format_outline,
     get_outline,
     invalidate_outline_cache,
-    normalize_lookup,
+    split_physical_lines,
 )
 
 if TYPE_CHECKING:
@@ -184,7 +184,7 @@ def tool_workspace_read(
     except (IsADirectoryError, PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path)
 
-    all_lines = content.splitlines()
+    all_lines = split_physical_lines(content)
     total = len(all_lines)
 
     # Common metadata for programmatic callers — sized in bytes so the
@@ -307,7 +307,7 @@ def tool_workspace_outline(ctx: "Context", path: str, section: str | None = None
     except (PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path)
 
-    all_lines = content.splitlines()
+    all_lines = split_physical_lines(content)
     total_lines = len(all_lines)
     base_data: dict = {
         "path": path,
