@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -252,15 +253,88 @@ def classify_tools(
 
 def get_description(tool_def: dict) -> str:
     """Extract a short description from a tool definition."""
-    desc = tool_def.get("function", {}).get("description", "")
+    raw = tool_def.get("function", {}).get("description", "")
+    if not raw:
+        return ""
+    name = tool_def.get("function", {}).get("name", "")
+    cleaned = re.sub(r"```[\s\S]*?(?:```|$)", "", raw).strip()
+    lines = [line_text.strip() for line_text in cleaned.splitlines() if line_text.strip()]
+    desc = raw
+    if lines:
+        for line_text in lines:
+            if re.match(r"^(?:(?:Here is an? )?examples?|usage|parameters?|arguments?):\s*$", line_text, re.IGNORECASE):
+                continue
+            stripped = _strip_signature(line_text, name)
+            if stripped:
+                desc = stripped
+                break
     # First sentence or first 80 chars
-    for sep in (". ", ".\n"):
-        idx = desc.find(sep)
-        if idx > 0:
-            return desc[: idx + 1]
+    match = re.search(r"^(.*?(?<!\be\.g)(?<!\bi\.e)[.!?])(?:\s+|$)", desc)
+    if match:
+        return match.group(1).strip()
     if len(desc) > 80:
         return desc[:77] + "..."
     return desc
+
+
+def _strip_signature(line: str, tool_name: str = "") -> str:
+    """Strip parameter signatures or leading tool name from a description line."""
+    line = line.strip()
+    if tool_name:
+        line = re.sub(
+            r"^" + re.escape(tool_name) + r"\s*\([^)]*\)\s*(?:->\s*[^:\s\-\u2014]+\s*)?[:\-\u2014]?\s*",
+            "",
+            line,
+        )
+        line = re.sub(
+            r"^" + re.escape(tool_name) + r"\s*[:\-\u2014]\s*",
+            "",
+            line,
+        )
+    line = re.sub(
+        r"^(?:[a-zA-Z_][a-zA-Z0-9_]*\s*)?\((?:[^)]*[:=,][^)]*|\s*)\)\s*(?:->\s*[^:\s\-\u2014]+\s*)?[:\-\u2014]?\s*",
+        "",
+        line,
+    )
+    return line.strip()
+
+
+def _extract_first_sentence(text: str) -> str:
+    """Extract the first sentence from text, respecting abbreviations."""
+    text = text.strip()
+    if not text:
+        return ""
+    match = re.search(r"^(.*?(?<!\be\.g)(?<!\bi\.e)[.!?])(?:\s+|$)", text)
+    if match:
+        return match.group(1).strip()
+    return text
+
+
+def normalize_deferred_description(desc: str, tool_name: str = "") -> str:
+    """Normalize a deferred tool description to a single line.
+
+    Strips markdown code blocks, parameter signatures, and example blocks,
+    and extracts the first sentence or first non-empty line.
+    """
+    if not desc:
+        return ""
+    cleaned = re.sub(r"```[\s\S]*?(?:```|$)", "", desc)
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    for line in lines:
+        if re.match(r"^(?:(?:Here is an? )?examples?|usage|parameters?|arguments?):\s*$", line, re.IGNORECASE):
+            continue
+        stripped = _strip_signature(line, tool_name)
+        if not stripped:
+            continue
+        first_sent = _extract_first_sentence(stripped)
+        if first_sent:
+            return " ".join(first_sent.split())
+
+    fallback = _strip_signature(lines[0], tool_name) or lines[0]
+    return " ".join(_extract_first_sentence(fallback).split())
 
 
 def _get_declared_priority(tool_def: dict) -> str:
@@ -328,7 +402,12 @@ def build_deferred_list_text(
 
     def _render(defs: list[dict]) -> list[str]:
         defs_sorted = sorted(defs, key=_deferred_sort_key)
-        return [f"- {td['function']['name']} — {get_description(td)}" for td in defs_sorted]
+        rendered = []
+        for td in defs_sorted:
+            name = td.get("function", {}).get("name", "")
+            desc = normalize_deferred_description(get_description(td), tool_name=name)
+            rendered.append(f"- {name} — {desc}")
+        return rendered
 
     lines = ["## Available tools (use tool_search to load)\n"]
 
