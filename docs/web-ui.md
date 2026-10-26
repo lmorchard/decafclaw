@@ -67,6 +67,17 @@ never grabs focus mid-turn. The policy lives in `static/lib/chat-focus.js`;
 fires on *every* WebSocket message, so a looser condition there steals focus
 on each streamed chunk.
 
+### Side Questions (Explanation Only)
+
+During an active or long-running turn, users can ask out-of-band explanation questions without interrupting or steering the main agent loop (#1141).
+
+- **Opening**: Click the "❓ Side question" button in the upper-right chat actions cluster or the ❓ button in the chat composer.
+- **Isolated execution**: Side questions call `POST /api/conversations/{conv_id}/side-question`, streaming tokens via SSE (`text/event-stream`).
+- **Snapshot context**: The model answers using a snapshot of the current conversation history up to the active iteration (including partial streamed text), but with all tools stripped and an isolated system prompt instructing explanation-only responses without tool invocations.
+- **Independent lifecycle**: Side questions do not touch the conversation's busy flag or turn queue. Cancelling a side question does not affect the main agent turn, and cancelling the main turn does not cancel an in-flight side question.
+- **Send to main conversation**: Clicking "Send to main conversation" on an explanation bubble copies the text into the main chat composer without auto-submitting.
+- **Ephemeral**: Side questions and their follow-up history are session-only and never written to `archive.jsonl` or compaction history.
+
 ### Conversations
 
 The sidebar lists conversations organized into folders:
