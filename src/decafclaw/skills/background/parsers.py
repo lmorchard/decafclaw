@@ -328,10 +328,12 @@ class PytestParser(BaseProgressParser):
     _PROGRESS_PCT_RE = re.compile(r"\[\s*(\d+)%\s*\]")
 
     # Matches final summary line:
-    # "=== 35 passed, 2 failed in 1.23s ===" or undecorated "4 passed in 0.10s"
-    _SUMMARY_RE = re.compile(r"(?:===+.*?===+|(?:\b\d+\s+(?:passed|failed|skipped|error)\b.*?\bin\s+\d+(?:\.\d+)?s\b))")
+    _SUMMARY_RE = re.compile(
+        r"(?:===+.*?===+|(?:\b\d+\s+(?:passed|failed|skipped|error|errors)\b.*?\bin\s+\d+(?:\.\d+)?s\b))"
+    )
     _PASSED_RE = re.compile(r"\b(\d+)\s+passed\b")
     _FAILED_RE = re.compile(r"\b(\d+)\s+failed\b")
+    _ERRORS_RE = re.compile(r"\b(\d+)\s+errors?\b")
     _SKIPPED_RE = re.compile(r"\b(\d+)\s+skipped\b")
 
     def __init__(self) -> None:
@@ -410,12 +412,17 @@ class PytestParser(BaseProgressParser):
             if p_match:
                 self.passed = int(p_match.group(1))
             f_match = self._FAILED_RE.search(truncated)
+            err_match = self._ERRORS_RE.search(truncated)
+            failed_total = 0
             if f_match:
-                self.failed = int(f_match.group(1))
+                failed_total += int(f_match.group(1))
+            if err_match:
+                failed_total += int(err_match.group(1))
+            if f_match or err_match:
+                self.failed = failed_total
             s_match = self._SKIPPED_RE.search(truncated)
             if s_match:
                 self.skipped = int(s_match.group(1))
-        return self.get_progress()
 
     def get_progress(self) -> ProgressUpdate:
         executed = self.passed + self.failed + self.skipped
@@ -535,17 +542,25 @@ class AutoParser(BaseProgressParser):
         cleaned = strip_ansi(raw_line).strip()
         if cleaned:
             self.last_line = cleaned
+        truncated = cleaned[:_MAX_LINE_LENGTH]
 
         self.none_parser._feed_single_line(raw_line, stream=stream)
+
+        def _reset_probes() -> None:
+            self.pytest_parser = PytestParser()
+            self.step_parser = StepParser()
+            self.percent_parser = PercentParser()
+            self._active_preset = None
+            self._consecutive_unmatched = 0
 
         # 1. If a preset has locked in, verify whether it matches or if another preset took over
         if self._active_preset == "pytest":
             matched = bool(
-                self.pytest_parser._COLLECTED_RE.search(cleaned)
-                or self.pytest_parser._TEST_OUTCOME_RE.search(cleaned)
-                or self.pytest_parser._XDIST_OUTCOME_RE.search(cleaned)
-                or self.pytest_parser._PROGRESS_PCT_RE.search(cleaned)
-                or self.pytest_parser._SUMMARY_RE.search(cleaned)
+                self.pytest_parser._COLLECTED_RE.search(truncated)
+                or self.pytest_parser._TEST_OUTCOME_RE.search(truncated)
+                or self.pytest_parser._XDIST_OUTCOME_RE.search(truncated)
+                or self.pytest_parser._PROGRESS_PCT_RE.search(truncated)
+                or self.pytest_parser._SUMMARY_RE.search(truncated)
             )
             if matched:
                 self._consecutive_unmatched = 0
@@ -554,23 +569,22 @@ class AutoParser(BaseProgressParser):
             else:
                 self._consecutive_unmatched += 1
                 self.pytest_parser._feed_single_line(raw_line, stream=stream)
-                # Check if another preset matches (e.g. step or percent)
-                if self.step_parser._STEP_RE.search(cleaned):
+                if self.step_parser._STEP_RE.search(truncated):
                     self.step_parser._feed_single_line(raw_line, stream=stream)
                     self._active_preset = "step"
                     self._consecutive_unmatched = 0
                     return self.get_progress()
-                if self.percent_parser._PERCENT_RE.search(cleaned):
+                if self.percent_parser._PERCENT_RE.search(truncated):
                     self.percent_parser._feed_single_line(raw_line, stream=stream)
                     self._active_preset = "percent"
                     self._consecutive_unmatched = 0
                     return self.get_progress()
                 if self._consecutive_unmatched >= 25:
-                    self._active_preset = None
+                    _reset_probes()
                 return self.get_progress()
 
         if self._active_preset == "step":
-            matched = bool(self.step_parser._STEP_RE.search(cleaned))
+            matched = bool(self.step_parser._STEP_RE.search(truncated))
             if matched:
                 self._consecutive_unmatched = 0
                 self.step_parser._feed_single_line(raw_line, stream=stream)
@@ -579,26 +593,26 @@ class AutoParser(BaseProgressParser):
                 self._consecutive_unmatched += 1
                 self.step_parser._feed_single_line(raw_line, stream=stream)
                 if (
-                    self.pytest_parser._COLLECTED_RE.search(cleaned)
-                    or self.pytest_parser._TEST_OUTCOME_RE.search(cleaned)
-                    or self.pytest_parser._XDIST_OUTCOME_RE.search(cleaned)
-                    or self.pytest_parser._SUMMARY_RE.search(cleaned)
+                    self.pytest_parser._COLLECTED_RE.search(truncated)
+                    or self.pytest_parser._TEST_OUTCOME_RE.search(truncated)
+                    or self.pytest_parser._XDIST_OUTCOME_RE.search(truncated)
+                    or self.pytest_parser._SUMMARY_RE.search(truncated)
                 ):
                     self.pytest_parser._feed_single_line(raw_line, stream=stream)
                     self._active_preset = "pytest"
                     self._consecutive_unmatched = 0
                     return self.get_progress()
-                if self.percent_parser._PERCENT_RE.search(cleaned):
+                if self.percent_parser._PERCENT_RE.search(truncated):
                     self.percent_parser._feed_single_line(raw_line, stream=stream)
                     self._active_preset = "percent"
                     self._consecutive_unmatched = 0
                     return self.get_progress()
                 if self._consecutive_unmatched >= 25:
-                    self._active_preset = None
+                    _reset_probes()
                 return self.get_progress()
 
         if self._active_preset == "percent":
-            matched = bool(self.percent_parser._PERCENT_RE.search(cleaned))
+            matched = bool(self.percent_parser._PERCENT_RE.search(truncated))
             if matched:
                 self._consecutive_unmatched = 0
                 self.percent_parser._feed_single_line(raw_line, stream=stream)
@@ -607,28 +621,34 @@ class AutoParser(BaseProgressParser):
                 self._consecutive_unmatched += 1
                 self.percent_parser._feed_single_line(raw_line, stream=stream)
                 if (
-                    self.pytest_parser._COLLECTED_RE.search(cleaned)
-                    or self.pytest_parser._TEST_OUTCOME_RE.search(cleaned)
-                    or self.pytest_parser._XDIST_OUTCOME_RE.search(cleaned)
-                    or self.pytest_parser._SUMMARY_RE.search(cleaned)
+                    self.pytest_parser._COLLECTED_RE.search(truncated)
+                    or self.pytest_parser._TEST_OUTCOME_RE.search(truncated)
+                    or self.pytest_parser._XDIST_OUTCOME_RE.search(truncated)
+                    or self.pytest_parser._SUMMARY_RE.search(truncated)
                 ):
                     self.pytest_parser._feed_single_line(raw_line, stream=stream)
                     self._active_preset = "pytest"
                     self._consecutive_unmatched = 0
                     return self.get_progress()
-                if self.step_parser._STEP_RE.search(cleaned):
+                if self.step_parser._STEP_RE.search(truncated):
                     self.step_parser._feed_single_line(raw_line, stream=stream)
                     self._active_preset = "step"
                     self._consecutive_unmatched = 0
                     return self.get_progress()
                 if self._consecutive_unmatched >= 25:
-                    self._active_preset = None
+                    _reset_probes()
                 return self.get_progress()
 
         # 2. Try detection in order: pytest -> step -> percent
         try:
+            pytest_matched = bool(
+                self.pytest_parser._COLLECTED_RE.search(truncated)
+                or self.pytest_parser._TEST_OUTCOME_RE.search(truncated)
+                or self.pytest_parser._XDIST_OUTCOME_RE.search(truncated)
+                or self.pytest_parser._SUMMARY_RE.search(truncated)
+            )
             self.pytest_parser._feed_single_line(raw_line, stream=stream)
-            if (
+            if pytest_matched and (
                 self.pytest_parser.total_tests is not None
                 or (self.pytest_parser.passed + self.pytest_parser.failed + self.pytest_parser.skipped) > 0
             ):
@@ -639,8 +659,9 @@ class AutoParser(BaseProgressParser):
             log.debug("AutoParser: pytest probe failed", exc_info=True)
 
         try:
+            step_matched = bool(self.step_parser._STEP_RE.search(truncated))
             self.step_parser._feed_single_line(raw_line, stream=stream)
-            if self.step_parser.current_step is not None and self.step_parser.total_steps is not None:
+            if step_matched and self.step_parser.current_step is not None and self.step_parser.total_steps is not None:
                 self._active_preset = "step"
                 self._consecutive_unmatched = 0
                 return self.get_progress()
@@ -648,8 +669,9 @@ class AutoParser(BaseProgressParser):
             log.debug("AutoParser: step probe failed", exc_info=True)
 
         try:
+            pct_matched = bool(self.percent_parser._PERCENT_RE.search(truncated))
             self.percent_parser._feed_single_line(raw_line, stream=stream)
-            if self.percent_parser.percent is not None:
+            if pct_matched and self.percent_parser.percent is not None:
                 self._active_preset = "percent"
                 self._consecutive_unmatched = 0
                 return self.get_progress()

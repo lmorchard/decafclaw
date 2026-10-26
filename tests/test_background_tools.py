@@ -1387,3 +1387,64 @@ async def test_pin_sticky_streaming_carriage_returns(tmp_path, config, sticky_re
     final = events[-1]
     assert "80%" in final["data"]["steps"][0]["note"]
     await manager.cleanup_all()
+
+
+def test_pytest_summary_with_errors():
+    p = PytestParser()
+    p.feed_line("1 passed, 2 errors in 0.20s")
+    assert p.passed == 1
+    assert p.failed == 2
+
+    p2 = PytestParser()
+    p2.feed_line("=== 2 failed, 1 error, 5 passed in 1.5s ===")
+    assert p2.passed == 5
+    assert p2.failed == 3
+
+
+def test_auto_parser_fallback_resets_probes():
+    p = AutoParser()
+    p.feed_line("[1/5] Step one")
+    assert p._active_preset == "step"
+    for i in range(25):
+        p.feed_line(f"plain log line {i}")
+    assert p._active_preset is None
+    assert p.step_parser.current_step is None
+
+
+@pytest.mark.asyncio
+async def test_read_stream_incremental_utf8():
+    from collections import deque
+
+    from decafclaw.skills.background.tools import _read_stream
+
+    # Split 3-byte UTF-8 character '€' (0xe2 0x82 0xac) across chunks
+    euro_bytes = "Price: 100€\n".encode("utf-8")
+    stream = asyncio.StreamReader()
+    stream.feed_data(euro_bytes[:8])  # ends mid-euro (e2 82)
+    stream.feed_data(euro_bytes[8:])  # finishes euro (ac) and \n
+    stream.feed_eof()
+
+    lines = []
+    buf = deque()
+    await _read_stream(stream, buf, on_line=lambda line: lines.append(line) or asyncio.sleep(0))
+    assert lines == ["Price: 100€"]
+
+
+@pytest.mark.asyncio
+async def test_read_stream_bounds_pending_buffer():
+    from collections import deque
+
+    from decafclaw.skills.background.tools import _read_stream
+
+    # Emit > 64 KB with no newline or carriage return
+    big_data = b"X" * 70000
+    stream = asyncio.StreamReader()
+    stream.feed_data(big_data)
+    stream.feed_eof()
+
+    lines = []
+    buf = deque()
+    await _read_stream(stream, buf, on_line=lambda line: lines.append(line) or asyncio.sleep(0))
+    # Should have split into a flushed chunk and remainder rather than waiting for EOF
+    assert len(lines) >= 2
+    assert sum(len(item) for item in lines) == 70000

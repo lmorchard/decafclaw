@@ -6,7 +6,7 @@
 - Worktree: /home/lmorchard/devel/decafclaw/.claude/worktrees/feat-1137-background-progress-widgets
 - Branch: feat-1137-background-progress-widgets
 - Base: origin/main at 875f2b7ab70a001000b0f8d67814d57ed8a91dd2
-- Next action: PR #1177 updated with review fixes.
+- Next action: PR #1177 updated with Round 3 review fixes.
 
 ## Log
 
@@ -43,4 +43,11 @@
   - Finding 5: Added auto-parser re-detection when active preset stops matching or another preset matches.
   - Finding 6: Set `last["t"] = now` on trailing updates in `_sticky_publish_when_due` to preserve the 500ms minimum interval.
   - Added unit and integration tests covering all findings in `tests/test_background_tools.py`.
-- Ran `make fmt`, `make check`, `make test`, and `make test-js`. All passed.
+- Addressed Round 3 review findings from /tmp/findings-1177-r3.md:
+  - Finding 1: Used `codecs.getincrementaldecoder('utf-8')('replace')` per stream in `_read_stream` to avoid multibyte UTF-8 boundary corruption.
+  - Finding 2: Capped pending buffer size in `_read_stream` (`_MAX_PENDING_CHARS = 65536`) to prevent unbounded memory growth on delimiterless output.
+  - Finding 3: Recognized pytest error counts in summaries (`_ERRORS_RE = re.compile(r"\b(\d+)\s+errors?\b")`) and added to `self.failed`.
+  - Finding 4: Truncated detection input in `AutoParser` to `_MAX_LINE_LENGTH` before running regex checks.
+  - Finding 5: Reset candidate parsers (`_reset_probes`) on `AutoParser` fallback after unmatched lines so stale counters do not reactivate old presets.
+  - Added unit and integration tests covering all Round 3 findings in `tests/test_background_tools.py`.
+- Ran `make fmt`, `make check`, and `make test`. All passed.

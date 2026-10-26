@@ -1,7 +1,9 @@
 """Background process management — start, monitor, and stop long-running processes."""
 
 import asyncio
+import codecs
 import logging
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -23,6 +25,7 @@ _STOP_GRACE_PERIOD = 2  # seconds between SIGTERM and SIGKILL
 _STICKY_THROTTLE_SEC = 0.5  # min interval between sticky-slot progress updates
 _STICKY_EMIT_TIMEOUT_SEC = 2.0  # delivery timeout for background sticky updates
 _STICKY_NOTE_MAX = 200  # max chars of a single output line shown in the sticky slot
+_MAX_PENDING_CHARS = 65536  # 64 KB cap to bound pending stream buffer
 
 
 @dataclass
@@ -63,17 +66,27 @@ async def _read_stream(
 
     Frames on \r\n, \r, and \n so in-place progress bars updating via
     carriage returns are delivered promptly to the on_line hook.
+    Uses an incremental UTF-8 decoder and bounds pending buffer size.
     """
     if stream is None:
         return
-    import re
-
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
     pending = ""
     while True:
         chunk = await stream.read(4096)
         if not chunk:
+            pending += decoder.decode(b"", final=True)
             break
-        pending += chunk.decode(errors="replace")
+        pending += decoder.decode(chunk)
+        if len(pending) >= _MAX_PENDING_CHARS and "\r" not in pending and "\n" not in pending:
+            buffer.append(pending)
+            if on_line is not None:
+                try:
+                    await on_line(pending)
+                except Exception:
+                    log.warning("on_line hook raised while reading stream; continuing", exc_info=True)
+            pending = ""
+            continue
         lines = re.split(r"\r\n|\r|\n", pending)
         pending = lines.pop()
         for line in lines:
