@@ -213,6 +213,31 @@ class TestSchedulesAPI:
         assert r.json()["schedule"]["body"] == "Edited via wiki-editor."
 
     @pytest.mark.asyncio
+    async def test_put_accepts_required_servers_and_server_timeout(self, client, http_config):
+        r = await client.put(
+            "/api/schedules/dream",
+            json={"required_servers": ["db", "storage"], "server_timeout": 45.0},
+        )
+        assert r.status_code == 200
+        schedule = r.json()["schedule"]
+        assert schedule["required_servers"] == ["db", "storage"]
+        assert schedule["server_timeout"] == 45.0
+
+        overlay = http_config.agent_path / "schedules" / "dream.md"
+        content = overlay.read_text()
+        assert "required-servers" in content
+        assert "server-timeout: 45.0" in content
+
+    @pytest.mark.asyncio
+    async def test_put_rejects_non_finite_server_timeout(self, client):
+        r = await client.put(
+            "/api/schedules/dream",
+            json={"server_timeout": -5.0},
+        )
+        assert r.status_code == 400
+        assert "server_timeout must be a finite positive number" in r.json()["error"]
+
+    @pytest.mark.asyncio
     async def test_get_includes_modified_field(self, client):
         r = await client.get("/api/schedules")
         assert r.status_code == 200

@@ -1496,6 +1496,62 @@ class TestWriteOverlayListFields:
         with pytest.raises(ValueError, match="email_recipients must be a list"):
             write_overlay(config, "seeded", {"email_recipients": "a@example.com"})
 
+    @pytest.mark.parametrize("invalid_timeout", [float("nan"), float("inf"), float("-inf"), 0, -10, "Infinity", "NaN"])
+    def test_non_finite_server_timeout_rejected(self, config, invalid_timeout):
+        self._seed(config)
+        with pytest.raises(ValueError, match="server_timeout must be a finite positive number"):
+            write_overlay(config, "seeded", {"server_timeout": invalid_timeout})
+
+    @pytest.mark.parametrize("bad_val", ["nan", "inf", "-inf", "0", "-15"])
+    def test_parse_schedule_file_falls_back_for_non_finite_timeout(self, tmp_path, bad_val):
+        from decafclaw.schedules import parse_schedule_file
+
+        f = tmp_path / "bad_timeout.md"
+        f.write_text(f"---\nschedule: '0 0 * * *'\nserver-timeout: {bad_val}\n---\nBody.\n")
+        task = parse_schedule_file(f)
+        assert task is not None
+        assert task.server_timeout == 30.0
+
+    @pytest.mark.asyncio
+    async def test_run_schedule_task_does_not_execute_pre_script_when_readiness_fails(
+        self, config, tmp_path, monkeypatch
+    ):
+        """Pre-script must not execute subprocesses if required MCP servers are unavailable."""
+        from unittest.mock import AsyncMock, patch
+
+        from decafclaw import mcp_client
+        from decafclaw.events import EventBus
+        from decafclaw.mcp_client import MCPRegistry
+        from decafclaw.schedules import ScheduleTask, run_schedule_task
+
+        registry = MCPRegistry()
+        monkeypatch.setattr(mcp_client, "_registry", registry)
+
+        pre_script_ran = False
+
+        async def fake_run_pre_script(*args, **kwargs):
+            nonlocal pre_script_ran
+            pre_script_ran = True
+            return "output"
+
+        task = ScheduleTask(
+            name="guarded_task",
+            schedule="* * * * *",
+            body="Do task.",
+            source="admin",
+            path=tmp_path / "guarded_task.md",
+            required_servers=["missing_server"],
+            pre_script="scripts/pre.py",
+        )
+
+        with patch("decafclaw.schedules._run_pre_script", side_effect=fake_run_pre_script):
+            dummy_manager = AsyncMock()
+            res = await run_schedule_task(config, EventBus(), dummy_manager, task)
+
+        assert res["is_ok"] is False
+        assert pre_script_ran is False
+        assert dummy_manager.enqueue_turn.call_count == 0
+
 
 class TestExtractFrontmatterText:
     def test_returns_the_raw_block_without_delimiters(self):

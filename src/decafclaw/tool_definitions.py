@@ -41,6 +41,19 @@ def invalidate_skill_cache(config) -> None:
     _skill_def_cache.pop(id(config), None)
 
 
+def reconcile_mcp_tools(ctx: "Context") -> None:
+    """Reconcile MCP tool definitions for the turn at a safe turn boundary.
+
+    If ctx.tools.mcp_frozen is True, the current snapshot is preserved across
+    turn iterations so in-flight turns do not observe mid-turn MCP changes.
+    """
+    if not ctx.tools.mcp_frozen:
+        from .mcp_client import get_registry
+
+        mcp_registry = get_registry()
+        ctx.tools.mcp_definitions = list(mcp_registry.get_tool_definitions()) if mcp_registry else []
+
+
 def refresh_dynamic_tools(ctx: "Context") -> None:
     """Call dynamic tool providers to refresh skill tools for this turn.
 
@@ -49,10 +62,10 @@ def refresh_dynamic_tools(ctx: "Context") -> None:
     Collects all possible tool names from providers, removes stale entries,
     then re-adds the current set.
     """
+    reconcile_mcp_tools(ctx)
     providers = ctx.tools.dynamic_providers
     if not providers:
         return
-
     # Collect names from previous turn + this turn so we can remove stale entries
     names_to_remove: set[str] = set()
     for skill_name in providers:
@@ -129,11 +142,14 @@ def collect_all_tool_defs(ctx: "Context") -> list:
             all_tools.append(td)
             preloaded_names.add(name)
 
-    from .mcp_client import get_registry
+    if ctx.tools.mcp_definitions is not None:
+        all_tools = all_tools + ctx.tools.mcp_definitions
+    else:
+        from .mcp_client import get_registry
 
-    mcp_registry = get_registry()
-    if mcp_registry:
-        all_tools = all_tools + mcp_registry.get_tool_definitions()
+        mcp_registry = get_registry()
+        if mcp_registry:
+            all_tools = all_tools + mcp_registry.get_tool_definitions()
 
     return _dedupe_by_name(all_tools)
 

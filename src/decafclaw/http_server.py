@@ -4,6 +4,7 @@ import asyncio
 import functools
 import json
 import logging
+import math
 import os
 import re
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ import yaml
 from croniter import croniter
 from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, field_validator
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -3015,6 +3016,8 @@ def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> 
         "allowed_tools": list(task.allowed_tools),
         "disallowed_tools": list(task.disallowed_tools),
         "required_skills": list(task.required_skills),
+        "required_servers": list(task.required_servers),
+        "server_timeout": task.server_timeout,
         "shell_patterns": list(task.shell_patterns),
         "email_recipients": list(task.email_recipients),
         "pre_script": task.pre_script,
@@ -3044,6 +3047,8 @@ class ScheduleResponse(BaseModel):
     allowed_tools: list[str]
     disallowed_tools: list[str]
     required_skills: list[str]
+    required_servers: list[str] = []
+    server_timeout: float = 30.0
     shell_patterns: list[str]
     email_recipients: list[str]
     pre_script: str
@@ -3080,9 +3085,19 @@ class ScheduleUpdateRequest(BaseModel):
     allowed_tools: list[str] | None = None
     disallowed_tools: list[str] | None = None
     required_skills: list[str] | None = None
+    required_servers: list[str] | None = None
+    server_timeout: float | None = None
     shell_patterns: list[str] | None = None
     email_recipients: list[str] | None = None
     pre_script: str | None = None
+
+    @field_validator("server_timeout")
+    @classmethod
+    def validate_server_timeout(cls, v: float | None) -> float | None:
+        if v is not None:
+            if not math.isfinite(v) or v <= 0:
+                raise ValueError("server_timeout must be a finite positive number")
+        return v
 
 
 class ScheduleUpdateResponse(BaseModel):

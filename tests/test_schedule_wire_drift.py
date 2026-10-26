@@ -67,6 +67,7 @@ NON_FIELD_WIRE_KEYS = {
 SAMPLES = {
     str: "sample-value",
     list[str]: ["sample-value"],
+    float: 15.0,
 }
 
 
@@ -88,8 +89,7 @@ def _sample_for(spec):
 
 
 # Values that must satisfy a validator rather than merely round-trip.
-SAMPLE_OVERRIDES = {"schedule": "*/5 * * * *"}
-
+SAMPLE_OVERRIDES = {"schedule": "*/5 * * * *", "server_timeout": 15.0}
 # One distinct value per patchable field, used by
 # test_wire_values_match_task_fields below. Distinct *per field* (not
 # just non-default) so a wire value that got misrouted onto the wrong
@@ -110,6 +110,8 @@ DISTINCT_VALUES = {
     "disallowed_tools": ["distinct-disallowed-tool"],
     "shell_patterns": ["distinct-pattern"],
     "required_skills": ["distinct-skill"],
+    "required_servers": ["distinct-server"],
+    "server_timeout": 45.0,
     "email_recipients": ["distinct@example.com"],
     "pre_script": "distinct-pre-script.py",
 }
