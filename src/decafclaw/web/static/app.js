@@ -37,6 +37,7 @@ import './components/file-page.js';
 import './components/config-panel.js';
 import './components/schedule-page.js';
 import './components/copy-conversation-menu.js';
+import './components/side-question-drawer.js';
 
 // -- Services -----------------------------------------------------------------
 
@@ -886,3 +887,46 @@ function setupTerminalButton() {
 }
 
 setupTerminalButton();
+
+function setupSideQuestion() {
+  const drawer = /** @type {any} */ (document.querySelector('side-question-drawer'));
+  if (drawer) {
+    drawer.convId = store.currentConvId || '';
+    store.addEventListener('change', () => {
+      drawer.convId = store.currentConvId || '';
+    });
+  }
+
+  const actions = getChatActions();
+  if (actions) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'side-question-action-btn dc-floating-btn';
+    btn.title = 'Ask side question';
+    btn.setAttribute('aria-label', 'Ask side question');
+    btn.textContent = '❓';
+    btn.addEventListener('click', () => {
+      drawer?.toggle();
+    });
+    const sync = () => {
+      btn.hidden = !store.currentConvId;
+    };
+    sync();
+    actions.appendChild(btn);
+    store.addEventListener('change', sync);
+  }
+
+  document.addEventListener('open-side-question', () => {
+    drawer?.openDrawer();
+  });
+
+  document.addEventListener('send-to-main', (e) => {
+    const detail = /** @type {CustomEvent} */ (e).detail;
+    if (detail?.text) {
+      const input = /** @type {any} */ (document.querySelector('chat-input'));
+      input?.setText?.(detail.text);
+    }
+  });
+}
+
+setupSideQuestion();

@@ -1,0 +1,165 @@
+/* Side Question Drawer (issue #1141) */
+
+side-question-drawer {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 100%);
+  background: var(--pico-card-background-color);
+  border-left: 1px solid var(--pico-muted-border-color);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
+  z-index: 15;
+  box-sizing: border-box;
+}
+
+side-question-drawer[hidden],
+side-question-drawer:not([open]) {
+  display: none !important;
+}
+
+side-question-drawer .drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  min-height: 48px;
+  box-sizing: border-box;
+}
+
+side-question-drawer .drawer-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+side-question-drawer .drawer-badge {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  background: var(--pico-muted-border-color);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+}
+
+side-question-drawer .drawer-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+side-question-drawer .drawer-feedback {
+  color: var(--pico-primary);
+  font-size: 0.75rem;
+  margin-right: 0.4rem;
+}
+
+side-question-drawer .drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+side-question-drawer .empty-hint {
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+  text-align: center;
+  margin: auto 0.5rem;
+  line-height: 1.4;
+}
+
+side-question-drawer .side-user-msg {
+  align-self: flex-end;
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px 8px 2px 8px;
+  max-width: 85%;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+side-question-drawer .side-assistant-msg {
+  align-self: flex-start;
+  background: var(--pico-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px 8px 8px 2px;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+side-question-drawer .side-assistant-msg .side-actions {
+  margin-top: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+  display: flex;
+  justify-content: flex-end;
+}
+
+side-question-drawer button.send-to-main-btn {
+  font-size: 0.8rem;
+  padding: 0.2rem 0.5rem;
+  margin: 0;
+  width: auto;
+  cursor: pointer;
+  color: inherit;
+}
+
+side-question-drawer .drawer-footer {
+  border-top: 1px solid var(--pico-muted-border-color);
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  background: var(--pico-card-background-color);
+}
+
+side-question-drawer .drawer-footer textarea {
+  resize: vertical;
+  min-height: 2.5rem;
+  max-height: 6rem;
+  margin: 0;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+}
+
+side-question-drawer .drawer-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+side-question-drawer button.ask-btn,
+side-question-drawer button.stop-btn {
+  margin: 0;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.85rem;
+  width: auto;
+}
+
+side-question-drawer button.stop-btn {
+  background: var(--pico-del-color);
+  border-color: var(--pico-del-color);
+  color: white;
+}
+
+side-question-drawer .side-error {
+  color: var(--pico-del-color);
+  font-size: 0.85rem;
+  padding: 0.4rem;
+  border: 1px solid var(--pico-del-color);
+  border-radius: 4px;
+}

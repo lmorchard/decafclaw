@@ -566,6 +566,11 @@ describe('chat-input accessible button names (#166)', () => {
 
     expect(byLabel(el, 'Remove attachment')?.classList.contains('attachment-remove')).toBe(true);
   });
+  it('labels the side question button', async () => {
+    const el = await mount();
+    expect(byLabel(el, 'Ask side question')?.classList.contains('side-question-btn')).toBe(true);
+  });
+
 
   it('gives every rendered button a non-empty aria-label', async () => {
     const el = await mount({ busy: true });
@@ -573,7 +578,7 @@ describe('chat-input accessible button names (#166)', () => {
     await el.updateComplete;
 
     const buttons = [...el.querySelectorAll('button')];
-    expect(buttons.length).toBe(4);
+    expect(buttons.length).toBe(5);
     for (const b of buttons) {
       expect(b.getAttribute('aria-label')?.trim()).toBeTruthy();
     }

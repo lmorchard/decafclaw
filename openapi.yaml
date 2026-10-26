@@ -297,6 +297,81 @@ paths:
           content:
             application/json:
               schema: {}
+  /api/conversations/{id}/side-question:
+    post:
+      summary: Handle Side Question
+      description: Stream an ephemeral explanation-only side question via SSE.
+      operationId: handle_side_question_api_conversations__id__side_question_post
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: SSE stream of response tokens and completion events
+          content:
+            text/event-stream: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                question:
+                  title: Question
+                  type: string
+                side_history:
+                  anyOf:
+                  - items:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    type: array
+                  - type: 'null'
+                  title: Side History
+                model:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Model
+              required:
+              - question
+              title: SideQuestionRequest
+              type: object
+  /api/conversations/{id}/side-question/cancel:
+    post:
+      summary: Handle Cancel Side Question
+      description: Cancel in-flight side questions for a conversation.
+      operationId: handle_cancel_side_question_api_conversations__id__side_question_cancel_post
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SideQuestionCancelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/conversations/{id}/context:
     get:
       summary: Get Context Diagnostics
@@ -2521,6 +2596,16 @@ components:
       - schedule
       - modified
       title: ScheduleUpdateResponse
+    SideQuestionCancelResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+      type: object
+      required:
+      - ok
+      title: SideQuestionCancelResponse
     StickyResponse:
       properties:
         widget_type:

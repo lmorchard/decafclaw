@@ -51,6 +51,12 @@ Two adjacent abort paths intentionally do **not** write this marker:
 - **Max-iterations exhaustion**: `_finalize_max_iterations` in `agent.py` already archives an `assistant` row with the limit-reached notice. That row is itself a clear LLM-visible closure signal — adding a marker on top would be double-signaling.
 - **Circuit breaker**: declines new turns but does not abort a turn mid-flight, so there is no half-archived turn to mark.
 
+### Side questions (ephemeral)
+
+Side questions (#1141) allow users to ask out-of-band explanation questions against a conversation snapshot without interrupting or steering the active turn.
+
+Side questions execute via `ConversationManager.run_side_question()`. They run with an isolated `Context` (with tools stripped, reflection disabled, and vault retrieval skipped), read-only access to the conversation messages up to the current turn, and independent cancellation. They do not acquire the per-conversation lock or modify `state.busy`, and are never written to `archive.jsonl` or compaction history.
+
 ## Compaction
 
 When the conversation grows too large (exceeding the token budget), the agent automatically compacts older messages into a summary.
