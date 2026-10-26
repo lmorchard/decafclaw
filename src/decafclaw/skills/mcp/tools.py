@@ -77,18 +77,24 @@ async def _restart(ctx: "Context", registry, server_name) -> str | ToolResult:
             # Full reload: create a fresh registry and connect
             configs = load_mcp_config(ctx.config)
             if not configs:
+                if registry:
+                    await registry.disconnect_all()
+                    _mcp._registry = None
                 return "MCP servers reloaded: no servers configured."
 
-            new_registry = MCPRegistry()
-            await new_registry.connect_all(configs)
-
-            # Swap the global registry (old one's connections will be GC'd)
+            old_registry = registry
+            new_registry = MCPRegistry(event_bus=ctx.event_bus)
             _mcp._registry = new_registry
+
+            # Drain and disconnect the old registry to prevent task leakage
+            if old_registry:
+                await old_registry.disconnect_all()
+
+            await new_registry.connect_all(configs)
 
             connected = sum(1 for s in new_registry.servers.values() if s.status == "connected")
             total_tools = sum(len(s.tools) for s in new_registry.servers.values())
             return f"MCP servers reloaded: {connected} connected, {total_tools} tool(s)"
-
     except BaseException as e:
         log.error(f"MCP restart failed: {e}", exc_info=True)
         return ToolResult(text=f"[error: MCP restart failed: {e}]")

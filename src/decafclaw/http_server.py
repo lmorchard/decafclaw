@@ -3015,6 +3015,8 @@ def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> 
         "allowed_tools": list(task.allowed_tools),
         "disallowed_tools": list(task.disallowed_tools),
         "required_skills": list(task.required_skills),
+        "required_servers": list(task.required_servers),
+        "server_timeout": task.server_timeout,
         "shell_patterns": list(task.shell_patterns),
         "email_recipients": list(task.email_recipients),
         "pre_script": task.pre_script,
@@ -3044,6 +3046,8 @@ class ScheduleResponse(BaseModel):
     allowed_tools: list[str]
     disallowed_tools: list[str]
     required_skills: list[str]
+    required_servers: list[str] = []
+    server_timeout: float = 30.0
     shell_patterns: list[str]
     email_recipients: list[str]
     pre_script: str

@@ -3857,6 +3857,19 @@
             "type": "array",
             "title": "Required Skills"
           },
+          "required_servers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Servers",
+            "default": []
+          },
+          "server_timeout": {
+            "type": "number",
+            "title": "Server Timeout",
+            "default": 30.0
+          },
           "shell_patterns": {
             "items": {
               "type": "string"

@@ -84,6 +84,8 @@ class ScheduleTask:
     disallowed_tools: list[str] = field(default_factory=list)
     shell_patterns: list[str] = field(default_factory=list)
     required_skills: list[str] = field(default_factory=list)
+    required_servers: list[str] = field(default_factory=list)
+    server_timeout: float = 30.0
     # Per-task overlay for `send_email` — exact addresses or
     # `@domain.com` suffix patterns that bypass confirmation. Merged
     # with `config.email.allowed_recipients` at tool-call time.
@@ -107,8 +109,15 @@ _KNOWN_FRONTMATTER_KEYS = frozenset(
         "model",
         "effort",
         "allowed-tools",
+        "disallowed-tools",
         "pre_script",
         "required-skills",
+        "required-servers",
+        "required_servers",
+        "required-mcp-servers",
+        "server-timeout",
+        "server_timeout",
+        "mcp-timeout",
         "email-recipients",
     }
 )
@@ -123,6 +132,8 @@ VALID_PATCH_KEYS = frozenset(
         "channel",
         "allowed_tools",
         "required_skills",
+        "required_servers",
+        "server_timeout",
         "shell_patterns",
         "email_recipients",
         "model",
@@ -185,6 +196,16 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
     if not isinstance(email_recipients, list):
         email_recipients = [str(email_recipients)] if email_recipients else []
 
+    required_servers = meta.get("required-servers", meta.get("required_servers", meta.get("required-mcp-servers", [])))
+    if not isinstance(required_servers, list):
+        required_servers = [str(required_servers)] if required_servers else []
+
+    server_timeout_raw = meta.get("server-timeout", meta.get("server_timeout", meta.get("mcp-timeout", 30.0)))
+    try:
+        server_timeout = float(server_timeout_raw)
+    except (TypeError, ValueError):
+        server_timeout = 30.0
+
     unknown_keys = sorted(set(meta) - _KNOWN_FRONTMATTER_KEYS)
     if unknown_keys:
         log.warning("Unrecognized frontmatter in %s: %s (ignored)", path.name, ", ".join(unknown_keys))
@@ -203,6 +224,8 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         disallowed_tools=disallowed_tools,
         shell_patterns=shell_patterns,
         required_skills=[str(s) for s in required_skills],
+        required_servers=[str(s) for s in required_servers],
+        server_timeout=server_timeout,
         email_recipients=[str(r) for r in email_recipients],
         unknown_keys=unknown_keys,
     )
@@ -316,6 +339,10 @@ def serialize_to_markdown(task: ScheduleTask) -> str:
         fm["pre_script"] = task.pre_script
     if task.required_skills:
         fm["required-skills"] = list(task.required_skills)
+    if task.required_servers:
+        fm["required-servers"] = list(task.required_servers)
+    if task.server_timeout != 30.0:
+        fm["server-timeout"] = task.server_timeout
     if task.email_recipients:
         fm["email-recipients"] = list(task.email_recipients)
     fm_text = yaml.safe_dump(fm, sort_keys=False).rstrip()
@@ -370,9 +397,22 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
 
     # Validate list fields — reject non-list values (e.g. comma-separated strings)
     # rather than silently iterating characters.
-    for list_field in ("allowed_tools", "disallowed_tools", "required_skills", "shell_patterns", "email_recipients"):
+    for list_field in (
+        "allowed_tools",
+        "disallowed_tools",
+        "required_skills",
+        "required_servers",
+        "shell_patterns",
+        "email_recipients",
+    ):
         if list_field in patch and not isinstance(patch[list_field], list):
             raise ValueError(f"{list_field} must be a list of strings")
+
+    if "server_timeout" in patch:
+        try:
+            patch["server_timeout"] = float(patch["server_timeout"])
+        except (TypeError, ValueError):
+            raise ValueError("server_timeout must be a number")
 
     updated = replace(
         base,
@@ -383,6 +423,8 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
         allowed_tools=list(patch.get("allowed_tools", base.allowed_tools)),
         disallowed_tools=list(patch.get("disallowed_tools", base.disallowed_tools)),
         required_skills=list(patch.get("required_skills", base.required_skills)),
+        required_servers=list(patch.get("required_servers", base.required_servers)),
+        server_timeout=patch.get("server_timeout", base.server_timeout),
         shell_patterns=list(patch.get("shell_patterns", base.shell_patterns)),
         email_recipients=list(patch.get("email_recipients", base.email_recipients)),
         model=patch.get("model", base.model),
@@ -864,6 +906,16 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv
     prompt = preamble + (f"{loaded_skills}\n\n" if loaded_skills else "") + pre_block + body
 
     try:
+        if task.required_servers:
+            from .mcp_client import MCPReadinessError, get_registry
+
+            registry = get_registry()
+            if not registry:
+                raise MCPReadinessError(
+                    f"Required MCP server(s) {task.required_servers} declared for task {task.name!r}, but MCP is not initialized"
+                )
+            await registry.wait_for_servers(task.required_servers, timeout=task.server_timeout)
+
         future = await manager.enqueue_turn(
             conv_id=conv_id,
             kind=TurnKind.SCHEDULED_TASK,

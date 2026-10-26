@@ -721,8 +721,9 @@ class TurnRunner:
         self.model_override = await _setup_turn_state(self.ctx, self.config, self.history)
 
         try:
+            self.ctx.tools.mcp_frozen = False
             await self._compose()
-
+            self.ctx.tools.mcp_frozen = True
             self.prompt_tokens = 0
             self.empty_retries = 0
             self.reflection_retries = 0
@@ -754,6 +755,7 @@ class TurnRunner:
             return await self._finalize_max_iterations()
 
         finally:
+            self.ctx.tools.mcp_frozen = False
             await self._write_diagnostics()
 
     async def _compose(self) -> None:
