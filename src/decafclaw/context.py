@@ -96,6 +96,11 @@ class ToolState:
     # reused across iterations so classify_tools() stays consistent mid-turn.
     # See docs/preemptive-tool-search.md.
     preempt_matches: set[str] = field(default_factory=set)
+    # MCP tool definitions snapshotted for this turn (#1148). Populated at the
+    # start of a turn (safe turn boundary) by ContextComposer so late-connecting
+    # MCP servers register on the next turn rather than altering tools mid-turn.
+    mcp_definitions: list[dict[str, Any]] | None = None
+    mcp_frozen: bool = False
 
 
 @dataclass

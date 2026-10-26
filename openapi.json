@@ -1612,6 +1612,31 @@
                     ],
                     "title": "Required Skills"
                   },
+                  "required_servers": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Required Servers"
+                  },
+                  "server_timeout": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Server Timeout"
+                  },
                   "shell_patterns": {
                     "anyOf": [
                       {
@@ -3856,6 +3881,19 @@
             },
             "type": "array",
             "title": "Required Skills"
+          },
+          "required_servers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Servers",
+            "default": []
+          },
+          "server_timeout": {
+            "type": "number",
+            "title": "Server Timeout",
+            "default": 30.0
           },
           "shell_patterns": {
             "items": {
