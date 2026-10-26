@@ -6,6 +6,15 @@ from types import SimpleNamespace
 import pytest
 
 from decafclaw.skills.background import tools
+from decafclaw.skills.background.parsers import (
+    AutoParser,
+    NoneParser,
+    PercentParser,
+    PytestParser,
+    StepParser,
+    get_progress_parser,
+    strip_ansi,
+)
 from decafclaw.skills.background.tools import BackgroundJobManager
 
 # ---------------------------------------------------------------------------
@@ -993,4 +1002,287 @@ async def test_pin_sticky_schedules_trailing_update_after_burst(tmp_path, config
     await fake.sticky_event.wait()
     assert fake.sticky_events[-1]["data"]["steps"][0]["note"] == "second"
     await manager.stop(job.job_id)
+    await manager.cleanup_all()
+
+
+# ---------------------------------------------------------------------------
+# Task 8: Progress parser engine & sticky progress integration (#1137)
+# ---------------------------------------------------------------------------
+
+
+def test_strip_ansi_removes_escape_codes_and_cr():
+    raw = "\x1b[32m[1/5]\x1b[0m Compiling core...\r\n"
+    assert strip_ansi(raw) == "[1/5] Compiling core...\n"
+
+
+def test_none_parser_line_counts():
+    p = NoneParser()
+    p.feed_line("line 1")
+    p.feed_line("line 2")
+    up = p.get_progress()
+    assert up.current == 2
+    assert up.total is None
+    assert up.unit == "lines"
+    assert up.label == "line 2"
+
+    sticky = p.format_running_sticky("cat file")
+    assert sticky["summary"] == "line 2"
+    assert sticky["steps"][0]["note"] == "line 2"
+
+
+def test_step_parser_formats():
+    p = StepParser()
+    # Bracket format
+    p.feed_line("[1/10] Building foo")
+    up = p.get_progress()
+    assert up.current == 1
+    assert up.total == 10
+    assert up.unit == "steps"
+    assert up.label == "Building foo"
+
+    # Parenthesis format
+    p.feed_line("(2/10) Building bar")
+    up = p.get_progress()
+    assert up.current == 2
+    assert up.total == 10
+    assert up.label == "Building bar"
+
+    # Step N of M format
+    p.feed_line("Step 3 of 10: Building baz")
+    up = p.get_progress()
+    assert up.current == 3
+    assert up.total == 10
+    assert up.label == "Building baz"
+
+    sticky = p.format_running_sticky("make build")
+    assert "[3/10] Building baz" in sticky["summary"]
+    assert sticky["steps"][0]["note"] == "[3/10] Building baz"
+
+
+def test_step_parser_invalid_fallbacks():
+    p = StepParser()
+    p.feed_line("[0/0] Invalid total")
+    up = p.get_progress()
+    assert up.total is None
+    assert up.unit == "lines"
+
+    p.feed_line("Random unrecognized line")
+    up = p.get_progress()
+    assert up.current == 2
+    assert up.total is None
+
+
+def test_percent_parser_formats():
+    p = PercentParser()
+    p.feed_line("Downloading assets: 45%")
+    up = p.get_progress()
+    assert up.current == 45
+    assert up.total == 100
+    assert up.unit == "%"
+    assert "Downloading assets" in up.label
+
+    sticky = p.format_running_sticky("curl url")
+    assert "45%" in sticky["summary"]
+    assert "45%" in sticky["steps"][0]["note"]
+
+
+def test_pytest_parser_formats():
+    p = PytestParser()
+    p.feed_line("collected 50 items")
+    assert p.total_tests == 50
+
+    p.feed_line("tests/test_one.py::test_alpha PASSED [ 2%]")
+    up = p.get_progress()
+    assert p.passed == 1
+    assert p.failed == 0
+    assert up.current == 1
+    assert up.total == 50
+    assert up.unit == "tests"
+
+    p.feed_line("tests/test_one.py::test_beta FAILED [ 4%]")
+    up = p.get_progress()
+    assert p.passed == 1
+    assert p.failed == 1
+    assert up.status == "failed"
+
+    p.feed_line("=== 48 passed, 2 failed in 5.2s ===")
+    up = p.get_progress()
+    assert p.passed == 48
+    assert p.failed == 2
+
+
+def test_auto_parser_detects_format_and_falls_back():
+    p = AutoParser()
+    # Initial lines unrecognized: line counter fallback
+    p.feed_line("Starting task...")
+    up = p.get_progress()
+    assert up.unit == "lines"
+    assert up.current == 1
+
+    # Step format encountered
+    p.feed_line("[1/4] Preparing environment")
+    up = p.get_progress()
+    assert up.unit == "steps"
+    assert up.current == 1
+    assert up.total == 4
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_with_step_parser(tmp_path, config, sticky_registry):
+    """pin_sticky=True with progress_parser='step' updates progress_tracker with step counts."""
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    cmd = (
+        'bash -c "echo \\"[1/3] Step one\\"; '
+        'sleep 0.1; echo \\"[2/3] Step two\\"; '
+        'sleep 0.1; echo \\"[3/3] Step three\\""'
+    )
+    job = await manager.start(
+        cmd,
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-step",
+        manager=fake,
+        pin_sticky=True,
+        progress_parser="step",
+    )
+    await job.reader_task
+
+    events = fake.sticky_events
+    assert len(events) >= 2
+    final = events[-1]
+    assert final["data"]["steps"][0]["status"] == "done"
+    assert "[3/3]" in final["data"]["steps"][0]["note"]
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_with_percent_parser(tmp_path, config, sticky_registry):
+    """pin_sticky=True with progress_parser='percent' updates progress_tracker with percentages."""
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    cmd = 'bash -c "echo \\"downloading 25%\\"; sleep 0.1; echo \\"downloading 75%\\""'
+    job = await manager.start(
+        cmd,
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-pct",
+        manager=fake,
+        pin_sticky=True,
+        progress_parser="percent",
+    )
+    await job.reader_task
+
+    events = fake.sticky_events
+    assert len(events) >= 2
+    final = events[-1]
+    assert final["data"]["steps"][0]["status"] == "done"
+    assert "75%" in final["data"]["steps"][0]["note"]
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_with_pytest_parser(tmp_path, config, sticky_registry):
+    """pin_sticky=True with progress_parser='pytest' tracks pass/fail counts."""
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    cmd = (
+        'bash -c "echo \\"collected 10 items\\"; '
+        'echo \\"tests/test_a.py::test_1 PASSED [ 50%]\\"; '
+        'echo \\"tests/test_a.py::test_2 FAILED [100%]\\"; '
+        'exit 1"'
+    )
+    job = await manager.start(
+        cmd,
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-pytest",
+        manager=fake,
+        pin_sticky=True,
+        progress_parser="pytest",
+    )
+    await job.reader_task
+
+    events = fake.sticky_events
+    final = events[-1]
+    assert final["data"]["steps"][0]["status"] == "failed"
+    assert "1 passed, 1 failed" in final["data"]["steps"][0]["note"]
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_progress_parser_tool_plumbing(ctx, monkeypatch):
+    """progress_parser parameter plumbs from tool_shell_background_start to job."""
+    from decafclaw.skills.background.tools import _get_job_manager, tool_shell_background_start
+
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    result = await tool_shell_background_start(ctx, command="true", pin_sticky=True, progress_parser="pytest")
+    mgr = _get_job_manager(ctx)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    assert job.pin_sticky is True
+    assert job.progress_parser == "pytest"
+    assert result.data["progress_parser"] == "pytest"
+
+    await mgr.cleanup_all()
+
+
+def test_pytest_parser_xdist_format():
+    p = PytestParser()
+    p.feed_line("created: 8/8 workers")
+    p.feed_line("8 workers [39 items]")
+    assert p.total_tests == 39
+
+    p.feed_line("....................................... [100%]")
+    up = p.get_progress()
+    assert up.total == 39
+    assert up.current == 39
+
+
+def test_get_progress_parser_factory():
+    assert isinstance(get_progress_parser("auto"), AutoParser)
+    assert isinstance(get_progress_parser("step"), StepParser)
+    assert isinstance(get_progress_parser("percent"), PercentParser)
+    assert isinstance(get_progress_parser("pytest"), PytestParser)
+    assert isinstance(get_progress_parser("none"), NoneParser)
+    # Unknown falls back to AutoParser
+    assert isinstance(get_progress_parser("unknown"), AutoParser)
+
+
+def test_auto_parser_huge_line_safety():
+    p = AutoParser()
+    huge_line = "A" * 5000 + " [1/2] Step one"
+    p.feed_line(huge_line)
+    # Should not raise, lines beyond 2000 capped safely
+    up = p.get_progress()
+    assert up.status == "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_auto_interleaved_stderr(tmp_path, config, sticky_registry):
+    """Interleaved stderr lines do not disrupt step progress in auto mode."""
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    cmd = (
+        'bash -c "echo \\"[1/2] Step one\\"; '
+        'echo \\"warning: some deprecation\\" >&2; '
+        'sleep 0.1; echo \\"[2/2] Step two\\""'
+    )
+    job = await manager.start(
+        cmd,
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-interleaved",
+        manager=fake,
+        pin_sticky=True,
+        progress_parser="auto",
+    )
+    await job.reader_task
+
+    events = fake.sticky_events
+    final = events[-1]
+    assert final["data"]["steps"][0]["status"] == "done"
+    assert "[2/2]" in final["data"]["steps"][0]["note"]
     await manager.cleanup_all()

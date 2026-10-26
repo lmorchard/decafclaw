@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import uuid4
 
 from decafclaw.media import ToolResult
+from decafclaw.skills.background.parsers import BaseProgressParser, get_progress_parser
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -45,6 +46,8 @@ class BackgroundJob:
     event_bus: Any = None
     completion_tail_lines: int = 50
     pin_sticky: bool = False  # stream live output to the sticky slot (#1104)
+    progress_parser: str = "auto"  # parser preset: auto, step, percent, pytest, none (#1137)
+    parser: BaseProgressParser | None = None
     last_output_line: str = ""  # latest stdout/stderr line observed (#1104)
     finalized: bool = False
     manager: Any = None
@@ -79,11 +82,11 @@ async def _read_stream(
 async def _run_reader(job: BackgroundJob) -> None:
     """Read stdout/stderr until process exits, then capture exit code."""
     cancelled = False
-    hook = _sticky_line_hook(job)
+    stdout_hook, stderr_hook = _sticky_stream_hooks(job)
     try:
         await asyncio.gather(
-            _read_stream(job.process.stdout, job.stdout_buffer, on_line=hook),
-            _read_stream(job.process.stderr, job.stderr_buffer, on_line=hook),
+            _read_stream(job.process.stdout, job.stdout_buffer, on_line=stdout_hook),
+            _read_stream(job.process.stderr, job.stderr_buffer, on_line=stderr_hook),
         )
         await job.process.wait()
         job.exit_code = job.process.returncode
@@ -194,6 +197,11 @@ def _last_output_line(job: BackgroundJob) -> str:
 
 def _running_sticky_data(job: BackgroundJob) -> dict:
     """progress_tracker payload for a running job."""
+    if job.parser is not None:
+        try:
+            return job.parser.format_running_sticky(job.command)
+        except Exception:
+            log.warning("Parser format_running_sticky failed for job %s", job.job_id, exc_info=True)
     last_line = _last_output_line(job)[:_STICKY_NOTE_MAX]
     step = {"label": _cmd_preview(job.command), "status": "in_progress"}
     if last_line:
@@ -207,6 +215,11 @@ def _running_sticky_data(job: BackgroundJob) -> dict:
 
 def _final_sticky_data(job: BackgroundJob) -> dict:
     """progress_tracker payload for a completed or failed job."""
+    if job.parser is not None:
+        try:
+            return job.parser.format_final_sticky(job.command, job.exit_code, job.status)
+        except Exception:
+            log.warning("Parser format_final_sticky failed for job %s", job.job_id, exc_info=True)
     last_line = _last_output_line(job)
     if job.status == "completed":
         step_status = "done"
@@ -281,24 +294,44 @@ async def _finish_job_sticky(job: BackgroundJob) -> None:
         log.warning("Failed to finalize sticky slot for background job %s", job.job_id, exc_info=True)
 
 
-def _sticky_line_hook(job: BackgroundJob) -> Callable[[str], Awaitable[None]] | None:
-    """Build a throttled sticky output callback that schedules publishes off the reader."""
+def _sticky_stream_hooks(
+    job: BackgroundJob,
+) -> tuple[Callable[[str], Awaitable[None]] | None, Callable[[str], Awaitable[None]] | None]:
+    """Build throttled sticky callbacks for stdout and stderr streams."""
     if not job.pin_sticky:
-        return None
+        return None, None
     last = {"t": 0.0}
 
-    async def on_line(line: str) -> None:
-        job.last_output_line = line
-        now = time.monotonic()
-        if now - last["t"] < _STICKY_THROTTLE_SEC:
-            return
-        last["t"] = now
-        task = job.sticky_publish_task
-        if task is not None and not task.done():
-            return
-        job.sticky_publish_task = asyncio.create_task(_sticky_publish_when_due(job, now))
+    def _make_hook(stream: str) -> Callable[[str], Awaitable[None]]:
+        async def on_line(line: str) -> None:
+            job.last_output_line = line
+            if job.parser is not None:
+                try:
+                    job.parser.feed_line(line, stream=stream)
+                except Exception:
+                    log.warning("Progress parser feed_line failed for job %s", job.job_id, exc_info=True)
+            now = time.monotonic()
+            if now - last["t"] < _STICKY_THROTTLE_SEC:
+                task = job.sticky_publish_task
+                if task is None or task.done():
+                    due_at = last["t"] + _STICKY_THROTTLE_SEC
+                    job.sticky_publish_task = asyncio.create_task(_sticky_publish_when_due(job, due_at))
+                return
+            last["t"] = now
+            task = job.sticky_publish_task
+            if task is not None and not task.done():
+                return
+            job.sticky_publish_task = asyncio.create_task(_sticky_publish_when_due(job, now))
 
-    return on_line
+        return on_line
+
+    return _make_hook("stdout"), _make_hook("stderr")
+
+
+def _sticky_line_hook(job: BackgroundJob) -> Callable[[str], Awaitable[None]] | None:
+    """Backwards-compatible single hook for tests."""
+    stdout_hook, _ = _sticky_stream_hooks(job)
+    return stdout_hook
 
 
 async def _finalize_job(job: BackgroundJob) -> None:
@@ -486,6 +519,7 @@ class BackgroundJobManager:
         completion_tail_lines: int = 50,
         manager: Any = None,
         pin_sticky: bool = False,
+        progress_parser: str = "auto",
     ) -> BackgroundJob:
         """Start a background process. Returns immediately.
 
@@ -502,6 +536,7 @@ class BackgroundJobManager:
             start_new_session=True,
         )
 
+        parser = get_progress_parser(progress_parser) if pin_sticky else None
         job = BackgroundJob(
             job_id=uuid4().hex[:12],
             command=command,
@@ -515,6 +550,8 @@ class BackgroundJobManager:
             completion_tail_lines=completion_tail_lines,
             manager=manager,
             pin_sticky=pin_sticky,
+            progress_parser=progress_parser,
+            parser=parser,
         )
         job.reader_task = asyncio.create_task(_run_reader(job))
         self.jobs[job.job_id] = job
@@ -625,7 +662,11 @@ def _get_job_manager(ctx: "Context") -> BackgroundJobManager:
 
 
 async def tool_shell_background_start(
-    ctx: "Context", command: str, completion_tail_lines: int | None = None, pin_sticky: bool = False
+    ctx: "Context",
+    command: str,
+    completion_tail_lines: int | None = None,
+    pin_sticky: bool = False,
+    progress_parser: str = "auto",
 ) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
@@ -664,6 +705,7 @@ async def tool_shell_background_start(
             completion_tail_lines=clamped_tail_lines,
             manager=conv_manager,
             pin_sticky=pin_sticky,
+            progress_parser=progress_parser,
         )
     except Exception as e:
         return ToolResult(
@@ -679,7 +721,13 @@ async def tool_shell_background_start(
             f"- **Command:** `{command}`\n"
             f"- **Max lifetime:** {job.max_lifetime:.0f}s"
         ),
-        data={"job_id": job.job_id, "status": "running", "command": command, "pid": job.pid},
+        data={
+            "job_id": job.job_id,
+            "status": "running",
+            "command": command,
+            "pid": job.pid,
+            **({"pin_sticky": True, "progress_parser": progress_parser} if pin_sticky else {}),
+        },
     )
 
 
@@ -856,6 +904,18 @@ TOOL_DEFINITIONS = [
                             "completed/failed state on exit). Use for long "
                             "jobs the user should watch instead of polling. "
                             "Optional; default false."
+                        ),
+                    },
+                    "progress_parser": {
+                        "type": "string",
+                        "enum": ["auto", "step", "percent", "pytest", "none"],
+                        "description": (
+                            "Progress parser preset to derive live progress_tracker "
+                            "updates from ordinary command output when pin_sticky is true. "
+                            "Options: 'auto' (detects format, falls back to line counts), "
+                            "'step' (e.g. [3/10], Step 3 of 10), 'percent' (e.g. 45%), "
+                            "'pytest' (collected count, passed/failed counts), "
+                            "or 'none' (raw line counting). Optional; default 'auto'."
                         ),
                     },
                 },
