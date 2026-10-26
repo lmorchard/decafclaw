@@ -17,8 +17,8 @@ from .openai_compat import _MAX_RETRIES, _cancellable_sleep, _RetryableError
 log = logging.getLogger(__name__)
 
 
-def _visible_output(output: list[dict]) -> tuple[str | None, list[dict] | None]:
-    text, calls = [], []
+def _visible_output(output: list[dict]) -> tuple[str | None, str | None, list[dict] | None]:
+    text, thinking, calls = [], [], []
     for item in output:
         if item["type"] == "message":
             for part in item.get("content", []):
@@ -37,9 +37,16 @@ def _visible_output(output: list[dict]) -> tuple[str | None, list[dict] | None]:
                     },
                 }
             )
-        elif item["type"] != "reasoning":
+        elif item["type"] == "reasoning":
+            for part in item.get("content", []):
+                if part.get("type") in ("reasoning_text", "text") and part.get("text"):
+                    thinking.append(part["text"])
+            for part in item.get("summary", []):
+                if part.get("type") in ("summary_text", "text") and part.get("text"):
+                    thinking.append(part["text"])
+        else:
             raise ValueError(f"Unsupported Responses output item: {item['type']}")
-    return "".join(text) or None, calls or None
+    return "".join(text) or None, "".join(thinking) or None, calls or None
 
 
 class OpenAIResponsesProvider(OpenAIProvider):
@@ -77,7 +84,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 # Visible history is authoritative, including edits made after
                 # archival. Foreign models/connections see normalized history.
                 if output and all(data.get(key) == value for key, value in self._provenance(model).items()):
-                    text, calls = _visible_output(output)
+                    text, _, calls = _visible_output(output)
                     if (text or "") == (content or "") and (calls or []) == (message.get("tool_calls") or []):
                         items.extend(deepcopy(output))
                         continue
@@ -227,6 +234,7 @@ class _ResponsesState:
         self.items: dict[int, dict] = {}
         self.item_indices: dict[str, int] = {}
         self.text: list[str] = []
+        self.thinking: list[str] = []
         self.response: dict | None = None
         self.finish_reason = "error"  # EOF is not successful completion.
         self.terminal = False
@@ -284,6 +292,15 @@ class _ResponsesState:
         elif kind in ("response.output_text.delta", "response.refusal.delta"):
             self.text.append(event["delta"])
             await self.emit("text", event["delta"])
+        elif kind in (
+            "response.reasoning_text.delta",
+            "response.reasoning_summary_text.delta",
+            "response.reasoning.delta",
+        ):
+            delta = event.get("delta", "")
+            if delta:
+                self.thinking.append(delta)
+                await self.emit("thinking", delta)
         elif kind == "response.function_call_arguments.delta":
             index = self.item_indices.get(event.get("item_id", ""), index)
             item = self.items[index]
@@ -302,12 +319,14 @@ class _ResponsesState:
 
     async def finalize(self) -> dict:
         output = [self.items[index] for index in sorted(self.items)]
-        content, calls = _visible_output(output)
+        content, reasoning, calls = _visible_output(output)
         # Terminal responses supply authoritative output. On disconnect,
         # deltas also contain text from unfinished message items.
         if self.response is None:
             content = "".join(self.text) or content
+            reasoning = "".join(self.thinking) or reasoning
         content = content or None
+        reasoning = reasoning or ("".join(self.thinking) or None)
         usage = None
         if self.response and self.response.get("usage"):
             raw = self.response["usage"]
@@ -326,6 +345,7 @@ class _ResponsesState:
         result = {
             "role": "assistant",
             "content": content,
+            "thinking": reasoning,
             "tool_calls": calls,
             "usage": usage,
             "finish_reason": self.finish_reason,

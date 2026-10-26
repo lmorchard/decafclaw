@@ -67,7 +67,7 @@ function extractText(msg: Record<string, unknown> | null | undefined): string {
 export function dispatch(s: State, m: ServerMessage): State {
   switch (m.type) {
     case "chunk":
-      return { ...s, draft: s.draft + m.text };
+      return { ...s, draft: s.draft + (m.text || "") };
 
     case "message_complete": {
       // Cancel preserves the streamed draft: the server replaces text with

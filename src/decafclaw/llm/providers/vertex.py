@@ -177,7 +177,7 @@ class VertexProvider:
                 )
                 await _cancellable_sleep(delay, cancel_event)
             except Exception as e:
-                if not state.all_text_parts and state.tool_calls_seen == 0:
+                if not state.all_text_parts and not state.all_thinking_parts and state.tool_calls_seen == 0:
                     raise
                 log.error("Vertex streaming error (partial content kept): %s", e)
                 break
@@ -301,6 +301,7 @@ class _VertexStreamState:
     def __init__(self, on_chunk: StreamCallback | None = None):
         self.on_chunk = on_chunk
         self.all_text_parts: list[str] = []
+        self.all_thinking_parts: list[str] = []
         self.all_tool_calls: list[dict] = []
         self.tool_calls_seen = 0
         self.usage: dict | None = None
@@ -342,9 +343,12 @@ class _VertexStreamState:
 
         # Gemini sends incremental text per chunk — emit directly
         chunk_text = ""
+        chunk_thinking = ""
         chunk_tool_calls = []
         for part in parts:
-            if "text" in part:
+            if part.get("thought") is True:
+                chunk_thinking += part.get("text", "")
+            elif "text" in part:
                 chunk_text += part["text"]
             elif "functionCall" in part:
                 fc = dict(part["functionCall"])
@@ -358,10 +362,13 @@ class _VertexStreamState:
                     fc["thought_signature"] = sig
                 chunk_tool_calls.append(fc)
 
+        if chunk_thinking:
+            self.all_thinking_parts.append(chunk_thinking)
+            await self._emit("thinking", chunk_thinking)
+
         if chunk_text:
             self.all_text_parts.append(chunk_text)
             await self._emit("text", chunk_text)
-
         # Tool calls arrive as complete calls (not deltas like OpenAI)
         for i, fc in enumerate(chunk_tool_calls):
             idx = self.tool_calls_seen + i
@@ -375,6 +382,7 @@ class _VertexStreamState:
     async def finalize(self) -> dict:
         """Build the final response dict and emit closing events."""
         content = "".join(self.all_text_parts) or None
+        thinking = "".join(self.all_thinking_parts) or None
         tool_calls = None
         if self.all_tool_calls:
             tool_calls = []
@@ -393,12 +401,12 @@ class _VertexStreamState:
                 tool_calls.append(tc)
 
         finish_reason = self.finish_reason
-        if finish_reason is None and (content or tool_calls):
+        if finish_reason is None and (content or thinking or tool_calls):
             finish_reason = "stop"
 
         await self._emit("done", {"usage": self.usage})
 
-        if not content and not tool_calls and self._all_events:
+        if not content and not thinking and not tool_calls and self._all_events:
             log.warning(
                 "Vertex returned empty — SSE dump (%d events):",
                 len(self._all_events),
@@ -408,6 +416,7 @@ class _VertexStreamState:
 
         return {
             "content": content,
+            "thinking": thinking,
             "tool_calls": tool_calls,
             "role": "assistant",
             "usage": self.usage,
@@ -649,10 +658,13 @@ def _parse_response(data: dict) -> dict:
     parts = candidates[0].get("content", {}).get("parts", [])
 
     text_parts = []
+    thinking_parts = []
     tool_calls = []
 
     for part in parts:
-        if "text" in part:
+        if part.get("thought") is True:
+            thinking_parts.append(part.get("text", ""))
+        elif "text" in part:
             text_parts.append(part["text"])
         elif "functionCall" in part:
             fc = part["functionCall"]
@@ -676,6 +688,7 @@ def _parse_response(data: dict) -> dict:
 
     return {
         "content": "".join(text_parts) or None,
+        "thinking": "".join(thinking_parts) or None,
         "tool_calls": tool_calls or None,
         "role": "assistant",
         "usage": _parse_usage(data),

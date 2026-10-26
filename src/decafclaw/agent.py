@@ -909,14 +909,16 @@ class TurnRunner:
         Returns _Continue to loop again, or _Final(result) to end the turn.
         """
         iter_content = response.get("content")
+        iter_thinking = response.get("thinking")
         assistant_msg = assistant_message(response)
         self.history.append(assistant_msg)
         self.messages.append(assistant_msg)
         _archive(self.ctx, assistant_msg)
 
-        if iter_content:
-            self.accumulated_text_parts.append(iter_content)
-            await self.ctx.publish("text_before_tools", text=iter_content)
+        if iter_content or iter_thinking:
+            if iter_content:
+                self.accumulated_text_parts.append(iter_content)
+            await self.ctx.publish("text_before_tools", text=iter_content or "", thinking=iter_thinking)
 
         finish_reason = response.get("finish_reason")
         if finish_reason == "length" or finish_reason in ("error", "interrupted"):
@@ -1196,7 +1198,7 @@ class TurnRunner:
 
         await self._emit_reflection_metrics(content)
         await _maybe_compact(self.ctx, self.config, self.history, self.prompt_tokens)
-        return _Final(result=self._extract_workspace_media(content))
+        return _Final(result=self._extract_workspace_media(content, thinking=response.get("thinking")))
 
     async def _emit_reflection_metrics(self, final_content: str) -> None:
         """Publish one reflection_turn telemetry event per judge-eligible turn
@@ -1547,7 +1549,7 @@ class TurnRunner:
         )
         return ToolResult(text=delivered, termination_reason=termination_reason)
 
-    def _extract_workspace_media(self, content: str) -> "ToolResult":
+    def _extract_workspace_media(self, content: str, thinking: str | None = None) -> "ToolResult":
         """Extract workspace:// refs only for channels that need it.
 
         Mattermost strips refs and uploads files; web/terminal render them
@@ -1569,8 +1571,9 @@ class TurnRunner:
                     text=cleaned_text,
                     media=workspace_media,
                     termination_reason=termination_reason,
+                    thinking=thinking,
                 )
-        return ToolResult(text=content or "", termination_reason=termination_reason)
+        return ToolResult(text=content or "", termination_reason=termination_reason, thinking=thinking)
 
     async def _write_diagnostics(self) -> None:
         """Persist context diagnostics + skill state on any turn-exit path.

@@ -25,6 +25,7 @@ from decafclaw.web.auto_titling import maybe_auto_title
 from decafclaw.web.message_types import (
     ServerMessage,
     SrvCanvasUpdate,
+    SrvChunk,
     SrvCompactionDone,
     SrvConfirmationResponse,
     SrvConfirmRequest,
@@ -925,7 +926,7 @@ def _subscribe_to_conv(state, conv_id):
 
     ws_send: WSSendCallable = state["ws_send"]
     config = state["config"]
-    streaming_buffer = {"text": ""}
+    streaming_buffer = {"text": "", "thinking": ""}
 
     async def on_conv_event(event):
         """Format manager events as WebSocket JSON messages."""
@@ -945,43 +946,54 @@ def _subscribe_to_conv(state, conv_id):
             )
 
         elif event_type == "chunk":
-            streaming_buffer["text"] += event.get("text", "")
-            await ws_send(
-                {
-                    "type": WSMessageType.CHUNK,
-                    "conv_id": event_conv_id,
-                    "text": event.get("text", ""),
-                }
-            )
+            text = event.get("text", "")
+            thinking = event.get("thinking", "")
+            if text:
+                streaming_buffer["text"] += text
+            if thinking:
+                streaming_buffer["thinking"] += thinking
+            chunk_payload: SrvChunk = {
+                "type": WSMessageType.CHUNK,
+                "conv_id": event_conv_id,
+            }
+            if text:
+                chunk_payload["text"] = text
+            if thinking:
+                chunk_payload["thinking"] = thinking
+            await ws_send(chunk_payload)
 
         elif event_type == "stream_done":
             pass  # buffer finalized by llm_start or message_complete
 
         elif event_type == "llm_start":
             iteration = event.get("iteration", 1)
-            if iteration > 1 and streaming_buffer["text"]:
-                await ws_send(
-                    {
-                        "type": WSMessageType.MESSAGE_COMPLETE,
-                        "conv_id": event_conv_id,
-                        "role": "assistant",
-                        "text": streaming_buffer["text"],
-                    }
-                )
+            if iteration > 1 and (streaming_buffer["text"] or streaming_buffer["thinking"]):
+                complete_payload: SrvMessageComplete = {
+                    "type": WSMessageType.MESSAGE_COMPLETE,
+                    "conv_id": event_conv_id,
+                    "role": "assistant",
+                    "text": streaming_buffer["text"],
+                }
+                if streaming_buffer["thinking"]:
+                    complete_payload["thinking"] = streaming_buffer["thinking"]
+                await ws_send(complete_payload)
                 streaming_buffer["text"] = ""
-
+                streaming_buffer["thinking"] = ""
         elif event_type == "text_before_tools":
             text = streaming_buffer["text"] or event.get("text", "")
-            if text:
-                await ws_send(
-                    {
-                        "type": WSMessageType.MESSAGE_COMPLETE,
-                        "conv_id": event_conv_id,
-                        "role": "assistant",
-                        "text": text,
-                    }
-                )
+            thinking = streaming_buffer["thinking"] or event.get("thinking", "")
+            if text or thinking:
+                msg_before_tools: SrvMessageComplete = {
+                    "type": WSMessageType.MESSAGE_COMPLETE,
+                    "conv_id": event_conv_id,
+                    "role": "assistant",
+                    "text": text,
+                }
+                if thinking:
+                    msg_before_tools["thinking"] = thinking
+                await ws_send(msg_before_tools)
                 streaming_buffer["text"] = ""
+                streaming_buffer["thinking"] = ""
 
         elif event_type == "tool_start":
             args = event.get("args")
@@ -1068,17 +1080,19 @@ def _subscribe_to_conv(state, conv_id):
                 )
 
         elif event_type == "confirmation_request":
-            # Flush any pending streamed text
-            if streaming_buffer["text"]:
-                await ws_send(
-                    {
-                        "type": WSMessageType.MESSAGE_COMPLETE,
-                        "conv_id": event_conv_id,
-                        "role": "assistant",
-                        "text": streaming_buffer["text"],
-                    }
-                )
+            # Flush any pending streamed text or thinking
+            if streaming_buffer["text"] or streaming_buffer["thinking"]:
+                confirm_complete_payload: SrvMessageComplete = {
+                    "type": WSMessageType.MESSAGE_COMPLETE,
+                    "conv_id": event_conv_id,
+                    "role": "assistant",
+                    "text": streaming_buffer["text"],
+                }
+                if streaming_buffer["thinking"]:
+                    confirm_complete_payload["thinking"] = streaming_buffer["thinking"]
+                await ws_send(confirm_complete_payload)
                 streaming_buffer["text"] = ""
+                streaming_buffer["thinking"] = ""
             action_type = event.get("action_type", "")
             action_data = event.get("action_data", {})
             log.info("Forwarding confirm request to web UI: %s", action_type)
@@ -1125,13 +1139,17 @@ def _subscribe_to_conv(state, conv_id):
         elif event_type == "message_complete":
             if event.get("suppress_user_message"):
                 return  # WAKE turn ended with BACKGROUND_WAKE_OK — silent end
+            thinking = event.get("thinking") or streaming_buffer["thinking"] or None
             if event.get("final"):
                 streaming_buffer["text"] = ""
+                streaming_buffer["thinking"] = ""
             msg_complete: SrvMessageComplete = {
                 "type": WSMessageType.MESSAGE_COMPLETE,
                 "conv_id": event_conv_id,
                 "text": event.get("text", ""),
             }
+            if thinking:
+                msg_complete["thinking"] = thinking
             if "role" in event:
                 msg_complete["role"] = event["role"]
             if "final" in event:
@@ -1149,6 +1167,7 @@ def _subscribe_to_conv(state, conv_id):
 
         elif event_type == "turn_complete":
             streaming_buffer["text"] = ""
+            streaming_buffer["thinking"] = ""
             await ws_send({"type": WSMessageType.TURN_COMPLETE, "conv_id": event_conv_id})
             # #1072 — refine the sidebar title in the background after the
             # turn. Fire-and-forget: titling must not add latency to turn

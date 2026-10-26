@@ -321,6 +321,7 @@ class ConversationState:
     # `turn_aborted_marker_written` is the parallel latch for the
     # exception-path marker (issue #517).
     partial_assistant_chunks: list[str] = field(default_factory=list)
+    partial_assistant_thinking_chunks: list[str] = field(default_factory=list)
     partial_assistant_archived: bool = False
     cancel_observed_by_agent: bool = False
     cancel_marker_written: bool = False
@@ -1716,6 +1717,7 @@ class ConversationManager:
         # Reset cancel/partial accounting so this turn starts clean and
         # a subsequent cancel only persists what we actually streamed.
         state.partial_assistant_chunks = []
+        state.partial_assistant_thinking_chunks = []
         state.partial_assistant_archived = False
         state.cancel_observed_by_agent = False
         state.cancel_marker_written = False
@@ -1738,6 +1740,16 @@ class ConversationManager:
                         {
                             "type": "chunk",
                             "text": data,
+                        },
+                    )
+                elif chunk_type == "thinking":
+                    if isinstance(data, str):
+                        state.partial_assistant_thinking_chunks.append(data)
+                    await self.emit(
+                        conv_id,
+                        {
+                            "type": "chunk",
+                            "thinking": data,
                         },
                     )
                 elif chunk_type == "done":
@@ -1874,36 +1886,33 @@ class ConversationManager:
                 if state.cancel_observed_by_agent:
                     self._write_cancel_marker_once(conv_id, state)
                 suppress = kind is TurnKind.WAKE and is_background_wake_ok(result)
-                await self.emit(
-                    conv_id,
-                    {
-                        "type": "message_complete",
-                        "role": "assistant",
-                        "text": response_text,
-                        "media": response_media,
-                        "final": True,
-                        "suppress_user_message": suppress,
-                        "usage": {
-                            "prompt_tokens": ctx.tokens.last_prompt,
-                            "completion_tokens": ctx.tokens.total_completion,
-                            "total_tokens": (ctx.tokens.total_prompt + ctx.tokens.total_completion),
-                        },
-                        # #1005 — the context meter's value, kept separate from
-                        # usage.prompt_tokens so the provider's actual LLM
-                        # usage record stays intact (the recorder stores that
-                        # verbatim). On a compacting turn last_prompt is the
-                        # last LLM call — which by definition exceeded the
-                        # threshold and would show >100% — so this carries the
-                        # post-compaction estimate instead. Non-compacting
-                        # turns fall back to the real last_prompt.
-                        "context_usage": (
-                            ctx.tokens.last_compaction_estimate
-                            if ctx.tokens.last_compaction_estimate is not None
-                            else ctx.tokens.last_prompt
-                        ),
-                        "context_limit": self.config.compaction.max_tokens,
-                    },
+                response_thinking = getattr(result, "thinking", None) or (
+                    "".join(state.partial_assistant_thinking_chunks)
+                    if state.partial_assistant_thinking_chunks
+                    else None
                 )
+                msg_complete_payload = {
+                    "type": "message_complete",
+                    "role": "assistant",
+                    "text": response_text,
+                    "media": response_media,
+                    "final": True,
+                    "suppress_user_message": suppress,
+                    "usage": {
+                        "prompt_tokens": ctx.tokens.last_prompt,
+                        "completion_tokens": ctx.tokens.total_completion,
+                        "total_tokens": (ctx.tokens.total_prompt + ctx.tokens.total_completion),
+                    },
+                    "context_usage": (
+                        ctx.tokens.last_compaction_estimate
+                        if ctx.tokens.last_compaction_estimate is not None
+                        else ctx.tokens.last_prompt
+                    ),
+                    "context_limit": self.config.compaction.max_tokens,
+                }
+                if response_thinking:
+                    msg_complete_payload["thinking"] = response_thinking
+                await self.emit(conv_id, msg_complete_payload)
                 if kind is TurnKind.WAKE and not suppress and not state.subscribers:
                     transport = getattr(ctx, "transport", "")
                     if transport == "mattermost" or (ctx.channel_id and ctx.channel_id != conv_id):
