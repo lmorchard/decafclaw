@@ -379,7 +379,8 @@ Lit web components in `src/decafclaw/web/static/`:
 | `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter strip/panel: view-mode summary + tags, edit-mode typed controls and raw YAML editor |
 | `context-inspector` | `components/context-inspector.js` | Context diagnostics popover |
 | `notification-inbox` | `components/notification-inbox.js` | Bell icon + dropdown inbox panel |
-| `config-panel` | `components/config-panel.js` | Admin config file editor |
+| `config-panel` | `components/config-panel.js` | Admin config file editor & shell presets tab |
+| `preset-manager` | `components/preset-manager.js` | Shell auto-approval preset manager (list, create, edit, delete) |
 | `confirm-view` | `components/confirm-view.js` | Confirmation dialog for tool approvals |
 | `login-view` | `components/login-view.js` | Login screen |
 | `canvas-panel` | `components/canvas-panel.js` | Canvas side panel and resummon pill |
@@ -563,10 +564,15 @@ See [Bookmarks](#bookmarks) for the UI.
 | `GET` | `/api/config/files` | List editable config files |
 | `GET` | `/api/config/files/{path}` | Read a config file |
 | `PUT` | `/api/config/files/{path}` | Write a config file |
+### Shell Approval Presets
 
-These generated contracts preserve the list's bare-array shape, nullable
-modification times, bundled-default fields, and the config writer's established
-400/409 responses.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/shell-approval/presets` | List all presets with `name`, `rules: list[str]`, `source` (`builtin` \| `config` \| `custom`), and `shadows_config` |
+| `PUT` | `/api/shell-approval/presets/{name}` | Create or replace a custom preset's rules |
+| `DELETE` | `/api/shell-approval/presets/{name}` | Delete a custom preset |
+
+PUT and DELETE on built-in or config preset names return 400. Successful mutations clear reviewer approval caches in active in-memory conversations that reference the modified preset.
 
 ### Notifications
 

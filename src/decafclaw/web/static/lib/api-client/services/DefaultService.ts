@@ -32,6 +32,8 @@ import type { ScheduleListResponse } from '../models/ScheduleListResponse';
 import type { ScheduleResetResponse } from '../models/ScheduleResetResponse';
 import type { ScheduleRunResponse } from '../models/ScheduleRunResponse';
 import type { ScheduleUpdateResponse } from '../models/ScheduleUpdateResponse';
+import type { ShellPresetItem } from '../models/ShellPresetItem';
+import type { ShellPresetMutateResponse } from '../models/ShellPresetMutateResponse';
 import type { SideQuestionCancelResponse } from '../models/SideQuestionCancelResponse';
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
@@ -1368,6 +1370,57 @@ export class DefaultService {
             query: {
                 'target': target,
                 'path': path,
+            },
+        });
+    }
+    /**
+     * Wrapper
+     * @returns ShellPresetItem Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiShellApprovalPresetsGet(): CancelablePromise<Array<ShellPresetItem>> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/shell-approval/presets',
+        });
+    }
+    /**
+     * Wrapper
+     * @param name
+     * @param requestBody
+     * @returns ShellPresetMutateResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiShellApprovalPresetsNamePut(
+        name: string,
+        requestBody: {
+            rules: Array<string>;
+        },
+    ): CancelablePromise<ShellPresetMutateResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/shell-approval/presets/{name}',
+            path: {
+                'name': name,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param name
+     * @returns ShellPresetMutateResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiShellApprovalPresetsNameDelete(
+        name: string,
+    ): CancelablePromise<ShellPresetMutateResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/shell-approval/presets/{name}',
+            path: {
+                'name': name,
             },
         });
     }

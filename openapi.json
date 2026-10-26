@@ -2259,6 +2259,105 @@
         ]
       }
     },
+    "/api/shell-approval/presets": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_shell_approval_presets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ShellPresetItem"
+                  },
+                  "type": "array",
+                  "title": "Response Wrapper Api Shell Approval Presets Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shell-approval/presets/{name}": {
+      "put": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_shell_approval_presets__name__put",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellPresetMutateResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "rules": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "Rules",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "rules"
+                ],
+                "title": "ShellPresetPutRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_shell_approval_presets__name__delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellPresetMutateResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/wiki": {
       "get": {
         "summary": "Wrapper",
@@ -4143,6 +4242,88 @@
           "modified"
         ],
         "title": "ScheduleUpdateResponse"
+      },
+      "ShellPresetItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "rules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "builtin",
+              "config",
+              "custom"
+            ],
+            "title": "Source"
+          },
+          "shadows_config": {
+            "type": "boolean",
+            "title": "Shadows Config",
+            "default": false
+          },
+          "referenced_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referenced By",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "rules",
+          "source"
+        ],
+        "title": "ShellPresetItem"
+      },
+      "ShellPresetMutateResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "rules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "updated_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "name",
+          "rules"
+        ],
+        "title": "ShellPresetMutateResponse"
       },
       "SideQuestionCancelResponse": {
         "properties": {
