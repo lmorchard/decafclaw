@@ -201,6 +201,44 @@ async def test_editing_preset_invalidates_active_conversation_cache(preset_confi
 
 
 @pytest.mark.asyncio
+async def test_editing_preset_invalidates_active_turn_context_and_prevents_restoration(preset_config, bus):
+    from decafclaw.context import Context
+    from decafclaw.conversation_manager import ConversationManager
+    from decafclaw.web.auth import create_token
+
+    manager = ConversationManager(preset_config, bus)
+    conv = manager.ensure_state("active_conv")
+    conv.persisted.active_aux_approval_presets = ["active_preset"]
+    conv.persisted.llm_approved_shell_patterns = ["pytest *"]
+
+    # Simulate an active turn with an active context
+    live_ctx = Context(config=preset_config, event_bus=bus)
+    live_ctx.tools.active_aux_approval_presets = ["active_preset"]
+    live_ctx.tools.llm_approved_shell_patterns = ["pytest *", "git status *"]
+    conv.active_context = live_ctx
+
+    app = create_app(preset_config, bus, manager=manager)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = create_token(preset_config, "testuser")
+        resp_login = await c.post("/api/auth/login", json={"token": token})
+        c.cookies = resp_login.cookies
+        resp = await c.put(
+            "/api/shell-approval/presets/active_preset",
+            json={"rules": ["Auto-approve pytest only"]},
+        )
+        assert resp.status_code == 200
+
+    # Both persisted and live running context approvals must be cleared
+    assert conv.persisted.llm_approved_shell_patterns == []
+    assert live_ctx.tools.llm_approved_shell_patterns == []
+
+    # Simulate turn-end state save: save must not restore the old approvals
+    manager._save_conversation_state(conv, live_ctx)
+    assert conv.persisted.llm_approved_shell_patterns == []
+
+
+@pytest.mark.asyncio
 async def test_editing_preset_invalidates_inherited_config_conversations(preset_config, bus):
     from decafclaw.conversation_manager import ConversationManager
     from decafclaw.web.auth import create_token

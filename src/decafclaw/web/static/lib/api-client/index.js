@@ -518,7 +518,7 @@ var request2 = (config, options) => {
         ok: response.ok,
         status: response.status,
         statusText: response.statusText,
-        body: folder && !response.ok ? await response.json() : vaultMutation && !response.ok ? await response.json().catch(() => void 0) : scheduleMutation && !response.ok ? await response.json().catch(() => void 0) : workspaceMutation && !response.ok ? workspaceSave ? await response.text() : await response.json().catch(() => void 0) : canvasNewTab && !response.ok ? await response.text() : void 0
+        body: folder && !response.ok ? await response.json() : vaultMutation && !response.ok ? await response.json().catch(() => void 0) : scheduleMutation && !response.ok ? await response.json().catch(() => void 0) : workspaceMutation && !response.ok ? workspaceSave ? await response.text() : await response.json().catch(() => void 0) : canvasNewTab && !response.ok ? await response.text() : shellPresets && !response.ok ? await response.json().catch(() => void 0) : void 0
       });
       if (options.discardResponse || workspaceRename) {
         resolve2(void 0);

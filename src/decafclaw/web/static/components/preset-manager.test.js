@@ -154,4 +154,49 @@ describe('preset-manager component', () => {
     );
     expect(deleteCall).toBeTruthy();
   });
+
+  it('does not let older in-flight GET overwrite post-mutation preset state', async () => {
+    const { savePreset, snapshot, load } = await import('../lib/presets-store.js');
+    reset();
+
+    let resolveInitialGet;
+    let hasBlocked = false;
+    const initialGetPromise = new Promise(resolve => {
+      resolveInitialGet = resolve;
+    });
+
+    const fetchMock = vi.fn(async (url, options) => {
+      const u = new URL(url, 'http://test');
+      if (u.pathname === '/api/shell-approval/presets') {
+        if (!hasBlocked) {
+          hasBlocked = true;
+          await initialGetPromise;
+          return jsonResponse(BUILTIN_PRESETS);
+        }
+        return jsonResponse([
+          ...BUILTIN_PRESETS,
+          { name: 'newly_saved', rules: ['rule 1'], source: 'custom', shadows_config: false },
+        ]);
+      }
+      if (u.pathname.startsWith('/api/shell-approval/presets/')) {
+        return jsonResponse({ ok: true, name: 'newly_saved', rules: ['rule 1'] });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // 1. Start a slow initial load
+    const slowLoad = load();
+
+    // 2. Perform a mutation while that GET is pending
+    await savePreset('newly_saved', ['rule 1']);
+
+    // 3. Complete the old slow initial GET
+    resolveInitialGet();
+    await slowLoad;
+
+    // 4. Assert current snapshot has newly_saved and was not overwritten by the older GET
+    const currentPresets = snapshot();
+    expect(currentPresets.some(p => p.name === 'newly_saved')).toBe(true);
+  });
 });

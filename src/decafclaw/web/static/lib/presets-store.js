@@ -16,7 +16,23 @@ const _state = {
   subscribers: new Set(),
   /** @type {Promise<PresetItem[]>|null} */
   inFlight: null,
+  /** Monotonic sequence token to sequence reads and mutations. */
+  seq: 0,
 };
+
+/** @type {Promise<any>} */
+let _tail = Promise.resolve();
+
+/**
+ * @template T
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+function _runExclusive(task) {
+  const result = _tail.then(task, task);
+  _tail = result.then(() => undefined, () => undefined);
+  return result;
+}
 
 function notify() {
   const snap = [..._state.presets];
@@ -51,29 +67,43 @@ export function subscribe(callback) {
 }
 
 /**
+ * Fetch latest presets, publishing only if the token matches the latest operation.
+ * @param {number} seq
+ * @returns {Promise<PresetItem[]>}
+ */
+async function fetchLatest(seq) {
+  if (!_state.inFlight) {
+    _state.inFlight = (async () => {
+      try {
+        const data = await DefaultService.wrapperApiShellApprovalPresetsGet();
+        if (seq === _state.seq) {
+          _state.presets = data;
+          notify();
+        }
+      } catch (e) {
+        if (e instanceof ApiError) {
+          console.debug('presets: fetch failed', e.status);
+        } else {
+          console.debug('presets: fetch failed', e);
+        }
+        throw e;
+      } finally {
+        _state.inFlight = null;
+      }
+      return snapshot();
+    })();
+  }
+  await _state.inFlight;
+  return snapshot();
+}
+
+/**
  * Fetch presets list from server.
  * @returns {Promise<PresetItem[]>}
  */
-export async function load() {
-  if (_state.inFlight) return _state.inFlight;
-  _state.inFlight = (async () => {
-    try {
-      const data = await DefaultService.wrapperApiShellApprovalPresetsGet();
-      _state.presets = data;
-      notify();
-      return _state.presets;
-    } catch (e) {
-      if (e instanceof ApiError) {
-        console.debug('presets: fetch failed', e.status);
-      } else {
-        console.debug('presets: fetch failed', e);
-      }
-      throw e;
-    } finally {
-      _state.inFlight = null;
-    }
-  })();
-  return _state.inFlight;
+export function load() {
+  const seq = ++_state.seq;
+  return fetchLatest(seq);
 }
 
 /**
@@ -82,10 +112,15 @@ export async function load() {
  * @param {string[]} rules
  * @returns {Promise<PresetMutateResponse>}
  */
-export async function savePreset(name, rules) {
-  const res = await DefaultService.wrapperApiShellApprovalPresetsNamePut(name, { rules });
-  await load();
-  return res;
+export function savePreset(name, rules) {
+  return _runExclusive(async () => {
+    const res = await DefaultService.wrapperApiShellApprovalPresetsNamePut(name, { rules });
+    // Invalidate in-flight and bump seq so older fetches are ignored
+    _state.inFlight = null;
+    const seq = ++_state.seq;
+    await fetchLatest(seq);
+    return res;
+  });
 }
 
 /**
@@ -93,10 +128,14 @@ export async function savePreset(name, rules) {
  * @param {string} name
  * @returns {Promise<PresetMutateResponse>}
  */
-export async function deletePreset(name) {
-  const res = await DefaultService.wrapperApiShellApprovalPresetsNameDelete(name);
-  await load();
-  return res;
+export function deletePreset(name) {
+  return _runExclusive(async () => {
+    const res = await DefaultService.wrapperApiShellApprovalPresetsNameDelete(name);
+    _state.inFlight = null;
+    const seq = ++_state.seq;
+    await fetchLatest(seq);
+    return res;
+  });
 }
 
 /** Test utility: reset internal state. */
@@ -104,4 +143,6 @@ export function reset() {
   _state.presets = [];
   _state.subscribers.clear();
   _state.inFlight = null;
+  _state.seq = 0;
+  _tail = Promise.resolve();
 }

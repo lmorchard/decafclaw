@@ -2102,6 +2102,10 @@ def _invalidate_conversations_for_preset(config, manager, preset_name: str) -> N
         if preset_name in active_presets:
             conv_state.persisted.llm_approved_shell_patterns.clear()
             manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
+            # Invalidate live active turn context if one is running
+            active_ctx = getattr(conv_state, "active_context", None)
+            if active_ctx and hasattr(active_ctx, "tools"):
+                active_ctx.tools.llm_approved_shell_patterns.clear()
 
 
 @_authenticated

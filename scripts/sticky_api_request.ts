@@ -130,7 +130,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                     : workspaceMutation && !response.ok
                         ? workspaceSave ? await response.text()
                             : await response.json().catch(() => undefined)
-                    : canvasNewTab && !response.ok ? await response.text() : undefined,
+                    : canvasNewTab && !response.ok ? await response.text()
+                    : shellPresets && !response.ok ? await response.json().catch(() => undefined) : undefined,
             });
             if (options.discardResponse || workspaceRename) {
                 // Void overloads and the legacy rename caller do not decode
