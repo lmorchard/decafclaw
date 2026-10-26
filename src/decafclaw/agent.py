@@ -49,7 +49,7 @@ from .persistence import read_skill_data, read_skills_state, write_skill_data, w
 from .reflection_metrics import classify_outcome, response_delta
 from .skills import activate_always_loaded
 from .telemetry import get_tracer
-from .tool_definitions import build_tool_list, refresh_dynamic_tools
+from .tool_definitions import build_tool_list, reconcile_mcp_tools, refresh_dynamic_tools
 from .tool_execution import execute_tool_calls
 
 _tracer = get_tracer(__name__)
@@ -722,8 +722,9 @@ class TurnRunner:
 
         try:
             self.ctx.tools.mcp_frozen = False
-            await self._compose()
+            reconcile_mcp_tools(self.ctx)
             self.ctx.tools.mcp_frozen = True
+            await self._compose()
             self.prompt_tokens = 0
             self.empty_retries = 0
             self.reflection_retries = 0

@@ -66,6 +66,7 @@ async def test_runner_starts_http_while_mcp_handshake_delayed(config):
         patch("decafclaw.http_server.shutdown_http_server", side_effect=mock_shutdown_http_server),
         patch("decafclaw.schedules.run_schedule_timer", side_effect=mock_schedule_timer),
         patch("decafclaw.workspace_index.start_workspace_index_loop"),
+        patch.object(asyncio.get_event_loop(), "add_signal_handler"),
         patch("decafclaw.runner.signal.SIGTERM", 15),
         patch("decafclaw.runner.signal.SIGINT", 2),
     ):
@@ -128,6 +129,7 @@ async def test_runner_late_mcp_registration(config):
         patch("decafclaw.http_server.shutdown_http_server", side_effect=mock_shutdown_http_server),
         patch("decafclaw.schedules.run_schedule_timer", new_callable=AsyncMock),
         patch("decafclaw.workspace_index.start_workspace_index_loop"),
+        patch.object(asyncio.get_event_loop(), "add_signal_handler"),
         patch("decafclaw.runner.signal.SIGTERM", 15),
         patch("decafclaw.runner.signal.SIGINT", 2),
     ):

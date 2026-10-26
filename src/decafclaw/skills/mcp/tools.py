@@ -66,6 +66,11 @@ async def _restart(ctx: "Context", registry, server_name) -> str | ToolResult:
             if not registry or server_name not in registry.servers:
                 return ToolResult(text=f"[error: MCP server '{server_name}' not found]")
 
+            # Cancel in-flight connection task if active
+            task = getattr(registry, "_connection_tasks", {}).pop(server_name, None)
+            if task and not task.done():
+                task.cancel()
+
             # Mark server as failed — auto-restart will reconnect on next call
             state = registry.servers.get(server_name)
             if state:

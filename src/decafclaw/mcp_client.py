@@ -588,6 +588,10 @@ class MCPRegistry:
         name = server_config.name
         if self._closed:
             log.debug("MCPRegistry is closed; skipping connection to %r", name)
+            state = self.servers.get(name)
+            if state:
+                state.status = "disconnected"
+                state.settled_event.set()
             return
 
         state = self.servers.get(name)
@@ -628,6 +632,12 @@ class MCPRegistry:
                 log.warning(f"MCP server {name!r}: unknown type {server_config.type!r}")
                 state.status = "failed"
                 state.error = f"unknown server type {server_config.type!r}"
+                if state._exit_stack:
+                    try:
+                        await state._exit_stack.__aexit__(None, None, None)
+                    except Exception as exc:
+                        log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
+                    state._exit_stack = None
                 state.settled_event.set()
                 if self.event_bus:
                     try:

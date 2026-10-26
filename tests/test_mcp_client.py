@@ -482,3 +482,87 @@ def test_parse_schedule_file_required_servers(tmp_path):
     assert task.required_servers == ["db", "storage"]
     assert task.server_timeout == 15.0
     assert not task.unknown_keys
+
+
+@pytest.mark.asyncio
+async def test_reconcile_before_freeze_keeps_mcp_tools_frozen(ctx, monkeypatch):
+    """reconcile_mcp_tools populates definitions before freeze, preventing mid-turn alteration."""
+    from decafclaw import mcp_client
+    from decafclaw.tool_definitions import reconcile_mcp_tools
+
+    registry = MCPRegistry()
+    registry.servers["srv_early"] = MCPServerState(
+        config=MCPServerConfig(name="srv_early", type="stdio"),
+        status="connected",
+        tool_definitions=[{"function": {"name": "mcp__srv_early__tool1"}}],
+    )
+    registry.servers["srv_late"] = MCPServerState(
+        config=MCPServerConfig(name="srv_late", type="stdio"),
+        status="connecting",
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    # Turn boundary: unfreeze, reconcile, freeze
+    ctx.tools.mcp_frozen = False
+    reconcile_mcp_tools(ctx)
+    ctx.tools.mcp_frozen = True
+
+    assert ctx.tools.mcp_definitions is not None
+    assert len(ctx.tools.mcp_definitions) == 1
+    assert ctx.tools.mcp_definitions[0]["function"]["name"] == "mcp__srv_early__tool1"
+
+    # Mid-turn: late server completes
+    registry.servers["srv_late"].status = "connected"
+    registry.servers["srv_late"].tool_definitions = [{"function": {"name": "mcp__srv_late__tool2"}}]
+
+    # Calling reconcile mid-turn does not alter the frozen definitions
+    reconcile_mcp_tools(ctx)
+    assert len(ctx.tools.mcp_definitions) == 1
+    assert ctx.tools.mcp_definitions[0]["function"]["name"] == "mcp__srv_early__tool1"
+
+    # Turn ends: unfreeze and reconcile for next turn
+    ctx.tools.mcp_frozen = False
+    reconcile_mcp_tools(ctx)
+    assert len(ctx.tools.mcp_definitions) == 2
+
+
+@pytest.mark.asyncio
+async def test_unknown_server_type_cleanly_exits_exit_stack():
+    """Unknown server type fails cleanly and cleans up exit stack."""
+    registry = MCPRegistry()
+    cleanup_called = False
+
+    class MockExitStack:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            nonlocal cleanup_called
+            cleanup_called = True
+
+    cfg = MCPServerConfig(name="odd", type="custom_proto")
+    state = MCPServerState(config=cfg, status="connecting", _exit_stack=MockExitStack())
+    registry.servers["odd"] = state
+
+    await registry.connect_server(cfg)
+
+    assert state.status == "failed"
+    assert "unknown server type" in (state.error or "")
+    assert state.settled_event.is_set()
+    assert state._exit_stack is None
+
+
+@pytest.mark.asyncio
+async def test_closed_registry_early_exit():
+    """connect_server on closed registry sets disconnected status and settled_event."""
+    registry = MCPRegistry()
+    registry._closed = True
+
+    cfg = MCPServerConfig(name="closed_srv", type="stdio")
+    state = MCPServerState(config=cfg, status="connecting")
+    registry.servers["closed_srv"] = state
+
+    await registry.connect_server(cfg)
+
+    assert state.status == "disconnected"
+    assert state.settled_event.is_set()
