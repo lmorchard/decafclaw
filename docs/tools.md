@@ -22,7 +22,8 @@ Sandboxed file operations inside `data/{agent_id}/workspace/`. See [Data Layout]
 
 | Tool | Always | What it does |
 |------|:------:|--------------|
-| `workspace_read` | ✓ | Read a file (supports line ranges) |
+| `workspace_read` | ✓ | Read a file (supports line ranges and targeted section retrieval) |
+| `workspace_outline` | | Structural outline of classes, functions, and headings, or targeted section retrieval |
 | `workspace_write` | ✓ | Write/overwrite a file, creating parents |
 | `workspace_list` | | List files and directories |
 | `workspace_append` | | Append content to a file |
