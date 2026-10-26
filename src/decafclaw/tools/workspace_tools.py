@@ -827,7 +827,7 @@ def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: 
         except (FileNotFoundError, PermissionError) as e:
             return _file_error(e, path)
 
-        lines = existing.splitlines(keepends=True)
+        lines = split_physical_lines(existing, keepends=True)
         if line_number < 1 or line_number > len(lines) + 1:
             return ToolResult(
                 text=f"[error: line_number {line_number} is out of range. "
@@ -837,7 +837,7 @@ def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: 
         # Ensure content ends with newline for clean insertion
         if content and not content.endswith("\n"):
             content += "\n"
-        insert_lines = content.splitlines(keepends=True)
+        insert_lines = split_physical_lines(content, keepends=True)
         new_lines = list(lines)
         new_lines[line_number - 1 : line_number - 1] = insert_lines
         resolved.write_text("".join(new_lines))
@@ -864,14 +864,14 @@ def tool_workspace_replace_lines(
         except (FileNotFoundError, PermissionError) as e:
             return _file_error(e, path)
 
-        lines = existing.splitlines(keepends=True)
+        lines = split_physical_lines(existing, keepends=True)
         if start_line < 1 or end_line < start_line or end_line > len(lines):
             return ToolResult(text=f"[error: invalid line range {start_line}-{end_line}. File has {len(lines)} lines.]")
 
         if content:
             if not content.endswith("\n"):
                 content += "\n"
-            replacement = content.splitlines(keepends=True)
+            replacement = split_physical_lines(content, keepends=True)
         else:
             replacement = []
         new_lines = list(lines)
@@ -1005,7 +1005,7 @@ def tool_workspace_search(
         except (UnicodeDecodeError, PermissionError):
             continue
 
-        lines = content.splitlines()
+        lines = split_physical_lines(content)
         file_matches = []
         for i, line in enumerate(lines):
             if regex.search(line):

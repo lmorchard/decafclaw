@@ -1475,3 +1475,22 @@ class TestWorkspaceOutline:
         tool_workspace_write(ctx, "dec.py", code)
         res = tool_workspace_outline(ctx, "dec.py")
         assert "1-5: @( my_decorator ) def decorated(): ..." in res.text
+
+    def test_class_with_first_method_decorated(self, ctx):
+        code = "class Container:\n    @property\n    def value(self) -> int:\n        return 42\n"
+        tool_workspace_write(ctx, "container.py", code)
+        res = tool_workspace_outline(ctx, "container.py")
+        assert "1-4: class Container: ..." in res.text
+        assert "@property" not in res.text.split("\n")[0]
+        assert "  2-4: @property def value(self) -> int: ..." in res.text
+
+    def test_physical_line_consistency_with_unicode_separator(self, ctx):
+        code = "description = 'first\u2028second'\nvalue = 1\n"
+        tool_workspace_write(ctx, "unicode_nl.py", code)
+        res_read = tool_workspace_read(ctx, "unicode_nl.py")
+        assert "2| value = 1" in res_read.text
+
+        tool_workspace_replace_lines(ctx, "unicode_nl.py", start_line=2, end_line=2, content="value = 42\n")
+        res_after = tool_workspace_read(ctx, "unicode_nl.py")
+        assert "value = 42" in res_after.text
+        assert "first\u2028second" in res_after.text

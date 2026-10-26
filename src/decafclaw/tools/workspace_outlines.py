@@ -23,15 +23,20 @@ HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*$")
 OPEN_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 CLOSE_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*$")
 
+_PHYSICAL_LINE_SPLIT_RE = re.compile(r"(\r\n|\r|\n)")
 
-def split_physical_lines(text: str) -> list[str]:
-    """Split text on physical newlines only, preserving 1-based source line numbering."""
+
+def split_physical_lines(text: str, keepends: bool = False) -> list[str]:
+    """Split text on physical newlines (\r\n, \r, \n) only, preserving 1-based source line numbering."""
     if not text:
         return []
-    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-    if normalized.endswith("\n"):
-        normalized = normalized[:-1]
-    return normalized.split("\n")
+    parts = _PHYSICAL_LINE_SPLIT_RE.split(text)
+    result: list[str] = []
+    for i in range(0, len(parts) - 1, 2):
+        result.append(parts[i] + parts[i + 1] if keepends else parts[i])
+    if len(parts) % 2 == 1 and parts[-1]:
+        result.append(parts[-1])
+    return result
 
 
 @dataclass
@@ -139,8 +144,14 @@ def _get_python_header(lines: list[str], node: ast.FunctionDef | ast.AsyncFuncti
             return f"{dec_prefix}{header}"
         return f"{dec_prefix}{lines[start_idx].strip()}"
 
-    # Multiline or standard header: lines from def/class up to first body statement
-    end_idx = first_body.lineno - 1
+    # Multiline or standard header: lines from def/class up to first body statement (or its decorators)
+    body_start = (
+        _get_start_line(lines, first_body)
+        if getattr(first_body, "decorator_list", None)
+        and isinstance(first_body, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        else first_body.lineno
+    )
+    end_idx = body_start - 1
     parts: list[str] = []
     for i in range(start_idx, end_idx):
         line_str = lines[i].strip()
