@@ -388,6 +388,7 @@ class MCPServerState:
     last_retry_time: float = 0.0
     error: str | None = None
     settled_event: asyncio.Event = field(default_factory=asyncio.Event)
+    _generation: int = 0
     _exit_stack: Any = None  # AsyncExitStack for managing context lifetimes
 
     @property
@@ -551,13 +552,17 @@ class MCPRegistry:
             state.error = None
             state.settled_event.clear()
 
+        # Increment generation counter so old in-flight attempts cannot clobber replacement
+        state._generation += 1
+        gen = state._generation
+
         # Cancel existing task for this server if one is still running
         existing_task = self._connection_tasks.get(name)
         if existing_task and not existing_task.done():
             existing_task.cancel()
 
         task = asyncio.create_task(
-            self._connect_server_wrapper(server_config),
+            self._connect_server_wrapper(server_config, gen),
             name=f"mcp-connect-{name}",
         )
         self._connection_tasks[name] = task
@@ -569,9 +574,9 @@ class MCPRegistry:
         task.add_done_callback(_cleanup)
         return task
 
-    async def _connect_server_wrapper(self, server_config: MCPServerConfig):
+    async def _connect_server_wrapper(self, server_config: MCPServerConfig, gen: int):
         try:
-            await self.connect_server(server_config)
+            await self.connect_server(server_config, generation=gen)
         except asyncio.CancelledError:
             log.debug("MCP connection task for %r cancelled", server_config.name)
             raise
@@ -583,18 +588,17 @@ class MCPRegistry:
             return []
         return [self.start_connect_server(cfg) for cfg in configs]
 
-    async def connect_server(self, server_config: MCPServerConfig):
+    async def connect_server(self, server_config: MCPServerConfig, generation: int | None = None):
         """Connect to a single MCP server and discover its tools."""
         name = server_config.name
+        state = self.servers.get(name)
         if self._closed:
             log.debug("MCPRegistry is closed; skipping connection to %r", name)
-            state = self.servers.get(name)
             if state:
                 state.status = "disconnected"
                 state.settled_event.set()
             return
 
-        state = self.servers.get(name)
         if state is None:
             state = MCPServerState(config=server_config, status="connecting")
             self.servers[name] = state
@@ -604,22 +608,29 @@ class MCPRegistry:
             state.error = None
             state.settled_event.clear()
 
+        if generation is None:
+            state._generation += 1
+            gen = state._generation
+        else:
+            gen = generation
+
         if self.event_bus:
             try:
                 await self.event_bus.publish({"type": "mcp_server_connecting", "server": name})
             except Exception as e:
                 log.debug("failed to publish mcp_server_connecting: %s", e)
 
+        exit_stack = contextlib.AsyncExitStack()
         try:
-            exit_stack = contextlib.AsyncExitStack()
             state._exit_stack = exit_stack
             await exit_stack.__aenter__()
 
-            if self._closed:
+            if self._closed or state._generation != gen:
                 await exit_stack.__aexit__(None, None, None)
-                state._exit_stack = None
-                state.status = "disconnected"
-                state.settled_event.set()
+                if state._generation == gen:
+                    state._exit_stack = None
+                    state.status = "disconnected"
+                    state.settled_event.set()
                 return
 
             message_handler = self._make_notification_handler(name)
@@ -630,29 +641,27 @@ class MCPRegistry:
                 session = await self._connect_http(exit_stack, server_config, message_handler)
             else:
                 log.warning(f"MCP server {name!r}: unknown type {server_config.type!r}")
-                state.status = "failed"
-                state.error = f"unknown server type {server_config.type!r}"
-                if state._exit_stack:
-                    try:
-                        await state._exit_stack.__aexit__(None, None, None)
-                    except Exception as exc:
-                        log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
+                await exit_stack.__aexit__(None, None, None)
+                if state._generation == gen:
+                    state.status = "failed"
+                    state.error = f"unknown server type {server_config.type!r}"
                     state._exit_stack = None
-                state.settled_event.set()
+                    state.settled_event.set()
                 if self.event_bus:
                     try:
                         await self.event_bus.publish(
-                            {"type": "mcp_server_failed", "server": name, "error": state.error}
+                            {"type": "mcp_server_failed", "server": name, "error": state.error or "unknown type"}
                         )
                     except Exception as exc:
                         log.debug("failed to publish mcp_server_failed: %s", exc)
                 return
 
-            if self._closed:
+            if self._closed or state._generation != gen:
                 await exit_stack.__aexit__(None, None, None)
-                state._exit_stack = None
-                state.status = "disconnected"
-                state.settled_event.set()
+                if state._generation == gen:
+                    state._exit_stack = None
+                    state.status = "disconnected"
+                    state.settled_event.set()
                 return
 
             state.session = session
@@ -696,16 +705,17 @@ class MCPRegistry:
                 except Exception as e:
                     log.warning(f"MCP server {name!r}: failed to discover prompts: {e}")
 
-            if self._closed:
+            if self._closed or state._generation != gen:
                 await exit_stack.__aexit__(None, None, None)
-                state._exit_stack = None
-                state.tools.clear()
-                state.tool_definitions.clear()
-                state.resources.clear()
-                state.resource_templates.clear()
-                state.prompts.clear()
-                state.status = "disconnected"
-                state.settled_event.set()
+                if state._generation == gen:
+                    state._exit_stack = None
+                    state.tools.clear()
+                    state.tool_definitions.clear()
+                    state.resources.clear()
+                    state.resource_templates.clear()
+                    state.prompts.clear()
+                    state.status = "disconnected"
+                    state.settled_event.set()
                 return
 
             state.status = "connected"
@@ -726,27 +736,28 @@ class MCPRegistry:
 
         except asyncio.CancelledError:
             log.debug(f"MCP server {name!r} connection cancelled")
-            state.status = "disconnected"
-            state.settled_event.set()
-            if state._exit_stack:
-                try:
-                    await state._exit_stack.__aexit__(None, None, None)
-                except Exception as exc:
-                    log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
-                state._exit_stack = None
+            try:
+                await exit_stack.__aexit__(None, None, None)
+            except Exception as exc:
+                log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
+            if state._generation == gen:
+                if state._exit_stack is exit_stack:
+                    state._exit_stack = None
+                state.status = "disconnected"
+                state.settled_event.set()
             raise
         except BaseException as e:
             log.warning(f"MCP server {name!r} failed to connect: {e}")
-            state.status = "failed"
-            state.error = str(e)
-            state.settled_event.set()
-            # Clean up the exit stack on failure
-            if state._exit_stack:
-                try:
-                    await state._exit_stack.__aexit__(None, None, None)
-                except Exception as exc:
-                    log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
-                state._exit_stack = None
+            try:
+                await exit_stack.__aexit__(None, None, None)
+            except Exception as exc:
+                log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
+            if state._generation == gen:
+                state.status = "failed"
+                state.error = str(e)
+                state.settled_event.set()
+                if state._exit_stack is exit_stack:
+                    state._exit_stack = None
             if self.event_bus:
                 try:
                     await self.event_bus.publish({"type": "mcp_server_failed", "server": name, "error": str(e)})

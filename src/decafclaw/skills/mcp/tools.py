@@ -1,5 +1,6 @@
 """MCP management tools — status, resources, prompts, restart."""
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -66,17 +67,24 @@ async def _restart(ctx: "Context", registry, server_name) -> str | ToolResult:
             if not registry or server_name not in registry.servers:
                 return ToolResult(text=f"[error: MCP server '{server_name}' not found]")
 
-            # Cancel in-flight connection task if active
+            # Cancel and drain in-flight connection task if active
             task = getattr(registry, "_connection_tasks", {}).pop(server_name, None)
             if task and not task.done():
                 task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
-            # Mark server as failed — auto-restart will reconnect on next call
-            state = registry.servers.get(server_name)
-            if state:
-                state.status = "failed"
-                state.retry_count = 0  # reset so auto-restart kicks in
-            return f"MCP server '{server_name}' marked for reconnection. It will reconnect on next use."
+            state = registry.servers[server_name]
+            cfg = state.config
+
+            # Disconnect previous session cleanly
+            await registry.disconnect_server(server_name)
+
+            # Start tracked replacement connection
+            registry.start_connect_server(cfg)
+            return f"MCP server '{server_name}' restarting."
 
         else:
             # Full reload: create a fresh registry and connect

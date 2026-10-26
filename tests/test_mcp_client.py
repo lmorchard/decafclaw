@@ -566,3 +566,94 @@ async def test_closed_registry_early_exit():
 
     assert state.status == "disconnected"
     assert state.settled_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_replacing_in_flight_connection_drains_without_clearing_replacement_exit_stack():
+    """Replacing in-flight connection cancels old attempt without clobbering replacement's exit stack."""
+    registry = MCPRegistry()
+    gate1 = asyncio.Event()
+    gate2 = asyncio.Event()
+    cleanup1 = False
+    cleanup2 = False
+
+    async def record_cleanup1():
+        nonlocal cleanup1
+        cleanup1 = True
+
+    async def record_cleanup2():
+        nonlocal cleanup2
+        cleanup2 = True
+
+    stack2_ref = None
+    attempt = 0
+
+    async def mock_connect(exit_stack, cfg, message_handler=None):
+        nonlocal stack2_ref, attempt
+        if cfg.name == "replace_srv":
+            attempt += 1
+            if attempt == 1:
+                exit_stack.push_async_callback(record_cleanup1)
+                await gate1.wait()
+            else:
+                stack2_ref = exit_stack
+                exit_stack.push_async_callback(record_cleanup2)
+                await gate2.wait()
+        return _make_mock_session([_make_fake_tool("t")])
+
+    registry._connect_stdio = mock_connect
+
+    cfg = MCPServerConfig(name="replace_srv", type="stdio")
+    t1 = registry.start_connect_server(cfg)
+    await asyncio.sleep(0)
+
+    state = registry.servers["replace_srv"]
+
+    # Start replacement while t1 is still pending
+    t2 = registry.start_connect_server(cfg)
+    await asyncio.sleep(0)
+
+    # Verify t1 was cancelled and drained
+    assert t1.cancelled() or t1.done()
+
+    # Finish replacement
+    gate1.set()
+    gate2.set()
+    await t2
+
+    assert cleanup1 is True
+    assert cleanup2 is False  # Replacement exit stack should NOT be torn down on success
+    assert state._exit_stack is stack2_ref
+    assert state.status == "connected"
+
+
+@pytest.mark.asyncio
+async def test_single_server_restart_cancels_previous_and_reconnects(ctx, monkeypatch):
+    """Restarting a single server cancels any in-flight task and starts a replacement connection."""
+    from decafclaw import mcp_client
+    from decafclaw.skills.mcp.tools import _restart
+
+    registry = MCPRegistry()
+    gate = asyncio.Event()
+    mock_session = _make_mock_session([_make_fake_tool("tool_x")])
+
+    async def slow_connect(exit_stack, cfg, message_handler=None):
+        await gate.wait()
+        return mock_session
+
+    registry._connect_stdio = slow_connect
+    cfg = MCPServerConfig(name="restart_me", type="stdio")
+    t_old = registry.start_connect_server(cfg)
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+    await asyncio.sleep(0)
+
+    res = await _restart(ctx, registry, server_name="restart_me")
+    assert "restarting" in str(res)
+    assert t_old.cancelled() or t_old.done()
+    assert "restart_me" in registry._connection_tasks
+    t_new = registry._connection_tasks["restart_me"]
+    assert t_new is not t_old
+
+    gate.set()
+    await t_new
+    assert registry.servers["restart_me"].status == "connected"

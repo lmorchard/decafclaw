@@ -1001,6 +1001,18 @@ paths:
                     type: array
                   - type: 'null'
                   title: Required Skills
+                required_servers:
+                  anyOf:
+                  - items:
+                      type: string
+                    type: array
+                  - type: 'null'
+                  title: Required Servers
+                server_timeout:
+                  anyOf:
+                  - type: number
+                  - type: 'null'
+                  title: Server Timeout
                 shell_patterns:
                   anyOf:
                   - items:

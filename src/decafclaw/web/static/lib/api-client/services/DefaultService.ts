@@ -997,6 +997,8 @@ export class DefaultService {
             allowed_tools?: (Array<string> | null);
             disallowed_tools?: (Array<string> | null);
             required_skills?: (Array<string> | null);
+            required_servers?: (Array<string> | null);
+            server_timeout?: (number | null);
             shell_patterns?: (Array<string> | null);
             email_recipients?: (Array<string> | null);
             pre_script?: (string | null);
@@ -1015,6 +1017,8 @@ export class DefaultService {
             allowed_tools?: (Array<string> | null);
             disallowed_tools?: (Array<string> | null);
             required_skills?: (Array<string> | null);
+            required_servers?: (Array<string> | null);
+            server_timeout?: (number | null);
             shell_patterns?: (Array<string> | null);
             email_recipients?: (Array<string> | null);
             pre_script?: (string | null);
@@ -1034,6 +1038,8 @@ export class DefaultService {
             allowed_tools?: (Array<string> | null);
             disallowed_tools?: (Array<string> | null);
             required_skills?: (Array<string> | null);
+            required_servers?: (Array<string> | null);
+            server_timeout?: (number | null);
             shell_patterns?: (Array<string> | null);
             email_recipients?: (Array<string> | null);
             pre_script?: (string | null);

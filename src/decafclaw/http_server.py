@@ -3084,6 +3084,8 @@ class ScheduleUpdateRequest(BaseModel):
     allowed_tools: list[str] | None = None
     disallowed_tools: list[str] | None = None
     required_skills: list[str] | None = None
+    required_servers: list[str] | None = None
+    server_timeout: float | None = None
     shell_patterns: list[str] | None = None
     email_recipients: list[str] | None = None
     pre_script: str | None = None
