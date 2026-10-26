@@ -146,8 +146,7 @@ class StepParser(BaseProgressParser):
                         after = truncated[match.end() :].strip()
                         # Clean leading separators like ':', '-', '...'
                         after = re.sub(r"^[:\-\s]+", "", after)
-                        if after:
-                            self.step_label = after
+                        self.step_label = after
                 except (ValueError, OverflowError):
                     pass
 
@@ -317,10 +316,11 @@ class PytestParser(BaseProgressParser):
     _PROGRESS_PCT_RE = re.compile(r"\[\s*(\d+)%\s*\]")
 
     # Matches final summary line:
-    # "=== 35 passed, 2 failed in 1.23s ==="
-    _SUMMARY_RE = re.compile(
-        r"===+\s+(?:(\d+)\s+passed)?(?:,\s*)?(?:(\d+)\s+failed)?(?:,\s*)?(?:(\d+)\s+skipped)?.*?===+"
-    )
+    # "=== 35 passed, 2 failed in 1.23s ===" or "=== 2 failed, 35 passed, 1 skipped in 1.23s ==="
+    _SUMMARY_RE = re.compile(r"===+.*?===+")
+    _PASSED_RE = re.compile(r"\b(\d+)\s+passed\b")
+    _FAILED_RE = re.compile(r"\b(\d+)\s+failed\b")
+    _SKIPPED_RE = re.compile(r"\b(\d+)\s+skipped\b")
 
     def __init__(self) -> None:
         super().__init__()
@@ -379,14 +379,15 @@ class PytestParser(BaseProgressParser):
         # 4. Check terminal summary line
         sum_match = self._SUMMARY_RE.search(truncated)
         if sum_match:
-            p_str, f_str, s_str = sum_match.group(1), sum_match.group(2), sum_match.group(3)
-            if p_str:
-                self.passed = int(p_str)
-            if f_str:
-                self.failed = int(f_str)
-            if s_str:
-                self.skipped = int(s_str)
-
+            p_match = self._PASSED_RE.search(truncated)
+            if p_match:
+                self.passed = int(p_match.group(1))
+            f_match = self._FAILED_RE.search(truncated)
+            if f_match:
+                self.failed = int(f_match.group(1))
+            s_match = self._SKIPPED_RE.search(truncated)
+            if s_match:
+                self.skipped = int(s_match.group(1))
         return self.get_progress()
 
     def get_progress(self) -> ProgressUpdate:
@@ -422,28 +423,40 @@ class PytestParser(BaseProgressParser):
 
     def format_running_sticky(self, command: str) -> dict:
         executed = self.passed + self.failed + self.skipped
-        if self.total_tests is not None or executed > 0:
+        current = executed
+        if self.total_tests is not None and self.pct is not None and self.total_tests > 0:
+            pct_count = int(round(self.total_tests * self.pct / 100))
+            current = max(executed, pct_count)
+
+        if self.total_tests is not None or executed > 0 or self.pct is not None:
             total_part = f"/{self.total_tests}" if self.total_tests is not None else ""
-            counts_part = f"{self.passed} passed"
-            if self.failed > 0:
-                counts_part += f", {self.failed} failed"
-            if self.skipped > 0:
-                counts_part += f", {self.skipped} skipped"
+            if executed == 0 and self.pct is not None:
+                summary = f"pytest: {current}{total_part} ({self.pct}%)"
+                if self.current_test:
+                    summary += f" · {self.current_test}"
+                note = f"{current}{total_part} ({self.pct}%)"
+                if self.current_test:
+                    note += f" — {self.current_test}"
+            else:
+                counts_part = f"{self.passed} passed"
+                if self.failed > 0:
+                    counts_part += f", {self.failed} failed"
+                if self.skipped > 0:
+                    counts_part += f", {self.skipped} skipped"
 
-            summary = f"pytest: {executed}{total_part} ({counts_part})"
-            if self.current_test:
-                summary += f" · {self.current_test}"
+                summary = f"pytest: {current}{total_part} ({counts_part})"
+                if self.current_test:
+                    summary += f" · {self.current_test}"
 
-            note = f"{executed}{total_part} ({counts_part})"
-            if self.current_test:
-                note += f" — {self.current_test}"
+                note = f"{current}{total_part} ({counts_part})"
+                if self.current_test:
+                    note += f" — {self.current_test}"
 
             return {
                 "title": "Background job",
                 "summary": summary[:_STICKY_NOTE_MAX],
                 "steps": [{"label": cmd_preview(command), "status": "in_progress", "note": note[:_STICKY_NOTE_MAX]}],
             }
-
         last = self.last_line[:_STICKY_NOTE_MAX]
         step: dict[str, str] = {"label": cmd_preview(command), "status": "in_progress"}
         if last:
@@ -514,7 +527,7 @@ class AutoParser(BaseProgressParser):
             self.pytest_parser.feed_line(raw_line, stream=stream)
             if (
                 self.pytest_parser.total_tests is not None
-                or (self.pytest_parser.passed + self.pytest_parser.failed) > 0
+                or (self.pytest_parser.passed + self.pytest_parser.failed + self.pytest_parser.skipped) > 0
             ):
                 self._active_preset = "pytest"
                 return self.get_progress()

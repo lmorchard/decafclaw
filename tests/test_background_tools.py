@@ -1286,3 +1286,36 @@ async def test_pin_sticky_auto_interleaved_stderr(tmp_path, config, sticky_regis
     assert final["data"]["steps"][0]["status"] == "done"
     assert "[2/2]" in final["data"]["steps"][0]["note"]
     await manager.cleanup_all()
+
+
+def test_pytest_summary_reordered_failure_before_passed():
+    p = PytestParser()
+    p.feed_line("=== 2 failed, 35 passed, 1 skipped in 1.23s ===")
+    assert p.passed == 35
+    assert p.failed == 2
+    assert p.skipped == 1
+
+
+def test_pytest_format_running_sticky_dots_mode():
+    p = PytestParser()
+    p.feed_line("collected 100 items")
+    p.feed_line(".................................................. [ 50%]")
+    sticky = p.format_running_sticky("pytest")
+    assert "50/100 (50%)" in sticky["summary"]
+    assert "50/100 (50%)" in sticky["steps"][0]["note"]
+
+
+def test_auto_parser_detects_pytest_from_skipped_line():
+    p = AutoParser()
+    p.feed_line("tests/test_mod.py::test_skipped SKIPPED [ 10%]")
+    up = p.get_progress()
+    assert p._active_preset == "pytest"
+    assert up.unit == "tests"
+
+
+def test_step_parser_unlabeled_step_resets_label():
+    p = StepParser()
+    p.feed_line("[1/2] Step one label")
+    assert p.step_label == "Step one label"
+    p.feed_line("[2/2]")
+    assert p.step_label == ""
