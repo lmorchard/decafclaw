@@ -46,6 +46,7 @@ class SkillInfo:
     description: str
     location: Path
     body: str = ""
+    summary: str = ""
     has_native_tools: bool = False
     tools_location: Path | None = None
     tools_trust_tier: str | None = None
@@ -204,6 +205,7 @@ def build_skill_info(result: SkillValidation) -> SkillInfo:
         description=meta["description"],
         location=skill_dir,
         body=result.body.strip(),
+        summary=str(meta.get("summary", "")).strip() if meta.get("summary") else "",
         has_native_tools=has_native_tools,
         tools_location=tools_location,
         requires_env=requires_env,
@@ -740,6 +742,34 @@ def build_skill_tool_owners(skills: list[SkillInfo]) -> dict[str, str]:
     return owners
 
 
+def compact_skill_summary(skill: SkillInfo) -> str:
+    """Extract a concise single-line summary for the skill catalog.
+
+    If frontmatter provides a `summary:` field (<= 15 words), use it.
+    Otherwise, extract the first sentence of `description` and truncate
+    to a maximum of 20 words.
+    """
+    raw_summary = getattr(skill, "summary", "")
+    if raw_summary:
+        words = str(raw_summary).strip().split()
+        if 1 <= len(words) <= 15:
+            return " ".join(words)
+
+    desc = getattr(skill, "description", "")
+    if not desc:
+        return ""
+    lines = [line.strip() for line in str(desc).strip().splitlines() if line.strip()]
+    if not lines:
+        return ""
+    joined = " ".join(lines)
+    match = re.search(r"^(.*?(?<!\be\.g)(?<!\bi\.e)[.!?])(?:\s+|$)", joined)
+    first_sent = match.group(1).strip() if match else joined
+    words = first_sent.split()
+    if len(words) > 20:
+        return " ".join(words[:20])
+    return first_sent
+
+
 def build_catalog_text(skills: list[SkillInfo]) -> str:
     """Build the skill catalog text for injection into the system prompt."""
     if not skills:
@@ -764,7 +794,7 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
             ]
         )
         for skill in always_loaded:
-            lines.append(f"- **{skill.name}**: {skill.description}")
+            lines.append(f"- **{skill.name}**: {compact_skill_summary(skill)}")
         lines.append("")
 
     if on_demand:
@@ -779,7 +809,7 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
             ]
         )
         for skill in on_demand:
-            lines.append(f"- **{skill.name}**: {skill.description}")
+            lines.append(f"- **{skill.name}**: {compact_skill_summary(skill)}")
 
     return "\n".join(lines)
 

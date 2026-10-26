@@ -72,6 +72,21 @@ class TestKeywordSearchNonSkillTools:
         assert "workspace_edit" in fetched
         assert "workspace_search" in fetched
 
+    def test_matches_wrapped_description_continuation_lines(self, ctx):
+        """Keyword search matches terms on continuation lines of a wrapped first sentence."""
+        tool = _make_tool_def(
+            "wrapped_tool",
+            "Read a file from your workspace filesystem\n"
+            "including blog posts, code, configs, scripts,\n"
+            "and project files. Extra details here.",
+        )
+        ctx.tools.deferred_pool = [tool]
+        ctx.config.skill_tool_owners = {}
+        ctx.config.discovered_skills = []
+        result = tool_search(ctx, "configs")
+        assert "wrapped_tool" in result.text
+        assert "wrapped_tool" in get_fetched_tools(ctx)
+
 
 class TestExactSelectionNonSkillTools:
     def test_select_by_name(self, search_ctx):

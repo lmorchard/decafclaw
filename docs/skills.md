@@ -85,7 +85,8 @@ These are loaded into context only when the skill is activated.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Lowercase alphanumeric + hyphens, max 64 chars |
-| `description` | Yes | What the skill does, max 1024 chars. Shown in catalog. |
+| `description` | Yes | What the skill does, max 1024 chars. Full description used for activation and fallback catalog summary. |
+| `summary` | No | Short single-line summary (<= 15 words) for `<skill_catalog>` in the system prompt. If omitted or over 15 words, falls back to the first sentence of `description` (truncated to max 20 words). |
 | `requires.env` | No | Env vars that must be set. Skill hidden if unmet. |
 | `user-invocable` | No | Bool, default true. When true, the skill can also be triggered as a command (`!name` / `/name`) in addition to agent activation. Orthogonal to activation — a user-invocable skill still appears in the agent's skill catalog. |
 | `context` | No | `inline` (default) or `fork`. Fork runs the skill as an isolated child turn. |

@@ -862,6 +862,87 @@ def test_build_catalog_text_includes_markdown_only_skills(tmp_path):
     assert "- **scheduled-only**: Scheduled skill." in text
 
 
+def test_compact_skill_summary_uses_short_summary():
+    from decafclaw.skills import SkillInfo, compact_skill_summary
+
+    skill = SkillInfo(
+        name="test-skill",
+        description="Long description sentence that has lots of words. Second sentence.",
+        summary="Concise summary under 15 words.",
+        location=Path("."),
+    )
+    assert compact_skill_summary(skill) == "Concise summary under 15 words."
+
+
+def test_compact_skill_summary_falls_back_when_summary_exceeds_15_words():
+    from decafclaw.skills import SkillInfo, compact_skill_summary
+
+    long_summary = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen"
+    assert len(long_summary.split()) == 16
+    skill = SkillInfo(
+        name="test-skill",
+        description="First sentence of description. Second sentence of description.",
+        summary=long_summary,
+        location=Path("."),
+    )
+    # Should fall back to first sentence of description
+    assert compact_skill_summary(skill) == "First sentence of description."
+
+
+def test_compact_skill_summary_first_sentence_and_truncation():
+    from decafclaw.skills import SkillInfo, compact_skill_summary
+
+    # Under 20 words: intact first sentence
+    skill1 = SkillInfo(
+        name="s1",
+        description="Single concise sentence without trailing period",
+        location=Path("."),
+    )
+    assert compact_skill_summary(skill1) == "Single concise sentence without trailing period"
+
+    # Multi-sentence: extracts only first sentence
+    skill2 = SkillInfo(
+        name="s2",
+        description="First sentence here. Second sentence here. Third sentence here.",
+        location=Path("."),
+    )
+    assert compact_skill_summary(skill2) == "First sentence here."
+
+    # First sentence with > 20 words: truncated to exactly 20 words
+    words = [f"word{i}" for i in range(25)]
+    skill3 = SkillInfo(
+        name="s3",
+        description=" ".join(words) + ". Another sentence.",
+        location=Path("."),
+    )
+    compact = compact_skill_summary(skill3)
+    assert len(compact.split()) == 20
+    assert compact == " ".join(words[:20])
+
+    # Handles abbreviations like e.g. and i.e. without premature splitting
+    skill4 = SkillInfo(
+        name="s4",
+        description="Admin tools for inspecting MCP servers (e.g. status, resources). Does NOT expose tools.",
+        location=Path("."),
+    )
+    assert compact_skill_summary(skill4) == "Admin tools for inspecting MCP servers (e.g. status, resources)."
+
+
+def test_parse_skill_md_parses_summary(tmp_path):
+    from decafclaw.skills import parse_skill_md
+
+    skill_dir = tmp_path / "skill_with_summary"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: with-summary\ndescription: Long description here.\nsummary: Short summary.\n---\nBody here.\n"
+    )
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.name == "with-summary"
+    assert info.summary == "Short summary."
+    assert info.body == "Body here."
+
+
 # -- permissions tests --
 
 

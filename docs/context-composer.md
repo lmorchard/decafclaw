@@ -36,9 +36,9 @@ deferred-tool catalog is wrapped in `build_deferred_list_text`).
 | `<agent_role>` | `AGENT.md` | Always present (bundled default or admin override) |
 | `<user_context>` | `USER.md` | Only when the file exists in the agent dir and has non-empty content |
 | `<custom_context>` | `CUSTOM.md` | Only when the file exists in the agent dir and has non-empty content (agent-maintained via `update_system_prompt`, #24) |
-| `<skill_catalog>` | `build_catalog_text` output (listing of Active + Available skills) | Only when at least one skill was discovered |
+| `<skill_catalog>` | `build_catalog_text` output (compact single-line `- **name**: summary` listing of Active + Available skills, #1051) | Only when at least one skill was discovered |
 | `<loaded_skills>` | Bodies of always-loaded bundled skills, one nested `<skill name="…">` block per body | Only when at least one bundled always-loaded skill exists |
-| `<deferred_tools>` | `build_deferred_list_text` output (separate system message) | Only when at least one deferred tool entry is emitted |
+| `<deferred_tools>` | `build_deferred_list_text` output (compact single-line `- name — summary` listing in separate system message, #1051) | Only when at least one deferred tool entry is emitted |
 | `<tool_guidance>` | `build_tool_guidance_text` output (separate system message) | Only when at least one active tool defines `prompt_guidelines` |
 
 Empty sections emit nothing — no dangling `<tag></tag>` wrappers.

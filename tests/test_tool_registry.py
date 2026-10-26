@@ -16,6 +16,7 @@ from decafclaw.tools.tool_registry import (
     get_description,
     get_fetched_tools,
     get_priority,
+    normalize_deferred_description,
 )
 
 
@@ -411,6 +412,18 @@ class TestGetDescription:
         td = _make_tool_def("t", "Short desc")
         assert get_description(td) == "Short desc"
 
+    def test_wrapped_docstring_preserves_complete_first_sentence(self):
+        raw = (
+            "Read a file from your workspace filesystem\n"
+            "including blog posts, code, configs, scripts,\n"
+            "and project files. Extra details here."
+        )
+        td = _make_tool_def("workspace_read", raw)
+        desc = get_description(td)
+        assert desc == (
+            "Read a file from your workspace filesystem including blog posts, code, configs, scripts, and project files."
+        )
+
 
 # -- build_deferred_list_text --------------------------------------------------
 
@@ -604,6 +617,79 @@ class TestBuildDeferredListText:
         assert "### Skills" not in text
         for name in ("tool_a", "tool_b", "tool_z"):
             assert name not in text
+
+    def test_single_line_entries(self):
+        """Every entry in <deferred_tools> renders as a single line (- name — summary)."""
+        multiline_desc = "First sentence of the tool.\nSecond line.\nThird line."
+        tools = [
+            _make_tool_def("workspace_read", multiline_desc),
+            _make_tool_def("mcp__github__issue", "Open an issue.\nDetails on line 2."),
+        ]
+        text = build_deferred_list_text(tools, core_names={"workspace_read"})
+        lines = [line for line in text.splitlines() if line.startswith("- ")]
+        assert len(lines) == 2
+        assert lines[0] == "- workspace_read — First sentence of the tool."
+        assert lines[1] == "- mcp__github__issue — Open an issue."
+
+    def test_strip_parameter_signatures(self):
+        """Parameter signatures in tool descriptions are stripped from the catalog listing."""
+        tools = [
+            _make_tool_def(
+                "workspace_edit",
+                "workspace_edit(path: str, old_text: str, new_text: str) -> bool: Edit a file by replacing text.",
+            ),
+            _make_tool_def(
+                "mcp__api__fetch",
+                "fetch(url: str, timeout: int = 30) - Fetch a URL via HTTP. Extra details.",
+            ),
+            _make_tool_def(
+                "mcp__api__query",
+                "(query: str) — Search for items in database.",
+            ),
+        ]
+        text = build_deferred_list_text(tools, core_names={"workspace_edit"})
+        assert "- workspace_edit — Edit a file by replacing text." in text
+        assert "- mcp__api__fetch — Fetch a URL via HTTP." in text
+        assert "- mcp__api__query — Search for items in database." in text
+
+    def test_strip_markdown_examples_and_code_blocks(self):
+        """Multi-line markdown code blocks and example sections are stripped."""
+        desc_with_example = (
+            'Query records from SQLite database.\n\nExample:\n```json\n{"query": "SELECT * FROM users"}\n```\n'
+        )
+        tools = [_make_tool_def("mcp__sqlite__query", desc_with_example)]
+        text = build_deferred_list_text(tools, core_names=set())
+        assert "```" not in text
+        assert "SELECT" not in text
+        assert "- mcp__sqlite__query — Query records from SQLite database." in text
+
+
+class TestNormalizeDeferredDescription:
+    def test_empty(self):
+        assert normalize_deferred_description("") == ""
+
+    def test_single_line_plain(self):
+        assert normalize_deferred_description("Simple description.") == "Simple description."
+
+    def test_multiline_takes_first_sentence(self):
+        raw = "First sentence.\nSecond line.\nThird line."
+        assert normalize_deferred_description(raw) == "First sentence."
+
+    def test_strip_tool_name_signature(self):
+        raw = "my_tool(a: int, b: str = '') -> dict: Do something useful."
+        assert normalize_deferred_description(raw, tool_name="my_tool") == "Do something useful."
+
+    def test_strip_generic_signature(self):
+        raw = "(x: float, y: float) - Compute distance."
+        assert normalize_deferred_description(raw) == "Compute distance."
+
+    def test_strip_fenced_code_block(self):
+        raw = "```python\nprint('hello')\n```\nUseful description here."
+        assert normalize_deferred_description(raw) == "Useful description here."
+
+    def test_abbreviations_preserved(self):
+        raw = "Read a file (e.g. config.json). Next sentence."
+        assert normalize_deferred_description(raw) == "Read a file (e.g. config.json)."
 
 
 # -- Fetched tools helpers -----------------------------------------------------
