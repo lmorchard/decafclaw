@@ -1449,3 +1449,29 @@ class TestWorkspaceOutline:
         assert "Not a heading" not in res.text
         assert "Still not a heading" not in res.text
         assert "## Real Heading" in res.text
+
+    def test_multiline_typed_signatures(self, ctx):
+        code = "def connect(\n    host: str = 'localhost',\n    timeout: int = 30,\n) -> bool:\n    return True\n"
+        tool_workspace_write(ctx, "typed.py", code)
+        res = tool_workspace_outline(ctx, "typed.py")
+        assert "1-5: def connect( host: str = 'localhost', timeout: int = 30, ) -> bool: ..." in res.text
+
+    def test_single_line_unicode_definition(self, ctx):
+        code = "def 计算(): return 123\n"
+        tool_workspace_write(ctx, "calc.py", code)
+        res = tool_workspace_outline(ctx, "calc.py")
+        assert "1: def 计算(): ..." in res.text
+        assert "return" not in res.text
+
+    def test_heading_with_literal_slash(self, ctx):
+        doc = "# Project\nIntro.\n## CI/CD Pipeline\nAutomated tests.\n"
+        tool_workspace_write(ctx, "cicd.md", doc)
+        res = tool_workspace_outline(ctx, "cicd.md", section="CI/CD Pipeline")
+        assert "Lines 3-4 of 4 (section 'CI/CD Pipeline'):" in res.text
+        assert "3| ## CI/CD Pipeline" in res.text
+
+    def test_parenthesized_decorator(self, ctx):
+        code = "@(\n    my_decorator\n)\ndef decorated():\n    pass\n"
+        tool_workspace_write(ctx, "dec.py", code)
+        res = tool_workspace_outline(ctx, "dec.py")
+        assert "1-5: @( my_decorator ) def decorated(): ..." in res.text

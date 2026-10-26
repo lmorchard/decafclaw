@@ -94,39 +94,67 @@ def _iter_statements(statements: Sequence[ast.stmt]) -> Iterator[ast.stmt]:
                 yield from _iter_statements(case.body)
 
 
+def _get_start_line(lines: list[str], node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> int:
+    if not node.decorator_list:
+        return node.lineno
+    d_first = node.decorator_list[0]
+    d_start = d_first.lineno
+    if d_start > 1 and lines[d_start - 2].strip().startswith("@"):
+        return d_start - 1
+    return d_start
+
+
 def _get_python_header(lines: list[str], node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> str:
     """Extract declaration header directly from source lines, preserving syntax as-is."""
-    decs: list[str] = []
-    for d in node.decorator_list:
-        d_start = d.lineno - 1
-        d_end = getattr(d, "end_lineno", d.lineno)
-        if 0 <= d_start < len(lines):
-            dec_text = " ".join(lines[i].strip() for i in range(d_start, min(d_end, len(lines))))
+    start_idx = node.lineno - 1
+    if node.decorator_list:
+        d_first = node.decorator_list[0]
+        d_start = d_first.lineno - 1
+        if d_start > 0 and lines[d_start - 1].strip().startswith("@"):
+            d_start = d_start - 1
+        dec_parts = [lines[i].strip() for i in range(d_start, max(d_start, start_idx)) if lines[i].strip()]
+        if dec_parts:
+            dec_text = " ".join(dec_parts)
             if not dec_text.startswith("@"):
                 dec_text = "@" + dec_text
-            decs.append(dec_text)
-    dec_prefix = f"{' '.join(decs)} " if decs else ""
+            dec_prefix = f"{dec_text} "
+        else:
+            dec_prefix = ""
+    else:
+        dec_prefix = ""
 
-    start_idx = node.lineno - 1
     if start_idx >= len(lines):
         return f"{dec_prefix}{node.name}"
 
+    if not node.body:
+        return f"{dec_prefix}{lines[start_idx].strip()}"
+
+    first_body = node.body[0]
     # Handle single-line definitions (e.g. def foo(): return 1 or class Foo: pass)
-    if node.body and node.body[0].lineno == node.lineno:
-        col = getattr(node.body[0], "col_offset", None)
+    if first_body.lineno == node.lineno:
+        col = getattr(first_body, "col_offset", None)
         if col is not None and col > 0:
-            header = lines[start_idx][:col].strip()
+            raw_bytes = lines[start_idx].encode("utf-8")[:col]
+            header = raw_bytes.decode("utf-8", errors="replace").strip()
             return f"{dec_prefix}{header}"
         return f"{dec_prefix}{lines[start_idx].strip()}"
 
-    # Multiline or standard header: collect lines up to closing colon
-    collected: list[str] = []
-    for idx in range(start_idx, len(lines)):
-        line_strip = lines[idx].strip()
-        collected.append(line_strip)
-        if ":" in line_strip and not line_strip.startswith("#"):
-            break
-    header = " ".join(collected)
+    # Multiline or standard header: lines from def/class up to first body statement
+    end_idx = first_body.lineno - 1
+    parts: list[str] = []
+    for i in range(start_idx, end_idx):
+        line_str = lines[i].strip()
+        if line_str and not line_str.startswith("#"):
+            parts.append(line_str)
+
+    # If first body statement shares line with closing colon: ): return x
+    col = getattr(first_body, "col_offset", None)
+    if col is not None and col > 0 and end_idx < len(lines):
+        raw_prefix = lines[end_idx].encode("utf-8")[:col].decode("utf-8", errors="replace").strip()
+        if raw_prefix and not raw_prefix.startswith("#"):
+            parts.append(raw_prefix)
+
+    header = " ".join(parts)
     return f"{dec_prefix}{header}"
 
 
@@ -139,7 +167,7 @@ def _extract_py_items(parent: ast.AST, lines: list[str], depth: int = 0) -> list
 
     for node in _iter_statements(body):
         if isinstance(node, ast.ClassDef):
-            start = node.decorator_list[0].lineno if node.decorator_list else node.lineno
+            start = _get_start_line(lines, node)
             end = getattr(node, "end_lineno", node.lineno)
             header = _get_python_header(lines, node)
             item = OutlineItem(
@@ -154,7 +182,7 @@ def _extract_py_items(parent: ast.AST, lines: list[str], depth: int = 0) -> list
             item.children = _extract_py_items(node, lines, depth + 1)
             items.append(item)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            start = node.decorator_list[0].lineno if node.decorator_list else node.lineno
+            start = _get_start_line(lines, node)
             end = getattr(node, "end_lineno", node.lineno)
             kind = "async_function" if isinstance(node, ast.AsyncFunctionDef) else "function"
             header = _get_python_header(lines, node)
@@ -385,6 +413,20 @@ def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem 
         return candidates
 
     all_paths = [p for _, p, _ in flat]
+    # Check for direct exact match on item name or display path (preserving literal slashes/dots)
+    norm_query_raw = query.strip().lstrip("#").strip().lower()
+    raw_exact = [
+        (item, path)
+        for item, path, _ in flat
+        if item.name.strip().lstrip("#").strip().lower() == norm_query_raw
+        or path.strip().lstrip("#").strip().lower() == norm_query_raw
+    ]
+    if len(raw_exact) == 1:
+        return raw_exact[0][0], [], []
+    if len(raw_exact) > 1:
+        ambig_cands = [f"{path} (lines {item.start_line}-{item.end_line})" for item, path in raw_exact]
+        return None, _cap_list(ambig_cands), []
+
     is_markdown = any(item.kind == "heading" for item, _, _ in flat)
 
     if is_markdown:
