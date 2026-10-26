@@ -1010,9 +1010,9 @@ async def test_pin_sticky_schedules_trailing_update_after_burst(tmp_path, config
 # ---------------------------------------------------------------------------
 
 
-def test_strip_ansi_removes_escape_codes_and_cr():
+def test_strip_ansi_removes_escape_codes():
     raw = "\x1b[32m[1/5]\x1b[0m Compiling core...\r\n"
-    assert strip_ansi(raw) == "[1/5] Compiling core...\n"
+    assert strip_ansi(raw) == "[1/5] Compiling core...\r\n"
 
 
 def test_none_parser_line_counts():
@@ -1319,3 +1319,71 @@ def test_step_parser_unlabeled_step_resets_label():
     assert p.step_label == "Step one label"
     p.feed_line("[2/2]")
     assert p.step_label == ""
+
+
+def test_feed_line_carriage_return_separated():
+    p = PercentParser()
+    p.feed_line("10%\r50%\r100%")
+    up = p.get_progress()
+    assert up.current == 100
+
+
+def test_pytest_summary_undecorated_quiet_mode():
+    p = PytestParser()
+    p.feed_line("4 passed in 0.10s")
+    assert p.passed == 4
+
+    p2 = PytestParser()
+    p2.feed_line("2 failed, 4 passed in 1.2s")
+    assert p2.passed == 4
+    assert p2.failed == 2
+
+
+def test_pytest_collection_with_deselected():
+    p = PytestParser()
+    p.feed_line("collected 50 items / 40 deselected / 10 selected")
+    assert p.total_tests == 10
+
+
+def test_pytest_xdist_verbose_outcome_first():
+    p = PytestParser()
+    p.feed_line("[gw0] [ 50%] FAILED tests/test_a.py::test_one")
+    assert p.failed == 1
+    assert p.pct == 50
+    assert p.current_test == "tests/test_a.py::test_one"
+
+
+def test_auto_parser_switches_presets_on_format_change():
+    p = AutoParser()
+    p.feed_line("[1/2] Step one")
+    assert p._active_preset == "step"
+    # New format lines take over
+    p.feed_line("downloading 50%")
+    assert p._active_preset == "percent"
+    up = p.get_progress()
+    assert up.current == 50
+    assert up.unit == "%"
+
+
+@pytest.mark.asyncio
+async def test_pin_sticky_streaming_carriage_returns(tmp_path, config, sticky_registry):
+    """Processes writing in-place with carriage returns update sticky slot."""
+    manager = BackgroundJobManager()
+    fake = _StickyCapturingManager()
+    cmd = 'bash -c "printf \\"downloading 20%%\\\\r\\"; sleep 0.1; printf \\"downloading 80%%\\\\r\\""'
+    job = await manager.start(
+        cmd,
+        cwd=str(tmp_path),
+        config=config,
+        conv_id="conv-sticky-cr",
+        manager=fake,
+        pin_sticky=True,
+        progress_parser="percent",
+    )
+    await job.reader_task
+
+    events = fake.sticky_events
+    assert len(events) >= 2
+    final = events[-1]
+    assert "80%" in final["data"]["steps"][0]["note"]
+    await manager.cleanup_all()

@@ -59,22 +59,35 @@ async def _read_stream(
     buffer: deque,
     on_line: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
-    """Read lines from an async stream into a deque until EOF.
+    """Read lines/chunks from an async stream into a deque until EOF.
 
-    When ``on_line`` is given it is awaited for each decoded line, after the
-    line is buffered. Fail-open: a hook error is logged and reading continues.
+    Frames on \r\n, \r, and \n so in-place progress bars updating via
+    carriage returns are delivered promptly to the on_line hook.
     """
     if stream is None:
         return
+    import re
+
+    pending = ""
     while True:
-        line = await stream.readline()
-        if not line:
+        chunk = await stream.read(4096)
+        if not chunk:
             break
-        text = line.decode(errors="replace").rstrip("\n")
-        buffer.append(text)
+        pending += chunk.decode(errors="replace")
+        lines = re.split(r"\r\n|\r|\n", pending)
+        pending = lines.pop()
+        for line in lines:
+            buffer.append(line)
+            if on_line is not None:
+                try:
+                    await on_line(line)
+                except Exception:
+                    log.warning("on_line hook raised while reading stream; continuing", exc_info=True)
+    if pending:
+        buffer.append(pending)
         if on_line is not None:
             try:
-                await on_line(text)
+                await on_line(pending)
             except Exception:
                 log.warning("on_line hook raised while reading stream; continuing", exc_info=True)
 
@@ -253,13 +266,16 @@ async def _publish_job_sticky(job: BackgroundJob) -> None:
         log.warning("Failed to publish sticky update for background job %s", job.job_id, exc_info=True)
 
 
-async def _sticky_publish_when_due(job: BackgroundJob, due_at: float) -> None:
+async def _sticky_publish_when_due(job: BackgroundJob, due_at: float, last: dict | None = None) -> None:
     """Publish the latest sticky snapshot once the throttle interval has elapsed."""
     delay = due_at - time.monotonic()
     if delay > 0:
         await asyncio.sleep(delay)
     if job.finalized:
         return
+    now = time.monotonic()
+    if last is not None:
+        last["t"] = now
     await _publish_job_sticky(job)
 
 
@@ -315,13 +331,13 @@ def _sticky_stream_hooks(
                 task = job.sticky_publish_task
                 if task is None or task.done():
                     due_at = last["t"] + _STICKY_THROTTLE_SEC
-                    job.sticky_publish_task = asyncio.create_task(_sticky_publish_when_due(job, due_at))
+                    job.sticky_publish_task = asyncio.create_task(_sticky_publish_when_due(job, due_at, last))
                 return
             last["t"] = now
             task = job.sticky_publish_task
             if task is not None and not task.done():
                 return
-            job.sticky_publish_task = asyncio.create_task(_sticky_publish_when_due(job, now))
+            job.sticky_publish_task = asyncio.create_task(_sticky_publish_when_due(job, now, last))
 
         return on_line
 

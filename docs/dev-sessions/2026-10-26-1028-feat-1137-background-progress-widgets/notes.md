@@ -35,4 +35,12 @@
   - Finding 3: In `AutoParser.feed_line`, included `skipped` in pytest detection check (`passed + failed + skipped > 0`).
   - Note 1: In `StepParser.feed_line`, updated `self.step_label = after` so unlabeled steps reset previous labels.
   - Added regression unit tests for all findings and notes in `tests/test_background_tools.py`.
-- Ran `make fmt`, `make check`, and `make test`. All passed.
+- Addressed Copilot review findings from /tmp/findings-1177-copilot.md:
+  - Finding 1: In `_read_stream`, framed streaming chunks on both `\r` and `\n` using per-stream pending buffers; in `parsers.py`, `feed_line` splits on `[\r\n]+` so in-place carriage returns feed separate progress records.
+  - Finding 2: Supported undecorated pytest summaries (`pytest -q`, e.g. `4 passed in 0.10s`).
+  - Finding 3: Handled pytest collection with deselected items (`collected 50 items / 40 deselected / 10 selected`) to use the selected count as `total_tests`.
+  - Finding 4: Supported xdist verbose outcome-first lines (`[gw0] [ 50%] FAILED tests/test_a.py::test_one`).
+  - Finding 5: Added auto-parser re-detection when active preset stops matching or another preset matches.
+  - Finding 6: Set `last["t"] = now` on trailing updates in `_sticky_publish_when_due` to preserve the 500ms minimum interval.
+  - Added unit and integration tests covering all findings in `tests/test_background_tools.py`.
+- Ran `make fmt`, `make check`, `make test`, and `make test-js`. All passed.
