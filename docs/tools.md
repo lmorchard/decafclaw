@@ -4,6 +4,8 @@ All built-in tools the agent can call, grouped by module. Skills and MCP servers
 
 Tools marked **critical** (✓) are always sent to the LLM — these are the minimum set needed for common tasks. Other tools are `normal` priority (filled in as budget allows) or `low` (fetched on demand via `tool_search`). See [Tool Priority System](tool-priority.md) and [Tool Search](tool-search.md).
 
+Tools can return rich visual presentations in the web UI via DecafClaw's widget framework (`dc-widget-host`). See [Widgets](widgets.md) and [Tool Widget Opportunities](tool-widget-opportunities.md) for the survey and integration patterns.
+
 ## Core (`tools/core.py`)
 
 | Tool | Always | What it does |

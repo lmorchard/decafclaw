@@ -11,6 +11,7 @@ import pytest
 
 from decafclaw.context import Context
 from decafclaw.conversation_paths import scheduled_wakes_path
+from decafclaw.media import WidgetRequest
 from decafclaw.scheduled_wakes import (
     ScheduledWake,
     ScheduledWakeManager,
@@ -152,6 +153,7 @@ async def test_schedule_list(ctx, mock_manager):
     empty_res = tool_schedule_list(ctx)
     assert "No pending scheduled wake turns" in empty_res.text
     assert empty_res.data["schedules"] == []
+    assert empty_res.widget is None
 
     await tool_schedule_turn(ctx, delay_seconds=60, reason="First wake")
     await tool_schedule_turn(ctx, delay_seconds=120, reason="Second wake")
@@ -161,6 +163,19 @@ async def test_schedule_list(ctx, mock_manager):
     assert len(list_res.data["schedules"]) == 2
     assert list_res.data["schedules"][0]["reason"] == "First wake"
     assert list_res.data["schedules"][1]["reason"] == "Second wake"
+    assert isinstance(list_res.widget, WidgetRequest)
+    assert list_res.widget.widget_type == "data_table"
+    assert list_res.widget.target == "inline"
+    assert "2 pending wake turn(s)" in list_res.widget.data["caption"]
+    assert len(list_res.widget.data["rows"]) == 2
+    assert list_res.widget.data["rows"][0]["reason"] == "First wake"
+    assert list_res.widget.data["columns"] == [
+        {"key": "schedule_id", "label": "Schedule ID"},
+        {"key": "fire_at", "label": "Fire At"},
+        {"key": "remaining", "label": "Remaining (s)"},
+        {"key": "reason", "label": "Reason"},
+    ]
+    assert isinstance(list_res.widget.data["rows"][0]["remaining"], int)
 
 
 @pytest.mark.asyncio

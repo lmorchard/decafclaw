@@ -5,7 +5,7 @@ import time
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
-from ..media import ToolResult
+from ..media import ToolResult, WidgetRequest
 from ..scheduled_wakes import ScheduledWakeManager
 
 if TYPE_CHECKING:
@@ -142,7 +142,33 @@ def tool_schedule_list(ctx: "Context") -> ToolResult:
         remaining = max(0, int(w.fire_at_ts - now_ts))
         lines.append(f"- {w.schedule_id}: fires in {remaining}s (at {w.fire_at}) — {w.reason}")
 
-    return ToolResult(text="\n".join(lines), data={"schedules": [asdict(w) for w in wakes]})
+    widget = WidgetRequest(
+        widget_type="data_table",
+        data={
+            "caption": f"schedule_list: {len(wakes)} pending wake turn(s)",
+            "columns": [
+                {"key": "schedule_id", "label": "Schedule ID"},
+                {"key": "fire_at", "label": "Fire At"},
+                {"key": "remaining", "label": "Remaining (s)"},
+                {"key": "reason", "label": "Reason"},
+            ],
+            "rows": [
+                {
+                    "schedule_id": w.schedule_id,
+                    "fire_at": w.fire_at,
+                    "remaining": max(0, int(w.fire_at_ts - now_ts)),
+                    "reason": w.reason,
+                }
+                for w in wakes
+            ],
+        },
+        target="inline",
+    )
+    return ToolResult(
+        text="\n".join(lines),
+        data={"schedules": [asdict(w) for w in wakes]},
+        widget=widget,
+    )
 
 
 SCHEDULE_TOOLS = {
