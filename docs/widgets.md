@@ -601,7 +601,7 @@ automatically into the sticky slot by three producers:
   started with `pin_sticky=True` streams its live output into the slot: an
   initial in-progress pin, throttled updates as output lines arrive, and a
   final done/failed pin on exit (the slot clears when the job is stopped or
-  expires). See [background-wake.md](background-wake.md#pin_sticky-parameter).
+  expires). See [background-wake.md](background-wake.md#pin_sticky-and-progress_parser-parameters).
 
 All three producers are fail-open (a sticky-mirror failure never breaks the
 underlying tool call) and use `sticky.py`'s `set_sticky` / `clear_sticky`
