@@ -1444,3 +1444,92 @@ class TestWorkspaceOutline:
         res = tool_workspace_outline(ctx, "big_vars.py")
         assert res.data["truncated"] is True
         assert "(file has 250 lines, showing first 200. Use workspace_read with line ranges to read more.)" in res.text
+
+    def test_outline_python_compound_statement_containers(self, ctx):
+        code = (
+            "if True:\n"
+            "    def conditional_worker():\n"
+            "        pass\n"
+            "else:\n"
+            "    def fallback_worker():\n"
+            "        pass\n"
+            "\n"
+            "try:\n"
+            "    class SafeManager:\n"
+            "        def manage(self):\n"
+            "            pass\n"
+            "except Exception:\n"
+            "    def error_handler():\n"
+            "        pass\n"
+        )
+        tool_workspace_write(ctx, "guarded.py", code)
+        res = tool_workspace_outline(ctx, "guarded.py")
+        assert "conditional_worker" in res.text
+        assert "fallback_worker" in res.text
+        assert "SafeManager" in res.text
+        assert "error_handler" in res.text
+        # Nested method inside class inside try
+        assert "manage" in res.text
+
+    def test_markdown_embedded_code_fences(self, ctx):
+        doc = (
+            "# Outer Title\n"
+            "\n"
+            "````markdown\n"
+            "# Not a heading inside 4-backtick\n"
+            "```python\n"
+            "# Still inside 4-backtick\n"
+            "```\n"
+            "````\n"
+            "\n"
+            "## Middle Section\n"
+            "\n"
+            "~~~\n"
+            "```\n"
+            "# Not a heading inside tilde\n"
+            "```\n"
+            "~~~\n"
+            "\n"
+            "### Final Subsection\n"
+        )
+        tool_workspace_write(ctx, "fences.md", doc)
+        res = tool_workspace_outline(ctx, "fences.md")
+        assert "Not a heading" not in res.text
+        assert "# Outer Title" in res.text
+        assert "## Middle Section" in res.text
+        assert "### Final Subsection" in res.text
+
+    def test_duplicate_identical_headings_ambiguity_with_line_ranges(self, ctx):
+        doc = "# Document\nIntro\n## Notes\nFirst notes body\n## Other\nOther body\n## Notes\nSecond notes body\n"
+        tool_workspace_write(ctx, "dup.md", doc)
+        res = tool_workspace_outline(ctx, "dup.md", section="Notes")
+        assert "[error: section 'Notes' is ambiguous in 'dup.md'. Matching candidates:" in res.text
+        assert "Notes (lines 3-4)" in res.text
+        assert "Notes (lines 7-8)" in res.text
+
+    def test_ambiguity_candidates_capped_at_20_with_omission_notice(self, ctx):
+        # 25 identical methods across classes
+        classes = []
+        for i in range(25):
+            classes.append(f"class Worker_{i}:\n    def process(self):\n        pass\n")
+        code = "\n".join(classes)
+        tool_workspace_write(ctx, "many_workers.py", code)
+        res = tool_workspace_outline(ctx, "many_workers.py", section="process")
+        assert "[error: section 'process' is ambiguous in 'many_workers.py'. Matching candidates:" in res.text
+        assert "... and 5 more omitted" in res.text
+
+    def test_thread_safe_outline_cache_concurrency(self, ctx):
+        import concurrent.futures
+
+        code = "class Concurrent:\n    def run(self):\n        pass\n"
+        tool_workspace_write(ctx, "concurrent_test.py", code)
+
+        def worker():
+            for _ in range(50):
+                res = tool_workspace_outline(ctx, "concurrent_test.py")
+                assert "class Concurrent:" in res.text
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(worker) for _ in range(8)]
+            for f in concurrent.futures.as_completed(futures):
+                f.result()

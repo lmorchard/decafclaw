@@ -42,4 +42,13 @@
 - Updated section truncation message in `tool_workspace_outline` to say `"Use workspace_read with start_line/end_line to read specific ranges."`.
 - Added 3 regression tests in `tests/test_workspace_tools.py` verifying no false ambiguity on substring queries, `#` heading lookups, and large no-symbol file truncation.
 
+## Copilot Review Follow-up (PR #1176)
+
+- Added `threading.Lock` (`_CACHE_LOCK`) around all `_OUTLINE_CACHE` operations (`get_outline`, `invalidate_outline_cache`) for thread-safe access in worker threads.
+- Added `_iter_statements` to recursively traverse statements inside compound containers (`if`, `try`, `with`, `async with`, `for`, `while`, `match`) without increasing lexical nesting depth.
+- Tracked `active_fence_char` and `active_fence_len` in Markdown code fence parsing to robustly handle embedded code fences (e.g. 3-backtick fence inside 4-backtick block).
+- Treated duplicate exact matches (e.g. repeated headings or getter/setter pairs) as ambiguous, returning candidate paths with line ranges for disambiguation.
+- Capped ambiguity candidate list at 20 with an omission notice (`... and N more omitted`).
+- Added 5 regression tests in `tests/test_workspace_tools.py` covering statement containers, embedded fences, duplicate heading line ranges, candidate capping, and cache concurrency.
+
 ## Log

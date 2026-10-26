@@ -11,10 +11,11 @@ import ast
 import hashlib
 import logging
 import re
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
+from typing import Iterator, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +25,8 @@ MAX_OUTLINE_ITEMS = 200
 MAX_CACHE_ENTRIES = 512
 
 HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*$")
-FENCE_RE = re.compile(r"^ {0,3}(```|~~~)")
+OPEN_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+CLOSE_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*$")
 
 
 @dataclass
@@ -53,6 +55,7 @@ class OutlineResult:
 
 
 _OUTLINE_CACHE: OrderedDict[tuple[str, str], OutlineResult] = OrderedDict()
+_CACHE_LOCK = threading.Lock()
 
 
 def invalidate_outline_cache(path: str | Path | None = None) -> None:
@@ -61,14 +64,15 @@ def invalidate_outline_cache(path: str | Path | None = None) -> None:
     If path is provided, removes entries matching that path.
     If path is None, clears the entire cache.
     """
-    if path is None:
-        _OUTLINE_CACHE.clear()
-        return
+    with _CACHE_LOCK:
+        if path is None:
+            _OUTLINE_CACHE.clear()
+            return
 
-    path_str = str(path)
-    keys_to_remove = [k for k in _OUTLINE_CACHE if k[0] == path_str]
-    for k in keys_to_remove:
-        _OUTLINE_CACHE.pop(k, None)
+        path_str = str(path)
+        keys_to_remove = [k for k in _OUTLINE_CACHE if k[0] == path_str]
+        for k in keys_to_remove:
+            _OUTLINE_CACHE.pop(k, None)
 
 
 def _content_hash(content: str) -> str:
@@ -80,10 +84,44 @@ def _content_hash(content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _iter_statements(statements: Sequence[ast.stmt]) -> Iterator[ast.stmt]:
+    """Yield statements, recursively expanding compound blocks without nesting depth."""
+    for stmt in statements:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield stmt
+        elif isinstance(stmt, ast.If):
+            yield from _iter_statements(stmt.body)
+            yield from _iter_statements(stmt.orelse)
+        elif isinstance(stmt, ast.Try):
+            yield from _iter_statements(stmt.body)
+            for handler in stmt.handlers:
+                yield from _iter_statements(handler.body)
+            yield from _iter_statements(stmt.orelse)
+            yield from _iter_statements(stmt.finalbody)
+        elif hasattr(ast, "TryStar") and isinstance(stmt, ast.TryStar):
+            yield from _iter_statements(stmt.body)
+            for handler in stmt.handlers:
+                yield from _iter_statements(handler.body)
+            yield from _iter_statements(stmt.orelse)
+            yield from _iter_statements(stmt.finalbody)
+        elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+            yield from _iter_statements(stmt.body)
+        elif isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
+            yield from _iter_statements(stmt.body)
+            yield from _iter_statements(stmt.orelse)
+        elif isinstance(stmt, ast.Match):
+            for case in stmt.cases:
+                yield from _iter_statements(case.body)
+
+
 def _extract_py_items(parent: ast.AST, depth: int = 0) -> list[OutlineItem]:
     """Recursively extract ClassDef, FunctionDef, and AsyncFunctionDef items."""
     items: list[OutlineItem] = []
-    for node in getattr(parent, "body", []):
+    body = getattr(parent, "body", [])
+    if not isinstance(body, list):
+        return items
+
+    for node in _iter_statements(body):
         if isinstance(node, ast.ClassDef):
             start = node.decorator_list[0].lineno if node.decorator_list else node.lineno
             end = getattr(node, "end_lineno", node.lineno)
@@ -148,18 +186,31 @@ def parse_python_outline(content: str, path: str = "") -> tuple[list[OutlineItem
 def parse_markdown_outline(content: str) -> list[OutlineItem]:
     """Parse Markdown headings into nested OutlineItem objects.
 
-    Fenced code blocks are ignored to avoid treating comments as headings.
+    Fenced code blocks are tracked with delimiter character and length
+    to properly handle embedded code fences.
     """
     lines = content.splitlines()
-    in_fence = False
+    active_fence_char: str | None = None
+    active_fence_len: int = 0
     flat_headings: list[dict] = []
 
     for i, line in enumerate(lines):
-        if FENCE_RE.match(line):
-            in_fence = not in_fence
+        if active_fence_char is not None:
+            m_close = CLOSE_FENCE_RE.match(line)
+            if m_close:
+                fence = m_close.group(1)
+                if fence[0] == active_fence_char and len(fence) >= active_fence_len:
+                    active_fence_char = None
+                    active_fence_len = 0
             continue
-        if in_fence:
+
+        m_open = OPEN_FENCE_RE.match(line)
+        if m_open:
+            fence = m_open.group(1)
+            active_fence_char = fence[0]
+            active_fence_len = len(fence)
             continue
+
         m = HEADING_RE.match(line)
         if m:
             level = len(m.group(1))
@@ -215,57 +266,61 @@ _SUPPORTED_PY_EXTS = frozenset({".py"})
 _SUPPORTED_MD_EXTS = frozenset({".md", ".markdown"})
 
 
-def get_outline(resolved_path: Path, content: str) -> OutlineResult:
-    """Retrieve or compute the structural outline for a file."""
-    path_str = str(resolved_path)
-    chash = _content_hash(content)
-    cache_key = (path_str, chash)
-
-    if cache_key in _OUTLINE_CACHE:
-        _OUTLINE_CACHE.move_to_end(cache_key)
-        return _OUTLINE_CACHE[cache_key]
-
+def _compute_outline(resolved_path: Path, content: str, path_str: str) -> OutlineResult:
     ext = resolved_path.suffix.lower()
     if ext in _SUPPORTED_PY_EXTS:
         items, error = parse_python_outline(content, path=path_str)
         if error:
-            res = OutlineResult(
+            return OutlineResult(
                 path=path_str,
                 items=[],
                 is_supported=True,
                 error=error,
                 has_symbols=False,
             )
-        else:
-            res = OutlineResult(
-                path=path_str,
-                items=items,
-                is_supported=True,
-                error=None,
-                has_symbols=bool(items),
-            )
-    elif ext in _SUPPORTED_MD_EXTS:
-        items = parse_markdown_outline(content)
-        res = OutlineResult(
+        return OutlineResult(
             path=path_str,
             items=items,
             is_supported=True,
             error=None,
             has_symbols=bool(items),
         )
-    else:
-        res = OutlineResult(
+    if ext in _SUPPORTED_MD_EXTS:
+        items = parse_markdown_outline(content)
+        return OutlineResult(
             path=path_str,
-            items=[],
-            is_supported=False,
+            items=items,
+            is_supported=True,
             error=None,
-            has_symbols=False,
+            has_symbols=bool(items),
         )
+    return OutlineResult(
+        path=path_str,
+        items=[],
+        is_supported=False,
+        error=None,
+        has_symbols=False,
+    )
 
-    _OUTLINE_CACHE[cache_key] = res
-    if len(_OUTLINE_CACHE) > MAX_CACHE_ENTRIES:
-        _OUTLINE_CACHE.popitem(last=False)
-    return res
+
+def get_outline(resolved_path: Path, content: str) -> OutlineResult:
+    """Retrieve or compute the structural outline for a file (thread-safe)."""
+    path_str = str(resolved_path)
+    chash = _content_hash(content)
+    cache_key = (path_str, chash)
+
+    with _CACHE_LOCK:
+        if cache_key in _OUTLINE_CACHE:
+            _OUTLINE_CACHE.move_to_end(cache_key)
+            return _OUTLINE_CACHE[cache_key]
+
+    res = _compute_outline(resolved_path, content, path_str)
+
+    with _CACHE_LOCK:
+        _OUTLINE_CACHE[cache_key] = res
+        if len(_OUTLINE_CACHE) > MAX_CACHE_ENTRIES:
+            _OUTLINE_CACHE.popitem(last=False)
+        return res
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +373,7 @@ def format_outline(items: Sequence[OutlineItem], max_items: int = MAX_OUTLINE_IT
 
 
 def normalize_lookup(name: str) -> str:
-    """Normalize a section lookup query."""
+    """Normalize a section lookup query, stripping markdown hashes and whitespace."""
     parts = [p.strip().lstrip("#").strip() for p in name.split("/") if p.strip()]
     cleaned = ".".join(parts) if parts else name.strip().lstrip("#").strip()
     return cleaned.lower()
@@ -330,16 +385,25 @@ def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem 
     Returns (matching_item, ambiguous_matches, known_sections):
     - Found: (matching_item, [], [])
     - Ambiguous: (None, ambiguous_matches, [])
-    - Not found: (None, [], all_paths[:20])
+    - Not found: (None, [], known_sections)
     """
     flat = flatten_items(items)
     normalized_query = normalize_lookup(query)
     all_paths = [p for _, p in flat]
 
+    def _cap_list(candidates: list[str], max_items: int = 20) -> list[str]:
+        if len(candidates) > max_items:
+            omitted = len(candidates) - max_items
+            return candidates[:max_items] + [f"... and {omitted} more omitted"]
+        return candidates
+
     # 1. Exact match (case-insensitive)
-    for item, path in flat:
-        if normalize_lookup(path) == normalized_query:
-            return item, [], []
+    exact_matches = [(item, path) for item, path in flat if normalize_lookup(path) == normalized_query]
+    if len(exact_matches) == 1:
+        return exact_matches[0][0], [], []
+    if len(exact_matches) > 1:
+        ambig_cands = [f"{path} (lines {item.start_line}-{item.end_line})" for item, path in exact_matches]
+        return None, _cap_list(ambig_cands), []
 
     # 2. Suffix match
     suffix_matches = [
@@ -351,7 +415,19 @@ def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem 
     if len(suffix_matches) == 1:
         return suffix_matches[0][0], [], []
     if len(suffix_matches) > 1:
-        return None, [p for _, p in suffix_matches], []
+        paths_seen = set()
+        has_dup_paths = False
+        for _, path in suffix_matches:
+            if path in paths_seen:
+                has_dup_paths = True
+                break
+            paths_seen.add(path)
 
-    # Not found — return known candidates (up to 20)
-    return None, [], all_paths[:20]
+        ambig_cands = [
+            f"{path} (lines {item.start_line}-{item.end_line})" if has_dup_paths else path
+            for item, path in suffix_matches
+        ]
+        return None, _cap_list(ambig_cands), []
+
+    # Not found — return known candidates capped at 20 with omission notice
+    return None, [], _cap_list(all_paths)
