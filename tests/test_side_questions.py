@@ -210,6 +210,48 @@ async def test_side_question_multi_iteration_turn_only_appends_uncommitted_chunk
 
 
 @pytest.mark.asyncio
+async def test_side_question_retains_streaming_text_during_tool_calls_prior_to_archive(manager, config):
+    conv_id = "test-conv-tool-call-streaming"
+    state = manager._get_or_create(conv_id)
+    state.busy = True
+    state.history = [{"role": "user", "content": "Search for files"}]
+
+    # Simulate streaming text followed by tool_call_start
+    # Note: on_stream_chunk appends to current_iteration_assistant_chunks
+    # and tool_call_start does NOT clear it.
+    state.current_iteration_assistant_chunks = ["Searching for matching files now."]
+
+    captured_messages = []
+
+    async def fake_streaming(cfg, messages, **kwargs):
+        captured_messages.extend(messages)
+        return {"role": "assistant", "content": "Explanation response"}
+
+    with patch("decafclaw.conversation_manager.call_llm_streaming", side_effect=fake_streaming):
+        await manager.run_side_question(conv_id, "What are you searching?")
+
+    assistant_msgs = [m for m in captured_messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 1
+    assert "Searching for matching files now." in assistant_msgs[0]["content"]
+
+    # Now simulate committing the assistant message to history and archiving
+    state.history.append({"role": "assistant", "content": "Searching for matching files now."})
+    manager.note_partial_assistant_archived(conv_id)
+
+    # current_iteration_assistant_chunks should now be cleared
+    assert state.current_iteration_assistant_chunks == []
+
+    # And subsequent side questions see it from history without duplication
+    captured_messages.clear()
+    with patch("decafclaw.conversation_manager.call_llm_streaming", side_effect=fake_streaming):
+        await manager.run_side_question(conv_id, "What are you searching?")
+
+    assistant_msgs = [m for m in captured_messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 1
+    assert "Searching for matching files now." in assistant_msgs[0]["content"]
+
+
+@pytest.mark.asyncio
 async def test_side_question_preserves_attachment_metadata(manager, config):
     conv_id = "test-conv-attachments"
     state = manager._get_or_create(conv_id)

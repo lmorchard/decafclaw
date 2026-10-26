@@ -1921,7 +1921,6 @@ class ConversationManager:
                 elif chunk_type == "done":
                     await self.emit(conv_id, {"type": "stream_done"})
                 elif chunk_type == "tool_call_start":
-                    state.current_iteration_assistant_chunks = []
                     name = data.get("name", "") if isinstance(data, dict) else ""
                     await self.emit(
                         conv_id,

@@ -40,3 +40,6 @@
   - Finding 4: Added request-local ID tracking and thread isolation in `SideQuestionDrawer` to avoid cross-conversation clobbering.
   - Finding 5: Passed captured conversation ID to `stopGeneration()` on conversation switch.
   - Finding 6: Disabled Clear button while generating in `SideQuestionDrawer`.
+- Addressed Round 3 review findings:
+  - Do not clear `current_iteration_assistant_chunks` at `tool_call_start`: keep chunks until `note_partial_assistant_archived()` commits the assistant message so streaming text remains visible during tool execution.
+  - Added `test_side_question_retains_streaming_text_during_tool_calls_prior_to_archive` in `tests/test_side_questions.py`.
