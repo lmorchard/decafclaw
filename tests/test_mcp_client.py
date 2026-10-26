@@ -657,3 +657,33 @@ async def test_single_server_restart_cancels_previous_and_reconnects(ctx, monkey
     gate.set()
     await t_new
     assert registry.servers["restart_me"].status == "connected"
+
+
+@pytest.mark.asyncio
+async def test_cross_task_disconnect_anyio_cancel_scope_safety():
+    """Disconnecting a server from a different task does not trigger AnyIO cancel scope errors."""
+    import anyio
+
+    registry = MCPRegistry()
+
+    async def connect_with_anyio_scope(exit_stack, cfg, message_handler=None):
+        scope = anyio.CancelScope()
+        exit_stack.enter_context(scope)
+        return _make_mock_session()
+
+    registry._connect_stdio = connect_with_anyio_scope
+    cfg = MCPServerConfig(name="anyio_srv", type="stdio")
+
+    t = registry.start_connect_server(cfg)
+    await registry.wait_for_server("anyio_srv")
+    assert registry.servers["anyio_srv"].status == "connected"
+
+    # Disconnect from a separate task
+    async def external_disconnect():
+        await registry.disconnect_server("anyio_srv")
+
+    disconnect_task = asyncio.create_task(external_disconnect())
+    await disconnect_task
+
+    assert registry.servers["anyio_srv"].status == "disconnected"
+    assert t.done()

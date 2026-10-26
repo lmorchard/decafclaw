@@ -4,6 +4,7 @@ import asyncio
 import functools
 import json
 import logging
+import math
 import os
 import re
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ import yaml
 from croniter import croniter
 from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, field_validator
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -3089,6 +3090,14 @@ class ScheduleUpdateRequest(BaseModel):
     shell_patterns: list[str] | None = None
     email_recipients: list[str] | None = None
     pre_script: str | None = None
+
+    @field_validator("server_timeout")
+    @classmethod
+    def validate_server_timeout(cls, v: float | None) -> float | None:
+        if v is not None:
+            if not math.isfinite(v) or v <= 0:
+                raise ValueError("server_timeout must be a finite positive number")
+        return v
 
 
 class ScheduleUpdateResponse(BaseModel):

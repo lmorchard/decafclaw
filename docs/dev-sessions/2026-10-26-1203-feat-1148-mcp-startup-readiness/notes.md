@@ -6,7 +6,7 @@
 - Worktree: /home/lmorchard/devel/decafclaw/.claude/worktrees/feat-1148-mcp-startup-readiness
 - Branch: feat-1148-mcp-startup-readiness
 - Base: origin/main at 875f2b7ab70a001000b0f8d67814d57ed8a91dd2
-- Next action: Done; PR updated with Copilot review fixes.
+- Next action: Done; PR updated with Copilot Round 2 review fixes.
 
 ## Log
 
@@ -21,9 +21,9 @@
 - 2026-10-26: Verified `make fmt`, `make check`, and `make test` (4851 passed, 2 skipped).
 - 2026-10-26: Published draft PR #1179.
 - 2026-10-26: Addressed review findings (Finding 1-3, Notes 1, 3). Re-verified (4854 passed, 2 skipped).
-- 2026-10-26: Addressed Copilot review findings:
-  - Added connection generation counter `_generation: int` on `MCPServerState` so replacement connections drain previous attempts without clobbering replacement's `_exit_stack` or status.
-  - Cancelled, drained, and started tracked replacement connection on single server restart in `_restart`.
-  - Added `required_servers` and `server_timeout` to `ScheduleUpdateRequest` in `http_server.py` and regenerated API client.
-  - Added tests for connection replacement draining, single server restart replacement, and PUT `/api/schedules/{name}` with readiness fields.
-  - Re-verified `make fmt`, `make check`, and `make test` (4857 passed, 2 skipped).
+- 2026-10-26: Addressed Copilot review findings (Round 1). Re-verified (4857 passed, 2 skipped).
+- 2026-10-26: Addressed Copilot review findings (Round 2):
+  - Validated finite positive `server_timeout` across frontmatter parsing, `write_overlay`, and `ScheduleUpdateRequest`.
+  - Moved MCP readiness check in `run_schedule_task` before `_run_pre_script` so pre-scripts do not execute when required servers are unavailable.
+  - Added AnyIO cancel-scope cross-task teardown test, finite timeout rejection tests, and pre-script bypass tests.
+  - Re-verified `make fmt`, `make check`, and `make test` (4872 passed, 2 skipped).

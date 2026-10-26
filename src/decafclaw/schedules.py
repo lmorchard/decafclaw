@@ -3,6 +3,7 @@
 import asyncio
 import html
 import logging
+import math
 import os
 import re
 import sys
@@ -203,9 +204,10 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
     server_timeout_raw = meta.get("server-timeout", meta.get("server_timeout", meta.get("mcp-timeout", 30.0)))
     try:
         server_timeout = float(server_timeout_raw)
+        if not math.isfinite(server_timeout) or server_timeout <= 0:
+            server_timeout = 30.0
     except (TypeError, ValueError):
         server_timeout = 30.0
-
     unknown_keys = sorted(set(meta) - _KNOWN_FRONTMATTER_KEYS)
     if unknown_keys:
         log.warning("Unrecognized frontmatter in %s: %s (ignored)", path.name, ", ".join(unknown_keys))
@@ -410,10 +412,12 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
 
     if "server_timeout" in patch:
         try:
-            patch["server_timeout"] = float(patch["server_timeout"])
+            val = float(patch["server_timeout"])
+            if not math.isfinite(val) or val <= 0:
+                raise ValueError("server_timeout must be a finite positive number")
+            patch["server_timeout"] = val
         except (TypeError, ValueError):
-            raise ValueError("server_timeout must be a number")
-
+            raise ValueError("server_timeout must be a finite positive number")
     updated = replace(
         base,
         enabled=patch.get("enabled", base.enabled),
@@ -891,20 +895,6 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv
                         log.error(f"Failed to activate skill '{skill_name}' for task '{task.name}': {e}")
                         ctx.skills.activation_denials.append(skill_name)
 
-    from .commands import substitute_body
-    from .polling import build_task_preamble
-
-    preamble = build_task_preamble("scheduled task", task.name)
-    body = substitute_body(task.body, skill_dir=skill_dir)
-    loaded_skills = _render_required_skill_bodies(config, required_skills)
-    # Data goes between the instructions and the ask, so the agent reads what
-    # it's doing, then what it has, then what to do with it.
-    # The pre_script tier gate lives inside `_run_pre_script`, on the
-    # dangerous function rather than at this call site (#731).
-    pre_output = await _run_pre_script(config, task)
-    pre_block = f"<pre_script_output>\n{pre_output.rstrip()}\n</pre_script_output>\n\n" if pre_output else ""
-    prompt = preamble + (f"{loaded_skills}\n\n" if loaded_skills else "") + pre_block + body
-
     try:
         if task.required_servers:
             from .mcp_client import MCPReadinessError, get_registry
@@ -916,6 +906,15 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv
                 )
             await registry.wait_for_servers(task.required_servers, timeout=task.server_timeout)
 
+        from .commands import substitute_body
+        from .polling import build_task_preamble
+
+        preamble = build_task_preamble("scheduled task", task.name)
+        body = substitute_body(task.body, skill_dir=skill_dir)
+        loaded_skills = _render_required_skill_bodies(config, required_skills)
+        pre_output = await _run_pre_script(config, task)
+        pre_block = f"<pre_script_output>\n{pre_output.rstrip()}\n</pre_script_output>\n\n" if pre_output else ""
+        prompt = preamble + (f"{loaded_skills}\n\n" if loaded_skills else "") + pre_block + body
         future = await manager.enqueue_turn(
             conv_id=conv_id,
             kind=TurnKind.SCHEDULED_TASK,
