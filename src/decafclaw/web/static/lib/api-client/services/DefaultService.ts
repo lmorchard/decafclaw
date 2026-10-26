@@ -34,6 +34,7 @@ import type { ScheduleRunResponse } from '../models/ScheduleRunResponse';
 import type { ScheduleUpdateResponse } from '../models/ScheduleUpdateResponse';
 import type { ShellPresetItem } from '../models/ShellPresetItem';
 import type { ShellPresetMutateResponse } from '../models/ShellPresetMutateResponse';
+import type { SideQuestionCancelResponse } from '../models/SideQuestionCancelResponse';
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
@@ -347,6 +348,56 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/conversations/{id}/history',
+        });
+    }
+    /**
+     * Handle Side Question
+     * Stream an ephemeral explanation-only side question via SSE.
+     * @param id
+     * @param requestBody
+     * @returns any SSE stream of response tokens and completion events
+     * @throws ApiError
+     */
+    public static handleSideQuestionApiConversationsIdSideQuestionPost(
+        id: string,
+        requestBody: {
+            question: string;
+            side_history?: (Array<Record<string, string>> | null);
+            model?: (string | null);
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/side-question',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Handle Cancel Side Question
+     * Cancel in-flight side questions for a conversation.
+     * @param id
+     * @returns SideQuestionCancelResponse Successful Response
+     * @throws ApiError
+     */
+    public static handleCancelSideQuestionApiConversationsIdSideQuestionCancelPost(
+        id: string,
+    ): CancelablePromise<SideQuestionCancelResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/side-question/cancel',
+            path: {
+                'id': id,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
@@ -999,6 +1050,8 @@ export class DefaultService {
             allowed_tools?: (Array<string> | null);
             disallowed_tools?: (Array<string> | null);
             required_skills?: (Array<string> | null);
+            required_servers?: (Array<string> | null);
+            server_timeout?: (number | null);
             shell_patterns?: (Array<string> | null);
             email_recipients?: (Array<string> | null);
             pre_script?: (string | null);
@@ -1017,6 +1070,8 @@ export class DefaultService {
             allowed_tools?: (Array<string> | null);
             disallowed_tools?: (Array<string> | null);
             required_skills?: (Array<string> | null);
+            required_servers?: (Array<string> | null);
+            server_timeout?: (number | null);
             shell_patterns?: (Array<string> | null);
             email_recipients?: (Array<string> | null);
             pre_script?: (string | null);
@@ -1036,6 +1091,8 @@ export class DefaultService {
             allowed_tools?: (Array<string> | null);
             disallowed_tools?: (Array<string> | null);
             required_skills?: (Array<string> | null);
+            required_servers?: (Array<string> | null);
+            server_timeout?: (number | null);
             shell_patterns?: (Array<string> | null);
             email_recipients?: (Array<string> | null);
             pre_script?: (string | null);

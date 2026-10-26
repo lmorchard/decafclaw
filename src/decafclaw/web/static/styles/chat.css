@@ -51,6 +51,11 @@ button.terminal-open-btn {
   font-size: 0.95rem;
 }
 button.terminal-open-btn[hidden] { display: none; }
+button.side-question-action-btn {
+  padding: 0 0.6rem;
+  font-size: 0.95rem;
+}
+button.side-question-action-btn[hidden] { display: none; }
 .copy-menu-list {
   position: absolute;
   top: calc(100% + 0.3rem);

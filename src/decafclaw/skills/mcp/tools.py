@@ -1,5 +1,6 @@
 """MCP management tools — status, resources, prompts, restart."""
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -66,29 +67,47 @@ async def _restart(ctx: "Context", registry, server_name) -> str | ToolResult:
             if not registry or server_name not in registry.servers:
                 return ToolResult(text=f"[error: MCP server '{server_name}' not found]")
 
-            # Mark server as failed — auto-restart will reconnect on next call
-            state = registry.servers.get(server_name)
-            if state:
-                state.status = "failed"
-                state.retry_count = 0  # reset so auto-restart kicks in
-            return f"MCP server '{server_name}' marked for reconnection. It will reconnect on next use."
+            # Cancel and drain in-flight connection task if active
+            task = getattr(registry, "_connection_tasks", {}).pop(server_name, None)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            state = registry.servers[server_name]
+            cfg = state.config
+
+            # Disconnect previous session cleanly
+            await registry.disconnect_server(server_name)
+
+            # Start tracked replacement connection
+            registry.start_connect_server(cfg)
+            return f"MCP server '{server_name}' restarting."
 
         else:
             # Full reload: create a fresh registry and connect
             configs = load_mcp_config(ctx.config)
             if not configs:
+                if registry:
+                    await registry.disconnect_all()
+                    _mcp._registry = None
                 return "MCP servers reloaded: no servers configured."
 
-            new_registry = MCPRegistry()
-            await new_registry.connect_all(configs)
-
-            # Swap the global registry (old one's connections will be GC'd)
+            old_registry = registry
+            new_registry = MCPRegistry(event_bus=ctx.event_bus)
             _mcp._registry = new_registry
+
+            # Drain and disconnect the old registry to prevent task leakage
+            if old_registry:
+                await old_registry.disconnect_all()
+
+            await new_registry.connect_all(configs)
 
             connected = sum(1 for s in new_registry.servers.values() if s.status == "connected")
             total_tools = sum(len(s.tools) for s in new_registry.servers.values())
             return f"MCP servers reloaded: {connected} connected, {total_tools} tool(s)"
-
     except BaseException as e:
         log.error(f"MCP restart failed: {e}", exc_info=True)
         return ToolResult(text=f"[error: MCP restart failed: {e}]")

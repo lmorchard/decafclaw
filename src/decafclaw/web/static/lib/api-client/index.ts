@@ -51,6 +51,7 @@ export type { ScheduleRunResponse } from './models/ScheduleRunResponse';
 export type { ScheduleUpdateResponse } from './models/ScheduleUpdateResponse';
 export { ShellPresetItem } from './models/ShellPresetItem';
 export type { ShellPresetMutateResponse } from './models/ShellPresetMutateResponse';
+export type { SideQuestionCancelResponse } from './models/SideQuestionCancelResponse';
 export type { StickyResponse } from './models/StickyResponse';
 export type { SystemConversationListingItem } from './models/SystemConversationListingItem';
 export type { SystemConversationListingResponse } from './models/SystemConversationListingResponse';

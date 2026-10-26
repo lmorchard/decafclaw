@@ -112,6 +112,13 @@ class AuditLogSubscriber:
                         "identifier": event.get("server", ""),
                     }
                 )
+            elif event_type == "mcp_server_failed":
+                self.append_record(
+                    {
+                        "event": "mcp_server_failed",
+                        "identifier": event.get("server", ""),
+                    }
+                )
         except Exception as exc:
             log.debug("audit log subscriber error: %s", exc)
 

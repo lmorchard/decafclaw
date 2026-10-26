@@ -4,17 +4,18 @@ import asyncio
 import functools
 import json
 import logging
+import math
 import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 import yaml
 from croniter import croniter
 from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, field_validator
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -1056,6 +1057,138 @@ async def get_conversation_history(request: Request, username: str) -> JSONRespo
     before = request.query_params.get("before", "")
     messages, has_more = index.load_history(conv_id, limit=limit, before=before)
     return JSONResponse({"messages": messages, "has_more": has_more})
+
+
+class SideQuestionRequest(BaseModel):
+    question: str
+    side_history: list[dict[str, str]] | None = None
+    model: str | None = None
+
+
+class SideQuestionCancelResponse(BaseModel):
+    ok: Literal[True]
+
+
+async def handle_side_question(request: Request, id: str) -> Response:
+    """Stream an ephemeral explanation-only side question via SSE."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    manager = request.app.state.manager
+    conv_id = id
+    if not conv_id:
+        return JSONResponse({"error": "missing conversation id"}, status_code=400)
+
+    from .web.conversations import ConversationIndex, can_read_conversation
+
+    index = ConversationIndex(config)
+    if not can_read_conversation(config, index, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid json body"}, status_code=400)
+
+    try:
+        req_data = SideQuestionRequest(**body)
+    except Exception as exc:
+        return JSONResponse({"error": f"invalid request payload: {exc}"}, status_code=400)
+
+    question = req_data.question.strip()
+    if not question:
+        return JSONResponse({"error": "question is required"}, status_code=400)
+
+    side_history = req_data.side_history
+    model_name = req_data.model
+    if model_name and model_name not in config.model_configs:
+        return JSONResponse({"error": f"Unknown model: {model_name}"}, status_code=400)
+
+    if manager is None:
+        return JSONResponse({"error": "manager not available"}, status_code=503)
+
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        cancel_event = asyncio.Event()
+        queue: asyncio.Queue[dict[str, str] | None] = asyncio.Queue()
+
+        async def on_chunk(chunk_type: str, data: Any):
+            if chunk_type == "text" and isinstance(data, str):
+                await queue.put({"event": "chunk", "data": json.dumps({"type": "chunk", "text": data})})
+
+        async def worker():
+            try:
+                result = await manager.run_side_question(
+                    conv_id,
+                    question,
+                    side_history=side_history,
+                    cancel_event=cancel_event,
+                    on_chunk=on_chunk,
+                    model_name=model_name,
+                )
+                full_text = result.get("content", "") if isinstance(result, dict) else str(result)
+                await queue.put({"event": "done", "data": json.dumps({"type": "done", "text": full_text})})
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                log.exception("Side question error")
+                await queue.put({"event": "error", "data": json.dumps({"type": "error", "error": str(e)})})
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(worker())
+        try:
+            while True:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    task.cancel()
+                    break
+
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    continue
+
+                if item is None:
+                    break
+                yield item
+        finally:
+            cancel_event.set()
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+    return EventSourceResponse(event_generator())
+
+
+async def handle_cancel_side_question(request: Request, id: str) -> JSONResponse:
+    """Cancel in-flight side questions for a conversation."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    manager = request.app.state.manager
+    conv_id = id
+    if not conv_id:
+        return JSONResponse({"error": "missing conversation id"}, status_code=400)
+
+    from .web.conversations import ConversationIndex, can_read_conversation
+
+    index = ConversationIndex(config)
+    if not can_read_conversation(config, index, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    if manager:
+        manager.cancel_side_question(conv_id)
+    return JSONResponse({"ok": True})
 
 
 class ContextMatch(BaseModel):
@@ -3170,6 +3303,8 @@ def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> 
         "allowed_tools": list(task.allowed_tools),
         "disallowed_tools": list(task.disallowed_tools),
         "required_skills": list(task.required_skills),
+        "required_servers": list(task.required_servers),
+        "server_timeout": task.server_timeout,
         "shell_patterns": list(task.shell_patterns),
         "email_recipients": list(task.email_recipients),
         "pre_script": task.pre_script,
@@ -3199,6 +3334,8 @@ class ScheduleResponse(BaseModel):
     allowed_tools: list[str]
     disallowed_tools: list[str]
     required_skills: list[str]
+    required_servers: list[str] = []
+    server_timeout: float = 30.0
     shell_patterns: list[str]
     email_recipients: list[str]
     pre_script: str
@@ -3235,9 +3372,19 @@ class ScheduleUpdateRequest(BaseModel):
     allowed_tools: list[str] | None = None
     disallowed_tools: list[str] | None = None
     required_skills: list[str] | None = None
+    required_servers: list[str] | None = None
+    server_timeout: float | None = None
     shell_patterns: list[str] | None = None
     email_recipients: list[str] | None = None
     pre_script: str | None = None
+
+    @field_validator("server_timeout")
+    @classmethod
+    def validate_server_timeout(cls, v: float | None) -> float | None:
+        if v is not None:
+            if not math.isfinite(v) or v <= 0:
+                raise ValueError("server_timeout must be a finite positive number")
+        return v
 
 
 class ScheduleUpdateResponse(BaseModel):
@@ -3483,6 +3630,32 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
+        APIRoute(
+            "/api/conversations/{id}/side-question",
+            handle_side_question,
+            methods=["POST"],
+            response_class=Response,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": SideQuestionRequest.model_json_schema()},
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "SSE stream of response tokens and completion events",
+                        "content": {"text/event-stream": {}},
+                    }
+                },
+            },
+        ),
+        APIRoute(
+            "/api/conversations/{id}/side-question/cancel",
+            handle_cancel_side_question,
+            methods=["POST"],
+            response_model=SideQuestionCancelResponse,
+        ),
         APIRoute(
             "/api/conversations/{id}/context",
             get_context_diagnostics,
