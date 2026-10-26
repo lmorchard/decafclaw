@@ -319,15 +319,18 @@ def format_outline(items: Sequence[OutlineItem], max_items: int = MAX_OUTLINE_IT
 
 def normalize_lookup(name: str) -> str:
     """Normalize a section lookup query."""
-    return name.strip().replace("/", ".").lower()
+    parts = [p.strip().lstrip("#").strip() for p in name.split("/") if p.strip()]
+    cleaned = ".".join(parts) if parts else name.strip().lstrip("#").strip()
+    return cleaned.lower()
 
 
-def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem | None, list[str]]:
+def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem | None, list[str], list[str]]:
     """Find a section by exact full path or unique suffix.
 
-    Returns (matching_item, candidate_matches).
-    If matching_item is None and candidate_matches has items, the query was ambiguous.
-    If matching_item is None and candidate_matches is empty, the query was not found.
+    Returns (matching_item, ambiguous_matches, known_sections):
+    - Found: (matching_item, [], [])
+    - Ambiguous: (None, ambiguous_matches, [])
+    - Not found: (None, [], all_paths[:20])
     """
     flat = flatten_items(items)
     normalized_query = normalize_lookup(query)
@@ -336,7 +339,7 @@ def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem 
     # 1. Exact match (case-insensitive)
     for item, path in flat:
         if normalize_lookup(path) == normalized_query:
-            return item, []
+            return item, [], []
 
     # 2. Suffix match
     suffix_matches = [
@@ -346,9 +349,9 @@ def find_section(items: Sequence[OutlineItem], query: str) -> tuple[OutlineItem 
     ]
 
     if len(suffix_matches) == 1:
-        return suffix_matches[0][0], []
+        return suffix_matches[0][0], [], []
     if len(suffix_matches) > 1:
-        return None, [p for _, p in suffix_matches]
+        return None, [p for _, p in suffix_matches], []
 
     # Not found — return known candidates (up to 20)
-    return None, all_paths[:20]
+    return None, [], all_paths[:20]

@@ -1416,3 +1416,31 @@ class TestWorkspaceOutline:
         res = tool_workspace_read(ctx, "giant.py", section="giant_func")
         assert res.data["truncated"] is True
         assert "showing first 200. Use start_line/end_line to read specific ranges." in res.text
+
+    def test_section_not_found_not_misclassified_as_ambiguous(self, ctx):
+        code = "class Worker:\n    pass\n\ndef do_work():\n    pass\n\ndef cleanup():\n    pass\n"
+        tool_workspace_write(ctx, "tasks.py", code)
+        res = tool_workspace_outline(ctx, "tasks.py", section="work")
+        assert "[error: section 'work' not found in 'tasks.py'. Known sections:" in res.text
+        assert "ambiguous" not in res.text
+        assert "Worker" in res.text
+        assert "do_work" in res.text
+        assert "cleanup" in res.text
+
+    def test_section_markdown_heading_lookup_with_hash_prefix(self, ctx):
+        doc = "# Main Title\nBody 1\n## Sub Title\nBody 2\n"
+        tool_workspace_write(ctx, "doc.md", doc)
+        res1 = tool_workspace_outline(ctx, "doc.md", section="# Main Title")
+        assert "Lines 1-4 of 4 (section 'Main Title'):" in res1.text
+        assert "1| # Main Title" in res1.text
+
+        res2 = tool_workspace_outline(ctx, "doc.md", section="## Sub Title")
+        assert "Lines 3-4 of 4 (section 'Sub Title'):" in res2.text
+        assert "3| ## Sub Title" in res2.text
+
+    def test_outline_no_symbols_large_file_truncated(self, ctx):
+        lines = [f"line_{i} = {i}\n" for i in range(250)]
+        tool_workspace_write(ctx, "big_vars.py", "".join(lines))
+        res = tool_workspace_outline(ctx, "big_vars.py")
+        assert res.data["truncated"] is True
+        assert "(file has 250 lines, showing first 200. Use workspace_read with line ranges to read more.)" in res.text

@@ -215,20 +215,18 @@ def tool_workspace_read(
                 text=f"[error: cannot retrieve section '{section}': no classes, functions, or headings found in '{path}']"
             )
 
-        match_item, candidates = find_section(outline_res.items, section)
+        match_item, ambig_matches, known_sections = find_section(outline_res.items, section)
         if match_item is None:
-            if candidates:
-                if len(candidates) > 1 and any(
-                    normalize_lookup(c).endswith(normalize_lookup(section)) for c in candidates
-                ):
-                    return ToolResult(
-                        text=f"[error: section '{section}' is ambiguous in '{path}'. Matching candidates:\n  "
-                        + "\n  ".join(candidates)
-                        + "]"
-                    )
+            if ambig_matches:
+                return ToolResult(
+                    text=f"[error: section '{section}' is ambiguous in '{path}'. Matching candidates:\n  "
+                    + "\n  ".join(ambig_matches)
+                    + "]"
+                )
+            if known_sections:
                 return ToolResult(
                     text=f"[error: section '{section}' not found in '{path}'. Known sections:\n  "
-                    + "\n  ".join(candidates)
+                    + "\n  ".join(known_sections)
                     + "]"
                 )
             return ToolResult(text=f"[error: section '{section}' not found in '{path}']")
@@ -337,20 +335,18 @@ def tool_workspace_outline(ctx: "Context", path: str, section: str | None = None
                 text=f"[error: cannot retrieve section '{section}': no classes, functions, or headings found in '{path}']"
             )
 
-        match_item, candidates = find_section(outline_res.items, section)
+        match_item, ambig_matches, known_sections = find_section(outline_res.items, section)
         if match_item is None:
-            if candidates:
-                if len(candidates) > 1 and any(
-                    normalize_lookup(c).endswith(normalize_lookup(section)) for c in candidates
-                ):
-                    return ToolResult(
-                        text=f"[error: section '{section}' is ambiguous in '{path}'. Matching candidates:\n  "
-                        + "\n  ".join(candidates)
-                        + "]"
-                    )
+            if ambig_matches:
+                return ToolResult(
+                    text=f"[error: section '{section}' is ambiguous in '{path}'. Matching candidates:\n  "
+                    + "\n  ".join(ambig_matches)
+                    + "]"
+                )
+            if known_sections:
                 return ToolResult(
                     text=f"[error: section '{section}' not found in '{path}'. Known sections:\n  "
-                    + "\n  ".join(candidates)
+                    + "\n  ".join(known_sections)
                     + "]"
                 )
             return ToolResult(text=f"[error: section '{section}' not found in '{path}']")
@@ -367,7 +363,7 @@ def tool_workspace_outline(ctx: "Context", path: str, section: str | None = None
             numbered = [f"{str(start + i).rjust(width)}| {line}" for i, line in enumerate(selected)]
             header = (
                 f"Section '{match_item.name}' has {section_count} lines (lines {start}-{end} of {total_lines}), "
-                f"showing first {MAX_READ_LINES}. Use start_line/end_line to read specific ranges.\n"
+                f"showing first {MAX_READ_LINES}. Use workspace_read with start_line/end_line to read specific ranges.\n"
             )
             return ToolResult(
                 text=header + "\n".join(numbered),
@@ -425,9 +421,17 @@ def tool_workspace_outline(ctx: "Context", path: str, section: str | None = None
         end_read = min(total_lines, MAX_READ_LINES)
         numbered = [f"{str(i + 1).rjust(width)}| {line}" for i, line in enumerate(all_lines[:end_read])]
         header = f"[Note: No classes, functions, or headings found in '{path}'. Showing file contents:]\n"
+        if total_lines > MAX_READ_LINES:
+            header += f"(file has {total_lines} lines, showing first {MAX_READ_LINES}. Use workspace_read with line ranges to read more.)\n"
         return ToolResult(
             text=header + "\n".join(numbered),
-            data={**base_data, "outline": False, "symbols": 0, "has_symbols": False, "truncated": False},
+            data={
+                **base_data,
+                "outline": False,
+                "symbols": 0,
+                "has_symbols": False,
+                "truncated": total_lines > MAX_READ_LINES,
+            },
         )
 
     text, truncated = format_outline(outline_res.items, max_items=MAX_OUTLINE_ITEMS)

@@ -31,6 +31,15 @@
 - `src/decafclaw/eval/diagnostics.py`: Registered `workspace_outline` in `READ_TOOL_ARGS`.
 - `evals/tool_choice/core_overlaps.yaml`: Added outline vs read disambiguation test cases.
 - `docs/tools.md` & `docs/tool-priority.md`: Documented `workspace_outline` and updated `workspace_read`.
-- `tests/test_workspace_tools.py`: Added 20 test cases covering classes/functions, signatures, nesting, markdown headings/fences, Unicode, targeted section retrieval, candidate hints, ambiguity, malformed code, unsupported types, empty files, path boundaries, bounded output, cache invalidation, and `workspace_read` section integration.
+- `tests/test_workspace_tools.py`: Added 23 test cases covering classes/functions, signatures, nesting, markdown headings/fences, Unicode, targeted section retrieval, candidate hints, ambiguity, malformed code, unsupported types, empty files, path boundaries, bounded output, cache invalidation, and `workspace_read` section integration.
+
+## Review Follow-up (PR #1176 Review Findings)
+
+- Updated `find_section` in `workspace_outlines.py` to return 3-tuple `(matching_item, ambiguous_matches, known_sections)`.
+- Updated `tool_workspace_read` and `tool_workspace_outline` to format `ambig_matches` on ambiguity and `known_sections` on not-found.
+- Updated `normalize_lookup` in `workspace_outlines.py` to strip leading `#` and whitespace, supporting `section="# Heading"` or `## Subheading`.
+- Updated `tool_workspace_outline` when `not outline_res.items` to show truncation note and set `truncated=True` when `total_lines > MAX_READ_LINES`.
+- Updated section truncation message in `tool_workspace_outline` to say `"Use workspace_read with start_line/end_line to read specific ranges."`.
+- Added 3 regression tests in `tests/test_workspace_tools.py` verifying no false ambiguity on substring queries, `#` heading lookups, and large no-symbol file truncation.
 
 ## Log
