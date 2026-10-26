@@ -313,7 +313,7 @@ class ConversationState:
     agent_task: asyncio.Task | None = None
     cancel_event: asyncio.Event | None = None
     steer_event: asyncio.Event | None = None
-
+    active_context: Any = None
     # Streamed assistant text accumulated for the current turn so the
     # cancel handler can persist whatever was delivered before cancel
     # (issue #491). Reset at turn start; appended to in on_stream_chunk
@@ -1859,6 +1859,7 @@ class ConversationManager:
             # Restore per-conversation state from previous turns
             self._restore_per_conv_state(state, ctx)
 
+        state.active_context = ctx
         # Apply command context if provided
         if command_ctx:
             from .commands import apply_command_ctx
@@ -2151,12 +2152,12 @@ class ConversationManager:
                         self._circuit_breaker_record(state)
                     state.busy = False
                     state.agent_task = None
+                    state.active_context = None
                     state.cancel_event = None
                     state.steer_event = None
                     state.partial_assistant_chunks = []
                     state.partial_assistant_thinking_chunks = []
                     state.current_iteration_assistant_chunks = []
-
                 await self.emit(conv_id, {"type": "turn_complete"})
 
                 # Resolve the caller's future (if any) before draining pending

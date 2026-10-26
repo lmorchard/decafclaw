@@ -7,20 +7,22 @@
 import { LitElement, html, nothing } from 'lit';
 import { DefaultService } from '../lib/api-client/index.js';
 import './wiki-editor.js';
-
+import './preset-manager.js';
 export class ConfigPanel extends LitElement {
   static properties = {
+    _tab: { state: true },
     _files: { state: true },
     _selectedFile: { state: true },
     _fileContent: { state: true },
     _fileModified: { state: true },
     _loading: { state: true },
   };
-
   createRenderRoot() { return this; }
 
   constructor() {
     super();
+    /** @type {'files'|'presets'} */
+    this._tab = 'files';
     /** @type {import('../lib/api-client/index.js').ConfigFileEntry[]} */
     this._files = [];
     /** @type {import('../lib/api-client/index.js').ConfigFileEntry|null} */
@@ -95,29 +97,47 @@ export class ConfigPanel extends LitElement {
         </div>
       `;
     }
-
-    if (this._loading) {
-      return html`<div class="config-panel"><p style="padding: 1rem; color: var(--pico-muted-color);">Loading...</p></div>`;
-    }
-
     return html`
       <div class="config-panel">
         <div class="config-panel-header">
           <span class="config-panel-title">Agent Config</span>
           <button class="config-close-btn dc-icon-btn" @click=${() => this.close()} title="Close config panel" aria-label="Close config panel">&#10005;</button>
         </div>
-        <div class="config-file-list">
-          ${this._files.map(f => html`
-            <div class="config-file-item" @click=${() => this.#selectFile(f)}>
-              <div class="config-file-info">
-                <span class="config-file-name">${f.name}</span>
-                <span class="config-scope-badge ${f.scope}">${f.scope}</span>
-                ${!f.exists ? html`<span class="config-default-badge">default</span>` : nothing}
-              </div>
-              <div class="config-file-desc">${f.description}</div>
-            </div>
-          `)}
+        <div class="config-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected=${this._tab === 'files'}
+            class="config-tab-btn ${this._tab === 'files' ? 'active' : ''}"
+            @click=${() => { this._tab = 'files'; }}
+          >Config Files</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected=${this._tab === 'presets'}
+            class="config-tab-btn ${this._tab === 'presets' ? 'active' : ''}"
+            @click=${() => { this._tab = 'presets'; }}
+          >Shell Presets</button>
         </div>
+
+        ${this._tab === 'presets' ? html`
+          <preset-manager></preset-manager>
+        ` : html`
+          ${this._loading ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">Loading...</p>` : html`
+            <div class="config-file-list">
+              ${this._files.map(f => html`
+                <div class="config-file-item" @click=${() => this.#selectFile(f)}>
+                  <div class="config-file-info">
+                    <span class="config-file-name">${f.name}</span>
+                    <span class="config-scope-badge ${f.scope}">${f.scope}</span>
+                    ${!f.exists ? html`<span class="config-default-badge">default</span>` : nothing}
+                  </div>
+                  <div class="config-file-desc">${f.description}</div>
+                </div>
+              `)}
+            </div>
+          `}
+        `}
       </div>
     `;
   }
