@@ -251,32 +251,6 @@ def classify_tools(
     return active, deferred
 
 
-def get_description(tool_def: dict) -> str:
-    """Extract a short description from a tool definition."""
-    raw = tool_def.get("function", {}).get("description", "")
-    if not raw:
-        return ""
-    name = tool_def.get("function", {}).get("name", "")
-    cleaned = re.sub(r"```[\s\S]*?(?:```|$)", "", raw).strip()
-    lines = [line_text.strip() for line_text in cleaned.splitlines() if line_text.strip()]
-    desc = raw
-    if lines:
-        for line_text in lines:
-            if re.match(r"^(?:(?:Here is an? )?examples?|usage|parameters?|arguments?):\s*$", line_text, re.IGNORECASE):
-                continue
-            stripped = _strip_signature(line_text, name)
-            if stripped:
-                desc = stripped
-                break
-    # First sentence or first 80 chars
-    match = re.search(r"^(.*?(?<!\be\.g)(?<!\bi\.e)[.!?])(?:\s+|$)", desc)
-    if match:
-        return match.group(1).strip()
-    if len(desc) > 80:
-        return desc[:77] + "..."
-    return desc
-
-
 def _strip_signature(line: str, tool_name: str = "") -> str:
     """Strip parameter signatures or leading tool name from a description line."""
     line = line.strip()
@@ -310,6 +284,47 @@ def _extract_first_sentence(text: str) -> str:
     return text
 
 
+def get_description(tool_def: dict) -> str:
+    """Extract a short description from a tool definition.
+
+    Cleans multi-line docstrings by joining wrapped lines of the first
+    paragraph that belong to the same sentence, extracting the complete
+    first sentence across wrapped lines.
+    """
+    raw = tool_def.get("function", {}).get("description", "")
+    if not raw:
+        return ""
+    name = tool_def.get("function", {}).get("name", "")
+    cleaned = re.sub(r"```[\s\S]*?(?:```|$)", "", raw).strip()
+    paragraphs = [p.strip() for p in cleaned.split("\n\n") if p.strip()]
+    if not paragraphs:
+        return ""
+
+    content_text = ""
+    for para in paragraphs:
+        lines = [line_text.strip() for line_text in para.splitlines() if line_text.strip()]
+        valid_lines = []
+        for line_text in lines:
+            if re.match(r"^(?:(?:Here is an? )?examples?|usage|parameters?|arguments?):\s*$", line_text, re.IGNORECASE):
+                continue
+            stripped = _strip_signature(line_text, name)
+            if stripped:
+                valid_lines.append(stripped)
+        if valid_lines:
+            content_text = " ".join(valid_lines)
+            break
+
+    if not content_text:
+        content_text = " ".join(paragraphs[0].splitlines())
+
+    match = re.search(r"^(.*?(?<!\be\.g)(?<!\bi\.e)[.!?])(?:\s+|$)", content_text)
+    if match:
+        return match.group(1).strip()
+    if len(content_text) > 80:
+        return content_text[:77] + "..."
+    return content_text
+
+
 def normalize_deferred_description(desc: str, tool_name: str = "") -> str:
     """Normalize a deferred tool description to a single line.
 
@@ -319,21 +334,26 @@ def normalize_deferred_description(desc: str, tool_name: str = "") -> str:
     if not desc:
         return ""
     cleaned = re.sub(r"```[\s\S]*?(?:```|$)", "", desc)
-    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
-    if not lines:
+    paragraphs = [p.strip() for p in cleaned.split("\n\n") if p.strip()]
+    if not paragraphs:
         return ""
 
-    for line in lines:
-        if re.match(r"^(?:(?:Here is an? )?examples?|usage|parameters?|arguments?):\s*$", line, re.IGNORECASE):
-            continue
-        stripped = _strip_signature(line, tool_name)
-        if not stripped:
-            continue
-        first_sent = _extract_first_sentence(stripped)
-        if first_sent:
-            return " ".join(first_sent.split())
+    for para in paragraphs:
+        lines = [line_text.strip() for line_text in para.splitlines() if line_text.strip()]
+        valid_lines = []
+        for line_text in lines:
+            if re.match(r"^(?:(?:Here is an? )?examples?|usage|parameters?|arguments?):\s*$", line_text, re.IGNORECASE):
+                continue
+            stripped = _strip_signature(line_text, tool_name)
+            if stripped:
+                valid_lines.append(stripped)
+        if valid_lines:
+            content_text = " ".join(valid_lines)
+            first_sent = _extract_first_sentence(content_text)
+            if first_sent:
+                return " ".join(first_sent.split())
 
-    fallback = _strip_signature(lines[0], tool_name) or lines[0]
+    fallback = _strip_signature(paragraphs[0].splitlines()[0], tool_name) or paragraphs[0].splitlines()[0]
     return " ".join(_extract_first_sentence(fallback).split())
 
 

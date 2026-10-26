@@ -6,7 +6,7 @@
 - Worktree: /home/lmorchard/devel/decafclaw/.claude/worktrees/feat-1051-compact-skill-catalog-deferred-tools
 - Branch: feat-1051-compact-skill-catalog-deferred-tools
 - Base: origin/main at 875f2b7ab70a001000b0f8d67814d57ed8a91dd2
-- Next action: publish final commits to draft PR #1175 and hand off.
+- Next action: commit and push PR review fixes to origin/feat-1051-compact-skill-catalog-deferred-tools.
 
 ## Log
 - 2026-10-26: Baseline tests verified (4833 passed, 2 skipped).
@@ -32,3 +32,8 @@
   - `make test`: 4847 passed, 2 skipped
   - `make test-js`: 52 test files, 574 tests passed
 - 2026-10-26: Evidence limits: `make eval-tools` requires live model endpoint connectivity; in this workstation environment, API connections fail (`All connection attempts failed`).
+- 2026-10-26: Addressed PR review Finding 1 from Copilot:
+  - Refined `get_description(tool_def)` in `src/decafclaw/tools/tool_registry.py` to join wrapped lines of multi-line docstrings belonging to the first sentence, preserving all terms across continuation lines for `tool_search()`.
+  - Kept display-only single-line compaction and parameter/example stripping in `normalize_deferred_description()`.
+  - Added regression test `test_matches_wrapped_description_continuation_lines` in `tests/test_search_tools.py`.
+  - Added unit test `test_wrapped_docstring_preserves_complete_first_sentence` in `tests/test_tool_registry.py`.

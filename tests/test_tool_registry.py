@@ -412,6 +412,18 @@ class TestGetDescription:
         td = _make_tool_def("t", "Short desc")
         assert get_description(td) == "Short desc"
 
+    def test_wrapped_docstring_preserves_complete_first_sentence(self):
+        raw = (
+            "Read a file from your workspace filesystem\n"
+            "including blog posts, code, configs, scripts,\n"
+            "and project files. Extra details here."
+        )
+        td = _make_tool_def("workspace_read", raw)
+        desc = get_description(td)
+        assert desc == (
+            "Read a file from your workspace filesystem including blog posts, code, configs, scripts, and project files."
+        )
+
 
 # -- build_deferred_list_text --------------------------------------------------
 
