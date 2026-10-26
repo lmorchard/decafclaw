@@ -102,10 +102,10 @@ async function fetchLatest(seq) {
  * @returns {Promise<PresetItem[]>}
  */
 export function load() {
+  if (_state.inFlight) return _state.inFlight;
   const seq = ++_state.seq;
   return fetchLatest(seq);
 }
-
 /**
  * Create or update a custom preset.
  * @param {string} name

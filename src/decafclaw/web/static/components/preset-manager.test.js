@@ -199,4 +199,27 @@ describe('preset-manager component', () => {
     const currentPresets = snapshot();
     expect(currentPresets.some(p => p.name === 'newly_saved')).toBe(true);
   });
+
+  it('resolves both concurrent load() calls and does not discard presets', async () => {
+    const { snapshot, load } = await import('../lib/presets-store.js');
+    reset();
+
+    const fetchMock = vi.fn(async (url) => {
+      const u = new URL(url, 'http://test');
+      if (u.pathname === '/api/shell-approval/presets') {
+        return jsonResponse(BUILTIN_PRESETS);
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Call load() twice concurrently
+    const [res1, res2] = await Promise.all([load(), load()]);
+
+    expect(res1.length).toBe(BUILTIN_PRESETS.length);
+    expect(res2.length).toBe(BUILTIN_PRESETS.length);
+    expect(snapshot().length).toBe(BUILTIN_PRESETS.length);
+    // Only a single network fetch was performed
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
