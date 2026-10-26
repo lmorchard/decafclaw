@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from decafclaw.security_monitor import SecurityStatus, evaluate_command, evaluate_command_llm
+from decafclaw.shell_presets import (
+    DEFAULT_AUX_APPROVAL_PRESETS,
+    ShellPresetStore,
+    format_rules,
+    split_rules,
+)
 
 from ..media import ToolResult
 from .confirmation import request_confirmation
@@ -347,25 +353,7 @@ def _suggest_aux_approval_pattern(command: str, has_guidance: bool) -> str:
     return cmd_stripped
 
 
-DEFAULT_AUX_APPROVAL_PRESETS: dict[str, str] = {
-    "developer": (
-        "Auto-approve standard software development commands within active workspace repositories, "
-        "including running test suites (e.g. pytest, npm test, vitest), linters and formatters (e.g. ruff, black, eslint, prettier), "
-        "typecheckers (e.g. pyright, mypy, tsc), build commands, executing repository development tasks via environment runners "
-        "(e.g. uv run <task>, poetry run <task>, npm run <script>, cargo test/check/build), "
-        "non-destructive local git operations (e.g. git status, git diff, git log, git add, git commit, git branch, git checkout, git switch), "
-        "non-destructive remote git operations (e.g. git fetch, git pull, and pushing to new or existing feature branches matching feat/*, fix/*, or test/*), "
-        "and safe sequential command chains (&&) between approved development commands. "
-        "Do not auto-approve package installations (e.g. pip install, uv add, npm install), package publication, "
-        "destructive operations (e.g. git reset --hard, deleting uncommitted work, force-pushing, pushing directly to main/master, "
-        "or deleting branches/repositories), or commands operating outside the workspace."
-    ),
-    "github": (
-        "Auto-approve GitHub CLI (gh) commands for issue/PR inspection, creation, and safe workflow management "
-        "(e.g. gh issue list/view/create, gh pr list/view/diff/checkout/create/checks, gh run list/view/watch). "
-        "Do not auto-approve destructive operations (such as repository deletion, deleting releases/tags, or closing/deleting issues without context)."
-    ),
-}
+DEFAULT_AUX_APPROVAL_PRESETS = DEFAULT_AUX_APPROVAL_PRESETS
 
 
 def _saved_presets_path(config) -> Path:
@@ -373,110 +361,30 @@ def _saved_presets_path(config) -> Path:
     return config.agent_path / "shell_approval_presets.json"
 
 
+def _get_preset_store(config) -> ShellPresetStore:
+    """Get or create ShellPresetStore for the given config."""
+    return ShellPresetStore(config)
+
+
 def _load_saved_presets(config) -> dict[str, str]:
     """Load custom saved presets from disk. Returns {'preset_name': 'guidance text'}.
 
     Raises ValueError if file exists but contains invalid or corrupt data.
     """
-    path = _saved_presets_path(config)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-        if isinstance(data, dict):
-            for k, v in data.items():
-                if not isinstance(k, str) or not isinstance(v, str):
-                    raise ValueError(f"Invalid preset entry ({k!r}: {v!r}); keys and values must be strings")
-            return {k: v for k, v in data.items()}
-        raise ValueError(f"Presets file root is not a JSON object: {type(data).__name__}")
-    except (json.JSONDecodeError, OSError) as e:
-        log.warning(f"Could not read saved shell approval presets from {path}: {e}")
-        raise ValueError(f"Corrupt or unreadable presets file: {e}") from e
+    store = _get_preset_store(config)
+    return store._load_saved_unlocked()
 
 
 def _save_custom_preset(config, preset_name: str, rules: list[str]) -> tuple[bool, str]:
-    """Save or append rules to a custom preset on disk.
-
-    Preserves existing text from saved presets or configured presets in config.shell.aux_approval_presets.
-    Returns (is_new, updated_text).
-    """
-    path = _saved_presets_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    presets = _load_saved_presets(config)
-
-    # Check whether the preset already exists in saved disk presets or config
-    raw_config_presets = getattr(config.shell, "aux_approval_presets", {})
-    if isinstance(raw_config_presets, str):
-        try:
-            cfg_presets = json.loads(raw_config_presets)
-            if not isinstance(cfg_presets, dict):
-                cfg_presets = {}
-        except (json.JSONDecodeError, ValueError):
-            cfg_presets = {}
-    elif isinstance(raw_config_presets, dict):
-        cfg_presets = raw_config_presets
-    else:
-        cfg_presets = {}
-
-    is_new = preset_name not in presets and preset_name not in cfg_presets
-
-    raw_existing = presets.get(preset_name) or cfg_presets.get(preset_name) or ""
-    existing_text = str(raw_existing).strip()
-
-    # Parse existing rules (split by newlines and clean bullet prefixes if present)
-    existing_rules = []
-    if existing_text:
-        for line in existing_text.splitlines():
-            cleaned = line.strip().lstrip("-").strip()
-            if cleaned and cleaned not in existing_rules:
-                existing_rules.append(cleaned)
-
-    # Append new rules avoiding duplicates
-    for r in rules:
-        cleaned_r = str(r).strip().lstrip("-").strip()
-        if cleaned_r and cleaned_r not in existing_rules:
-            existing_rules.append(cleaned_r)
-
-    # Format cleanly with markdown bullet points if multiple rules, or single sentence if one
-    if len(existing_rules) == 1:
-        updated_text = existing_rules[0]
-    else:
-        updated_text = "\n".join(f"- {r}" for r in existing_rules)
-
-    presets[preset_name] = updated_text
-    tmp_path = path.with_suffix(".json.tmp")
-    try:
-        tmp_path.write_text(json.dumps(presets, indent=2) + "\n")
-        tmp_path.replace(path)
-    except Exception:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        raise
-    log.info(f"Saved custom shell approval preset '{preset_name}' to {path}")
-    return is_new, updated_text
+    """Save or append rules to a custom preset on disk via ShellPresetStore."""
+    store = _get_preset_store(config)
+    return store._save_custom_preset_sync(preset_name, rules)
 
 
 def _get_all_presets(config) -> dict[str, str]:
     """Merge built-in presets with user-defined presets from config and saved presets."""
-    raw_custom = getattr(config.shell, "aux_approval_presets", {})
-    if isinstance(raw_custom, str):
-        try:
-            custom = json.loads(raw_custom)
-            if not isinstance(custom, dict):
-                custom = {}
-        except (json.JSONDecodeError, ValueError):
-            custom = {}
-    elif isinstance(raw_custom, dict):
-        custom = raw_custom
-    else:
-        custom = {}
-
-    saved = {}
-    try:
-        saved = _load_saved_presets(config)
-    except ValueError as e:
-        log.warning(f"Could not load custom saved presets from disk: {e}")
-    return {**DEFAULT_AUX_APPROVAL_PRESETS, **custom, **saved}
+    store = _get_preset_store(config)
+    return store.get_all_presets_dict_sync()
 
 
 _warned_deprecated_guidance_files: set[str] = set()

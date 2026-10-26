@@ -37,6 +37,7 @@ from .schedules import (
     write_last_run,
     write_overlay,
 )
+from .shell_presets import ShellPresetStore
 from .skills import _extract_frontmatter_text
 from .skills.vault._events import (
     KIND_CREATE,
@@ -278,6 +279,24 @@ class BookmarkEntry(BaseModel):
 class BookmarksResponse(BaseModel):
     files: list[BookmarkEntry]
     vault: list[BookmarkEntry]
+
+
+class ShellPresetItem(BaseModel):
+    name: str
+    rules: list[str]
+    source: Literal["builtin", "config", "custom"]
+    shadows_config: bool = False
+
+
+class ShellPresetPutRequest(BaseModel):
+    rules: list[str]
+
+
+class ShellPresetMutateResponse(BaseModel):
+    ok: Literal[True]
+    name: str
+    rules: list[str]
+    updated_text: str | None = None
 
 
 class BookmarkAddRequest(BaseModel):
@@ -2061,6 +2080,106 @@ async def bookmarks_delete(request: Request, username: str) -> JSONResponse:
     if data is None:
         return JSONResponse({"error": "bookmark not found"}, status_code=404)
     return JSONResponse(data)
+
+
+def _invalidate_conversations_for_preset(manager, preset_name: str) -> None:
+    """Clear llm_approved_shell_patterns in in-memory conversations where preset_name is active."""
+    if not manager or not hasattr(manager, "_conversations"):
+        return
+    for conv_id, conv_state in manager._conversations.items():
+        active_presets = getattr(conv_state.persisted, "active_aux_approval_presets", [])
+        disabled_presets = set(getattr(conv_state.persisted, "disabled_aux_approval_presets", []))
+        if preset_name in active_presets and preset_name not in disabled_presets:
+            conv_state.persisted.llm_approved_shell_patterns.clear()
+            manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
+
+
+@_authenticated
+async def shell_presets_list(request: Request, username: str) -> JSONResponse:
+    """GET /api/shell-approval/presets — list all presets with sources and rules."""
+    store = getattr(request.app.state, "preset_store", None)
+    if not store:
+        store = ShellPresetStore(request.app.state.config)
+    try:
+        presets = await store.list_presets()
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return JSONResponse(presets)
+
+
+@_authenticated
+async def shell_presets_put(request: Request, username: str) -> JSONResponse:
+    """PUT /api/shell-approval/presets/{name} — create or replace a custom preset."""
+    preset_name = request.path_params.get("name", "").strip()
+    if not preset_name:
+        return JSONResponse({"error": "preset name is required"}, status_code=400)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+    rules = body.get("rules")
+    if not isinstance(rules, list) or not rules:
+        return JSONResponse({"error": "rules must be a non-empty list of strings"}, status_code=400)
+    for r in rules:
+        if not isinstance(r, str) or not r.strip():
+            return JSONResponse({"error": "each rule must be a non-empty string"}, status_code=400)
+
+    store = getattr(request.app.state, "preset_store", None)
+    if not store:
+        store = ShellPresetStore(request.app.state.config)
+
+    try:
+        is_new, updated_text = await store.save_preset(preset_name, rules)
+    except ValueError as e:
+        err_msg = str(e)
+        if "Corrupt or unreadable presets file" in err_msg:
+            return JSONResponse({"error": err_msg}, status_code=500)
+        return JSONResponse({"error": err_msg}, status_code=400)
+
+    manager = getattr(request.app.state, "manager", None)
+    _invalidate_conversations_for_preset(manager, preset_name)
+
+    clean_rules = [r.strip() for r in rules if r.strip()]
+    return JSONResponse(
+        {
+            "ok": True,
+            "name": preset_name,
+            "rules": clean_rules,
+            "updated_text": updated_text,
+        }
+    )
+
+
+@_authenticated
+async def shell_presets_delete(request: Request, username: str) -> JSONResponse:
+    """DELETE /api/shell-approval/presets/{name} — delete a custom preset."""
+    preset_name = request.path_params.get("name", "").strip()
+    if not preset_name:
+        return JSONResponse({"error": "preset name is required"}, status_code=400)
+
+    store = getattr(request.app.state, "preset_store", None)
+    if not store:
+        store = ShellPresetStore(request.app.state.config)
+
+    try:
+        deleted = await store.delete_preset(preset_name)
+    except ValueError as e:
+        err_msg = str(e)
+        if "Corrupt or unreadable presets file" in err_msg:
+            return JSONResponse({"error": err_msg}, status_code=500)
+        return JSONResponse({"error": err_msg}, status_code=400)
+
+    if not deleted:
+        return JSONResponse({"error": f"custom preset '{preset_name}' not found"}, status_code=404)
+
+    manager = getattr(request.app.state, "manager", None)
+    _invalidate_conversations_for_preset(manager, preset_name)
+
+    return JSONResponse({"ok": True, "name": preset_name, "rules": []})
 
 
 @_authenticated
@@ -3873,6 +3992,50 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                 ]
             },
         ),
+        APIRoute(
+            "/api/shell-approval/presets",
+            shell_presets_list,
+            methods=["GET"],
+            response_model=list[ShellPresetItem],
+        ),
+        APIRoute(
+            "/api/shell-approval/presets/{name}",
+            shell_presets_put,
+            methods=["PUT"],
+            response_model=ShellPresetMutateResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": ShellPresetPutRequest.model_json_schema()},
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/shell-approval/presets/{name}",
+            shell_presets_delete,
+            methods=["DELETE"],
+            response_model=ShellPresetMutateResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
         APIRoute("/api/wiki", vault_list, methods=["GET"]),
         APIRoute("/api/wiki/{page:path}", vault_read, methods=["GET"]),
@@ -3952,6 +4115,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     app.state.event_bus = event_bus
     app.state.manager = manager
     app.state.app_ctx = app_ctx
+    app.state.preset_store = ShellPresetStore(config)
     from .terminals import TerminalRegistry
 
     app.state.terminal_registry = TerminalRegistry(config)
