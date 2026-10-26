@@ -169,6 +169,13 @@ async def test_schedule_list(ctx, mock_manager):
     assert "2 pending wake turn(s)" in list_res.widget.data["caption"]
     assert len(list_res.widget.data["rows"]) == 2
     assert list_res.widget.data["rows"][0]["reason"] == "First wake"
+    assert list_res.widget.data["columns"] == [
+        {"key": "schedule_id", "label": "Schedule ID"},
+        {"key": "fire_at", "label": "Fire At"},
+        {"key": "remaining", "label": "Remaining (s)"},
+        {"key": "reason", "label": "Reason"},
+    ]
+    assert isinstance(list_res.widget.data["rows"][0]["remaining"], int)
 
 
 @pytest.mark.asyncio

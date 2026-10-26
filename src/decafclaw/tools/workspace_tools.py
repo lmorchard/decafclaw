@@ -95,6 +95,10 @@ def _file_not_found_with_suggestions(config, path: str) -> ToolResult:
 MAX_READ_LINES = 200
 # Context lines shown in edit tool mini-diffs
 EDIT_CONTEXT_LINES = 3
+# Max characters per file buffer before diff_view widget attachment is suppressed
+MAX_DIFF_WIDGET_CHARS = 50_000
+# Max total lines before diff_view widget attachment is suppressed
+MAX_DIFF_WIDGET_LINES = 1_000
 
 
 def _mini_diff(old_text: str, new_text: str, path: str = "") -> str:
@@ -327,7 +331,7 @@ def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
                 {
                     "name": f"{e['name']}/" if e["is_dir"] else e["name"],
                     "type": "directory" if e["is_dir"] else "file",
-                    "size": f"{e['size']} B" if e["size"] is not None else "—",
+                    "size": e["size"],
                 }
                 for e in data_entries
             ]
@@ -338,7 +342,7 @@ def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
                     "columns": [
                         {"key": "name", "label": "Name"},
                         {"key": "type", "label": "Type"},
-                        {"key": "size", "label": "Size"},
+                        {"key": "size", "label": "Size (bytes)"},
                     ],
                     "rows": table_rows,
                 },
@@ -570,6 +574,13 @@ def tool_workspace_edit(
         summary = f"Edited {path}: replaced {count} occurrence(s)"
         diff = _mini_diff(normalized, new_normalized, path)
         text = f"{summary}\n\n{diff}" if diff else summary
+        has_diff = bool(diff)
+        oversized = (
+            len(normalized) > MAX_DIFF_WIDGET_CHARS
+            or len(new_normalized) > MAX_DIFF_WIDGET_CHARS
+            or normalized.count("\n") > MAX_DIFF_WIDGET_LINES
+            or new_normalized.count("\n") > MAX_DIFF_WIDGET_LINES
+        )
         widget = (
             WidgetRequest(
                 widget_type="diff_view",
@@ -581,7 +592,7 @@ def tool_workspace_edit(
                 },
                 target="inline",
             )
-            if diff
+            if has_diff and not oversized
             else None
         )
         return ToolResult(
@@ -717,18 +728,31 @@ def tool_workspace_diff(ctx: "Context", path1: str, path2: str, context_lines: i
     )
     if not diff:
         return f"Files are identical: {path1} and {path2}"
-    return ToolResult(
-        text="".join(diff),
-        widget=WidgetRequest(
+    before_text = "".join(lines1)
+    after_text = "".join(lines2)
+    oversized = (
+        len(before_text) > MAX_DIFF_WIDGET_CHARS
+        or len(after_text) > MAX_DIFF_WIDGET_CHARS
+        or len(lines1) > MAX_DIFF_WIDGET_LINES
+        or len(lines2) > MAX_DIFF_WIDGET_LINES
+    )
+    widget = (
+        WidgetRequest(
             widget_type="diff_view",
             data={
-                "before": "".join(lines1),
-                "after": "".join(lines2),
+                "before": before_text,
+                "after": after_text,
                 "filename": f"{path1} ↔ {path2}",
                 "view": "unified",
             },
             target="inline",
-        ),
+        )
+        if not oversized
+        else None
+    )
+    return ToolResult(
+        text="".join(diff),
+        widget=widget,
     )
 
 

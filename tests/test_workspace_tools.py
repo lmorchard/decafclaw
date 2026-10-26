@@ -1057,11 +1057,12 @@ def test_workspace_list_attaches_data_table_widget(ctx):
     assert result.widget.data["columns"] == [
         {"key": "name", "label": "Name"},
         {"key": "type", "label": "Type"},
-        {"key": "size", "label": "Size"},
+        {"key": "size", "label": "Size (bytes)"},
     ]
     assert len(result.widget.data["rows"]) == 1
     assert result.widget.data["rows"][0]["name"] == "file1.txt"
     assert result.widget.data["rows"][0]["type"] == "file"
+    assert result.widget.data["rows"][0]["size"] == len("content")
 
 
 def test_workspace_list_empty_directory_has_no_widget(ctx):
@@ -1070,6 +1071,29 @@ def test_workspace_list_empty_directory_has_no_widget(ctx):
     result = tool_workspace_list(ctx, "emptydir")
     assert isinstance(result, ToolResult)
     assert result.text == "(empty directory)"
+    assert result.widget is None
+
+
+def test_workspace_edit_oversized_diff_has_no_widget(ctx):
+    # Create file exceeding MAX_DIFF_WIDGET_CHARS (50_000)
+    large_content = "x = 1\n" + ("# padding line\n" * 3500)
+    tool_workspace_write(ctx, "large.py", large_content)
+    result = tool_workspace_edit(ctx, "large.py", "x = 1", "x = 2")
+    assert isinstance(result, ToolResult)
+    assert "Edited large.py: replaced 1 occurrence(s)" in result.text
+    assert "+x = 2" in result.text
+    assert result.widget is None
+
+
+def test_workspace_diff_oversized_has_no_widget(ctx):
+    large_content_1 = "x = 1\n" + ("# padding line\n" * 3500)
+    large_content_2 = "x = 2\n" + ("# padding line\n" * 3500)
+    tool_workspace_write(ctx, "large1.py", large_content_1)
+    tool_workspace_write(ctx, "large2.py", large_content_2)
+    result = tool_workspace_diff(ctx, "large1.py", "large2.py")
+    assert isinstance(result, ToolResult)
+    assert "-x = 1" in result.text
+    assert "+x = 2" in result.text
     assert result.widget is None
 
 

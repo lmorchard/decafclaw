@@ -149,14 +149,14 @@ def tool_schedule_list(ctx: "Context") -> ToolResult:
             "columns": [
                 {"key": "schedule_id", "label": "Schedule ID"},
                 {"key": "fire_at", "label": "Fire At"},
-                {"key": "remaining", "label": "Remaining"},
+                {"key": "remaining", "label": "Remaining (s)"},
                 {"key": "reason", "label": "Reason"},
             ],
             "rows": [
                 {
                     "schedule_id": w.schedule_id,
                     "fire_at": w.fire_at,
-                    "remaining": f"{max(0, int(w.fire_at_ts - now_ts))}s",
+                    "remaining": max(0, int(w.fire_at_ts - now_ts)),
                     "reason": w.reason,
                 }
                 for w in wakes

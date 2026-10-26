@@ -27,3 +27,9 @@
 - Added unit tests in `tests/test_workspace_tools.py` and `tests/test_scheduled_wakes.py`.
 - Ran full test suite: `uv run pytest tests/ contrib/skills/` passed 4826 tests (2 skipped) in 47.97s.
 - Ran full gates: `make fmt && make check` passed clean with 0 errors/warnings.
+- 2026-10-26: Addressed PR #1167 review feedback from Copilot:
+  - Fixed table sorting in `schedule_list` by storing numeric remaining seconds and labeling column `Remaining (s)`.
+  - Fixed table sorting in `workspace_list` by storing numeric bytes and labeling column `Size (bytes)`.
+  - Bounded diff widget inputs in `workspace_edit` and `workspace_diff` with `MAX_DIFF_WIDGET_CHARS` (50,000) and `MAX_DIFF_WIDGET_LINES` (1,000) thresholds, falling back to text diff when exceeded.
+  - Filed follow-up issues #1168 (diff_view bounding), #1169 (data_table column formatters), #1170 (admin tools widgets), #1171 (list/background widgets), and #1172 (code_block / json_view widgets).
+  - Updated unit tests in `tests/test_workspace_tools.py` and `tests/test_scheduled_wakes.py`.
