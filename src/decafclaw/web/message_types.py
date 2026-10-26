@@ -131,7 +131,8 @@ class SrvCanvasUpdate(TypedDict):
 class SrvChunk(TypedDict):
     type: Literal[WSMessageType.CHUNK]
     conv_id: str
-    text: str
+    text: NotRequired[str]
+    thinking: NotRequired[str]
 
 
 class SrvCommandAck(TypedDict):
@@ -233,6 +234,7 @@ class SrvMessageComplete(TypedDict):
     type: Literal[WSMessageType.MESSAGE_COMPLETE]
     conv_id: str
     text: str
+    thinking: NotRequired[str]
     role: NotRequired[str]
     final: NotRequired[bool]
     usage: NotRequired[dict[str, object]]

@@ -19,7 +19,8 @@ export interface SrvCanvasUpdate {
 export interface SrvChunk {
   type: "chunk";
   conv_id: string;
-  text: string;
+  text?: string;
+  thinking?: string;
 }
 
 export interface SrvCommandAck {
@@ -121,6 +122,7 @@ export interface SrvMessageComplete {
   type: "message_complete";
   conv_id: string;
   text: string;
+  thinking?: string;
   role?: string;
   final?: boolean;
   usage?: Record<string, unknown>;

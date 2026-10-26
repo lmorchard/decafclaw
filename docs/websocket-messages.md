@@ -37,7 +37,8 @@ Streaming text fragment of an in-flight assistant message.
 **Fields:**
 
 - `conv_id` — string
-- `text` — string
+- `text` — string?
+- `thinking` — string?
 
 ### `command_ack`
 
@@ -172,6 +173,7 @@ Final form of an assistant message after streaming completed (or when replayed f
 
 - `conv_id` — string
 - `text` — string
+- `thinking` — string?
 - `role` — string?
 - `final` — boolean?
 - `usage` — object?

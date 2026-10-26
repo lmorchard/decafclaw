@@ -32,6 +32,11 @@ def _sanitize_tool_call_id(tc_id: str) -> str:
     return tc_id.split("__thought__")[0]
 
 
+def _clean_messages(messages: list) -> list:
+    """Strip provider_data and internal UI/context keys before sending to OpenAI API."""
+    return [{k: v for k, v in m.items() if k != "thinking"} for m in without_provider_data(messages)]
+
+
 class OpenAICompatProvider:
     """Provider for OpenAI-compatible endpoints (LiteLLM, Ollama, vLLM, etc.)."""
 
@@ -111,7 +116,7 @@ class OpenAICompatProvider:
         timeout=300,
     ) -> dict:
         url = self._completions_url()
-        body: dict = {"model": model, "messages": without_provider_data(messages)}
+        body: dict = {"model": model, "messages": _clean_messages(messages)}
         if tools:
             body["tools"] = tools
 
@@ -157,8 +162,10 @@ class OpenAICompatProvider:
             for tc in tool_calls:
                 tc["id"] = _sanitize_tool_call_id(tc.get("id", ""))
 
+        thinking = message.get("reasoning_content") or message.get("reasoning") or message.get("thinking") or None
         return {
             "content": message.get("content"),
+            "thinking": thinking,
             "tool_calls": tool_calls,
             "role": "assistant",
             "usage": usage,
@@ -178,7 +185,7 @@ class OpenAICompatProvider:
         url = self._completions_url()
         body: dict = {
             "model": model,
-            "messages": without_provider_data(messages),
+            "messages": _clean_messages(messages),
             "stream": True,
             "stream_options": {"include_usage": True},
         }
@@ -218,7 +225,7 @@ class OpenAICompatProvider:
                 )
                 await _cancellable_sleep(delay, cancel_event)
             except Exception as e:
-                if not state.content_parts and not state.tool_calls_in_progress:
+                if not state.content_parts and not state.thinking_parts and not state.tool_calls_in_progress:
                     raise
                 log.error("LLM streaming error (partial content kept): %s", e)
                 state.finish_reason = "error"
@@ -361,6 +368,7 @@ class _StreamState:
     def __init__(self, on_chunk: StreamCallback | None = None):
         self.on_chunk = on_chunk
         self.content_parts: list[str] = []
+        self.thinking_parts: list[str] = []
         self.tool_calls_in_progress: dict = {}
         self.usage: dict | None = None
         self.finish_reason: str | None = None
@@ -395,12 +403,17 @@ class _StreamState:
 
         delta = choices[0].get("delta", {})
 
+        # Thinking / reasoning content
+        thinking = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
+        if thinking:
+            self.thinking_parts.append(thinking)
+            await self._emit("thinking", thinking)
+
         # Text content
         text = delta.get("content")
         if text:
             self.content_parts.append(text)
             await self._emit("text", text)
-
         # Tool calls
         tc_deltas = delta.get("tool_calls")
         if tc_deltas:
@@ -460,11 +473,12 @@ class _StreamState:
                 )
 
         content = "".join(self.content_parts) or None
+        thinking = "".join(self.thinking_parts) or None
         finish_reason = self.finish_reason
         if finish_reason is None:
             if self.saw_done:
                 finish_reason = "stop"
-            elif content or self.tool_calls_in_progress:
+            elif content or thinking or self.tool_calls_in_progress:
                 finish_reason = "error"
 
         await self._emit("done", {"usage": self.usage})
@@ -482,7 +496,7 @@ class _StreamState:
             finish_reason,
         )
 
-        if not content and not self.tool_calls_in_progress and self._all_events:
+        if not content and not thinking and not self.tool_calls_in_progress and self._all_events:
             log.warning(
                 "LLM returned empty — full SSE event dump (%d events):",
                 len(self._all_events),
@@ -492,6 +506,7 @@ class _StreamState:
 
         return {
             "content": content,
+            "thinking": thinking,
             "tool_calls": tool_calls,
             "role": "assistant",
             "usage": self.usage,

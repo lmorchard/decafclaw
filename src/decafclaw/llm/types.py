@@ -22,7 +22,7 @@ FINISH_REASON_CANCELLED = "cancelled"
 
 # Callback type for streaming chunks
 # on_chunk(chunk_type, data) where chunk_type is one of:
-#   "text", "tool_call_start", "tool_call_delta", "tool_call_end", "done"
+#   "text", "thinking", "tool_call_start", "tool_call_delta", "tool_call_end", "done"
 StreamCallback = Callable[[str, Any], Any]
 
 
@@ -60,6 +60,7 @@ class Provider(Protocol):
 
         Returns a dict with:
           - "content": str or None
+          - "thinking": str or None
           - "tool_calls": list or None
           - "role": "assistant"
           - "usage": dict or None
