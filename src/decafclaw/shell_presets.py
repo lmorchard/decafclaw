@@ -105,11 +105,15 @@ class ShellPresetStore:
             raw = self._path.read_text(encoding="utf-8")
             data = json.loads(raw)
             if not isinstance(data, dict):
-                raise ValueError(f"Presets file root is not a JSON object: {type(data).__name__}")
+                raise ValueError(
+                    f"Corrupt or unreadable presets file: root is not a JSON object ({type(data).__name__})"
+                )
             result: dict[str, str] = {}
             for k, v in data.items():
                 if not isinstance(k, str) or not isinstance(v, str):
-                    raise ValueError(f"Invalid preset entry ({k!r}: {v!r}); keys and values must be strings")
+                    raise ValueError(
+                        f"Corrupt or unreadable presets file: invalid entry ({k!r}: {v!r}); keys and values must be strings"
+                    )
                 result[k] = v
             return result
         except json.JSONDecodeError as e:

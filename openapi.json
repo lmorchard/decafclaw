@@ -4107,6 +4107,14 @@
             "type": "boolean",
             "title": "Shadows Config",
             "default": false
+          },
+          "referenced_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referenced By",
+            "default": []
           }
         },
         "type": "object",

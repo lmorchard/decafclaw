@@ -1080,7 +1080,8 @@ async def tool_shell_guidance(
             return ToolResult(text="[error: denied]")
 
         try:
-            is_new, updated_text = _save_custom_preset(ctx.config, preset_clean, rules_to_save)
+            store = _get_preset_store(ctx.config)
+            is_new, updated_text = await store.append_rules_from_tool(preset_clean, rules_to_save)
         except ValueError as e:
             return ToolResult(text=f"[error: failed to save preset: {e}]")
         status_msg = "Created" if is_new else "Updated"

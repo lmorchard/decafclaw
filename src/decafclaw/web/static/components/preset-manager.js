@@ -21,8 +21,6 @@ export class PresetManager extends LitElement {
     _isNew: { state: true },
     _error: { state: true },
     _pendingDelete: { state: true },
-    _modes: { state: true },
-    _activePresets: { state: true },
   };
 
   createRenderRoot() { return this; }
@@ -40,10 +38,6 @@ export class PresetManager extends LitElement {
     this._error = '';
     /** @type {string|null} */
     this._pendingDelete = null;
-    /** @type {Array<{name: string, presets: string[]}>} */
-    this._modes = [];
-    /** @type {string[]} */
-    this._activePresets = [];
   }
 
   connectedCallback() {
@@ -64,14 +58,6 @@ export class PresetManager extends LitElement {
     this._error = '';
     try {
       await load();
-      // Also inspect modes or window state if available
-      const w = /** @type {any} */ (window);
-      if (w.__DECAFCLAW_MODES__) {
-        this._modes = w.__DECAFCLAW_MODES__;
-      }
-      if (w.__DECAFCLAW_ACTIVE_PRESETS__) {
-        this._activePresets = w.__DECAFCLAW_ACTIVE_PRESETS__;
-      }
     } catch (e) {
       this._error = 'Failed to load presets';
     } finally {
@@ -162,16 +148,8 @@ export class PresetManager extends LitElement {
    * @returns {string[]} referencing sources
    */
   getReferences(name) {
-    const refs = [];
-    for (const m of this._modes) {
-      if (m.presets && m.presets.includes(name)) {
-        refs.push(`mode '${m.name}'`);
-      }
-    }
-    if (this._activePresets && this._activePresets.includes(name)) {
-      refs.push('active_aux_approval_presets');
-    }
-    return refs;
+    const preset = this._presets.find(p => p.name === name);
+    return preset?.referenced_by || [];
   }
 
   render() {

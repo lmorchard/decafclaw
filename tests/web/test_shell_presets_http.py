@@ -112,6 +112,13 @@ async def test_presets_put_or_delete_builtin_or_config_returns_400(client, prese
 
 
 @pytest.mark.asyncio
+async def test_presets_delete_nonexistent_returns_404(client):
+    resp = await client.delete("/api/shell-approval/presets/does_not_exist")
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
 async def test_concurrent_puts_survive(client, preset_config):
     resp1, resp2 = await asyncio.gather(
         client.put("/api/shell-approval/presets/preset_a", json={"rules": ["Rule A1", "Rule A2"]}),
@@ -130,6 +137,8 @@ async def test_concurrent_puts_survive(client, preset_config):
 @pytest.mark.asyncio
 async def test_malformed_presets_file_returns_error_and_unchanged(client, preset_config):
     file_path = preset_config.agent_path / "shell_approval_presets.json"
+
+    # 1. Invalid JSON
     corrupt_content = "{ this is not valid json"
     file_path.write_text(corrupt_content, encoding="utf-8")
 
@@ -140,8 +149,23 @@ async def test_malformed_presets_file_returns_error_and_unchanged(client, preset
     resp_put = await client.put("/api/shell-approval/presets/new_preset", json={"rules": ["Rule 1"]})
     assert resp_put.status_code == 500
     assert "Corrupt or unreadable presets file" in resp_put.json()["error"]
-
     assert file_path.read_text(encoding="utf-8") == corrupt_content
+
+    # 2. Non-dict root
+    list_root = json.dumps(["an", "array"])
+    file_path.write_text(list_root, encoding="utf-8")
+    resp_get_arr = await client.get("/api/shell-approval/presets")
+    assert resp_get_arr.status_code == 500
+    assert "Corrupt or unreadable presets file" in resp_get_arr.json()["error"]
+    assert file_path.read_text(encoding="utf-8") == list_root
+
+    # 3. Non-string keys/values
+    non_str_val = json.dumps({"key": 12345})
+    file_path.write_text(non_str_val, encoding="utf-8")
+    resp_get_val = await client.get("/api/shell-approval/presets")
+    assert resp_get_val.status_code == 500
+    assert "Corrupt or unreadable presets file" in resp_get_val.json()["error"]
+    assert file_path.read_text(encoding="utf-8") == non_str_val
 
 
 @pytest.mark.asyncio
@@ -174,6 +198,66 @@ async def test_editing_preset_invalidates_active_conversation_cache(preset_confi
     assert conv1.persisted.llm_approved_shell_patterns == []
     # conv2 does NOT have my_preset active -> left alone
     assert conv2.persisted.llm_approved_shell_patterns == ["npm test *"]
+
+
+@pytest.mark.asyncio
+async def test_editing_preset_invalidates_inherited_config_conversations(preset_config, bus):
+    from decafclaw.conversation_manager import ConversationManager
+    from decafclaw.web.auth import create_token
+
+    # Preset is globally active via config.shell.active_aux_approval_presets
+    preset_config.shell.active_aux_approval_presets = ["global_preset"]
+
+    manager = ConversationManager(preset_config, bus)
+    conv1 = manager.ensure_state("conv1")
+    # Inherits global_preset; has cached approved patterns
+    conv1.persisted.llm_approved_shell_patterns = ["pytest *"]
+
+    conv2 = manager.ensure_state("conv2")
+    # Disabled global_preset in this conversation
+    conv2.persisted.disabled_aux_approval_presets = ["global_preset"]
+    conv2.persisted.llm_approved_shell_patterns = ["npm test *"]
+
+    app = create_app(preset_config, bus, manager=manager)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = create_token(preset_config, "testuser")
+        resp_login = await c.post("/api/auth/login", json={"token": token})
+        c.cookies = resp_login.cookies
+        resp = await c.put(
+            "/api/shell-approval/presets/global_preset",
+            json={"rules": ["Auto-approve updated"]},
+        )
+        assert resp.status_code == 200
+
+    # conv1 has global_preset active via config -> cleared
+    assert conv1.persisted.llm_approved_shell_patterns == []
+    # conv2 disabled global_preset -> untouched
+    assert conv2.persisted.llm_approved_shell_patterns == ["npm test *"]
+
+
+@pytest.mark.asyncio
+async def test_presets_list_populates_referenced_by(client, preset_config):
+    preset_config.shell.active_aux_approval_presets = ["developer", "custom_active"]
+    # Save custom_active to disk
+    resp = await client.put(
+        "/api/shell-approval/presets/custom_active",
+        json={"rules": ["Auto-approve make check"]},
+    )
+    assert resp.status_code == 200
+
+    resp_list = await client.get("/api/shell-approval/presets")
+    assert resp_list.status_code == 200
+    presets = resp_list.json()
+
+    # developer is in mode 'dev' and config.shell.active_aux_approval_presets
+    dev = next(p for p in presets if p["name"] == "developer")
+    assert "mode 'dev'" in dev["referenced_by"]
+    assert "config.shell.active_aux_approval_presets" in dev["referenced_by"]
+
+    # custom_active is in config.shell.active_aux_approval_presets
+    custom = next(p for p in presets if p["name"] == "custom_active")
+    assert "config.shell.active_aux_approval_presets" in custom["referenced_by"]
 
 
 @pytest.mark.asyncio

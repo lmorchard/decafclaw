@@ -7,6 +7,7 @@ export type ShellPresetItem = {
     rules: Array<string>;
     source: ShellPresetItem.source;
     shadows_config?: boolean;
+    referenced_by?: Array<string>;
 };
 export namespace ShellPresetItem {
     export enum source {

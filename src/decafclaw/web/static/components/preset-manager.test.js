@@ -27,6 +27,7 @@ const BUILTIN_PRESETS = [
     rules: ['Auto-approve git status'],
     source: 'custom',
     shadows_config: false,
+    referenced_by: ["mode 'dev'"],
   },
 ];
 
@@ -132,8 +133,6 @@ describe('preset-manager component', () => {
 
   it('shows warning when deleting preset referenced by mode or active presets', async () => {
     const { el, fetchMock } = await mountManager();
-    el._modes = [{ name: 'dev', presets: ['custom_work'] }];
-
     const customItem = el.querySelector('[data-preset-name="custom_work"]');
     const deleteBtn = customItem.querySelector('.preset-delete-btn');
     deleteBtn.click();

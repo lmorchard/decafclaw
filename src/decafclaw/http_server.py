@@ -286,6 +286,7 @@ class ShellPresetItem(BaseModel):
     rules: list[str]
     source: Literal["builtin", "config", "custom"]
     shadows_config: bool = False
+    referenced_by: list[str] = []
 
 
 class ShellPresetPutRequest(BaseModel):
@@ -2082,28 +2083,61 @@ async def bookmarks_delete(request: Request, username: str) -> JSONResponse:
     return JSONResponse(data)
 
 
-def _invalidate_conversations_for_preset(manager, preset_name: str) -> None:
+def _invalidate_conversations_for_preset(config, manager, preset_name: str) -> None:
     """Clear llm_approved_shell_patterns in in-memory conversations where preset_name is active."""
     if not manager or not hasattr(manager, "_conversations"):
         return
-    for conv_id, conv_state in manager._conversations.items():
-        active_presets = getattr(conv_state.persisted, "active_aux_approval_presets", [])
+    config_active_raw = getattr(config.shell, "active_aux_approval_presets", [])
+    if isinstance(config_active_raw, str):
+        config_active = set(p.strip() for p in config_active_raw.split(",") if p.strip())
+    elif isinstance(config_active_raw, (list, tuple, set)):
+        config_active = set(str(p).strip() for p in config_active_raw if str(p).strip())
+    else:
+        config_active = set()
+
+    for conv_id, conv_state in list(manager._conversations.items()):
+        persisted_active = set(getattr(conv_state.persisted, "active_aux_approval_presets", []))
         disabled_presets = set(getattr(conv_state.persisted, "disabled_aux_approval_presets", []))
-        if preset_name in active_presets and preset_name not in disabled_presets:
+        active_presets = (config_active | persisted_active) - disabled_presets
+        if preset_name in active_presets:
             conv_state.persisted.llm_approved_shell_patterns.clear()
             manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
 
 
 @_authenticated
 async def shell_presets_list(request: Request, username: str) -> JSONResponse:
-    """GET /api/shell-approval/presets — list all presets with sources and rules."""
+    """GET /api/shell-approval/presets — list all presets with sources, rules, and reference tracking."""
+    config = request.app.state.config
     store = getattr(request.app.state, "preset_store", None)
     if not store:
-        store = ShellPresetStore(request.app.state.config)
+        store = ShellPresetStore(config)
     try:
         presets = await store.list_presets()
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+    # Compute referenced_by for each preset
+    from .modes import get_all_modes
+
+    all_modes = get_all_modes(config)
+    config_active_raw = getattr(config.shell, "active_aux_approval_presets", [])
+    if isinstance(config_active_raw, str):
+        config_active_set = set(p.strip() for p in config_active_raw.split(",") if p.strip())
+    elif isinstance(config_active_raw, (list, tuple, set)):
+        config_active_set = set(str(p).strip() for p in config_active_raw if str(p).strip())
+    else:
+        config_active_set = set()
+
+    for p in presets:
+        name = p["name"]
+        refs = []
+        for m_name, mode in all_modes.items():
+            if mode.presets and name in mode.presets:
+                refs.append(f"mode '{m_name}'")
+        if name in config_active_set:
+            refs.append("config.shell.active_aux_approval_presets")
+        p["referenced_by"] = refs
+
     return JSONResponse(presets)
 
 
@@ -2141,8 +2175,7 @@ async def shell_presets_put(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"error": err_msg}, status_code=400)
 
     manager = getattr(request.app.state, "manager", None)
-    _invalidate_conversations_for_preset(manager, preset_name)
-
+    _invalidate_conversations_for_preset(request.app.state.config, manager, preset_name)
     clean_rules = [r.strip() for r in rules if r.strip()]
     return JSONResponse(
         {
@@ -2177,8 +2210,7 @@ async def shell_presets_delete(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"error": f"custom preset '{preset_name}' not found"}, status_code=404)
 
     manager = getattr(request.app.state, "manager", None)
-    _invalidate_conversations_for_preset(manager, preset_name)
-
+    _invalidate_conversations_for_preset(request.app.state.config, manager, preset_name)
     return JSONResponse({"ok": True, "name": preset_name, "rules": []})
 
 
