@@ -1199,8 +1199,8 @@ class ConversationManager:
         else:
             raw_history = list(self.load_history(conv_id))
 
-        # Include partial assistant text if streaming currently
-        if state.partial_assistant_chunks:
+        # Include partial assistant text if streaming currently and turn is busy (Finding 1)
+        if state.busy and state.partial_assistant_chunks:
             partial = "".join(state.partial_assistant_chunks).strip()
             if partial and (not raw_history or raw_history[-1].get("content") != partial):
                 raw_history.append({"role": "assistant", "content": partial})
@@ -2143,6 +2143,8 @@ class ConversationManager:
                     state.agent_task = None
                     state.cancel_event = None
                     state.steer_event = None
+                    state.partial_assistant_chunks = []
+                    state.partial_assistant_thinking_chunks = []
 
                 await self.emit(conv_id, {"type": "turn_complete"})
 

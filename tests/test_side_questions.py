@@ -96,6 +96,28 @@ async def test_side_question_idle_conversation(manager, config):
 
 
 @pytest.mark.asyncio
+async def test_side_question_ignores_stale_partial_chunks_when_not_busy(manager, config):
+    conv_id = "test-conv-stale-idle"
+    state = manager._get_or_create(conv_id)
+    state.busy = False
+    state.history = [{"role": "user", "content": "Done task"}]
+    state.partial_assistant_chunks = ["stale partial chunk"]
+
+    captured_messages = []
+
+    async def fake_streaming(cfg, messages, **kwargs):
+        captured_messages.extend(messages)
+        return {"role": "assistant", "content": "Clean explanation."}
+
+    with patch("decafclaw.conversation_manager.call_llm_streaming", side_effect=fake_streaming):
+        await manager.run_side_question(conv_id, "Explain")
+
+    # Stale chunk must NOT appear in snapshot
+    assistant_msgs = [m for m in captured_messages if m.get("role") == "assistant"]
+    assert len(assistant_msgs) == 0
+
+
+@pytest.mark.asyncio
 async def test_side_question_during_active_busy_turn(manager, config):
     conv_id = "test-conv-busy"
     state = manager._get_or_create(conv_id)
@@ -337,3 +359,30 @@ async def test_side_question_http_endpoint_auth_and_validation(client, http_conf
         json={"question": "hello", "model": "nonexistent-model-xyz"},
     )
     assert resp.status_code == 400
+
+    # Non-dict json body (Finding 3)
+    resp = await client.post(
+        f"/api/conversations/{conv.conv_id}/side-question",
+        json=["not", "a", "dict"],
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_side_question_http_endpoint_cancel(client, http_config, manager):
+    index = ConversationIndex(http_config)
+    conv = index.create("testuser", title="Test")
+    conv_id = conv.conv_id
+
+    state = manager._get_or_create(conv_id)
+    side_cancel = asyncio.Event()
+    state.active_side_questions.add(side_cancel)
+
+    resp = await client.post(f"/api/conversations/{conv_id}/side-question/cancel")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert side_cancel.is_set()
+
+    # Cancel for nonexistent conversation returns 404
+    resp_nonexistent = await client.post("/api/conversations/nonexistent/side-question/cancel")
+    assert resp_nonexistent.status_code == 404

@@ -1,14 +1,12 @@
 import { LitElement, html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../lib/markdown.js';
+import { DefaultService } from '../lib/api-client/index.js';
 
 function sideQuestionUrl(convId) {
   return `/api/conversations/${encodeURIComponent(convId)}/side-question`;
 }
 
-function sideQuestionCancelUrl(convId) {
-  return `/api/conversations/${encodeURIComponent(convId)}/side-question/cancel`;
-}
 
 /**
  * Side Question Drawer (issue #1141).
@@ -59,6 +57,9 @@ export class SideQuestionDrawer extends LitElement {
     if (changedProperties.has('convId')) {
       const prev = changedProperties.get('convId');
       if (prev && prev !== this.convId) {
+        if (this._generating) {
+          this.stopGeneration();
+        }
         this._threadsByConv.set(prev, this._thread);
       }
       this._thread = this._threadsByConv.get(this.convId) || [];
@@ -173,7 +174,7 @@ export class SideQuestionDrawer extends LitElement {
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
-        let currentEvent = 'chunk';
+        let currentEvent = '';
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
@@ -183,14 +184,15 @@ export class SideQuestionDrawer extends LitElement {
             const dataStr = trimmed.slice(5).trim();
             try {
               const data = JSON.parse(dataStr);
-              if (currentEvent === 'chunk' || data.type === 'chunk') {
+              const eventType = data.type || currentEvent;
+              if (eventType === 'chunk') {
                 const chunkText = data.text || '';
                 fullAssistantText += chunkText;
                 this._streamingText = fullAssistantText;
                 this.#scrollToBottom();
-              } else if (currentEvent === 'done' || data.type === 'done') {
+              } else if (eventType === 'done') {
                 if (data.text) fullAssistantText = data.text;
-              } else if (currentEvent === 'error' || data.type === 'error') {
+              } else if (eventType === 'error') {
                 this._error = data.error || 'Side question failed';
               }
             } catch {
@@ -236,10 +238,7 @@ export class SideQuestionDrawer extends LitElement {
     }
     const convId = this.convId || this.#resolveActiveConvId();
     if (convId) {
-      const cancelUrl = sideQuestionCancelUrl(convId);
-      fetch(cancelUrl, {
-        method: 'POST',
-      }).catch(() => {});
+      DefaultService.handleCancelSideQuestionApiConversationsIdSideQuestionCancelPost(convId).catch(() => {});
     }
   }
 

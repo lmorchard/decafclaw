@@ -754,28 +754,44 @@ var DefaultService = class {
     });
   }
   /**
-   * Wrapper
+   * Handle Side Question
+   * Stream an ephemeral explanation-only side question via SSE.
+   * @param id
    * @param requestBody
    * @returns any SSE stream of response tokens and completion events
    * @throws ApiError
    */
-  static wrapperApiConversationsIdSideQuestionPost(requestBody) {
+  static handleSideQuestionApiConversationsIdSideQuestionPost(id, requestBody) {
     return request2(OpenAPI, {
       method: "POST",
       url: "/api/conversations/{id}/side-question",
+      path: {
+        "id": id
+      },
       body: requestBody,
-      mediaType: "application/json"
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
-   * Wrapper
+   * Handle Cancel Side Question
+   * Cancel in-flight side questions for a conversation.
+   * @param id
    * @returns SideQuestionCancelResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiConversationsIdSideQuestionCancelPost() {
+  static handleCancelSideQuestionApiConversationsIdSideQuestionCancelPost(id) {
     return request2(OpenAPI, {
       method: "POST",
-      url: "/api/conversations/{id}/side-question/cancel"
+      url: "/api/conversations/{id}/side-question/cancel",
+      path: {
+        "id": id
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**

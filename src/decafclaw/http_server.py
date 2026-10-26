@@ -1048,12 +1048,14 @@ class SideQuestionCancelResponse(BaseModel):
     ok: Literal[True]
 
 
-@_authenticated
-async def handle_side_question(request: Request, username: str) -> Response:
+async def handle_side_question(request: Request, id: str) -> Response:
     """Stream an ephemeral explanation-only side question via SSE."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
     manager = request.app.state.manager
-    conv_id = request.path_params.get("id") or request.path_params.get("conv_id")
+    conv_id = id
     if not conv_id:
         return JSONResponse({"error": "missing conversation id"}, status_code=400)
 
@@ -1068,6 +1070,8 @@ async def handle_side_question(request: Request, username: str) -> Response:
     except Exception:
         return JSONResponse({"error": "invalid json"}, status_code=400)
 
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid json body"}, status_code=400)
     question = str(body.get("question", "")).strip()
     if not question:
         return JSONResponse({"error": "question is required"}, status_code=400)
@@ -1138,12 +1142,14 @@ async def handle_side_question(request: Request, username: str) -> Response:
     return EventSourceResponse(event_generator())
 
 
-@_authenticated
-async def handle_cancel_side_question(request: Request, username: str) -> JSONResponse:
+async def handle_cancel_side_question(request: Request, id: str) -> JSONResponse:
     """Cancel in-flight side questions for a conversation."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
     manager = request.app.state.manager
-    conv_id = request.path_params.get("id") or request.path_params.get("conv_id")
+    conv_id = id
     if not conv_id:
         return JSONResponse({"error": "missing conversation id"}, status_code=400)
 

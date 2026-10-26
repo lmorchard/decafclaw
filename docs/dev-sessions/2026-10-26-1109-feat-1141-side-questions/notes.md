@@ -6,7 +6,7 @@
 - Worktree: /home/lmorchard/devel/decafclaw/.claude/worktrees/feat-1141-side-questions
 - Branch: feat-1141-side-questions
 - Base: origin/main at 875f2b7ab70a001000b0f8d67814d57ed8a91dd2
-- Next action: run all gates and publish PR.
+- Next action: address-pr-review complete, publish final commit.
 
 ## Log
 
@@ -26,3 +26,10 @@
   - Added "Ask side question" action triggers in composer and `.dc-chat-actions`.
 - Added unit tests in `tests/test_side_questions.py` and `side-question-drawer.test.js`.
 - Updated documentation in `docs/web-ui.md` and `docs/conversations.md`.
+- Published first draft PR #1178 at commit `65c8009abd2b2c5cb614a5767d5aa4d18d2639c2`.
+- Addressed review findings (Finding 1, 2, 3, 4, Note 1):
+  - Finding 1: Gated partial streaming snapshot on `state.busy` and cleared `partial_assistant_chunks` in turn finally block.
+  - Finding 2: Stopped in-flight generation when switching conversation in `SideQuestionDrawer`.
+  - Finding 3: Validated request body is a JSON object.
+  - Finding 4: Updated SSE event parser to check `data.type || currentEvent` so done events are honored on all chunk boundaries.
+  - Note 1: Added `id: str` parameter to route handlers, regenerated OpenAPI client, and added test for `/cancel` endpoint.

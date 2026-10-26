@@ -209,4 +209,38 @@ describe('SideQuestionDrawer (#1141)', () => {
     expect(drawer._thread.length).toBe(0);
     expect(drawer.querySelector('.empty-hint')).not.toBeNull();
   });
+
+  it('stops in-flight generation when switching conversation (Finding 2)', async () => {
+    drawer.openDrawer();
+    await drawer.updateComplete;
+
+    let aborted = false;
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: chunk\ndata: {"type":"chunk","text":"Chunk..."}\n\n'));
+      },
+    });
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url, opts) => {
+      opts?.signal?.addEventListener('abort', () => {
+        aborted = true;
+      });
+      return Promise.resolve(/** @type {any} */ ({
+        ok: true,
+        body: stream,
+      }));
+    });
+
+    const promise = drawer.sendQuestion('Query on conv1');
+    await drawer.updateComplete;
+
+    // Switch conversation
+    drawer.convId = 'conv-test-2';
+    await drawer.updateComplete;
+    await promise;
+
+    expect(aborted).toBe(true);
+    expect(drawer.convId).toBe('conv-test-2');
+  });
 });

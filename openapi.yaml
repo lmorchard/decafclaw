@@ -299,16 +299,36 @@ paths:
               schema: {}
   /api/conversations/{id}/side-question:
     post:
-      summary: Wrapper
-      operationId: wrapper_api_conversations__id__side_question_post
+      summary: Handle Side Question
+      description: Stream an ephemeral explanation-only side question via SSE.
+      operationId: handle_side_question_api_conversations__id__side_question_post
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: SSE stream of response tokens and completion events
+          content:
+            text/event-stream: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               properties:
                 question:
-                  type: string
                   title: Question
+                  type: string
                 side_history:
                   anyOf:
                   - items:
@@ -323,20 +343,22 @@ paths:
                   - type: string
                   - type: 'null'
                   title: Model
-              type: object
               required:
               - question
               title: SideQuestionRequest
-        required: true
-      responses:
-        '200':
-          description: SSE stream of response tokens and completion events
-          content:
-            text/event-stream: {}
+              type: object
   /api/conversations/{id}/side-question/cancel:
     post:
-      summary: Wrapper
-      operationId: wrapper_api_conversations__id__side_question_cancel_post
+      summary: Handle Cancel Side Question
+      description: Cancel in-flight side questions for a conversation.
+      operationId: handle_cancel_side_question_api_conversations__id__side_question_cancel_post
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
       responses:
         '200':
           description: Successful Response
@@ -344,6 +366,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SideQuestionCancelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/conversations/{id}/context:
     get:
       summary: Get Context Diagnostics
