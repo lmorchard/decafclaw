@@ -33,6 +33,8 @@ from .confirmations import (
 from .context_composer import InjectionCursors
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
+from .llm import call_llm_streaming
+from .llm.history import without_provider_data
 from .media import ToolResult
 from .workflow.journal import load_journal, save_journal
 from .workflow.paths import workflow_path
@@ -59,6 +61,16 @@ CANCEL_MARKER_TEXT = (
 TURN_ABORTED_MARKER_TEXT = (
     "[The previous turn failed unexpectedly. Treat the prior request "
     "as not fulfilled and wait for the user to clarify.]"
+)
+
+
+# Isolated system prompt for side questions (issue #1141).
+SIDE_QUESTION_SYSTEM_PROMPT = (
+    "You are an assistant providing an explanation of an ongoing conversation and task.\n"
+    "The user is asking an out-of-band side question for explanation, clarification, or background "
+    "information about the task, code, tools, or reasoning shown in the conversation snapshot.\n"
+    "Provide a concise, direct, and helpful explanation.\n"
+    "Do NOT propose tool invocations or execute actions; this is an explanation-only response."
 )
 
 
@@ -326,6 +338,7 @@ class ConversationState:
     cancel_observed_by_agent: bool = False
     cancel_marker_written: bool = False
     turn_aborted_marker_written: bool = False
+    active_side_questions: set[asyncio.Event] = field(default_factory=set)
 
     # Per-conversation lock guarding the dispatch decision and the
     # confirmation lifecycle (issue #440). Held during:
@@ -1150,6 +1163,149 @@ class ConversationManager:
         if agent_task and not agent_task.done():
             agent_task.cancel()
             log.info("Cancelled agent turn for conv %s", conv_id[:8])
+
+    def cancel_side_question(self, conv_id: str) -> None:
+        """Cancel any in-flight side questions for a conversation."""
+        state = self._conversations.get(conv_id)
+        if state:
+            for ev in list(state.active_side_questions):
+                ev.set()
+
+    async def run_side_question(
+        self,
+        conv_id: str,
+        question: str,
+        *,
+        side_history: list[dict[str, Any]] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        on_chunk: Callable | None = None,
+        model_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Run an ephemeral explanation-only side question against the current conversation snapshot.
+
+        Snapshots current conversation messages up to the current turn (including
+        partial assistant text if streaming), strips all tools from the model call,
+        uses an isolated Context and system prompt, and executes independently of
+        the main task's busy flag and turn queue (issue #1141).
+        """
+        if cancel_event is None:
+            cancel_event = asyncio.Event()
+        state = self._get_or_create(conv_id)
+        state.active_side_questions.add(cancel_event)
+
+        # Snapshot current conversation messages up to current turn
+        if state.history:
+            raw_history = list(state.history)
+        else:
+            raw_history = list(self.load_history(conv_id))
+
+        # Include partial assistant text if streaming currently
+        if state.partial_assistant_chunks:
+            partial = "".join(state.partial_assistant_chunks).strip()
+            if partial and (not raw_history or raw_history[-1].get("content") != partial):
+                raw_history.append({"role": "assistant", "content": partial})
+
+        snapshot_messages: list[dict[str, Any]] = []
+        for m in raw_history:
+            role = m.get("role")
+            if role in ("compaction", "model", "mode", "decision_slice"):
+                continue
+
+            content = m.get("content") or ""
+
+            if role == "assistant":
+                tool_calls = m.get("tool_calls")
+                if tool_calls:
+                    tc_lines = []
+                    for tc in tool_calls:
+                        fn = tc.get("function", {})
+                        name = fn.get("name", "")
+                        args = fn.get("arguments", "")
+                        tc_lines.append(f"[Tool call: {name}({args})]")
+                    tc_text = "\n".join(tc_lines)
+                    merged = f"{content}\n{tc_text}".strip() if content else tc_text
+                    snapshot_messages.append({"role": "assistant", "content": merged})
+                elif content:
+                    snapshot_messages.append({"role": "assistant", "content": content})
+            elif role == "tool":
+                tool_id = m.get("tool_call_id", "")
+                name = m.get("name", "")
+                prefix = (
+                    f"[Tool result: {name}]" if name else (f"[Tool result ({tool_id})]" if tool_id else "[Tool result]")
+                )
+                snapshot_messages.append({"role": "user", "content": f"{prefix}: {content}"})
+            elif role in (
+                "vault_retrieval",
+                "vault_references",
+                "workspace_references",
+                "mcp_references",
+                "conversation_notes",
+                "recent_journal",
+                "cancel_marker",
+                "turn_aborted",
+            ):
+                if content:
+                    snapshot_messages.append({"role": "user", "content": content})
+            elif role in ("user", "system"):
+                if content:
+                    snapshot_messages.append({"role": role, "content": content})
+
+        messages: list[dict[str, Any]] = [{"role": "system", "content": SIDE_QUESTION_SYSTEM_PROMPT}]
+        messages.extend(without_provider_data(snapshot_messages))
+
+        if side_history:
+            for sm in side_history:
+                sm_role = sm.get("role", "user")
+                sm_content = sm.get("content", "")
+                if sm_role in ("user", "assistant") and sm_content:
+                    messages.append({"role": sm_role, "content": sm_content})
+
+        messages.append({"role": "user", "content": question})
+
+        from .context import Context
+
+        ctx = Context(config=self.config, event_bus=self.event_bus)
+        ctx.conv_id = conv_id
+        ctx.user_id = state.last_user_id if state else ""
+        ctx.cancelled = cancel_event
+        ctx.skip_reflection = True
+        ctx.skip_vault_retrieval = True
+        ctx.skip_archive = True
+        ctx.tools.allowed = set()
+        ctx.tools.extra = {}
+        ctx.tools.extra_definitions = []
+
+        effective_model = model_name or (state.persisted.active_model if state else "") or self.config.default_model
+        ctx.active_model = effective_model
+
+        chunks_received: list[str] = []
+
+        async def handle_chunk(chunk_type: str, data: Any):
+            if chunk_type == "text":
+                if isinstance(data, str):
+                    chunks_received.append(data)
+                if on_chunk:
+                    if asyncio.iscoroutinefunction(on_chunk):
+                        await on_chunk(chunk_type, data)
+                    else:
+                        res = on_chunk(chunk_type, data)
+                        if asyncio.iscoroutine(res):
+                            await res
+
+        try:
+            response = await call_llm_streaming(
+                self.config,
+                messages,
+                tools=None,
+                on_chunk=handle_chunk,
+                cancel_event=cancel_event,
+                model_name=effective_model,
+            )
+            if on_chunk and not chunks_received and response and response.get("content"):
+                await handle_chunk("text", response["content"])
+            return response or {"role": "assistant", "content": "".join(chunks_received)}
+        finally:
+            state.active_side_questions.discard(cancel_event)
 
     async def shutdown(self, timeout: float = 15) -> None:
         """Wait for all in-flight agent turns to complete, then clean up.

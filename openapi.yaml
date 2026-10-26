@@ -297,6 +297,53 @@ paths:
           content:
             application/json:
               schema: {}
+  /api/conversations/{id}/side-question:
+    post:
+      summary: Wrapper
+      operationId: wrapper_api_conversations__id__side_question_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                question:
+                  type: string
+                  title: Question
+                side_history:
+                  anyOf:
+                  - items:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    type: array
+                  - type: 'null'
+                  title: Side History
+                model:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Model
+              type: object
+              required:
+              - question
+              title: SideQuestionRequest
+        required: true
+      responses:
+        '200':
+          description: SSE stream of response tokens and completion events
+          content:
+            text/event-stream: {}
+  /api/conversations/{id}/side-question/cancel:
+    post:
+      summary: Wrapper
+      operationId: wrapper_api_conversations__id__side_question_cancel_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SideQuestionCancelResponse'
   /api/conversations/{id}/context:
     get:
       summary: Get Context Diagnostics
@@ -2499,6 +2546,16 @@ components:
       - schedule
       - modified
       title: ScheduleUpdateResponse
+    SideQuestionCancelResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+      type: object
+      required:
+      - ok
+      title: SideQuestionCancelResponse
     StickyResponse:
       properties:
         widget_type:

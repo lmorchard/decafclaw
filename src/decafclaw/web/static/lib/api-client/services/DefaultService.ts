@@ -32,6 +32,7 @@ import type { ScheduleListResponse } from '../models/ScheduleListResponse';
 import type { ScheduleResetResponse } from '../models/ScheduleResetResponse';
 import type { ScheduleRunResponse } from '../models/ScheduleRunResponse';
 import type { ScheduleUpdateResponse } from '../models/ScheduleUpdateResponse';
+import type { SideQuestionCancelResponse } from '../models/SideQuestionCancelResponse';
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
@@ -345,6 +346,37 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/conversations/{id}/history',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns any SSE stream of response tokens and completion events
+     * @throws ApiError
+     */
+    public static wrapperApiConversationsIdSideQuestionPost(
+        requestBody: {
+            question: string;
+            side_history?: (Array<Record<string, string>> | null);
+            model?: (string | null);
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/side-question',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @returns SideQuestionCancelResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiConversationsIdSideQuestionCancelPost(): CancelablePromise<SideQuestionCancelResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/side-question/cancel',
         });
     }
     /**

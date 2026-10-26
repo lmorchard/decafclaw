@@ -396,6 +396,23 @@ export class ChatInput extends LitElement {
     this.#closeMenu();
     this.#clearAttachments();
   }
+  /**
+   * Set text in the composer without auto-submitting (issue #1141).
+   * @param {string} text
+   */
+  setText(text) {
+    const textarea = this.querySelector('textarea');
+    if (textarea) {
+      textarea.value = text;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.focus();
+    }
+  }
+
+  #openSideQuestion() {
+    this.dispatchEvent(new CustomEvent('open-side-question', { bubbles: true, composed: true }));
+  }
+
 
   /**
    * Auto-resize textarea and re-evaluate the command menu.
@@ -586,6 +603,8 @@ export class ChatInput extends LitElement {
         ${!this.disabled ? html`
           <button type="button" class="attach-btn" @click=${this.#openFilePicker}
             title="Attach file" aria-label="Attach file">&#128206;</button>
+          <button type="button" class="side-question-btn" @click=${this.#openSideQuestion}
+            title="Ask side question" aria-label="Ask side question">&#x2753;</button>
         ` : nothing}
         <textarea
           placeholder=${this.placeholder}

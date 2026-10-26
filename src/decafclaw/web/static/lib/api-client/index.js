@@ -754,6 +754,31 @@ var DefaultService = class {
     });
   }
   /**
+   * Wrapper
+   * @param requestBody
+   * @returns any SSE stream of response tokens and completion events
+   * @throws ApiError
+   */
+  static wrapperApiConversationsIdSideQuestionPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/conversations/{id}/side-question",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @returns SideQuestionCancelResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiConversationsIdSideQuestionCancelPost() {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/conversations/{id}/side-question/cancel"
+    });
+  }
+  /**
    * Get Context Diagnostics
    * Return context composer diagnostics for a conversation.
    * @param id
