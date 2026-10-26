@@ -185,7 +185,7 @@ button.preset-confirm-delete-btn {
   background: var(--pico-card-background-color);
 }
 
-.config-tab-btn {
+button.config-tab-btn {
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
@@ -198,11 +198,11 @@ button.preset-confirm-delete-btn {
   border-radius: 0;
 }
 
-.config-tab-btn:hover {
-  color: var(--pico-color);
+button.config-tab-btn:hover {
+  color: inherit;
 }
 
-.config-tab-btn.active {
+button.config-tab-btn.active {
   color: var(--pico-primary);
   border-bottom-color: var(--pico-primary);
   font-weight: 600;
