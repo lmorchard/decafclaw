@@ -1072,12 +1072,18 @@ async def handle_side_question(request: Request, id: str) -> Response:
 
     if not isinstance(body, dict):
         return JSONResponse({"error": "invalid json body"}, status_code=400)
-    question = str(body.get("question", "")).strip()
+
+    try:
+        req_data = SideQuestionRequest(**body)
+    except Exception as exc:
+        return JSONResponse({"error": f"invalid request payload: {exc}"}, status_code=400)
+
+    question = req_data.question.strip()
     if not question:
         return JSONResponse({"error": "question is required"}, status_code=400)
 
-    side_history = body.get("side_history")
-    model_name = body.get("model")
+    side_history = req_data.side_history
+    model_name = req_data.model
     if model_name and model_name not in config.model_configs:
         return JSONResponse({"error": f"Unknown model: {model_name}"}, status_code=400)
 

@@ -334,6 +334,7 @@ class ConversationState:
     # exception-path marker (issue #517).
     partial_assistant_chunks: list[str] = field(default_factory=list)
     partial_assistant_thinking_chunks: list[str] = field(default_factory=list)
+    current_iteration_assistant_chunks: list[str] = field(default_factory=list)
     partial_assistant_archived: bool = False
     cancel_observed_by_agent: bool = False
     cancel_marker_written: bool = False
@@ -1014,6 +1015,7 @@ class ConversationManager:
         """
         state = self._conversations.get(conv_id)
         if state is not None:
+            state.current_iteration_assistant_chunks = []
             state.partial_assistant_archived = True
 
     def note_cancel_observed_by_agent(self, conv_id: str) -> None:
@@ -1200,8 +1202,8 @@ class ConversationManager:
             raw_history = list(self.load_history(conv_id))
 
         # Include partial assistant text if streaming currently and turn is busy (Finding 1)
-        if state.busy and state.partial_assistant_chunks:
-            partial = "".join(state.partial_assistant_chunks).strip()
+        if state.busy and state.current_iteration_assistant_chunks:
+            partial = "".join(state.current_iteration_assistant_chunks).strip()
             if partial and (not raw_history or raw_history[-1].get("content") != partial):
                 raw_history.append({"role": "assistant", "content": partial})
 
@@ -1247,9 +1249,15 @@ class ConversationManager:
                 if content:
                     snapshot_messages.append({"role": "user", "content": content})
             elif role in ("user", "system"):
-                if content:
-                    snapshot_messages.append({"role": role, "content": content})
+                msg_entry: dict[str, Any] = {"role": role, "content": content}
+                if m.get("attachments"):
+                    msg_entry["attachments"] = m["attachments"]
+                if content or m.get("attachments"):
+                    snapshot_messages.append(msg_entry)
 
+        from .attachments import resolve_attachments
+
+        snapshot_messages = [resolve_attachments(self.config, m) for m in snapshot_messages]
         messages: list[dict[str, Any]] = [{"role": "system", "content": SIDE_QUESTION_SYSTEM_PROMPT}]
         messages.extend(without_provider_data(snapshot_messages))
 
@@ -1878,6 +1886,7 @@ class ConversationManager:
         state.cancel_observed_by_agent = False
         state.cancel_marker_written = False
         state.turn_aborted_marker_written = False
+        state.current_iteration_assistant_chunks = []
 
         # Set up streaming callback that emits to subscribers.
         # WAKE turns don't stream: the agent may emit BACKGROUND_WAKE_OK to
@@ -1891,6 +1900,7 @@ class ConversationManager:
                 if chunk_type == "text":
                     if isinstance(data, str):
                         state.partial_assistant_chunks.append(data)
+                        state.current_iteration_assistant_chunks.append(data)
                     await self.emit(
                         conv_id,
                         {
@@ -1911,6 +1921,7 @@ class ConversationManager:
                 elif chunk_type == "done":
                     await self.emit(conv_id, {"type": "stream_done"})
                 elif chunk_type == "tool_call_start":
+                    state.current_iteration_assistant_chunks = []
                     name = data.get("name", "") if isinstance(data, dict) else ""
                     await self.emit(
                         conv_id,
@@ -2145,6 +2156,7 @@ class ConversationManager:
                     state.steer_event = None
                     state.partial_assistant_chunks = []
                     state.partial_assistant_thinking_chunks = []
+                    state.current_iteration_assistant_chunks = []
 
                 await self.emit(conv_id, {"type": "turn_complete"})
 

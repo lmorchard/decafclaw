@@ -44,6 +44,8 @@ export class SideQuestionDrawer extends LitElement {
     this._abortController = null;
     /** @type {Map<string, Array<{role: 'user'|'assistant', content: string}>>} */
     this._threadsByConv = new Map();
+    this._currentRequestId = 0;
+    this._activeGeneratingConvId = '';
   }
 
   connectedCallback() {
@@ -115,7 +117,12 @@ export class SideQuestionDrawer extends LitElement {
       content: m.content,
     }));
 
-    this._thread = [...this._thread, { role: 'user', content: question }];
+    const targetConvId = convId;
+    const reqId = ++this._currentRequestId;
+    this._activeGeneratingConvId = targetConvId;
+
+    let targetThread = [...this._thread, { role: /** @type {const} */ ('user'), content: question }];
+    this._thread = targetThread;
     this._generating = true;
     this._streamingText = '';
     this._error = '';
@@ -128,7 +135,7 @@ export class SideQuestionDrawer extends LitElement {
     this.#scrollToBottom();
 
     try {
-      const url = sideQuestionUrl(convId);
+      const url = sideQuestionUrl(targetConvId);
       const resp = await fetch(url, {
         method: 'POST',
         headers: {
@@ -188,12 +195,16 @@ export class SideQuestionDrawer extends LitElement {
               if (eventType === 'chunk') {
                 const chunkText = data.text || '';
                 fullAssistantText += chunkText;
-                this._streamingText = fullAssistantText;
-                this.#scrollToBottom();
+                if (this._currentRequestId === reqId) {
+                  this._streamingText = fullAssistantText;
+                  this.#scrollToBottom();
+                }
               } else if (eventType === 'done') {
                 if (data.text) fullAssistantText = data.text;
               } else if (eventType === 'error') {
-                this._error = data.error || 'Side question failed';
+                if (this._currentRequestId === reqId) {
+                  this._error = data.error || 'Side question failed';
+                }
               }
             } catch {
               // Ignore non-json lines
@@ -207,36 +218,47 @@ export class SideQuestionDrawer extends LitElement {
       }
 
       if (fullAssistantText.trim()) {
-        this._thread = [...this._thread, { role: 'assistant', content: fullAssistantText.trim() }];
+        targetThread = [...targetThread, { role: /** @type {const} */ ('assistant'), content: fullAssistantText.trim() }];
+        if (this._currentRequestId === reqId) {
+          this._thread = targetThread;
+        }
       }
-      this._streamingText = '';
+      if (this._currentRequestId === reqId) {
+        this._streamingText = '';
+      }
     } catch (err) {
       if (/** @type {any} */ (err).name === 'AbortError') {
         if (this._streamingText.trim()) {
-          this._thread = [
-            ...this._thread,
-            { role: 'assistant', content: this._streamingText.trim() + ' [cancelled]' },
+          targetThread = [
+            ...targetThread,
+            { role: /** @type {const} */ ('assistant'), content: this._streamingText.trim() + ' [cancelled]' },
           ];
+          if (this._currentRequestId === reqId) {
+            this._thread = targetThread;
+          }
         }
-        this._streamingText = '';
-      } else {
+        if (this._currentRequestId === reqId) {
+          this._streamingText = '';
+        }
+      } else if (this._currentRequestId === reqId) {
         this._error = /** @type {Error} */ (err).message || 'Request failed';
       }
     } finally {
-      this._generating = false;
-      this._abortController = null;
-      if (convId) {
-        this._threadsByConv.set(convId, this._thread);
+      this._threadsByConv.set(targetConvId, targetThread);
+      if (this._currentRequestId === reqId) {
+        this._generating = false;
+        this._abortController = null;
+        this._activeGeneratingConvId = '';
+        this.#scrollToBottom();
       }
-      this.#scrollToBottom();
     }
   }
 
-  stopGeneration() {
+  stopGeneration(convIdToCancel = null) {
     if (this._abortController) {
       this._abortController.abort();
     }
-    const convId = this.convId || this.#resolveActiveConvId();
+    const convId = convIdToCancel || this._activeGeneratingConvId || this.convId || this.#resolveActiveConvId();
     if (convId) {
       DefaultService.handleCancelSideQuestionApiConversationsIdSideQuestionCancelPost(convId).catch(() => {});
     }
@@ -311,7 +333,7 @@ export class SideQuestionDrawer extends LitElement {
           ${this._thread.length > 0 ? html`
             <button
               type="button"
-              class="dc-icon-btn"
+              ?disabled=${this._generating}
               @click=${() => this.clearThread()}
               title="Clear thread"
               aria-label="Clear thread"

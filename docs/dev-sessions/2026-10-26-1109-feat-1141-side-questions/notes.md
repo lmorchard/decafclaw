@@ -33,3 +33,10 @@
   - Finding 3: Validated request body is a JSON object.
   - Finding 4: Updated SSE event parser to check `data.type || currentEvent` so done events are honored on all chunk boundaries.
   - Note 1: Added `id: str` parameter to route handlers, regenerated OpenAPI client, and added test for `/cancel` endpoint.
+- Addressed Copilot review findings:
+  - Finding 1: Tracked `current_iteration_assistant_chunks` separately to only append uncommitted active streaming chunks, clearing on tool calls and turn completion.
+  - Finding 2: Preserved user attachment metadata and applied `resolve_attachments()` to user messages in snapshot.
+  - Finding 3: Validated request payload using `SideQuestionRequest(**body)` Pydantic schema in `handle_side_question`.
+  - Finding 4: Added request-local ID tracking and thread isolation in `SideQuestionDrawer` to avoid cross-conversation clobbering.
+  - Finding 5: Passed captured conversation ID to `stopGeneration()` on conversation switch.
+  - Finding 6: Disabled Clear button while generating in `SideQuestionDrawer`.

@@ -157,6 +157,7 @@ async def test_side_question_includes_partial_assistant_streaming_chunks(manager
     state.busy = True
     state.history = [{"role": "user", "content": "Run analysis"}]
     state.partial_assistant_chunks = ["I am reading ", "the data file now."]
+    state.current_iteration_assistant_chunks = ["I am reading ", "the data file now."]
 
     captured_messages = []
 
@@ -171,6 +172,73 @@ async def test_side_question_includes_partial_assistant_streaming_chunks(manager
     assistant_msgs = [m for m in captured_messages if m.get("role") == "assistant"]
     assert len(assistant_msgs) == 1
     assert assistant_msgs[0]["content"] == "I am reading the data file now."
+
+
+@pytest.mark.asyncio
+async def test_side_question_multi_iteration_turn_only_appends_uncommitted_chunks(manager, config):
+    conv_id = "test-conv-multi-iter"
+    state = manager._get_or_create(conv_id)
+    state.busy = True
+    # Committed from iteration 1:
+    state.history = [
+        {"role": "user", "content": "Analyze code"},
+        {
+            "role": "assistant",
+            "content": "Analyzing...",
+            "tool_calls": [{"function": {"name": "read_file", "arguments": '{"path": "foo.py"}'}}],
+        },
+        {"role": "tool", "name": "read_file", "content": "def foo(): pass"},
+    ]
+    # partial_assistant_chunks accumulated across the turn:
+    state.partial_assistant_chunks = ["Analyzing...", "Now compiling."]
+    # But current_iteration_assistant_chunks only has the uncommitted text:
+    state.current_iteration_assistant_chunks = ["Now compiling."]
+
+    captured_messages = []
+
+    async def fake_streaming(cfg, messages, **kwargs):
+        captured_messages.extend(messages)
+        return {"role": "assistant", "content": "Compiling."}
+
+    with patch("decafclaw.conversation_manager.call_llm_streaming", side_effect=fake_streaming):
+        await manager.run_side_question(conv_id, "Status?")
+
+    assistant_msgs = [m for m in captured_messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 2
+    assert "Now compiling." in assistant_msgs[1]["content"]
+    assert "Analyzing..." not in assistant_msgs[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_side_question_preserves_attachment_metadata(manager, config):
+    conv_id = "test-conv-attachments"
+    state = manager._get_or_create(conv_id)
+    state.history = [
+        {
+            "role": "user",
+            "content": "Look at this screenshot",
+            "attachments": [
+                {
+                    "filename": "screenshot.png",
+                    "path": "attachments/screenshot.png",
+                    "mime_type": "image/png",
+                }
+            ],
+        }
+    ]
+
+    captured_messages = []
+
+    async def fake_streaming(cfg, messages, **kwargs):
+        captured_messages.extend(messages)
+        return {"role": "assistant", "content": "I see the screenshot."}
+
+    with patch("decafclaw.conversation_manager.call_llm_streaming", side_effect=fake_streaming):
+        await manager.run_side_question(conv_id, "What is in the image?")
+
+    user_msgs = [m for m in captured_messages if m["role"] == "user"]
+    assert len(user_msgs) == 2
+    assert "attachments" in user_msgs[0] or "screenshot.png" in str(user_msgs[0])
 
 
 @pytest.mark.asyncio
@@ -364,6 +432,19 @@ async def test_side_question_http_endpoint_auth_and_validation(client, http_conf
     resp = await client.post(
         f"/api/conversations/{conv.conv_id}/side-question",
         json=["not", "a", "dict"],
+    )
+    assert resp.status_code == 400
+    # Invalid non-list side_history type
+    resp = await client.post(
+        f"/api/conversations/{conv.conv_id}/side-question",
+        json={"question": "hello", "side_history": "invalid-string"},
+    )
+    assert resp.status_code == 400
+
+    # Invalid side_history item type
+    resp = await client.post(
+        f"/api/conversations/{conv.conv_id}/side-question",
+        json={"question": "hello", "side_history": [123]},
     )
     assert resp.status_code == 400
 

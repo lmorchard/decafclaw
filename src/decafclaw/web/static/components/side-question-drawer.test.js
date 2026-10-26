@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './side-question-drawer.js';
 import './chat-input.js';
+import { DefaultService } from '../lib/api-client/index.js';
 
 describe('SideQuestionDrawer (#1141)', () => {
   /** @type {any} */
@@ -209,12 +210,25 @@ describe('SideQuestionDrawer (#1141)', () => {
     expect(drawer._thread.length).toBe(0);
     expect(drawer.querySelector('.empty-hint')).not.toBeNull();
   });
+  it('disables Clear button while generating', async () => {
+    drawer.openDrawer();
+    drawer._thread = [
+      { role: 'user', content: 'Q1' },
+      { role: 'assistant', content: 'A1' },
+    ];
+    drawer._generating = true;
+    await drawer.updateComplete;
 
-  it('stops in-flight generation when switching conversation (Finding 2)', async () => {
+    const clearBtn = drawer.querySelector('.drawer-header-actions button');
+    expect(clearBtn?.disabled).toBe(true);
+  });
+
+  it('stops in-flight generation when switching conversation with correct convId', async () => {
     drawer.openDrawer();
     await drawer.updateComplete;
 
     let aborted = false;
+    let cancelCalledWith = null;
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
@@ -232,15 +246,23 @@ describe('SideQuestionDrawer (#1141)', () => {
       }));
     });
 
+    vi.spyOn(DefaultService, 'handleCancelSideQuestionApiConversationsIdSideQuestionCancelPost').mockImplementation(
+      (id) => {
+        cancelCalledWith = id;
+        return Promise.resolve(/** @type {any} */ ({ ok: true }));
+      }
+    );
+
     const promise = drawer.sendQuestion('Query on conv1');
     await drawer.updateComplete;
 
-    // Switch conversation
+    // Switch conversation from conv-test-1 to conv-test-2
     drawer.convId = 'conv-test-2';
     await drawer.updateComplete;
     await promise;
 
     expect(aborted).toBe(true);
+    expect(cancelCalledWith).toBe('conv-test-1');
     expect(drawer.convId).toBe('conv-test-2');
   });
 });
