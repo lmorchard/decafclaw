@@ -32,6 +32,12 @@ def get_provider(name: str) -> Provider:
     return _providers[name]
 
 
+def unregister_provider(name: str) -> None:
+    """Remove a registered provider by name. No-op if not registered."""
+    _providers.pop(name, None)
+    log.debug("Unregistered LLM provider: %s", name)
+
+
 def list_providers() -> list[str]:
     """Return sorted list of registered provider names."""
     return sorted(_providers.keys())

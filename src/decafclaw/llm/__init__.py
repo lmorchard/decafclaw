@@ -19,6 +19,7 @@ from .registry import (  # noqa: F401
     init_providers,
     list_providers,
     register_provider,
+    unregister_provider,
 )
 from .types import (  # noqa: F401
     FINISH_REASON_CANCELLED,

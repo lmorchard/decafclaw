@@ -74,6 +74,20 @@ def guard_chat_completions(monkeypatch, request):
             "Use stub_llm fixture or mark with @pytest.mark.live_llm"
         )
 
+    if request.node.get_closest_marker("scripted_provider"):
+        # The test drives the normal LLM path through an in-memory
+        # ScriptedProvider (issue #923): the agent entry seams must stay
+        # live so the registered provider is reachable. The real network
+        # providers stay guarded, so a config that resolves anywhere but
+        # the scripted provider still fails loudly (#851).
+        for target in (
+            "decafclaw.llm.providers.openai_compat.OpenAICompatProvider.complete",
+            "decafclaw.llm.providers.vertex.VertexProvider.complete",
+            "decafclaw.llm.providers.openai_responses.OpenAIResponsesProvider.complete",
+        ):
+            monkeypatch.setattr(target, _guard_fail)
+        return
+
     monkeypatch.setattr("decafclaw.agent.call_llm", _guard_fail)
     monkeypatch.setattr("decafclaw.llm.call_llm_streaming", _guard_fail)
     monkeypatch.setattr(
