@@ -12,6 +12,9 @@ PROVIDER_OPENAI_RESPONSES = "openai-responses"
 PROVIDER_VERTEX = "vertex"
 # Legacy alias
 PROVIDER_LITELLM = "litellm"
+# Test-only: replayed in-memory provider (decafclaw.testing.ScriptedProvider).
+# Registered directly via the registry — init_providers never instantiates it.
+PROVIDER_SCRIPTED = "scripted"
 
 # Completion finish reason constants
 FINISH_REASON_STOP = "stop"
