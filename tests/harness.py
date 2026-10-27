@@ -251,16 +251,21 @@ class AgentHarness:
             raise TimeoutError(
                 f"Timed out after {timeout}s waiting for event {event_type!r} {match}; recent events: {tail}"
             ) from None
+        finally:
+            if waiter in self._waiters:
+                self._waiters.remove(waiter)
         return waiter.found[0]
 
     # -- teardown ---------------------------------------------------------------
 
     async def close(self) -> None:
         """Shut the manager down and drop the scripted provider registration."""
-        await self.manager.shutdown(timeout=10)
-        self.manager.unsubscribe(self.conv_id, self._sub_id)
-        unregister_scripted_provider(PROVIDER_SCRIPTED)
-        self._waiters.clear()
+        try:
+            await self.manager.shutdown(timeout=10)
+        finally:
+            self.manager.unsubscribe(self.conv_id, self._sub_id)
+            unregister_scripted_provider(PROVIDER_SCRIPTED)
+            self._waiters.clear()
 
     async def __aenter__(self) -> "AgentHarness":
         return self
@@ -278,4 +283,4 @@ def provider_is_registered(name: str = PROVIDER_SCRIPTED) -> bool:
         return False
 
 
-__all__ = ["AgentHarness", "MODEL_NAME"]
+__all__ = ["AgentHarness", "MODEL_NAME", "provider_is_registered"]

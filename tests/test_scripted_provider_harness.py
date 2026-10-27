@@ -23,7 +23,7 @@ from decafclaw.llm.registry import register_provider, unregister_provider
 from decafclaw.media import ToolResult
 from decafclaw.memory_context import embed_text as _real_embed_text
 from decafclaw.testing import ScriptedResponse
-from tests.harness import AgentHarness
+from tests.harness import AgentHarness, provider_is_registered
 
 
 async def _echo_tool(ctx, text: str = "") -> ToolResult:
@@ -290,3 +290,39 @@ async def test_real_provider_seams_stay_guarded(tmp_path):
             assert "Unstubbed LLM call" in result.text
         finally:
             unregister_provider("openai-compat")
+
+
+@pytest.mark.scripted_provider
+async def test_wait_for_event_cleans_up_waiter(tmp_path):
+    """wait_for_event cleans up its internal waiter on success, timeout, or cancellation."""
+    async with AgentHarness(tmp_path) as h:
+        wait_task = asyncio.create_task(h.wait_for_event("user_message"))
+        await asyncio.sleep(0.01)
+        assert len(h._waiters) == 1
+        h.script(ScriptedResponse.text("hi"))
+        fut = await h.enqueue("hi")
+        ev = await wait_task
+        assert ev["type"] == "user_message"
+        assert len(h._waiters) == 0
+        await fut
+
+        with pytest.raises(TimeoutError):
+            await h.wait_for_event("nonexistent_event", timeout=0.05)
+        assert len(h._waiters) == 0
+
+
+@pytest.mark.scripted_provider
+async def test_harness_close_cleans_up_even_if_shutdown_fails(tmp_path, monkeypatch):
+    """AgentHarness.close unregisters the provider even if manager.shutdown raises."""
+    h = AgentHarness(tmp_path)
+    h.script(ScriptedResponse.text("hi"))
+    assert provider_is_registered()
+
+    async def _failing_shutdown(*args, **kwargs):
+        raise RuntimeError("shutdown crashed")
+
+    monkeypatch.setattr(h.manager, "shutdown", _failing_shutdown)
+    with pytest.raises(RuntimeError, match="shutdown crashed"):
+        await h.close()
+
+    assert not provider_is_registered()

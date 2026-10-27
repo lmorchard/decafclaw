@@ -55,8 +55,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Sequence
 
 from ..llm import register_provider, unregister_provider
 from ..llm.types import (
@@ -79,6 +80,8 @@ __all__ = [
     "register_scripted_provider",
     "unregister_scripted_provider",
 ]
+
+log = logging.getLogger(__name__)
 
 
 class ScriptedProviderError(RuntimeError):
@@ -348,10 +351,24 @@ class ScriptedProvider:
     def next_call_index(self) -> int:
         return self._call_index
 
-    def extend(self, responses: list) -> None:
+    def extend(
+        self,
+        responses: (
+            Sequence[ScriptedResponse | Callable[[ScriptedRequest], ScriptedResponse]]
+            | ScriptedResponse
+            | Callable[[ScriptedRequest], ScriptedResponse]
+        ),
+    ) -> None:
         """Append responses to the queue (the harness uses this to build
         a script across multiple calls before turns run)."""
-        self._queue.extend(responses)
+        if isinstance(responses, (list, tuple)):
+            for r in responses:
+                if isinstance(r, (list, tuple)):
+                    self._queue.extend(r)
+                else:
+                    self._queue.append(r)
+        else:
+            self._queue.append(responses)
 
     async def complete(
         self,
@@ -383,10 +400,11 @@ class ScriptedProvider:
         if callable(entry):
             response = entry(request)
             if not isinstance(response, ScriptedResponse):
+                last_user = request.messages[-1].get("content") if request.messages else None
                 raise UnexpectedCallError(
                     f"ScriptedProvider call #{request.call_index}: the request-aware factory "
                     f"must return ScriptedResponse, got {type(response).__name__!r}. "
-                    f"Last user message: {request.messages[-1].get('content')!r}"
+                    f"Last user message: {last_user!r}"
                 )
         else:
             response = entry
@@ -434,10 +452,10 @@ class ScriptedProvider:
                 result = on_chunk(chunk_type, data)
                 if asyncio.iscoroutine(result):
                     await result
-            except Exception:
+            except Exception as exc:
                 # A subscriber error must never kill the stream (same as
                 # the real providers' _emit).
-                pass
+                log.debug("on_chunk %s callback failed: %s", chunk_type, exc)
             if chunk_type == "error":
                 # Scripted stand-in for a real SSE disconnect: the
                 # stream dies right after this chunk.
@@ -461,8 +479,8 @@ class ScriptedProvider:
             result = on_chunk("done", {"usage": response.usage})
             if asyncio.iscoroutine(result):
                 await result
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("on_chunk done callback failed: %s", exc)
         return self._finalize(response, acc.content or None, acc.thinking or None, acc.tool_calls, finish_reason)
 
     @staticmethod
@@ -515,7 +533,11 @@ class ScriptedProvider:
 
 def register_scripted_provider(
     name: str = PROVIDER_SCRIPTED,
-    responses: list | None = None,
+    responses: (
+        list[ScriptedResponse | Callable[[ScriptedRequest], ScriptedResponse]]
+        | Callable[[ScriptedRequest], ScriptedResponse]
+        | None
+    ) = None,
     *,
     provider: ScriptedProvider | None = None,
     **kwargs: Any,

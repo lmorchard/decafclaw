@@ -65,6 +65,16 @@ class TestReplay:
         await provider.complete("m", USER_MSG, streaming=True, on_chunk=_noop)
         assert provider.requests[0].streaming is True
 
+    async def test_extend_supports_single_response_and_nested_sequence(self):
+        provider = ScriptedProvider([ScriptedResponse.text("first")])
+        provider.extend(ScriptedResponse.text("second"))
+        provider.extend([ScriptedResponse.text("third"), ScriptedResponse.text("fourth")])
+        r1 = await provider.complete("m", USER_MSG)
+        r2 = await provider.complete("m", USER_MSG)
+        r3 = await provider.complete("m", USER_MSG)
+        r4 = await provider.complete("m", USER_MSG)
+        assert [r["content"] for r in (r1, r2, r3, r4)] == ["first", "second", "third", "fourth"]
+
 
 class TestStreaming:
     async def test_standard_chunk_sequence_with_tool_call(self):
@@ -146,6 +156,24 @@ class TestStreaming:
         with pytest.raises(ScriptedProviderError, match="server exploded"):
             await provider.complete("m", USER_MSG)
 
+    async def test_on_chunk_subscriber_error_does_not_abort_stream(self, caplog):
+        import logging
+
+        provider = ScriptedProvider([ScriptedResponse.text("streamed text")])
+        chunks = []
+
+        def broken_chunk(chunk_type: str, data):
+            if chunk_type == "text":
+                raise ValueError("callback crashed")
+            chunks.append((chunk_type, data))
+
+        with caplog.at_level(logging.DEBUG, logger="decafclaw.testing.scripted_provider"):
+            response = await provider.complete("m", USER_MSG, streaming=True, on_chunk=broken_chunk)
+
+        assert response["content"] == "streamed text"
+        assert [ct for ct, _ in chunks] == ["done"]
+        assert any("callback failed" in record.message for record in caplog.records)
+
 
 class TestScriptExhaustion:
     async def test_raises_with_actionable_message(self):
@@ -223,6 +251,11 @@ class TestFactories:
         provider = ScriptedProvider(lambda request: "not a response")
         with pytest.raises(UnexpectedCallError, match="must return ScriptedResponse"):
             await provider.complete("m", USER_MSG)
+
+    async def test_factory_wrong_return_with_empty_messages(self):
+        provider = ScriptedProvider(lambda request: "not a response")
+        with pytest.raises(UnexpectedCallError, match="must return ScriptedResponse"):
+            await provider.complete("m", [])
 
 
 class TestEmbeddingsAndModelInfo:
