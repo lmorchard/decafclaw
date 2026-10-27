@@ -12,6 +12,7 @@ network provider seams stay guarded (verified in
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -227,6 +228,33 @@ async def test_script_exhaustion_fails_turn_loudly(tmp_path):
         assert "ScriptedProvider exhausted" in err["message"]
         # The turn terminated (no hang).
         assert "turn_complete" in [ev["type"] for ev in h.events]
+
+
+@pytest.mark.scripted_provider
+async def test_turn_emits_no_warning_logs(tmp_path):
+    """A harness turn stays warning-free: with vault retrieval disabled
+    in the harness config, the fail-open memory-context path (which
+    would hit the scripted provider's missing embedder and log a
+    WARNING traceback) never runs."""
+    captured: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    logger = logging.getLogger("decafclaw.memory_context")
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        async with AgentHarness(tmp_path) as h:
+            h.script(ScriptedResponse.text("hi"))
+            result = await (await h.enqueue("hi"))
+            assert result.text == "hi"
+            assert "turn_complete" in [ev["type"] for ev in h.events]
+    finally:
+        logger.removeHandler(handler)
+
+    assert [r for r in captured if r.levelno >= logging.WARNING] == []
 
 
 @pytest.mark.scripted_provider

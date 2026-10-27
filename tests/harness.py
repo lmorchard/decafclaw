@@ -24,7 +24,7 @@ Usage::
                 ScriptedResponse.tool_call("echo", {"text": "hi"}, call_id="call_1"),
                 ScriptedResponse.text("Echoed: hi"),
             )
-            result = await harness.enqueue("Please echo hi.")
+            result = await (await harness.enqueue("Please echo hi."))
             assert result.text == "Echoed: hi"
             # assert on harness.events, harness.provider.requests, harness.archive()
 """
@@ -37,7 +37,13 @@ from typing import Any
 
 from decafclaw.archive import read_archive
 from decafclaw.config import Config
-from decafclaw.config_types import AgentConfig, ModelConfig, ProviderConfig, ReflectionConfig
+from decafclaw.config_types import (
+    AgentConfig,
+    ModelConfig,
+    ProviderConfig,
+    ReflectionConfig,
+    VaultRetrievalConfig,
+)
 from decafclaw.conversation_manager import ConversationManager, TurnKind
 from decafclaw.events import EventBus
 from decafclaw.llm.registry import get_provider
@@ -99,6 +105,11 @@ class AgentHarness:
                 user_id="harness-tester",
             ),
             reflection=ReflectionConfig(enabled=False),
+            # The harness data dir has no vault content to retrieve and
+            # the scripted provider has no embedder; with the default
+            # vault_retrieval enabled, every turn would attempt an embed
+            # and the fail-open path would log a WARNING traceback.
+            vault_retrieval=VaultRetrievalConfig(enabled=False),
             providers={PROVIDER_SCRIPTED: ProviderConfig(type=PROVIDER_SCRIPTED)},
             model_configs={
                 MODEL_NAME: ModelConfig(

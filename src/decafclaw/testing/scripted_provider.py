@@ -317,7 +317,11 @@ class ScriptedProvider:
 
     def __init__(
         self,
-        responses: (list[ScriptedResponse | Any] | Callable[[ScriptedRequest], ScriptedResponse] | None) = None,
+        responses: (
+            list[ScriptedResponse | Callable[[ScriptedRequest], ScriptedResponse]]
+            | Callable[[ScriptedRequest], ScriptedResponse]
+            | None
+        ) = None,
         *,
         model: str = "scripted-model",
         embedder: Any = None,
