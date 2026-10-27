@@ -67,6 +67,10 @@ These docs are as much for me as they are for agents working on this project. Th
 - [LLM Providers](providers.md) — Multi-provider LLM support: Vertex/Gemini, OpenAI, LiteLLM-compat, service accounts
 - [Model Selection](model-selection.md) — Named model configs, per-conversation model switching
 
+## Testing
+
+- [Testing](testing.md) — Scripted LLM provider (`decafclaw.testing`), agent-runtime integration harness, unstubbed-LLM-call guard
+
 ## Architecture
 
 - [Architecture Overview](architecture.md) — Narrative walkthrough: entry points, Context, EventBus, agent turn lifecycle, tool concurrency

@@ -98,6 +98,7 @@ addopts = "-n auto --dist=worksteal -m 'not integration'"
 markers = [
     "integration: marks tests that hit real LLM APIs (opt in with: -m integration)",
     "live_llm: opts a test out of the unstubbed-LLM-call guard in tests/conftest.py; use it for tests that run the real provider code with HTTP mocked below the guard",
+    "scripted_provider: test drives the normal LLM path through decafclaw.testing.ScriptedProvider (issue #923); agent entry seams stay live, real provider seams stay guarded",
 ]
 
 [tool.ruff]
