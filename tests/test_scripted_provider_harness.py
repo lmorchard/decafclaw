@@ -21,6 +21,7 @@ from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
 from decafclaw.llm.providers.openai_compat import OpenAICompatProvider
 from decafclaw.llm.registry import register_provider, unregister_provider
 from decafclaw.media import ToolResult
+from decafclaw.memory_context import embed_text as _real_embed_text
 from decafclaw.testing import ScriptedResponse
 from tests.harness import AgentHarness
 
@@ -231,11 +232,20 @@ async def test_script_exhaustion_fails_turn_loudly(tmp_path):
 
 
 @pytest.mark.scripted_provider
-async def test_turn_emits_no_warning_logs(tmp_path):
+async def test_turn_emits_no_warning_logs(tmp_path, monkeypatch):
     """A harness turn stays warning-free: with vault retrieval disabled
     in the harness config, the fail-open memory-context path (which
     would hit the scripted provider's missing embedder and log a
-    WARNING traceback) never runs."""
+    WARNING traceback) never runs.
+
+    The root autouse ``mock_embed_text`` fixture patches
+    ``decafclaw.memory_context.embed_text`` with a zero vector, so this
+    test restores the real function — bound at module import, before
+    fixture setup — to actually guard the harness config: if retrieval
+    were re-enabled, the real embed path would reach the scripted
+    provider's ``embed()`` and log the warning.
+    """
+    monkeypatch.setattr("decafclaw.memory_context.embed_text", _real_embed_text)
     captured: list[logging.LogRecord] = []
 
     class _Capture(logging.Handler):
@@ -247,6 +257,7 @@ async def test_turn_emits_no_warning_logs(tmp_path):
     logger.addHandler(handler)
     try:
         async with AgentHarness(tmp_path) as h:
+            assert h.config.vault_retrieval.enabled is False
             h.script(ScriptedResponse.text("hi"))
             result = await (await h.enqueue("hi"))
             assert result.text == "hi"
