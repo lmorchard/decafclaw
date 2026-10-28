@@ -64,14 +64,16 @@ Side questions execute via `ConversationManager.run_side_question()`. They run w
 | `reason` | Meaning |
 |---|---|
 | `completed` | The agent loop finished normally and the final response was emitted as `message_complete`. |
-| `cancelled` | The turn was cancelled before it finished: either the loop raised `CancelledError` (the manager emits `message_complete` with the `[Cancelled]` text first) or the agent observed a cancel in-flight and returned cleanly. |
+| `cancelled` | The turn was cancelled before it finished: either the loop raised `CancelledError` (the manager emits `message_complete` with the `[cancelled]` text first) or the agent observed a cancel in-flight and returned cleanly. |
 | `failed` | The turn raised an exception (provider error, tool failure that escapes the loop, ...). The manager emits an `error` event first; no `message_complete`. |
 
-There is no `paused` reason: a pause is **not** a settle. While the turn is paused (a `request_confirmation` prompt or a `request_widget` awaiting the user), the turn keeps running with the busy flag held — no `turn_complete` fires, the activity status stays `waiting`/`busy` — and the turn settles later with `completed`, `cancelled`, or `failed` depending on how it ends after the user responds.
+A turn that ends with a skill-activation failure (`termination_reason: skill_activation_failed`) also settles with `completed` — the agent loop finished normally and the final response was still emitted as `message_complete`; the denial is carried in-band, not as a distinct settle.
+
+There is no `paused` reason: a pause is **not** a settle. While the turn is paused (a `confirmation_request` prompt awaiting the user — widget-input pauses ride the same infrastructure), the turn keeps running with the busy flag held — no `turn_complete` fires, the activity status stays `waiting`/`busy` — and the turn settles later with `completed`, `cancelled`, or `failed` depending on how it ends after the user responds.
 
 ### Event trace per outcome
 
-Ordering between *direct* emits of the manager (the bold events below) is stable; bus-forwarded events (`llm_start`, `llm_end`, `reflection_result`, tool activity) are scheduled as forwarding tasks and may interleave with direct emits, but every event published during a turn lands in the per-conversation stream **before** `turn_complete` (the `finally` gathers in-flight forwards first).
+Ordering between *direct* emits of the manager is stable; bus-forwarded events (`llm_start`, `llm_end`, `reflection_result`, tool activity) are scheduled as forwarding tasks and may interleave with direct emits, but every event published during a turn lands in the per-conversation stream **before** `turn_complete` (the `finally` gathers in-flight forwards first).
 
 **Completed:**
 
@@ -82,16 +84,18 @@ user_message -> turn_start -> llm_start -> llm_end -> message_complete -> turn_c
 **Paused, then resumed:**
 
 ```
-user_message -> turn_start -> llm_start -> llm_end -> request_confirmation
+user_message -> turn_start -> llm_start -> llm_end -> confirmation_request
    (no turn_complete; the turn is still busy)
 confirmation_response -> llm_start -> llm_end -> message_complete -> turn_complete {reason: "completed"}
 ```
 
-**Cancelled** (while the LLM call is in flight; `llm_end` still fires with `finish_reason: "cancelled"`):
+**Cancelled** (while the LLM call is in flight; the cancel unwinds the in-flight LLM call, so `llm_end` never fires):
 
 ```
-user_message -> turn_start -> llm_start -> llm_end -> message_complete "[Cancelled]" -> turn_complete {reason: "cancelled"}
+user_message -> turn_start -> llm_start -> message_complete "[cancelled]" -> turn_complete {reason: "cancelled"}
 ```
+
+(A provider stream that ends gracefully between chunks can race the task cancel and occasionally let `llm_end` fire — it is never guaranteed, so consumers must not rely on it.)
 
 **Failed:**
 
