@@ -1,3 +1,106 @@
+/* ── Chat Controls Strip ─────────────────────────────────────────────── */
+
+/* Shared controls strip styling (desktop + mobile) */
+.controls-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--pico-background-color);
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.control label {
+  color: var(--pico-muted-color);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.control select,
+.control input[type="text"] {
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color);
+  color: var(--pico-color);
+  font-size: 0.8rem;
+}
+
+.control select:disabled,
+.control input[type="text"]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Context usage progress bar */
+.context-control progress {
+  flex: 1;
+  min-width: 48px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.context-control .usage-label {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  white-space: nowrap;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* Context progress colors */
+.context-icon.danger {
+  color: var(--pico-del-color);
+}
+
+/* Collapse toggle button */
+.collapse-toggle {
+  padding: 0.2rem 0.4rem;
+  border: none;
+  background: transparent;
+  color: var(--pico-muted-color);
+  font-size: 1rem;
+}
+
+.collapse-toggle:hover {
+  color: var(--pico-color);
+}
+
+/* Mobile collapsed state - icon-only buttons */
+.controls-strip.collapsed .control:not(.collapsed) > label,
+.controls-strip.collapsed .control:not(.collapsed) select,
+.controls-strip.collapsed .control:not(.collapsed) progress,
+.controls-strip.collapsed .control:not(.collapsed) .usage-label {
+  display: none;
+}
+
+.control-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  background: var(--pico-card-background-color);
+  font-size: 0.9rem;
+}
+
+.control-icon:hover {
+  background: var(--pico-secondary-background);
+}
+
+.context-icon.danger {
+  color: var(--pico-del-color);
+}
 /* ── Mobile (< 640px) ───────────────────────────────────────────────────── */
 @media (max-width: 639px) {
   /* Wider message bubbles */
