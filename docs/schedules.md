@@ -139,6 +139,15 @@ The overlay is a full-file replacement — it is not merged with the original. A
    - If due, the task executes as an independent agent turn
 4. Last-run timestamps are stored per-task in `workspace/.schedule_last_run/`
 
+### Global switch
+
+The whole timer can be switched off with `schedules.enabled: false` in
+`config.json` (env `SCHEDULES_ENABLED=false`; see [config reference](config.md#schedules)).
+When off, the schedule timer does not start at all — no schedule file is
+scanned or run, including bundled ones. The [ephemeral test instance](ephemeral-instance.md)
+sets this so a throwaway instance can never fire a schedule. Per-task
+`enabled` in frontmatter still applies when the global switch is on.
+
 ### Overlap protection
 
 If a task is still running from a previous tick, it's skipped. This prevents runaway concurrent executions of slow tasks.
