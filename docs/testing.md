@@ -83,6 +83,12 @@ async def test_tool_roundtrip(tmp_path):
   (no polling, no sleeps).
 - `AgentHarness(tmp_path, streaming=False)` exercises the non-streaming
   path with the same script.
+- `AgentHarness(tmp_path, reflection=True)` enables the response-reflection
+  judge on the scripted model, so tests can drive retry-on-fail verdicts
+  without a real judge LLM. The script must alternate agent responses with
+  judge verdicts (`{"pass": true|false, "critique": "..."}` text responses);
+  the judge call is a non-streaming request in `h.provider.requests` and
+  each verdict appears in `h.events` as a `reflection_result`.
 - Closing the harness shuts the manager down and drops the scripted
   provider registration.
 
