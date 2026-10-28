@@ -173,6 +173,13 @@ class HeartbeatConfig:
 
 
 @dataclass
+class SchedulesConfig:
+    # Global switch for the schedule timer (#957). Per-task `enabled` in
+    # SCHEDULE.md frontmatter still applies when this is true.
+    enabled: bool = True
+
+
+@dataclass
 class HttpConfig:
     enabled: bool = False
     host: str = "0.0.0.0"

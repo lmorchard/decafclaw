@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import os
 import sys
+from typing import Any, Callable
 
 from .config import load_config
 from .context import Context
@@ -11,22 +13,30 @@ from .events import EventBus
 log = logging.getLogger(__name__)
 
 
-def main():
-    import os
-
+def _setup_logging() -> None:
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
         level=getattr(logging, log_level, logging.INFO),
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
     )
 
-    # CLI subcommand: python -m decafclaw config ...
-    if len(sys.argv) > 1 and sys.argv[1] == "config":
-        sys.argv = sys.argv[1:]  # shift so argparse sees "config show"
-        from .config_cli import main as config_main
 
-        config_main()
-        return
+def start_app(extra_provider_hook: Callable[[Any], None] | None = None) -> None:
+    """Shared startup for `decafclaw` and the ephemeral test server (#957).
+
+    Loads the config, initializes telemetry, the LLM provider registry, and
+    the widget catalog, assembles the system prompt, and runs the server
+    (Mattermost and/or HTTP) or the interactive terminal — exactly the
+    steps `main()` used to perform inline. Both entry points call this
+    function; nothing is duplicated.
+
+    ``extra_provider_hook``, when given, is called with the loaded config
+    after ``init_providers(config)`` and before the server starts. The
+    ephemeral test server uses it to register the scripted provider
+    (``decafclaw.testing``) in-process, so a production ``config.json``
+    can never select the scripted provider.
+    """
+    _setup_logging()
 
     config = load_config()
 
@@ -39,6 +49,9 @@ def main():
     from .llm import init_providers
 
     init_providers(config)
+
+    if extra_provider_hook is not None:
+        extra_provider_hook(config)
 
     # Initialize the widget catalog registry (bundled + admin tiers).
     # Shared across server and interactive modes; agent loop consults it
@@ -77,3 +90,17 @@ def main():
         from .interactive_terminal import run_interactive
 
         asyncio.run(run_interactive(app_ctx))
+
+
+def main():
+    _setup_logging()
+
+    # CLI subcommand: python -m decafclaw config ...
+    if len(sys.argv) > 1 and sys.argv[1] == "config":
+        sys.argv = sys.argv[1:]  # shift so argparse sees "config show"
+        from .config_cli import main as config_main
+
+        config_main()
+        return
+
+    start_app()

@@ -179,6 +179,17 @@ test-all:
 test-contrib:
 	uv run pytest contrib/skills/ -v
 
+# Ephemeral scripted end-to-end test (#957): starts a throwaway decafclaw
+# server from this checkout (temp DATA_HOME, free port, scripted provider),
+# runs a scripted tool round-trip through decafclaw-client, prints the JSON
+# summary, and tears down process + temp dir. No credentials, no network,
+# no Mattermost, no schedules; the live daemon's data is untouched.
+# See docs/ephemeral-instance.md.
+ephemeral-test:
+	uv run python scripts/ephemeral_instance.py \
+		--responses tests/fixtures/ephemeral/tool-roundtrip.responses.json \
+		--prompt "Write the exact text hello to the file notes.txt in the workspace."
+
 # Rebuild production embedding index
 reindex:
 	uv run decafclaw-reindex
