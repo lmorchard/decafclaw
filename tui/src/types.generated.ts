@@ -222,6 +222,7 @@ export interface SrvToolStatus {
 export interface SrvTurnComplete {
   type: "turn_complete";
   conv_id: string;
+  reason?: string;
 }
 
 export interface SrvTurnStart {

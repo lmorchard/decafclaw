@@ -119,8 +119,8 @@
     },
     "turn_complete": {
       "direction": "server_to_client",
-      "description": "An agent turn finished (success, error, or cancellation).",
-      "fields": {"conv_id": "string"}
+      "description": "An agent turn finished (success, error, or cancellation). `reason` names the settle outcome: `completed`, `cancelled`, or `failed`. A pause for confirmation or widget input is not an outcome — the turn is still in flight and no turn_complete is emitted until the pause resolves. Optional on the wire: older servers omit it.",
+      "fields": {"conv_id": "string", "reason": "string?"}
     },
     "turn_start": {
       "direction": "server_to_client",

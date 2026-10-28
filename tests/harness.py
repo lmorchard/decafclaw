@@ -73,6 +73,10 @@ class AgentHarness:
     - ``streaming=True`` (default) configures the model for the streaming
       path; pass ``False`` to exercise the non-streaming path with the
       same script.
+    - ``reflection=True`` enables self-reflection (issue #1000): the
+      judge runs on the same scripted provider, so the script must
+      alternate agent responses with judge verdicts
+      (``{"pass": true|false, "critique": "..."}`` text responses).
     - ``tools`` / ``tool()``: callables executed by the real
       ``execute_tool`` lookup (``ctx.tools.extra``) and advertised to the
       LLM via ``ctx.tools.extra_definitions``.
@@ -93,6 +97,7 @@ class AgentHarness:
         tmp_path: Path | str,
         *,
         streaming: bool = True,
+        reflection: bool = False,
         conv_id: str = "harness-conv",
     ) -> None:
         self.tmp_path = Path(tmp_path)
@@ -104,7 +109,7 @@ class AgentHarness:
                 id="harness-agent",
                 user_id="harness-tester",
             ),
-            reflection=ReflectionConfig(enabled=False),
+            reflection=ReflectionConfig(enabled=reflection),
             # The harness data dir has no vault content to retrieve and
             # the scripted provider has no embedder; with the default
             # vault_retrieval enabled, every turn would attempt an embed
