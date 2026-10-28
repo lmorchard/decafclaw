@@ -70,6 +70,7 @@ These docs are as much for me as they are for agents working on this project. Th
 ## Testing
 
 - [Testing](testing.md) — Scripted LLM provider (`decafclaw.testing`), agent-runtime integration harness, unstubbed-LLM-call guard
+- [Ephemeral Test Instance](ephemeral-instance.md) — One-command headless end-to-end test: throwaway server from this checkout, scripted conversation, full teardown
 
 ## Architecture
 

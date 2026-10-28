@@ -321,7 +321,7 @@ class ScriptedProvider:
     def __init__(
         self,
         responses: (
-            list[ScriptedResponse | Callable[[ScriptedRequest], ScriptedResponse]]
+            Sequence[ScriptedResponse | Callable[[ScriptedRequest], ScriptedResponse]]
             | Callable[[ScriptedRequest], ScriptedResponse]
             | None
         ) = None,
@@ -534,7 +534,7 @@ class ScriptedProvider:
 def register_scripted_provider(
     name: str = PROVIDER_SCRIPTED,
     responses: (
-        list[ScriptedResponse | Callable[[ScriptedRequest], ScriptedResponse]]
+        Sequence[ScriptedResponse | Callable[[ScriptedRequest], ScriptedResponse]]
         | Callable[[ScriptedRequest], ScriptedResponse]
         | None
     ) = None,

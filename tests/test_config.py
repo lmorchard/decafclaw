@@ -64,6 +64,7 @@ class TestDefaults:
         assert c.agent.preemptive_search.max_matches == 10
         assert c.compaction.max_tokens == 100000
         assert c.embedding.search_strategy == "substring"
+        assert c.schedules.enabled is True
 
     def test_notifications_defaults(self):
         c = Config()
@@ -520,6 +521,34 @@ class TestEnvVarOverride:
         monkeypatch.setenv("LLM_MODEL", "from-env")
         c = load_config()
         assert c.llm.model == "from-env"
+
+
+class TestSchedulesConfig:
+    """Global schedule-timer switch (#957)."""
+
+    def test_default_enabled(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.delenv("SCHEDULES_ENABLED", raising=False)
+        c = load_config()
+        assert c.schedules.enabled is True
+
+    def test_disabled_from_json(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"schedules": {"enabled": False}}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.delenv("SCHEDULES_ENABLED", raising=False)
+        c = load_config()
+        assert c.schedules.enabled is False
+
+    def test_env_override_beats_json(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"schedules": {"enabled": False}}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("SCHEDULES_ENABLED", "true")
+        c = load_config()
+        assert c.schedules.enabled is True
 
 
 class TestListFields:

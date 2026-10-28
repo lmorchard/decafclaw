@@ -71,9 +71,10 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
     "typed its name.",
     ("tool_definitions.py", "_preloaded_skill_defs"): "GATE (#744): grants_capability before _load_native_tools, which "
     "imports tools.py and therefore execs module-level code.",
-    ("__init__.py", "main"): "DELEGATES to skills.build_skill_tool_owners, which applies "
+    ("__init__.py", "start_app"): "DELEGATES to skills.build_skill_tool_owners, which applies "
     "grants_capability before importing any tools.py (#744). This is the "
-    "startup call site; the decision lands in the callee.",
+    "shared startup call site (decafclaw.main and the ephemeral test server "
+    "both run it, #957); the decision lands in the callee.",
     ("schedules.py", "setup_schedule_ctx"): "GATE (#731 vector 5): skips trust_tier == 'workspace' before "
     "activate_skill_internal, which execs the skill's tools.py.",
     (

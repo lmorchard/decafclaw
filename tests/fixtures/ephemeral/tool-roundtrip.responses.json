@@ -1,0 +1,17 @@
+[
+  {
+    "tool_calls": [
+      {
+        "id": "call_1",
+        "type": "function",
+        "function": {
+          "name": "workspace_write",
+          "arguments": "{\"path\": \"notes.txt\", \"content\": \"hello\"}"
+        }
+      }
+    ]
+  },
+  {
+    "content": "Done — wrote hello to notes.txt."
+  }
+]

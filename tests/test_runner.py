@@ -1,11 +1,13 @@
 """Tests for runner orchestrator startup and MCP lifecycle (#1148)."""
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from decafclaw.context import Context
+from decafclaw.conversation_manager import ConversationManager
 from decafclaw.events import EventBus
 from decafclaw.mcp_client import (
     MCPRegistry,
@@ -163,3 +165,99 @@ async def test_runner_late_mcp_registration(config):
         except (asyncio.CancelledError, Exception):
             pass
         await shutdown_mcp()
+
+
+def _schedule_switch_mocks(schedule_timer):
+    """Shared mocks for the schedule-switch tests: run_all reaches the
+    schedule-timer decision, then `post_schedule` is set (the next statement
+    after it in run_all), so waiting on it proves the decision was executed."""
+    post_schedule = asyncio.Event()
+
+    async def mock_run_http_server(*args, **kwargs):
+        pass
+
+    async def scan_wakes(self):
+        post_schedule.set()
+
+    return (
+        post_schedule,
+        (
+            patch("decafclaw.http_server.run_http_server", side_effect=mock_run_http_server),
+            patch("decafclaw.http_server.shutdown_http_server", new_callable=AsyncMock),
+            patch("decafclaw.schedules.run_schedule_timer", side_effect=schedule_timer),
+            patch("decafclaw.workspace_index.start_workspace_index_loop"),
+            patch.object(ConversationManager, "startup_scan", new_callable=AsyncMock),
+            patch.object(ConversationManager, "startup_scan_workflows", new_callable=AsyncMock),
+            patch.object(ConversationManager, "startup_scan_scheduled_wakes", scan_wakes),
+            patch.object(asyncio.get_event_loop(), "add_signal_handler"),
+            patch("decafclaw.runner.signal.SIGTERM", 15),
+            patch("decafclaw.runner.signal.SIGINT", 2),
+        ),
+    )
+
+
+async def _run_until_schedule_decision(ctx, patches, timeout=10.0):
+    runner_task = asyncio.create_task(run_all(ctx))
+    try:
+        await patches[0].wait()
+        return runner_task
+    except BaseException:
+        runner_task.cancel()
+        raise
+
+
+@pytest.mark.asyncio
+async def test_runner_schedule_timer_disabled(config):
+    """The schedule timer does not start when schedules.enabled is false (#957)."""
+    config.http.enabled = True
+    config.heartbeat.interval = ""
+    config.schedules.enabled = False
+    bus = EventBus()
+    ctx = Context(config=config, event_bus=bus)
+
+    schedule_started = asyncio.Event()
+
+    async def schedule_timer(*args, **kwargs):
+        schedule_started.set()
+
+    post_schedule, patches = _schedule_switch_mocks(schedule_timer)
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        runner_task = await _run_until_schedule_decision(ctx, (post_schedule, patches))
+        await asyncio.sleep(0)  # let any (mistakenly created) timer task run
+        assert not schedule_started.is_set()
+        runner_task.cancel()
+        try:
+            await asyncio.wait_for(runner_task, timeout=5.0)
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_runner_schedule_timer_enabled(config):
+    """Control: with schedules.enabled true (the default) the timer starts."""
+    config.http.enabled = True
+    config.heartbeat.interval = ""
+    config.schedules.enabled = True
+    bus = EventBus()
+    ctx = Context(config=config, event_bus=bus)
+
+    schedule_started = asyncio.Event()
+
+    async def schedule_timer(*args, **kwargs):
+        schedule_started.set()
+        await asyncio.Event().wait()  # keep running until cancelled
+
+    post_schedule, patches = _schedule_switch_mocks(schedule_timer)
+    with contextlib.ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        runner_task = await _run_until_schedule_decision(ctx, (post_schedule, patches))
+        await asyncio.wait_for(schedule_started.wait(), timeout=5.0)
+        assert schedule_started.is_set()
+        runner_task.cancel()
+        try:
+            await asyncio.wait_for(runner_task, timeout=5.0)
+        except (asyncio.CancelledError, Exception):
+            pass
