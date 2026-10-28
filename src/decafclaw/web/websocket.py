@@ -36,6 +36,7 @@ from decafclaw.web.message_types import (
     SrvStickyClear,
     SrvStickySet,
     SrvToolEnd,
+    SrvTurnComplete,
     WSMessageType,
     WSSendCallable,
 )
@@ -1168,7 +1169,15 @@ def _subscribe_to_conv(state, conv_id):
         elif event_type == "turn_complete":
             streaming_buffer["text"] = ""
             streaming_buffer["thinking"] = ""
-            await ws_send({"type": WSMessageType.TURN_COMPLETE, "conv_id": event_conv_id})
+            turn_complete: SrvTurnComplete = {
+                "type": WSMessageType.TURN_COMPLETE,
+                "conv_id": event_conv_id,
+            }
+            # #1000 — the settle outcome ("completed" | "cancelled" | "failed").
+            # Optional on the wire: older servers omit it and clients behave as before.
+            if "reason" in event:
+                turn_complete["reason"] = event["reason"]
+            await ws_send(turn_complete)
             # #1072 — refine the sidebar title in the background after the
             # turn. Fire-and-forget: titling must not add latency to turn
             # delivery. The task self-dedupes across tabs of the same

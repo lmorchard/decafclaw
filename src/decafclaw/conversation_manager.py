@@ -2144,6 +2144,17 @@ class ConversationManager:
                 is_cancelled = (
                     state.cancel_event is not None and state.cancel_event.is_set()
                 ) or state.cancel_observed_by_agent
+                # turn_complete outcome (#1000): "cancelled" wins (a cancel
+                # may be observed after the turn already unwound), then
+                # "failed" (the except-Exception branch tagged the result),
+                # else "completed". A pause (pending confirmation) is not an
+                # outcome — the turn is still in flight and turn_complete
+                # has not fired yet.
+                turn_reason = "completed"
+                if is_cancelled:
+                    turn_reason = "cancelled"
+                elif result_holder and result_holder[0].termination_reason == "error":
+                    turn_reason = "failed"
                 async with state.lock:
                     # Circuit breaker tracking is USER-only (task turns are
                     # externally rate-limited by the scheduler / heartbeat
@@ -2158,7 +2169,7 @@ class ConversationManager:
                     state.partial_assistant_chunks = []
                     state.partial_assistant_thinking_chunks = []
                     state.current_iteration_assistant_chunks = []
-                await self.emit(conv_id, {"type": "turn_complete"})
+                await self.emit(conv_id, {"type": "turn_complete", "reason": turn_reason})
 
                 # Resolve the caller's future (if any) before draining pending
                 if future is not None and not future.done():

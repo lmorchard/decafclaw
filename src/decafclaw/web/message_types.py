@@ -334,6 +334,7 @@ class SrvToolStatus(TypedDict):
 class SrvTurnComplete(TypedDict):
     type: Literal[WSMessageType.TURN_COMPLETE]
     conv_id: str
+    reason: NotRequired[str]
 
 
 class SrvTurnStart(TypedDict):
