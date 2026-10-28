@@ -307,11 +307,12 @@ Mid-flight progress update from a running tool.
 
 ### `turn_complete`
 
-An agent turn finished (success, error, or cancellation).
+An agent turn finished (success, error, or cancellation). `reason` names the settle outcome: `completed`, `cancelled`, or `failed`. A pause for confirmation or widget input is not an outcome — the turn is still in flight and no turn_complete is emitted until the pause resolves. Optional on the wire: older servers omit it.
 
 **Fields:**
 
 - `conv_id` — string
+- `reason` — string?
 
 ### `turn_start`
 
