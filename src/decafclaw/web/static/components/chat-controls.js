@@ -121,10 +121,14 @@ export class ChatControls extends LitElement {
   #formatContextUsage() {
     if (this._contextLimit <= 0) return '';
     const pct = Math.min(100, Math.round((this._contextUsage / this._contextLimit) * 100));
-    let color = 'success';
-    if (pct >= 90) color = 'error';
-    else if (pct >= 75) color = 'warning';
     return `${pct}%`;
+  }
+
+  /** True when context usage is high enough to flag the icon red. */
+  #contextDanger() {
+    if (this._contextLimit <= 0) return false;
+    const pct = Math.round((this._contextUsage / this._contextLimit) * 100);
+    return pct >= 90;
   }
 
   render() {
@@ -177,14 +181,16 @@ export class ChatControls extends LitElement {
             <progress id="cc-context-progress" value="${this._contextUsage}" max="${this._contextLimit}"></progress>
             <span class="usage-label">${contextPct}</span>
           ` : html`
-            <span class="control-icon context-icon ${contextPct === 'error' ? 'danger' : ''}" title="Context: ${this._contextUsage}/${this._contextLimit} (${contextPct})">📊</span>
+            <span class="control-icon context-icon ${this.#contextDanger() ? 'danger' : ''}" title="Context: ${this._contextUsage}/${this._contextLimit} (${contextPct})">📊</span>
           `}
         </div>
 
         <!-- Collapse toggle button (always visible on mobile when expanded) -->
         ${!isMobileCollapsed ? html`
           <button class="collapse-toggle dc-icon-btn" @click=${this.#toggleCollapse} title="Collapse controls">✕</button>
-        ` : nothing}
+        ` : html`
+          <button class="collapse-toggle dc-icon-btn" @click=${this.#toggleCollapse} title="Expand controls">⌄</button>
+        `}
       </div>
     `;
   }
