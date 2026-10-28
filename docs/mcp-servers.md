@@ -58,13 +58,13 @@ Server names must be lowercase alphanumeric with hyphens or underscores (e.g., `
 
 ## How it works
 
-1. On startup, DecafClaw reads `mcp_servers.json` and connects to each server
-2. Server capabilities are checked — tools, resources, and prompts are discovered based on what the server supports
-3. Tools are registered with namespaced names: `mcp__<server>__<tool>`
-4. Resources and prompts are cached for on-demand access via agent tools
-5. The agent sees MCP tools alongside built-in tools and can call them directly
-6. No activation or confirmation needed — MCP tools are immediately available
-
+1. On startup, DecafClaw reads `mcp_servers.json` and begins connecting servers concurrently in the background. Interactive surfaces (chat, status UI) start immediately without waiting for slow MCP handshakes.
+2. Server capabilities are checked — tools, resources, and prompts are discovered based on what each server supports.
+3. Tools are registered with namespaced names: `mcp__<server>__<tool>`.
+4. As servers complete connecting, their tools become available at the next eligible turn boundary. In-flight turns freeze their tool availability snapshot to maintain execution consistency.
+5. Resources and prompts are cached for on-demand access via agent tools.
+6. Scheduled and unattended tasks can declare `required-servers` and `server-timeout` in their frontmatter to wait only for declared prerequisites before executing, failing explicitly if unavailable.
+7. Healthy servers remain fully usable even if one server fails or disconnects.
 ## Tool namespacing
 
 All MCP tools are prefixed with the server name to prevent collisions.

@@ -246,6 +246,12 @@ function singleClick(/** HTMLElement */ link) {
   return evt;
 }
 
+function altClick(/** HTMLElement */ link) {
+  const evt = new MouseEvent('click', { bubbles: true, cancelable: true, altKey: true });
+  link.dispatchEvent(evt);
+  return evt;
+}
+
 function setField(/** string */ name, /** string */ value) {
   const input = /** @type {HTMLInputElement} */ (
     document.querySelector(`.wiki-link-popover input[data-field="${name}"]`));
@@ -257,10 +263,11 @@ function clickButton(/** string */ selector) {
   /** @type {HTMLButtonElement} */ (document.querySelector(selector)).click();
 }
 
-/** Open the popover (waits out the single/double-click delay). */
+/** Open the popover (Alt+click opens it immediately — no disambiguation delay). */
 async function openPopover(/** import('./wiki-editor.js').WikiEditor */ el, /** HTMLElement */ link) {
-  singleClick(link);
+  altClick(link);
   await vi.waitFor(() => expect(el._linkEdit).not.toBeNull());
+  await vi.waitFor(() => expect(document.querySelector('.wiki-link-popover')).not.toBeNull());
 }
 
 describe('wiki-editor wiki-link popover', () => {
@@ -287,7 +294,7 @@ describe('wiki-editor wiki-link popover', () => {
     vi.unstubAllGlobals();
   });
 
-  it('opens on single click with the current target and display', async () => {
+  it('opens on Alt+click with the current target and display', async () => {
     fakeView = setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
     link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
 
@@ -313,7 +320,7 @@ describe('wiki-editor wiki-link popover', () => {
     expect(display.value).toBe('Plain');
   });
 
-  it('prevents default on the link click and does not navigate', async () => {
+  it('plain click navigates to the target immediately and opens no popover', async () => {
     setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
     link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
     /** @type {string[]} */
@@ -322,10 +329,23 @@ describe('wiki-editor wiki-link popover', () => {
 
     const evt = singleClick(link);
     expect(evt.defaultPrevented).toBe(true);
+    // No disambiguation delay: navigation is synchronous, and no popover
+    // is ever opened.
+    expect(pages).toEqual(['Old Target']);
+    expect(el._linkEdit).toBeNull();
+  });
 
-    // Past the open delay: the popover came up, and no navigation happened.
-    await vi.waitFor(() => expect(el._linkEdit).not.toBeNull());
-    expect(pages).toEqual([]);
+  it('plain click on a plain [[link]] navigates to its text', async () => {
+    setupFixture(el, schema, { target: null, display: 'Plain' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+    /** @type {string[]} */
+    const pages = [];
+    el.addEventListener('wiki-navigate', (e) => pages.push(/** @type {CustomEvent} */ (e).detail.page));
+
+    singleClick(link);
+
+    expect(pages).toEqual(['Plain']);
+    expect(el._linkEdit).toBeNull();
   });
 
   it('stops propagation so a document-level link interceptor never fires', async () => {
@@ -462,35 +482,88 @@ describe('wiki-editor wiki-link popover', () => {
     expect(el._linkEdit).toBeNull();
   });
 
-  it('double click still dispatches wiki-navigate and opens no popover', async () => {
+  it('the popover Open link navigates to the current target and closes without applying', async () => {
+    fakeView = setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+    /** @type {string[]} */
+    const pages = [];
+    el.addEventListener('wiki-navigate', (e) => pages.push(/** @type {CustomEvent} */ (e).detail.page));
+
+    await openPopover(el, link);
+    setField('target', 'New Target');
+    clickButton('.wiki-link-popover-goto');
+
+    expect(el._linkEdit).toBeNull();
+    expect(pages).toEqual(['New Target']);
+    // The edit is not applied — the document is untouched.
+    expect(fakeView.dispatches).toHaveLength(0);
+  });
+
+  it('the popover Open link label follows the live Target field value', async () => {
+    setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+
+    await openPopover(el, link);
+    expect(/** @type {HTMLButtonElement} */ (document.querySelector('.wiki-link-popover-goto')).textContent.trim())
+      .toBe('Open "Old Target"');
+
+    setField('target', 'New Target');
+    await el.updateComplete;
+
+    expect(/** @type {HTMLButtonElement} */ (document.querySelector('.wiki-link-popover-goto')).textContent.trim())
+      .toBe('Open "New Target"');
+    // The re-render must not steal focus or re-select the field mid-typing.
+    const target = /** @type {HTMLInputElement} */ (
+      document.querySelector('.wiki-link-popover input[data-field="target"]'));
+    expect(document.activeElement).toBe(target);
+  });
+
+  it('the popover Open link with an empty target closes without navigating', async () => {
     setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
     link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
     /** @type {string[]} */
     const pages = [];
     el.addEventListener('wiki-navigate', (e) => pages.push(/** @type {CustomEvent} */ (e).detail.page));
 
-    // A double click is two clicks plus the dblclick event.
+    await openPopover(el, link);
+    setField('target', '   ');
+    clickButton('.wiki-link-popover-goto');
+
+    expect(el._linkEdit).toBeNull();
+    expect(pages).toEqual([]);
+  });
+
+  it('double click navigates on each click and opens no popover', async () => {
+    setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+    /** @type {string[]} */
+    const pages = [];
+    el.addEventListener('wiki-navigate', (e) => pages.push(/** @type {CustomEvent} */ (e).detail.page));
+
+    // A double click is two clicks plus the dblclick event; each click
+    // navigates and the dblclick itself is a no-op (the host navigates
+    // idempotently).
     singleClick(link);
     singleClick(link);
     link.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
 
-    expect(pages).toEqual(['Old Target']);
-    // Past the open delay: the pending popover was cancelled, not shown.
-    // (Negative assertion — nothing to await, so a bounded wait is the
-    // honest check here.)
-    await new Promise(r => setTimeout(r, 350));
+    expect(pages).toEqual(['Old Target', 'Old Target']);
     expect(el._linkEdit).toBeNull();
   });
 
-  it('double click closes an already-open popover', async () => {
+  it('plain click closes an already-open popover and navigates', async () => {
     setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
     link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+    /** @type {string[]} */
+    const pages = [];
+    el.addEventListener('wiki-navigate', (e) => pages.push(/** @type {CustomEvent} */ (e).detail.page));
 
     await openPopover(el, link);
     expect(el._linkEdit).not.toBeNull();
-    link.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    singleClick(link);
 
     expect(el._linkEdit).toBeNull();
+    expect(pages).toEqual(['Old Target']);
   });
 
   it('resolves the full span of a multi-run link even when resolved at the last run', async () => {
@@ -580,21 +653,6 @@ describe('wiki-editor wiki-link popover', () => {
     expect(document.querySelector('.wiki-link-popover')).toBeNull();
   });
 
-  it('cancels a pending popover open if the document changes', async () => {
-    setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
-    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
-    /** @type {any} */
-    const editor = editors[0];
-    editor.configFn(editor.getCtx());
-
-    singleClick(link); // pending — the 250ms open delay has not elapsed
-    editor.mdListeners[0](null, 'changed content', 'Old Display');
-
-    // Past the open delay: the pending popover was cancelled, not shown.
-    await new Promise(r => setTimeout(r, 350));
-    expect(el._linkEdit).toBeNull();
-  });
-
   it('opens with the Target field focused and selected', async () => {
     setupFixture(el, schema, { target: 'Old Target', display: 'Old Display' });
     link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
@@ -606,7 +664,23 @@ describe('wiki-editor wiki-link popover', () => {
     expect(document.activeElement).toBe(target);
   });
 
-  it('a re-click inside the same link (nested element) keeps the popover open', async () => {
+  it('a plain click on a nested element of the same link navigates and closes', async () => {
+    const { a, strong } = setupNestedFixture(el, schema, { target: 'Old Target' });
+    link = a;
+    /** @type {string[]} */
+    const pages = [];
+    el.addEventListener('wiki-navigate', (e) => pages.push(/** @type {CustomEvent} */ (e).detail.page));
+
+    await openPopover(el, a);
+    expect(el._linkEdit).not.toBeNull();
+
+    singleClick(strong); // a nested element of the link being edited
+
+    expect(el._linkEdit).toBeNull();
+    expect(pages).toEqual(['Old Target']);
+  });
+
+  it('Alt+click on a nested element of the same link keeps the popover open', async () => {
     const { a, strong } = setupNestedFixture(el, schema, { target: 'Old Target' });
     link = a;
 
@@ -614,8 +688,32 @@ describe('wiki-editor wiki-link popover', () => {
     const before = el._linkEdit;
     expect(before).not.toBeNull();
 
-    singleClick(strong); // a nested element of the very link being edited
+    altClick(strong); // a nested element of the very link being edited
 
     expect(el._linkEdit).toBe(before); // still open — no close/reopen
+  });
+
+  it('clamps popover left to margin on a narrow viewport', async () => {
+    setupFixture(el, schema, { target: 'Target', display: 'Display' });
+    link = /** @type {HTMLElement} */ (el.querySelector('.milkdown-root a.wiki-link'));
+
+    vi.spyOn(link, 'getBoundingClientRect').mockReturnValue(/** @type {DOMRect} */ ({
+      left: 100,
+      right: 150,
+      top: 50,
+      bottom: 70,
+      width: 50,
+      height: 20,
+    }));
+    const innerWidthSpy = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(320);
+
+    try {
+      await openPopover(el, link);
+      expect(el._linkEdit).not.toBeNull();
+      // On 320px viewport with LINK_EDIT_MARGIN = 8, left clamps to 8
+      expect(el._linkEdit.left).toBe(8);
+    } finally {
+      innerWidthSpy.mockRestore();
+    }
   });
 });

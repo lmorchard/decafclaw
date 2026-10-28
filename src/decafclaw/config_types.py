@@ -173,6 +173,13 @@ class HeartbeatConfig:
 
 
 @dataclass
+class SchedulesConfig:
+    # Global switch for the schedule timer (#957). Per-task `enabled` in
+    # SCHEDULE.md frontmatter still applies when this is true.
+    enabled: bool = True
+
+
+@dataclass
 class HttpConfig:
     enabled: bool = False
     host: str = "0.0.0.0"
@@ -550,6 +557,7 @@ class LoopBreakerConfig:
     repeat_threshold: int = 3  # same (tool, args) N times → trip
     error_threshold: int = 4  # this many errors...
     error_window: int = 6  # ...within the last N tool results → trip
+    exempt_tools: tuple[str, ...] = ("wait", "shell_background_status")
 
 
 @dataclass

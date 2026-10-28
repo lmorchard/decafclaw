@@ -12,6 +12,9 @@ PROVIDER_OPENAI_RESPONSES = "openai-responses"
 PROVIDER_VERTEX = "vertex"
 # Legacy alias
 PROVIDER_LITELLM = "litellm"
+# Test-only: replayed in-memory provider (decafclaw.testing.ScriptedProvider).
+# Registered directly via the registry — init_providers never instantiates it.
+PROVIDER_SCRIPTED = "scripted"
 
 # Completion finish reason constants
 FINISH_REASON_STOP = "stop"
@@ -22,7 +25,7 @@ FINISH_REASON_CANCELLED = "cancelled"
 
 # Callback type for streaming chunks
 # on_chunk(chunk_type, data) where chunk_type is one of:
-#   "text", "tool_call_start", "tool_call_delta", "tool_call_end", "done"
+#   "text", "thinking", "tool_call_start", "tool_call_delta", "tool_call_end", "done"
 StreamCallback = Callable[[str, Any], Any]
 
 
@@ -60,6 +63,7 @@ class Provider(Protocol):
 
         Returns a dict with:
           - "content": str or None
+          - "thinking": str or None
           - "tool_calls": list or None
           - "role": "assistant"
           - "usage": dict or None

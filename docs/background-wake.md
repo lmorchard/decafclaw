@@ -67,6 +67,17 @@ before enqueueing the wake turn:
 `stopped`. Both the archive record and the inbox notification fire regardless
 of whether the wake turn is rate-limited.
 
+## Scheduled Turn Wakes (`schedule_turn`)
+
+In addition to process-exit wakes, agents can schedule future autonomous wake turns on demand via `schedule_turn(delay_seconds=..., reason=...)` ([#1103](https://github.com/lmorchard/decafclaw/issues/1103)).
+
+These also fire as `TurnKind.WAKE` turns:
+- Timers are persisted per-conversation in `data/{agent_id}/scheduled_wakes/{conv_id}.json` outside the workspace, so they survive server restarts and cannot be forged by workspace tools.
+- Wake turns execute in unattended mode (`is_unattended = True`): pre-approved or aux-LLM auto-approved commands execute, while interactive confirmations fail-fast rather than hanging.
+- When the timer expires, `ConversationManager.enqueue_turn(kind=TurnKind.WAKE, ...)` triggers an autonomous wake with the schedule's reason.
+- During the wake turn, the agent can inspect history/output and notify the user, or reply with `BACKGROUND_WAKE_OK` to remain silent if no action is needed.
+- Pending wake timers can be inspected via `schedule_list` and cancelled via `schedule_cancel(schedule_id=...)`.
+
 ## History rendering — tool-result framing
 
 The `background_event` archive role is not a native LLM role. At
@@ -128,6 +139,58 @@ await tool_shell_background_start(
 The in-memory deques (`_OUTPUT_BUFFER_SIZE = 500`) remain the authoritative
 source for richer data via a live `shell_background_status` call during the
 job's lifetime.
+
+## `pin_sticky` and `progress_parser` parameters
+
+`shell_background_start` accepts optional `pin_sticky` and `progress_parser`
+parameters ([#1104](https://github.com/lmorchard/decafclaw/issues/1104), [#1137](https://github.com/lmorchard/decafclaw/issues/1137)):
+
+```python
+await tool_shell_background_start(
+    ctx,
+    command="python scripts/train.py",
+    pin_sticky=True,  # stream live progress to the web UI sticky slot
+    progress_parser="auto",  # derive structured progress from command output
+)
+```
+
+With `pin_sticky=True`, the job's output is mirrored into the conversation's
+sticky slot above the chat input as a `progress_tracker` widget
+([widgets.md](widgets.md#sticky-slot)) — out-of-band over WebSocket, with no
+conversational turns, no LLM tokens, and no archive writes during streaming:
+
+- **On start:** an initial `in_progress` pin ("Running: …"), so the slot
+  appears even before the first output line.
+- **While running:** new output lines re-pin the tracker, throttled to at
+  most one update per 0.5 s; the collapsed slot line shows the latest output
+  line.
+- **On exit:** the slot shows a final `done` (exit 0) or `failed` (non-zero
+  exit) state with the exit code. A job that is stopped or expires clears the
+  slot.
+
+### `progress_parser` presets
+
+When `pin_sticky=True`, the reader task applies a deterministic log output
+parser (`src/decafclaw/skills/background/parsers.py`) to convert streaming
+output lines into structured `progress_tracker` snapshots:
+
+- **`auto`** (default): detects output format in order (`pytest` → `step` → `percent`),
+  falling back cleanly to line count and raw output on unrecognized output.
+- **`step`**: extracts `[N/M]`, `(N/M)`, or `Step N of M` to display current and
+  total steps with optional step labels.
+- **`percent`**: extracts `N%` for percentage-based progress.
+- **`pytest`**: tracks test collection (`collected N items`), per-test pass/fail
+  lines (`PASSED`/`FAILED`/`SKIPPED`), and summary lines (`=== N passed... ===`).
+- **`none`**: displays the raw line count and latest line without format parsing.
+
+All parsers strip ANSI escape codes, cap regex line lengths to prevent ReDoS,
+and fail open to raw line counting if an output line is malformed or shifts format.
+
+All sticky mirroring is fail-open: a sticky failure never affects job
+monitoring, the archive record, the inbox notification, or the wake turn.
+Non-web transports ignore sticky events (the `sticky.json` sidecar is still
+written). External scripts can push the same surface without a job:
+`POST /api/sticky/{conv_id}` / `DELETE /api/sticky/{conv_id}`.
 
 ## `BACKGROUND_WAKE_OK` sentinel
 

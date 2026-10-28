@@ -10,6 +10,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { buildNativeWorkspaceUrl } from '../lib/api-client/index.js';
+import { isBookmarked, load as loadBookmarks, subscribe as subscribeBookmarks, toggle as toggleBookmark } from '../lib/bookmarks-store.js';
 import './file-editor.js';
 
 /**
@@ -49,6 +50,7 @@ export class FilePage extends LitElement {
     _saveStatus: { state: true },
     _saveError: { state: true },
     _conflict: { state: true },
+    _bookmarked: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -73,6 +75,7 @@ export class FilePage extends LitElement {
     /** @type {'' | 'saving' | 'saved' | 'error'} */ this._saveStatus = '';
     /** @type {string} */ this._saveError = '';
     this._conflict = false;
+    this._bookmarked = false;
   }
 
   /** @param {Map<string, any>} changed */
@@ -84,6 +87,7 @@ export class FilePage extends LitElement {
       this._saveStatus = '';
       this._saveError = '';
       this._conflict = false;
+      this._bookmarked = isBookmarked('files', this.path);
       if (this.kind === 'text') {
         this._editing = !this.readonly;
         this.#fetchFile();
@@ -139,6 +143,11 @@ export class FilePage extends LitElement {
       await this.#applyFetchedData(data);
     };
     window.addEventListener('turn-complete', this._onTurnComplete);
+    // Bookmark toggle in the toolbar (#1086): shared store.
+    this._unsubBookmarks = subscribeBookmarks(snap => {
+      if (this.path) this._bookmarked = isBookmarked('files', this.path);
+    });
+    void loadBookmarks();
   }
 
   disconnectedCallback() {
@@ -146,6 +155,7 @@ export class FilePage extends LitElement {
     if (this._onTurnComplete) {
       window.removeEventListener('turn-complete', this._onTurnComplete);
     }
+    if (this._unsubBookmarks) this._unsubBookmarks();
   }
 
   /** Public: re-fetch from disk and remount the editor. */
@@ -372,6 +382,31 @@ export class FilePage extends LitElement {
     `;
   }
 
+  // ── Bookmark toggle (#1086) ───────────────────────────────────────────
+  async #toggleFileBookmark() {
+    if (!this.path) return;
+    const label = this.path.split('/').pop();
+    try {
+      await toggleBookmark('files', this.path, 'file', label);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        console.debug('file-page: bookmark toggle failed', error.status);
+      } else {
+        console.debug('file-page: bookmark toggle failed', error);
+      }
+    }
+  }
+
+  #renderBookmarkBtn() {
+    const title = this._bookmarked ? 'Remove bookmark' : 'Bookmark this file';
+    return html`
+      <button class="file-bookmark-btn dc-icon-btn ${this._bookmarked ? 'active' : ''}"
+        @click=${() => void this.#toggleFileBookmark()} title=${title} aria-label=${title}>
+        ${this._bookmarked ? '★' : '☆'}
+      </button>
+    `;
+  }
+
   #renderRightButtons() {
     const canToggle = this.kind === 'text' && !this.readonly;
     const modeIcon = this._editing ? '\u{1f441}' : '\u{270e}';
@@ -389,7 +424,7 @@ export class FilePage extends LitElement {
       ? nothing
       : html`<button class="file-close-btn dc-icon-btn" @click=${() => this._close()} title="Close file pane" aria-label="Close file pane">&times;</button>`;
 
-    return html`${toggleBtn}${deleteBtn}${closeBtn}`;
+    return html`${toggleBtn}${deleteBtn}${this.#renderBookmarkBtn()}${closeBtn}`;
   }
 
   #renderSaveStatus() {

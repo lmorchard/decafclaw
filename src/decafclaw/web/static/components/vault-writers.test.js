@@ -109,6 +109,7 @@ describe('vault generated write callers', () => {
 
   it('preserves conflict and malformed-error messages', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ files: [], vault: [] }))
       .mockResolvedValueOnce(jsonResponse({ title: 'Conflict', path: 'Conflict', body: '',
         modified: 10, frontmatter: {}, frontmatter_raw: '' }))
       .mockResolvedValueOnce(jsonResponse({ error: 'conflict' }, 409));
@@ -130,6 +131,7 @@ describe('vault generated write callers', () => {
   it('preserves successful metadata writes when response JSON is malformed', async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ files: [], vault: [] }))
       .mockResolvedValueOnce(jsonResponse({ title: 'Parse fallback', path: 'Parse fallback', body: '',
         modified: 10, frontmatter: {}, frontmatter_raw: '' }))
       .mockResolvedValueOnce({
@@ -149,7 +151,7 @@ describe('vault generated write callers', () => {
     }));
     await vi.runAllTimersAsync();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(page._metaError).toBeNull();
     expect(page._modified).toBe(10);
   });

@@ -43,7 +43,7 @@ describe('vault generated read callers', () => {
     await vi.waitFor(() => expect(el._wikiPages).toEqual([page]));
     expect(el._vaultFolders).toEqual([folder]);
     expect(fetchSpy).toHaveBeenNthCalledWith(
-      2,
+      3,
       '/api/vault?folder=agent%2Fpages%2F%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F',
       expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),
     );
@@ -53,7 +53,7 @@ describe('vault generated read callers', () => {
     recent.click();
     await vi.waitFor(() => expect(el._recentPages).toEqual([page]));
     expect(fetchSpy).toHaveBeenNthCalledWith(
-      3,
+      4,
       '/api/vault/recent',
       expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),
     );
@@ -78,6 +78,7 @@ describe('vault generated read callers', () => {
 
   it('preserves empty/error fallbacks for list, recent, and tag reads', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ files: [], vault: [] }))
       .mockResolvedValueOnce(jsonResponse({ error: 'missing' }, 404))
       .mockResolvedValueOnce(jsonResponse({ error: 'failed' }, 500))
       .mockRejectedValueOnce(new TypeError('offline'));
@@ -93,14 +94,14 @@ describe('vault generated read callers', () => {
     const recent = [...sidebar.querySelectorAll('button')]
       .find(button => button.textContent === 'Recent');
     recent.click();
-    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
     expect(sidebar._recentPages).toEqual([]);
 
     const tags = document.createElement('tags-sidebar');
     document.body.append(tags);
     await tags.updateComplete;
     tags.active = true;
-    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(4));
     expect(tags._tags).toEqual([]);
   });
 
@@ -112,7 +113,8 @@ describe('vault generated read callers', () => {
       frontmatter_raw: 'nested:\n  rows: [1, true, null]\nbroken: [',
       frontmatter_error: 'invalid YAML',
     };
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(payload));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(jsonResponse(payload)));
     const el = document.createElement('wiki-page');
     el.page = payload.path;
     document.body.append(el);

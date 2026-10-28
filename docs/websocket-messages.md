@@ -37,7 +37,8 @@ Streaming text fragment of an in-flight assistant message.
 **Fields:**
 
 - `conv_id` — string
-- `text` — string
+- `text` — string?
+- `thinking` — string?
 
 ### `command_ack`
 
@@ -126,6 +127,16 @@ Page of historical messages for a conversation.
 - `turn_active` — boolean?
 - `pending_confirmation` — object?
 
+### `conv_renamed`
+
+A conversation's sidebar title was updated in the background by the periodic auto-titling task (#1072); update the tab in place.
+
+**Fields:**
+
+- `conv_id` — string
+- `title` — string
+- `updated_at` — string
+
 ### `conv_selected`
 
 Confirmation that a select_conv subscribed this socket to the named conversation. May include initial conversation state.
@@ -162,6 +173,7 @@ Final form of an assistant message after streaming completed (or when replayed f
 
 - `conv_id` — string
 - `text` — string
+- `thinking` — string?
 - `role` — string?
 - `final` — boolean?
 - `usage` — object?
@@ -295,11 +307,12 @@ Mid-flight progress update from a running tool.
 
 ### `turn_complete`
 
-An agent turn finished (success, error, or cancellation).
+An agent turn finished (success, error, or cancellation). `reason` names the settle outcome: `completed`, `cancelled`, or `failed`. A pause for confirmation or widget input is not an outcome — the turn is still in flight and no turn_complete is emitted until the pause resolves. Optional on the wire: older servers omit it.
 
 **Fields:**
 
 - `conv_id` — string
+- `reason` — string?
 
 ### `turn_start`
 

@@ -58,6 +58,7 @@ class MattermostClient:
         self.require_mention = config.mattermost.require_mention
         self.user_rate_limit_ms = config.mattermost.user_rate_limit_ms
         self.channel_blocklist = set(config.mattermost.channel_blocklist)
+        self._connected_event = asyncio.Event()
         self._http = httpx.AsyncClient(
             base_url=self.url + "/api/v4",
             headers={
@@ -73,6 +74,7 @@ class MattermostClient:
         me = resp.json()
         self.bot_user_id = me["id"]
         self.bot_username = me.get("username", self.bot_username)
+        self._connected_event.set()
         log.info(f"Authenticated as @{self.bot_username} ({self.bot_user_id})")
 
     async def send(self, channel_id, message, root_id=None, attachments=None):
@@ -428,6 +430,7 @@ class MattermostClient:
             ctx.channel_name = ""
             ctx.thread_id = root_id or ""
             ctx.user_id = app_ctx.config.agent.user_id
+            ctx.transport = "mattermost"
 
         # Start the turn via the manager
         await manager.send_message(
@@ -509,13 +512,19 @@ class MattermostClient:
                     display_short_text=event.get("display_short_text"),
                 )
 
-            elif event_type == "tool_media_uploaded" and cd:
-                await cd.on_tool_media_uploaded(
-                    event.get("file_ids", []),
-                    tool_call_id=event.get("tool_call_id", ""),
-                )
+            elif event_type == "tool_media_uploaded":
+                if cd:
+                    await cd.on_tool_media_uploaded(
+                        event.get("file_ids", []),
+                        tool_call_id=event.get("tool_call_id", ""),
+                    )
+                elif channel_id:
+                    from .media import MattermostMediaHandler
 
-            elif event_type == "confirmation_request" and cd:
+                    handler = MattermostMediaHandler(client._http, channel_id=channel_id)
+                    await handler.send_with_media(channel_id, "", event.get("file_ids", []), root_id=root_id)
+
+            elif event_type == "confirmation_request":
                 confirmation_id = event.get("confirmation_id", "")
                 action_data = event.get("action_data", {})
                 command = action_data.get("command", event.get("message", ""))
@@ -538,12 +547,27 @@ class MattermostClient:
                     )
                     return
 
+                display = cd
+                if display is None and channel_id:
+                    from .mattermost_display import ConversationDisplay
+
+                    display = ConversationDisplay(
+                        client,
+                        channel_id,
+                        root_id=root_id,
+                        config=config,
+                        conv_id=conv_id,
+                    )
+
+                if display is None:
+                    return
+
                 approve_label = event.get("approve_label", "")
                 deny_label = event.get("deny_label", "")
                 display_tool = action_data.get("tool_name", action_type)
                 decline_reason = action_data.get("decline_reason", "")
                 suggested_rule = action_data.get("suggested_rule", "")
-                confirm_post_id = await cd.on_confirm_request(
+                confirm_post_id = await display.on_confirm_request(
                     display_tool,
                     command,
                     suggested_pattern,
@@ -658,6 +682,12 @@ class MattermostClient:
                 if cd and final_text:
                     cd._text_buffer = final_text
                     cd._text_has_content = True
+                elif not cd and final_text and channel_id:
+                    # Autonomous/wake turn arrived with no active interactive display (#1119 review)
+                    try:
+                        await client.send(channel_id, final_text, root_id=root_id)
+                    except Exception as exc:
+                        log.warning("Failed to post autonomous wake response to Mattermost: %s", exc)
 
                 # Post any response media (workspace image refs, etc.)
                 media = event.get("media") or []
@@ -704,72 +734,168 @@ class MattermostClient:
 
     async def run(self, app_ctx, shutdown_event, manager=None):
         """Run the bot: connect, listen for messages, and dispatch to the agent."""
-        await self.connect()
 
-        agent_tasks = set()
-        mm_conversations: dict[str, MattermostConvState] = {}
-        user_last_msg_time: dict[str, float] = {}
-
-        debounce_sec = self.debounce_ms / 1000.0
-        user_rate_sec = self.user_rate_limit_ms / 1000.0
-
-        def _conv_id_for_msg(msg):
-            return msg["root_id"] or msg["channel_id"]
-
-        async def on_message(msg):
-            channel_id = msg["channel_id"]
-            user_id = msg["user_id"]
-            conv_id = _conv_id_for_msg(msg)
-
-            # Per-user rate limit
-            now = time.monotonic()
-            last_user_time = user_last_msg_time.get(user_id, 0)
-            if (now - last_user_time) < user_rate_sec:
-                log.info(f"Rate limit: dropping message from {msg['sender_name']}")
+        async def on_wake_delivery(event):
+            event_type = event.get("type", "")
+            if event_type not in ("wake_delivery", "confirmation_request", "tool_media_uploaded_fallback"):
                 return
-            user_last_msg_time[user_id] = now
+            if event.get("transport") != "mattermost":
+                return
+            channel_id = event.get("channel_id")
+            if not channel_id:
+                return
+            root_id = event.get("thread_id") or None
 
-            mm_state = self._get_mm_state(mm_conversations, conv_id)
-            log.info(f"Message from {msg['sender_name']} in {conv_id[:8]}: {msg['text'][:50]}")
+            # Wait for connection to be ready if waking during server startup (#1119 review)
+            if not self._connected_event.is_set():
+                try:
+                    await asyncio.wait_for(self._connected_event.wait(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    log.warning("Mattermost client did not connect within 15s; dropping wake delivery")
+                    return
 
-            # Accumulate message by conversation
-            mm_state.pending_msgs.append(msg)
-
-            # Reset debounce timer for this conversation
-            if mm_state.debounce_timer:
-                mm_state.debounce_timer.cancel()
-
-            async def debounce_and_process():
-                await asyncio.sleep(debounce_sec)
-                mm_inner = self._get_mm_state(mm_conversations, conv_id)
-                msgs = mm_inner.pending_msgs
-                mm_inner.pending_msgs = []
-                mm_inner.debounce_timer = None
-                if msgs:
-                    task = asyncio.current_task()
-                    agent_tasks.add(task)
+            if event_type == "tool_media_uploaded_fallback":
+                file_ids = event.get("file_ids", [])
+                if file_ids and channel_id:
                     try:
-                        await self._process_conversation(
-                            conv_id,
-                            channel_id,
-                            msgs,
-                            app_ctx,
-                            mm_conversations,
+                        from .media import MattermostMediaHandler
+
+                        handler = MattermostMediaHandler(self._http, channel_id=channel_id)
+                        await handler.send_with_media(channel_id, "", file_ids, root_id=root_id)
+                    except Exception as e:
+                        log.warning("Failed to deliver uploaded media to Mattermost channel %s: %s", channel_id, e)
+                return
+
+            if event_type == "confirmation_request":
+                action_data = event.get("action_data", {})
+                action_type = event.get("action_type", "")
+                if action_type == "widget_response":
+                    return
+
+                from .mattermost_display import ConversationDisplay
+
+                display = ConversationDisplay(
+                    self,
+                    channel_id,
+                    root_id=root_id,
+                    config=app_ctx.config,
+                    conv_id=event.get("conv_id", ""),
+                )
+                confirm_post_id = await display.on_confirm_request(
+                    action_data.get("tool_name", action_type),
+                    action_data.get("command", event.get("message", "")),
+                    action_data.get("suggested_pattern", ""),
+                    app_ctx.event_bus,
+                    "",
+                    tool_call_id=event.get("tool_call_id", ""),
+                    conv_id=event.get("conv_id", ""),
+                    confirmation_id=event.get("confirmation_id", ""),
+                    approve_label=event.get("approve_label", ""),
+                    deny_label=event.get("deny_label", ""),
+                    decline_reason=action_data.get("decline_reason", ""),
+                    suggested_rule=action_data.get("suggested_rule", ""),
+                )
+                if confirm_post_id and manager:
+                    asyncio.create_task(
+                        self._poll_confirmation_manager(
+                            confirm_post_id,
                             manager,
+                            event.get("conv_id", ""),
+                            event.get("confirmation_id", ""),
+                            action_type,
+                            timeout=event.get("timeout"),
+                            allow_always=not bool(event.get("approve_label")),
+                            suggested_rule=action_data.get("suggested_rule", ""),
                         )
-                    finally:
-                        agent_tasks.discard(task)
+                    )
+                return
 
-            mm_state.debounce_timer = asyncio.create_task(debounce_and_process())
+            text = event.get("text", "")
+            media = event.get("media") or []
 
-        # Wrap the sync callback from WebSocket into async
-        def on_message_sync(msg):
-            asyncio.get_running_loop().create_task(on_message(msg))
+            try:
+                if media:
+                    from .media import MattermostMediaHandler, upload_and_collect
+
+                    handler = MattermostMediaHandler(self._http, channel_id=channel_id)
+                    file_ids = await upload_and_collect(handler, channel_id, media)
+                    if file_ids:
+                        await handler.send_with_media(channel_id, text, file_ids, root_id=root_id)
+                        return
+                if text:
+                    await self.send(channel_id, text, root_id=root_id)
+            except Exception as e:
+                log.warning("Failed to deliver wake response to Mattermost channel %s: %s", channel_id, e)
+
+        wake_sub_id = app_ctx.event_bus.subscribe(on_wake_delivery)
 
         try:
+            await self.connect()
+
+            agent_tasks = set()
+            mm_conversations: dict[str, MattermostConvState] = {}
+            user_last_msg_time: dict[str, float] = {}
+
+            debounce_sec = self.debounce_ms / 1000.0
+            user_rate_sec = self.user_rate_limit_ms / 1000.0
+
+            def _conv_id_for_msg(msg):
+                return msg["root_id"] or msg["channel_id"]
+
+            async def on_message(msg):
+                channel_id = msg["channel_id"]
+                user_id = msg["user_id"]
+                conv_id = _conv_id_for_msg(msg)
+
+                # Per-user rate limit
+                now = time.monotonic()
+                last_user_time = user_last_msg_time.get(user_id, 0)
+                if (now - last_user_time) < user_rate_sec:
+                    log.info(f"Rate limit: dropping message from {msg['sender_name']}")
+                    return
+                user_last_msg_time[user_id] = now
+
+                mm_state = self._get_mm_state(mm_conversations, conv_id)
+                log.info(f"Message from {msg['sender_name']} in {conv_id[:8]}: {msg['text'][:50]}")
+
+                # Accumulate message by conversation
+                mm_state.pending_msgs.append(msg)
+
+                # Reset debounce timer for this conversation
+                if mm_state.debounce_timer:
+                    mm_state.debounce_timer.cancel()
+
+                async def debounce_and_process():
+                    await asyncio.sleep(debounce_sec)
+                    mm_inner = self._get_mm_state(mm_conversations, conv_id)
+                    msgs = mm_inner.pending_msgs
+                    mm_inner.pending_msgs = []
+                    mm_inner.debounce_timer = None
+                    if msgs:
+                        task = asyncio.current_task()
+                        agent_tasks.add(task)
+                        try:
+                            await self._process_conversation(
+                                conv_id,
+                                channel_id,
+                                msgs,
+                                app_ctx,
+                                mm_conversations,
+                                manager,
+                            )
+                        finally:
+                            agent_tasks.discard(task)
+
+                mm_state.debounce_timer = asyncio.create_task(debounce_and_process())
+
+            # Wrap the sync callback from WebSocket into async
+            def on_message_sync(msg):
+                asyncio.get_running_loop().create_task(on_message(msg))
+
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
-            if agent_tasks:
+            app_ctx.event_bus.unsubscribe(wake_sub_id)
+            if "agent_tasks" in locals() and agent_tasks:
                 log.info(f"Waiting for {len(agent_tasks)} in-flight agent turn(s)...")
                 await asyncio.gather(*agent_tasks, return_exceptions=True)
             await self.close()

@@ -1,5 +1,6 @@
 """Core tools — web fetch, debug, time, context stats, ask_user_multiple_choice."""
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -134,8 +135,6 @@ async def tool_wait(ctx: "Context", seconds: int = 30) -> str | ToolResult:
     to complete. Avoids burning iterations polling in a tight loop.
     Maximum wait time is 300 seconds (5 minutes).
     """
-    import asyncio
-
     max_wait = 300
     seconds = max(1, min(seconds, max_wait))
     log.info(f"[tool:wait] sleeping {seconds}s")
@@ -500,10 +499,11 @@ CORE_TOOL_DEFINITIONS = [
         "function": {
             "name": "wait",
             "description": (
-                "Sleep for the specified number of seconds before returning. "
-                "Use this when waiting for a background process to complete "
-                "instead of polling shell_background_status in a tight loop. "
-                "Call wait FIRST, then check status. Maximum 300 seconds."
+                "Sleep for the specified number of seconds before returning within the current turn. "
+                "Use this to pause briefly before checking status, progress, or output of a "
+                "background process (like a build or watcher) instead of polling in a tight loop. "
+                "Call wait first, then check back on status. For cross-turn delays or long tasks, "
+                "prefer schedule_turn. Maximum 300 seconds."
             ),
             "parameters": {
                 "type": "object",

@@ -4,13 +4,15 @@ All built-in tools the agent can call, grouped by module. Skills and MCP servers
 
 Tools marked **critical** (✓) are always sent to the LLM — these are the minimum set needed for common tasks. Other tools are `normal` priority (filled in as budget allows) or `low` (fetched on demand via `tool_search`). See [Tool Priority System](tool-priority.md) and [Tool Search](tool-search.md).
 
+Tools can return rich visual presentations in the web UI via DecafClaw's widget framework (`dc-widget-host`). See [Widgets](widgets.md) and [Tool Widget Opportunities](tool-widget-opportunities.md) for the survey and integration patterns.
+
 ## Core (`tools/core.py`)
 
 | Tool | Always | What it does |
 |------|:------:|--------------|
 | `web_fetch` | ✓ | Fetch raw HTML from a URL |
 | `current_time` | ✓ | Get current date and time |
-| `wait` | | Pause the agent for a specified number of seconds |
+| `wait` | | Pause briefly within current turn before checking output (max 300s; exempt from loop-breaker repeat limits; prefer `schedule_turn` for cross-turn delays) |
 | `debug_context` | | Dump current context as JSON file attachments |
 | `context_stats` | | Show token budget breakdown and diagnostics |
 
@@ -20,7 +22,8 @@ Sandboxed file operations inside `data/{agent_id}/workspace/`. See [Data Layout]
 
 | Tool | Always | What it does |
 |------|:------:|--------------|
-| `workspace_read` | ✓ | Read a file (supports line ranges) |
+| `workspace_read` | ✓ | Read a file (supports line ranges and targeted section retrieval) |
+| `workspace_outline` | | Structural outline of classes, functions, and headings, or targeted section retrieval |
 | `workspace_write` | ✓ | Write/overwrite a file, creating parents |
 | `workspace_list` | | List files and directories |
 | `workspace_append` | | Append content to a file |
@@ -153,6 +156,16 @@ Per-conversation step-by-step execution loop. Storage is markdown checkboxes at 
 
 `checklist_create`/`checklist_step_done`/`checklist_abort` also mirror the checklist into the sticky slot above the chat input as a `progress_tracker` widget (fail-open), so the user sees live progress without the agent calling `widget_pin_sticky` directly. The slot clears once all steps are done or on abort. See [widgets.md](widgets.md#progress_tracker-widget).
 
+## Turn Scheduling (`tools/schedule_tools.py`)
+
+Tools for scheduling asynchronous wake turns in long-running workflows (#1103). Triggers an autonomous wake turn (`TurnKind.WAKE`) in the current conversation after a specified delay without blocking the active turn. State is persisted per-conversation in `data/{agent_id}/scheduled_wakes/{conv_id}.json` outside the agent-writable workspace, and resumes across server restarts. Wakes run as unattended turns (`is_unattended = True`), executing automated/allow-listed commands while failing-fast on interactive confirmations.
+
+| Tool | Always | What it does |
+|------|:------:|--------------|
+| `schedule_turn` | | Schedule a future wake turn in this conversation after a delay (seconds) |
+| `schedule_cancel` | | Cancel a pending scheduled wake turn by schedule_id |
+| `schedule_list` | | List all pending scheduled wake turns for the current conversation |
+
 ## Shell (`tools/shell_tools.py`)
 
 Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.
@@ -180,7 +193,7 @@ Modes can be selected in the Web UI sidebar dropdown above the Model picker, or 
 - **`developer`**: Auto-approves test runners (`pytest`, `npm test`), linters/formatters (`ruff`, `eslint`), typecheckers (`pyright`, `mypy`), environment task runners (`uv run`, `poetry run`, `npm run`, `cargo test/check/build`), non-destructive local git operations (`git status`, `git diff`, `git add`, `git commit`, `git checkout`), non-destructive remote operations (`git fetch`, `git pull`, pushing to `feat/*`, `fix/*`, `test/*`), and safe sequential `&&` chaining. Rejects destructive operations and package installations.
 - **`github`**: Auto-approves GitHub CLI inspection and workflow management (`gh issue list/view/create`, `gh pr list/view/diff/checkout/create/checks`, `gh run list/view/watch`). Rejects destructive operations like repo deletion.
 
-Background process management (`shell_background_start/status/stop/list`) lives in the bundled `background` skill (auto-activates) — see [Skills](skills.md).
+Background process management (`shell_background_start/status/stop/list`) lives in the bundled `background` skill (auto-activates) — see [Skills](skills.md). With `pin_sticky=True` on `shell_background_start`, a job streams live progress into the web UI sticky slot without conversational turns — see [Background Job Agent Wake](background-wake.md#pin_sticky-parameter).
 
 ### Approval sources
 
@@ -201,8 +214,11 @@ Otherwise it falls through to a user confirmation prompt. The message explains w
 - Subsequent commands in that conversation are evaluated against the newly added guidance rule.
 - Users can also choose standard "Approve", "Deny", or "Allow Pattern" (which persists a glob pattern).
 
-Active conversation rules can also be snapshotted or appended to a custom situational preset on disk via `shell_guidance(action="save_preset", preset="<name>")` (#1031). This stores custom named presets in `data/{agent_id}/shell_approval_presets.json` without auto-enabling them globally, allowing future conversations to reuse them on demand via `shell_guidance(action="enable_preset", preset="<name>")`.
+**What survives a server restart (#1160).** A conversation's "remember why" rules (`aux_approval_guidance`), its preset toggles (`active_aux_approval_presets`, `disabled_aux_approval_presets`), and its session mode are saved to `data/{agent_id}/approval_state/{conv_id}.json` whenever they change (at turn end and on `set_flag` writes such as a web UI mode switch). Rules added during a turn are saved when that turn ends, including a cancelled or errored turn, so a restart in the middle of a turn loses only that turn's additions. `ConversationManager` loads that file when it first creates state for the conversation, so every transport (web, Mattermost, terminal) gets the restored state. The file sits in the admin data dir rather than the agent-writable workspace, because a rule written there would steer the reviewer. A missing or malformed file falls back to defaults. The reviewer's approval cache (`llm_approved_shell_patterns`) is **not** saved: after a restart, each command pattern is approved again with one reviewer call. Conversations created before #1160 have no such file; for those only, the web UI and the agent turn setup still read the session mode from the archived `role: "mode"` record (a legacy fallback), and the web UI writes the file on first load. Once the file exists, its mode wins, even when it records `default`.
 
+Active conversation rules can also be snapshotted or appended to a custom situational preset on disk via `shell_guidance(action="save_preset", preset="<name>")` (#1031). This stores custom named presets in `data/{agent_id}/shell_approval_presets.json` through a shared serialized store (`ShellPresetStore`, #1158) without auto-enabling them globally, allowing future conversations to reuse them on demand via `shell_guidance(action="enable_preset", preset="<name>")`.
+
+Custom presets can also be viewed, created, edited, and deleted in the Web UI preset manager (reachable via the Agent Config panel's "Shell Presets" tab). Edits made through the Web UI write through the same serialized store and invalidate in-memory conversation pattern caches for conversations where the affected preset is active.
 **Unattended turns get the same allowlist and no prompt (#649).** Heartbeat and scheduled turns
 (`ctx.is_unattended`, i.e. `task_mode` in `{"heartbeat", "scheduled"}`) traverse exactly the branches
 above — there is no bypass for them. On a miss they are **denied outright** instead of falling through

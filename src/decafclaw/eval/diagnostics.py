@@ -17,6 +17,7 @@ CANONICAL_AXES: frozenset[str] = frozenset({"retrieval", "routing", "answer_qual
 READ_TOOL_ARGS: dict[str, str] = {
     "vault_read": "page",
     "workspace_read": "path",
+    "workspace_outline": "path",
     "admin_read": "path",
 }
 

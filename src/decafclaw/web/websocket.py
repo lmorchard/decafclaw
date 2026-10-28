@@ -18,11 +18,14 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from decafclaw.commands import list_invokable_commands
 from decafclaw.conversation_manager import TurnKind
+from decafclaw.conversation_paths import approval_state_path
 from decafclaw.llm.history import without_provider_data
 from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
+from decafclaw.web.auto_titling import maybe_auto_title
 from decafclaw.web.message_types import (
     ServerMessage,
     SrvCanvasUpdate,
+    SrvChunk,
     SrvCompactionDone,
     SrvConfirmationResponse,
     SrvConfirmRequest,
@@ -33,6 +36,7 @@ from decafclaw.web.message_types import (
     SrvStickyClear,
     SrvStickySet,
     SrvToolEnd,
+    SrvTurnComplete,
     WSMessageType,
     WSSendCallable,
 )
@@ -375,17 +379,27 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
 
     manager = state.get("manager")
     if manager:
-        conv_state = manager.get_state(conv_id)
+        # ensure_state loads the approval-state sidecar (#1160), which is
+        # the source of truth for the mode.
+        conv_state = manager.ensure_state(conv_id)
         if conv_state:
-            # If the manager state is pristine (default mode with empty presets)
-            # but the archive recorded a mode, hydrate manager state from the archive.
+            # Legacy fallback: conversations written before #1160 have no
+            # approval-state sidecar, only archived `role: "mode"` records.
+            # If there is no sidecar file and the manager state is pristine
+            # (default mode with empty presets) but the archive recorded a
+            # mode, hydrate manager state from the archive. Gated on actual
+            # file absence so a corrupt sidecar fails open to defaults
+            # rather than reviving an older archived mode. set_flag also
+            # writes the sidecar, so this migration runs once.
             if (
-                conv_state.persisted.active_mode == "default"
+                not approval_state_path(manager.config, conv_id).exists()
+                and conv_state.approval_state_saved is None
+                and conv_state.persisted.active_mode == "default"
                 and not conv_state.persisted.active_aux_approval_presets
                 and active_mode
             ):
-                conv_state.persisted.active_mode = active_mode
-                conv_state.persisted.active_aux_approval_presets = list(all_modes[active_mode].presets)
+                manager.set_flag(conv_id, "active_mode", active_mode)
+                manager.set_flag(conv_id, "active_aux_approval_presets", list(all_modes[active_mode].presets))
 
             persisted_mode = conv_state.persisted.active_mode or "default"
             active_presets = set(conv_state.persisted.active_aux_approval_presets)
@@ -459,6 +473,7 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
             ctx.media_handler = LocalFileMediaHandler(state["config"])
             ctx.channel_name = "web"
             ctx.thread_id = ""
+            ctx.transport = "web"
 
         _subscribe_to_conv(state, conv_id)
         # Persist the user's invocation so a conversation reload renders
@@ -489,6 +504,14 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
     # NO agent turn and NO archive write. Human-only; the agent has no path here.
     if text.startswith("/terminal") and (text == "/terminal" or text[9:10].isspace()):
         await _handle_terminal_command(ws_send, conv_id, text, username, state)
+        return
+
+    # -- /retitle side-effect command (#1156): regenerate conversation title
+    # via LLM summary with NO agent turn and NO archive write.
+    if (text.startswith("/retitle") and (text == "/retitle" or text[8:9].isspace())) or (
+        text.startswith("!retitle") and (text == "!retitle" or text[8:9].isspace())
+    ):
+        await _handle_retitle_command(ws_send, index, conv_id, username, state)
         return
 
     # -- Command dispatch (centralized in commands.py) --
@@ -556,6 +579,7 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         ctx.media_handler = LocalFileMediaHandler(state["config"])
         ctx.channel_name = "web"
         ctx.thread_id = ""
+        ctx.transport = "web"
 
     # Send message through the manager — it handles queueing and turn lifecycle
     await manager.send_message(
@@ -660,6 +684,39 @@ async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, usern
     # path runs no agent turn, so nothing would ever clear it (perpetual
     # "Running skill: terminal" spinner). See _handle_send / conversation
     # store: the client also skips the busy flag + user echo for /terminal.
+
+
+async def _handle_retitle_command(ws_send: WSSendCallable, index, conv_id: str, username: str, state: dict) -> None:
+    """`/retitle`: regenerate conversation title via LLM summary (#1156).
+
+    No agent turn, no archive write — this is a server-side side-effect command
+    like `/terminal`.
+    """
+    from .auto_titling import retitle_conversation
+    from .conversations import can_read_conversation
+
+    config = state["config"]
+    event_bus = state["event_bus"]
+
+    if not can_read_conversation(config, index, conv_id, username):
+        await ws_send(
+            {
+                "type": WSMessageType.ERROR,
+                "message": "Not authorized to retitle this conversation.",
+                "conv_id": conv_id,
+            }
+        )
+        return
+
+    ok, result = await retitle_conversation(config, conv_id, event_bus)
+    if not ok:
+        await ws_send(
+            {
+                "type": WSMessageType.ERROR,
+                "message": result,
+                "conv_id": conv_id,
+            }
+        )
 
 
 async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:
@@ -870,7 +927,7 @@ def _subscribe_to_conv(state, conv_id):
 
     ws_send: WSSendCallable = state["ws_send"]
     config = state["config"]
-    streaming_buffer = {"text": ""}
+    streaming_buffer = {"text": "", "thinking": ""}
 
     async def on_conv_event(event):
         """Format manager events as WebSocket JSON messages."""
@@ -890,43 +947,54 @@ def _subscribe_to_conv(state, conv_id):
             )
 
         elif event_type == "chunk":
-            streaming_buffer["text"] += event.get("text", "")
-            await ws_send(
-                {
-                    "type": WSMessageType.CHUNK,
-                    "conv_id": event_conv_id,
-                    "text": event.get("text", ""),
-                }
-            )
+            text = event.get("text", "")
+            thinking = event.get("thinking", "")
+            if text:
+                streaming_buffer["text"] += text
+            if thinking:
+                streaming_buffer["thinking"] += thinking
+            chunk_payload: SrvChunk = {
+                "type": WSMessageType.CHUNK,
+                "conv_id": event_conv_id,
+            }
+            if text:
+                chunk_payload["text"] = text
+            if thinking:
+                chunk_payload["thinking"] = thinking
+            await ws_send(chunk_payload)
 
         elif event_type == "stream_done":
             pass  # buffer finalized by llm_start or message_complete
 
         elif event_type == "llm_start":
             iteration = event.get("iteration", 1)
-            if iteration > 1 and streaming_buffer["text"]:
-                await ws_send(
-                    {
-                        "type": WSMessageType.MESSAGE_COMPLETE,
-                        "conv_id": event_conv_id,
-                        "role": "assistant",
-                        "text": streaming_buffer["text"],
-                    }
-                )
+            if iteration > 1 and (streaming_buffer["text"] or streaming_buffer["thinking"]):
+                complete_payload: SrvMessageComplete = {
+                    "type": WSMessageType.MESSAGE_COMPLETE,
+                    "conv_id": event_conv_id,
+                    "role": "assistant",
+                    "text": streaming_buffer["text"],
+                }
+                if streaming_buffer["thinking"]:
+                    complete_payload["thinking"] = streaming_buffer["thinking"]
+                await ws_send(complete_payload)
                 streaming_buffer["text"] = ""
-
+                streaming_buffer["thinking"] = ""
         elif event_type == "text_before_tools":
             text = streaming_buffer["text"] or event.get("text", "")
-            if text:
-                await ws_send(
-                    {
-                        "type": WSMessageType.MESSAGE_COMPLETE,
-                        "conv_id": event_conv_id,
-                        "role": "assistant",
-                        "text": text,
-                    }
-                )
+            thinking = streaming_buffer["thinking"] or event.get("thinking", "")
+            if text or thinking:
+                msg_before_tools: SrvMessageComplete = {
+                    "type": WSMessageType.MESSAGE_COMPLETE,
+                    "conv_id": event_conv_id,
+                    "role": "assistant",
+                    "text": text,
+                }
+                if thinking:
+                    msg_before_tools["thinking"] = thinking
+                await ws_send(msg_before_tools)
                 streaming_buffer["text"] = ""
+                streaming_buffer["thinking"] = ""
 
         elif event_type == "tool_start":
             args = event.get("args")
@@ -1013,17 +1081,19 @@ def _subscribe_to_conv(state, conv_id):
                 )
 
         elif event_type == "confirmation_request":
-            # Flush any pending streamed text
-            if streaming_buffer["text"]:
-                await ws_send(
-                    {
-                        "type": WSMessageType.MESSAGE_COMPLETE,
-                        "conv_id": event_conv_id,
-                        "role": "assistant",
-                        "text": streaming_buffer["text"],
-                    }
-                )
+            # Flush any pending streamed text or thinking
+            if streaming_buffer["text"] or streaming_buffer["thinking"]:
+                confirm_complete_payload: SrvMessageComplete = {
+                    "type": WSMessageType.MESSAGE_COMPLETE,
+                    "conv_id": event_conv_id,
+                    "role": "assistant",
+                    "text": streaming_buffer["text"],
+                }
+                if streaming_buffer["thinking"]:
+                    confirm_complete_payload["thinking"] = streaming_buffer["thinking"]
+                await ws_send(confirm_complete_payload)
                 streaming_buffer["text"] = ""
+                streaming_buffer["thinking"] = ""
             action_type = event.get("action_type", "")
             action_data = event.get("action_data", {})
             log.info("Forwarding confirm request to web UI: %s", action_type)
@@ -1070,13 +1140,17 @@ def _subscribe_to_conv(state, conv_id):
         elif event_type == "message_complete":
             if event.get("suppress_user_message"):
                 return  # WAKE turn ended with BACKGROUND_WAKE_OK — silent end
+            thinking = event.get("thinking") or streaming_buffer["thinking"] or None
             if event.get("final"):
                 streaming_buffer["text"] = ""
+                streaming_buffer["thinking"] = ""
             msg_complete: SrvMessageComplete = {
                 "type": WSMessageType.MESSAGE_COMPLETE,
                 "conv_id": event_conv_id,
                 "text": event.get("text", ""),
             }
+            if thinking:
+                msg_complete["thinking"] = thinking
             if "role" in event:
                 msg_complete["role"] = event["role"]
             if "final" in event:
@@ -1094,7 +1168,21 @@ def _subscribe_to_conv(state, conv_id):
 
         elif event_type == "turn_complete":
             streaming_buffer["text"] = ""
-            await ws_send({"type": WSMessageType.TURN_COMPLETE, "conv_id": event_conv_id})
+            streaming_buffer["thinking"] = ""
+            turn_complete: SrvTurnComplete = {
+                "type": WSMessageType.TURN_COMPLETE,
+                "conv_id": event_conv_id,
+            }
+            # #1000 — the settle outcome ("completed" | "cancelled" | "failed").
+            # Optional on the wire: older servers omit it and clients behave as before.
+            if "reason" in event:
+                turn_complete["reason"] = event["reason"]
+            await ws_send(turn_complete)
+            # #1072 — refine the sidebar title in the background after the
+            # turn. Fire-and-forget: titling must not add latency to turn
+            # delivery. The task self-dedupes across tabs of the same
+            # conversation and skips titles the user set manually.
+            asyncio.create_task(maybe_auto_title(config, event_conv_id, state["event_bus"]))
 
         elif event_type == "error":
             await ws_send(
@@ -1275,7 +1363,7 @@ def _make_conversation_status_forwarder(ws_send: WSSendCallable, config, index, 
     Only forwards events for conversations visible to ``username``, preventing
     cross-user visibility leaks for private conversations.
     """
-    from .conversations import can_read_conversation
+    from .conversations import can_read_conversation, is_web_conv_for_user
 
     async def _forward(event: dict):
         if event.get("type") != "conversation_status":
@@ -1285,7 +1373,7 @@ def _make_conversation_status_forwarder(ws_send: WSSendCallable, config, index, 
             return
 
         if conv_id.startswith("web-"):
-            if not conv_id.startswith(f"web-{username}-"):
+            if not is_web_conv_for_user(conv_id, username):
                 return
         elif not can_read_conversation(config, index, conv_id, username):
             return
@@ -1295,6 +1383,33 @@ def _make_conversation_status_forwarder(ws_send: WSSendCallable, config, index, 
                 "type": WSMessageType.CONVERSATION_STATUS,
                 "conv_id": conv_id,
                 "status": event.get("status", "idle"),
+            }
+        )
+
+    return _forward
+
+
+def _make_conv_renamed_forwarder(ws_send: WSSendCallable, username: str):
+    """Forward `conv_renamed` events from the global bus to a single socket.
+
+    Auto-titling (#1072) only renames web conversations, whose conv_ids are
+    namespaced per user (``web-{username}-{hex}``), so comparing the parsed
+    username portion is the cross-user visibility guard (#1132).
+    """
+    from .conversations import is_web_conv_for_user
+
+    async def _forward(event: dict):
+        if event.get("type") != "conv_renamed":
+            return
+        conv_id = event.get("conv_id", "")
+        if not is_web_conv_for_user(conv_id, username):
+            return
+        await ws_send(
+            {
+                "type": WSMessageType.CONV_RENAMED,
+                "conv_id": conv_id,
+                "title": event.get("title", ""),
+                "updated_at": event.get("updated_at", ""),
             }
         )
 
@@ -1372,6 +1487,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     notif_sub_id = event_bus.subscribe(_make_notification_forwarder(ws_send))
     vault_sub_id = event_bus.subscribe(_make_vault_change_forwarder(ws_send))
     status_sub_id = event_bus.subscribe(_make_conversation_status_forwarder(ws_send, config, index, username))
+    renamed_sub_id = event_bus.subscribe(_make_conv_renamed_forwarder(ws_send, username))
 
     try:
         while True:
@@ -1398,6 +1514,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
         event_bus.unsubscribe(notif_sub_id)
         event_bus.unsubscribe(vault_sub_id)
         event_bus.unsubscribe(status_sub_id)
+        event_bus.unsubscribe(renamed_sub_id)
         _unsubscribe_all(state)
 
 

@@ -93,6 +93,38 @@ conversation-sidebar .conv-item .conv-archive:hover {
   opacity: 1;
 }
 
+/* Pinned Bookmarks section (Files/Vault tabs, #1086). */
+conversation-sidebar .bookmark-section {
+  margin-bottom: 0.5rem;
+}
+
+conversation-sidebar .bookmark-section-header {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--pico-muted-color);
+}
+
+/* ☆/★ toggle on folder rows. Base shape comes from .dc-icon-btn
+   (primitives.css); tag-qualified so the padding override ties the
+   primitive's 0,1,1 specificity and wins by source order. */
+button.folder-bm-btn {
+  font-size: 1rem;
+  padding: 0 0.25rem;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+button.folder-bm-btn:hover {
+  color: var(--pico-primary);
+}
+
+button.folder-bm-btn.active {
+  color: var(--pico-primary);
+}
+
 conversation-sidebar .conv-item.archived {
   opacity: 0.6;
 }
@@ -401,6 +433,30 @@ conversation-sidebar .logout-btn:hover {
   border-radius: 50%;
   flex: 0 0 auto;
   border: 1px solid var(--pico-muted-border-color);
+}
+
+.theme-palette-icon {
+  width: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  flex: 0 0 auto;
+}
+
+.theme-menu-divider {
+  border-top: 1px solid var(--pico-muted-border-color);
+  margin: 0.25rem 0;
+}
+
+.theme-menu-section-header {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--pico-muted-color);
+  padding: 0.35rem 0.5rem 0.15rem;
+  user-select: none;
 }
 
 /* Config gear button */

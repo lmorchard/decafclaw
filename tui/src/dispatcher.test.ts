@@ -120,6 +120,17 @@ describe("dispatcher", () => {
     expect(s1.conv_id).toBe(CONV);
   });
 
+  it("conv_renamed is a no-op for the single-conversation TUI (#1072)", () => {
+    const s0 = { ...initialState, conv_id: CONV };
+    const s1 = dispatch(s0, {
+      type: "conv_renamed",
+      conv_id: CONV,
+      title: "Refined title",
+      updated_at: "t1",
+    });
+    expect(s1).toBe(s0); // referential equality — no copy
+  });
+
   it("compaction_done appends a system line with before/after counts (#1005)", () => {
     const s0 = { ...initialState, conv_id: CONV };
     const s1 = dispatch(s0, {

@@ -113,6 +113,21 @@ describe('MessageStore', () => {
             expect(store.currentMessages[0].content).toBe('part1 part2');
         });
 
+        it('handles CHUNK with thinking and records thinking on MESSAGE_COMPLETE', () => {
+            const store = new MessageStore(() => {});
+            store.handleMessage({ type: MESSAGE_TYPES.CHUNK, conv_id: '1', thinking: 'think 1 ' }, '1');
+            store.handleMessage({ type: MESSAGE_TYPES.CHUNK, conv_id: '1', thinking: 'think 2', text: 'answer' }, '1');
+            expect(store.streamingThinking).toBe('think 1 think 2');
+            expect(store.streamingText).toBe('answer');
+
+            store.handleMessage({ type: MESSAGE_TYPES.MESSAGE_COMPLETE, conv_id: '1', role: 'assistant', text: 'answer' }, '1');
+            expect(store.streamingThinking).toBe('');
+            expect(store.streamingText).toBe('');
+            expect(store.currentMessages.length).toBe(1);
+            expect(store.currentMessages[0].content).toBe('answer');
+            expect(store.currentMessages[0].thinking).toBe('think 1 think 2');
+        });
+
         it('handles USER_MESSAGE and dedups', () => {
             const store = new MessageStore(() => {});
             store.pushMessage({ role: 'user', content: 'hello' });

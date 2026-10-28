@@ -172,3 +172,25 @@ async def test_recovery_via_manager_dispatches_to_handler(config):
     user_msgs = [m for m in archived if m.get("role") == "user" and m.get("source") == "widget_response"]
     assert len(user_msgs) == 1
     assert "yes" in user_msgs[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_unattended_widget_input_pause_drops_callback_and_returns_none(ctx):
+    """When a WidgetInputPause occurs on an unattended turn (e.g. background_wake),
+
+    the callback is popped and None is returned immediately without waiting (#1119 review).
+    """
+    from decafclaw.agent import _handle_widget_input_pause
+
+    ctx.task_mode = "background_wake"
+    assert ctx.is_unattended is True
+
+    called = []
+    pending_callbacks["tc-unattended"] = lambda data: called.append(data)
+
+    signal = WidgetInputPause(tool_call_id="tc-unattended", widget_payload={"type": "choice"})
+    result = await _handle_widget_input_pause(ctx, signal)
+
+    assert result is None
+    assert "tc-unattended" not in pending_callbacks
+    assert called == []

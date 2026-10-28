@@ -75,15 +75,18 @@ def get_mcp_data() -> dict:
 
     registry = get_registry()
     if not registry or not registry.servers:
-        return {"connected": 0, "failed": 0, "servers": {}}
+        return {"connected": 0, "failed": 0, "connecting": 0, "servers": {}}
 
     connected = 0
     failed = 0
+    connecting = 0
     servers = {}
     for name, state in registry.servers.items():
         status = state.status
-        if status == "connected":
+        if status in ("connected", "ready"):
             connected += 1
+        elif status == "connecting":
+            connecting += 1
         elif status in ("failed", "error"):
             failed += 1
         servers[name] = {
@@ -92,7 +95,7 @@ def get_mcp_data() -> dict:
             "retries": state.retry_count,
         }
 
-    return {"connected": connected, "failed": failed, "servers": servers}
+    return {"connected": connected, "failed": failed, "connecting": connecting, "servers": servers}
 
 
 def get_heartbeat_data(config) -> dict:

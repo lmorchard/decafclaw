@@ -156,6 +156,16 @@ async def request_confirmation(
     if not force and tool_name in ctx.tools.preapproved:
         log.info(f"Confirmation pre-approved for {tool_name}")
         return {"approved": True}
+
+    if getattr(ctx, "is_unattended", False):
+        log.warning(
+            f"Confirmation requested for {tool_name} on unattended turn ({getattr(ctx, 'task_mode', '')}); denying"
+        )
+        return {
+            "approved": False,
+            "reason": f"interactive confirmations are not available on unattended turns ({getattr(ctx, 'task_mode', '')})",
+        }
+
     event = getattr(ctx, "confirmation_active", None)
     if event is not None:
         event.set()

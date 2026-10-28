@@ -96,6 +96,11 @@ class ToolState:
     # reused across iterations so classify_tools() stays consistent mid-turn.
     # See docs/preemptive-tool-search.md.
     preempt_matches: set[str] = field(default_factory=set)
+    # MCP tool definitions snapshotted for this turn (#1148). Populated at the
+    # start of a turn (safe turn boundary) by ContextComposer so late-connecting
+    # MCP servers register on the next turn rather than altering tools mid-turn.
+    mcp_definitions: list[dict[str, Any]] | None = None
+    mcp_frozen: bool = False
 
 
 @dataclass
@@ -153,6 +158,7 @@ class Context:
         self.channel_name: str = ""
         self.thread_id: str = ""
         self.conv_id: str = ""
+        self.transport: str = ""
 
         # Grouped state
         self.tokens = TokenUsage()
@@ -215,7 +221,7 @@ class Context:
     # timeout (or indefinitely) and is then synthesized into a denial. Deliberately NOT
     # `task_mode != ""` — child_agent inherits the parent's request_confirmation,
     # so a child of an interactive turn does have someone who can answer.
-    UNATTENDED_TASK_MODES = frozenset({"heartbeat", "scheduled"})
+    UNATTENDED_TASK_MODES = frozenset({"heartbeat", "scheduled", "background_wake"})
 
     @property
     def is_unattended(self) -> bool:

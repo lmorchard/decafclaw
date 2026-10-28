@@ -161,22 +161,24 @@ class LoopBreaker:
 
         calls: iterable of CallSignature.
         """
+        exempt_tools = getattr(self._cfg, "exempt_tools", ())
         for sig in calls:
-            entry = self._counts.get(sig.fingerprint)
-            if entry is None:
-                entry = self._counts[sig.fingerprint] = _Offender(
-                    tool_name=sig.tool_name,
-                )
-            entry.tool_name = sig.tool_name
-            entry.count += 1
-            entry.args_text = sig.args_text
-            # Keep the latest error for this call — the one a redirect quotes.
-            # Cleared on a successful occurrence: the nudge/redirect wording is
-            # "the error every time", and a call that failed early then started
-            # succeeding would otherwise keep quoting a stale failure forever.
-            # Reachable because repeated *successful* identical calls trip the
-            # repeat signal too.
-            entry.error_text = sig.error_text if sig.is_error else ""
+            if sig.tool_name not in exempt_tools:
+                entry = self._counts.get(sig.fingerprint)
+                if entry is None:
+                    entry = self._counts[sig.fingerprint] = _Offender(
+                        tool_name=sig.tool_name,
+                    )
+                entry.tool_name = sig.tool_name
+                entry.count += 1
+                entry.args_text = sig.args_text
+                # Keep the latest error for this call — the one a redirect quotes.
+                # Cleared on a successful occurrence: the nudge/redirect wording is
+                # "the error every time", and a call that failed early then started
+                # succeeding would otherwise keep quoting a stale failure forever.
+                # Reachable because repeated *successful* identical calls trip the
+                # repeat signal too.
+                entry.error_text = sig.error_text if sig.is_error else ""
             self._recent_errors.append(bool(sig.is_error))
             if sig.is_error:
                 self._total_errors += 1

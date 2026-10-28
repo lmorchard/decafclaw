@@ -14,6 +14,13 @@ Location: `data/{agent_id}/config.json` (default: `data/decafclaw/config.json`)
 
 Only include settings you want to override — absent keys use defaults.
 
+`load_config()` first imports the nearest `.env` (python-dotenv, searching
+up from the package) without overriding variables that are already set.
+Set `DECACLAW_LOAD_DOTENV=0` to skip that import entirely — the ephemeral
+test instance ([ephemeral-instance.md](ephemeral-instance.md)) uses this so
+a child process started from a checkout never imports the checkout's `.env`
+(real credentials, real `DATA_HOME`).
+
 ```json
 {
   "providers": {
@@ -234,6 +241,18 @@ Periodic wake-up settings.
 | `user` | str | `""` | `HEARTBEAT_USER` |
 | `channel` | str | `""` | `HEARTBEAT_CHANNEL` |
 | `suppress_ok` | bool | `true` | `HEARTBEAT_SUPPRESS_OK` |
+
+### `schedules`
+
+Global switch for the [scheduled-task](schedules.md) timer (#957). When
+`enabled` is `false`, the schedule timer does not start at all — no
+schedule file is scanned or run, including bundled ones (`dream`,
+`garden`). Per-task `enabled` in SCHEDULE.md frontmatter still applies when
+the global switch is on.
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `true` | `SCHEDULES_ENABLED` |
 
 ### `pre_script`
 

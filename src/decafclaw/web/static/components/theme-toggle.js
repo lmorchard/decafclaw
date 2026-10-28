@@ -1,17 +1,16 @@
 import { LitElement, html } from 'lit';
-import { THEMES, applyTheme, loadStoredTheme, storeTheme } from '../lib/theme.js';
+import { THEMES, applyTheme, loadStoredTheme, resolveTheme, storeTheme } from '../lib/theme.js';
 
 /**
- * Theme toggle: base light/dark/system buttons + a color-palette popover.
+ * Theme toggle: consolidated theme selector button + popover menu.
  *
- * A single active theme name is chosen either via a base button (which clears
- * any custom palette) or via a palette item (which supersedes the base and
- * drives its own base mode). Persists via lib/theme.js.
+ * A single theme control displays the active theme's icon (☀️/🌙/💻 for base
+ * themes, 🎨 for color palettes) and opens a disclosure popover containing both
+ * the structural base modes (Light, Dark, System) and the color palettes.
  *
- * The 🎨 popover is a disclosure (not an ARIA menu): the trigger carries
+ * The popover is a disclosure (not an ARIA menu): the trigger carries
  * `aria-expanded`, the items are plain buttons, and it closes on outside-click
- * or Escape. We intentionally don't use `role="menu"`/`menuitem` — those
- * promise arrow-key menu navigation we don't implement.
+ * or Escape.
  */
 export class ThemeToggle extends LitElement {
   static properties = {
@@ -36,6 +35,7 @@ export class ThemeToggle extends LitElement {
     this._onDocKeydown = (e) => {
       if (this._paletteOpen && e.key === 'Escape') {
         this._paletteOpen = false;
+        /** @type {HTMLButtonElement | null} */ (this.querySelector('.theme-btn'))?.focus();
       }
     };
   }
@@ -60,31 +60,38 @@ export class ThemeToggle extends LitElement {
   }
 
   render() {
+    const current = resolveTheme(this._theme);
     const bases = THEMES.filter((t) => t.kind === 'base');
     const palettes = THEMES.filter((t) => t.kind === 'palette');
-    const paletteActive = palettes.some((p) => p.name === this._theme);
+    const triggerIcon = current.icon ?? '🎨';
+
     return html`
       <div class="theme-toggle">
-        ${bases.map((t) => html`
-          <button
-            type="button"
-            class="theme-btn ${this._theme === t.name ? 'active' : ''}"
-            @click=${() => this.#select(t.name)}
-            title=${t.label}
-            aria-label="Switch to ${t.label} theme"
-          >${t.icon}</button>
-        `)}
         <div class="theme-palette-wrap">
           <button
             type="button"
-            class="theme-btn ${paletteActive ? 'active' : ''}"
+            class="theme-btn ${this._paletteOpen ? 'active' : ''}"
             @click=${() => { this._paletteOpen = !this._paletteOpen; }}
-            title="Color palette"
-            aria-label="Select color palette"
+            title="Theme: ${current.label}"
+            aria-label="Select theme"
             aria-expanded=${this._paletteOpen ? 'true' : 'false'}
-          >🎨</button>
+          >${triggerIcon}</button>
           ${this._paletteOpen ? html`
             <div class="theme-palette-menu">
+              <div class="theme-menu-section-header">Base</div>
+              ${bases.map((t) => html`
+                <button
+                  type="button"
+                  class="theme-palette-item ${this._theme === t.name ? 'active' : ''}"
+                  @click=${() => this.#select(t.name)}
+                  aria-label="Switch to ${t.label} theme"
+                >
+                  <span class="theme-palette-icon">${t.icon}</span>
+                  ${t.label}
+                </button>
+              `)}
+              <div class="theme-menu-divider"></div>
+              <div class="theme-menu-section-header">Palettes</div>
               ${palettes.map((p) => html`
                 <button
                   type="button"

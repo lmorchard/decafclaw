@@ -14,6 +14,8 @@ export type ScheduleResponse = {
     allowed_tools: Array<string>;
     disallowed_tools: Array<string>;
     required_skills: Array<string>;
+    required_servers?: Array<string>;
+    server_timeout?: number;
     shell_patterns: Array<string>;
     email_recipients: Array<string>;
     pre_script: string;

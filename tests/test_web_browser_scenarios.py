@@ -314,6 +314,7 @@ def test_browser_workspace_reads(built_static, chromium, config):
             return filePage._content === 'second browser content' && !filePage._loading;
         }""")
         assert [(request.path, request.query, request.authenticated) for request in scenario.requests] == [
+            ("/api/bookmarks", [], True),
             ("/api/workspace", [("folder", workspace_folder)], True),
             (f"/api/workspace-file/{workspace_rel_path}", [], True),
             ("/api/autocomplete", [("q", "Browser")], True),
@@ -431,6 +432,7 @@ def test_browser_workspace_file_writes(built_static, chromium, config):
             for request in scenario.requests
             if request.method == "GET"
         ] == [
+            ("/api/bookmarks", [], True),
             ("/api/workspace", [("folder", workspace_folder)], True),
             (f"/api/workspace-file/{workspace_rel_path}", [], True),
             (f"/api/workspace-file/{workspace_rel_path}", [], True),
@@ -963,6 +965,64 @@ def test_browser_vault_standalone_page(built_static, chromium, config):
         ] == [(f"/api/vault/{VAULT_PAGE_NAME}", [], True)]
 
 
+def test_browser_vault_standalone_editor_navigation(built_static, chromium, config):
+    page_a_name = "agent/pages/Standalone-Nav-A"
+    page_b_name = "agent/pages/Standalone-Nav-B"
+    page_a_path = config.vault_root / f"{page_a_name}.md"
+    page_b_path = config.vault_root / f"{page_b_name}.md"
+    page_a_path.parent.mkdir(parents=True, exist_ok=True)
+    page_a_path.write_text(f"# Page A Body\n\nLink to [[{page_b_name}]]\n")
+    page_b_path.write_text(f"# Page B Body\n\nLink to [[{page_a_name}]]\n")
+
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        page.evaluate("localStorage.setItem('wiki-edit-mode', 'true')")
+        url_a = f"{scenario.base}/vault/{page_a_name}"
+        url_b = f"{scenario.base}/vault/{page_b_name}"
+
+        with page.expect_response("**/api/auth/me"):
+            page.goto(url_a)
+        page.wait_for_function("document.querySelector('wiki-page')._loaded")
+        page.wait_for_selector("wiki-page wiki-editor .milkdown .ProseMirror")
+
+        # Edit heading in Page A so there is a pending save
+        page.locator("wiki-page wiki-editor .milkdown .ProseMirror h1").click()
+        page.keyboard.type(" Edited")
+        page.wait_for_function("document.querySelector('wiki-page wiki-editor')._status === 'editing'")
+
+        # 1. Plain click on wiki-link to Page B navigates and preserves pending save
+        link_to_b = page.locator("wiki-page wiki-editor a.wiki-link")
+        link_to_b.click()
+
+        page.wait_for_url(url_b)
+        page.wait_for_function(
+            f"document.querySelector('wiki-page').page === '{page_b_name}' && document.querySelector('wiki-page')._loaded"
+        )
+        assert page.url == url_b
+        assert page_a_path.read_text().startswith("# Page A Body Edited\n")
+
+        # 2. On Page B, Alt+click opens the popover, then the Open button navigates back to Page A
+        page.wait_for_selector("wiki-page wiki-editor a.wiki-link")
+        link_to_a = page.locator("wiki-page wiki-editor a.wiki-link")
+        link_to_a.click(modifiers=["Alt"])
+        page.wait_for_selector(".wiki-link-popover")
+        page.locator(".wiki-link-popover button.wiki-link-popover-goto").click()
+
+        page.wait_for_url(url_a)
+        page.wait_for_function(
+            f"document.querySelector('wiki-page').page === '{page_a_name}' && document.querySelector('wiki-page')._loaded"
+        )
+        assert page.url == url_a
+
+        # 3. Browser back button navigates back to Page B via popstate
+        page.go_back()
+        page.wait_for_url(url_b)
+        page.wait_for_function(
+            f"document.querySelector('wiki-page').page === '{page_b_name}' && document.querySelector('wiki-page')._loaded"
+        )
+        assert page.url == url_b
+
+
 def test_browser_vault_sidebars(built_static, chromium, config):
     seed_vault_page(config)
     with browser_scenario(built_static, chromium, config) as scenario:
@@ -1005,6 +1065,7 @@ def test_browser_vault_sidebars(built_static, chromium, config):
             for request in scenario.requests
             if request.method == "GET"
         ] == [
+            ("/api/bookmarks", [], True),
             ("/api/vault", [("folder", "agent/pages")], True),
             ("/api/vault/tags", [], True),
             ("/api/vault/recent", [], True),
@@ -1641,6 +1702,7 @@ def test_browser_auth_logout_redirects_guard(built_static, chromium, config):
         assert base + "/api/auth/me" in scenario.failed_requests
         assert set(scenario.failed_requests) <= {
             base + "/api/auth/me",
+            base + "/api/bookmarks",
             base + "/api/vault/agent/pages/Browser%20%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E",
         }, scenario.failed_requests
         scenario.failed_requests.clear()

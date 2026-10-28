@@ -4,17 +4,18 @@ import asyncio
 import functools
 import json
 import logging
+import math
 import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 import yaml
 from croniter import croniter
 from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, field_validator
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -37,6 +38,7 @@ from .schedules import (
     write_last_run,
     write_overlay,
 )
+from .shell_presets import ShellPresetStore
 from .skills import _extract_frontmatter_text
 from .skills.vault._events import (
     KIND_CREATE,
@@ -46,6 +48,7 @@ from .skills.vault._events import (
     publish_vault_changed,
 )
 from .tags import collect_all_tags
+from .web.bookmarks import KINDS_BY_TARGET, BookmarkStore, validate_bookmark_path
 from .web.workspace_paths import (
     IMAGE_EXTENSIONS,
     detect_kind,
@@ -266,6 +269,43 @@ class VaultTagEntry(BaseModel):
 
 class VaultTagsResponse(BaseModel):
     tags: list[VaultTagEntry]
+
+
+class BookmarkEntry(BaseModel):
+    path: str
+    label: str
+    kind: Literal["file", "dir", "page", "folder"]
+
+
+class BookmarksResponse(BaseModel):
+    files: list[BookmarkEntry]
+    vault: list[BookmarkEntry]
+
+
+class ShellPresetItem(BaseModel):
+    name: str
+    rules: list[str]
+    source: Literal["builtin", "config", "custom"]
+    shadows_config: bool = False
+    referenced_by: list[str] = []
+
+
+class ShellPresetPutRequest(BaseModel):
+    rules: list[str]
+
+
+class ShellPresetMutateResponse(BaseModel):
+    ok: Literal[True]
+    name: str
+    rules: list[str]
+    updated_text: str | None = None
+
+
+class BookmarkAddRequest(BaseModel):
+    target: Literal["files", "vault"]
+    path: str
+    label: str | None = None
+    kind: Literal["file", "dir", "page", "folder"]
 
 
 class VaultCreateRequest(BaseModel):
@@ -989,7 +1029,7 @@ async def rename_conversation(request: Request, id: str) -> JSONResponse:
                 return JSONResponse({"error": "Folder does not exist"}, status_code=400)
     title = body.get("title")
     if title is not None:
-        updated = index.rename(conv_id, title)
+        updated = index.rename(conv_id, title, manual=True)
         if not updated:
             return JSONResponse({"error": "not found"}, status_code=404)
         conv = updated
@@ -1017,6 +1057,138 @@ async def get_conversation_history(request: Request, username: str) -> JSONRespo
     before = request.query_params.get("before", "")
     messages, has_more = index.load_history(conv_id, limit=limit, before=before)
     return JSONResponse({"messages": messages, "has_more": has_more})
+
+
+class SideQuestionRequest(BaseModel):
+    question: str
+    side_history: list[dict[str, str]] | None = None
+    model: str | None = None
+
+
+class SideQuestionCancelResponse(BaseModel):
+    ok: Literal[True]
+
+
+async def handle_side_question(request: Request, id: str) -> Response:
+    """Stream an ephemeral explanation-only side question via SSE."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    manager = request.app.state.manager
+    conv_id = id
+    if not conv_id:
+        return JSONResponse({"error": "missing conversation id"}, status_code=400)
+
+    from .web.conversations import ConversationIndex, can_read_conversation
+
+    index = ConversationIndex(config)
+    if not can_read_conversation(config, index, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid json body"}, status_code=400)
+
+    try:
+        req_data = SideQuestionRequest(**body)
+    except Exception as exc:
+        return JSONResponse({"error": f"invalid request payload: {exc}"}, status_code=400)
+
+    question = req_data.question.strip()
+    if not question:
+        return JSONResponse({"error": "question is required"}, status_code=400)
+
+    side_history = req_data.side_history
+    model_name = req_data.model
+    if model_name and model_name not in config.model_configs:
+        return JSONResponse({"error": f"Unknown model: {model_name}"}, status_code=400)
+
+    if manager is None:
+        return JSONResponse({"error": "manager not available"}, status_code=503)
+
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        cancel_event = asyncio.Event()
+        queue: asyncio.Queue[dict[str, str] | None] = asyncio.Queue()
+
+        async def on_chunk(chunk_type: str, data: Any):
+            if chunk_type == "text" and isinstance(data, str):
+                await queue.put({"event": "chunk", "data": json.dumps({"type": "chunk", "text": data})})
+
+        async def worker():
+            try:
+                result = await manager.run_side_question(
+                    conv_id,
+                    question,
+                    side_history=side_history,
+                    cancel_event=cancel_event,
+                    on_chunk=on_chunk,
+                    model_name=model_name,
+                )
+                full_text = result.get("content", "") if isinstance(result, dict) else str(result)
+                await queue.put({"event": "done", "data": json.dumps({"type": "done", "text": full_text})})
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                log.exception("Side question error")
+                await queue.put({"event": "error", "data": json.dumps({"type": "error", "error": str(e)})})
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(worker())
+        try:
+            while True:
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    task.cancel()
+                    break
+
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    continue
+
+                if item is None:
+                    break
+                yield item
+        finally:
+            cancel_event.set()
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+    return EventSourceResponse(event_generator())
+
+
+async def handle_cancel_side_question(request: Request, id: str) -> JSONResponse:
+    """Cancel in-flight side questions for a conversation."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    manager = request.app.state.manager
+    conv_id = id
+    if not conv_id:
+        return JSONResponse({"error": "missing conversation id"}, status_code=400)
+
+    from .web.conversations import ConversationIndex, can_read_conversation
+
+    index = ConversationIndex(config)
+    if not can_read_conversation(config, index, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    if manager:
+        manager.cancel_side_question(conv_id)
+    return JSONResponse({"ok": True})
 
 
 class ContextMatch(BaseModel):
@@ -1200,6 +1372,11 @@ async def delete_conversation(request: Request, id: str) -> JSONResponse:
     # them — the shell's cwd may be inside the conversation's workspace.
     terminal_registry = request.app.state.terminal_registry
     await terminal_registry.kill_sessions_for_conv(conv_id)
+
+    # Cancel any active in-memory wake timers for this conversation
+    manager = getattr(request.app.state, "manager", None)
+    if manager and hasattr(manager, "scheduled_wakes"):
+        await manager.scheduled_wakes.cancel_all_for_conversation(conv_id)
 
     # Remove the {id}/ dir (archive, sidecars, uploads, workflow.json) and
     # any leftover flat legacy sidecar files.
@@ -1961,6 +2138,220 @@ async def vault_tags(request: Request, username: str) -> JSONResponse:
 
 
 @_authenticated
+async def bookmarks_list(request: Request, username: str) -> JSONResponse:
+    """GET /api/bookmarks — the agent's current bookmarks."""
+    config = request.app.state.config
+    data = await BookmarkStore(config).list()
+    return JSONResponse(data)
+
+
+@_authenticated
+async def bookmarks_add(request: Request, username: str) -> JSONResponse:
+    """POST /api/bookmarks — add (or update) a bookmark.
+
+    Body: ``{"target": "files"|"vault", "path": str, "label"?: str,
+    "kind": "file"|"dir"|"page"|"folder"}``. Returns the updated payload.
+    """
+    config = request.app.state.config
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    target = body.get("target")
+    path = body.get("path")
+    label = body.get("label")
+    kind = body.get("kind")
+    # `target` may arrive as a JSON array/object (malformed); an unhashable
+    # value would blow up the dict membership test below with a TypeError, so
+    # check the type before comparing.
+    if not isinstance(target, str) or target not in KINDS_BY_TARGET:
+        return JSONResponse({"error": "target must be 'files' or 'vault'"}, status_code=400)
+    if not isinstance(path, str):
+        return JSONResponse({"error": "path is required"}, status_code=400)
+    err = validate_bookmark_path(path)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    if not isinstance(kind, str) or kind not in KINDS_BY_TARGET[target]:
+        return JSONResponse(
+            {"error": f"kind must be one of {list(KINDS_BY_TARGET[target])} for target '{target}'"},
+            status_code=400,
+        )
+    if label is not None and not isinstance(label, str):
+        return JSONResponse({"error": "label must be a string"}, status_code=400)
+    data = await BookmarkStore(config).add(target, path, kind, label)
+    return JSONResponse(data)
+
+
+@_authenticated
+async def bookmarks_delete(request: Request, username: str) -> JSONResponse:
+    """DELETE /api/bookmarks?target=...&path=... — remove a bookmark.
+
+    ``target`` and ``path`` come from the query string; a JSON body with
+    the same keys is accepted as a fallback. Returns the updated payload;
+    404 when the bookmark is not present.
+    """
+    config = request.app.state.config
+    target = request.query_params.get("target")
+    path = request.query_params.get("path")
+    if target is None or path is None:
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            body = None
+        if isinstance(body, dict):
+            target = body.get("target") if target is None else target
+            path = body.get("path") if path is None else path
+    # Same as POST: a malformed (array/object) `target` from the query-string
+    # fallback body must be a 400, not an unhandled TypeError from the
+    # unhashable-key dict lookup below.
+    if not isinstance(target, str) or target not in KINDS_BY_TARGET:
+        return JSONResponse({"error": "target must be 'files' or 'vault'"}, status_code=400)
+    if not isinstance(path, str) or not path:
+        return JSONResponse({"error": "path query parameter is required"}, status_code=400)
+    data = await BookmarkStore(config).remove(target, path)
+    if data is None:
+        return JSONResponse({"error": "bookmark not found"}, status_code=404)
+    return JSONResponse(data)
+
+
+def _invalidate_conversations_for_preset(config, manager, preset_name: str) -> None:
+    """Clear llm_approved_shell_patterns in in-memory conversations where preset_name is active."""
+    if not manager or not hasattr(manager, "_conversations"):
+        return
+    config_active_raw = getattr(config.shell, "active_aux_approval_presets", [])
+    if isinstance(config_active_raw, str):
+        config_active = set(p.strip() for p in config_active_raw.split(",") if p.strip())
+    elif isinstance(config_active_raw, (list, tuple, set)):
+        config_active = set(str(p).strip() for p in config_active_raw if str(p).strip())
+    else:
+        config_active = set()
+
+    for conv_id, conv_state in list(manager._conversations.items()):
+        persisted_active = set(getattr(conv_state.persisted, "active_aux_approval_presets", []))
+        disabled_presets = set(getattr(conv_state.persisted, "disabled_aux_approval_presets", []))
+        active_presets = (config_active | persisted_active) - disabled_presets
+        if preset_name in active_presets:
+            conv_state.persisted.llm_approved_shell_patterns.clear()
+            manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
+            # Invalidate live active turn context if one is running
+            active_ctx = getattr(conv_state, "active_context", None)
+            if active_ctx and hasattr(active_ctx, "tools"):
+                active_ctx.tools.llm_approved_shell_patterns.clear()
+
+
+@_authenticated
+async def shell_presets_list(request: Request, username: str) -> JSONResponse:
+    """GET /api/shell-approval/presets — list all presets with sources, rules, and reference tracking."""
+    config = request.app.state.config
+    store = getattr(request.app.state, "preset_store", None)
+    if not store:
+        store = ShellPresetStore(config)
+    try:
+        presets = await store.list_presets()
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    # Compute referenced_by for each preset
+    from .modes import get_all_modes
+
+    all_modes = get_all_modes(config)
+    config_active_raw = getattr(config.shell, "active_aux_approval_presets", [])
+    if isinstance(config_active_raw, str):
+        config_active_set = set(p.strip() for p in config_active_raw.split(",") if p.strip())
+    elif isinstance(config_active_raw, (list, tuple, set)):
+        config_active_set = set(str(p).strip() for p in config_active_raw if str(p).strip())
+    else:
+        config_active_set = set()
+
+    for p in presets:
+        name = p["name"]
+        refs = []
+        for m_name, mode in all_modes.items():
+            if mode.presets and name in mode.presets:
+                refs.append(f"mode '{m_name}'")
+        if name in config_active_set:
+            refs.append("config.shell.active_aux_approval_presets")
+        p["referenced_by"] = refs
+
+    return JSONResponse(presets)
+
+
+@_authenticated
+async def shell_presets_put(request: Request, username: str) -> JSONResponse:
+    """PUT /api/shell-approval/presets/{name} — create or replace a custom preset."""
+    preset_name = request.path_params.get("name", "").strip()
+    if not preset_name:
+        return JSONResponse({"error": "preset name is required"}, status_code=400)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+    rules = body.get("rules")
+    if not isinstance(rules, list) or not rules:
+        return JSONResponse({"error": "rules must be a non-empty list of strings"}, status_code=400)
+    for r in rules:
+        if not isinstance(r, str) or not r.strip():
+            return JSONResponse({"error": "each rule must be a non-empty string"}, status_code=400)
+
+    store = getattr(request.app.state, "preset_store", None)
+    if not store:
+        store = ShellPresetStore(request.app.state.config)
+
+    try:
+        is_new, updated_text = await store.save_preset(preset_name, rules)
+    except ValueError as e:
+        err_msg = str(e)
+        if "Corrupt or unreadable presets file" in err_msg:
+            return JSONResponse({"error": err_msg}, status_code=500)
+        return JSONResponse({"error": err_msg}, status_code=400)
+
+    manager = getattr(request.app.state, "manager", None)
+    _invalidate_conversations_for_preset(request.app.state.config, manager, preset_name)
+    clean_rules = [r.strip() for r in rules if r.strip()]
+    return JSONResponse(
+        {
+            "ok": True,
+            "name": preset_name,
+            "rules": clean_rules,
+            "updated_text": updated_text,
+        }
+    )
+
+
+@_authenticated
+async def shell_presets_delete(request: Request, username: str) -> JSONResponse:
+    """DELETE /api/shell-approval/presets/{name} — delete a custom preset."""
+    preset_name = request.path_params.get("name", "").strip()
+    if not preset_name:
+        return JSONResponse({"error": "preset name is required"}, status_code=400)
+
+    store = getattr(request.app.state, "preset_store", None)
+    if not store:
+        store = ShellPresetStore(request.app.state.config)
+
+    try:
+        deleted = await store.delete_preset(preset_name)
+    except ValueError as e:
+        err_msg = str(e)
+        if "Corrupt or unreadable presets file" in err_msg:
+            return JSONResponse({"error": err_msg}, status_code=500)
+        return JSONResponse({"error": err_msg}, status_code=400)
+
+    if not deleted:
+        return JSONResponse({"error": f"custom preset '{preset_name}' not found"}, status_code=404)
+
+    manager = getattr(request.app.state, "manager", None)
+    _invalidate_conversations_for_preset(request.app.state.config, manager, preset_name)
+    return JSONResponse({"ok": True, "name": preset_name, "rules": []})
+
+
+@_authenticated
 async def vault_read(request: Request, username: str) -> JSONResponse:
     """Read a single vault page as JSON."""
     config = request.app.state.config
@@ -2661,6 +3052,64 @@ async def get_sticky_state(request: Request, conv_id: str) -> StickyResponse | J
     )
 
 
+class StickySetRequest(BaseModel):
+    widget_type: str
+    data: dict[str, object]
+
+
+async def post_sticky_state(request: Request, conv_id: str) -> JSONResponse:
+    """Pin a widget into the conversation's sticky slot. Backs external
+    progress updates (e.g. long-running scripts posting live status)."""
+    from . import sticky as sticky_mod
+
+    config = request.app.state.config
+    manager = request.app.state.manager
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    widget_type = body.get("widget_type")
+    data = body.get("data")
+    if not isinstance(widget_type, str) or not widget_type:
+        return JSONResponse({"error": "widget_type must be a non-empty string"}, status_code=400)
+    if not isinstance(data, dict):
+        return JSONResponse({"error": "data must be a JSON object"}, status_code=400)
+    emit = manager.emit if manager else None
+    result = await sticky_mod.set_sticky(config, conv_id, widget_type, data, emit=emit)
+    if not result.ok:
+        return JSONResponse({"error": result.error}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+async def delete_sticky_state(request: Request, conv_id: str) -> JSONResponse:
+    """Clear the conversation's sticky slot."""
+    from . import sticky as sticky_mod
+
+    config = request.app.state.config
+    manager = request.app.state.manager
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    emit = manager.emit if manager else None
+    result = await sticky_mod.clear_sticky(config, conv_id, emit=emit)
+    if not result.ok:
+        return JSONResponse({"error": result.error}, status_code=500)
+    return JSONResponse({"ok": True})
+
+
 async def post_canvas_new_tab(request: Request, conv_id: str) -> JSONResponse:
     """Create a new canvas tab. Backs the inline 'Open in Canvas' button."""
     from . import canvas as canvas_mod
@@ -2854,6 +3303,8 @@ def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> 
         "allowed_tools": list(task.allowed_tools),
         "disallowed_tools": list(task.disallowed_tools),
         "required_skills": list(task.required_skills),
+        "required_servers": list(task.required_servers),
+        "server_timeout": task.server_timeout,
         "shell_patterns": list(task.shell_patterns),
         "email_recipients": list(task.email_recipients),
         "pre_script": task.pre_script,
@@ -2883,6 +3334,8 @@ class ScheduleResponse(BaseModel):
     allowed_tools: list[str]
     disallowed_tools: list[str]
     required_skills: list[str]
+    required_servers: list[str] = []
+    server_timeout: float = 30.0
     shell_patterns: list[str]
     email_recipients: list[str]
     pre_script: str
@@ -2919,9 +3372,19 @@ class ScheduleUpdateRequest(BaseModel):
     allowed_tools: list[str] | None = None
     disallowed_tools: list[str] | None = None
     required_skills: list[str] | None = None
+    required_servers: list[str] | None = None
+    server_timeout: float | None = None
     shell_patterns: list[str] | None = None
     email_recipients: list[str] | None = None
     pre_script: str | None = None
+
+    @field_validator("server_timeout")
+    @classmethod
+    def validate_server_timeout(cls, v: float | None) -> float | None:
+        if v is not None:
+            if not math.isfinite(v) or v <= 0:
+                raise ValueError("server_timeout must be a finite positive number")
+        return v
 
 
 class ScheduleUpdateResponse(BaseModel):
@@ -3167,6 +3630,32 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
+        APIRoute(
+            "/api/conversations/{id}/side-question",
+            handle_side_question,
+            methods=["POST"],
+            response_class=Response,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": SideQuestionRequest.model_json_schema()},
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "SSE stream of response tokens and completion events",
+                        "content": {"text/event-stream": {}},
+                    }
+                },
+            },
+        ),
+        APIRoute(
+            "/api/conversations/{id}/side-question/cancel",
+            handle_cancel_side_question,
+            methods=["POST"],
+            response_model=SideQuestionCancelResponse,
+        ),
         APIRoute(
             "/api/conversations/{id}/context",
             get_context_diagnostics,
@@ -3680,6 +4169,82 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute("/vault/{page:path}", serve_vault_page, methods=["GET"]),
+        APIRoute("/api/bookmarks", bookmarks_list, methods=["GET"], response_model=BookmarksResponse),
+        APIRoute(
+            "/api/bookmarks",
+            bookmarks_add,
+            methods=["POST"],
+            response_model=BookmarksResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": BookmarkAddRequest.model_json_schema()},
+                    },
+                }
+            },
+        ),
+        APIRoute(
+            "/api/bookmarks",
+            bookmarks_delete,
+            methods=["DELETE"],
+            response_model=BookmarksResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "target",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["files", "vault"]},
+                    },
+                    {"name": "path", "in": "query", "required": True, "schema": {"type": "string"}},
+                ]
+            },
+        ),
+        APIRoute(
+            "/api/shell-approval/presets",
+            shell_presets_list,
+            methods=["GET"],
+            response_model=list[ShellPresetItem],
+        ),
+        APIRoute(
+            "/api/shell-approval/presets/{name}",
+            shell_presets_put,
+            methods=["PUT"],
+            response_model=ShellPresetMutateResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": ShellPresetPutRequest.model_json_schema()},
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/shell-approval/presets/{name}",
+            shell_presets_delete,
+            methods=["DELETE"],
+            response_model=ShellPresetMutateResponse,
+            openapi_extra={
+                "parameters": [
+                    {
+                        "name": "name",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ]
+            },
+        ),
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
         APIRoute("/api/wiki", vault_list, methods=["GET"]),
         APIRoute("/api/wiki/{page:path}", vault_read, methods=["GET"]),
@@ -3687,6 +4252,18 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/widgets/{tier}/{name}/widget.js", serve_widget_js, methods=["GET"]),
         APIRoute("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"], response_model=CanvasStateResponse),
         APIRoute("/api/sticky/{conv_id}", get_sticky_state, methods=["GET"], response_model=StickyResponse),
+        APIRoute(
+            "/api/sticky/{conv_id}",
+            post_sticky_state,
+            methods=["POST"],
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": StickySetRequest.model_json_schema()}},
+                }
+            },
+        ),
+        APIRoute("/api/sticky/{conv_id}", delete_sticky_state, methods=["DELETE"]),
         APIRoute(
             "/api/canvas/{conv_id}/new_tab",
             post_canvas_new_tab,
@@ -3747,6 +4324,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     app.state.event_bus = event_bus
     app.state.manager = manager
     app.state.app_ctx = app_ctx
+    app.state.preset_store = ShellPresetStore(config)
     from .terminals import TerminalRegistry
 
     app.state.terminal_registry = TerminalRegistry(config)

@@ -115,6 +115,7 @@ async def run_all(app_ctx):
             from .mattermost import MattermostClient
 
             mm_client = MattermostClient(config)
+            manager.mm_client = mm_client
             mattermost_task = asyncio.create_task(mm_client.run(app_ctx, shutdown_event, manager=manager))
             log.info("Mattermost client starting")
 
@@ -174,11 +175,17 @@ async def run_all(app_ctx):
         else:
             log.info("Heartbeat disabled (interval not set)")
 
-        # Start schedule timer
-        from .schedules import run_schedule_timer
+        # Start schedule timer (global off switch: config.schedules.enabled, #957)
+        if config.schedules.enabled:
+            from .schedules import run_schedule_timer
 
-        schedule_task = asyncio.create_task(run_schedule_timer(config, app_ctx.event_bus, manager, shutdown_event))
-        log.info("Schedule timer started")
+            schedule_task = asyncio.create_task(run_schedule_timer(config, app_ctx.event_bus, manager, shutdown_event))
+            log.info("Schedule timer started")
+        else:
+            log.info("Schedule timer disabled (schedules.enabled=false)")
+
+        # Resume pending scheduled wake timers now that transports are listening (#1119 review)
+        await manager.startup_scan_scheduled_wakes()
 
         # Wait for shutdown
         await shutdown_event.wait()

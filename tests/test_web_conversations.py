@@ -13,7 +13,7 @@ from decafclaw.archive import append_message
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.web.auth import create_token
-from decafclaw.web.conversations import ConversationIndex, ConversationMeta
+from decafclaw.web.conversations import ConversationIndex, ConversationMeta, is_web_conv_for_user
 
 # -- ConversationIndex tests ---------------------------------------------------
 
@@ -25,6 +25,25 @@ def test_create_conversation(config):
     assert conv.conv_id.startswith("web-alice-")
     assert conv.title == "Test chat"
     assert conv.user_id == "alice"
+
+
+def test_is_web_conv_for_user():
+    # Exact owner match
+    assert is_web_conv_for_user("web-alice-12345678", "alice")
+    assert is_web_conv_for_user("web-alice-team-12345678", "alice-team")
+    assert is_web_conv_for_user("web-alice-12345678--child-abcdef12", "alice")
+    assert is_web_conv_for_user("web-alice-team-12345678--child-abcdef12", "alice-team")
+
+    # Username prefix collision guard (#1132)
+    assert not is_web_conv_for_user("web-alice-team-12345678", "alice")
+    assert not is_web_conv_for_user("web-alice-team-12345678--child-abcdef12", "alice")
+    assert not is_web_conv_for_user("web-alice-12345678", "alice-team")
+
+    # Invalid / non-web shapes
+    assert not is_web_conv_for_user("", "alice")
+    assert not is_web_conv_for_user("web-alice", "alice")
+    assert not is_web_conv_for_user("schedule-daily-20260101-000000", "alice")
+    assert not is_web_conv_for_user("web-alice-12345678", "")
 
 
 def test_create_default_title(config):
@@ -83,6 +102,59 @@ def test_rename_conversation(config):
     assert updated is not None
     assert updated.title == "New title"
     assert updated.updated_at > conv.updated_at
+
+
+def test_rename_manual_sets_custom_title(config):
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Old title")
+    updated = index.rename(conv.conv_id, "My title", manual=True)
+    assert updated is not None
+    assert updated.title == "My title"
+    assert updated.custom_title is True
+
+
+def test_rename_auto_updates_non_custom_title(config):
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice", "First 100 characters of the opening message")
+    updated = index.rename(conv.conv_id, "Refined title")
+    assert updated is not None
+    assert updated.title == "Refined title"
+    assert updated.custom_title is False
+
+
+def test_rename_auto_refused_for_custom_title(config):
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Old title")
+    index.rename(conv.conv_id, "User title", manual=True)
+
+    # Automated retitle is refused — the user's title survives.
+    assert index.rename(conv.conv_id, "Auto title") is None
+    reloaded = ConversationIndex(config).get(conv.conv_id)
+    assert reloaded.title == "User title"
+    assert reloaded.custom_title is True
+
+    # Manual renames still apply after a refused automated one.
+    again = index.rename(conv.conv_id, "User title v2", manual=True)
+    assert again is not None
+    assert again.title == "User title v2"
+
+
+def test_custom_title_round_trips_through_disk(config):
+    """custom_title persists in the JSON index across index instances."""
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice")
+    index.rename(conv.conv_id, "Kept by user", manual=True)
+
+    fresh = ConversationIndex(config)
+    meta = fresh.get(conv.conv_id)
+    assert meta.custom_title is True
+    # And the flag is respected on a fresh instance too.
+    assert fresh.rename(conv.conv_id, "Auto again") is None
+    assert fresh.get(conv.conv_id).title == "Kept by user"
 
 
 def test_touch_updates_timestamp(config):

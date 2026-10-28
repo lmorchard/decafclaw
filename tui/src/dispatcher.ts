@@ -67,7 +67,7 @@ function extractText(msg: Record<string, unknown> | null | undefined): string {
 export function dispatch(s: State, m: ServerMessage): State {
   switch (m.type) {
     case "chunk":
-      return { ...s, draft: s.draft + m.text };
+      return { ...s, draft: s.draft + (m.text || "") };
 
     case "message_complete": {
       // Cancel preserves the streamed draft: the server replaces text with
@@ -143,6 +143,11 @@ export function dispatch(s: State, m: ServerMessage): State {
       // is expected to arrive on connect, before any turn is in flight.
       return { ...s, model: m.active_model ?? s.model, transcript: [...items, ...s.transcript] };
     }
+
+    case "conv_renamed":
+      // #1072 — auto-titling refreshes the web UI's conversation listing;
+      // the TUI shows a single conversation, so this is a no-op here.
+      return s;
 
     // #1005 — a failed compaction leaves the conversation unchanged, so the old
     // unconditional "[compaction complete]" was misleading. Mirror the web UI:

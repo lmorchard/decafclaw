@@ -401,6 +401,11 @@ export class ConversationSidebar extends LitElement {
   }
 
   /** @param {string} convId */
+  #handleRetitle(convId) {
+    this.store?.retitleConversation(convId);
+  }
+
+  /** @param {string} convId */
   #handleUnarchive(convId) {
     this.store?.unarchiveConversation(convId);
   }
@@ -663,6 +668,9 @@ export class ConversationSidebar extends LitElement {
                 actionLabel: '\u00d7',
                 actionTitle: 'Archive conversation',
                 onAction: (id) => this.#handleArchive(id),
+                action2Label: '✨',
+                action2Title: 'Regenerate title',
+                onAction2: (id) => this.#handleRetitle(id),
                 onDblClick: (/** @type {Event} */ e) => { e.stopPropagation(); this.#handleRename(c.conv_id, c.title); },
               }))
         }

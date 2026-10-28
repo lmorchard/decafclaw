@@ -32,6 +32,7 @@ from .config_types import LoopBreakerConfig
 from .context import TurnLifecycle
 from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
+from .conversation_paths import approval_state_path
 from .iteration_budget import IterationBudget
 from .llm import call_llm
 from .llm.history import assistant_message
@@ -48,7 +49,7 @@ from .persistence import read_skill_data, read_skills_state, write_skill_data, w
 from .reflection_metrics import classify_outcome, response_delta
 from .skills import activate_always_loaded
 from .telemetry import get_tracer
-from .tool_definitions import build_tool_list, refresh_dynamic_tools
+from .tool_definitions import build_tool_list, reconcile_mcp_tools, refresh_dynamic_tools
 from .tool_execution import execute_tool_calls
 
 _tracer = get_tracer(__name__)
@@ -316,6 +317,14 @@ async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause) -
         pending_callbacks,
     )
 
+    if getattr(ctx, "is_unattended", False):
+        log.warning(
+            "WidgetInputPause received on unattended turn (%s) — cannot pause, dropping callback and ending turn",
+            getattr(ctx, "task_mode", ""),
+        )
+        pending_callbacks.pop(signal.tool_call_id, None)
+        return None
+
     request_confirmation = ctx.request_confirmation
     if request_confirmation is None:
         log.warning(
@@ -569,10 +578,18 @@ async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
                     break
 
     # Restore active mode from archive if not already set or non-default.
+    # Legacy fallback (#1160): the manager now restores the mode from the
+    # approval_state file, which is the source of truth whenever it exists
+    # (including a recorded "default"). This scan runs only for
+    # conversations whose mode was recorded before that file existed.
     from .modes import get_all_modes
 
     all_modes = get_all_modes(config)
-    if getattr(ctx, "active_mode", "default") == "default" and conv_id:
+    if (
+        getattr(ctx, "active_mode", "default") == "default"
+        and conv_id
+        and not approval_state_path(config, conv_id).exists()
+    ):
         from .archive import read_archive
 
         for msg in reversed(read_archive(config, conv_id)):
@@ -704,8 +721,10 @@ class TurnRunner:
         self.model_override = await _setup_turn_state(self.ctx, self.config, self.history)
 
         try:
+            self.ctx.tools.mcp_frozen = False
+            reconcile_mcp_tools(self.ctx)
+            self.ctx.tools.mcp_frozen = True
             await self._compose()
-
             self.prompt_tokens = 0
             self.empty_retries = 0
             self.reflection_retries = 0
@@ -737,6 +756,7 @@ class TurnRunner:
             return await self._finalize_max_iterations()
 
         finally:
+            self.ctx.tools.mcp_frozen = False
             await self._write_diagnostics()
 
     async def _compose(self) -> None:
@@ -892,14 +912,16 @@ class TurnRunner:
         Returns _Continue to loop again, or _Final(result) to end the turn.
         """
         iter_content = response.get("content")
+        iter_thinking = response.get("thinking")
         assistant_msg = assistant_message(response)
         self.history.append(assistant_msg)
         self.messages.append(assistant_msg)
         _archive(self.ctx, assistant_msg)
 
-        if iter_content:
-            self.accumulated_text_parts.append(iter_content)
-            await self.ctx.publish("text_before_tools", text=iter_content)
+        if iter_content or iter_thinking:
+            if iter_content:
+                self.accumulated_text_parts.append(iter_content)
+            await self.ctx.publish("text_before_tools", text=iter_content or "", thinking=iter_thinking)
 
         finish_reason = response.get("finish_reason")
         if finish_reason == "length" or finish_reason in ("error", "interrupted"):
@@ -1179,7 +1201,7 @@ class TurnRunner:
 
         await self._emit_reflection_metrics(content)
         await _maybe_compact(self.ctx, self.config, self.history, self.prompt_tokens)
-        return _Final(result=self._extract_workspace_media(content))
+        return _Final(result=self._extract_workspace_media(content, thinking=response.get("thinking")))
 
     async def _emit_reflection_metrics(self, final_content: str) -> None:
         """Publish one reflection_turn telemetry event per judge-eligible turn
@@ -1333,6 +1355,7 @@ class TurnRunner:
 
             critique_msg = {
                 "role": "user",
+                "source": "reflection_retry",
                 "content": (
                     "[reflection] Your previous response may not fully "
                     "address the user's request.\n"
@@ -1529,7 +1552,7 @@ class TurnRunner:
         )
         return ToolResult(text=delivered, termination_reason=termination_reason)
 
-    def _extract_workspace_media(self, content: str) -> "ToolResult":
+    def _extract_workspace_media(self, content: str, thinking: str | None = None) -> "ToolResult":
         """Extract workspace:// refs only for channels that need it.
 
         Mattermost strips refs and uploads files; web/terminal render them
@@ -1551,8 +1574,9 @@ class TurnRunner:
                     text=cleaned_text,
                     media=workspace_media,
                     termination_reason=termination_reason,
+                    thinking=thinking,
                 )
-        return ToolResult(text=content or "", termination_reason=termination_reason)
+        return ToolResult(text=content or "", termination_reason=termination_reason, thinking=thinking)
 
     async def _write_diagnostics(self) -> None:
         """Persist context diagnostics + skill state on any turn-exit path.

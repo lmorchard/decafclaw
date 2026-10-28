@@ -41,6 +41,7 @@ from .config_types import (
     RecentJournalConfig,
     ReflectionConfig,
     RelevanceConfig,
+    SchedulesConfig,
     SecretPolicyConfig,
     ShellConfig,
     TelemetryConfig,
@@ -109,6 +110,8 @@ def _coerce(value: str, field_type) -> object:
             return _coerce(value, args[0])
     if origin is list:
         return _parse_list(value)
+    if origin is tuple:
+        return tuple(_parse_list(value))
     if origin is dict or field_type is dict:
         return _parse_dict(value)
     if field_type is bool:
@@ -181,6 +184,8 @@ def load_sub_config(
                     nested_env_prefix,
                 )
             # JSON already has correct types for most things
+            elif isinstance(json_val, list) and get_origin(field_type) is tuple:
+                kwargs[f.name] = tuple(json_val)
             elif isinstance(json_val, str) and field_type not in (str, "str"):
                 kwargs[f.name] = _coerce(json_val, field_type)
             else:
@@ -205,6 +210,7 @@ class Config:
     recent_journal: RecentJournalConfig = field(default_factory=RecentJournalConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
+    schedules: SchedulesConfig = field(default_factory=SchedulesConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
     terminal: TerminalConfig = field(default_factory=TerminalConfig)
     shell: ShellConfig = field(default_factory=ShellConfig)
@@ -427,7 +433,11 @@ def _load_modes(raw: dict) -> dict[str, SessionMode]:
 
 def load_config() -> Config:
     """Load config from defaults → config.json → env vars."""
-    load_dotenv()
+    # The ephemeral test server (#957) sets DECACLAW_LOAD_DOTENV=0 so a child
+    # process started from a checkout never imports the checkout's .env,
+    # which can hold real credentials and a real DATA_HOME.
+    if os.getenv("DECACLAW_LOAD_DOTENV", "1").strip().lower() not in ("0", "false", "no", "off"):
+        load_dotenv()
 
     # Bootstrap: resolve data_home and agent_id from env only
     data_home = os.getenv("DATA_HOME", AgentConfig.data_home)
@@ -478,6 +488,13 @@ def load_config() -> Config:
     )
 
     heartbeat = load_sub_config(HeartbeatConfig, file_data.get("heartbeat", {}), "HEARTBEAT")
+
+    schedules = load_sub_config(
+        SchedulesConfig,
+        file_data.get("schedules", {}),
+        "SCHEDULES",
+        env_aliases={"enabled": "SCHEDULES_ENABLED"},
+    )
 
     http = load_sub_config(HttpConfig, file_data.get("http", {}), "HTTP")
 
@@ -640,6 +657,7 @@ def load_config() -> Config:
         recent_journal=recent_journal,
         embedding=embedding,
         heartbeat=heartbeat,
+        schedules=schedules,
         http=http,
         terminal=terminal,
         shell=shell,

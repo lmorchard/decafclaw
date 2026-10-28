@@ -22,6 +22,7 @@ class WSMessageType(StrEnum):
     CONFIRM_REQUEST = "confirm_request"
     CONFIRMATION_RESPONSE = "confirmation_response"
     CONV_HISTORY = "conv_history"
+    CONV_RENAMED = "conv_renamed"
     CONV_SELECTED = "conv_selected"
     CONVERSATION_STATUS = "conversation_status"
     ERROR = "error"
@@ -67,6 +68,7 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.CONFIRM_REQUEST,
         WSMessageType.CONFIRMATION_RESPONSE,
         WSMessageType.CONV_HISTORY,
+        WSMessageType.CONV_RENAMED,
         WSMessageType.CONV_SELECTED,
         WSMessageType.CONVERSATION_STATUS,
         WSMessageType.ERROR,
@@ -129,7 +131,8 @@ class SrvCanvasUpdate(TypedDict):
 class SrvChunk(TypedDict):
     type: Literal[WSMessageType.CHUNK]
     conv_id: str
-    text: str
+    text: NotRequired[str]
+    thinking: NotRequired[str]
 
 
 class SrvCommandAck(TypedDict):
@@ -201,6 +204,13 @@ class SrvConvHistory(TypedDict):
     pending_confirmation: NotRequired[dict[str, object]]
 
 
+class SrvConvRenamed(TypedDict):
+    type: Literal[WSMessageType.CONV_RENAMED]
+    conv_id: str
+    title: str
+    updated_at: str
+
+
 class SrvConvSelected(TypedDict):
     type: Literal[WSMessageType.CONV_SELECTED]
     conv_id: str
@@ -224,6 +234,7 @@ class SrvMessageComplete(TypedDict):
     type: Literal[WSMessageType.MESSAGE_COMPLETE]
     conv_id: str
     text: str
+    thinking: NotRequired[str]
     role: NotRequired[str]
     final: NotRequired[bool]
     usage: NotRequired[dict[str, object]]
@@ -323,6 +334,7 @@ class SrvToolStatus(TypedDict):
 class SrvTurnComplete(TypedDict):
     type: Literal[WSMessageType.TURN_COMPLETE]
     conv_id: str
+    reason: NotRequired[str]
 
 
 class SrvTurnStart(TypedDict):
@@ -419,6 +431,7 @@ ServerMessage = (
     | SrvConfirmRequest
     | SrvConfirmationResponse
     | SrvConvHistory
+    | SrvConvRenamed
     | SrvConvSelected
     | SrvConversationStatus
     | SrvError

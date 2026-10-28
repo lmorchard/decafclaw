@@ -5,6 +5,7 @@ import { textRequest as __textRequest } from '../core/request';
 /* eslint-disable */
 import type { AttachmentResponse } from '../models/AttachmentResponse';
 import type { AutocompleteResponse } from '../models/AutocompleteResponse';
+import type { BookmarksResponse } from '../models/BookmarksResponse';
 import type { CanvasMutationResponse } from '../models/CanvasMutationResponse';
 import type { CanvasNewTabResponse } from '../models/CanvasNewTabResponse';
 import type { CanvasStateResponse } from '../models/CanvasStateResponse';
@@ -31,6 +32,9 @@ import type { ScheduleListResponse } from '../models/ScheduleListResponse';
 import type { ScheduleResetResponse } from '../models/ScheduleResetResponse';
 import type { ScheduleRunResponse } from '../models/ScheduleRunResponse';
 import type { ScheduleUpdateResponse } from '../models/ScheduleUpdateResponse';
+import type { ShellPresetItem } from '../models/ShellPresetItem';
+import type { ShellPresetMutateResponse } from '../models/ShellPresetMutateResponse';
+import type { SideQuestionCancelResponse } from '../models/SideQuestionCancelResponse';
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
@@ -344,6 +348,56 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/conversations/{id}/history',
+        });
+    }
+    /**
+     * Handle Side Question
+     * Stream an ephemeral explanation-only side question via SSE.
+     * @param id
+     * @param requestBody
+     * @returns any SSE stream of response tokens and completion events
+     * @throws ApiError
+     */
+    public static handleSideQuestionApiConversationsIdSideQuestionPost(
+        id: string,
+        requestBody: {
+            question: string;
+            side_history?: (Array<Record<string, string>> | null);
+            model?: (string | null);
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/side-question',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Handle Cancel Side Question
+     * Cancel in-flight side questions for a conversation.
+     * @param id
+     * @returns SideQuestionCancelResponse Successful Response
+     * @throws ApiError
+     */
+    public static handleCancelSideQuestionApiConversationsIdSideQuestionCancelPost(
+        id: string,
+    ): CancelablePromise<SideQuestionCancelResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/side-question/cancel',
+            path: {
+                'id': id,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
@@ -996,6 +1050,8 @@ export class DefaultService {
             allowed_tools?: (Array<string> | null);
             disallowed_tools?: (Array<string> | null);
             required_skills?: (Array<string> | null);
+            required_servers?: (Array<string> | null);
+            server_timeout?: (number | null);
             shell_patterns?: (Array<string> | null);
             email_recipients?: (Array<string> | null);
             pre_script?: (string | null);
@@ -1014,6 +1070,8 @@ export class DefaultService {
             allowed_tools?: (Array<string> | null);
             disallowed_tools?: (Array<string> | null);
             required_skills?: (Array<string> | null);
+            required_servers?: (Array<string> | null);
+            server_timeout?: (number | null);
             shell_patterns?: (Array<string> | null);
             email_recipients?: (Array<string> | null);
             pre_script?: (string | null);
@@ -1033,6 +1091,8 @@ export class DefaultService {
             allowed_tools?: (Array<string> | null);
             disallowed_tools?: (Array<string> | null);
             required_skills?: (Array<string> | null);
+            required_servers?: (Array<string> | null);
+            server_timeout?: (number | null);
             shell_patterns?: (Array<string> | null);
             email_recipients?: (Array<string> | null);
             pre_script?: (string | null);
@@ -1263,6 +1323,109 @@ export class DefaultService {
     }
     /**
      * Wrapper
+     * @returns BookmarksResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiBookmarksGet(): CancelablePromise<BookmarksResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/bookmarks',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns BookmarksResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiBookmarksPost(
+        requestBody: {
+            target: 'files' | 'vault';
+            path: string;
+            label?: (string | null);
+            kind: 'file' | 'dir' | 'page' | 'folder';
+        },
+    ): CancelablePromise<BookmarksResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/bookmarks',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param target
+     * @param path
+     * @returns BookmarksResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiBookmarksDelete(
+        target: 'files' | 'vault',
+        path: string,
+    ): CancelablePromise<BookmarksResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/bookmarks',
+            query: {
+                'target': target,
+                'path': path,
+            },
+        });
+    }
+    /**
+     * Wrapper
+     * @returns ShellPresetItem Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiShellApprovalPresetsGet(): CancelablePromise<Array<ShellPresetItem>> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/shell-approval/presets',
+        });
+    }
+    /**
+     * Wrapper
+     * @param name
+     * @param requestBody
+     * @returns ShellPresetMutateResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiShellApprovalPresetsNamePut(
+        name: string,
+        requestBody: {
+            rules: Array<string>;
+        },
+    ): CancelablePromise<ShellPresetMutateResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/shell-approval/presets/{name}',
+            path: {
+                'name': name,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param name
+     * @returns ShellPresetMutateResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiShellApprovalPresetsNameDelete(
+        name: string,
+    ): CancelablePromise<ShellPresetMutateResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/shell-approval/presets/{name}',
+            path: {
+                'name': name,
+            },
+        });
+    }
+    /**
+     * Wrapper
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -1339,6 +1502,56 @@ export class DefaultService {
     ): CancelablePromise<StickyResponse> {
         return __request(OpenAPI, {
             method: 'GET',
+            url: '/api/sticky/{conv_id}',
+            path: {
+                'conv_id': convId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Post Sticky State
+     * Pin a widget into the conversation's sticky slot. Backs external
+     * progress updates (e.g. long-running scripts posting live status).
+     * @param convId
+     * @param requestBody
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static postStickyStateApiStickyConvIdPost(
+        convId: string,
+        requestBody: {
+            widget_type: string;
+            data: Record<string, JsonValue>;
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/sticky/{conv_id}',
+            path: {
+                'conv_id': convId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete Sticky State
+     * Clear the conversation's sticky slot.
+     * @param convId
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static deleteStickyStateApiStickyConvIdDelete(
+        convId: string,
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
             url: '/api/sticky/{conv_id}',
             path: {
                 'conv_id': convId,

@@ -67,6 +67,17 @@ never grabs focus mid-turn. The policy lives in `static/lib/chat-focus.js`;
 fires on *every* WebSocket message, so a looser condition there steals focus
 on each streamed chunk.
 
+### Side Questions (Explanation Only)
+
+During an active or long-running turn, users can ask out-of-band explanation questions without interrupting or steering the main agent loop (#1141).
+
+- **Opening**: Click the "❓ Side question" button in the upper-right chat actions cluster or the ❓ button in the chat composer.
+- **Isolated execution**: Side questions call `POST /api/conversations/{conv_id}/side-question`, streaming tokens via SSE (`text/event-stream`).
+- **Snapshot context**: The model answers using a snapshot of the current conversation history up to the active iteration (including partial streamed text), but with all tools stripped and an isolated system prompt instructing explanation-only responses without tool invocations.
+- **Independent lifecycle**: Side questions do not touch the conversation's busy flag or turn queue. Cancelling a side question does not affect the main agent turn, and cancelling the main turn does not cancel an in-flight side question.
+- **Send to main conversation**: Clicking "Send to main conversation" on an explanation bubble copies the text into the main chat composer without auto-submitting.
+- **Ephemeral**: Side questions and their follow-up history are session-only and never written to `archive.jsonl` or compaction history.
+
 ### Conversations
 
 The sidebar lists conversations organized into folders:
@@ -77,6 +88,30 @@ The sidebar lists conversations organized into folders:
 - **Virtual folders**: Archived (preserving folder structure) and System (heartbeat, scheduled, delegated)
 - Folder structure is per-user metadata — archive files stay in place
 
+**Periodic auto-titling (#1072).** New conversations start with the first
+100 characters of the opening message as their title, which is often
+scaffolding. After each completed agent turn the server checks in the
+background whether that conversation's user-turn count has just hit a
+cadence point (turns 2, 5, 10, 15, 20 — each attempted at most once per
+server process). When it has, a short LLM call refines the title and the
+result is pushed to open clients as a `conv_renamed` WebSocket event, so
+the sidebar entry updates in place (re-sorted by `updated_at`) without a
+refetch. Only web conversations known to the index are eligible — system
+and child conversations are never retitled. A user rename (sidebar or
+`PATCH /api/conversations/{id}`) is a **permanent opt-out**: it is recorded
+as `custom_title`, the index refuses non-manual renames for such
+conversations, and the titler checks it before any LLM call, so a title
+the user set is never overwritten.
+
+**On-demand retitling (#1156).** Users can trigger title regeneration on demand
+via the `/retitle` chat command or the "Regenerate title" (✨) action button on
+active conversation rows in the sidebar. Both run as server-side side-effect
+commands (no agent turn and no archive write), bypass cadence and exhaustion
+sentinels, and update the index with `manual=False`. An explicit on-demand retitle
+clears `custom_title` so subsequent periodic refinements continue running on
+their normal cadence. On failure (e.g. empty conversation history or LLM error),
+the command fails open with an error toast while preserving the existing title.
+
 ### Vault editor
 
 WYSIWYG markdown editor for vault pages, accessible from the sidebar:
@@ -86,11 +121,12 @@ WYSIWYG markdown editor for vault pages, accessible from the sidebar:
 - **Recent pages** list for quick access
 - Open pages are automatically injected as context in the active conversation
 - `@[[PageName]]` mentions in messages also inject page content
-- **Wiki links in edit mode**: a single click on a `[[link]]` opens a small
-  popover with editable **Target** and **Display text** fields (both commit on
-  **Apply** or Enter; Cancel/Escape/outside-click discards). A plain `[[text]]`
-  link shows its text as the target, and clearing the target stores the plain
-  form. Double-click still navigates to the target page.
+- **Wiki links in edit mode**: a plain click on a `[[link]]` navigates to the
+  target page; Alt/Option+click opens a small popover with a link that
+  navigates to the target and editable **Target** and **Display text** fields
+  (both commit on **Apply** or Enter; Cancel/Escape/outside-click discards).
+  A plain `[[text]]` link shows its text as the target, and clearing the
+  target stores the plain form.
 - **Frontmatter editing**: a metadata strip above the body shows `summary` and
   tags in view mode; edit mode swaps it for typed controls plus a raw-YAML
   escape hatch. See [Editing frontmatter in the web UI](vault.md#editing-frontmatter-in-the-web-ui).
@@ -134,6 +170,30 @@ The **Tags** tab lists every tag in use across the vault, with usage counts, sor
 - Click a page to open it in the wiki pane (same side panel as the Vault editor)
 - The page open in the wiki pane is highlighted in any tag's page list that contains it; closing the pane clears the highlight
 - Backed by `GET /api/vault/tags`
+
+### Bookmarks
+
+Pin the files, folders, vault pages, and vault folders you reach for
+often. Bookmarks are stored server-side, per-agent, at
+`data/{agent_id}/bookmarks.json` (outside the workspace), so they sync
+across desktop, tablet, and mobile sessions.
+
+- **Pinned Bookmarks section** in the Files and Vault sidebars, above
+  the Browse/Recent view toggle. Each row shows a 📁 or 📄 icon plus
+  the label; clicking (or Enter/Space) opens the target — folder rows
+  navigate the sidebar, file rows open the file viewer, and vault page
+  rows open the wiki pane.
+- **☆/★ toggle on folder rows** in both sidebars — bookmark the folder
+  the listing is currently showing.
+- **☆/★ toggle in the viewer toolbars** (`<file-page>` and
+  `<wiki-page>`) — bookmark the file or page you have open.
+- A section renders only when its target has at least one bookmark; an
+  empty section would be dead chrome.
+- All components share one client cache (`lib/bookmarks-store.js`): one
+  `GET /api/bookmarks` per page load, in-flight dedupe, subscribe for
+  live updates after each toggle.
+
+The endpoints are listed in the [REST API](#rest-api) section below.
 
 ### Keyboard navigation
 
@@ -319,7 +379,8 @@ Lit web components in `src/decafclaw/web/static/`:
 | `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter strip/panel: view-mode summary + tags, edit-mode typed controls and raw YAML editor |
 | `context-inspector` | `components/context-inspector.js` | Context diagnostics popover |
 | `notification-inbox` | `components/notification-inbox.js` | Bell icon + dropdown inbox panel |
-| `config-panel` | `components/config-panel.js` | Admin config file editor |
+| `config-panel` | `components/config-panel.js` | Admin config file editor & shell presets tab |
+| `preset-manager` | `components/preset-manager.js` | Shell auto-approval preset manager (list, create, edit, delete) |
 | `confirm-view` | `components/confirm-view.js` | Confirmation dialog for tool approvals |
 | `login-view` | `components/login-view.js` | Login screen |
 | `canvas-panel` | `components/canvas-panel.js` | Canvas side panel and resummon pill |
@@ -392,6 +453,7 @@ Conversation management is REST-only. WebSocket handles only real-time operation
 - Model switching
 - Turn cancellation
 - Tool confirmation responses
+- Conversation title updates (`conv_renamed`, pushed from background auto-titling)
 
 #### Subscriptions are per-socket, and re-established on reconnect
 
@@ -471,6 +533,23 @@ block is preserved verbatim), `frontmatter` (dict patch), or `frontmatter_raw`
 response carries `modified` and the resulting `frontmatter` — `wiki-page` pushes
 that `modified` into `<wiki-editor>` so the body autosave doesn't 409.
 
+### Bookmarks
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/bookmarks` | List the agent's bookmarks: `{files: [...], vault: [...]}` |
+| `POST` | `/api/bookmarks` | Add or update a bookmark. Body `{target: "files"\|"vault", path, kind, label?}`; returns the updated payload |
+| `DELETE` | `/api/bookmarks?target=...&path=...` | Remove a bookmark; returns the updated payload, 404 when absent |
+
+Each entry is `{path, label, kind}`. `kind` must match `target` — `file`
+or `dir` for `files`, `page` or `folder` for `vault` (400 otherwise).
+`label` defaults to the path's last segment when omitted. POST is an
+upsert keyed on `(target, path)`: re-POSTing updates `label`/`kind` and
+never duplicates. Paths must be non-empty, relative, and free of `..`
+and empty segments (400 otherwise).
+
+See [Bookmarks](#bookmarks) for the UI.
+
 ### Uploads
 
 | Method | Endpoint | Description |
@@ -485,10 +564,15 @@ that `modified` into `<wiki-editor>` so the body autosave doesn't 409.
 | `GET` | `/api/config/files` | List editable config files |
 | `GET` | `/api/config/files/{path}` | Read a config file |
 | `PUT` | `/api/config/files/{path}` | Write a config file |
+### Shell Approval Presets
 
-These generated contracts preserve the list's bare-array shape, nullable
-modification times, bundled-default fields, and the config writer's established
-400/409 responses.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/shell-approval/presets` | List all presets with `name`, `rules: list[str]`, `source` (`builtin` \| `config` \| `custom`), and `shadows_config` |
+| `PUT` | `/api/shell-approval/presets/{name}` | Create or replace a custom preset's rules |
+| `DELETE` | `/api/shell-approval/presets/{name}` | Delete a custom preset |
+
+PUT and DELETE on built-in or config preset names return 400. Successful mutations clear reviewer approval caches in active in-memory conversations that reference the modified preset.
 
 ### Notifications
 
@@ -536,6 +620,7 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 - `src/decafclaw/web/auth.py` — Token-based auth, `decafclaw-token` CLI
 - `src/decafclaw/web/conversations.py` — Conversation index metadata
 - `src/decafclaw/web/conversation_folders.py` — Per-user folder management
+- `src/decafclaw/web/bookmarks.py` — Per-agent bookmark index (`data/{agent_id}/bookmarks.json`)
 - `src/decafclaw/web/websocket.py` — WebSocket message handlers
 - `src/decafclaw/web/static/` — Frontend components and service layer
 

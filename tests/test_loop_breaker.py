@@ -313,3 +313,47 @@ def test_ladder_is_nudge_then_redirect_then_stop():
     assert lb.verdict() is LoopVerdict.STOP
     lb.record([CallSignature("edit", fp, False)])
     assert lb.verdict() is LoopVerdict.STOP
+
+
+def test_exempt_tools_do_not_trip_repeat_threshold():
+    """Polling tools like 'wait' and 'shell_background_status' are exempt from
+    repeat-call trip detection (#1107)."""
+    lb = _lb(repeat_threshold=3, error_threshold=99, error_window=6)
+    fp_wait = fingerprint("wait", {"seconds": 5})
+    for _ in range(10):
+        lb.record([CallSignature("wait", fp_wait, False)])
+        assert lb.verdict() is LoopVerdict.NONE
+
+    fp_status = fingerprint("shell_background_status", {"job_id": "job-123"})
+    for _ in range(10):
+        lb.record([CallSignature("shell_background_status", fp_status, False)])
+        assert lb.verdict() is LoopVerdict.NONE
+
+
+def test_exempt_tools_errors_still_trip_error_surge():
+    """Errors from exempt tools must still accumulate toward error surge (#1107)."""
+    lb = _lb(repeat_threshold=99, error_threshold=3, error_window=6)
+    fp_wait = fingerprint("wait", {"seconds": 5})
+    lb.record([CallSignature("wait", fp_wait, True, "{}", "[error: timeout]")])
+    assert lb.verdict() is LoopVerdict.NONE
+    lb.record([CallSignature("wait", fp_wait, True, "{}", "[error: timeout]")])
+    assert lb.verdict() is LoopVerdict.NONE
+    lb.record([CallSignature("wait", fp_wait, True, "{}", "[error: timeout]")])
+    assert lb.verdict() is LoopVerdict.NUDGE
+
+
+def test_exempt_tools_configurable():
+    """Custom exempt tools configured on LoopBreakerConfig are honored."""
+    lb = _lb(repeat_threshold=3, exempt_tools=("custom_poll",))
+    fp_custom = fingerprint("custom_poll", {"id": 1})
+    for _ in range(5):
+        lb.record([CallSignature("custom_poll", fp_custom, False)])
+        assert lb.verdict() is LoopVerdict.NONE
+
+    # 'wait' is no longer exempt because it was overridden
+    fp_wait = fingerprint("wait", {"seconds": 5})
+    for _ in range(2):
+        lb.record([CallSignature("wait", fp_wait, False)])
+        assert lb.verdict() is LoopVerdict.NONE
+    lb.record([CallSignature("wait", fp_wait, False)])
+    assert lb.verdict() is LoopVerdict.NUDGE

@@ -359,7 +359,7 @@ file-editor,
   color: var(--pico-primary);
   text-decoration: underline;
   text-decoration-style: dotted;
-  cursor: default;
+  cursor: pointer;
 }
 
 /* -- Wiki-link edit popover ---------------------------------------------
@@ -370,7 +370,8 @@ file-editor,
 .wiki-link-popover {
   position: fixed;
   z-index: 1000;
-  width: 240px;
+  width: 380px;
+  max-width: calc(100vw - 16px);
   box-sizing: border-box;
   padding: 0.6rem 0.75rem;
   display: flex;
@@ -394,6 +395,28 @@ file-editor,
   width: 100%;
   box-sizing: border-box;
   margin: 0;
+}
+
+/* In-popover navigation link. Tag-qualified: Pico's button:not(...) rules
+   outrank a bare class. Pico v2 re-scopes color vars inside <button>, so
+   the link color comes from the non-aliased primary var. */
+button.wiki-link-popover-goto {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--pico-primary);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.wiki-link-popover-goto:hover {
+  text-decoration-style: solid;
 }
 
 .wiki-link-popover-actions {

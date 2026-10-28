@@ -105,3 +105,16 @@ async def test_compaction_end_renders_success_notice(ctx, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "  [Conversation compacted (12s, 42 → 10 messages, ~50,000 tokens compacted)]\n" in out
     assert "failed" not in out
+
+
+@pytest.mark.asyncio
+async def test_autonomous_wake_rendered_when_idle(ctx, monkeypatch, capsys):
+    """An autonomous wake completion arriving while REPL is idle prints directly (#1119)."""
+    on_event = await _capture_on_event(ctx, monkeypatch)
+    capsys.readouterr()
+
+    await on_event({"type": "message_complete", "final": True, "text": "Build completed in background!"})
+
+    out = capsys.readouterr().out
+    assert "agent (wake)> Build completed in background!" in out
+    assert "you> " in out

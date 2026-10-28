@@ -10,6 +10,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @typedef {object} ChatMessage
  * @property {string} role
  * @property {string} [content]
+ * @property {string} [thinking]
  * @property {string} [timestamp]
  * @property {string} [tool]
  * @property {string} [command]
@@ -160,6 +161,8 @@ export class ConversationStore extends EventTarget {
   get currentMessages() { return this.#messageStore.currentMessages; }
   /** @returns {string} */
   get streamingText() { return this.#messageStore.streamingText; }
+  /** @returns {string} */
+  get streamingThinking() { return this.#messageStore.streamingThinking; }
   /** @returns {boolean} */
   get isBusy() { return this.#busy; }
   /** @returns {boolean} */
@@ -330,6 +333,16 @@ export class ConversationStore extends EventTarget {
     }
   }
 
+  /**
+   * Request an on-demand title regeneration for a conversation (#1156).
+   * Server-side side-effect command handled via websocket like /retitle.
+   * @param {string} convId
+   */
+  retitleConversation(convId) {
+    if (!convId) return;
+    this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: convId, text: '/retitle' });
+  }
+
   /** @param {string} convId @param {string} folder */
   async moveConversation(convId, folder) {
     try {
@@ -489,15 +502,18 @@ export class ConversationStore extends EventTarget {
       this.createConversation('', this.#activeModel, this.#currentFolder);
       return;
     }
-    // `/terminal` is a human-only side-effect command (#442): it opens a
-    // canvas tab via the separate canvas channel and runs NO agent turn, so
-    // it must not engage the conversation's busy/turn machinery. Sending it
-    // like a normal message would set `#busy` with nothing to clear it (the
-    // server sends no MESSAGE_COMPLETE for it) — a perpetual spinner. Fire it
-    // off without the busy flag or an optimistic user echo. Mirrors the
-    // server-side guard in _handle_send.
+    // `/terminal` and `/retitle` are human-only side-effect commands (#442, #1156):
+    // they run NO agent turn, so they must not engage the conversation's busy/turn
+    // machinery. Sending them like a normal message would set `#busy` with nothing
+    // to clear it (the server sends no MESSAGE_COMPLETE for them) — a perpetual
+    // spinner. Fire them off without the busy flag or an optimistic user echo.
+    // Mirrors the server-side guards in _handle_send.
     const trimmed = text.trim();
-    if (trimmed === '/terminal' || trimmed.startsWith('/terminal ')) {
+    if (
+      trimmed === '/terminal' || trimmed.startsWith('/terminal ') ||
+      trimmed === '/retitle' || trimmed.startsWith('/retitle ') ||
+      trimmed === '!retitle' || trimmed.startsWith('!retitle ')
+    ) {
       this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text });
       return;
     }
@@ -669,6 +685,21 @@ export class ConversationStore extends EventTarget {
             this.#setConversationStatus(convId, msg.status || 'idle');
           }
           this.#emitChange();
+        }
+        break;
+      }
+
+      case MESSAGE_TYPES.CONV_RENAMED: {
+        // #1072 — background auto-titling renamed a conversation; patch the
+        // in-memory listing so the sidebar re-renders without a refetch.
+        const convId = msg.conv_id;
+        const conv = convId ? this.#conversations.find((c) => c.conv_id === convId) : undefined;
+        if (conv && msg.title) {
+          conv.title = msg.title;
+          if (msg.updated_at) {
+            conv.updated_at = msg.updated_at;
+            this.#conversations.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+          }
         }
         break;
       }

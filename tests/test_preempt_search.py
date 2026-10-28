@@ -1,5 +1,7 @@
 """Tests for the pre-emptive tool search module."""
 
+import pytest
+
 from decafclaw.preempt_search import (
     STOPWORDS,
     match_tools,
@@ -150,3 +152,41 @@ class TestMatchTools:
         result = match_tools({"vault"}, tools, 10)
         assert len(result) == 1
         assert result[0]["name"] == "vault_read"
+
+
+class TestBackgroundAndSchedulingPreempt:
+    """Verify preemptive search promotion for background operations, waits, and scheduling (#1095)."""
+
+    @pytest.fixture
+    def candidate_tools(self):
+        from decafclaw.skills.background.tools import TOOL_DEFINITIONS as BG_DEFS
+        from decafclaw.tools.core import CORE_TOOL_DEFINITIONS
+        from decafclaw.tools.schedule_tools import SCHEDULE_TOOL_DEFINITIONS
+
+        return CORE_TOOL_DEFINITIONS + BG_DEFS + SCHEDULE_TOOL_DEFINITIONS
+
+    def test_preempt_check_back(self, candidate_tools):
+        tokens = tokenize("Can you check back in a few minutes?")
+        matches = {m["name"] for m in match_tools(tokens, candidate_tools, 10)}
+        assert "wait" in matches or "shell_background_start" in matches or "shell_background_status" in matches
+
+    def test_preempt_monitor_the_build(self, candidate_tools):
+        tokens = tokenize("Please monitor the build")
+        matches = {m["name"] for m in match_tools(tokens, candidate_tools, 10)}
+        assert "shell_background_start" in matches
+        assert "shell_background_status" in matches
+
+    def test_preempt_run_in_background(self, candidate_tools):
+        tokens = tokenize("Run this server in background")
+        matches = {m["name"] for m in match_tools(tokens, candidate_tools, 10)}
+        assert "shell_background_start" in matches
+
+    def test_preempt_watch_progress(self, candidate_tools):
+        tokens = tokenize("Watch progress of that job")
+        matches = {m["name"] for m in match_tools(tokens, candidate_tools, 10)}
+        assert "shell_background_status" in matches
+
+    def test_preempt_schedule_turn(self, candidate_tools):
+        tokens = tokenize("Schedule a check in 10 minutes")
+        matches = {m["name"] for m in match_tools(tokens, candidate_tools, 10)}
+        assert "schedule_turn" in matches

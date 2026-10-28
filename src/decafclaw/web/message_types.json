@@ -15,7 +15,7 @@
     "chunk": {
       "direction": "server_to_client",
       "description": "Streaming text fragment of an in-flight assistant message.",
-      "fields": {"conv_id": "string", "text": "string"}
+      "fields": {"conv_id": "string", "text": "string?", "thinking": "string?"}
     },
     "command_ack": {
       "direction": "server_to_client",
@@ -47,6 +47,11 @@
       "description": "Page of historical messages for a conversation.",
       "fields": {"conv_id": "string", "messages": "array of object", "has_more": "boolean", "context_limit": "number", "read_only": "boolean?", "estimated_tokens": "number?", "active_model": "string?", "available_models": "array of string?", "default_model": "string?", "active_mode": "string?", "available_modes": "array of object?", "turn_active": "boolean?", "pending_confirmation": "object?"}
     },
+    "conv_renamed": {
+      "direction": "server_to_client",
+      "description": "A conversation's sidebar title was updated in the background by the periodic auto-titling task (#1072); update the tab in place.",
+      "fields": {"conv_id": "string", "title": "string", "updated_at": "string"}
+    },
     "conv_selected": {
       "direction": "server_to_client",
       "description": "Confirmation that a select_conv subscribed this socket to the named conversation. May include initial conversation state.",
@@ -65,7 +70,7 @@
     "message_complete": {
       "direction": "server_to_client",
       "description": "Final form of an assistant message after streaming completed (or when replayed from history). `context_usage` is the context meter's value: the post-compaction estimate when this turn compacted and no later LLM call recorded usage, else the turn's last LLM prompt size (#1005, #1054).",
-      "fields": {"conv_id": "string", "text": "string", "role": "string?", "final": "boolean?", "usage": "object?", "context_usage": "number?", "context_limit": "number?"}
+      "fields": {"conv_id": "string", "text": "string", "thinking": "string?", "role": "string?", "final": "boolean?", "usage": "object?", "context_usage": "number?", "context_limit": "number?"}
     },
     "model_changed": {
       "direction": "server_to_client",
@@ -114,8 +119,8 @@
     },
     "turn_complete": {
       "direction": "server_to_client",
-      "description": "An agent turn finished (success, error, or cancellation).",
-      "fields": {"conv_id": "string"}
+      "description": "An agent turn finished (success, error, or cancellation). `reason` names the settle outcome: `completed`, `cancelled`, or `failed`. A pause for confirmation or widget input is not an outcome — the turn is still in flight and no turn_complete is emitted until the pause resolves. Optional on the wire: older servers omit it.",
+      "fields": {"conv_id": "string", "reason": "string?"}
     },
     "turn_start": {
       "direction": "server_to_client",

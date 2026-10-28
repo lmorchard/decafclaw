@@ -19,7 +19,8 @@ export interface SrvCanvasUpdate {
 export interface SrvChunk {
   type: "chunk";
   conv_id: string;
-  text: string;
+  text?: string;
+  thinking?: string;
 }
 
 export interface SrvCommandAck {
@@ -91,6 +92,13 @@ export interface SrvConvHistory {
   pending_confirmation?: Record<string, unknown>;
 }
 
+export interface SrvConvRenamed {
+  type: "conv_renamed";
+  conv_id: string;
+  title: string;
+  updated_at: string;
+}
+
 export interface SrvConvSelected {
   type: "conv_selected";
   conv_id: string;
@@ -114,6 +122,7 @@ export interface SrvMessageComplete {
   type: "message_complete";
   conv_id: string;
   text: string;
+  thinking?: string;
   role?: string;
   final?: boolean;
   usage?: Record<string, unknown>;
@@ -213,6 +222,7 @@ export interface SrvToolStatus {
 export interface SrvTurnComplete {
   type: "turn_complete";
   conv_id: string;
+  reason?: string;
 }
 
 export interface SrvTurnStart {
@@ -307,6 +317,7 @@ export type ServerMessage =
   | SrvConfirmRequest
   | SrvConfirmationResponse
   | SrvConvHistory
+  | SrvConvRenamed
   | SrvConvSelected
   | SrvConversationStatus
   | SrvError

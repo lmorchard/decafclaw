@@ -122,6 +122,18 @@ var OpenAPI = {
   ENCODE_PATH: void 0
 };
 
+// src/decafclaw/web/static/lib/api-client/models/BookmarkEntry.ts
+var BookmarkEntry;
+((BookmarkEntry2) => {
+  let kind;
+  ((kind2) => {
+    kind2["FILE"] = "file";
+    kind2["DIR"] = "dir";
+    kind2["PAGE"] = "page";
+    kind2["FOLDER"] = "folder";
+  })(kind = BookmarkEntry2.kind || (BookmarkEntry2.kind = {}));
+})(BookmarkEntry || (BookmarkEntry = {}));
+
 // src/decafclaw/web/static/lib/api-client/models/ConfigFileEntry.ts
 var ConfigFileEntry;
 ((ConfigFileEntry2) => {
@@ -161,6 +173,17 @@ var ScheduleResponse;
     source_tier2["EXTRA"] = "extra";
   })(source_tier = ScheduleResponse2.source_tier || (ScheduleResponse2.source_tier = {}));
 })(ScheduleResponse || (ScheduleResponse = {}));
+
+// src/decafclaw/web/static/lib/api-client/models/ShellPresetItem.ts
+var ShellPresetItem;
+((ShellPresetItem2) => {
+  let source;
+  ((source2) => {
+    source2["BUILTIN"] = "builtin";
+    source2["CONFIG"] = "config";
+    source2["CUSTOM"] = "custom";
+  })(source = ShellPresetItem2.source || (ShellPresetItem2.source = {}));
+})(ShellPresetItem || (ShellPresetItem = {}));
 
 // src/decafclaw/web/static/lib/api-client/models/VaultCompletion.ts
 var VaultCompletion;
@@ -453,13 +476,15 @@ var request2 = (config, options) => {
   const create = options.method === "POST" && options.url === "/api/conversations";
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && (options.method !== "GET" || !sticky && !listing)) {
+  const bookmarks = options.url === "/api/bookmarks";
+  const shellPresets = options.url === "/api/shell-approval/presets" || options.url === "/api/shell-approval/presets/{name}";
+  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && !shellPresets && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = upload ? `${config.BASE}/api/upload/${encodeURIComponent(options.path.conv_id)}` : workspaceMutation ? `${config.BASE}/api/workspace/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}${options.query ? getQueryString(options.query) : ""}` : schedule && options.path ? `${config.BASE}${options.url.replace("{name}", encodeURIComponent(options.path.name))}` : schedule ? `${config.BASE}${options.url}` : configFile && options.path ? `${config.BASE}/api/config/files/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : configFile ? `${config.BASE}/api/config/files` : vaultMutation && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = upload ? `${config.BASE}/api/upload/${encodeURIComponent(options.path.conv_id)}` : workspaceMutation ? `${config.BASE}/api/workspace/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}${options.query ? getQueryString(options.query) : ""}` : schedule && options.path ? `${config.BASE}${options.url.replace("{name}", encodeURIComponent(options.path.name))}` : schedule ? `${config.BASE}${options.url}` : configFile && options.path ? `${config.BASE}/api/config/files/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : configFile ? `${config.BASE}/api/config/files` : vaultMutation && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : shellPresets && options.path?.name ? `${config.BASE}/api/shell-approval/presets/${encodeURIComponent(options.path.name)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       let formData = getFormData(options);
@@ -493,7 +518,7 @@ var request2 = (config, options) => {
         ok: response.ok,
         status: response.status,
         statusText: response.statusText,
-        body: folder && !response.ok ? await response.json() : vaultMutation && !response.ok ? await response.json().catch(() => void 0) : scheduleMutation && !response.ok ? await response.json().catch(() => void 0) : workspaceMutation && !response.ok ? workspaceSave ? await response.text() : await response.json().catch(() => void 0) : canvasNewTab && !response.ok ? await response.text() : void 0
+        body: folder && !response.ok ? await response.json() : vaultMutation && !response.ok ? await response.json().catch(() => void 0) : scheduleMutation && !response.ok ? await response.json().catch(() => void 0) : workspaceMutation && !response.ok ? workspaceSave ? await response.text() : await response.json().catch(() => void 0) : canvasNewTab && !response.ok ? await response.text() : shellPresets && !response.ok ? await response.json().catch(() => void 0) : void 0
       });
       if (options.discardResponse || workspaceRename) {
         resolve2(void 0);
@@ -738,6 +763,47 @@ var DefaultService = class {
     return request2(OpenAPI, {
       method: "GET",
       url: "/api/conversations/{id}/history"
+    });
+  }
+  /**
+   * Handle Side Question
+   * Stream an ephemeral explanation-only side question via SSE.
+   * @param id
+   * @param requestBody
+   * @returns any SSE stream of response tokens and completion events
+   * @throws ApiError
+   */
+  static handleSideQuestionApiConversationsIdSideQuestionPost(id, requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/conversations/{id}/side-question",
+      path: {
+        "id": id
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
+   * Handle Cancel Side Question
+   * Cancel in-flight side questions for a conversation.
+   * @param id
+   * @returns SideQuestionCancelResponse Successful Response
+   * @throws ApiError
+   */
+  static handleCancelSideQuestionApiConversationsIdSideQuestionCancelPost(id) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/conversations/{id}/side-question/cancel",
+      path: {
+        "id": id
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
@@ -1268,6 +1334,92 @@ var DefaultService = class {
   }
   /**
    * Wrapper
+   * @returns BookmarksResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiBookmarksGet() {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/bookmarks"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns BookmarksResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiBookmarksPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/bookmarks",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param target
+   * @param path
+   * @returns BookmarksResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiBookmarksDelete(target, path) {
+    return request2(OpenAPI, {
+      method: "DELETE",
+      url: "/api/bookmarks",
+      query: {
+        "target": target,
+        "path": path
+      }
+    });
+  }
+  /**
+   * Wrapper
+   * @returns ShellPresetItem Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiShellApprovalPresetsGet() {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/shell-approval/presets"
+    });
+  }
+  /**
+   * Wrapper
+   * @param name
+   * @param requestBody
+   * @returns ShellPresetMutateResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiShellApprovalPresetsNamePut(name, requestBody) {
+    return request2(OpenAPI, {
+      method: "PUT",
+      url: "/api/shell-approval/presets/{name}",
+      path: {
+        "name": name
+      },
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param name
+   * @returns ShellPresetMutateResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiShellApprovalPresetsNameDelete(name) {
+    return request2(OpenAPI, {
+      method: "DELETE",
+      url: "/api/shell-approval/presets/{name}",
+      path: {
+        "name": name
+      }
+    });
+  }
+  /**
+   * Wrapper
    * @returns any Successful Response
    * @throws ApiError
    */
@@ -1340,6 +1492,48 @@ var DefaultService = class {
   static getStickyStateApiStickyConvIdGet(convId) {
     return request2(OpenAPI, {
       method: "GET",
+      url: "/api/sticky/{conv_id}",
+      path: {
+        "conv_id": convId
+      },
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
+   * Post Sticky State
+   * Pin a widget into the conversation's sticky slot. Backs external
+   * progress updates (e.g. long-running scripts posting live status).
+   * @param convId
+   * @param requestBody
+   * @returns any Successful Response
+   * @throws ApiError
+   */
+  static postStickyStateApiStickyConvIdPost(convId, requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/sticky/{conv_id}",
+      path: {
+        "conv_id": convId
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
+   * Delete Sticky State
+   * Clear the conversation's sticky slot.
+   * @param convId
+   * @returns any Successful Response
+   * @throws ApiError
+   */
+  static deleteStickyStateApiStickyConvIdDelete(convId) {
+    return request2(OpenAPI, {
+      method: "DELETE",
       url: "/api/sticky/{conv_id}",
       path: {
         "conv_id": convId
@@ -1437,6 +1631,7 @@ var buildNativeWorkspaceUrl = (path, mode = "segments") => {
 };
 export {
   ApiError,
+  BookmarkEntry,
   CancelError,
   CancelablePromise,
   ConfigFileEntry,
@@ -1445,6 +1640,7 @@ export {
   McpCompletion,
   OpenAPI,
   ScheduleResponse,
+  ShellPresetItem,
   VaultCompletion,
   WorkspaceFileEntry,
   buildNativeWorkspaceUrl

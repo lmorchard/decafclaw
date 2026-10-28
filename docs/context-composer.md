@@ -36,9 +36,9 @@ deferred-tool catalog is wrapped in `build_deferred_list_text`).
 | `<agent_role>` | `AGENT.md` | Always present (bundled default or admin override) |
 | `<user_context>` | `USER.md` | Only when the file exists in the agent dir and has non-empty content |
 | `<custom_context>` | `CUSTOM.md` | Only when the file exists in the agent dir and has non-empty content (agent-maintained via `update_system_prompt`, #24) |
-| `<skill_catalog>` | `build_catalog_text` output (listing of Active + Available skills) | Only when at least one skill was discovered |
+| `<skill_catalog>` | `build_catalog_text` output (compact single-line `- **name**: summary` listing of Active + Available skills, #1051) | Only when at least one skill was discovered |
 | `<loaded_skills>` | Bodies of always-loaded bundled skills, one nested `<skill name="…">` block per body | Only when at least one bundled always-loaded skill exists |
-| `<deferred_tools>` | `build_deferred_list_text` output (separate system message) | Only when at least one deferred tool entry is emitted |
+| `<deferred_tools>` | `build_deferred_list_text` output (compact single-line `- name — summary` listing in separate system message, #1051) | Only when at least one deferred tool entry is emitted |
 | `<tool_guidance>` | `build_tool_guidance_text` output (separate system message) | Only when at least one active tool defines `prompt_guidelines` |
 
 Empty sections emit nothing — no dangling `<tag></tag>` wrappers.
@@ -210,6 +210,18 @@ Before each interactive turn, the composer automatically surfaces relevant vault
 
 The context is archived for auditability and persists in conversation history.
 
+### Deduplication across turns (#1157)
+
+Automatic proactive retrieval is deduplicated per conversation: a vault page that an earlier turn already surfaced is not surfaced again.
+
+1. After injection, the composer records the injected vault file paths on the `vault_retrieval` message it archives (`file_paths`).
+2. On each later turn, the composer rebuilds the already-retrieved set from archived history via `get_already_retrieved_paths` and filters retrieval candidates (keyed on `file_path`) against it. Explicit references (`@[[Page]]` in `_compose_vault_references`) continue to use `get_already_injected_pages` to track `vault_references` separately, so explicit mentions are not suppressed by earlier proactive retrievals.
+3. The live `ComposerState.injected_paths` set is still unioned in for in-flight injections within a turn.
+
+Explicit `vault_search` tool results are not deduplicated — the agent asked for those, so they are delivered in full.
+
+Compaction resets the in-memory injected paths (`ComposerState.reset_for_compaction()`), and a compacted history replaces the archived turns, so pages can surface again after compaction.
+
 ### Configuration
 
 All settings live under the `vault_retrieval` section in `config.json`:
@@ -336,7 +348,9 @@ importance-formula rework) build on.
 Once per interactive turn, after `_score_candidates` produces the full
 scored candidate list and before the `min_composite_score` threshold and
 token-budget trim are applied, `_compose_vault_retrieval` publishes a
-`retrieval_event` on the event bus:
+`retrieval_event` on the event bus. The full scored list includes
+already-injected candidates, which are tagged with
+`drop_reason: "already_injected"` instead of being silently absent (#1157).
 
 ```python
 {
@@ -351,7 +365,7 @@ token-budget trim are applied, `_compose_vault_retrieval` publishes a
             "importance": float,
             "composite_score": float,
             "included": bool,            # survived score threshold AND budget trim
-            "drop_reason": str | None,   # None | "score" | "budget"
+            "drop_reason": str | None,   # None | "score" | "budget" | "already_injected"
         },
         ...
     ],
@@ -391,7 +405,7 @@ By default, every interactive turn auto-injects scored full-body candidates from
 
 `@[[Page]]` mentions inject regardless of mode (those are user-driven explicit references, not auto-retrieval).
 
-**Empty result sets** (no candidates, all suppressed because already-injected, or all below `relevance.min_composite_score`) emit a `SourceEntry` with `mode` and `injection_skipped: true` so the context inspector can show retrieval ran but didn't inject.
+**Empty result sets** (no candidates, all suppressed because already-injected, or all below `relevance.min_composite_score`) emit a `SourceEntry` with `mode` and `injection_skipped: true` so the context inspector can show retrieval ran but didn't inject. When the cause is already-injected suppression, the entry also records `drop_reason: "already_injected"`, the suppressed count, `candidates_considered`, and the token budget that was evaluated.
 
 **Headlines format** uses each result's `summary` frontmatter field when present, falls back to a truncated body excerpt. Configurable cap via `vault_retrieval.headline_summary_max_chars` (default 120).
 

@@ -98,6 +98,8 @@ async def run_interactive(ctx: "Context"):
         model = conv_state.persisted.active_model if conv_state else ""
         return resolve_streaming(config, model)
 
+    is_interactive = {"active": False}
+
     # Subscribe to conversation events for terminal display
     async def on_event(event):
         event_type = event.get("type", "")
@@ -178,7 +180,12 @@ async def run_interactive(ctx: "Context"):
             if event.get("suppress_user_message"):
                 return  # WAKE turn ended with BACKGROUND_WAKE_OK — silent end
             if event.get("final"):
-                last_response_text["text"] = event.get("text", "")
+                text = event.get("text", "")
+                if is_interactive["active"]:
+                    last_response_text["text"] = text
+                else:
+                    if text:
+                        print(f"\nagent (wake)> {text}\nyou> ", end="", flush=True)
 
         elif event_type == "turn_complete":
             turn_done.set()
@@ -193,6 +200,10 @@ async def run_interactive(ctx: "Context"):
     def terminal_context_setup(ctx_arg):
         ctx_arg.media_handler = LocalFileMediaHandler(config)
         ctx_arg.channel_name = "interactive"
+        ctx_arg.transport = "terminal"
+
+    # Recover pending wake timers for this interactive conversation (#1119 review)
+    await manager.scheduled_wakes.startup_scan_conversation(conv_id)
 
     # Start heartbeat timer
     shutdown_event = asyncio.Event()
@@ -239,16 +250,20 @@ async def run_interactive(ctx: "Context"):
 
             turn_done.clear()
             last_response_text["text"] = ""
+            is_interactive["active"] = True
 
-            await manager.send_message(
-                conv_id,
-                user_input,
-                user_id=ctx.user_id,
-                context_setup=terminal_context_setup,
-            )
+            try:
+                await manager.send_message(
+                    conv_id,
+                    user_input,
+                    user_id=ctx.user_id,
+                    context_setup=terminal_context_setup,
+                )
 
-            # Wait for the turn to complete
-            await turn_done.wait()
+                # Wait for the turn to complete
+                await turn_done.wait()
+            finally:
+                is_interactive["active"] = False
 
             if is_streaming():
                 print()  # final newline after streamed text
@@ -263,4 +278,5 @@ async def run_interactive(ctx: "Context"):
             await heartbeat_task
         except asyncio.CancelledError:
             pass
+        await manager.shutdown()
         await shutdown_mcp()

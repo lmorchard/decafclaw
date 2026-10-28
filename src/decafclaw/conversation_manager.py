@@ -15,6 +15,14 @@ from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
 
+from .approval_state import (
+    APPROVAL_STATE_FIELDS,
+    ApprovalState,
+    apply_approval_state,
+    approval_state_from,
+    load_approval_state,
+    save_approval_state,
+)
 from .archive import append_message
 from .confirmations import (
     ConfirmationAction,
@@ -25,6 +33,8 @@ from .confirmations import (
 from .context_composer import InjectionCursors
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
+from .llm import call_llm_streaming
+from .llm.history import without_provider_data
 from .media import ToolResult
 from .workflow.journal import load_journal, save_journal
 from .workflow.paths import workflow_path
@@ -51,6 +61,16 @@ CANCEL_MARKER_TEXT = (
 TURN_ABORTED_MARKER_TEXT = (
     "[The previous turn failed unexpectedly. Treat the prior request "
     "as not fulfilled and wait for the user to clarify.]"
+)
+
+
+# Isolated system prompt for side questions (issue #1141).
+SIDE_QUESTION_SYSTEM_PROMPT = (
+    "You are an assistant providing an explanation of an ongoing conversation and task.\n"
+    "The user is asking an out-of-band side question for explanation, clarification, or background "
+    "information about the task, code, tools, or reasoning shown in the conversation snapshot.\n"
+    "Provide a concise, direct, and helpful explanation.\n"
+    "Do NOT propose tool invocations or execute actions; this is an explanation-only response."
 )
 
 
@@ -293,7 +313,7 @@ class ConversationState:
     agent_task: asyncio.Task | None = None
     cancel_event: asyncio.Event | None = None
     steer_event: asyncio.Event | None = None
-
+    active_context: Any = None
     # Streamed assistant text accumulated for the current turn so the
     # cancel handler can persist whatever was delivered before cancel
     # (issue #491). Reset at turn start; appended to in on_stream_chunk
@@ -313,10 +333,13 @@ class ConversationState:
     # `turn_aborted_marker_written` is the parallel latch for the
     # exception-path marker (issue #517).
     partial_assistant_chunks: list[str] = field(default_factory=list)
+    partial_assistant_thinking_chunks: list[str] = field(default_factory=list)
+    current_iteration_assistant_chunks: list[str] = field(default_factory=list)
     partial_assistant_archived: bool = False
     cancel_observed_by_agent: bool = False
     cancel_marker_written: bool = False
     turn_aborted_marker_written: bool = False
+    active_side_questions: set[asyncio.Event] = field(default_factory=set)
 
     # Per-conversation lock guarding the dispatch decision and the
     # confirmation lifecycle (issue #440). Held during:
@@ -379,6 +402,13 @@ class ConversationState:
     # interact with it.
     persisted: PersistedTurnState = field(default_factory=PersistedTurnState)
 
+    # Last approval state known to be on disk (#1160) — loaded from the
+    # approval_state sidecar when the state is created, updated on each
+    # successful write. ``None`` means no sidecar exists for this
+    # conversation yet (a fresh or pre-#1160 conversation). Used to skip
+    # unchanged writes and to gate the legacy archived-mode fallback.
+    approval_state_saved: ApprovalState | None = None
+
     # Circuit breaker state (rate-limiting turns per conversation)
     turn_times: list = field(default_factory=list)
     paused_until: float = 0
@@ -394,6 +424,9 @@ class ConversationState:
     # pass an explicit context_setup when enqueuing WAKE turns.
     last_user_id: str = ""
     last_context_setup: Callable | None = None
+    last_channel_id: str = ""
+    last_thread_id: str = ""
+    last_transport: str = ""
 
     # Event stream subscribers: sub_id -> callback
     subscribers: dict[str, Callable] = field(default_factory=dict)
@@ -418,6 +451,7 @@ class ConversationManager:
         self.event_bus = event_bus
         self.confirmation_registry = confirmation_registry or ConfirmationRegistry()
         self.terminal_registry = terminal_registry
+        self.mm_client: Any | None = None
 
         # Workflow user-input resumes via the confirmation recovery path.
         from .workflow.resume import WorkflowUserInputHandler
@@ -443,11 +477,41 @@ class ConversationManager:
         self._wake_max_per_window = bg.wake_max_per_window if bg else 20
         self._wake_window_sec = bg.wake_window_sec if bg else 60
 
+        from .scheduled_wakes import ScheduledWakeManager
+
+        self.scheduled_wakes = ScheduledWakeManager(self.config, self)
+
     def _get_or_create(self, conv_id: str) -> ConversationState:
         """Get existing conversation state or create a new one."""
         if conv_id not in self._conversations:
-            self._conversations[conv_id] = ConversationState(conv_id=conv_id)
+            state = ConversationState(conv_id=conv_id)
+            loaded = load_approval_state(self.config, conv_id)
+            if loaded is not None:
+                apply_approval_state(state.persisted, loaded)
+                state.approval_state_saved = loaded
+            self._conversations[conv_id] = state
         return self._conversations[conv_id]
+
+    def ensure_state(self, conv_id: str) -> ConversationState:
+        """Get conversation state, creating it (and loading durable
+        per-conversation state such as approval settings) if needed."""
+        return self._get_or_create(conv_id)
+
+    def _persist_approval_state(self, state: ConversationState) -> None:
+        """Write the approval-state sidecar if it changed (#1160).
+
+        Skips the write when the state matches what is already on disk,
+        and when a conversation without a sidecar still has default
+        state (no file for conversations that never touched approvals).
+        Fail-open: a failed write logs and leaves the snapshot unchanged
+        so the next change retries.
+        """
+        current = approval_state_from(state.persisted)
+        saved = state.approval_state_saved
+        if current == saved or (saved is None and current == ApprovalState()):
+            return
+        if save_approval_state(self.config, state.conv_id, current):
+            state.approval_state_saved = current
 
     def _circuit_breaker_tripped(self, state: ConversationState) -> bool:
         """Check if the circuit breaker has tripped for a conversation.
@@ -525,9 +589,11 @@ class ConversationManager:
                         len(state.wake_times),
                         self._wake_window_sec,
                     )
+                    setattr(future, "rate_limited", True)
                     future.set_result(None)
                     return future
                 state.wake_times.append(now)
+                setattr(future, "rate_limited", False)
 
             # USER-kind only: circuit breaker check + user_message event emission.
             if kind is TurnKind.USER:
@@ -601,7 +667,10 @@ class ConversationManager:
                     state.steer_event.set()
 
                 log.info("Conv %s busy, queued message", conv_id[:8])
+                setattr(future, "queued", True)
                 return future
+
+            setattr(future, "queued", False)
 
             # Not busy. Start turn immediately.
             # But wait, we appended it to inbox.jsonl. We need to pop it!
@@ -946,6 +1015,7 @@ class ConversationManager:
         """
         state = self._conversations.get(conv_id)
         if state is not None:
+            state.current_iteration_assistant_chunks = []
             state.partial_assistant_archived = True
 
     def note_cancel_observed_by_agent(self, conv_id: str) -> None:
@@ -1096,22 +1166,173 @@ class ConversationManager:
             agent_task.cancel()
             log.info("Cancelled agent turn for conv %s", conv_id[:8])
 
+    def cancel_side_question(self, conv_id: str) -> None:
+        """Cancel any in-flight side questions for a conversation."""
+        state = self._conversations.get(conv_id)
+        if state:
+            for ev in list(state.active_side_questions):
+                ev.set()
+
+    async def run_side_question(
+        self,
+        conv_id: str,
+        question: str,
+        *,
+        side_history: list[dict[str, Any]] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        on_chunk: Callable | None = None,
+        model_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Run an ephemeral explanation-only side question against the current conversation snapshot.
+
+        Snapshots current conversation messages up to the current turn (including
+        partial assistant text if streaming), strips all tools from the model call,
+        uses an isolated Context and system prompt, and executes independently of
+        the main task's busy flag and turn queue (issue #1141).
+        """
+        if cancel_event is None:
+            cancel_event = asyncio.Event()
+        state = self._get_or_create(conv_id)
+        state.active_side_questions.add(cancel_event)
+
+        # Snapshot current conversation messages up to current turn
+        if state.history:
+            raw_history = list(state.history)
+        else:
+            raw_history = list(self.load_history(conv_id))
+
+        # Include partial assistant text if streaming currently and turn is busy (Finding 1)
+        if state.busy and state.current_iteration_assistant_chunks:
+            partial = "".join(state.current_iteration_assistant_chunks).strip()
+            if partial and (not raw_history or raw_history[-1].get("content") != partial):
+                raw_history.append({"role": "assistant", "content": partial})
+
+        snapshot_messages: list[dict[str, Any]] = []
+        for m in raw_history:
+            role = m.get("role")
+            if role in ("compaction", "model", "mode", "decision_slice"):
+                continue
+
+            content = m.get("content") or ""
+
+            if role == "assistant":
+                tool_calls = m.get("tool_calls")
+                if tool_calls:
+                    tc_lines = []
+                    for tc in tool_calls:
+                        fn = tc.get("function", {})
+                        name = fn.get("name", "")
+                        args = fn.get("arguments", "")
+                        tc_lines.append(f"[Tool call: {name}({args})]")
+                    tc_text = "\n".join(tc_lines)
+                    merged = f"{content}\n{tc_text}".strip() if content else tc_text
+                    snapshot_messages.append({"role": "assistant", "content": merged})
+                elif content:
+                    snapshot_messages.append({"role": "assistant", "content": content})
+            elif role == "tool":
+                tool_id = m.get("tool_call_id", "")
+                name = m.get("name", "")
+                prefix = (
+                    f"[Tool result: {name}]" if name else (f"[Tool result ({tool_id})]" if tool_id else "[Tool result]")
+                )
+                snapshot_messages.append({"role": "user", "content": f"{prefix}: {content}"})
+            elif role in (
+                "vault_retrieval",
+                "vault_references",
+                "workspace_references",
+                "mcp_references",
+                "conversation_notes",
+                "recent_journal",
+                "cancel_marker",
+                "turn_aborted",
+            ):
+                if content:
+                    snapshot_messages.append({"role": "user", "content": content})
+            elif role in ("user", "system"):
+                msg_entry: dict[str, Any] = {"role": role, "content": content}
+                if m.get("attachments"):
+                    msg_entry["attachments"] = m["attachments"]
+                if content or m.get("attachments"):
+                    snapshot_messages.append(msg_entry)
+
+        from .attachments import resolve_attachments
+
+        snapshot_messages = [resolve_attachments(self.config, m) for m in snapshot_messages]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": SIDE_QUESTION_SYSTEM_PROMPT}]
+        messages.extend(without_provider_data(snapshot_messages))
+
+        if side_history:
+            for sm in side_history:
+                sm_role = sm.get("role", "user")
+                sm_content = sm.get("content", "")
+                if sm_role in ("user", "assistant") and sm_content:
+                    messages.append({"role": sm_role, "content": sm_content})
+
+        messages.append({"role": "user", "content": question})
+
+        from .context import Context
+
+        ctx = Context(config=self.config, event_bus=self.event_bus)
+        ctx.conv_id = conv_id
+        ctx.user_id = state.last_user_id if state else ""
+        ctx.cancelled = cancel_event
+        ctx.skip_reflection = True
+        ctx.skip_vault_retrieval = True
+        ctx.skip_archive = True
+        ctx.tools.allowed = set()
+        ctx.tools.extra = {}
+        ctx.tools.extra_definitions = []
+
+        effective_model = model_name or (state.persisted.active_model if state else "") or self.config.default_model
+        ctx.active_model = effective_model
+
+        chunks_received: list[str] = []
+
+        async def handle_chunk(chunk_type: str, data: Any):
+            if chunk_type == "text":
+                if isinstance(data, str):
+                    chunks_received.append(data)
+                if on_chunk:
+                    if asyncio.iscoroutinefunction(on_chunk):
+                        await on_chunk(chunk_type, data)
+                    else:
+                        res = on_chunk(chunk_type, data)
+                        if asyncio.iscoroutine(res):
+                            await res
+
+        try:
+            response = await call_llm_streaming(
+                self.config,
+                messages,
+                tools=None,
+                on_chunk=handle_chunk,
+                cancel_event=cancel_event,
+                model_name=effective_model,
+            )
+            if on_chunk and not chunks_received and response and response.get("content"):
+                await handle_chunk("text", response["content"])
+            return response or {"role": "assistant", "content": "".join(chunks_received)}
+        finally:
+            state.active_side_questions.discard(cancel_event)
+
     async def shutdown(self, timeout: float = 15) -> None:
         """Wait for all in-flight agent turns to complete, then clean up.
 
         Called during graceful shutdown so running turns can finish
         rather than being abandoned.
         """
+        # Stop timers first so idle conversations cannot spawn new turns during shutdown (#1119 review)
+        await self.scheduled_wakes.shutdown()
+
         tasks = [s.agent_task for s in self._conversations.values() if s.agent_task and not s.agent_task.done()]
-        if not tasks:
-            return
-        log.info("Waiting for %d in-flight agent turn(s)...", len(tasks))
-        done, pending = await asyncio.wait(tasks, timeout=timeout)
-        if pending:
-            log.warning("Shutdown timeout: cancelling %d agent turn(s)", len(pending))
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+        if tasks:
+            log.info("Waiting for %d in-flight agent turn(s)...", len(tasks))
+            done, pending = await asyncio.wait(tasks, timeout=timeout)
+            if pending:
+                log.warning("Shutdown timeout: cancelling %d agent turn(s)", len(pending))
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
 
     def get_state(self, conv_id: str) -> ConversationState | None:
         """Get current conversation state, or None if not tracked."""
@@ -1158,6 +1379,8 @@ class ConversationManager:
         state = self._get_or_create(conv_id)
         if key in _PERSISTED_FIELD_NAMES:
             setattr(state.persisted, key, value)
+            if key in APPROVAL_STATE_FIELDS:
+                self._persist_approval_state(state)
             return
         if hasattr(state, key):
             setattr(state, key, value)
@@ -1288,6 +1511,25 @@ class ConversationManager:
         state.confirmation_response = None
         self._promote_next_confirmation_unlocked(state, conv_id)
 
+    async def _emit_confirmation_request(
+        self,
+        state: "ConversationState",
+        conv_id: str,
+        request: ConfirmationRequest,
+    ) -> None:
+        payload = _confirmation_request_payload(request)
+        await self.emit(conv_id, payload)
+        if not state.subscribers and getattr(state, "last_transport", "") == "mattermost":
+            await self.event_bus.publish(
+                {
+                    **payload,
+                    "conv_id": conv_id,
+                    "channel_id": getattr(state, "last_channel_id", ""),
+                    "thread_id": getattr(state, "last_thread_id", ""),
+                    "transport": "mattermost",
+                }
+            )
+
     async def request_confirmation(
         self,
         conv_id: str,
@@ -1348,7 +1590,7 @@ class ConversationManager:
             # transports to render UI (outside the lock — emit awaits
             # subscribers).
             request.timestamp = datetime.now(timezone.utc).isoformat()
-            await self.emit(conv_id, _confirmation_request_payload(request))
+            await self._emit_confirmation_request(state, conv_id, request)
         else:
             # Queued path: wait (no timeout) for promotion. The promote
             # helper will assign state.confirmation_event for our turn
@@ -1381,7 +1623,7 @@ class ConversationManager:
             # caller could null the field (Copilot review on this PR).
             event = queued.active_event
             request.timestamp = datetime.now(timezone.utc).isoformat()
-            await self.emit(conv_id, _confirmation_request_payload(request))
+            await self._emit_confirmation_request(state, conv_id, request)
 
         await self._publish_status(conv_id, "waiting")
         # By either path (active or queued-then-promoted) ``event`` is
@@ -1556,7 +1798,12 @@ class ConversationManager:
         state.busy = True
         state.cancel_event = asyncio.Event()
         state.steer_event = asyncio.Event()
-        await self._publish_status(conv_id, "busy")
+        try:
+            await self._publish_status(conv_id, "busy")
+        except BaseException:
+            state.busy = False
+            state.agent_task = None
+            raise
         # -- Persist / inherit transport context --------------------------------
         # USER turns save their user_id and context_setup so that subsequent
         # WAKE turns (which have no transport of their own) can inherit them.
@@ -1612,6 +1859,7 @@ class ConversationManager:
             # Restore per-conversation state from previous turns
             self._restore_per_conv_state(state, ctx)
 
+        state.active_context = ctx
         # Apply command context if provided
         if command_ctx:
             from .commands import apply_command_ctx
@@ -1626,13 +1874,20 @@ class ConversationManager:
             else:
                 context_setup(ctx)
 
+        if kind is TurnKind.USER or kind is TurnKind.WAKE:
+            state.last_channel_id = getattr(ctx, "channel_id", "")
+            state.last_thread_id = getattr(ctx, "thread_id", "")
+            state.last_transport = getattr(ctx, "transport", "")
+
         # Reset cancel/partial accounting so this turn starts clean and
         # a subsequent cancel only persists what we actually streamed.
         state.partial_assistant_chunks = []
+        state.partial_assistant_thinking_chunks = []
         state.partial_assistant_archived = False
         state.cancel_observed_by_agent = False
         state.cancel_marker_written = False
         state.turn_aborted_marker_written = False
+        state.current_iteration_assistant_chunks = []
 
         # Set up streaming callback that emits to subscribers.
         # WAKE turns don't stream: the agent may emit BACKGROUND_WAKE_OK to
@@ -1646,11 +1901,22 @@ class ConversationManager:
                 if chunk_type == "text":
                     if isinstance(data, str):
                         state.partial_assistant_chunks.append(data)
+                        state.current_iteration_assistant_chunks.append(data)
                     await self.emit(
                         conv_id,
                         {
                             "type": "chunk",
                             "text": data,
+                        },
+                    )
+                elif chunk_type == "thinking":
+                    if isinstance(data, str):
+                        state.partial_assistant_thinking_chunks.append(data)
+                    await self.emit(
+                        conv_id,
+                        {
+                            "type": "chunk",
+                            "thinking": data,
                         },
                     )
                 elif chunk_type == "done":
@@ -1670,6 +1936,22 @@ class ConversationManager:
         # Set up manager-based confirmation on the context so tools
         # route through the manager instead of the event bus
         async def ctx_request_confirmation(request: ConfirmationRequest) -> ConfirmationResponse:
+            if getattr(ctx, "is_unattended", False):
+                action_name = (
+                    request.action_type.value if hasattr(request.action_type, "value") else str(request.action_type)
+                )
+                log.warning(
+                    "Confirmation requested on unattended turn (%s, action: %s); denying immediately",
+                    getattr(ctx, "task_mode", ""),
+                    action_name,
+                )
+                return ConfirmationResponse(
+                    confirmation_id=request.confirmation_id,
+                    approved=False,
+                    data={
+                        "reason": f"Interactive confirmation unavailable on unattended turn ({getattr(ctx, 'task_mode', '')})"
+                    },
+                )
             return await self.request_confirmation(conv_id, request)
 
         ctx.request_confirmation = ctx_request_confirmation
@@ -1706,6 +1988,18 @@ class ConversationManager:
 
             async def _forward():
                 await self.emit(conv_id, event)
+                if not state.subscribers and getattr(state, "last_transport", "") == "mattermost":
+                    if event.get("type") == "tool_media_uploaded":
+                        await self.event_bus.publish(
+                            {
+                                "type": "tool_media_uploaded_fallback",
+                                "conv_id": conv_id,
+                                "file_ids": event.get("file_ids", []),
+                                "channel_id": getattr(state, "last_channel_id", ""),
+                                "thread_id": getattr(state, "last_thread_id", ""),
+                                "transport": "mattermost",
+                            }
+                        )
 
             task = asyncio.create_task(_forward())
             forward_tasks.add(task)
@@ -1759,36 +2053,48 @@ class ConversationManager:
                 if state.cancel_observed_by_agent:
                     self._write_cancel_marker_once(conv_id, state)
                 suppress = kind is TurnKind.WAKE and is_background_wake_ok(result)
-                await self.emit(
-                    conv_id,
-                    {
-                        "type": "message_complete",
-                        "role": "assistant",
-                        "text": response_text,
-                        "media": response_media,
-                        "final": True,
-                        "suppress_user_message": suppress,
-                        "usage": {
-                            "prompt_tokens": ctx.tokens.last_prompt,
-                            "completion_tokens": ctx.tokens.total_completion,
-                            "total_tokens": (ctx.tokens.total_prompt + ctx.tokens.total_completion),
-                        },
-                        # #1005 — the context meter's value, kept separate from
-                        # usage.prompt_tokens so the provider's actual LLM
-                        # usage record stays intact (the recorder stores that
-                        # verbatim). On a compacting turn last_prompt is the
-                        # last LLM call — which by definition exceeded the
-                        # threshold and would show >100% — so this carries the
-                        # post-compaction estimate instead. Non-compacting
-                        # turns fall back to the real last_prompt.
-                        "context_usage": (
-                            ctx.tokens.last_compaction_estimate
-                            if ctx.tokens.last_compaction_estimate is not None
-                            else ctx.tokens.last_prompt
-                        ),
-                        "context_limit": self.config.compaction.max_tokens,
-                    },
+                response_thinking = getattr(result, "thinking", None) or (
+                    "".join(state.partial_assistant_thinking_chunks)
+                    if state.partial_assistant_thinking_chunks
+                    else None
                 )
+                msg_complete_payload = {
+                    "type": "message_complete",
+                    "role": "assistant",
+                    "text": response_text,
+                    "media": response_media,
+                    "final": True,
+                    "suppress_user_message": suppress,
+                    "usage": {
+                        "prompt_tokens": ctx.tokens.last_prompt,
+                        "completion_tokens": ctx.tokens.total_completion,
+                        "total_tokens": (ctx.tokens.total_prompt + ctx.tokens.total_completion),
+                    },
+                    "context_usage": (
+                        ctx.tokens.last_compaction_estimate
+                        if ctx.tokens.last_compaction_estimate is not None
+                        else ctx.tokens.last_prompt
+                    ),
+                    "context_limit": self.config.compaction.max_tokens,
+                }
+                if response_thinking:
+                    msg_complete_payload["thinking"] = response_thinking
+                await self.emit(conv_id, msg_complete_payload)
+                if kind is TurnKind.WAKE and not suppress and not state.subscribers:
+                    transport = getattr(ctx, "transport", "")
+                    if transport == "mattermost" or (ctx.channel_id and ctx.channel_id != conv_id):
+                        await self.event_bus.publish(
+                            {
+                                "type": "wake_delivery",
+                                "conv_id": conv_id,
+                                "channel_id": ctx.channel_id,
+                                "thread_id": getattr(ctx, "thread_id", ""),
+                                "user_id": user_id,
+                                "transport": transport or "mattermost",
+                                "text": response_text,
+                                "media": response_media,
+                            }
+                        )
             except asyncio.CancelledError:
                 log.info("Agent turn cancelled for conv %s", conv_id[:8])
                 result_holder.append(ToolResult(text="[cancelled]", termination_reason="cancelled"))
@@ -1838,6 +2144,17 @@ class ConversationManager:
                 is_cancelled = (
                     state.cancel_event is not None and state.cancel_event.is_set()
                 ) or state.cancel_observed_by_agent
+                # turn_complete outcome (#1000): "cancelled" wins (a cancel
+                # may be observed after the turn already unwound), then
+                # "failed" (the except-Exception branch tagged the result),
+                # else "completed". A pause (pending confirmation) is not an
+                # outcome — the turn is still in flight and turn_complete
+                # has not fired yet.
+                turn_reason = "completed"
+                if is_cancelled:
+                    turn_reason = "cancelled"
+                elif result_holder and result_holder[0].termination_reason == "error":
+                    turn_reason = "failed"
                 async with state.lock:
                     # Circuit breaker tracking is USER-only (task turns are
                     # externally rate-limited by the scheduler / heartbeat
@@ -1846,10 +2163,13 @@ class ConversationManager:
                         self._circuit_breaker_record(state)
                     state.busy = False
                     state.agent_task = None
+                    state.active_context = None
                     state.cancel_event = None
                     state.steer_event = None
-
-                await self.emit(conv_id, {"type": "turn_complete"})
+                    state.partial_assistant_chunks = []
+                    state.partial_assistant_thinking_chunks = []
+                    state.current_iteration_assistant_chunks = []
+                await self.emit(conv_id, {"type": "turn_complete", "reason": turn_reason})
 
                 # Resolve the caller's future (if any) before draining pending
                 if future is not None and not future.done():
@@ -1927,6 +2247,7 @@ class ConversationManager:
                     setattr(persisted, f.name, value)
             elif value:
                 setattr(persisted, f.name, value)
+        self._persist_approval_state(state)
 
     async def _drain_pending(self, state: ConversationState) -> None:
         """Process queued entries one batch at a time.
@@ -2035,6 +2356,34 @@ class ConversationManager:
 
                 tid = q.get("turn_id")
                 inmem = state.inmemory_turn_data.pop(tid, {})
+                drain_setup = inmem.get("context_setup")
+                meta = q.get("metadata") or {}
+                sched_id = meta.get("schedule_id")
+                if sched_id:
+                    # Consume the queued record upon execution (both live and recovered) (#1119 review)
+                    from .scheduled_wakes import load_scheduled_wakes, save_scheduled_wakes
+
+                    schedules = load_scheduled_wakes(self.config, state.conv_id)
+                    sched = next((s for s in schedules if s.schedule_id == sched_id), None)
+                    if sched:
+                        remaining = [s for s in schedules if s.schedule_id != sched.schedule_id]
+                        try:
+                            save_scheduled_wakes(self.config, state.conv_id, remaining)
+                        except OSError:
+                            pass
+
+                        if drain_setup is None:
+                            ch = sched.channel_id
+                            th = sched.thread_id
+                            tr = sched.transport
+
+                            def drain_setup(ctx, _ch=ch, _th=th, _tr=tr):
+                                if _ch:
+                                    ctx.channel_id = _ch
+                                if _th:
+                                    ctx.thread_id = _th
+                                if _tr:
+                                    ctx.transport = _tr
 
                 log.info("Draining queued %s turn for conv %s", q["kind"], state.conv_id[:8])
                 await self._start_turn(
@@ -2042,7 +2391,7 @@ class ConversationManager:
                     q["text"],
                     kind=get_kind(q["kind"]),
                     user_id=q.get("user_id", ""),
-                    context_setup=inmem.get("context_setup"),
+                    context_setup=drain_setup,
                     archive_text=q.get("archive_text", ""),
                     attachments=inmem.get("attachments"),
                     command_ctx=inmem.get("command_ctx"),
@@ -2097,7 +2446,14 @@ class ConversationManager:
                 # but startup_scan is async!
                 await self._drain_pending(state)
 
+        # Phase 4: Resume pending scheduled wakes (#1103)
+        await self.startup_scan_scheduled_wakes()
+
         return recovered
+
+    async def startup_scan_scheduled_wakes(self) -> int:
+        """Scan and resume pending scheduled wakes after transports are ready."""
+        return await self.scheduled_wakes.startup_scan()
 
     async def startup_scan_workflows(self) -> int:
         """Recover workflows in status='running' by re-enqueueing them (#581).

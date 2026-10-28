@@ -95,18 +95,25 @@ def repair_arbitrary_json_types(static: Path) -> None:
     json_import = "import type { JsonValue } from '../models/JsonValue';"
     if json_import not in source:
         source = source.replace(import_marker, json_import + "\n" + import_marker)
-    method_start = source.index("    public static postCanvasNewTabApiCanvasConvIdNewTabPost(")
-    method_end = source.index("    /**", method_start)
-    method = source[method_start:method_end]
+    # Arbitrary-JSON request bodies: repair each method whose Pydantic
+    # ``dict[str, object]`` field the stock generator emits as
+    # ``Record<string, any>``.
     old_data = "            data: Record<string, any>;"
-    if method.count(old_data) == 1:
-        method = method.replace(old_data, "            data: Record<string, JsonValue>;")
-    elif "            data:" in method:
-        raise ValueError("Unexpected generated canvas new-tab arbitrary data field")
-    # A contract-change test can deliberately rename ``data``. Leave that
-    # incompatible generated signature alone so tsc reports the unchanged
-    # caller rather than the generator masking it with its own failure.
-    source = source[:method_start] + method + source[method_end:]
+    for method_name in (
+        "postCanvasNewTabApiCanvasConvIdNewTabPost",
+        "postStickyStateApiStickyConvIdPost",
+    ):
+        method_start = source.index(f"    public static {method_name}(")
+        method_end = source.index("    /**", method_start)
+        method = source[method_start:method_end]
+        if method.count(old_data) == 1:
+            method = method.replace(old_data, "            data: Record<string, JsonValue>;")
+        elif "            data:" in method:
+            raise ValueError(f"Unexpected generated {method_name} arbitrary data field")
+        # A contract-change test can deliberately rename ``data``. Leave that
+        # incompatible generated signature alone so tsc reports the unchanged
+        # caller rather than the generator masking it with its own failure.
+        source = source[:method_start] + method + source[method_end:]
     service.write_text(source)
 
 

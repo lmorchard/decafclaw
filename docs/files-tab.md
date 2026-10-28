@@ -13,6 +13,7 @@ The Files tab is a sidebar in the web UI that browses, views, and edits the agen
 - **Delete files** (empty parent folders auto-prune afterwards).
 - **Show/hide dotfiles** via a toggle (persisted in `localStorage`).
 - **Switch between Browse and Recent views** — Recent lists the 50 most recently modified files across the workspace.
+- **Bookmark files and folders** — pinned **Bookmarks** section in the sidebar plus ☆/★ toggles on folder rows and in the file viewer ([Bookmarks](#bookmarks)).
 
 > Create-file, create-folder, and empty-folder deletion are available via the REST API (see the table below) but are not wired to UI controls in v1 — the UI may expose them later.
 
@@ -68,6 +69,25 @@ The Files sidebar listens for two events and re-fetches its current view:
 - **`turn-complete`** (window-level) — fanned out by `app.js` from the WebSocket `turn_complete` message. The Files sidebar re-fetches silently (no "Loading…" placeholder) but **only when the Files tab is the active sidebar tab**. Other tabs don't fire spurious fetches, and the refetch never clobbers a listing the user is looking at.
 
 There is no live file-watcher or websocket-push for external changes — edits made via SSH or another tool won't surface until the next refetch trigger or manual folder re-navigation.
+
+## Bookmarks
+
+Pin the files and folders you reach for often. Bookmarks are stored
+per-agent at `data/{agent_id}/bookmarks.json` (outside the workspace)
+and shared with the Vault tab — see [Web UI — Bookmarks](web-ui.md#bookmarks)
+for the full feature.
+
+- **Pinned Bookmarks section** at the top of the sidebar, above the
+  Browse/Recent toggle. Each row shows a 📁 or 📄 icon plus the label;
+  clicking (or Enter/Space) opens the target — folder rows navigate the
+  breadcrumb view, file rows open the file viewer.
+- **☆/★ toggle on folder rows** bookmarks the folder the listing is
+  currently showing.
+- **☆/★ toggle in the file viewer toolbar** bookmarks the open file.
+- The section renders only when at least one file/dir bookmark exists.
+- All components share one client cache (`lib/bookmarks-store.js`): one
+  `GET /api/bookmarks` per page load, in-flight dedupe, live updates
+  after each toggle.
 
 ## Editor (CodeMirror 6)
 
@@ -126,20 +146,25 @@ characters outside Latin-1. That pre-existing server-header bug is tracked in
 | PUT | `/api/workspace/{path}?rename_to=...` | Rename/move. Target exists → 409. Secret/readonly on either side → 403. |
 | DELETE | `/api/workspace/{path}` | Delete file or empty folder. Non-empty folder → 409. Secret/readonly → 403. Empty parents auto-prune. |
 | POST | `/api/workspace` | Create file or folder. Body `{type: "file"\|"folder", path, content?}`. Exists → 409. |
+| GET | `/api/bookmarks` | The agent's bookmarks: `{files: [...], vault: [...]}`. |
+| POST | `/api/bookmarks` | Add or update a bookmark. Body `{target: "files"\|"vault", path, kind, label?}`; `label` defaults to the path's last segment. Re-POSTing an existing `(target, path)` updates it (upsert). Returns the updated payload. |
+| DELETE | `/api/bookmarks?target=...&path=...` | Remove a bookmark. Returns the updated payload; 404 when absent. |
 
 ## Components involved
 
 Frontend (all under `src/decafclaw/web/static/`):
 
-- `components/vault-sidebar.js` — Vault tab, extracted from the old inline sidebar code as part of this feature's refactor.
-- `components/files-sidebar.js` — Files tab: browse/recent views, hidden-file toggle, breadcrumbs, auto-refetch listeners.
-- `components/file-page.js` — File content pane: routes to text editor / image preview / binary download based on `kind`; owns rename, delete, conflict recovery.
+- `components/vault-sidebar.js` — Vault tab sidebar: page/folder browsing, recent pages, pinned Bookmarks section (extracted from the old inline sidebar code as part of the Files-tab refactor).
+- `components/files-sidebar.js` — Files tab: browse/recent views, hidden-file toggle, breadcrumbs, pinned Bookmarks section, auto-refetch listeners.
+- `components/file-page.js` — File content pane: routes to text editor / image preview / binary download based on `kind`; owns rename, delete, bookmark toggle, conflict recovery.
 - `components/file-editor.js` — CodeMirror 6 editor with debounced auto-save and conflict events.
 - `lib/api-client/` — Generated request methods, response types, and native-file URL builder used by workspace reads and mutations.
+- `lib/bookmarks-store.js` — Shared bookmark cache: one `GET /api/bookmarks` per page load, in-flight dedupe, subscribe, toggle.
 - `codemirror-entry.js` — Bundling barrel for the CodeMirror language packs.
 
 Backend:
 
+- `src/decafclaw/web/bookmarks.py` — Per-agent bookmark store (`data/{agent_id}/bookmarks.json`, atomic writes).
 - `src/decafclaw/web/workspace_paths.py` — Path resolution, pattern constants, kind detection.
 - `src/decafclaw/http_server.py` — Handlers: `workspace_list`, `workspace_recent`, `workspace_read_json`, `workspace_write`, `workspace_delete`, `workspace_create`; helpers `_workspace_file_entry`, `_can_write_as_text`, `_workspace_rename`, `_prune_empty_parents`.
 

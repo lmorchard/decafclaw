@@ -353,6 +353,21 @@ def _convert_prompt_response(result):
     return "\n".join(parts) if parts else "(no messages)"
 
 
+# -- Exceptions ----------------------------------------------------------------
+
+
+class MCPReadinessError(RuntimeError):
+    """Base error for MCP readiness policy failures."""
+
+
+class MCPTimeoutError(MCPReadinessError):
+    """Raised when waiting for required MCP servers times out."""
+
+
+class MCPConnectionError(MCPReadinessError):
+    """Raised when a required MCP server fails to connect."""
+
+
 # -- MCP Registry --------------------------------------------------------------
 
 
@@ -361,7 +376,7 @@ class MCPServerState:
     """Runtime state for a single MCP server connection."""
 
     config: MCPServerConfig
-    status: str = "disconnected"  # connected, disconnected, failed
+    status: str = "disconnected"  # connecting, connected, disconnected, failed
     session: Any = None  # ClientSession when connected
     capabilities: Any = None  # ServerCapabilities from initialize()
     tools: dict = field(default_factory=dict)  # namespaced_name -> callable
@@ -371,7 +386,15 @@ class MCPServerState:
     prompts: list = field(default_factory=list)  # from list_prompts()
     retry_count: int = 0
     last_retry_time: float = 0.0
+    error: str | None = None
+    settled_event: asyncio.Event = field(default_factory=asyncio.Event)
+    _generation: int = 0
     _exit_stack: Any = None  # AsyncExitStack for managing context lifetimes
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if server is ready/connected."""
+        return self.status in ("connected", "ready")
 
 
 class MCPRegistry:
@@ -380,6 +403,8 @@ class MCPRegistry:
     def __init__(self, event_bus=None):
         self.servers: dict[str, MCPServerState] = {}
         self.event_bus = event_bus
+        self._closed: bool = False
+        self._connection_tasks: dict[str, asyncio.Task] = {}
 
     def get_tools(self) -> dict:
         """Return all MCP tools as {namespaced_name: async_callable}."""
@@ -514,16 +539,99 @@ class MCPRegistry:
 
         return handler
 
-    async def connect_server(self, server_config: MCPServerConfig):
+    def start_connect_server(self, server_config: MCPServerConfig) -> asyncio.Task:
+        """Start connecting to a single MCP server in the background."""
+        name = server_config.name
+        state = self.servers.get(name)
+        if state is None:
+            state = MCPServerState(config=server_config, status="connecting")
+            self.servers[name] = state
+        else:
+            state.config = server_config
+            state.status = "connecting"
+            state.error = None
+            state.settled_event.clear()
+
+        # Increment generation counter so old in-flight attempts cannot clobber replacement
+        state._generation += 1
+        gen = state._generation
+
+        # Cancel existing task for this server if one is still running
+        existing_task = self._connection_tasks.get(name)
+        if existing_task and not existing_task.done():
+            existing_task.cancel()
+
+        task = asyncio.create_task(
+            self._connect_server_wrapper(server_config, gen),
+            name=f"mcp-connect-{name}",
+        )
+        self._connection_tasks[name] = task
+
+        def _cleanup(t):
+            if self._connection_tasks.get(name) is t:
+                self._connection_tasks.pop(name, None)
+
+        task.add_done_callback(_cleanup)
+        return task
+
+    async def _connect_server_wrapper(self, server_config: MCPServerConfig, gen: int):
+        try:
+            await self.connect_server(server_config, generation=gen)
+        except asyncio.CancelledError:
+            log.debug("MCP connection task for %r cancelled", server_config.name)
+            raise
+
+    def start_connect_all(self, configs: list[MCPServerConfig]) -> list[asyncio.Task]:
+        """Start connecting all configured MCP servers concurrently in the background."""
+        if self._closed:
+            log.debug("MCPRegistry is closed; not starting connections")
+            return []
+        return [self.start_connect_server(cfg) for cfg in configs]
+
+    async def connect_server(self, server_config: MCPServerConfig, generation: int | None = None):
         """Connect to a single MCP server and discover its tools."""
         name = server_config.name
-        state = MCPServerState(config=server_config)
-        self.servers[name] = state
+        state = self.servers.get(name)
+        if self._closed:
+            log.debug("MCPRegistry is closed; skipping connection to %r", name)
+            if state:
+                state.status = "disconnected"
+                state.settled_event.set()
+            return
 
+        if state is None:
+            state = MCPServerState(config=server_config, status="connecting")
+            self.servers[name] = state
+        else:
+            state.config = server_config
+            state.status = "connecting"
+            state.error = None
+            state.settled_event.clear()
+
+        if generation is None:
+            state._generation += 1
+            gen = state._generation
+        else:
+            gen = generation
+
+        if self.event_bus:
+            try:
+                await self.event_bus.publish({"type": "mcp_server_connecting", "server": name})
+            except Exception as e:
+                log.debug("failed to publish mcp_server_connecting: %s", e)
+
+        exit_stack = contextlib.AsyncExitStack()
         try:
-            exit_stack = contextlib.AsyncExitStack()
             state._exit_stack = exit_stack
             await exit_stack.__aenter__()
+
+            if self._closed or state._generation != gen:
+                await exit_stack.__aexit__(None, None, None)
+                if state._generation == gen:
+                    state._exit_stack = None
+                    state.status = "disconnected"
+                    state.settled_event.set()
+                return
 
             message_handler = self._make_notification_handler(name)
 
@@ -533,7 +641,27 @@ class MCPRegistry:
                 session = await self._connect_http(exit_stack, server_config, message_handler)
             else:
                 log.warning(f"MCP server {name!r}: unknown type {server_config.type!r}")
-                state.status = "failed"
+                await exit_stack.__aexit__(None, None, None)
+                if state._generation == gen:
+                    state.status = "failed"
+                    state.error = f"unknown server type {server_config.type!r}"
+                    state._exit_stack = None
+                    state.settled_event.set()
+                if self.event_bus:
+                    try:
+                        await self.event_bus.publish(
+                            {"type": "mcp_server_failed", "server": name, "error": state.error or "unknown type"}
+                        )
+                    except Exception as exc:
+                        log.debug("failed to publish mcp_server_failed: %s", exc)
+                return
+
+            if self._closed or state._generation != gen:
+                await exit_stack.__aexit__(None, None, None)
+                if state._generation == gen:
+                    state._exit_stack = None
+                    state.status = "disconnected"
+                    state.settled_event.set()
                 return
 
             state.session = session
@@ -545,14 +673,19 @@ class MCPRegistry:
             tools_result = await session.list_tools()
             tools_list = tools_result.tools if hasattr(tools_result, "tools") else tools_result
 
+            new_tools = {}
+            new_defs = []
             for mcp_tool in tools_list:
                 tool_def = _convert_tool_definition(name, mcp_tool)
                 namespaced = tool_def["function"]["name"]
                 tool_name = mcp_tool.name if hasattr(mcp_tool, "name") else mcp_tool["name"]
 
                 # Build async callable wrapper (uses state.session, supports reconnect)
-                state.tools[namespaced] = self._make_tool_caller(name, tool_name, server_config.timeout)
-                state.tool_definitions.append(tool_def)
+                new_tools[namespaced] = self._make_tool_caller(name, tool_name, server_config.timeout)
+                new_defs.append(tool_def)
+
+            state.tools = new_tools
+            state.tool_definitions = new_defs
 
             # Discover resources if server supports them
             if state.capabilities and getattr(state.capabilities, "resources", None):
@@ -572,8 +705,23 @@ class MCPRegistry:
                 except Exception as e:
                     log.warning(f"MCP server {name!r}: failed to discover prompts: {e}")
 
+            if self._closed or state._generation != gen:
+                await exit_stack.__aexit__(None, None, None)
+                if state._generation == gen:
+                    state._exit_stack = None
+                    state.tools.clear()
+                    state.tool_definitions.clear()
+                    state.resources.clear()
+                    state.resource_templates.clear()
+                    state.prompts.clear()
+                    state.status = "disconnected"
+                    state.settled_event.set()
+                return
+
             state.status = "connected"
             state.retry_count = 0
+            state.error = None
+            state.settled_event.set()
 
             if self.event_bus:
                 try:
@@ -586,16 +734,35 @@ class MCPRegistry:
                 f"{len(state.resources)} resource(s), {len(state.prompts)} prompt(s)"
             )
 
+        except asyncio.CancelledError:
+            log.debug(f"MCP server {name!r} connection cancelled")
+            try:
+                await exit_stack.__aexit__(None, None, None)
+            except Exception as exc:
+                log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
+            if state._generation == gen:
+                if state._exit_stack is exit_stack:
+                    state._exit_stack = None
+                state.status = "disconnected"
+                state.settled_event.set()
+            raise
         except BaseException as e:
             log.warning(f"MCP server {name!r} failed to connect: {e}")
-            state.status = "failed"
-            # Clean up the exit stack on failure
-            if state._exit_stack:
+            try:
+                await exit_stack.__aexit__(None, None, None)
+            except Exception as exc:
+                log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
+            if state._generation == gen:
+                state.status = "failed"
+                state.error = str(e)
+                state.settled_event.set()
+                if state._exit_stack is exit_stack:
+                    state._exit_stack = None
+            if self.event_bus:
                 try:
-                    await state._exit_stack.__aexit__(None, None, None)
+                    await self.event_bus.publish({"type": "mcp_server_failed", "server": name, "error": str(e)})
                 except Exception as exc:
-                    log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
-                state._exit_stack = None
+                    log.debug("failed to publish mcp_server_failed: %s", exc)
 
     async def _connect_stdio(self, exit_stack, server_config, message_handler=None):
         """Connect to a stdio MCP server. Override in tests."""
@@ -712,20 +879,76 @@ class MCPRegistry:
             new_state.retry_count = state.retry_count + 1
         return False
 
-    async def connect_all(self, configs: list[MCPServerConfig]):
+    async def connect_all(self, configs: list[MCPServerConfig], wait: bool = True):
         """Connect to all configured MCP servers (in parallel)."""
-        await asyncio.gather(
-            *(self.connect_server(cfg) for cfg in configs),
-            return_exceptions=True,
-        )
+        tasks = self.start_connect_all(configs)
+        if wait and tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         connected = sum(1 for s in self.servers.values() if s.status == "connected")
         failed = sum(1 for s in self.servers.values() if s.status == "failed")
+        connecting = sum(1 for s in self.servers.values() if s.status == "connecting")
         total_tools = sum(len(s.tools) for s in self.servers.values())
-        log.info(f"MCP: {connected} connected, {failed} failed, {total_tools} tool(s)")
+        log.info(f"MCP: {connected} connected, {connecting} connecting, {failed} failed, {total_tools} tool(s)")
+
+    async def wait_for_server(self, name: str, timeout: float | None = 30.0) -> bool:
+        """Wait for a single MCP server to connect or fail within deadline.
+
+        Raises:
+            MCPReadinessError: If the server is not configured.
+            MCPTimeoutError: If the server does not settle before timeout.
+            MCPConnectionError: If the server fails to connect.
+        """
+        state = self.servers.get(name)
+        if not state:
+            raise MCPReadinessError(f"Required MCP server {name!r} is not configured")
+
+        if state.status == "connected":
+            return True
+        if state.status == "failed":
+            raise MCPConnectionError(
+                f"Required MCP server {name!r} failed to connect: {state.error or 'connection failed'}"
+            )
+
+        try:
+            if timeout is not None:
+                await asyncio.wait_for(state.settled_event.wait(), timeout=timeout)
+            else:
+                await state.settled_event.wait()
+        except asyncio.TimeoutError:
+            raise MCPTimeoutError(f"Required MCP server {name!r} timed out waiting for connection after {timeout}s")
+
+        if state.status == "connected":
+            return True
+        raise MCPConnectionError(
+            f"Required MCP server {name!r} failed to connect: {state.error or 'connection failed'}"
+        )
+
+    async def wait_for_servers(self, names: list[str] | set[str], timeout: float = 30.0) -> dict[str, bool]:
+        """Wait for declared server dependencies concurrently within deadline.
+
+        Does not wait on unmentioned slow servers.
+        Raises MCPReadinessError/MCPTimeoutError/MCPConnectionError on failure.
+        """
+        if not names:
+            return {}
+
+        results = await asyncio.gather(
+            *(self.wait_for_server(name, timeout=timeout) for name in names),
+            return_exceptions=False,
+        )
+        return dict(zip(names, results))
 
     async def disconnect_server(self, name: str):
         """Disconnect a single MCP server."""
+        task = self._connection_tasks.pop(name, None)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
         state = self.servers.get(name)
         if not state:
             return
@@ -747,10 +970,33 @@ class MCPRegistry:
         state.resource_templates.clear()
         state.prompts.clear()
         state.status = "disconnected"
+        state.settled_event.set()
         log.info(f"MCP server {name!r} disconnected")
+        if self.event_bus:
+            try:
+                await self.event_bus.publish({"type": "mcp_server_disconnected", "server": name})
+            except Exception as exc:
+                log.debug("failed to publish mcp_server_disconnected: %s", exc)
 
     async def disconnect_all(self):
-        """Disconnect all MCP servers with a timeout."""
+        """Cancel in-flight connection tasks and disconnect all servers with a timeout."""
+        self._closed = True
+
+        # 1. Cancel and drain all in-flight connection tasks
+        active_tasks = [t for t in self._connection_tasks.values() if not t.done()]
+        for t in active_tasks:
+            t.cancel()
+        if active_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*active_tasks, return_exceptions=True),
+                    timeout=5.0,
+                )
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+        self._connection_tasks.clear()
+
+        # 2. Disconnect any connected servers
         try:
             await asyncio.wait_for(
                 self._disconnect_all_inner(),
@@ -775,21 +1021,26 @@ def get_registry() -> MCPRegistry | None:
     return _registry
 
 
-async def init_mcp(config, event_bus=None):
-    """Initialize the global MCP registry and connect all servers."""
+async def init_mcp(config, event_bus=None, wait: bool = False) -> MCPRegistry | None:
+    """Initialize the global MCP registry and start connecting servers."""
     global _registry
     configs = load_mcp_config(config)
     if not configs:
         log.info("No MCP servers configured")
-        return
+        return None
 
     _registry = MCPRegistry(event_bus=event_bus)
-    await _registry.connect_all(configs)
+    if wait:
+        await _registry.connect_all(configs, wait=True)
+    else:
+        _registry.start_connect_all(configs)
+    return _registry
 
 
 async def shutdown_mcp():
     """Shut down the global MCP registry."""
     global _registry
     if _registry:
-        await _registry.disconnect_all()
+        reg = _registry
         _registry = None
+        await reg.disconnect_all()

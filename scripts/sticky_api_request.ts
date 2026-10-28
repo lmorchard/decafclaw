@@ -48,7 +48,10 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && (options.method !== 'GET' || (!sticky && !listing))) {
+    const bookmarks = options.url === '/api/bookmarks';
+    const shellPresets = options.url === '/api/shell-approval/presets'
+        || options.url === '/api/shell-approval/presets/{name}';
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && !shellPresets && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
@@ -85,6 +88,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                 ? `${config.BASE}${options.url.replace('{id}', encodeURIComponent(options.path!.id))}${query ? getQueryString(query) : ''}`
                 : sticky
                 ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path!.conv_id)}`
+                : shellPresets && options.path?.name
+                ? `${config.BASE}/api/shell-approval/presets/${encodeURIComponent(options.path.name)}`
                 : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
             const headers = await getHeaders(config, options);
             if (onCancel.isCancelled) return;
@@ -125,7 +130,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                     : workspaceMutation && !response.ok
                         ? workspaceSave ? await response.text()
                             : await response.json().catch(() => undefined)
-                    : canvasNewTab && !response.ok ? await response.text() : undefined,
+                    : canvasNewTab && !response.ok ? await response.text()
+                    : shellPresets && !response.ok ? await response.json().catch(() => undefined) : undefined,
             });
             if (options.discardResponse || workspaceRename) {
                 // Void overloads and the legacy rename caller do not decode

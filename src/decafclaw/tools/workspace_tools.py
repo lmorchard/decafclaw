@@ -19,6 +19,13 @@ from ..media import ToolResult, WidgetRequest
 from ..util import find_fuzzy_matches
 from ..workspace_index import invalidate_workspace_file_cache
 from .file_locks import file_lock
+from .workspace_outlines import (
+    find_section,
+    flatten_items,
+    format_outline,
+    get_outline,
+    split_physical_lines,
+)
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -95,6 +102,10 @@ def _file_not_found_with_suggestions(config, path: str) -> ToolResult:
 MAX_READ_LINES = 200
 # Context lines shown in edit tool mini-diffs
 EDIT_CONTEXT_LINES = 3
+# Max characters per file buffer before diff_view widget attachment is suppressed
+MAX_DIFF_WIDGET_CHARS = 50_000
+# Max total lines before diff_view widget attachment is suppressed
+MAX_DIFF_WIDGET_LINES = 1_000
 
 
 def _mini_diff(old_text: str, new_text: str, path: str = "") -> str:
@@ -153,32 +164,93 @@ def _resolve_safe(config, path_str: str) -> Path | None:
 
 
 def tool_workspace_read(
-    ctx: "Context", path: str, start_line: int | None = None, end_line: int | None = None
+    ctx: "Context",
+    path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+    section: str | None = None,
 ) -> str | ToolResult:
-    """Read a file from the agent's workspace, optionally a line range."""
+    """Read a file from the agent's workspace, optionally a line range or section."""
     log.info(f"[tool:workspace_read] {path}")
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
     try:
-        content = resolved.read_text()
+        content = resolved.read_text(encoding="utf-8")
     except FileNotFoundError:
         return _file_not_found_with_suggestions(ctx.config, path)
     except (IsADirectoryError, PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path)
 
-    all_lines = content.splitlines()
+    all_lines = split_physical_lines(content)
     total = len(all_lines)
-    partial = start_line is not None or end_line is not None
-    # Common metadata for programmatic callers — sized in bytes so the
-    # script can decide whether to keep, summarize, or skip without
-    # re-reading. Body is intentionally NOT echoed into `data` (already in
-    # text) to avoid doubling the tool-result token cost.
     base_data: dict = {
         "path": path,
         "size": len(content.encode("utf-8")),
         "lines": total,
     }
+
+    if section is not None:
+        if start_line is not None or end_line is not None:
+            return ToolResult(text="[error: cannot specify both 'section' and 'start_line'/'end_line']")
+        outline_res = get_outline(resolved, content)
+        if not outline_res.is_supported:
+            ext = resolved.suffix.lower()
+            return ToolResult(
+                text=f"[error: cannot retrieve section '{section}': file does not have a structural outline (unsupported type '{ext}')]"
+            )
+        if outline_res.error:
+            return ToolResult(
+                text=f"[error: cannot retrieve section '{section}': file contains syntax error ({outline_res.error})]"
+            )
+        if not outline_res.items:
+            return ToolResult(
+                text=f"[error: cannot retrieve section '{section}': no classes, functions, or headings found in '{path}']"
+            )
+
+        match_item, ambig_matches, known_sections = find_section(outline_res.items, section)
+        if match_item is None:
+            if ambig_matches:
+                return ToolResult(
+                    text=f"[error: section '{section}' is ambiguous in '{path}'. Matching candidates:\n  "
+                    + "\n  ".join(ambig_matches)
+                    + "]"
+                )
+            if known_sections:
+                return ToolResult(
+                    text=f"[error: section '{section}' not found in '{path}'. Known sections:\n  "
+                    + "\n  ".join(known_sections)
+                    + "]"
+                )
+            return ToolResult(text=f"[error: section '{section}' not found in '{path}']")
+
+        start = match_item.start_line
+        end = match_item.end_line
+        selected = all_lines[start - 1 : end]
+        section_count = len(selected)
+        width = len(str(end))
+
+        if section_count > MAX_READ_LINES:
+            showing_end = start + MAX_READ_LINES - 1
+            selected = all_lines[start - 1 : showing_end]
+            numbered = [f"{str(start + i).rjust(width)}| {line}" for i, line in enumerate(selected)]
+            header = (
+                f"Section '{match_item.name}' has {section_count} lines (lines {start}-{end} of {total}), "
+                f"showing first {MAX_READ_LINES}. Use start_line/end_line to read specific ranges.\n"
+            )
+            return ToolResult(
+                text=header + "\n".join(numbered),
+                data={**base_data, "range": [start, showing_end], "section": match_item.name, "truncated": True},
+            )
+
+        numbered = [f"{str(start + i).rjust(width)}| {line}" for i, line in enumerate(selected)]
+        header = f"Lines {start}-{end} of {total} (section '{match_item.name}'):\n"
+        return ToolResult(
+            text=header + "\n".join(numbered),
+            data={**base_data, "range": [start, end], "section": match_item.name, "truncated": False},
+        )
+
+    partial = start_line is not None or end_line is not None
 
     # Large file guard: cap full reads at MAX_READ_LINES
     if not partial and total > MAX_READ_LINES:
@@ -210,6 +282,150 @@ def tool_workspace_read(
     return ToolResult(
         text="\n".join(numbered),
         data={**base_data, "range": [1, total], "truncated": False},
+    )
+
+
+def tool_workspace_outline(ctx: "Context", path: str, section: str | None = None) -> ToolResult:
+    """Show a structural outline of a workspace file or retrieve a specific section."""
+    log.info(f"[tool:workspace_outline] {path} section={section!r}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        content = resolved.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return _file_not_found_with_suggestions(ctx.config, path)
+    except IsADirectoryError:
+        return ToolResult(text=f"[error: '{path}' is a directory, not a file]")
+    except (PermissionError, UnicodeDecodeError) as e:
+        return _file_error(e, path)
+
+    all_lines = split_physical_lines(content)
+    total_lines = len(all_lines)
+    base_data: dict = {
+        "path": path,
+        "size": len(content.encode("utf-8")),
+        "lines": total_lines,
+    }
+
+    if not content.strip():
+        return ToolResult(text="(empty file)", data={**base_data, "symbols": 0})
+
+    outline_res = get_outline(resolved, content)
+
+    if section is not None:
+        if not outline_res.is_supported:
+            ext = resolved.suffix.lower()
+            return ToolResult(
+                text=f"[error: cannot retrieve section '{section}': file does not have a structural outline (unsupported type '{ext}')]"
+            )
+        if outline_res.error:
+            return ToolResult(
+                text=f"[error: cannot retrieve section '{section}': file contains syntax error ({outline_res.error})]"
+            )
+        if not outline_res.items:
+            return ToolResult(
+                text=f"[error: cannot retrieve section '{section}': no classes, functions, or headings found in '{path}']"
+            )
+
+        match_item, ambig_matches, known_sections = find_section(outline_res.items, section)
+        if match_item is None:
+            if ambig_matches:
+                return ToolResult(
+                    text=f"[error: section '{section}' is ambiguous in '{path}'. Matching candidates:\n  "
+                    + "\n  ".join(ambig_matches)
+                    + "]"
+                )
+            if known_sections:
+                return ToolResult(
+                    text=f"[error: section '{section}' not found in '{path}'. Known sections:\n  "
+                    + "\n  ".join(known_sections)
+                    + "]"
+                )
+            return ToolResult(text=f"[error: section '{section}' not found in '{path}']")
+
+        start = match_item.start_line
+        end = match_item.end_line
+        selected = all_lines[start - 1 : end]
+        section_count = len(selected)
+        width = len(str(end))
+
+        if section_count > MAX_READ_LINES:
+            showing_end = start + MAX_READ_LINES - 1
+            selected = all_lines[start - 1 : showing_end]
+            numbered = [f"{str(start + i).rjust(width)}| {line}" for i, line in enumerate(selected)]
+            header = (
+                f"Section '{match_item.name}' has {section_count} lines (lines {start}-{end} of {total_lines}), "
+                f"showing first {MAX_READ_LINES}. Use workspace_read with start_line/end_line to read specific ranges.\n"
+            )
+            return ToolResult(
+                text=header + "\n".join(numbered),
+                data={**base_data, "range": [start, showing_end], "section": match_item.name, "truncated": True},
+            )
+
+        numbered = [f"{str(start + i).rjust(width)}| {line}" for i, line in enumerate(selected)]
+        header = f"Lines {start}-{end} of {total_lines} (section '{match_item.name}'):\n"
+        return ToolResult(
+            text=header + "\n".join(numbered),
+            data={**base_data, "range": [start, end], "section": match_item.name, "truncated": False},
+        )
+
+    if not outline_res.is_supported:
+        ext = resolved.suffix.lower()
+        showing = min(total_lines, MAX_READ_LINES)
+        width = len(str(showing))
+        numbered = [f"{str(i + 1).rjust(width)}| {line}" for i, line in enumerate(all_lines[:showing])]
+        text = (
+            f"[File type '{ext}' does not have a structural outline parser. "
+            f"Showing first {showing} of {total_lines} lines:]\n" + "\n".join(numbered)
+        )
+        return ToolResult(
+            text=text,
+            data={**base_data, "supported": False, "symbols": 0, "truncated": total_lines > MAX_READ_LINES},
+        )
+
+    if outline_res.error:
+        showing = min(total_lines, MAX_READ_LINES)
+        width = len(str(showing))
+        numbered = [f"{str(i + 1).rjust(width)}| {line}" for i, line in enumerate(all_lines[:showing])]
+        text = (
+            f"[Could not parse outline: {outline_res.error}. Showing first {showing} of {total_lines} lines:]\n"
+            + "\n".join(numbered)
+        )
+        return ToolResult(
+            text=text,
+            data={**base_data, "error": outline_res.error, "symbols": 0, "truncated": total_lines > MAX_READ_LINES},
+        )
+
+    if not outline_res.items:
+        showing = min(total_lines, MAX_READ_LINES)
+        width = len(str(showing))
+        numbered = [f"{str(i + 1).rjust(width)}| {line}" for i, line in enumerate(all_lines[:showing])]
+        trunc_note = (
+            f"\n[Showing first {showing} of {total_lines} lines. "
+            f"Use workspace_read with start_line/end_line to read specific ranges.]"
+            if total_lines > MAX_READ_LINES
+            else ""
+        )
+        text = (
+            f"[No classes, functions, or headings found in '{path}'. Showing {showing} of {total_lines} lines:]\n"
+            + "\n".join(numbered)
+            + trunc_note
+        )
+        return ToolResult(
+            text=text,
+            data={**base_data, "symbols": 0, "truncated": total_lines > MAX_READ_LINES},
+        )
+
+    flat = flatten_items(outline_res.items)
+    text, truncated = format_outline(outline_res.items)
+    return ToolResult(
+        text=text,
+        data={
+            **base_data,
+            "symbols": len(flat),
+            "truncated": truncated,
+        },
     )
 
 
@@ -319,9 +535,35 @@ def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
                 }
             )
         text = "\n".join(lines) if lines else "(empty directory)"
+        widget = None
+        if data_entries:
+            count_str = f"{len(data_entries)} item" if len(data_entries) == 1 else f"{len(data_entries)} items"
+            caption = f"workspace_list: {path} ({count_str})"
+            table_rows = [
+                {
+                    "name": f"{e['name']}/" if e["is_dir"] else e["name"],
+                    "type": "directory" if e["is_dir"] else "file",
+                    "size": e["size"],
+                }
+                for e in data_entries
+            ]
+            widget = WidgetRequest(
+                widget_type="data_table",
+                data={
+                    "caption": caption,
+                    "columns": [
+                        {"key": "name", "label": "Name"},
+                        {"key": "type", "label": "Type"},
+                        {"key": "size", "label": "Size (bytes)"},
+                    ],
+                    "rows": table_rows,
+                },
+                target="inline",
+            )
         return ToolResult(
             text=text,
             data={"path": path, "entries": data_entries},
+            widget=widget,
         )
     except PermissionError as e:
         return _file_error(e, path)
@@ -543,9 +785,32 @@ def tool_workspace_edit(
         resolved.write_text(new_content, newline="")
         summary = f"Edited {path}: replaced {count} occurrence(s)"
         diff = _mini_diff(normalized, new_normalized, path)
-        if diff:
-            return f"{summary}\n\n{diff}"
-        return summary
+        text = f"{summary}\n\n{diff}" if diff else summary
+        has_diff = bool(diff)
+        oversized = (
+            len(normalized) > MAX_DIFF_WIDGET_CHARS
+            or len(new_normalized) > MAX_DIFF_WIDGET_CHARS
+            or normalized.count("\n") > MAX_DIFF_WIDGET_LINES
+            or new_normalized.count("\n") > MAX_DIFF_WIDGET_LINES
+        )
+        widget = (
+            WidgetRequest(
+                widget_type="diff_view",
+                data={
+                    "before": normalized,
+                    "after": new_normalized,
+                    "filename": path,
+                    "view": "unified",
+                },
+                target="inline",
+            )
+            if has_diff and not oversized
+            else None
+        )
+        return ToolResult(
+            text=text,
+            widget=widget,
+        )
 
 
 def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: str) -> str | ToolResult:
@@ -562,7 +827,7 @@ def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: 
         except (FileNotFoundError, PermissionError) as e:
             return _file_error(e, path)
 
-        lines = existing.splitlines(keepends=True)
+        lines = split_physical_lines(existing, keepends=True)
         if line_number < 1 or line_number > len(lines) + 1:
             return ToolResult(
                 text=f"[error: line_number {line_number} is out of range. "
@@ -572,7 +837,7 @@ def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: 
         # Ensure content ends with newline for clean insertion
         if content and not content.endswith("\n"):
             content += "\n"
-        insert_lines = content.splitlines(keepends=True)
+        insert_lines = split_physical_lines(content, keepends=True)
         new_lines = list(lines)
         new_lines[line_number - 1 : line_number - 1] = insert_lines
         resolved.write_text("".join(new_lines))
@@ -599,14 +864,14 @@ def tool_workspace_replace_lines(
         except (FileNotFoundError, PermissionError) as e:
             return _file_error(e, path)
 
-        lines = existing.splitlines(keepends=True)
+        lines = split_physical_lines(existing, keepends=True)
         if start_line < 1 or end_line < start_line or end_line > len(lines):
             return ToolResult(text=f"[error: invalid line range {start_line}-{end_line}. File has {len(lines)} lines.]")
 
         if content:
             if not content.endswith("\n"):
                 content += "\n"
-            replacement = content.splitlines(keepends=True)
+            replacement = split_physical_lines(content, keepends=True)
         else:
             replacement = []
         new_lines = list(lines)
@@ -675,7 +940,32 @@ def tool_workspace_diff(ctx: "Context", path1: str, path2: str, context_lines: i
     )
     if not diff:
         return f"Files are identical: {path1} and {path2}"
-    return "".join(diff)
+    before_text = "".join(lines1)
+    after_text = "".join(lines2)
+    oversized = (
+        len(before_text) > MAX_DIFF_WIDGET_CHARS
+        or len(after_text) > MAX_DIFF_WIDGET_CHARS
+        or len(lines1) > MAX_DIFF_WIDGET_LINES
+        or len(lines2) > MAX_DIFF_WIDGET_LINES
+    )
+    widget = (
+        WidgetRequest(
+            widget_type="diff_view",
+            data={
+                "before": before_text,
+                "after": after_text,
+                "filename": f"{path1} ↔ {path2}",
+                "view": "unified",
+            },
+            target="inline",
+        )
+        if not oversized
+        else None
+    )
+    return ToolResult(
+        text="".join(diff),
+        widget=widget,
+    )
 
 
 def tool_workspace_search(
@@ -715,7 +1005,7 @@ def tool_workspace_search(
         except (UnicodeDecodeError, PermissionError):
             continue
 
-        lines = content.splitlines()
+        lines = split_physical_lines(content)
         file_matches = []
         for i, line in enumerate(lines):
             if regex.search(line):
@@ -832,6 +1122,7 @@ def tool_workspace_glob(ctx: "Context", pattern: str, path: str = ".") -> str | 
 
 WORKSPACE_TOOLS = {
     "workspace_read": tool_workspace_read,
+    "workspace_outline": tool_workspace_outline,
     "workspace_preview_markdown": tool_workspace_preview_markdown,
     "workspace_write": tool_workspace_write,
     "workspace_list": tool_workspace_list,
@@ -858,7 +1149,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         ],
         "function": {
             "name": "workspace_read",
-            "description": "Read a file from your workspace filesystem (blog posts, code, configs, scripts, project files). NOT for vault knowledge pages (use vault_read for those). Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive). Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
+            "description": "Read a file from your workspace filesystem (blog posts, code, configs, scripts, project files). NOT for vault knowledge pages (use vault_read for those). Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive) or a targeted section by name/symbol. Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -873,6 +1164,35 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     "end_line": {
                         "type": "integer",
                         "description": "Last line to read (1-based, inclusive). Omit to read to end of file.",
+                    },
+                    "section": {
+                        "type": "string",
+                        "description": "Optional section name or symbol to read (e.g. 'MyClass', 'my_func', 'Overview'). Mutually exclusive with start_line/end_line.",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "prompt_guidelines": [
+            "Use workspace_outline to inspect classes, functions, and headings before reading specific sections of large files."
+        ],
+        "function": {
+            "name": "workspace_outline",
+            "description": "Show a structural outline of a workspace file (Python classes/functions or Markdown headings) with line numbers, or retrieve a specific section. Use this on large files before reading full contents to identify relevant code or documentation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "section": {
+                        "type": "string",
+                        "description": "Optional section name or symbol to retrieve directly (e.g. 'MyClass', 'my_func', 'Overview')",
                     },
                 },
                 "required": ["path"],

@@ -409,3 +409,17 @@ def get_already_injected_pages(history: list) -> set[str]:
             if page:
                 pages.add(page)
     return pages
+
+
+def get_already_retrieved_paths(history: list) -> set[str]:
+    """Scan history for vault_retrieval messages and return set of file paths
+    already surfaced to the conversation (#1157).
+    """
+    paths: set[str] = set()
+    for msg in history:
+        if msg.get("role") == "vault_retrieval":
+            file_paths = msg.get("file_paths") or []
+            for path in file_paths:
+                if path:
+                    paths.add(path)
+    return paths

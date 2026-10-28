@@ -297,6 +297,81 @@ paths:
           content:
             application/json:
               schema: {}
+  /api/conversations/{id}/side-question:
+    post:
+      summary: Handle Side Question
+      description: Stream an ephemeral explanation-only side question via SSE.
+      operationId: handle_side_question_api_conversations__id__side_question_post
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: SSE stream of response tokens and completion events
+          content:
+            text/event-stream: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                question:
+                  title: Question
+                  type: string
+                side_history:
+                  anyOf:
+                  - items:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    type: array
+                  - type: 'null'
+                  title: Side History
+                model:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Model
+              required:
+              - question
+              title: SideQuestionRequest
+              type: object
+  /api/conversations/{id}/side-question/cancel:
+    post:
+      summary: Handle Cancel Side Question
+      description: Cancel in-flight side questions for a conversation.
+      operationId: handle_cancel_side_question_api_conversations__id__side_question_cancel_post
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SideQuestionCancelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/conversations/{id}/context:
     get:
       summary: Get Context Diagnostics
@@ -1001,6 +1076,18 @@ paths:
                     type: array
                   - type: 'null'
                   title: Required Skills
+                required_servers:
+                  anyOf:
+                  - items:
+                      type: string
+                    type: array
+                  - type: 'null'
+                  title: Required Servers
+                server_timeout:
+                  anyOf:
+                  - type: number
+                  - type: 'null'
+                  title: Server Timeout
                 shell_patterns:
                   anyOf:
                   - items:
@@ -1212,6 +1299,147 @@ paths:
           content:
             application/json:
               schema: {}
+  /api/bookmarks:
+    get:
+      summary: Wrapper
+      operationId: wrapper_api_bookmarks_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookmarksResponse'
+    post:
+      summary: Wrapper
+      operationId: wrapper_api_bookmarks_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookmarksResponse'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                target:
+                  enum:
+                  - files
+                  - vault
+                  title: Target
+                  type: string
+                path:
+                  title: Path
+                  type: string
+                label:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Label
+                kind:
+                  enum:
+                  - file
+                  - dir
+                  - page
+                  - folder
+                  title: Kind
+                  type: string
+              required:
+              - target
+              - path
+              - kind
+              title: BookmarkAddRequest
+              type: object
+    delete:
+      summary: Wrapper
+      operationId: wrapper_api_bookmarks_delete
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookmarksResponse'
+      parameters:
+      - name: target
+        in: query
+        required: true
+        schema:
+          type: string
+          enum:
+          - files
+          - vault
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+  /api/shell-approval/presets:
+    get:
+      summary: Wrapper
+      operationId: wrapper_api_shell_approval_presets_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ShellPresetItem'
+                type: array
+                title: Response Wrapper Api Shell Approval Presets Get
+  /api/shell-approval/presets/{name}:
+    put:
+      summary: Wrapper
+      operationId: wrapper_api_shell_approval_presets__name__put
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShellPresetMutateResponse'
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                rules:
+                  items:
+                    type: string
+                  title: Rules
+                  type: array
+              required:
+              - rules
+              title: ShellPresetPutRequest
+              type: object
+    delete:
+      summary: Wrapper
+      operationId: wrapper_api_shell_approval_presets__name__delete
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShellPresetMutateResponse'
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
   /api/wiki:
     get:
       summary: Wrapper
@@ -1298,6 +1526,72 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StickyResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      summary: Post Sticky State
+      description: 'Pin a widget into the conversation''s sticky slot. Backs external
+
+        progress updates (e.g. long-running scripts posting live status).'
+      operationId: post_sticky_state_api_sticky__conv_id__post
+      parameters:
+      - name: conv_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conv Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                widget_type:
+                  title: Widget Type
+                  type: string
+                data:
+                  additionalProperties: true
+                  title: Data
+                  type: object
+              required:
+              - widget_type
+              - data
+              title: StickySetRequest
+              type: object
+    delete:
+      summary: Delete Sticky State
+      description: Clear the conversation's sticky slot.
+      operationId: delete_sticky_state_api_sticky__conv_id__delete
+      parameters:
+      - name: conv_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conv Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
         '422':
           description: Validation Error
           content:
@@ -1491,6 +1785,45 @@ components:
       required:
       - results
       title: AutocompleteResponse
+    BookmarkEntry:
+      properties:
+        path:
+          type: string
+          title: Path
+        label:
+          type: string
+          title: Label
+        kind:
+          type: string
+          enum:
+          - file
+          - dir
+          - page
+          - folder
+          title: Kind
+      type: object
+      required:
+      - path
+      - label
+      - kind
+      title: BookmarkEntry
+    BookmarksResponse:
+      properties:
+        files:
+          items:
+            $ref: '#/components/schemas/BookmarkEntry'
+          type: array
+          title: Files
+        vault:
+          items:
+            $ref: '#/components/schemas/BookmarkEntry'
+          type: array
+          title: Vault
+      type: object
+      required:
+      - files
+      - vault
+      title: BookmarksResponse
     CanvasMutationResponse:
       properties:
         ok:
@@ -2226,6 +2559,16 @@ components:
             type: string
           type: array
           title: Required Skills
+        required_servers:
+          items:
+            type: string
+          type: array
+          title: Required Servers
+          default: []
+        server_timeout:
+          type: number
+          title: Server Timeout
+          default: 30.0
         shell_patterns:
           items:
             type: string
@@ -2315,6 +2658,74 @@ components:
       - schedule
       - modified
       title: ScheduleUpdateResponse
+    ShellPresetItem:
+      properties:
+        name:
+          type: string
+          title: Name
+        rules:
+          items:
+            type: string
+          type: array
+          title: Rules
+        source:
+          type: string
+          enum:
+          - builtin
+          - config
+          - custom
+          title: Source
+        shadows_config:
+          type: boolean
+          title: Shadows Config
+          default: false
+        referenced_by:
+          items:
+            type: string
+          type: array
+          title: Referenced By
+          default: []
+      type: object
+      required:
+      - name
+      - rules
+      - source
+      title: ShellPresetItem
+    ShellPresetMutateResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+        name:
+          type: string
+          title: Name
+        rules:
+          items:
+            type: string
+          type: array
+          title: Rules
+        updated_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Updated Text
+      type: object
+      required:
+      - ok
+      - name
+      - rules
+      title: ShellPresetMutateResponse
+    SideQuestionCancelResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+      type: object
+      required:
+      - ok
+      title: SideQuestionCancelResponse
     StickyResponse:
       properties:
         widget_type:

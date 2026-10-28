@@ -9,6 +9,8 @@ export type { OpenAPIConfig } from './core/OpenAPI';
 
 export type { AttachmentResponse } from './models/AttachmentResponse';
 export type { AutocompleteResponse } from './models/AutocompleteResponse';
+export { BookmarkEntry } from './models/BookmarkEntry';
+export type { BookmarksResponse } from './models/BookmarksResponse';
 export type { CanvasMutationResponse } from './models/CanvasMutationResponse';
 export type { CanvasNewTabResponse } from './models/CanvasNewTabResponse';
 export type { CanvasStateResponse } from './models/CanvasStateResponse';
@@ -47,6 +49,9 @@ export type { ScheduleResetResponse } from './models/ScheduleResetResponse';
 export { ScheduleResponse } from './models/ScheduleResponse';
 export type { ScheduleRunResponse } from './models/ScheduleRunResponse';
 export type { ScheduleUpdateResponse } from './models/ScheduleUpdateResponse';
+export { ShellPresetItem } from './models/ShellPresetItem';
+export type { ShellPresetMutateResponse } from './models/ShellPresetMutateResponse';
+export type { SideQuestionCancelResponse } from './models/SideQuestionCancelResponse';
 export type { StickyResponse } from './models/StickyResponse';
 export type { SystemConversationListingItem } from './models/SystemConversationListingItem';
 export type { SystemConversationListingResponse } from './models/SystemConversationListingResponse';

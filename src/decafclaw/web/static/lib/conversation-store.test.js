@@ -531,6 +531,29 @@ describe('conversation activity status tracking', () => {
     store.sendMessage('hello');
     expect(store.getConversationStatus('c1')).toBe('busy');
   });
+
+  it('sends /retitle without engaging busy state or adding user message', () => {
+    store.selectConversation('c1');
+    expect(store.getConversationStatus('c1')).toBe('idle');
+
+    store.sendMessage('/retitle');
+    expect(store.getConversationStatus('c1')).toBe('idle');
+    expect(store.currentMessages).toHaveLength(0);
+    expect(ws.sent).toContainEqual({
+      type: MESSAGE_TYPES.SEND,
+      conv_id: 'c1',
+      text: '/retitle',
+    });
+  });
+
+  it('retitleConversation sends /retitle for specified conversation', () => {
+    store.retitleConversation('c2');
+    expect(ws.sent).toContainEqual({
+      type: MESSAGE_TYPES.SEND,
+      conv_id: 'c2',
+      text: '/retitle',
+    });
+  });
   it('does not overwrite newer websocket transition with delayed REST response', async () => {
     let resolveRest;
     const restPromise = new Promise(resolve => { resolveRest = resolve; });
@@ -720,5 +743,85 @@ describe('ConversationStore context meter after compaction (#1005)', () => {
       context_limit: 48_000,
     });
     expect(store.contextUsage).toBe(10_000);
+  });
+});
+
+// #1072 — background auto-titling renames conversations after the turn that
+// triggered them. The sidebar must pick the new title up in real time from
+// the `conv_renamed` frame instead of waiting for a page reload or a manual
+// refetch.
+describe('ConversationStore conv_renamed (#1072)', () => {
+  /** @type {FakeWS} */
+  let ws;
+  /** @type {ConversationStore} */
+  let store;
+
+  beforeEach(async () => {
+    ws = new FakeWS();
+    store = makeStore(ws);
+    const listing = {
+      conversations: [
+        { conv_id: 'web-alice-1', title: 'Old auto title', created_at: 't0', updated_at: 't1' },
+        { conv_id: 'web-alice-2', title: 'Other chat', created_at: 't0', updated_at: 't2' },
+      ],
+      folders: [],
+      folder: '',
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(listing))));
+    await store.listConversations();
+  });
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('applies the new title and re-sorts by updated_at, emitting change', () => {
+    const change = vi.fn();
+    store.addEventListener('change', change);
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_RENAMED,
+      conv_id: 'web-alice-1',
+      title: 'Refined conversation title',
+      updated_at: 't3',
+    });
+    // t3 > t2: the renamed conversation must move to the top.
+    expect(store.conversations.map(c => c.conv_id)).toEqual(['web-alice-1', 'web-alice-2']);
+    expect(store.conversations[0].title).toBe('Refined conversation title');
+    expect(store.conversations[0].updated_at).toBe('t3');
+    expect(change).toHaveBeenCalled();
+    // The patch is in-memory only — no refetch for a title change.
+    expect(store.currentMessages).toEqual([]);
+  });
+
+  it('keeps list order when the rename does not bump updated_at past the rest', () => {
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_RENAMED,
+      conv_id: 'web-alice-2',
+      title: 'Other chat refined',
+      updated_at: 't0', // older than web-alice-1's t1
+    });
+    expect(store.conversations.map(c => c.title)).toEqual(['Old auto title', 'Other chat refined']);
+  });
+
+  it('ignores a rename for a conversation not in the listing', () => {
+    const change = vi.fn();
+    store.addEventListener('change', change);
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_RENAMED,
+      conv_id: 'web-alice-9',
+      title: 'Ghost title',
+      updated_at: 't9',
+    });
+    expect(store.conversations.map(c => c.title)).toEqual(['Old auto title', 'Other chat']);
+    expect(change).toHaveBeenCalled();
+  });
+
+  it('ignores a frame with an empty title', () => {
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_RENAMED,
+      conv_id: 'web-alice-1',
+      title: '',
+      updated_at: 't9',
+    });
+    expect(store.conversations[0].title).toBe('Old auto title');
+    expect(store.conversations[0].updated_at).toBe('t1');
   });
 });

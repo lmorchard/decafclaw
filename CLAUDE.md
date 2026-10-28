@@ -204,12 +204,13 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `sticky.py` — per-conversation sticky-slot sidecar (`sticky.json`) + `set_sticky`/`clear_sticky`
 - `backlinks.py` — persistent inbound-link index (`{workspace}/backlinks.json`); `rebuild_index`/`load_index`/`inbound_count`/`update_for_page`; incremental update wired to the `vault_changed` event in `runner.py`
 - `tags.py` — first-class tag extraction/normalization + on-demand scan (`extract_tags`/`collect_all_tags`/`pages_with_tags`); tags from frontmatter + journal bullet + inline `#tags`, unioned at the query layer (#318)
-- `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py`, `memory_context.py`, `checklist.py`, `notes.py`
+- `approval_state.py` — durable per-conversation shell approval state (rules, preset toggles, mode) at `data/{agent_id}/approval_state/{conv_id}.json` (#1160)
+- `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py`, `memory_context.py`, `checklist.py`, `notes.py`, `scheduled_wakes.py`
 
 ### Tools
 - `tools/tool_registry.py` — Priority-based classification, deferred catalog
 - `tools/search_tools.py` — `tool_search`
-- `tools/{core,admin_tools,prompt_tools,workspace_tools,conversation_tools,checklist_tools,notes_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools,sticky_tools}.py`
+- `tools/{core,admin_tools,prompt_tools,workspace_tools,conversation_tools,checklist_tools,notes_tools,schedule_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools,sticky_tools}.py`
 - `preempt_search.py` — Keyword-match for pre-emptive tool promotion
 
 ### Skills (bundled)
@@ -226,7 +227,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `tool_telemetry.py` — Tool-usage telemetry subscriber + report (#310); `make tool-usage-report`
 - `metrics.py` — Prometheus metrics (#10); in-memory counters from EventBus events, scraped at `/metrics`, no sidecar ([docs/metrics.md](docs/metrics.md))
 - `reflection_metrics.py` — Reflection cost/effectiveness telemetry subscriber + stats (#409); `make reflection-stats`
-- `heartbeat.py`, `schedules.py`, `polling.py`
+- `heartbeat.py`, `schedules.py`, `scheduled_wakes.py`, `polling.py`
 - `notifications.py`, `notification_channels/`, `mail.py`
 - `mcp_client.py`
 - `media.py`, `widgets.py`, `widget_input.py`, `web/static/widgets/` (incl. `web/static/widgets/progress_tracker/`), `web/static/components/widgets/widget-host.js`
