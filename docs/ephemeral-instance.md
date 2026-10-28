@@ -37,8 +37,10 @@ Flags:
 
 Exit codes are the client's — `0` complete, `1` error, `2` halted on a
 confirmation, `3` timeout (see [client.md](client.md#exit-codes)) — plus
-`4` for launcher-level failures (missing `uv`, unreadable responses file,
-child died at startup, server never became healthy).
+`4` for a launcher-level failure (missing `uv`, unreadable responses file,
+child died at startup, server never became healthy) or a client
+transport/auth failure (the client's own code 4, passed through unchanged);
+see stderr / the client JSON summary for which.
 
 ## How it works
 

@@ -31,7 +31,9 @@ Usage (see docs/ephemeral-instance.md):
 
 Exit codes: 0-3 pass through from ``decafclaw-client`` (0 complete, 1 error,
 2 halted on a confirmation, 3 timeout); 4 is a launcher-level failure
-(missing uv, unreadable responses file, child died, server never healthy).
+(missing uv, unreadable responses file, child died, server never healthy)
+or a client transport/auth failure (the client's own code 4, passed through
+unchanged) — see stderr / the client JSON summary for which.
 """
 
 from __future__ import annotations
