@@ -50,19 +50,11 @@ export class ChatControls extends LitElement {
     this.store?.removeEventListener('change', this.#onStoreChange);
   }
 
-  static get observedAttributes() { return ['collapsed']; }
-
-  attributeChangedCallback(name, _oldValue, newValue) {
-    if (name === 'collapsed') {
-      this._collapsed = newValue !== null;
-    }
-  }
-
   #updateCollapseState = () => {
     // Desktop: expand by default. Mobile (<640px): collapse to button.
     const shouldExpand = window.innerWidth >= 640;
-    if (this._collapsed !== shouldExpand) {
-      this._collapsed = shouldExpand;
+    if (this._collapsed !== !shouldExpand) {
+      this._collapsed = !shouldExpand;
       this.toggleAttribute('collapsed', this._collapsed);
     }
   };
@@ -79,7 +71,9 @@ export class ChatControls extends LitElement {
     this._activeMode = this.store.activeMode || 'default';
     this._availableModes = this.store.availableModes || [];
     this._contextUsage = this.store.contextUsage || 0;
-    this._contextLimit = this.store.contextLimit || 100000;
+    // The store uses 0 as the "no limit known" sentinel; `??` preserves it
+    // (a bare `||` would coerce 0 to the 100000 default and mis-render usage).
+    this._contextLimit = this.store.contextLimit ?? 100000;
     this._isBusy = Boolean(this.store.isBusy);
   }
 
