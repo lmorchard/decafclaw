@@ -109,6 +109,8 @@ export class ContextInspector extends LitElement {
             if (this.contains(e.target)) return;
             const trigger = this.previousElementSibling;
             if (trigger && trigger.contains(e.target)) return;
+            const chatControlsTrigger = document.querySelector('chat-controls .context-control');
+            if (chatControlsTrigger && chatControlsTrigger.contains(e.target)) return;
             this.dispatchEvent(new Event('close'));
           };
           document.addEventListener('click', this._onDocClick, true);
