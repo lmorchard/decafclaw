@@ -14,7 +14,6 @@ export class ChatControls extends LitElement {
     _contextUsage: { type: Number, state: true },
     _contextLimit: { type: Number, state: true },
     _isBusy: { type: Boolean, state: true },
-    _collapsed: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -30,35 +29,12 @@ export class ChatControls extends LitElement {
     this._contextUsage = 0;
     this._contextLimit = 100000;
     this._isBusy = false;
-    this._collapsed = true; // collapsed by default on mobile, auto-expanded on desktop
-    this._userToggledCollapse = false;
-    this.#updateCollapseState();
-  }
-
-  connectedCallback() {
-    super.connectedCallback();
-    window.addEventListener('resize', this.#updateCollapseState);
-    this.#updateCollapseState();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    window.removeEventListener('resize', this.#updateCollapseState);
     this.store?.removeEventListener('change', this.#onStoreChange);
   }
-
-  #updateCollapseState = () => {
-    // Desktop: expand by default. Mobile (<640px): collapse to button.
-    // Once the user has explicitly toggled, their choice is sticky — a
-    // resize (e.g. the mobile keyboard appearing when the chat field is
-    // focused) must not clobber it back to the viewport default.
-    if (this._userToggledCollapse) return;
-    const shouldExpand = window.innerWidth >= 640;
-    if (this._collapsed !== !shouldExpand) {
-      this._collapsed = !shouldExpand;
-      this.toggleAttribute('collapsed', this._collapsed);
-    }
-  };
 
   #onStoreChange = () => {
     this.#syncFromStore();
@@ -84,22 +60,13 @@ export class ChatControls extends LitElement {
       if (oldStore) oldStore.removeEventListener('change', this.#onStoreChange);
       if (this.store) {
         // app.js assigns `store` after the element is connected, so the
-        // listener must be registered here (not in connectedCallback, where
-        // store is still null). The store populates availableModels/
+        // listener must be registered here. The store populates availableModels/
         // availableModes asynchronously from a WebSocket message, so without
         // this the model/mode controls would never appear.
         this.store.addEventListener('change', this.#onStoreChange);
         this.#syncFromStore();
       }
     }
-    // Keep attribute in sync with state
-    this.toggleAttribute('collapsed', this._collapsed);
-  }
-
-  #toggleCollapse() {
-    this._collapsed = !this._collapsed;
-    this._userToggledCollapse = true;
-    this.requestUpdate();
   }
 
   #handleModelChange(e) {
@@ -124,9 +91,8 @@ export class ChatControls extends LitElement {
     }
   }
 
-  // The context meter (desktop <progress> / mobile icon) summons the context
-  // inspector. The inspector is owned by the sidebar, so we dispatch an event
-  // it listens for (mirroring set-model / set-mode).
+  // The context meter summons the context inspector. The inspector is owned
+  // by the sidebar, so we dispatch an event it listens for (mirroring set-model / set-mode).
   #handleContextClick() {
     this.dispatchEvent(new CustomEvent('toggle-context-inspector', {
       detail: { convId: this.store?.currentConvId || '' },
@@ -144,55 +110,35 @@ export class ChatControls extends LitElement {
     return { pct: Math.min(100, pct), formatted: `${pct}%`, cls, warn, danger };
   }
 
-  /** True when context usage is high enough to flag the icon red (>=90% preserved for compatibility with test assertions). */
-  #contextDanger() {
-    if (this._contextLimit <= 0) return false;
-    const pct = Math.round((this._contextUsage / this._contextLimit) * 100);
-    return pct >= 90;
-  }
   render() {
-    const { formatted: contextPct, cls: contextCls, warn: contextWarn } = this.#getContextStatus();
-    const contextDanger = this.#contextDanger();
+    const { formatted: contextPct, cls: contextCls } = this.#getContextStatus();
     const modelUnconfigured = this._activeModel && !this._availableModels.includes(this._activeModel);
-    const isMobileCollapsed = this.hasAttribute('collapsed');
 
     return html`
       <!-- Model control -->
       ${this._availableModels.length > 0 ? html`
         <div class="control model-control">
-          ${!isMobileCollapsed ? html`
-            <label for="cc-model-select">Model</label>
-            <select id="cc-model-select" ?disabled=${this._isBusy} @change=${this.#handleModelChange}>
-              ${modelUnconfigured ? html`
-                <option value="${this._activeModel}" selected>⚠ ${this._activeModel} (not configured)</option>
-              ` : nothing}
-              ${this._availableModels.map(m => html`
-                <option value="${m}" ?selected=${m === this._activeModel}>${m}</option>
-              `)}
-            </select>
-          ` : html`
-            <button type="button" class="control-icon model-icon" @click=${this.#toggleCollapse}
-                    title="Model: ${this._activeModel || '—'} (click to expand)"
-                    aria-label="Model: ${this._activeModel || '—'} (click to expand)">🤖</button>
-          `}
+          <label for="cc-model-select">Model</label>
+          <select id="cc-model-select" ?disabled=${this._isBusy} @change=${this.#handleModelChange}>
+            ${modelUnconfigured ? html`
+              <option value="${this._activeModel}" selected>⚠ ${this._activeModel} (not configured)</option>
+            ` : nothing}
+            ${this._availableModels.map(m => html`
+              <option value="${m}" ?selected=${m === this._activeModel}>${m}</option>
+            `)}
+          </select>
         </div>
       ` : nothing}
 
       <!-- Mode control -->
       ${this._availableModes.length > 0 ? html`
         <div class="control mode-control">
-          ${!isMobileCollapsed ? html`
-            <label for="cc-mode-select">Mode</label>
-            <select id="cc-mode-select" ?disabled=${this._isBusy} @change=${this.#handleModeChange}>
-              ${this._availableModes.map(m => html`
-                <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
-              `)}
-            </select>
-          ` : html`
-            <button type="button" class="control-icon mode-icon" @click=${this.#toggleCollapse}
-                    title="Mode: ${this._activeMode} (click to expand)"
-                    aria-label="Mode: ${this._activeMode} (click to expand)">🎯</button>
-          `}
+          <label for="cc-mode-select">Mode</label>
+          <select id="cc-mode-select" ?disabled=${this._isBusy} @change=${this.#handleModeChange}>
+            ${this._availableModes.map(m => html`
+              <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
+            `)}
+          </select>
         </div>
       ` : nothing}
 
@@ -200,25 +146,12 @@ export class ChatControls extends LitElement {
       <div class="control context-control ${contextCls}" role="button" tabindex="0"
            title="Click for context details" @click=${this.#handleContextClick}
            @keydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.#handleContextClick(); }}}>
-        ${!isMobileCollapsed ? html`
-          <label>Context</label>
-          <div class="context-usage-bar" id="cc-context-progress">
-            <div class="context-usage-fill" style="width: ${this.#getContextStatus().pct}%"></div>
-          </div>
-          <span class="usage-label">${contextPct}</span>
-        ` : html`
-          <button type="button" class="control-icon context-icon ${contextDanger ? 'danger' : contextWarn ? 'warn' : ''}"
-                  title="Context: ${this._contextUsage}/${this._contextLimit} (${contextPct})"
-                  aria-label="Context usage: ${contextPct}">📊</button>
-        `}
+        <label>Context</label>
+        <div class="context-usage-bar" id="cc-context-progress">
+          <div class="context-usage-fill" style="width: ${this.#getContextStatus().pct}%"></div>
+        </div>
+        <span class="usage-label">${contextPct}</span>
       </div>
-
-      <!-- Collapse toggle button -->
-      <button type="button" class="collapse-toggle dc-icon-btn" @click=${this.#toggleCollapse}
-              title="${!isMobileCollapsed ? 'Collapse controls' : 'Expand controls'}"
-              aria-label="${!isMobileCollapsed ? 'Collapse controls' : 'Expand controls'}">
-        ${!isMobileCollapsed ? '✕' : '⌄'}
-      </button>
     `;
   }
 }

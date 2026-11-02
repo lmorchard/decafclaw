@@ -145,8 +145,6 @@
   .file-bc-segment {
     min-height: 0;
   }
-  chat-controls .collapse-toggle,                    /* compact disclosure button in chat controls strip */
-  chat-controls .control-icon,                       /* compact 32px icon buttons in collapsed chat controls */
 
   /* Hover-only affordances are unreachable on touch — show them always
      on mobile. */

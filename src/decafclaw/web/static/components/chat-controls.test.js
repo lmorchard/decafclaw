@@ -41,67 +41,22 @@ describe('chat-controls', () => {
     await el.updateComplete;
     return { el, store };
   }
+   it('applies warn and full classes to context control bar', async () => {
+     const { el } = await mount({ contextUsage: 85000, contextLimit: 100000 });
+     const contextControl = el.querySelector('.context-control');
+     expect(contextControl.classList.contains('warn')).toBe(true);
 
-  // The context icon (with its danger class) only renders in the collapsed
-  // mobile state; desktop shows a <progress> bar instead. Mount at mobile
-  // width to exercise the icon.
-  it('flags the context icon red at >=90% usage and not below', async () => {
-    const { el } = await mount({ contextUsage: 95000, contextLimit: 100000 }, { innerWidth: 375 });
-    const icon = el.querySelector('.context-icon');
-    expect(icon).toBeTruthy();
-    expect(icon.classList.contains('danger')).toBe(true);
+     el._contextUsage = 100000;
+     await el.updateComplete;
+     expect(contextControl.classList.contains('full')).toBe(true);
+   });
 
-    el._contextUsage = 50000;
-    await el.updateComplete;
-    expect(el.querySelector('.context-icon').classList.contains('danger')).toBe(false);
-  });
-  it('flags the context icon and bar with warn at >=80% and <90%', async () => {
-    const { el } = await mount({ contextUsage: 85000, contextLimit: 100000 }, { innerWidth: 375 });
-    const icon = el.querySelector('.context-icon');
-    expect(icon).toBeTruthy();
-    expect(icon.classList.contains('warn')).toBe(true);
-    expect(icon.classList.contains('danger')).toBe(false);
-  });
-
-  it('applies warn and full classes to desktop context control bar', async () => {
-    const { el } = await mount({ contextUsage: 85000, contextLimit: 100000 }, { innerWidth: 1024 });
-    const contextControl = el.querySelector('.context-control');
-    expect(contextControl.classList.contains('warn')).toBe(true);
-
-    el._contextUsage = 100000;
-    await el.updateComplete;
-    expect(contextControl.classList.contains('full')).toBe(true);
-  });
-
-  it('expands controls when clicking mobile model or mode icons', async () => {
-    const { el } = await mount({}, { innerWidth: 375 });
-    expect(el._collapsed).toBe(true);
-
-    const modelIcon = el.querySelector('.model-icon');
-    expect(modelIcon).toBeTruthy();
-    modelIcon.click();
-    await el.updateComplete;
-    expect(el._collapsed).toBe(false);
-  });
-
-  it('does not flag danger when no context limit is known', async () => {
-    const { el } = await mount({ contextUsage: 95000, contextLimit: 0 }, { innerWidth: 375 });
-    expect(el.querySelector('.context-icon').classList.contains('danger')).toBe(false);
-  });
-
-  it('shows an expand button in the collapsed (mobile) state', async () => {
-    const { el } = await mount({}, { innerWidth: 375 });
-    const toggle = el.querySelector('.collapse-toggle');
-    expect(toggle).toBeTruthy();
-    expect(toggle.title).toBe('Expand controls');
-  });
-
-  it('shows a collapse button in the expanded (desktop) state', async () => {
-    const { el } = await mount({}, { innerWidth: 1024 });
-    const toggle = el.querySelector('.collapse-toggle');
-    expect(toggle).toBeTruthy();
-    expect(toggle.title).toBe('Collapse controls');
-  });
+   it('renders model, mode, and context controls inline across viewports', async () => {
+     const { el } = await mount({}, { innerWidth: 375 });
+     expect(el.querySelector('#cc-model-select')).toBeTruthy();
+     expect(el.querySelector('#cc-mode-select')).toBeTruthy();
+     expect(el.querySelector('#cc-context-progress')).toBeTruthy();
+   });
 
   it('dispatches set-model with the chosen model', async () => {
     const { el } = await mount();
@@ -153,54 +108,15 @@ describe('chat-controls', () => {
     expect(el.querySelector('#cc-model-select')).toBeTruthy();
     expect(el.querySelector('#cc-mode-select')).toBeTruthy();
   });
+   it('dispatches toggle-context-inspector when the context meter is clicked', async () => {
+     const { el } = await mount();
+     const handler = vi.fn();
+     document.addEventListener('toggle-context-inspector', handler);
 
-  // On a narrow viewport the strip starts collapsed. The user taps the toggle
-  // to expand it, then clicking the chat field raises the mobile keyboard,
-  // which fires a `resize` event. The viewport default must NOT clobber the
-  // user's explicit choice, or the controls collapse right back.
-  it('keeps a user-expanded control expanded across a resize on a narrow viewport', async () => {
-    const { el } = await mount({}, { innerWidth: 500 });
-    // Narrow viewport: starts collapsed.
-    expect(el._collapsed).toBe(true);
-
-    // User taps the toggle to expand.
-    el.querySelector('.collapse-toggle').click();
-    await el.updateComplete;
-    expect(el._collapsed).toBe(false);
-
-    // Clicking the chat field raises the keyboard -> resize event.
-    window.dispatchEvent(new Event('resize'));
-    await el.updateComplete;
-    // The user's explicit expand must stick.
-    expect(el._collapsed).toBe(false);
-  });
-
-  // The context meter (desktop <progress> / mobile icon) should summon the
-  // context inspector. It dispatches a toggle-context-inspector event that
-  // the sidebar (which owns the inspector) listens for.
-  it('dispatches toggle-context-inspector when the context meter is clicked', async () => {
-    const { el } = await mount();
-    const handler = vi.fn();
-    document.addEventListener('toggle-context-inspector', handler);
-
-    // Desktop: the <progress> bar is the meter.
-    const progress = /** @type {HTMLElement} */ (el.querySelector('#cc-context-progress'));
-    progress.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0].detail).toEqual({ convId: 'c1' });
-    document.removeEventListener('toggle-context-inspector', handler);
-  });
-
-  it('dispatches toggle-context-inspector when the mobile context icon is clicked', async () => {
-    const { el } = await mount({}, { innerWidth: 500 });
-    const handler = vi.fn();
-    document.addEventListener('toggle-context-inspector', handler);
-
-    const icon = /** @type {HTMLElement} */ (el.querySelector('.context-icon'));
-    expect(icon).toBeTruthy();
-    icon.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0].detail).toEqual({ convId: 'c1' });
-    document.removeEventListener('toggle-context-inspector', handler);
-  });
+     const contextControl = /** @type {HTMLElement} */ (el.querySelector('.context-control'));
+     contextControl.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+     expect(handler).toHaveBeenCalledTimes(1);
+     expect(handler.mock.calls[0][0].detail).toEqual({ convId: 'c1' });
+     document.removeEventListener('toggle-context-inspector', handler);
+   });
 });

@@ -71,8 +71,9 @@ on each streamed chunk.
 
 Conversation-specific controls (model selector, mode selector, and context usage meter) live in a dedicated `<chat-controls>` strip docked above the chat input.
 
-- **Desktop**: Always visible inline with direct model/mode `<select>` dropdowns and a styled context usage bar (with warning/danger color thresholds matching the sidebar).
-- **Mobile (<640px)**: Collapses to compact icon buttons (`🤖`, `🎯`, `📊`) by default to conserve vertical space. Tapping the disclosure toggle (`⌄`/`✕`) or the model/mode icons expands the full controls; tapping the context meter opens the context inspector popover.
+- **Always visible inline**: Direct model and mode `<select>` dropdowns and a styled context usage bar (with warning/danger color thresholds matching the sidebar).
+- **Context inspector access**: Clicking or tapping the context usage meter opens the context inspector popover.
+- **Responsive**: Compact font and input sizing adapt smoothly to narrow mobile screens without requiring collapse toggles.
 - **Fallback**: When `<chat-controls>` is present, `conversation-sidebar` suppresses its redundant mode/model/context controls; if absent, the sidebar controls render as fallback.
 
 ### Side Questions (Explanation Only)
