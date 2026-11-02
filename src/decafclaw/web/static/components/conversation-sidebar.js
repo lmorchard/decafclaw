@@ -31,6 +31,7 @@ export class ConversationSidebar extends LitElement {
     _contextInspectorOpen: { type: Boolean, state: true },
     _contextVersion: { type: Number, state: true },
     _openSchedule: { type: String, state: true },
+    _hasControlsStrip: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -64,6 +65,7 @@ export class ConversationSidebar extends LitElement {
     this._contextInspectorOpen = false;
     this._contextVersion = 0;
     this._openSchedule = '';
+    this._hasControlsStrip = document.querySelector('chat-controls') !== null;
   }
 
   openMobile() {
@@ -76,6 +78,10 @@ export class ConversationSidebar extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this._onToggleInspector = () => {
+      this._contextInspectorOpen = !this._contextInspectorOpen;
+    };
+    document.addEventListener('toggle-context-inspector', this._onToggleInspector);
     this._onStoreChange = () => {
       const newId = this.store?.currentConvId;
       if (newId !== this._activeId) this._contextInspectorOpen = false;
@@ -108,6 +114,7 @@ export class ConversationSidebar extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    document.removeEventListener('toggle-context-inspector', this._onToggleInspector);
     this.store?.removeEventListener('change', this._onStoreChange);
   }
 
@@ -673,7 +680,7 @@ export class ConversationSidebar extends LitElement {
               }))
         }
       </div>
-      ${this._availableModes.length > 0 ? html`
+      ${!this._hasControlsStrip && this._availableModes.length > 0 ? html`
       <div class="mode-picker">
         <label class="mode-picker-label" for="mode-select">Mode</label>
         <select id="mode-select" class="mode-select"
@@ -696,7 +703,7 @@ export class ConversationSidebar extends LitElement {
         </select>
       </div>
       ` : nothing}
-      ${this._availableModels.length > 0 ? html`
+      ${!this._hasControlsStrip && this._availableModels.length > 0 ? html`
       <div class="model-picker">
         <label class="model-picker-label" for="model-select">Model</label>
         <select id="model-select" class="model-select"
@@ -719,7 +726,7 @@ export class ConversationSidebar extends LitElement {
         </select>
       </div>
       ` : nothing}
-      ${this._contextLimit > 0 ? html`
+      ${!this._hasControlsStrip && this._contextLimit > 0 ? html`
         ${(() => {
           const pct = Math.round(this._contextUsage / this._contextLimit * 100);
           const cls = pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
@@ -739,15 +746,15 @@ export class ConversationSidebar extends LitElement {
                 <div class="context-usage-fill" style="width: ${Math.min(100, pct)}%"></div>
               </div>
             </div>
-            <context-inspector
-              .convId=${this._activeId || ''}
-              .open=${this._contextInspectorOpen}
-              .contextVersion=${this._contextVersion}
-              @close=${() => { this._contextInspectorOpen = false; }}
-            ></context-inspector>
           `;
         })()}
       ` : nothing}
+      <context-inspector
+        .convId=${this._activeId || ''}
+        .open=${this._contextInspectorOpen}
+        .contextVersion=${this._contextVersion}
+        @close=${() => { this._contextInspectorOpen = false; }}
+      ></context-inspector>
       <div class="sidebar-footer">
         <div class="footer-icons">
           <theme-toggle></theme-toggle>
