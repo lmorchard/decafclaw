@@ -4,10 +4,10 @@
 .context-inspector-mount .inspector {
   position: fixed;
   z-index: 1000;
-  bottom: 5.25rem;
-  left: 1rem;
-  width: min(640px, calc(100vw - 2rem));
-  max-height: 480px;
+  bottom: 7.25rem;
+  right: 1.5rem;
+  width: min(720px, calc(100vw - 3rem));
+  max-height: 560px;
   display: flex;
   flex-direction: column;
   background: var(--pico-card-background-color, #fff);
@@ -23,10 +23,10 @@
 
 .context-inspector-mount .inspector.expanded {
   top: 1rem;
-  bottom: 5.25rem;
+  bottom: 7.25rem;
   width: min(88vw, 1200px);
-  max-height: calc(100vh - 6.25rem);
-  height: calc(100vh - 6.25rem);
+  max-height: calc(100vh - 9rem);
+  height: calc(100vh - 9rem);
 }
 
 .context-inspector-mount .inspector-header {

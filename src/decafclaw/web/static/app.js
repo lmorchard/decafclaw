@@ -37,6 +37,7 @@ import './components/file-page.js';
 import './components/config-panel.js';
 import './components/schedule-page.js';
 import './components/copy-conversation-menu.js';
+import './components/chat-controls.js';
 import './components/side-question-drawer.js';
 
 // -- Services -----------------------------------------------------------------
@@ -67,7 +68,8 @@ const chatInput = /** @type {any} */ (document.querySelector('chat-input'));
 if (loginView) loginView.authClient = auth;
 if (sidebar) { sidebar.store = store; sidebar.authClient = auth; }
 if (chatView) chatView.store = store;
-
+const chatControls = /** @type {any} */ (document.querySelector('chat-controls'));
+if (chatControls) chatControls.store = store;
 // Update chat-input disabled/busy state from store, auto-focus when ready
 let wasBusy = false;
 let lastConvId = null;
@@ -114,6 +116,16 @@ document.addEventListener('send', (e) => {
 
 // Handle stop events from chat-input
 document.addEventListener('stop', () => store.cancelTurn());
+// Handle model/mode changes from chat-controls
+document.addEventListener('set-model', (e) => {
+  const { model } = /** @type {CustomEvent} */ (e).detail;
+  if (model && store) store.setModel(model);
+});
+
+document.addEventListener('set-mode', (e) => {
+  const { mode } = /** @type {CustomEvent} */ (e).detail;
+  if (mode && store) store.setMode(mode);
+});
 
 // Drop files anywhere in the chat area → forward to chat-input
 const chatMain = document.getElementById('chat-main');
