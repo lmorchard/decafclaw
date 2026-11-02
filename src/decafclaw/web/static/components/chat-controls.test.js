@@ -98,4 +98,31 @@ describe('chat-controls', () => {
     expect(handler.mock.calls[0][0].detail).toEqual({ mode: 'dev' });
     document.removeEventListener('set-mode', handler);
   });
+
+  // The store populates availableModels/availableModes asynchronously from a
+  // WebSocket message (CONV_HISTORY) *after* app.js assigns `store`. The
+  // component must re-sync on the store's `change` event, or the model/mode
+  // controls (gated on .length > 0) stay hidden.
+  it('re-syncs model/mode controls when the store populates after connect', async () => {
+    const { el, store } = await mount({
+      availableModels: [],
+      availableModes: [],
+      activeModel: '',
+      activeMode: 'default',
+    });
+    // Before the WS message: no model/mode controls rendered.
+    expect(el.querySelector('#cc-model-select')).toBeNull();
+    expect(el.querySelector('#cc-mode-select')).toBeNull();
+
+    // Simulate the store receiving available_models/available_modes and
+    // emitting change (as #handleMessage does for CONV_HISTORY).
+    store.availableModels = ['anthropic-claude-3.5-sonnet', 'vertex-gemini-flash-3.8'];
+    store.activeModel = 'vertex-gemini-flash-3.8';
+    store.availableModes = [{ name: 'default', description: 'Standard' }];
+    store.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+
+    expect(el.querySelector('#cc-model-select')).toBeTruthy();
+    expect(el.querySelector('#cc-mode-select')).toBeTruthy();
+  });
 });

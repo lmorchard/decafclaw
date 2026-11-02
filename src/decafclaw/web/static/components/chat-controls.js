@@ -37,10 +37,6 @@ export class ChatControls extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     window.addEventListener('resize', this.#updateCollapseState);
-    if (this.store) {
-      this.#syncFromStore();
-      this.store.addEventListener('change', this.#onStoreChange);
-    }
     this.#updateCollapseState();
   }
 
@@ -78,8 +74,18 @@ export class ChatControls extends LitElement {
   }
 
   updated(changedProps) {
-    if (changedProps.has('store') && this.store) {
-      this.#syncFromStore();
+    if (changedProps.has('store')) {
+      const oldStore = changedProps.get('store');
+      if (oldStore) oldStore.removeEventListener('change', this.#onStoreChange);
+      if (this.store) {
+        // app.js assigns `store` after the element is connected, so the
+        // listener must be registered here (not in connectedCallback, where
+        // store is still null). The store populates availableModels/
+        // availableModes asynchronously from a WebSocket message, so without
+        // this the model/mode controls would never appear.
+        this.store.addEventListener('change', this.#onStoreChange);
+        this.#syncFromStore();
+      }
     }
     // Keep attribute in sync with state
     this.toggleAttribute('collapsed', this._collapsed);
