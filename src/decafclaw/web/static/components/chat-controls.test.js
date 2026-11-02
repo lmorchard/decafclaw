@@ -55,6 +55,34 @@ describe('chat-controls', () => {
     await el.updateComplete;
     expect(el.querySelector('.context-icon').classList.contains('danger')).toBe(false);
   });
+  it('flags the context icon and bar with warn at >=80% and <90%', async () => {
+    const { el } = await mount({ contextUsage: 85000, contextLimit: 100000 }, { innerWidth: 375 });
+    const icon = el.querySelector('.context-icon');
+    expect(icon).toBeTruthy();
+    expect(icon.classList.contains('warn')).toBe(true);
+    expect(icon.classList.contains('danger')).toBe(false);
+  });
+
+  it('applies warn and full classes to desktop context control bar', async () => {
+    const { el } = await mount({ contextUsage: 85000, contextLimit: 100000 }, { innerWidth: 1024 });
+    const contextControl = el.querySelector('.context-control');
+    expect(contextControl.classList.contains('warn')).toBe(true);
+
+    el._contextUsage = 100000;
+    await el.updateComplete;
+    expect(contextControl.classList.contains('full')).toBe(true);
+  });
+
+  it('expands controls when clicking mobile model or mode icons', async () => {
+    const { el } = await mount({}, { innerWidth: 375 });
+    expect(el._collapsed).toBe(true);
+
+    const modelIcon = el.querySelector('.model-icon');
+    expect(modelIcon).toBeTruthy();
+    modelIcon.click();
+    await el.updateComplete;
+    expect(el._collapsed).toBe(false);
+  });
 
   it('does not flag danger when no context limit is known', async () => {
     const { el } = await mount({ contextUsage: 95000, contextLimit: 0 }, { innerWidth: 375 });
