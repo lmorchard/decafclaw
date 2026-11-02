@@ -78,6 +78,10 @@ export class ConversationSidebar extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this._onToggleInspector = () => {
+      this._contextInspectorOpen = !this._contextInspectorOpen;
+    };
+    document.addEventListener('toggle-context-inspector', this._onToggleInspector);
     this._onStoreChange = () => {
       const newId = this.store?.currentConvId;
       if (newId !== this._activeId) this._contextInspectorOpen = false;
@@ -110,6 +114,7 @@ export class ConversationSidebar extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    document.removeEventListener('toggle-context-inspector', this._onToggleInspector);
     this.store?.removeEventListener('change', this._onStoreChange);
   }
 
@@ -741,15 +746,15 @@ export class ConversationSidebar extends LitElement {
                 <div class="context-usage-fill" style="width: ${Math.min(100, pct)}%"></div>
               </div>
             </div>
-            <context-inspector
-              .convId=${this._activeId || ''}
-              .open=${this._contextInspectorOpen}
-              .contextVersion=${this._contextVersion}
-              @close=${() => { this._contextInspectorOpen = false; }}
-            ></context-inspector>
           `;
         })()}
       ` : nothing}
+      <context-inspector
+        .convId=${this._activeId || ''}
+        .open=${this._contextInspectorOpen}
+        .contextVersion=${this._contextVersion}
+        @close=${() => { this._contextInspectorOpen = false; }}
+      ></context-inspector>
       <div class="sidebar-footer">
         <div class="footer-icons">
           <theme-toggle></theme-toggle>

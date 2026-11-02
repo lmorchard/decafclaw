@@ -114,6 +114,64 @@ describe('conversation-sidebar model selector', () => {
   });
 });
 
+describe('conversation-sidebar context inspector', () => {
+  let sidebar;
+
+  afterEach(() => {
+    sidebar?.remove();
+  });
+
+  async function mount(storeOverrides = {}) {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'c1',
+      conversations: [{ conv_id: 'c1', title: 'Trip planning' }],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 45000,
+      contextLimit: 100000,
+      activeModel: 'vertex-gemini-flash-3.8',
+      availableModels: ['vertex-gemini-flash-3.8'],
+      defaultModel: 'vertex-gemini-flash-3.8',
+      activeMode: 'default',
+      availableModes: [{ name: 'default', description: 'Standard' }],
+      selectConversation: vi.fn(),
+      setModel: vi.fn(),
+      setMode: vi.fn(),
+      ...storeOverrides,
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    await sidebar.updateComplete;
+    return { sidebar, store };
+  }
+
+  // The chat-controls context meter dispatches toggle-context-inspector; the
+  // sidebar owns the inspector and must open it in response.
+  it('opens the context inspector on toggle-context-inspector and closes on the next', async () => {
+    const { sidebar } = await mount();
+    const inspector = /** @type {any} */ (sidebar.querySelector('context-inspector'));
+    expect(inspector).toBeTruthy();
+    expect(sidebar._contextInspectorOpen).toBe(false);
+
+    document.dispatchEvent(new CustomEvent('toggle-context-inspector', { detail: { convId: 'c1' } }));
+    await sidebar.updateComplete;
+    expect(sidebar._contextInspectorOpen).toBe(true);
+    expect(inspector.open).toBe(true);
+
+    // Let the inspector's deferred outside-click listener register, then
+    // toggle closed again.
+    await new Promise((r) => requestAnimationFrame(r));
+    document.dispatchEvent(new CustomEvent('toggle-context-inspector', { detail: { convId: 'c1' } }));
+    await sidebar.updateComplete;
+    expect(sidebar._contextInspectorOpen).toBe(false);
+    expect(inspector.open).toBe(false);
+  });
+});
+
 describe('conversation-sidebar mode selector', () => {
   let sidebar;
 

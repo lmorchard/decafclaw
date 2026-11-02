@@ -31,6 +31,7 @@ export class ChatControls extends LitElement {
     this._contextLimit = 100000;
     this._isBusy = false;
     this._collapsed = true; // collapsed by default on mobile, auto-expanded on desktop
+    this._userToggledCollapse = false;
     this.#updateCollapseState();
   }
 
@@ -48,6 +49,10 @@ export class ChatControls extends LitElement {
 
   #updateCollapseState = () => {
     // Desktop: expand by default. Mobile (<640px): collapse to button.
+    // Once the user has explicitly toggled, their choice is sticky — a
+    // resize (e.g. the mobile keyboard appearing when the chat field is
+    // focused) must not clobber it back to the viewport default.
+    if (this._userToggledCollapse) return;
     const shouldExpand = window.innerWidth >= 640;
     if (this._collapsed !== !shouldExpand) {
       this._collapsed = !shouldExpand;
@@ -93,6 +98,7 @@ export class ChatControls extends LitElement {
 
   #toggleCollapse() {
     this._collapsed = !this._collapsed;
+    this._userToggledCollapse = true;
     this.requestUpdate();
   }
 
@@ -116,6 +122,17 @@ export class ChatControls extends LitElement {
         composed: true,
       }));
     }
+  }
+
+  // The context meter (desktop <progress> / mobile icon) summons the context
+  // inspector. The inspector is owned by the sidebar, so we dispatch an event
+  // it listens for (mirroring set-model / set-mode).
+  #handleContextClick() {
+    this.dispatchEvent(new CustomEvent('toggle-context-inspector', {
+      detail: { convId: this.store?.currentConvId || '' },
+      bubbles: true,
+      composed: true,
+    }));
   }
 
   #formatContextUsage() {
@@ -175,7 +192,9 @@ export class ChatControls extends LitElement {
         ` : nothing}
 
         <!-- Context usage control -->
-        <div class="control context-control">
+        <div class="control context-control" role="button" tabindex="0"
+             title="Click for context details" @click=${this.#handleContextClick}
+             @keydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.#handleContextClick(); }}}>
           ${!isMobileCollapsed ? html`
             <label>Context</label>
             <progress id="cc-context-progress" value="${this._contextUsage}" max="${this._contextLimit}"></progress>

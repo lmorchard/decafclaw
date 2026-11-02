@@ -58,6 +58,11 @@
   text-align: right;
 }
 
+/* The context meter is clickable (summons the context inspector). */
+.context-control {
+  cursor: pointer;
+}
+
 /* Context progress colors */
 .context-icon.danger {
   color: var(--pico-del-color);
