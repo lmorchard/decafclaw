@@ -19,12 +19,17 @@ chat-controls .control {
   flex-shrink: 0;
 }
 
+/* Pico v2 puts margin-bottom on label tags; zero it out so labels center vertically with selects */
 chat-controls .control label {
   color: var(--pico-muted-color);
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.02em;
   white-space: nowrap;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
 }
 
 chat-controls .control select {
@@ -35,6 +40,7 @@ chat-controls .control select {
   color: var(--pico-color);
   font-size: 0.8rem;
   max-width: 180px;
+  margin: 0;
 }
 
 chat-controls .control select:disabled {
@@ -42,23 +48,37 @@ chat-controls .control select:disabled {
   cursor: not-allowed;
 }
 
-/* Context usage control */
+/* Context usage button / badge */
 chat-controls .context-control {
   cursor: pointer;
   margin-left: auto;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.45rem;
   min-width: 0;
-  flex-shrink: 1;
+  flex-shrink: 0;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-/* Styled context bar: high-contrast recessed track with border */
+chat-controls .context-control:hover {
+  background: var(--pico-code-background-color, rgba(127, 127, 127, 0.12));
+  border-color: var(--pico-color);
+}
+
+chat-controls .context-control label {
+  cursor: pointer;
+}
+
+/* Recessed context bar track */
 chat-controls .context-usage-bar {
-  width: 80px;
+  width: 72px;
   min-width: 48px;
   height: 8px;
-  background: var(--pico-form-element-background-color);
+  background: var(--pico-background-color);
   border: 1px solid var(--pico-muted-border-color);
   border-radius: 4px;
   overflow: hidden;
@@ -82,27 +102,21 @@ chat-controls .context-control.full .context-usage-fill {
 
 chat-controls .context-control .usage-label {
   font-size: 0.75rem;
+  font-weight: 600;
   color: var(--pico-color);
-  opacity: 0.85;
   white-space: nowrap;
-  min-width: 32px;
+  min-width: 28px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 chat-controls .context-control.full .usage-label {
   color: var(--pico-del-color);
-  font-weight: 600;
-  opacity: 1;
 }
 
 chat-controls .context-control.warn .usage-label {
   color: var(--pico-color-orange-500, #f59e0b);
-}
-
-/* Hover/active indicator on context control */
-chat-controls .context-control:hover .context-usage-bar {
-  border-color: var(--pico-color);
 }
 
 /* Mobile adjustments (<640px) */
@@ -119,11 +133,16 @@ chat-controls .context-control:hover .context-usage-bar {
   chat-controls .control select {
     font-size: 0.75rem;
     padding: 0.15rem 0.25rem;
-    max-width: 130px;
+    max-width: 120px;
+  }
+
+  chat-controls .context-control {
+    padding: 0.15rem 0.35rem;
+    gap: 0.3rem;
   }
 
   chat-controls .context-usage-bar {
-    width: 54px;
-    min-width: 36px;
+    width: 44px;
+    min-width: 32px;
   }
 }
