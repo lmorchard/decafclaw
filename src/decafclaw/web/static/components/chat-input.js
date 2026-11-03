@@ -409,11 +409,6 @@ export class ChatInput extends LitElement {
     }
   }
 
-  #openSideQuestion() {
-    this.dispatchEvent(new CustomEvent('open-side-question', { bubbles: true, composed: true }));
-  }
-
-
   /**
    * Auto-resize textarea and re-evaluate the command menu.
    *
@@ -603,8 +598,6 @@ export class ChatInput extends LitElement {
         ${!this.disabled ? html`
           <button type="button" class="attach-btn" @click=${this.#openFilePicker}
             title="Attach file" aria-label="Attach file">&#128206;</button>
-          <button type="button" class="side-question-btn" @click=${this.#openSideQuestion}
-            title="Ask side question" aria-label="Ask side question">&#x2753;</button>
         ` : nothing}
         <textarea
           placeholder=${this.placeholder}
