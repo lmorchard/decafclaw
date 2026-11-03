@@ -546,11 +546,12 @@ describe('chat-input accessible button names (#166)', () => {
   /** @param {any} el @param {string} label */
   const byLabel = (el, label) => el.querySelector(`button[aria-label="${label}"]`);
 
-  it('labels the send and attach buttons', async () => {
+  it('labels the send, attach, and conversation actions buttons', async () => {
     const el = await mount();
 
     expect(byLabel(el, 'Send message')?.textContent.trim()).toBe('Send');
     expect(byLabel(el, 'Attach file')?.classList.contains('attach-btn')).toBe(true);
+    expect(byLabel(el, 'Conversation actions')?.classList.contains('conversation-actions-btn')).toBe(true);
   });
 
   it('labels the stop button while busy', async () => {
@@ -579,11 +580,99 @@ describe('chat-input accessible button names (#166)', () => {
     await el.updateComplete;
 
     const buttons = [...el.querySelectorAll('button')];
-    // attach + stop + send + attachment-remove (the side-question entry
-    // moved to the chat-controls action cluster, issue #1190).
-    expect(buttons.length).toBe(4);
+    // conversation-actions + attach + stop + send + attachment-remove (the
+    // side-question entry moved to the chat-controls action cluster, issue
+    // #1190; the conversation menu itself is a single toggle, issue #1192).
+    expect(buttons.length).toBe(5);
     for (const b of buttons) {
       expect(b.getAttribute('aria-label')?.trim()).toBeTruthy();
     }
+  });
+});
+
+describe('chat-input conversation actions menu (issue #1192)', () => {
+  /** Open the menu via the conversation actions toggle. @param {any} el */
+  async function openMenu(el) {
+    el.querySelector('.conversation-actions-btn').click();
+    await el.updateComplete;
+    return el.querySelector('.conversation-menu');
+  }
+
+  it('renders a conversation actions button left of the attach button', async () => {
+    const el = await mount();
+    const btn = el.querySelector('.conversation-actions-btn');
+    expect(btn).toBeTruthy();
+    expect(btn.getAttribute('aria-label')).toBe('Conversation actions');
+    const attach = el.querySelector('.attach-btn');
+    expect(attach).toBeTruthy();
+    // Left of the paperclip: the actions button precedes the attach button in
+    // the input row's DOM order.
+    expect(btn.compareDocumentPosition(attach) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('renders the menu closed until the conversation actions button is clicked', async () => {
+    const el = await mount();
+    expect(el.querySelector('.conversation-menu')).toBeNull();
+  });
+
+  it('opens a vertical menu when the conversation actions button is clicked', async () => {
+    const el = await mount();
+    const menu = await openMenu(el);
+    expect(menu).not.toBeNull();
+    expect(menu.classList.contains('conversation-menu')).toBe(true);
+  });
+
+  it.each([
+    ['Context', 'toggle-context-inspector'],
+    ['Canvas', 'conversation-action'],
+    ['Terminal', 'conversation-action'],
+    ['Side question', 'open-side-question'],
+  ])('dispatches a %s menu action when its item is picked', async (label, eventName) => {
+    const el = await mount();
+    el.convId = 'c1';
+    const handler = vi.fn();
+    document.addEventListener(eventName, handler);
+    const menu = await openMenu(el);
+
+    const item = [...menu.querySelectorAll('.conversation-menu-item')]
+      .find((b) => b.textContent.trim() === label);
+    expect(item).toBeTruthy();
+    item.click();
+    await el.updateComplete;
+
+    document.removeEventListener(eventName, handler);
+    expect(handler).toHaveBeenCalledTimes(1);
+    if (eventName === 'conversation-action') {
+      expect(handler.mock.calls[0][0].detail).toEqual({ action: label === 'Canvas' ? 'canvas' : 'terminal' });
+    }
+    if (eventName === 'toggle-context-inspector') {
+      expect(handler.mock.calls[0][0].detail).toEqual({ convId: 'c1' });
+    }
+    // Picking an item closes the menu.
+    expect(el.querySelector('.conversation-menu')).toBeNull();
+  });
+
+  it('closes the menu on Escape', async () => {
+    const el = await mount();
+    const menu = await openMenu(el);
+    expect(menu).not.toBeNull();
+
+    el.querySelector('.conversation-actions-btn').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    await el.updateComplete;
+
+    expect(el.querySelector('.conversation-menu')).toBeNull();
+  });
+
+  it('closes the menu on outside click', async () => {
+    const el = await mount();
+    await openMenu(el);
+    expect(el.querySelector('.conversation-menu')).not.toBeNull();
+
+    document.body.click();
+    await el.updateComplete;
+
+    expect(el.querySelector('.conversation-menu')).toBeNull();
   });
 });
