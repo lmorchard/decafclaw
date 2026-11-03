@@ -21,9 +21,9 @@
 
   /* Mobile header bar — hidden by default, shown only when the
      connection banner is visible. The hamburger lives OUTSIDE
-     #mobile-header (fixed-position). The canvas resummon pill no
-     longer mounts here — it floats absolutely over #chat-main on both
-     desktop and mobile. */
+     #mobile-header (fixed-position). The canvas resummon pill now
+     lives in the chat-controls action cluster (issue #1190) instead of
+     floating over #chat-main. */
   #mobile-header {
     display: none;
     align-items: center;

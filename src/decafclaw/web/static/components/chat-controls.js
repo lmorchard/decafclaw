@@ -1,4 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
+import './copy-conversation-menu.js';
+import { subscribe as subscribeCanvas, resummon } from '../lib/canvas-state.js';
 
 /** @typedef {{ name: string, description?: string }} ModeConfig */
 /** @typedef {{ provider: string, model: string }} ModelConfig */
@@ -34,11 +36,27 @@ export class ChatControls extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this.store?.removeEventListener('change', this.#onStoreChange);
+    this.#canvasUnsub?.();
+    this.#canvasUnsub = null;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    // Canvas resummon pill state (issue #1190): the control bar owns the
+    // pill now, so subscribe to the shared canvas snapshot here.
+    this.#canvasUnsub = subscribeCanvas((snap) => {
+      this._canvasSnapshot = snap;
+      this.requestUpdate();
+    });
   }
 
   #onStoreChange = () => {
     this.#syncFromStore();
   };
+
+  /** Latest canvas snapshot for the active conversation (pill visibility). */
+  _canvasSnapshot = null;
+  #canvasUnsub = null;
 
   #syncFromStore() {
     if (!this.store) return;
@@ -91,6 +109,20 @@ export class ChatControls extends LitElement {
     }
   }
 
+  // Conversation action cluster (issue #1190): compact controls hosted in the
+  // control bar, right of the mode selector. The context meter keeps the right
+  // end of the strip via its own margin-left:auto.
+  #handleTerminalClick() {
+    const store = this.store;
+    const convId = store?.currentConvId || '';
+    if (!convId) return;
+    store?.sendMessage?.('/terminal');
+  }
+
+  #handleSideQuestion() {
+    this.dispatchEvent(new CustomEvent('open-side-question', { bubbles: true, composed: true }));
+  }
+
   // The context meter summons the context inspector. The inspector is owned
   // by the sidebar, so we dispatch an event it listens for (mirroring set-model / set-mode).
   #handleContextClick() {
@@ -113,6 +145,11 @@ export class ChatControls extends LitElement {
   render() {
     const { formatted: contextPct, cls: contextCls } = this.#getContextStatus();
     const modelUnconfigured = this._activeModel && !this._availableModels.includes(this._activeModel);
+    const convId = this.store?.currentConvId || '';
+    const canvas = this._canvasSnapshot;
+    const showResummon = Boolean(
+      convId && canvas && Array.isArray(canvas.tabs) && canvas.tabs.length > 0 && !canvas.visible,
+    );
 
     return html`
       <!-- Model control -->
@@ -139,6 +176,39 @@ export class ChatControls extends LitElement {
               <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
             `)}
           </select>
+        </div>
+      ` : nothing}
+
+      <!-- Conversation actions (issue #1190): compact controls in the control
+           bar, positioned right of the mode selector. The context meter below
+           keeps the strip's right end via its own margin-left:auto. -->
+      ${convId ? html`
+        <div class="control actions-control">
+          ${showResummon && canvas ? html`
+            <button
+              type="button"
+              class="canvas-resummon-pill dc-floating-btn"
+              data-unread=${canvas.unreadDot ? 'true' : 'false'}
+              title="Canvas"
+              aria-label=${canvas.unreadDot ? 'Canvas (unread update)' : 'Canvas'}
+              @click=${() => resummon()}
+            >&#x1F4C4;<span class="resummon-label"> Canvas</span></button>
+          ` : nothing}
+          <copy-conversation-menu conv-id=${convId}></copy-conversation-menu>
+          <button
+            type="button"
+            class="terminal-open-btn dc-floating-btn"
+            title="Open a terminal"
+            aria-label="Open a terminal"
+            @click=${this.#handleTerminalClick}
+          >&gt;_</button>
+          <button
+            type="button"
+            class="side-question-action-btn dc-floating-btn"
+            title="Ask side question"
+            aria-label="Ask side question"
+            @click=${this.#handleSideQuestion}
+          >&#x2753;</button>
         </div>
       ` : nothing}
 

@@ -119,6 +119,45 @@ chat-controls .context-control.warn .usage-label {
   color: var(--pico-color-orange-500, #f59e0b);
 }
 
+/* Conversation action cluster (issue #1190): compact buttons hosted in the
+   control bar, right of the mode selector, ahead of the context meter (which
+   keeps the strip's right end via its own margin-left:auto). */
+chat-controls .actions-control {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+chat-controls .actions-control .dc-floating-btn {
+  /* Compact control-bar sizing: smaller than the 44px floating tap target,
+     still inside the shared floating-btn frame (border/radius/shadow). */
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  font-size: 0.85rem;
+}
+
+chat-controls .actions-control .canvas-resummon-pill {
+  padding: 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+chat-controls .actions-control .copy-menu-trigger {
+  padding: 0 0.6rem;
+  font-size: 0.8rem;
+}
+
+chat-controls .actions-control button.terminal-open-btn {
+  padding: 0 0.6rem;
+  font-size: 0.85rem;
+}
+
+chat-controls .actions-control button.side-question-action-btn {
+  padding: 0 0.5rem;
+  font-size: 0.9rem;
+}
+
 /* Mobile adjustments (<640px) */
 @media (max-width: 639px) {
   chat-controls {

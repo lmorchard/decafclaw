@@ -7,7 +7,8 @@ import { copyToClipboard } from '../lib/utils.js';
  * Floating "Copy ▾" menu for the active conversation. Fetches the
  * server-rendered export and writes it to the clipboard.
  *
- * Mounts inside .dc-chat-actions (alongside the Canvas resummon pill).
+ * Mounts inside the chat-controls action cluster (alongside the Canvas
+ * resummon pill and the compact action buttons).
  * Hides itself when convId is falsy so empty / unselected conversations
  * don't show a useless menu.
  */
@@ -15,6 +16,7 @@ export class CopyConversationMenu extends LitElement {
   static properties = {
     convId: { type: String, attribute: 'conv-id' },
     _open: { type: Boolean, state: true },
+    _menuPosition: { type: Object, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -46,6 +48,24 @@ export class CopyConversationMenu extends LitElement {
   _toggle(/** @type {Event} */ e) {
     e.stopPropagation();
     this._open = !this._open;
+    if (this._open) {
+      // The menu lives inside the chat-control strip, which is a horizontal
+      // scroll container (overflow-x: auto) and therefore clips / scrolls
+      // absolutely-positioned descendants. Pin it fixed so it escapes the
+      // strip and floats over the chat area. Anchor it above the trigger (the
+      // strip sits near the bottom of the viewport, so downward-open menus can
+      // run past the end of the page).
+      const wrap = this.querySelector('.copy-menu-wrap');
+      if (wrap) {
+        const r = wrap.getBoundingClientRect();
+        this._menuPosition = {
+          bottom: Math.max(0, window.innerHeight - r.bottom),
+          right: Math.max(0, r.right),
+        };
+      }
+    } else {
+      this._menuPosition = null;
+    }
   }
 
   /** @param {'jsonl' | 'markdown'} format */
@@ -68,6 +88,9 @@ export class CopyConversationMenu extends LitElement {
 
   render() {
     if (!this.convId) return nothing;
+    const menuStyle = this._open && this._menuPosition
+      ? `position: fixed; bottom: ${this._menuPosition.bottom}px; right: ${this._menuPosition.right}px;`
+      : '';
     return html`
       <div class="copy-menu-wrap">
         <button
@@ -79,7 +102,7 @@ export class CopyConversationMenu extends LitElement {
           @click=${this._toggle}
         >\u{1F4CB}<span class="copy-label"> Copy</span><span class="copy-caret"> ▾</span></button>
         ${this._open ? html`
-          <ul class="copy-menu-list" role="menu">
+          <ul class="copy-menu-list" role="menu" style=${menuStyle}>
             <li role="none">
               <button
                 type="button"
