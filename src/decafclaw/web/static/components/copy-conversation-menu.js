@@ -7,10 +7,10 @@ import { copyToClipboard } from '../lib/utils.js';
  * Floating "Copy ▾" menu for the active conversation. Fetches the
  * server-rendered export and writes it to the clipboard.
  *
- * Mounts inside the chat-controls action cluster (alongside the Canvas
- * resummon pill and the compact action buttons).
- * Hides itself when convId is falsy so empty / unselected conversations
- * don't show a useless menu.
+ * Mounts inside the context inspector raw pane (issue #1192; it moved out of
+ * the chat-control strip), alongside the raw JSON copy. Hides itself when
+ * convId is falsy so empty / unselected conversations don't show a useless
+ * menu.
  */
 export class CopyConversationMenu extends LitElement {
   static properties = {
@@ -49,12 +49,10 @@ export class CopyConversationMenu extends LitElement {
     e.stopPropagation();
     this._open = !this._open;
     if (this._open) {
-      // The menu lives inside the chat-control strip, which is a horizontal
-      // scroll container (overflow-x: auto) and therefore clips / scrolls
-      // absolutely-positioned descendants. Pin it fixed so it escapes the
-      // strip and floats over the chat area. Anchor it above the trigger (the
-      // strip sits near the bottom of the viewport, so downward-open menus can
-      // run past the end of the page).
+      // Pin it fixed so it escapes any clipping ancestor and floats over the
+      // surface; anchor it via the wrap's bounding rect (the trigger may sit
+      // near the bottom of the viewport, so downward-open menus can run past
+      // the end of the page).
       const wrap = this.querySelector('.copy-menu-wrap');
       if (wrap) {
         const r = wrap.getBoundingClientRect();

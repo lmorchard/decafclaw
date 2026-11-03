@@ -108,8 +108,10 @@ drag-to-resize). The close button meets the 44×44px tap-target floor. When
 the user opens the vault editor or the files tab via the sidebar, the canvas
 panel auto-closes.
 
-The resummon pill in `#mobile-header` mirrors the pill in
-`#chat-main-header` so it remains reachable even when the sidebar is
+The resummon pill in the conversation control strip's action cluster
+(`chat-controls`) is hidden on mobile (≤639px) and replaced by the
+conversation actions menu summoned via the `⋮` button in the chat input;
+the menu keeps the Canvas action reachable even when the sidebar is
 collapsed.
 
 ## Canvas tabs

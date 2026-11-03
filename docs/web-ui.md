@@ -320,8 +320,10 @@ close buttons. See [Web UI — mobile conventions](web-ui-mobile.md#canvas-tabs)
 - `canvas_read()` — return `{active_tab, tabs: [{id, label, widget_type, data}, ...]}`.
 
 **Resummon UI:** when canvas state exists but the panel has been dismissed,
-a "📄 Canvas" pill appears in `#chat-main-header` (mirrored to
-`#mobile-header` on mobile). Clicking it re-opens the panel. An unread dot
+a "📄 Canvas" pill appears in the conversation control strip's action cluster
+(`<chat-controls>` `.actions-control`, right of the mode selector, above the
+composer; the same cluster hosts the action buttons on mobile) — not floated
+over the chat area. Clicking it re-opens the panel. An unread dot
 lights up on the pill if a `canvas_update` event arrived while the panel
 was hidden.
 
@@ -375,6 +377,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | `chat-view` | `components/chat-view.js` | Main chat area with message list |
 | `chat-input` | `components/chat-input.js` | Message input with file upload and command autocomplete |
 | `chat-message` | `components/chat-message.js` | Individual message rendering |
+| `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/mode/context controls plus the conversation action cluster (issue #1190) |
 | `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor (see [host contract](#the-wiki-editor-host-contract)) |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |

@@ -99,7 +99,7 @@ The four shared classes live in `src/decafclaw/web/static/styles/primitives.css`
 
 Border + 6px radius + drop shadow + 44px tap-target floor. Defined at `primitives.css`.
 
-**What it is:** the look for any free-floating control that should read as "tappable, lifted off the page" — hamburger menu, canvas resummon pill, mobile disclosure triangle, scroll-to-bottom pill. Provides structural shape; bg / text color / horizontal padding are set by each consumer.
+**What it is:** the look for any free-floating control that should read as "tappable, lifted off the page" — hamburger menu, canvas resummon pill, mobile disclosure triangle, scroll-to-bottom pill. Provides structural shape; bg / text color / horizontal padding are set by each consumer. Since issue #1190 the conversation action cluster hosts compact variants of these controls in flow, inside the chat control bar; the primitive owns the shape and a compact sizing variant may be applied as a deliberate exception, documented in the consumer's per-component CSS.
 
 **What it isn't:** in-flow buttons (use Pico defaults), action buttons inside a header row (use `.dc-icon-btn`), filled-primary CTAs (Pico's `<button>` defaults already cover this).
 
