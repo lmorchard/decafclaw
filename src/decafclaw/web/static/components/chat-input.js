@@ -67,6 +67,7 @@ export class ChatInput extends LitElement {
     _history: { type: Array, state: true },
     _historyIndex: { type: Number, state: true },
     _draft: { type: String, state: true },
+    _conversationMenuOpen: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -82,11 +83,23 @@ export class ChatInput extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    document.removeEventListener('click', this.#onDocClick);
     if (this._fetchTimeout) {
       clearTimeout(this._fetchTimeout);
       this._fetchTimeout = null;
     }
   }
+
+  connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener('click', this.#onDocClick);
+  }
+
+  #onDocClick = (/** @type {MouseEvent} */ e) => {
+    if (!this._conversationMenuOpen) return;
+    if (e.target instanceof Node && this.contains(e.target)) return;
+    this._conversationMenuOpen = false;
+  };
 
   /** Escape keeps the menu shut for the token it dismissed. */
   #dismissed = false;
@@ -112,6 +125,7 @@ export class ChatInput extends LitElement {
     this._draft = '';
     this._lastFetchedQuery = '';
     this._fetchTimeout = null;
+    this._conversationMenuOpen = false;
   }
 
   /** Focus the textarea. */
@@ -283,6 +297,58 @@ export class ChatInput extends LitElement {
     }
   }
 
+  // -- Conversation actions menu (issue #1192) ---------------------------------
+
+  /** Toggle the conversation actions menu (the mobile control surface). */
+  #toggleConversationMenu(/** @type {Event} */ e) {
+    e.stopPropagation();
+    this._conversationMenuOpen = !this._conversationMenuOpen;
+  }
+
+  /** Close the conversation actions menu on Escape (toggle button focus). */
+  #handleConversationKeydown(/** @type {KeyboardEvent} */ e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      this._conversationMenuOpen = false;
+    }
+  }
+
+  /** Context item: summon the context inspector. */
+  #handleMenuContext() {
+    this._conversationMenuOpen = false;
+    this.dispatchEvent(new CustomEvent('toggle-context-inspector', {
+      detail: { convId: this.convId },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /** Canvas item: resummon the canvas for the active conversation. */
+  #handleMenuCanvas() {
+    this._conversationMenuOpen = false;
+    this.dispatchEvent(new CustomEvent('conversation-action', {
+      detail: { action: 'canvas' },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /** Terminal item: open a terminal for the active conversation. */
+  #handleMenuTerminal() {
+    this._conversationMenuOpen = false;
+    this.dispatchEvent(new CustomEvent('conversation-action', {
+      detail: { action: 'terminal' },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /** Side question item: open the side-question drawer. */
+  #handleMenuSideQuestion() {
+    this._conversationMenuOpen = false;
+    this.dispatchEvent(new CustomEvent('open-side-question', { bubbles: true, composed: true }));
+  }
+
   /** @param {KeyboardEvent} e */
   #handleKeydown(e) {
     const ctx = this.#triggerContext();
@@ -362,6 +428,9 @@ export class ChatInput extends LitElement {
     } else if (e.key === 'Escape' && this.busy) {
       e.preventDefault();
       this.#handleStop();
+    } else if (e.key === 'Escape' && this._conversationMenuOpen) {
+      e.preventDefault();
+      this._conversationMenuOpen = false;
     }
   }
 
@@ -394,6 +463,7 @@ export class ChatInput extends LitElement {
     textarea.value = '';
     textarea.style.height = 'auto';
     this.#closeMenu();
+    this._conversationMenuOpen = false;
     this.#clearAttachments();
   }
   /**
@@ -589,12 +659,28 @@ export class ChatInput extends LitElement {
           `)}
         </div>
       ` : nothing}
+      ${this._conversationMenuOpen ? html`
+        <div class="conversation-menu" role="menu">
+          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuContext}>Context</button>
+          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuCanvas}>Canvas</button>
+          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuTerminal}>Terminal</button>
+          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuSideQuestion}>Side question</button>
+        </div>
+      ` : nothing}
       <div class="input-row ${this._dragOver ? 'drag-over' : ''}"
         @dragover=${this.#handleDragOver}
         @dragleave=${this.#handleDragLeave}
         @drop=${this.#handleDrop}>
         <input type="file" id="file-input" multiple hidden
           @change=${this.#handleFileInput}>
+        <button
+          type="button"
+          class="conversation-actions-btn dc-floating-btn"
+          aria-label="Conversation actions"
+          title="Conversation actions"
+          @click=${this.#toggleConversationMenu}
+          @keydown=${this.#handleConversationKeydown}
+        >&8942;</button>
         ${!this.disabled ? html`
           <button type="button" class="attach-btn" @click=${this.#openFilePicker}
             title="Attach file" aria-label="Attach file">&#128206;</button>
