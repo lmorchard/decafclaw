@@ -36,10 +36,13 @@ button.side-question-action-btn {
   font-size: 0.95rem;
 }
 button.side-question-action-btn[hidden] { display: none; }
+/* The menu is position: fixed at open time (see CopyConversationMenu) so it
+   escapes the chat-control strip's horizontal scroll container (overflow-x:
+   auto clips / scrolls absolutely-positioned descendants) and pops over the
+   chat area outside the control strip. The inline style set when opened
+   carries the fixed top / right offsets. */
 .copy-menu-list {
-  position: absolute;
-  top: calc(100% + 0.3rem);
-  right: 0;
+  position: fixed;
   margin: 0;
   padding: 0.25rem 0;
   list-style: none;
