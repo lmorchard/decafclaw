@@ -51,13 +51,17 @@ export class CopyConversationMenu extends LitElement {
     if (this._open) {
       // The menu lives inside the chat-control strip, which is a horizontal
       // scroll container (overflow-x: auto) and therefore clips / scrolls
-      // absolutely-positioned descendants. Pin it fixed, anchored below the
-      // trigger, so it pops over the chat area outside the control strip
-      // instead of stretching / scrolling the strip.
+      // absolutely-positioned descendants. Pin it fixed so it escapes the
+      // strip and floats over the chat area. Anchor it above the trigger (the
+      // strip sits near the bottom of the viewport, so downward-open menus can
+      // run past the end of the page).
       const wrap = this.querySelector('.copy-menu-wrap');
       if (wrap) {
         const r = wrap.getBoundingClientRect();
-        this._menuPosition = { top: Math.max(0, r.bottom + 0.3), right: Math.max(0, r.right) };
+        this._menuPosition = {
+          bottom: Math.max(0, window.innerHeight - r.bottom),
+          right: Math.max(0, r.right),
+        };
       }
     } else {
       this._menuPosition = null;
@@ -85,7 +89,7 @@ export class CopyConversationMenu extends LitElement {
   render() {
     if (!this.convId) return nothing;
     const menuStyle = this._open && this._menuPosition
-      ? `position: fixed; top: ${this._menuPosition.top}px; right: ${this._menuPosition.right}px;`
+      ? `position: fixed; bottom: ${this._menuPosition.bottom}px; right: ${this._menuPosition.right}px;`
       : '';
     return html`
       <div class="copy-menu-wrap">
