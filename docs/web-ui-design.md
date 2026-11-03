@@ -99,18 +99,18 @@ The four shared classes live in `src/decafclaw/web/static/styles/primitives.css`
 
 Border + 6px radius + drop shadow + 44px tap-target floor. Defined at `primitives.css`.
 
-**What it is:** the look for any control that should read as "tappable, lifted off the page" — hamburger menu, canvas resummon pill, mobile disclosure triangle, scroll-to-bottom pill. Provides structural shape; bg / text color / horizontal padding are set by each consumer. Since issue #1190 the conversation action cluster hosts compact variants of these controls in flow, inside the chat control bar; the primitive owns the shape and a compact sizing variant may be applied as a deliberate exception, documented in the consumer's per-component CSS.
+**What it is:** the look for any free-floating control that should read as "tappable, lifted off the page" — hamburger menu, canvas resummon pill, mobile disclosure triangle, scroll-to-bottom pill. Provides structural shape; bg / text color / horizontal padding are set by each consumer.
 
 **What it isn't:** in-flow buttons (use Pico defaults), action buttons inside a header row (use `.dc-icon-btn`), filled-primary CTAs (Pico's `<button>` defaults already cover this).
 
 **Used by:**
 - `index.html:29` — hamburger (mobile)
-- `chat-controls.js` — conversation action cluster (issue #1190): canvas resummon pill, copy menu, terminal, side question, in compact control-bar variants
 - `app.js:701` — canvas resummon pill
 - `chat-view.js:185` — scroll-to-bottom pill
 - `canvas-panel.js:208` — canvas mobile disclosure
+- `chat-input.js` — conversation actions toggle (`⋮`, issue #1192)
 
-**Don't:** redeclare `border`, `border-radius`, `box-shadow`, `min-width`, or `min-height` on a button using this class. The primitive owns those — overriding them locally is the cluster-style fragility this doc exists to prevent, except for a documented compact control-bar variant (see the actions-control sizing in `chat-controls.css`, issue #1190).
+**Don't:** redeclare `border`, `border-radius`, `box-shadow`, `min-width`, or `min-height` on a button using this class. The primitive owns those — overriding them locally is the cluster-style fragility this doc exists to prevent.
 
 ### `.dc-overlay-header`
 

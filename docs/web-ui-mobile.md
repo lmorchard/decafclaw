@@ -108,9 +108,9 @@ drag-to-resize). The close button meets the 44×44px tap-target floor. When
 the user opens the vault editor or the files tab via the sidebar, the canvas
 panel auto-closes.
 
-The resummon pill in the conversation control bar (`chat-controls` action
-cluster) keeps the same action cluster on mobile, so it remains reachable even
-when the sidebar is collapsed.
+The resummon pill in `#mobile-header` mirrors the pill in
+`#chat-main-header` so it remains reachable even when the sidebar is
+collapsed.
 
 ## Canvas tabs
 
@@ -133,6 +133,21 @@ height is `min-height: 44px`; the close button within each row also gets
 `min-width: 44px; min-height: 44px`. This is enforced via `mobile.css`
 (annotated with the same one-line reason pattern used elsewhere in the
 file).
+
+## Conversation controls on mobile
+
+On mobile (≤639px), the chat-control strip's conversation action cluster
+(`.actions-control` inside `<chat-controls>`) is hidden and replaced by the
+composer's conversation-actions menu. The toggle is the `⋮` button
+(`.conversation-actions-btn`) rendered left of the paperclip (attach) button
+in the chat-input row; tapping it opens a vertical `.conversation-menu`
+floated above the composer. Menu items dispatch document-level events the app
+handles: Context → `toggle-context-inspector`, Canvas → `conversation-action`
+(canvas resummon), Terminal → `conversation-action`, Side question →
+`open-side-question`.
+
+The strip itself keeps the compact model / mode / context-usage controls as
+its single-row mobile surface; only the action cluster is hidden.
 
 ## Quick checklist before merging a UI change
 
