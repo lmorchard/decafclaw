@@ -15,8 +15,6 @@ import { showToast } from './lib/toast.js';
 import {
   setActiveConv,
   applyEvent,
-  subscribe as subscribeCanvas,
-  resummon,
   dismiss as canvasDismiss,
   currentSnapshot as canvasSnapshot,
 } from './lib/canvas-state.js';
@@ -804,102 +802,6 @@ if (canvasResizeHandle && canvasMainEl) {
   });
 }
 
-/**
- * Lazily create / fetch the floating action cluster anchored to the
- * upper-right of #chat-main. Buttons (Canvas pill, Copy menu, ...) live
- * inside it so they don't fight each other for absolute offsets.
- *
- * @returns {HTMLElement | null}
- */
-function getChatActions() {
-  const host = document.getElementById('chat-main');
-  if (!host) return null;
-  let actions = host.querySelector(':scope > .dc-chat-actions');
-  if (!actions) {
-    actions = document.createElement('div');
-    actions.className = 'dc-chat-actions';
-    host.appendChild(actions);
-  }
-  return /** @type {HTMLElement} */ (actions);
-}
-
-function setupCanvasResummonPill() {
-  // Pill lives inside .dc-chat-actions (upper-right of #chat-main). The
-  // container handles positioning; the pill only contributes its own
-  // sizing / unread-dot styling.
-  /**
-   * @param {{tabs: any[], activeTab: any, visible: boolean, unreadDot: boolean}} snapshot
-   */
-  const renderTo = (snapshot) => {
-    const actions = getChatActions();
-    if (!actions) return;
-    actions.querySelector('.canvas-resummon-pill')?.remove();
-    if (!snapshot.tabs || snapshot.tabs.length === 0) return;
-    if (snapshot.visible) return;
-    const btn = document.createElement('button');
-    btn.className = 'canvas-resummon-pill dc-floating-btn';
-    btn.type = 'button';
-    // Wrap the label so mobile CSS can hide it and leave just the emoji.
-    btn.innerHTML = '📄<span class="resummon-label"> Canvas</span>';
-    if (snapshot.unreadDot) {
-      btn.dataset.unread = 'true';
-      // The dot is purely visual (CSS ::after); pair it with an
-      // accessible name so screen readers get the same state signal.
-      btn.setAttribute('aria-label', 'Canvas (unread update)');
-    } else {
-      btn.setAttribute('aria-label', 'Canvas');
-    }
-    btn.addEventListener('click', () => resummon());
-    actions.appendChild(btn);
-  };
-
-  subscribeCanvas(renderTo);
-}
-
-setupCanvasResummonPill();
-
-function setupCopyConversationMenu() {
-  // Mount once inside the chat-action cluster. The element hides itself
-  // when convId is empty, so we don't need to add/remove it on every
-  // conversation switch — just keep its convId attribute in sync.
-  const actions = getChatActions();
-  if (!actions) return;
-  const menu = /** @type {any} */ (document.createElement('copy-conversation-menu'));
-  menu.convId = store.currentConvId || '';
-  actions.appendChild(menu);
-  store.addEventListener('change', () => {
-    menu.convId = store.currentConvId || '';
-  });
-}
-
-setupCopyConversationMenu();
-
-function setupTerminalButton() {
-  // `>_` lives in the chat-action cluster (top-right of #chat-main), next to
-  // the Copy menu. Clicking it sends the `/terminal` side-effect command —
-  // conversation-store special-cases it (no busy state, no user echo; the
-  // canvas tab opens over the separate canvas channel). Hidden until a
-  // conversation is active, mirroring the Copy menu's convId gating.
-  const actions = getChatActions();
-  if (!actions) return;
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'terminal-open-btn dc-floating-btn';
-  btn.title = 'Open a terminal';
-  btn.setAttribute('aria-label', 'Open a terminal');
-  btn.textContent = '>_';
-  btn.addEventListener('click', () => {
-    if (!store.currentConvId) return;
-    store.sendMessage('/terminal');
-  });
-  const sync = () => { btn.hidden = !store.currentConvId; };
-  sync();
-  actions.appendChild(btn);
-  store.addEventListener('change', sync);
-}
-
-setupTerminalButton();
-
 function setupSideQuestion() {
   const drawer = /** @type {any} */ (document.querySelector('side-question-drawer'));
   if (drawer) {
@@ -907,25 +809,6 @@ function setupSideQuestion() {
     store.addEventListener('change', () => {
       drawer.convId = store.currentConvId || '';
     });
-  }
-
-  const actions = getChatActions();
-  if (actions) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'side-question-action-btn dc-floating-btn';
-    btn.title = 'Ask side question';
-    btn.setAttribute('aria-label', 'Ask side question');
-    btn.textContent = '❓';
-    btn.addEventListener('click', () => {
-      drawer?.toggle();
-    });
-    const sync = () => {
-      btn.hidden = !store.currentConvId;
-    };
-    sync();
-    actions.appendChild(btn);
-    store.addEventListener('change', sync);
   }
 
   document.addEventListener('open-side-question', () => {

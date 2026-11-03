@@ -566,9 +566,10 @@ describe('chat-input accessible button names (#166)', () => {
 
     expect(byLabel(el, 'Remove attachment')?.classList.contains('attachment-remove')).toBe(true);
   });
-  it('labels the side question button', async () => {
+
+  it('no longer renders a side-question button in the composer (moved to the control bar, issue #1190)', async () => {
     const el = await mount();
-    expect(byLabel(el, 'Ask side question')?.classList.contains('side-question-btn')).toBe(true);
+    expect(byLabel(el, 'Ask side question')).toBeNull();
   });
 
 
@@ -578,7 +579,9 @@ describe('chat-input accessible button names (#166)', () => {
     await el.updateComplete;
 
     const buttons = [...el.querySelectorAll('button')];
-    expect(buttons.length).toBe(5);
+    // attach + stop + send + attachment-remove (the side-question entry
+    // moved to the chat-controls action cluster, issue #1190).
+    expect(buttons.length).toBe(4);
     for (const b of buttons) {
       expect(b.getAttribute('aria-label')?.trim()).toBeTruthy();
     }

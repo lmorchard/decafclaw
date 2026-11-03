@@ -105,7 +105,7 @@ canvas-panel {
   font-weight: bold;
 }
 
-/* Positioning lives on the .dc-chat-actions cluster (see chat.css).
+/* Positioning lives on the chat-controls action cluster (see chat-controls.css).
    The pill only contributes its own sizing. */
 
 @media (max-width: 639px) {

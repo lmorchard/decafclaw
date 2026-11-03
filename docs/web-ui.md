@@ -67,15 +67,6 @@ never grabs focus mid-turn. The policy lives in `static/lib/chat-focus.js`;
 fires on *every* WebSocket message, so a looser condition there steals focus
 on each streamed chunk.
 
-### Controls strip above chat input (#1163)
-
-Conversation-specific controls (model selector, mode selector, and context usage meter) live in a dedicated `<chat-controls>` strip docked above the chat input.
-
-- **Always visible inline**: Direct model and mode `<select>` dropdowns and a styled context usage bar (with warning/danger color thresholds matching the sidebar).
-- **Context inspector access**: Clicking or tapping the context usage meter opens the context inspector popover.
-- **Responsive**: Compact font and input sizing adapt smoothly to narrow mobile screens without requiring collapse toggles.
-- **Fallback**: When `<chat-controls>` is present, `conversation-sidebar` suppresses its redundant mode/model/context controls; if absent, the sidebar controls render as fallback.
-
 ### Side Questions (Explanation Only)
 
 During an active or long-running turn, users can ask out-of-band explanation questions without interrupting or steering the main agent loop (#1141).
@@ -239,8 +230,9 @@ See [Context Composer](context-composer.md#context-inspection) for details.
 
 ### Copy conversation
 
-A floating `📋 Copy ▾` button in the upper-right of the chat area opens a
-small menu with two items: **Copy as JSONL** and **Copy as markdown**. JSONL
+A `📋 Copy ▾` button in the conversation control bar (the `<chat-controls>`
+action cluster above the composer) opens a small menu with two items: **Copy as
+JSONL** and **Copy as markdown**. JSONL
 is the raw archive bytes (lossless — paste into another LLM for diagnosis).
 Markdown is a rendered transcript suitable for Obsidian, sharing, or PR
 descriptions. Both are server-rendered via
@@ -327,8 +319,10 @@ close buttons. See [Web UI — mobile conventions](web-ui-mobile.md#canvas-tabs)
 - `canvas_read()` — return `{active_tab, tabs: [{id, label, widget_type, data}, ...]}`.
 
 **Resummon UI:** when canvas state exists but the panel has been dismissed,
-a "📄 Canvas" pill appears in `#chat-main-header` (mirrored to
-`#mobile-header` on mobile). Clicking it re-opens the panel. An unread dot
+a "📄 Canvas" pill appears in the conversation control bar's action cluster
+(`<chat-controls>`, above the composer; the same cluster hosts the action
+buttons on mobile) — not floated over the chat area. Clicking it re-opens the
+panel. An unread dot
 lights up on the pill if a `canvas_update` event arrived while the panel
 was hidden.
 
@@ -380,10 +374,10 @@ Lit web components in `src/decafclaw/web/static/`:
 | Component | File | Purpose |
 |-----------|------|---------|
 | `chat-view` | `components/chat-view.js` | Main chat area with message list |
-| `chat-controls` | `components/chat-controls.js` | Model, mode, and context usage controls strip docked above chat input |
 | `chat-input` | `components/chat-input.js` | Message input with file upload and command autocomplete |
 | `chat-message` | `components/chat-message.js` | Individual message rendering |
-| `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser |
+| `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/mode/context controls plus the conversation action cluster (issue #1190) |
+| `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor (see [host contract](#the-wiki-editor-host-contract)) |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |
 | `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter strip/panel: view-mode summary + tags, edit-mode typed controls and raw YAML editor |

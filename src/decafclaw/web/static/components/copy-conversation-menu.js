@@ -7,7 +7,8 @@ import { copyToClipboard } from '../lib/utils.js';
  * Floating "Copy ▾" menu for the active conversation. Fetches the
  * server-rendered export and writes it to the clipboard.
  *
- * Mounts inside .dc-chat-actions (alongside the Canvas resummon pill).
+ * Mounts inside the chat-controls action cluster (alongside the Canvas
+ * resummon pill and the compact action buttons).
  * Hides itself when convId is falsy so empty / unselected conversations
  * don't show a useless menu.
  */

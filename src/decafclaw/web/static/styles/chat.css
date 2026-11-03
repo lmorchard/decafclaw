@@ -11,39 +11,19 @@ chat-view {
   position: relative;
 }
 
-/* Floating action cluster anchored to the upper-right of #chat-main.
-   Holds the Canvas resummon pill and the Copy menu side-by-side. The
-   right offset clears chat-view's scrollbar on platforms that use
-   classic (non-overlay) scrollbars. */
-#chat-main { position: relative; }
-.dc-chat-actions {
-  position: absolute;
-  top: 0.5rem;
-  right: 1.5rem;
-  z-index: 5;
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-}
-
-@media (max-width: 639px) {
-  .dc-chat-actions {
-    top: 0.4rem;
-    right: 0.4rem;
-  }
-}
-
-/* Copy ▾ menu lives inside .dc-chat-actions alongside the Canvas pill.
-   Trigger matches the pill's sizing; the dropdown list floats below
-   it with the same border/shadow vocabulary as .dc-floating-btn. */
+/* Copy ▾ menu lives in the chat-controls action cluster (issue #1190) now;
+   the container handles positioning, the dropdown floats below with the
+   same border/shadow vocabulary as the compact control-bar buttons. */
 .copy-menu-wrap { position: relative; }
+
 .copy-menu-trigger {
   padding: 0 0.85rem;
   font-size: 0.85rem;
 }
 
-/* `>_` terminal-open button sits in the cluster next to Copy. Inherits the
-   .dc-floating-btn frame; here we only set the monospace glyph treatment. */
+/* `>_` terminal-open button: monospace glyph treatment; inherits the
+   .dc-floating-btn frame. Compact sizing lives in the control-bar context
+   (chat-controls.css, issue #1190). */
 button.terminal-open-btn {
   padding: 0 0.85rem;
   font-family: var(--pico-font-family-monospace, monospace);
