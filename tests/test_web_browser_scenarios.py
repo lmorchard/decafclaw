@@ -1755,7 +1755,11 @@ def test_browser_chat_input_height_alignment(built_static, chromium, config):
                 const ci = document.querySelector('chat-input');
                 const row = ci.querySelector('.input-row');
                 const ta = ci.querySelector('textarea');
-                const btns = [...ci.querySelectorAll('.input-row > button')];
+                // Skip buttons hidden via CSS (e.g. the conversation-actions
+                // toggle, which is mobile-only and display:none at desktop
+                // widths) — a display:none button has no box to align.
+                const btns = [...ci.querySelectorAll('.input-row > button')]
+                    .filter((b) => getComputedStyle(b).display !== 'none');
                 const heights = (el) => el.getBoundingClientRect().height;
                 return {row: heights(row), textarea: heights(ta), buttons: btns.map(heights)};
             }"""
