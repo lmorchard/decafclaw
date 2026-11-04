@@ -715,41 +715,49 @@ export class ChatInput extends LitElement {
         </div>
       ` : nothing}
       ${this._conversationMenuOpen ? html`
-        <div class="conversation-menu" role="menu">
-          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuContext}>
-            <span class="conversation-menu-icon" aria-hidden="true">&#x1F50D;</span>
-            <span class="conversation-menu-label">Context</span>
-          </button>
-          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuCanvas}>
-            <span class="conversation-menu-icon" aria-hidden="true">&#x1F4C4;</span>
-            <span class="conversation-menu-label">Canvas</span>
-          </button>
-          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuTerminal}>
-            <span class="conversation-menu-icon" aria-hidden="true">&#x1F5A5;</span>
-            <span class="conversation-menu-label">Terminal</span>
-          </button>
-          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuSideQuestion}>
-            <span class="conversation-menu-icon" aria-hidden="true">&#x2753;</span>
-            <span class="conversation-menu-label">Side question</span>
-          </button>
-          ${this._availableModels.length > 0 ? html`
-            <div class="conversation-menu-section">
-              <div class="conversation-menu-label">Model</div>
-              <select class="conversation-menu-select" ?disabled=${this._isBusy} @change=${this.#handleMenuModelChange}>
-                ${this._availableModels.map(m => html`
-                  <option value="${m}" ?selected=${m === this._activeModel}>${m}</option>
-                `)}
-              </select>
-            </div>
-          ` : nothing}
-          ${this._availableModes.length > 0 ? html`
-            <div class="conversation-menu-section">
-              <div class="conversation-menu-label">Mode</div>
-              <select class="conversation-menu-select" ?disabled=${this._isBusy} @change=${this.#handleMenuModeChange}>
-                ${this._availableModes.map(m => html`
-                  <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
-                `)}
-              </select>
+        <div class="conversation-menu" role="region" aria-label="Conversation actions"
+          @keydown=${this.#handleConversationKeydown}>
+          <div class="conversation-menu-heading">Conversation</div>
+          <div class="conversation-menu-actions">
+            <button type="button" class="conversation-menu-item" @click=${this.#handleMenuContext}>
+              <span class="conversation-menu-icon" aria-hidden="true">&#x1F50D;</span>
+              <span class="conversation-menu-label">Context</span>
+            </button>
+            <button type="button" class="conversation-menu-item" @click=${this.#handleMenuCanvas}>
+              <span class="conversation-menu-icon" aria-hidden="true">&#x1F4C4;</span>
+              <span class="conversation-menu-label">Canvas</span>
+            </button>
+            <button type="button" class="conversation-menu-item" @click=${this.#handleMenuTerminal}>
+              <span class="conversation-menu-icon" aria-hidden="true">&#x1F5A5;</span>
+              <span class="conversation-menu-label">Terminal</span>
+            </button>
+            <button type="button" class="conversation-menu-item" @click=${this.#handleMenuSideQuestion}>
+              <span class="conversation-menu-icon" aria-hidden="true">&#x2753;</span>
+              <span class="conversation-menu-label">Side question</span>
+            </button>
+          </div>
+          ${this._availableModels.length || this._availableModes.length ? html`
+            <div class="conversation-menu-settings">
+              ${this._availableModels.length > 0 ? html`
+                <div class="conversation-menu-section">
+                  <label class="conversation-menu-field-label" for="conversation-menu-model">Model</label>
+                  <select id="conversation-menu-model" class="conversation-menu-select" ?disabled=${this._isBusy} @change=${this.#handleMenuModelChange}>
+                    ${this._availableModels.map(m => html`
+                      <option value="${m}" ?selected=${m === this._activeModel}>${m}</option>
+                    `)}
+                  </select>
+                </div>
+              ` : nothing}
+              ${this._availableModes.length > 0 ? html`
+                <div class="conversation-menu-section">
+                  <label class="conversation-menu-field-label" for="conversation-menu-mode">Mode</label>
+                  <select id="conversation-menu-mode" class="conversation-menu-select" ?disabled=${this._isBusy} @change=${this.#handleMenuModeChange}>
+                    ${this._availableModes.map(m => html`
+                      <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
+                    `)}
+                  </select>
+                </div>
+              ` : nothing}
             </div>
           ` : nothing}
         </div>
@@ -764,6 +772,7 @@ export class ChatInput extends LitElement {
           type="button"
           class="conversation-actions-btn dc-floating-btn"
           aria-label="Conversation actions"
+          aria-expanded=${this._conversationMenuOpen}
           title="Conversation actions"
           @click=${this.#toggleConversationMenu}
           @keydown=${this.#handleConversationKeydown}

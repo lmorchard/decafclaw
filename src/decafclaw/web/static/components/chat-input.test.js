@@ -627,6 +627,8 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     const menu = await openMenu(el);
     expect(menu).not.toBeNull();
     expect(menu.classList.contains('conversation-menu')).toBe(true);
+    expect(menu.getAttribute('aria-label')).toBe('Conversation actions');
+    expect(el.querySelector('.conversation-actions-btn').getAttribute('aria-expanded')).toBe('true');
   });
 
   it.each([
@@ -682,6 +684,8 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     expect(selects).toHaveLength(2);
 
     const [modelSelect, modeSelect] = selects;
+    expect(modelSelect.labels[0].textContent.trim()).toBe('Model');
+    expect(modeSelect.labels[0].textContent.trim()).toBe('Mode');
     expect(modelSelect.value).toBe('m1');
     expect([...modelSelect.options].map((o) => o.value)).toEqual(['m1', 'm2']);
     expect(modeSelect.value).toBe('default');
