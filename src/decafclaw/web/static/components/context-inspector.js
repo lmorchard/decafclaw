@@ -391,6 +391,9 @@ export class ContextInspector extends LitElement {
               class="copy-raw-btn dc-small-btn"
               @click=${() => this.#copyRaw()}
             >Copy JSON</button>
+            <!-- Issue #1192: conversation export copy lives here (the floating
+                 copy-conversation-menu moved out of the chat-control strip). -->
+            <copy-conversation-menu conv-id=${this.convId}></copy-conversation-menu>
           </div>
         </div>
         ${this._rawFormat === 'tree' ? html`

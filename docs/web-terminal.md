@@ -12,10 +12,16 @@ Dev-session artifacts: [`docs/dev-sessions/2026-05-06-2042-web-terminal-canvas/`
 
 Two ways, both human-only:
 
-- Click the **`>_` button** in the chat-action cluster at the top-right of the
-  conversation (next to the 📋 Copy menu). It appears once a conversation is
+- Click the conversation actions control: the terminal button in the
+  conversation control strip on desktop, or the Terminal item in the
+  conversation actions menu summoned via the `⋮` button in the chat input on
+  mobile. It appears once a conversation is
   active and sends `/terminal` over the normal chat WebSocket — the same path
   as typing it, no dedicated endpoint. Opens in the default CWD.
+
+  On mobile the conversation actions menu also hosts the Model and Mode
+  selects, since the whole conversation control strip is hidden behind the
+  menu at ≤639px.
 - Type `/terminal` or `/terminal <cwd>` in the chat input (use the typed form
   to pass a specific CWD).
 

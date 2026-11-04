@@ -158,30 +158,3 @@ chat-controls .actions-control button.side-question-action-btn {
   font-size: 0.9rem;
 }
 
-/* Mobile adjustments (<640px) */
-@media (max-width: 639px) {
-  chat-controls {
-    gap: 0.5rem;
-    padding: 0.3rem 0.5rem;
-  }
-
-  chat-controls .control label {
-    font-size: 0.7rem;
-  }
-
-  chat-controls .control select {
-    font-size: 0.75rem;
-    padding: 0.15rem 0.25rem;
-    max-width: 120px;
-  }
-
-  chat-controls .context-control {
-    padding: 0.15rem 0.35rem;
-    gap: 0.3rem;
-  }
-
-  chat-controls .context-usage-bar {
-    width: 44px;
-    min-width: 32px;
-  }
-}
