@@ -515,6 +515,11 @@ conversation-sidebar button.collapse-btn {
      is what yields when the sidebar is narrow; the hide button keeps its
      intrinsic width so it stays inside the sidebar's overflow:hidden box. */
   flex-shrink: 0;
+  /* Opaque surface (the shared .dc-icon-btn primitive is borderless and
+     transparent) so the toggle reads as a button and stays visible against
+     whatever sits behind it instead of blending into the header content. */
+  background: var(--pico-background-color);
+  color: var(--pico-color);
 }
 
 /* Mobile-only close button — hamburger handles toggle, but a tap-target
