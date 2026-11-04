@@ -8,11 +8,11 @@ This is a narrative walkthrough for developers new to the DecafClaw codebase. It
 ┌────────────────────────────────────────────────────────────────┐
 │                      runner.py (process root)                  │
 │                                                                │
-│   ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐  │
-│   │ Mattermost  │  │   HTTP +     │  │  Interactive        │  │
-│   │ websocket   │  │   Web UI     │  │  Terminal           │  │
-│   └──────┬──────┘  └──────┬───────┘  └──────────┬──────────┘  │
-│          │                │                     │              │
+│   ┌─────────────┐  ┌──────────────┐                        │
+│   │ Mattermost  │  │   HTTP +     │                        │
+│   │ websocket   │  │   Web UI     │                        │
+│   └──────┬──────┘  └──────┬───────┘                        │
+│          │                │                                    │
 │          └────────────────┼─────────────────────┘              │
 │                           ↓                                    │
 │                 run_agent_turn(ctx, message, history)          │
@@ -29,7 +29,7 @@ This is a narrative walkthrough for developers new to the DecafClaw codebase. It
 │                           ↓                                    │
 │   ┌────────────────────────────────────────────────────────┐  │
 │   │ EventBus (events.py): tool_status, llm_start/end, …    │  │
-│   │ Subscribers: Mattermost, terminal, web UI streams      │  │
+│   │ Subscribers: Mattermost, web UI streams                │  │
 │   └────────────────────────────────────────────────────────┘  │
 │                                                                │
 │   ┌────────────┐  ┌──────────────┐  ┌───────────────────┐    │

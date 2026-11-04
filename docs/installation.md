@@ -17,7 +17,7 @@ DecafClaw is a Python project managed with [uv](https://docs.astral.sh/uv/). It 
   now refuses the install with a message that names the problem.
 
 Optional:
-- **Mattermost instance** — for chat bot mode (interactive terminal mode works without it)
+- **Mattermost instance** — for chat bot mode (without it, the agent runs headless via the server process root)
 - **Web UI** — set `HTTP_ENABLED=true` and create a token, see [Web UI](web-ui.md)
 - **Tabstack API key** — for web browsing/research tools ([tabstack.ai](https://tabstack.ai))
 - **Embedding API** — for semantic search (default: `text-embedding-004` via the same LLM endpoint)

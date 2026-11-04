@@ -173,7 +173,7 @@ The composer is mode-aware via `ComposerMode`:
 
 | Mode | Memory | Wiki | Vault guide | Tools | Use case |
 |------|--------|------|-------------|-------|----------|
-| `INTERACTIVE` | Yes | Yes | Yes | Full | Mattermost, web UI, terminal |
+| `INTERACTIVE` | Yes | Yes | Yes | Full | Mattermost, web UI |
 | `HEARTBEAT` | No | No | No | Full | Periodic heartbeat (set via `ctx.task_mode="heartbeat"`) |
 | `SCHEDULED` | No | No | No | Full | Scheduled tasks (set via `ctx.task_mode="scheduled"`) |
 | `CHILD_AGENT` | No | No | No | Full | `delegate_task` sub-agents (set via `ctx.is_child`) |
