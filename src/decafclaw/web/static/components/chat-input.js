@@ -59,6 +59,11 @@ export class ChatInput extends LitElement {
     convId: { type: String, attribute: 'conv-id' },
     // {name, description, argument_hint} entries from the server's command_list.
     commands: { type: Array },
+    store: { type: Object, attribute: false },
+    _activeModel: { type: String, state: true },
+    _availableModels: { type: Array, state: true },
+    _activeMode: { type: String, state: true },
+    _availableModes: { type: Array, state: true },
     _pendingAttachments: { type: Array, state: true },
     _dragOver: { type: Boolean, state: true },
     _trigger: { type: Object, state: true },
@@ -78,6 +83,14 @@ export class ChatInput extends LitElement {
     if (changedProperties.has('_highlight') || triggerOpened) {
       const highlighted = this.querySelector('.command-menu-item.highlighted');
       highlighted?.scrollIntoView?.({ block: 'nearest' });
+    }
+    if (changedProperties.has('store')) {
+      const oldStore = changedProperties.get('store');
+      if (oldStore) oldStore.removeEventListener('change', this.#onStoreChange);
+      if (this.store) {
+        this.store.addEventListener('change', this.#onStoreChange);
+        this.#syncFromStore();
+      }
     }
   }
 
@@ -101,6 +114,19 @@ export class ChatInput extends LitElement {
     this._conversationMenuOpen = false;
   };
 
+  #onStoreChange = () => {
+    this.#syncFromStore();
+  };
+
+  #syncFromStore() {
+    if (!this.store) return;
+    this._activeModel = this.store.activeModel || '';
+    this._availableModels = this.store.availableModels || [];
+    this._activeMode = this.store.activeMode || 'default';
+    this._availableModes = this.store.availableModes || [];
+    this._isBusy = Boolean(this.store.isBusy);
+  }
+
   /** Escape keeps the menu shut for the token it dismissed. */
   #dismissed = false;
 
@@ -112,6 +138,11 @@ export class ChatInput extends LitElement {
     this.convId = '';
     /** @type {Command[]} */
     this.commands = [];
+    this.store = null;
+    this._activeModel = '';
+    this._availableModels = [];
+    this._activeMode = 'default';
+    this._availableModes = [];
     /** @type {Array<UploadedAttachment | PendingAttachment>} */
     this._pendingAttachments = [];
     this._dragOver = false;
@@ -347,6 +378,30 @@ export class ChatInput extends LitElement {
   #handleMenuSideQuestion() {
     this._conversationMenuOpen = false;
     this.dispatchEvent(new CustomEvent('open-side-question', { bubbles: true, composed: true }));
+  }
+
+  /** Model menu item: switch the conversation's model via the set-model event. */
+  #handleMenuModelChange(e) {
+    const newModel = e.target.value;
+    if (newModel && newModel !== this._activeModel) {
+      this.dispatchEvent(new CustomEvent('set-model', {
+        detail: { model: newModel },
+        bubbles: true,
+        composed: true,
+      }));
+    }
+  }
+
+  /** Mode menu item: switch the conversation's mode via the set-mode event. */
+  #handleMenuModeChange(e) {
+    const newMode = e.target.value;
+    if (newMode && newMode !== this._activeMode) {
+      this.dispatchEvent(new CustomEvent('set-mode', {
+        detail: { mode: newMode },
+        bubbles: true,
+        composed: true,
+      }));
+    }
   }
 
   /** @param {KeyboardEvent} e */
@@ -661,10 +716,42 @@ export class ChatInput extends LitElement {
       ` : nothing}
       ${this._conversationMenuOpen ? html`
         <div class="conversation-menu" role="menu">
-          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuContext}>Context</button>
-          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuCanvas}>Canvas</button>
-          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuTerminal}>Terminal</button>
-          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuSideQuestion}>Side question</button>
+          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuContext}>
+            <span class="conversation-menu-icon" aria-hidden="true">&#x1F50D;</span>
+            <span class="conversation-menu-label">Context</span>
+          </button>
+          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuCanvas}>
+            <span class="conversation-menu-icon" aria-hidden="true">&#x1F4C4;</span>
+            <span class="conversation-menu-label">Canvas</span>
+          </button>
+          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuTerminal}>
+            <span class="conversation-menu-icon" aria-hidden="true">&#x1F5A5;</span>
+            <span class="conversation-menu-label">Terminal</span>
+          </button>
+          <button type="button" class="conversation-menu-item" role="menuitem" @click=${this.#handleMenuSideQuestion}>
+            <span class="conversation-menu-icon" aria-hidden="true">&#x2753;</span>
+            <span class="conversation-menu-label">Side question</span>
+          </button>
+          ${this._availableModels.length > 0 ? html`
+            <div class="conversation-menu-section">
+              <div class="conversation-menu-label">Model</div>
+              <select class="conversation-menu-select" ?disabled=${this._isBusy} @change=${this.#handleMenuModelChange}>
+                ${this._availableModels.map(m => html`
+                  <option value="${m}" ?selected=${m === this._activeModel}>${m}</option>
+                `)}
+              </select>
+            </div>
+          ` : nothing}
+          ${this._availableModes.length > 0 ? html`
+            <div class="conversation-menu-section">
+              <div class="conversation-menu-label">Mode</div>
+              <select class="conversation-menu-select" ?disabled=${this._isBusy} @change=${this.#handleMenuModeChange}>
+                ${this._availableModes.map(m => html`
+                  <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
+                `)}
+              </select>
+            </div>
+          ` : nothing}
         </div>
       ` : nothing}
       <div class="input-row ${this._dragOver ? 'drag-over' : ''}"
@@ -680,7 +767,7 @@ export class ChatInput extends LitElement {
           title="Conversation actions"
           @click=${this.#toggleConversationMenu}
           @keydown=${this.#handleConversationKeydown}
-        >&8942;</button>
+        >&#x22EE;</button>
         ${!this.disabled ? html`
           <button type="button" class="attach-btn" @click=${this.#openFilePicker}
             title="Attach file" aria-label="Attach file">&#128206;</button>

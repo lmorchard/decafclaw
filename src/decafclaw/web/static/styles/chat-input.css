@@ -145,6 +145,42 @@ chat-input .conversation-menu .conversation-menu-item:focus-visible {
   color: var(--pico-primary-inverse);
 }
 
+/* Conversation actions toggle / menu are mobile-only (issue #1192): at desktop
+   widths the chat-control strip hosts the conversation actions instead. */
+@media (min-width: 640px) {
+  chat-input .conversation-actions-btn {
+    display: none;
+  }
+
+  chat-input .conversation-menu {
+    display: none;
+  }
+}
+
+/* Conversation menu sections: the model / mode controls hosted in the menu. */
+chat-input .conversation-menu .conversation-menu-section {
+  padding: 0.25rem 0.75rem 0.35rem 0.75rem;
+}
+
+chat-input .conversation-menu .conversation-menu-label {
+  padding: 0.3rem 0.75rem 0.15rem 0.75rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--pico-muted-color);
+}
+
+chat-input .conversation-menu .conversation-menu-select {
+  display: block;
+  width: 100%;
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color);
+  color: var(--pico-color);
+  font-size: 0.85rem;
+}
+
 chat-input .input-row.drag-over {
   outline: 2px dashed var(--pico-primary);
   outline-offset: -2px;

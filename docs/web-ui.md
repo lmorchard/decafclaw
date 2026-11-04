@@ -322,10 +322,11 @@ close buttons. See [Web UI — mobile conventions](web-ui-mobile.md#canvas-tabs)
 **Resummon UI:** when canvas state exists but the panel has been dismissed,
 a "📄 Canvas" pill appears in the conversation control strip's action cluster
 (`<chat-controls>` `.actions-control`, right of the mode selector, above the
-composer; the same cluster hosts the action buttons on mobile) — not floated
-over the chat area. Clicking it re-opens the panel. An unread dot
-lights up on the pill if a `canvas_update` event arrived while the panel
-was hidden.
+composer) — not floated over the chat area. Clicking it re-opens the panel. An
+unread dot lights up on the pill if a `canvas_update` event arrived while the
+panel was hidden. On mobile (≤639px) the strip is hidden (it vanishes into the
+conversation-actions menu), so the Canvas action is reached through the menu's
+Canvas item instead of the strip's pill.
 
 **Dismiss behavior:** dismissing the panel persists to localStorage
 per-conversation (key `canvas-dismissed.{conv_id}`); the canvas sidecar
@@ -377,7 +378,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | `chat-view` | `components/chat-view.js` | Main chat area with message list |
 | `chat-input` | `components/chat-input.js` | Message input with file upload and command autocomplete |
 | `chat-message` | `components/chat-message.js` | Individual message rendering |
-| `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/mode/context controls plus the conversation action cluster (issue #1190) |
+| `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/mode/context controls plus the conversation action cluster (issue #1190); on mobile (≤639px) the strip is replaced by the conversation-actions menu (issue #1192) |
 | `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor (see [host contract](#the-wiki-editor-host-contract)) |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |

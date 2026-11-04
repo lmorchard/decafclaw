@@ -610,6 +610,13 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     expect(btn.compareDocumentPosition(attach) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it('renders the conversation actions toggle with the ⋮ glyph', async () => {
+    const el = await mount();
+    const btn = el.querySelector('.conversation-actions-btn');
+    expect(btn).toBeTruthy();
+    expect(btn.textContent.trim()).toBe('⋮');
+  });
+
   it('renders the menu closed until the conversation actions button is clicked', async () => {
     const el = await mount();
     expect(el.querySelector('.conversation-menu')).toBeNull();
@@ -635,7 +642,7 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     const menu = await openMenu(el);
 
     const item = [...menu.querySelectorAll('.conversation-menu-item')]
-      .find((b) => b.textContent.trim() === label);
+      .find((b) => b.querySelector('.conversation-menu-label')?.textContent.trim() === label);
     expect(item).toBeTruthy();
     item.click();
     await el.updateComplete;
@@ -650,6 +657,57 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     }
     // Picking an item closes the menu.
     expect(el.querySelector('.conversation-menu')).toBeNull();
+  });
+
+  it('renders the model and mode controls inside the menu when the store provides options', async () => {
+    const el = await mount();
+    const store = /** @type {any} */ (new EventTarget());
+    store.activeModel = 'm1';
+    store.availableModels = ['m1', 'm2'];
+    store.activeMode = 'default';
+    store.availableModes = [
+      { name: 'default', description: 'Standard' },
+      { name: 'dev', description: 'Development' },
+    ];
+    store.isBusy = false;
+    el.store = store;
+    await el.updateComplete;
+
+    el.querySelector('.conversation-actions-btn').click();
+    await el.updateComplete;
+
+    const menu = el.querySelector('.conversation-menu');
+    expect(menu).not.toBeNull();
+    const selects = [...menu.querySelectorAll('select')];
+    expect(selects).toHaveLength(2);
+
+    const [modelSelect, modeSelect] = selects;
+    expect(modelSelect.value).toBe('m1');
+    expect([...modelSelect.options].map((o) => o.value)).toEqual(['m1', 'm2']);
+    expect(modeSelect.value).toBe('default');
+    expect([...modeSelect.options].map((o) => o.value)).toEqual(['default', 'dev']);
+
+    const modelHandler = vi.fn();
+    const modeHandler = vi.fn();
+    document.addEventListener('set-model', modelHandler);
+    document.addEventListener('set-mode', modeHandler);
+
+    modelSelect.value = 'm2';
+    modelSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    modeSelect.value = 'dev';
+    modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    await el.updateComplete;
+
+    document.removeEventListener('set-model', modelHandler);
+    document.removeEventListener('set-mode', modeHandler);
+
+    expect(modelHandler).toHaveBeenCalledTimes(1);
+    expect(modelHandler.mock.calls[0][0].detail).toEqual({ model: 'm2' });
+    expect(modeHandler).toHaveBeenCalledTimes(1);
+    expect(modeHandler.mock.calls[0][0].detail).toEqual({ mode: 'dev' });
+
+    // Changing a control does not close the menu.
+    expect(el.querySelector('.conversation-menu')).not.toBeNull();
   });
 
   it('closes the menu on Escape', async () => {

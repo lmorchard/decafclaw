@@ -69,6 +69,7 @@ if (sidebar) { sidebar.store = store; sidebar.authClient = auth; }
 if (chatView) chatView.store = store;
 const chatControls = /** @type {any} */ (document.querySelector('chat-controls'));
 if (chatControls) chatControls.store = store;
+if (chatInput) chatInput.store = store;
 // Update chat-input disabled/busy state from store, auto-focus when ready
 let wasBusy = false;
 let lastConvId = null;

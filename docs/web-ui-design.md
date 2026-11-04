@@ -108,7 +108,7 @@ Border + 6px radius + drop shadow + 44px tap-target floor. Defined at `primitive
 - `app.js:701` — canvas resummon pill
 - `chat-view.js:185` — scroll-to-bottom pill
 - `canvas-panel.js:208` — canvas mobile disclosure
-- `chat-input.js` — conversation actions toggle (`⋮`, issue #1192)
+- `chat-input.js` — conversation actions toggle (`⋮`, mobile-only at ≤639px, issue #1192)
 
 **Don't:** redeclare `border`, `border-radius`, `box-shadow`, `min-width`, or `min-height` on a button using this class. The primitive owns those — overriding them locally is the cluster-style fragility this doc exists to prevent.
 

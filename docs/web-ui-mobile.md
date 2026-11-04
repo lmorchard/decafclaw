@@ -109,10 +109,10 @@ the user opens the vault editor or the files tab via the sidebar, the canvas
 panel auto-closes.
 
 The resummon pill in the conversation control strip's action cluster
-(`chat-controls`) is hidden on mobile (≤639px) and replaced by the
-conversation actions menu summoned via the `⋮` button in the chat input;
-the menu keeps the Canvas action reachable even when the sidebar is
-collapsed.
+(`chat-controls`) is hidden on mobile (≤639px) along with the rest of the
+strip, which vanishes into the conversation actions menu summoned via the
+`⋮` button in the chat input; the menu's Canvas item keeps the action
+reachable even when the sidebar is collapsed.
 
 ## Canvas tabs
 
@@ -138,18 +138,20 @@ file).
 
 ## Conversation controls on mobile
 
-On mobile (≤639px), the chat-control strip's conversation action cluster
-(`.actions-control` inside `<chat-controls>`) is hidden and replaced by the
-composer's conversation-actions menu. The toggle is the `⋮` button
-(`.conversation-actions-btn`) rendered left of the paperclip (attach) button
-in the chat-input row; tapping it opens a vertical `.conversation-menu`
-floated above the composer. Menu items dispatch document-level events the app
-handles: Context → `toggle-context-inspector`, Canvas → `conversation-action`
-(canvas resummon), Terminal → `conversation-action`, Side question →
-`open-side-question`.
+On mobile (≤639px), the chat-control strip is hidden and replaced by the
+composer's conversation-actions menu. The whole strip (`<chat-controls>`) is
+the mobile surface and vanishes into the button menu, which now hosts the
+Context, Canvas, Terminal, and Side question actions plus the Model and Mode
+selects. The toggle is the `⋮` button (`.conversation-actions-btn`) rendered
+left of the paperclip (attach) button in the chat-input row; tapping it opens
+a vertical `.conversation-menu` floated above the composer. Menu items
+dispatch document-level events the app handles: Context → `toggle-context-inspector`,
+Canvas → `conversation-action` (canvas resummon), Terminal →
+`conversation-action`, Side question → `open-side-question`.
 
-The strip itself keeps the compact model / mode / context-usage controls as
-its single-row mobile surface; only the action cluster is hidden.
+The conversation-actions toggle and menu are mobile-only: at desktop widths
+(≥640px) they are hidden and the chat-control strip keeps hosting the
+conversation actions as before.
 
 ## Quick checklist before merging a UI change
 

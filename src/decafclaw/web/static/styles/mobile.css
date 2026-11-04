@@ -91,11 +91,12 @@
     box-shadow: 2px 0 12px rgba(0, 0, 0, 0.2);
   }
 
-  /* Issue #1192: on mobile the conversation action strip is replaced by the
+  /* Issue #1192: on mobile the conversation control strip is replaced by the
      composer's `⋮` conversation-actions menu (summoned left of the paperclip in
-     the chat-input row). The strip (model/mode/context controls) stays as the
-     compact single-row surface. */
-  chat-controls .actions-control {
+     the chat-input row). The whole strip vanishes into the button menu, which
+     now hosts the model / mode / context controls alongside the conversation
+     actions. */
+  chat-controls {
     display: none;
   }
 
