@@ -23,3 +23,4 @@
 ## Post-delivery feedback
 
 - 2026-11-03 (post-delivery peek): user reported the collapse button still not easily visible — needs an opaque background and looked like it overlaps text. Addressed post-ready: gave `conversation-sidebar button.collapse-btn` an opaque surface (`background: var(--pico-background-color)` + button-scoped `color: var(--pico-color`) in src/decafclaw/web/static/styles/sidebar.css. Regression test still green; fmt/lint green.
+- 2026-11-03 (post-feedback correction): added opaque-background assertion to the regression test and committed as a separate commit (`7a1d1e1a`).
