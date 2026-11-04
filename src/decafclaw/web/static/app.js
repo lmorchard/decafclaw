@@ -17,6 +17,7 @@ import {
   applyEvent,
   dismiss as canvasDismiss,
   currentSnapshot as canvasSnapshot,
+  resummon,
 } from './lib/canvas-state.js';
 import {
   setActiveConv as stickySetActiveConv,
@@ -68,6 +69,7 @@ if (sidebar) { sidebar.store = store; sidebar.authClient = auth; }
 if (chatView) chatView.store = store;
 const chatControls = /** @type {any} */ (document.querySelector('chat-controls'));
 if (chatControls) chatControls.store = store;
+if (chatInput) chatInput.store = store;
 // Update chat-input disabled/busy state from store, auto-focus when ready
 let wasBusy = false;
 let lastConvId = null;
@@ -123,6 +125,19 @@ document.addEventListener('set-model', (e) => {
 document.addEventListener('set-mode', (e) => {
   const { mode } = /** @type {CustomEvent} */ (e).detail;
   if (mode && store) store.setMode(mode);
+});
+
+// Conversation actions menu (issue #1192): canvas resummon / terminal picked
+// from the composer's conversation-actions menu. Context and side-question
+// have their own document-level listeners (context: conversation-sidebar,
+// side-question: app.js setupSideQuestion).
+document.addEventListener('conversation-action', (e) => {
+  const { action } = /** @type {CustomEvent} */ (e).detail;
+  if (action === 'canvas') {
+    resummon();
+  } else if (action === 'terminal') {
+    store.sendMessage?.('/terminal');
+  }
 });
 
 // Drop files anywhere in the chat area → forward to chat-input

@@ -220,6 +220,7 @@ Click the context usage bar in the sidebar to see a popover with:
   - Model name, messages count, and tools count
   - Full formatted canonical messages and tools JSON
   - Copy button to copy the request JSON to the clipboard
+  - **Conversation copy** — the `📋 Copy ▾` menu (Copy as JSONL / Copy as markdown) mounted alongside the raw copy; it exports the full conversation transcript via the same export endpoint
 
 The panel portals to a body-level `context-inspector-mount` div (the
 [portal pattern](web-ui-mobile.md#no-position-fixed-inside-transformed-ancestors),
@@ -230,9 +231,9 @@ See [Context Composer](context-composer.md#context-inspection) for details.
 
 ### Copy conversation
 
-A `📋 Copy ▾` button in the conversation control bar (the `<chat-controls>`
-action cluster above the composer) opens a small menu with two items: **Copy as
-JSONL** and **Copy as markdown**. JSONL
+The conversation copy menu (`📋 Copy ▾`) lives inside the context inspector
+raw pane, not as a floating button. It opens a small menu with two items:
+**Copy as JSONL** and **Copy as markdown**. JSONL
 is the raw archive bytes (lossless — paste into another LLM for diagnosis).
 Markdown is a rendered transcript suitable for Obsidian, sharing, or PR
 descriptions. Both are server-rendered via
@@ -319,12 +320,13 @@ close buttons. See [Web UI — mobile conventions](web-ui-mobile.md#canvas-tabs)
 - `canvas_read()` — return `{active_tab, tabs: [{id, label, widget_type, data}, ...]}`.
 
 **Resummon UI:** when canvas state exists but the panel has been dismissed,
-a "📄 Canvas" pill appears in the conversation control bar's action cluster
-(`<chat-controls>`, above the composer; the same cluster hosts the action
-buttons on mobile) — not floated over the chat area. Clicking it re-opens the
-panel. An unread dot
-lights up on the pill if a `canvas_update` event arrived while the panel
-was hidden.
+a "📄 Canvas" pill appears in the conversation control strip's action cluster
+(`<chat-controls>` `.actions-control`, right of the mode selector, above the
+composer) — not floated over the chat area. Clicking it re-opens the panel. An
+unread dot lights up on the pill if a `canvas_update` event arrived while the
+panel was hidden. On mobile (≤639px) the strip is hidden (it vanishes into the
+conversation-actions menu), so the Canvas action is reached through the menu's
+Canvas item instead of the strip's pill.
 
 **Dismiss behavior:** dismissing the panel persists to localStorage
 per-conversation (key `canvas-dismissed.{conv_id}`); the canvas sidecar
@@ -376,7 +378,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | `chat-view` | `components/chat-view.js` | Main chat area with message list |
 | `chat-input` | `components/chat-input.js` | Message input with file upload and command autocomplete |
 | `chat-message` | `components/chat-message.js` | Individual message rendering |
-| `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/mode/context controls plus the conversation action cluster (issue #1190) |
+| `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/mode/context controls plus the conversation action cluster (issue #1190); on mobile (≤639px) the strip is replaced by the conversation-actions menu (issue #1192) |
 | `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor (see [host contract](#the-wiki-editor-host-contract)) |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |

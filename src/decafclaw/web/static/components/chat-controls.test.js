@@ -119,4 +119,11 @@ describe('chat-controls', () => {
      expect(handler.mock.calls[0][0].detail).toEqual({ convId: 'c1' });
      document.removeEventListener('toggle-context-inspector', handler);
    });
+
+  // Issue #1192: the copy-conversation-menu moves out of the chat-control
+  // strip and into the context inspector raw pane. The strip must not mount it.
+  it('no longer mounts the copy conversation menu in the control strip', async () => {
+    const { el } = await mount();
+    expect(el.querySelector('copy-conversation-menu')).toBeNull();
+  });
 });

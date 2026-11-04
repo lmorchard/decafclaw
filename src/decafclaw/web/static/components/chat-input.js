@@ -59,6 +59,11 @@ export class ChatInput extends LitElement {
     convId: { type: String, attribute: 'conv-id' },
     // {name, description, argument_hint} entries from the server's command_list.
     commands: { type: Array },
+    store: { type: Object, attribute: false },
+    _activeModel: { type: String, state: true },
+    _availableModels: { type: Array, state: true },
+    _activeMode: { type: String, state: true },
+    _availableModes: { type: Array, state: true },
     _pendingAttachments: { type: Array, state: true },
     _dragOver: { type: Boolean, state: true },
     _trigger: { type: Object, state: true },
@@ -67,6 +72,7 @@ export class ChatInput extends LitElement {
     _history: { type: Array, state: true },
     _historyIndex: { type: Number, state: true },
     _draft: { type: String, state: true },
+    _conversationMenuOpen: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -78,14 +84,47 @@ export class ChatInput extends LitElement {
       const highlighted = this.querySelector('.command-menu-item.highlighted');
       highlighted?.scrollIntoView?.({ block: 'nearest' });
     }
+    if (changedProperties.has('store')) {
+      const oldStore = changedProperties.get('store');
+      if (oldStore) oldStore.removeEventListener('change', this.#onStoreChange);
+      if (this.store) {
+        this.store.addEventListener('change', this.#onStoreChange);
+        this.#syncFromStore();
+      }
+    }
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    document.removeEventListener('click', this.#onDocClick);
     if (this._fetchTimeout) {
       clearTimeout(this._fetchTimeout);
       this._fetchTimeout = null;
     }
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener('click', this.#onDocClick);
+  }
+
+  #onDocClick = (/** @type {MouseEvent} */ e) => {
+    if (!this._conversationMenuOpen) return;
+    if (e.target instanceof Node && this.contains(e.target)) return;
+    this._conversationMenuOpen = false;
+  };
+
+  #onStoreChange = () => {
+    this.#syncFromStore();
+  };
+
+  #syncFromStore() {
+    if (!this.store) return;
+    this._activeModel = this.store.activeModel || '';
+    this._availableModels = this.store.availableModels || [];
+    this._activeMode = this.store.activeMode || 'default';
+    this._availableModes = this.store.availableModes || [];
+    this._isBusy = Boolean(this.store.isBusy);
   }
 
   /** Escape keeps the menu shut for the token it dismissed. */
@@ -99,6 +138,11 @@ export class ChatInput extends LitElement {
     this.convId = '';
     /** @type {Command[]} */
     this.commands = [];
+    this.store = null;
+    this._activeModel = '';
+    this._availableModels = [];
+    this._activeMode = 'default';
+    this._availableModes = [];
     /** @type {Array<UploadedAttachment | PendingAttachment>} */
     this._pendingAttachments = [];
     this._dragOver = false;
@@ -112,6 +156,7 @@ export class ChatInput extends LitElement {
     this._draft = '';
     this._lastFetchedQuery = '';
     this._fetchTimeout = null;
+    this._conversationMenuOpen = false;
   }
 
   /** Focus the textarea. */
@@ -283,6 +328,82 @@ export class ChatInput extends LitElement {
     }
   }
 
+  // -- Conversation actions menu (issue #1192) ---------------------------------
+
+  /** Toggle the conversation actions menu (the mobile control surface). */
+  #toggleConversationMenu(/** @type {Event} */ e) {
+    e.stopPropagation();
+    this._conversationMenuOpen = !this._conversationMenuOpen;
+  }
+
+  /** Close the conversation actions menu on Escape (toggle button focus). */
+  #handleConversationKeydown(/** @type {KeyboardEvent} */ e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      this._conversationMenuOpen = false;
+    }
+  }
+
+  /** Context item: summon the context inspector. */
+  #handleMenuContext() {
+    this._conversationMenuOpen = false;
+    this.dispatchEvent(new CustomEvent('toggle-context-inspector', {
+      detail: { convId: this.convId },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /** Canvas item: resummon the canvas for the active conversation. */
+  #handleMenuCanvas() {
+    this._conversationMenuOpen = false;
+    this.dispatchEvent(new CustomEvent('conversation-action', {
+      detail: { action: 'canvas' },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /** Terminal item: open a terminal for the active conversation. */
+  #handleMenuTerminal() {
+    this._conversationMenuOpen = false;
+    this.dispatchEvent(new CustomEvent('conversation-action', {
+      detail: { action: 'terminal' },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /** Side question item: open the side-question drawer. */
+  #handleMenuSideQuestion() {
+    this._conversationMenuOpen = false;
+    this.dispatchEvent(new CustomEvent('open-side-question', { bubbles: true, composed: true }));
+  }
+
+  /** Model menu item: switch the conversation's model via the set-model event. */
+  #handleMenuModelChange(e) {
+    const newModel = e.target.value;
+    if (newModel && newModel !== this._activeModel) {
+      this.dispatchEvent(new CustomEvent('set-model', {
+        detail: { model: newModel },
+        bubbles: true,
+        composed: true,
+      }));
+    }
+  }
+
+  /** Mode menu item: switch the conversation's mode via the set-mode event. */
+  #handleMenuModeChange(e) {
+    const newMode = e.target.value;
+    if (newMode && newMode !== this._activeMode) {
+      this.dispatchEvent(new CustomEvent('set-mode', {
+        detail: { mode: newMode },
+        bubbles: true,
+        composed: true,
+      }));
+    }
+  }
+
   /** @param {KeyboardEvent} e */
   #handleKeydown(e) {
     const ctx = this.#triggerContext();
@@ -362,6 +483,9 @@ export class ChatInput extends LitElement {
     } else if (e.key === 'Escape' && this.busy) {
       e.preventDefault();
       this.#handleStop();
+    } else if (e.key === 'Escape' && this._conversationMenuOpen) {
+      e.preventDefault();
+      this._conversationMenuOpen = false;
     }
   }
 
@@ -394,6 +518,7 @@ export class ChatInput extends LitElement {
     textarea.value = '';
     textarea.style.height = 'auto';
     this.#closeMenu();
+    this._conversationMenuOpen = false;
     this.#clearAttachments();
   }
   /**
@@ -589,12 +714,69 @@ export class ChatInput extends LitElement {
           `)}
         </div>
       ` : nothing}
+      ${this._conversationMenuOpen ? html`
+        <div class="conversation-menu" role="region" aria-label="Conversation actions"
+          @keydown=${this.#handleConversationKeydown}>
+          <div class="conversation-menu-heading">Conversation</div>
+          <div class="conversation-menu-actions">
+            <button type="button" class="conversation-menu-item" @click=${this.#handleMenuContext}>
+              <span class="conversation-menu-icon" aria-hidden="true">&#x1F50D;</span>
+              <span class="conversation-menu-label">Context</span>
+            </button>
+            <button type="button" class="conversation-menu-item" @click=${this.#handleMenuCanvas}>
+              <span class="conversation-menu-icon" aria-hidden="true">&#x1F4C4;</span>
+              <span class="conversation-menu-label">Canvas</span>
+            </button>
+            <button type="button" class="conversation-menu-item" @click=${this.#handleMenuTerminal}>
+              <span class="conversation-menu-icon" aria-hidden="true">&#x1F5A5;</span>
+              <span class="conversation-menu-label">Terminal</span>
+            </button>
+            <button type="button" class="conversation-menu-item" @click=${this.#handleMenuSideQuestion}>
+              <span class="conversation-menu-icon" aria-hidden="true">&#x2753;</span>
+              <span class="conversation-menu-label">Side question</span>
+            </button>
+          </div>
+          ${this._availableModels.length || this._availableModes.length ? html`
+            <div class="conversation-menu-settings">
+              ${this._availableModels.length > 0 ? html`
+                <div class="conversation-menu-section">
+                  <label class="conversation-menu-field-label" for="conversation-menu-model">Model</label>
+                  <select id="conversation-menu-model" class="conversation-menu-select" ?disabled=${this._isBusy} @change=${this.#handleMenuModelChange}>
+                    ${this._availableModels.map(m => html`
+                      <option value="${m}" ?selected=${m === this._activeModel}>${m}</option>
+                    `)}
+                  </select>
+                </div>
+              ` : nothing}
+              ${this._availableModes.length > 0 ? html`
+                <div class="conversation-menu-section">
+                  <label class="conversation-menu-field-label" for="conversation-menu-mode">Mode</label>
+                  <select id="conversation-menu-mode" class="conversation-menu-select" ?disabled=${this._isBusy} @change=${this.#handleMenuModeChange}>
+                    ${this._availableModes.map(m => html`
+                      <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
+                    `)}
+                  </select>
+                </div>
+              ` : nothing}
+            </div>
+          ` : nothing}
+        </div>
+      ` : nothing}
       <div class="input-row ${this._dragOver ? 'drag-over' : ''}"
         @dragover=${this.#handleDragOver}
         @dragleave=${this.#handleDragLeave}
         @drop=${this.#handleDrop}>
         <input type="file" id="file-input" multiple hidden
           @change=${this.#handleFileInput}>
+        <button
+          type="button"
+          class="conversation-actions-btn dc-floating-btn"
+          aria-label="Conversation actions"
+          aria-expanded=${this._conversationMenuOpen}
+          title="Conversation actions"
+          @click=${this.#toggleConversationMenu}
+          @keydown=${this.#handleConversationKeydown}
+        >&#x22EE;</button>
         ${!this.disabled ? html`
           <button type="button" class="attach-btn" @click=${this.#openFilePicker}
             title="Attach file" aria-label="Attach file">&#128206;</button>

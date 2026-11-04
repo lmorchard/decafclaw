@@ -143,6 +143,24 @@ it('renders raw view and copies request JSON', async () => {
   expect(showToast).toHaveBeenCalledWith('Copied raw context');
 });
 
+// Issue #1192: the conversation copy menu moves into the context inspector
+// raw pane (it owns the conversation export + clipboard copy flow).
+it('mounts the conversation copy menu in the raw pane', async () => {
+  fetchMock.mockResolvedValue(json({ model: 'test-model', messages: [{ role: 'user', content: 'hello' }], tools: [] }));
+  const el = document.createElement('context-inspector');
+  el.convId = 'id ?#%é';
+  el.open = true;
+  el._tab = 'raw';
+  document.body.append(el);
+  await el.updateComplete;
+  await vi.waitFor(() => expect(el._rawLoading).toBe(false));
+  await el.updateComplete;
+
+  const copyMenu = el._panelMount.querySelector('copy-conversation-menu');
+  expect(copyMenu).not.toBeNull();
+  expect(copyMenu.convId).toBe('id ?#%é');
+});
+
 it('shows empty message when raw context is 404', async () => {
   fetchMock.mockResolvedValue(new Response('not found', { status: 404 }));
   const el = document.createElement('context-inspector');

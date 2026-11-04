@@ -1,5 +1,4 @@
 import { LitElement, html, nothing } from 'lit';
-import './copy-conversation-menu.js';
 import { subscribe as subscribeCanvas, resummon } from '../lib/canvas-state.js';
 
 /** @typedef {{ name: string, description?: string }} ModeConfig */
@@ -181,7 +180,12 @@ export class ChatControls extends LitElement {
 
       <!-- Conversation actions (issue #1190): compact controls in the control
            bar, positioned right of the mode selector. The context meter below
-           keeps the strip's right end via its own margin-left:auto. -->
+           keeps the strip's right end via its own margin-left:auto.
+
+           Issue #1192: the copy-conversation-menu moved OUT of this cluster
+           into the context inspector raw pane (conversation export copy now
+           lives there), so the cluster keeps the canvas resummon pill, the
+           terminal button, and the side-question button. -->
       ${convId ? html`
         <div class="control actions-control">
           ${showResummon && canvas ? html`
@@ -194,7 +198,6 @@ export class ChatControls extends LitElement {
               @click=${() => resummon()}
             >&#x1F4C4;<span class="resummon-label"> Canvas</span></button>
           ` : nothing}
-          <copy-conversation-menu conv-id=${convId}></copy-conversation-menu>
           <button
             type="button"
             class="terminal-open-btn dc-floating-btn"
