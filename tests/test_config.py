@@ -698,6 +698,26 @@ class TestSecretMetadata:
     def test_llm_api_key_is_secret(self):
         assert is_secret(LlmConfig, "api_key") is True
 
+    def test_llm_api_key_ref_resolves_from_env(self, tmp_path, monkeypatch):
+        """``${VAR}`` secret references resolve to the env value on load (#1032)."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"llm": {"api_key": "${MY_KEY}"}}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("MY_KEY", "sk-live-xyz")
+        c = load_config()
+        assert c.llm.api_key == "sk-live-xyz"
+
+    def test_llm_api_key_literal_warns_deprecated(self, tmp_path, monkeypatch, caplog):
+        """Literal secret values still load, but log a deprecation warning (#1032)."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"llm": {"api_key": "sk-live-abc"}}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.llm.api_key == "sk-live-abc"
+        assert "literal secret" in caplog.text
+
     def test_llm_model_not_secret(self):
         assert is_secret(LlmConfig, "model") is False
 

@@ -53,6 +53,7 @@ from .config_types import (
     WorkflowConfig,
 )
 from .modes import SessionMode
+from .secrets import is_secret_ref, resolve_secret
 from .skills import SkillInfo
 from .skills.vault._grants import normalize_folder
 
@@ -191,6 +192,21 @@ def load_sub_config(
             else:
                 kwargs[f.name] = json_val
         # else: use dataclass default
+
+        # Secret fields (#1032): resolve ``${VAR_NAME}`` references to their
+        # value from the secret store; literal values are accepted with a
+        # deprecation warning during the transition.
+        if f.metadata.get("secret"):
+            secret_val = kwargs.get(f.name)
+            if isinstance(secret_val, str) and secret_val != "":
+                if is_secret_ref(secret_val):
+                    kwargs[f.name] = resolve_secret(secret_val)
+                elif not (env_val is not None and env_val != ""):
+                    log.warning(
+                        "Config %s.%s holds a literal secret value; prefer a ${VAR} reference (#1032)",
+                        env_prefix or "config",
+                        f.name,
+                    )
 
     return dc_class(**kwargs)
 
