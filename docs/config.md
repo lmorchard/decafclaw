@@ -551,6 +551,23 @@ Arbitrary environment variables set at startup. Useful for API keys and tool-spe
 - `config set env.MY_VAR value` and `config get env.MY_VAR` work
 - `reload_env(config)` re-reads the env section at runtime
 
+## Config hot-reload (#149)
+
+While the server process is running, the agent watches `data/{agent_id}/config.json`
+(and `mcp_servers.json`) and reacts to changes:
+
+- **Safe to apply in place** (no restart): the runtime-tunable config groups —
+  `llm`, `agent`, `compaction`, `embedding`, `heartbeat`, `notes`, `cleanup`,
+  `vault_retrieval`, `schedules`, `telemetry`, and others. The changed values are
+  applied onto the live config so the next agent turn picks them up.
+- **Require a process restart**: `http`, `mattermost`, and any MCP server config
+  change. The watcher publishes a `config_changed` event with
+  `requires_restart: true` and stops the watch loop; the process restarts.
+- Every handled change publishes a `config_changed` event of the shape
+  `{"type": "config_changed", "requires_restart": <bool>, "keys": [<section>, ...]}`.
+
+The classification lives in `src/decafclaw/config_watcher.py`.
+
 ## Migrating from .env
 
 ```bash
