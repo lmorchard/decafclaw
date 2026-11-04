@@ -102,12 +102,8 @@ export class DiffViewWidget extends LitElement {
         if (part.removed) { type = 'removed'; marker = '-'; }
         
         const highlighted = this._highlight(line, language);
-        lines.push(html`
-          <div class="diff-line ${type}">
-            <span class="diff-marker">${marker}</span>
-            <span class="diff-content">${unsafeHTML(highlighted || ' ')}</span>
-          </div>
-        `);
+        // Whitespace between elements is visible inside the enclosing <pre>.
+        lines.push(html`<div class="diff-line ${type}"><span class="diff-marker">${marker}</span><span class="diff-content">${unsafeHTML(highlighted || ' ')}</span></div>`);
       });
     });
 
