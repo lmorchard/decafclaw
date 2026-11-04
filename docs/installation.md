@@ -83,13 +83,13 @@ Semantic search uses [sqlite-vec](https://github.com/asg017/sqlite-vec), which r
 ## Run
 
 ```bash
-make run          # Interactive terminal mode (no Mattermost needed)
+make run          # Run the agent (server process root; headless duties if no inbound transport is configured)
 make dev          # Auto-restart on file changes (development)
 make debug        # With debug logging
 make run-pro      # With gemini-2.5-pro model
 ```
 
-If `MATTERMOST_URL` and `MATTERMOST_TOKEN` are set, the agent runs as a Mattermost bot. Otherwise it falls back to interactive terminal mode. The HTTP/web UI server runs alongside either mode when `HTTP_ENABLED=true`.
+The agent always runs through the single server process root (`runner.run_all`) — whether the inbound chat transport is Mattermost, the HTTP/web UI server, or neither. If `MATTERMOST_URL` and `MATTERMOST_TOKEN` are set, the agent runs as a Mattermost bot. The HTTP/web UI server runs alongside when `HTTP_ENABLED=true`.
 
 **Warning:** Only one bot instance can connect to Mattermost at a time. A second instance will silently miss websocket events.
 

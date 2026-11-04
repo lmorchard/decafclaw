@@ -58,7 +58,6 @@ Transports delegate turn lifecycle to the **ConversationManager** (`conversation
 
 - **Mattermost transport** (`mattermost.py`) — websocket input, renders events back to Mattermost
 - **Web UI WebSocket** (`web/websocket.py`) — renders events to the browser
-- **Interactive terminal** (`interactive_terminal.py`) — stdin/stdout REPL
 - **Heartbeat / scheduled tasks** — bypass the ConversationManager (fire-and-forget, no persistent state); call `run_agent_turn` directly with `task_mode="heartbeat"` or `"scheduled"`, skipping memory retrieval and reflection
 
 ## The forkable Context

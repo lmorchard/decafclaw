@@ -17,7 +17,7 @@ git clone https://github.com/lmorchard/decafclaw.git
 cd decafclaw
 uv sync
 cp .env.example .env    # then configure LLM provider — see docs/providers.md
-make run                 # interactive terminal mode (no Mattermost needed)
+make run                 # Run the agent (server process root; headless duties if no inbound transport is configured)
 ```
 
 See [Installation & Setup](docs/installation.md) for provider configuration, Mattermost bot setup, and all options.
