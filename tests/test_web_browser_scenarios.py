@@ -1804,6 +1804,7 @@ def test_browser_sidebar_collapse_button_visible_when_narrow(built_static, chrom
                 const style = getComputedStyle(btn);
                 return {
                     display: style.display,
+                    backgroundColor: style.backgroundColor,
                     left: r.left,
                     right: r.right,
                     width: r.width,
@@ -1819,6 +1820,12 @@ def test_browser_sidebar_collapse_button_visible_when_narrow(built_static, chrom
             geom = collapse_geometry()
             assert geom["display"] != "none", f"{label}: collapse button is display:none: {geom}"
             assert geom["width"] > 0, f"{label}: collapse button has no width: {geom}"
+            # Opaque surface: the shared .dc-icon-btn primitive is borderless and
+            # transparent, and the toggle must read as a button rather than blend
+            # into whatever sits behind it (#1189 follow-up from the visual peek).
+            assert geom["backgroundColor"] not in ("rgba(0, 0, 0, 0)", "transparent", "none"), (
+                f"{label}: collapse button has no opaque background: {geom}"
+            )
             # Fully inside the sidebar box — not pushed past the right edge
             # (clipped by the sidebar's overflow:hidden) nor outside its left.
             assert geom["right"] <= geom["sidebarRight"] + 0.5, (
