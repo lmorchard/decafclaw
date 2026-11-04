@@ -511,6 +511,10 @@ conversation-sidebar[collapsed] .sidebar-header {
 conversation-sidebar button.collapse-btn {
   padding: 0.15rem 0.3rem;
   font-size: 1.1rem;
+  /* Never squeeze the toggle — the header row's other item (the tab strip)
+     is what yields when the sidebar is narrow; the hide button keeps its
+     intrinsic width so it stays inside the sidebar's overflow:hidden box. */
+  flex-shrink: 0;
 }
 
 /* Mobile-only close button — hamburger handles toggle, but a tap-target
@@ -527,6 +531,10 @@ conversation-sidebar .mobile-close-btn {
   display: flex;
   gap: 0;
   flex: 1;
+  /* Let the strip shrink below the sum of the tab labels' min-content so the
+     trailing collapse button keeps its slot instead of being pushed past the
+     sidebar's right edge and clipped by overflow:hidden. */
+  min-width: 0;
 }
 
 .sidebar-tab {

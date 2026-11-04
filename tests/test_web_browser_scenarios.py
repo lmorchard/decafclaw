@@ -1777,3 +1777,74 @@ def test_browser_chat_input_height_alignment(built_static, chromium, config):
         assert_aligned("after single-line input")
         page.locator("chat-input textarea").fill("")
         assert_aligned("after clearing the text")
+
+
+def test_browser_sidebar_collapse_button_visible_when_narrow(built_static, chromium, config):
+    """The sidebar hide (collapse) button must stay inside the sidebar bounds (#1189).
+
+    The sidebar header is a nowrap flex row whose tab strip has an automatic
+    content-based minimum. Once the sidebar is narrowed below the emergent clip
+    threshold (~300px), the strip refuses to shrink and pushes the collapse
+    button past the sidebar's right edge, where the sidebar's overflow:hidden
+    clips it away. The drag-resize floor (160px) lets users get well into that
+    range, so the button has to stay put on its own.
+    """
+    with browser_scenario(built_static, chromium, config, viewport={"width": 1280, "height": 800}) as scenario:
+        page = scenario.page
+        page.goto(scenario.base + "/")
+        page.wait_for_selector("conversation-sidebar", timeout=15000)
+
+        def collapse_geometry():
+            return page.evaluate(
+                """() => {
+                const sidebar = document.querySelector('conversation-sidebar');
+                const btn = sidebar.querySelector('.collapse-btn');
+                const s = sidebar.getBoundingClientRect();
+                const r = btn.getBoundingClientRect();
+                const style = getComputedStyle(btn);
+                return {
+                    display: style.display,
+                    left: r.left,
+                    right: r.right,
+                    width: r.width,
+                    top: r.top,
+                    height: r.height,
+                    sidebarLeft: s.left,
+                    sidebarRight: s.right,
+                };
+            }"""
+            )
+
+        def assert_collapse_button_visible(label):
+            geom = collapse_geometry()
+            assert geom["display"] != "none", f"{label}: collapse button is display:none: {geom}"
+            assert geom["width"] > 0, f"{label}: collapse button has no width: {geom}"
+            # Fully inside the sidebar box — not pushed past the right edge
+            # (clipped by the sidebar's overflow:hidden) nor outside its left.
+            assert geom["right"] <= geom["sidebarRight"] + 0.5, (
+                f"{label}: collapse button clipped by sidebar overflow: {geom}"
+            )
+            assert geom["left"] >= geom["sidebarLeft"] - 0.5, f"{label}: collapse button outside sidebar: {geom}"
+            # Hit-test the button's center point: it must resolve to the button.
+            hit = page.evaluate(
+                """() => {
+                const btn = document.querySelector('conversation-sidebar .collapse-btn');
+                const r = btn.getBoundingClientRect();
+                const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                return el === btn || btn.contains(el);
+            }"""
+            )
+            assert hit, f"{label}: collapse button not hit-testable at its center: {geom}"
+
+        # Baseline at the default width.
+        assert_collapse_button_visible("default sidebar width")
+
+        # Narrow below the emergent clip threshold — the reported bug shape.
+        page.evaluate("document.documentElement.style.setProperty('--sidebar-width', '180px')")
+        page.wait_for_timeout(250)
+        assert_collapse_button_visible("narrow sidebar (180px)")
+
+        # Narrow at the drag-resize floor.
+        page.evaluate("document.documentElement.style.setProperty('--sidebar-width', '160px')")
+        page.wait_for_timeout(250)
+        assert_collapse_button_visible("narrow sidebar (160px drag-resize floor)")
