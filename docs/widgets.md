@@ -2,7 +2,7 @@
 
 Tools can return rich UI widgets alongside their text output. The web UI
 renders the widget inline inside the tool-result message; Mattermost and
-the interactive terminal keep rendering the text as before.
+the web UI keep rendering the text as before.
 
 Phase 1 ships a single bundled widget, `data_table`, plus the plumbing
 for tools and admins to add more.

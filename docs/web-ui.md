@@ -1,6 +1,6 @@
 # Web UI
 
-DecafClaw includes a browser-based chat interface with a vault wiki editor, conversation management, model selection, and context inspection. The web UI runs alongside the Mattermost bot and interactive terminal as a third transport.
+DecafClaw includes a browser-based chat interface with a vault wiki editor, conversation management, model selection, and context inspection. The web UI runs alongside the Mattermost bot as the HTTP/WebSocket transport; the terminal clients (web UI, Ink TUI) are separate network clients of that gateway.
 
 ## Setup
 

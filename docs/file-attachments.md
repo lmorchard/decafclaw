@@ -99,12 +99,12 @@ The `debug_context` tool uploads the full JSON context and system prompt as file
 - Max files per post: 10 (overflow automatically splits into continuation posts)
 - Max image dimensions: 7680x4320
 
-## Interactive Mode
+## Media storage
 
-In terminal mode, media files are saved to `workspace/media/` and paths are printed:
+Media files are saved to `workspace/media/` and paths are surfaced in tool results:
 
 ```
-agent> Here's the analysis
+Here's the analysis
 [file saved: media/chart.png]
 [file saved: media/report.json]
 ```
