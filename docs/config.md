@@ -551,6 +551,29 @@ Arbitrary environment variables set at startup. Useful for API keys and tool-spe
 - `config set env.MY_VAR value` and `config get env.MY_VAR` work
 - `reload_env(config)` re-reads the env section at runtime
 
+## File-operation ledger through compaction (#924)
+
+Compaction's prose summary is lossy for concrete file operations, and the
+artifact list was LLM-supplied. The agent now derives a deterministic
+file-operation ledger from the built-in workspace file-tool calls and carries
+it through compaction alongside the structured decision slice:
+
+- Operations are recorded as ``"<operation> <path> :: call <id> :: ok|failed"``
+  with the canonical workspace-relative path, operation, tool-call identity,
+  and outcome.
+- Successful reads/writes/edits survive at least two compactions with the
+  path, call identity, and outcome intact even when prose summaries omit
+  them; failed writes are never represented as successful modifications.
+- Repeated compaction does not duplicate the same operation record (merge
+  dedups by operation string and FIFO-caps at the configured per-category
+  limit).
+- Existing decisions/open questions/artifacts remain intact and compatible
+  with older conversations lacking a ledger.
+
+The ledger lives in the per-conversation `decisions.json` sidecar next to the
+decision slice and renders as a `### File Operations` section inside the
+`<decision_slice>` block.
+
 ## Migrating from .env
 
 ```bash
