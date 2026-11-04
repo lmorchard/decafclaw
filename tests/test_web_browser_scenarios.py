@@ -1839,12 +1839,36 @@ def test_browser_sidebar_collapse_button_visible_when_narrow(built_static, chrom
         # Baseline at the default width.
         assert_collapse_button_visible("default sidebar width")
 
-        # Narrow below the emergent clip threshold — the reported bug shape.
+        # Narrow below the emergent clip threshold — the reported bug shape. Wait
+        # on the actual layout signal (button inside the sidebar bounds) rather
+        # than a fixed sleep.
         page.evaluate("document.documentElement.style.setProperty('--sidebar-width', '180px')")
-        page.wait_for_timeout(250)
+        page.wait_for_function(
+            """() => {
+            const sidebar = document.querySelector('conversation-sidebar');
+            const btn = sidebar.querySelector('.collapse-btn');
+            if (!btn) return false;
+            const s = sidebar.getBoundingClientRect();
+            const r = btn.getBoundingClientRect();
+            const style = getComputedStyle(btn);
+            if (style.display === 'none' || r.width === 0) return false;
+            return r.right <= s.right + 0.5 && r.left >= s.left - 0.5;
+        }"""
+        )
         assert_collapse_button_visible("narrow sidebar (180px)")
 
         # Narrow at the drag-resize floor.
         page.evaluate("document.documentElement.style.setProperty('--sidebar-width', '160px')")
-        page.wait_for_timeout(250)
+        page.wait_for_function(
+            """() => {
+            const sidebar = document.querySelector('conversation-sidebar');
+            const btn = sidebar.querySelector('.collapse-btn');
+            if (!btn) return false;
+            const s = sidebar.getBoundingClientRect();
+            const r = btn.getBoundingClientRect();
+            const style = getComputedStyle(btn);
+            if (style.display === 'none' || r.width === 0) return false;
+            return r.right <= s.right + 0.5 && r.left >= s.left - 0.5;
+        }"""
+        )
         assert_collapse_button_visible("narrow sidebar (160px drag-resize floor)")
