@@ -234,6 +234,58 @@ def test_admin_read_attaches_code_block_widget_for_json(ctx):
     assert result.widget.data["code"] == '{"agent": "test"}'
 
 
+@pytest.mark.asyncio
+async def test_admin_replace_lines_attaches_diff_view_widget(ctx):
+    """admin_replace_lines attaches a diff_view widget on a successful edit (#1170)."""
+    target = ctx.config.agent_path / "prompts" / "replace.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("A\nB\nC\nD\n")
+
+    ctx.request_confirmation = _mock_confirm(approved=True)
+
+    result = await tool_admin_replace_lines(ctx, "prompts/replace.md", 2, 3, "X\nY\n")
+    assert isinstance(result, ToolResult)
+    assert result.widget is not None
+    assert result.widget.widget_type == "diff_view"
+    assert result.widget.data["before"] == "A\nB\nC\nD\n"
+    assert result.widget.data["after"] == "A\nX\nY\nD\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_attaches_diff_view_widget(ctx):
+    """admin_edit attaches a diff_view widget on a successful edit (#1170)."""
+    target = ctx.config.agent_path / "prompts" / "edit.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("hello foo world\n")
+
+    ctx.request_confirmation = _mock_confirm(approved=True)
+
+    result = await tool_admin_edit(ctx, "prompts/edit.md", "foo", "bar")
+    assert isinstance(result, ToolResult)
+    assert result.widget is not None
+    assert result.widget.widget_type == "diff_view"
+    assert result.widget.data["before"] == "hello foo world\n"
+    assert result.widget.data["after"] == "hello bar world\n"
+
+
+def test_admin_list_empty_directory_attaches_no_widget(ctx):
+    """admin_list attaches no widget for an empty directory listing (#1170)."""
+    (ctx.config.agent_path / "emptydir").mkdir(parents=True, exist_ok=True)
+
+    result = tool_admin_list(ctx, "emptydir")
+    assert isinstance(result, ToolResult)
+    assert "(empty directory)" in result.text
+    assert result.widget is None
+
+
+def test_admin_read_refused_secret_file_attaches_no_widget(ctx):
+    """admin_read refuses protected secret files with no widget attached (#1170)."""
+    result = tool_admin_read(ctx, "web_tokens.json")
+    assert isinstance(result, ToolResult)
+    assert result.widget is None
+    assert "protected secret" in result.text
+
+
 # ---------------------------------------------------------------------------
 # Mutation tests (write, replace_lines, edit, delete)
 # ---------------------------------------------------------------------------
