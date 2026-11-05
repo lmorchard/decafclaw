@@ -248,15 +248,19 @@ class Config:
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
 
-    # Runtime-only (not in config file)
-    system_prompt: str = ""
-    discovered_skills: list[SkillInfo] = field(default_factory=list)
-    always_loaded_skill_tools: set[str] = field(default_factory=set)
+    # Runtime-only (not in config file). Marked with metadata so the
+    # config hot-reload watcher (#149) skips them when diffing a fresh
+    # load against the live config — a fresh load always differs here,
+    # and applying would clobber in-memory state like the assembled
+    # system prompt or discovered skills.
+    system_prompt: str = field(default="", metadata={"runtime_only": True})
+    discovered_skills: list[SkillInfo] = field(default_factory=list, metadata={"runtime_only": True})
+    always_loaded_skill_tools: set[str] = field(default_factory=set, metadata={"runtime_only": True})
     # Tool name → owning skill name. Built at skill discovery for the
     # subset of skills with has_native_tools. Used by the unknown-tool
     # error path and by tool_search to route hidden-tool-name guesses
     # back to the skill that owns the tool.
-    skill_tool_owners: dict[str, str] = field(default_factory=dict)
+    skill_tool_owners: dict[str, str] = field(default_factory=dict, metadata={"runtime_only": True})
 
     def apply_env(self) -> None:
         """Apply env vars from the config. Only sets vars not already in the environment.
@@ -267,6 +271,35 @@ class Config:
         for key, value in self.env.items():
             if key not in os.environ:
                 os.environ[key] = value
+
+    def apply_env_update(self, previous_env: dict[str, str]) -> None:
+        """Apply an env-section hot-reload, honoring apply_env's priority rule.
+
+        Config hot-reload (#149) captures the live env dict before applying
+        the fresh one and passes it as ``previous_env``. A reload may only
+        touch variables the previous section owned — detected by the live
+        environment still holding the previous config value. Changed keys are
+        updated, dropped keys are unset, and brand-new keys are set only when
+        absent, exactly like apply_env at startup.
+        """
+        for key in set(previous_env) | set(self.env):
+            old = previous_env.get(key)
+            new = self.env.get(key)
+            if old == new:
+                continue
+            current = os.environ.get(key)
+            # A key the previous section did not set but that already exists
+            # belongs to the real env/.env — apply_env would have skipped it.
+            if old is None and current is not None:
+                continue
+            # The previous section set it, but the live value differs — the
+            # real env/.env overrode us. Leave it alone.
+            if old is not None and current != old:
+                continue
+            if new is None:
+                del os.environ[key]
+            else:
+                os.environ[key] = new
 
     @property
     def agent_path(self) -> Path:
