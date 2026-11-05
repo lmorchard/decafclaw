@@ -107,7 +107,7 @@ class ComposerMode(enum.Enum):
     """Agent turn mode — controls which context sources are included.
 
     Callers set the mode via ``ctx.task_mode`` (mapped in ``run_agent_turn``):
-    - INTERACTIVE — default for Mattermost, web UI, terminal
+    - INTERACTIVE — default for Mattermost and the web UI
     - HEARTBEAT — periodic heartbeat tasks (skips memory + wiki)
     - SCHEDULED — cron-style scheduled tasks (skips memory + wiki)
     - CHILD_AGENT — delegate_task sub-agents (skips memory + wiki)

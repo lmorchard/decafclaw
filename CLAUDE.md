@@ -190,7 +190,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `llm/` — Provider abstraction; `llm/providers/{openai_compat,openai,vertex}.py`
 
 ### Transports
-- `interactive_terminal.py`, `mattermost.py`, `mattermost_display.py`, `mattermost_ui.py`
+- `mattermost.py`, `mattermost_display.py`, `mattermost_ui.py`
 - `http_server.py` — Starlette/uvicorn: button callbacks, health
 - `web/` — Web gateway: `auth.py`, `conversations.py`, `conversation_folders.py`, `websocket.py`, `workspace_paths.py`, `static/` (Lit components + service layer)
 
@@ -241,7 +241,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 ## Running
 
 ```
-make run          # Interactive mode (stdin/stdout)
+make run          # Run the agent (server process root; headless if no transport configured)
 make dev          # Auto-restart on file changes (10s graceful shutdown)
 make debug        # Debug logging
 make run-pro      # gemini-2.5-pro

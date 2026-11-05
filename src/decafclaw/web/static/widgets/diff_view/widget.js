@@ -6,6 +6,7 @@ import { getActiveConvId } from '/static/lib/canvas-state.js';
 import { ApiError, DefaultService } from '/static/lib/api-client/index.js';
 
 const INLINE_MAX_HEIGHT = '20rem';
+const MAX_DIFF_RENDER_LINES = 500;
 
 /**
  * diff_view widget.
@@ -107,6 +108,33 @@ export class DiffViewWidget extends LitElement {
       });
     });
 
+    if (lines.length > MAX_DIFF_RENDER_LINES) {
+      // Defensive cap: never render unbounded diff line sets in the inline
+      // preview. The tool layer already suppresses oversized widgets; this is
+      // the frontend backstop (#1168).
+      return html`
+        <div class="diff-view-widget code-block-inline">
+          <header class="code-block-header">
+            <span class="code-block-label">${this._headerLabel()}</span>
+            <span class="code-block-spacer"></span>
+            <button class="code-block-copy" type="button" @click=${this._toggleViewMode}>
+              ${this.viewMode === 'unified' ? 'Split View' : 'Unified View'}
+            </button>
+          </header>
+          <div class="diff-view-body">
+            <div class="code-block-notice">
+              Diff exceeds ${MAX_DIFF_RENDER_LINES} lines (${lines.length} diff lines); showing first ${MAX_DIFF_RENDER_LINES}.
+              Use "Open in Canvas" for the full diff.
+            </div>
+          </div>
+          <div class="code-block-actions">
+            <button type="button" @click=${this._toggleExpand}>${this.expanded ? 'Collapse' : 'Expand'}</button>
+            <button type="button" @click=${this._openInCanvas}>Open in Canvas</button>
+          </div>
+        </div>
+      `;
+    }
+
     return html`<div class="diff-unified"><pre><code>${lines}</code></pre></div>`;
   }
 
@@ -135,6 +163,33 @@ export class DiffViewWidget extends LitElement {
         }
       });
     });
+
+    if (leftLines.length > MAX_DIFF_RENDER_LINES || rightLines.length > MAX_DIFF_RENDER_LINES) {
+      // Defensive cap: never render unbounded diff line sets in split view.
+      // The tool layer already suppresses oversized widgets; this is the
+      // frontend backstop (#1168).
+      return html`
+        <div class="diff-view-widget code-block-inline">
+          <header class="code-block-header">
+            <span class="code-block-label">${this._headerLabel()}</span>
+            <span class="code-block-spacer"></span>
+            <button class="code-block-copy" type="button" @click=${this._toggleViewMode}>
+              ${this.viewMode === 'unified' ? 'Split View' : 'Unified View'}
+            </button>
+          </header>
+          <div class="diff-view-body">
+            <div class="code-block-notice">
+              Diff exceeds ${MAX_DIFF_RENDER_LINES} lines; showing first ${MAX_DIFF_RENDER_LINES}.
+              Use "Open in Canvas" for the full diff.
+            </div>
+          </div>
+          <div class="code-block-actions">
+            <button type="button" @click=${this._toggleExpand}>${this.expanded ? 'Collapse' : 'Expand'}</button>
+            <button type="button" @click=${this._openInCanvas}>Open in Canvas</button>
+          </div>
+        </div>
+      `;
+    }
 
     return html`
       <div class="diff-split">

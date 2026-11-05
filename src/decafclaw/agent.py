@@ -1476,8 +1476,8 @@ class TurnRunner:
 
         Every iteration's preamble was already published as
         `text_before_tools` — rendered live by Mattermost
-        (mattermost_display.on_text_complete), the web UI
-        (websocket.py) and the terminal (interactive_terminal.on_event) —
+        (mattermost_display.on_text_complete) and the web UI
+        (websocket.py) —
         and archived as it was emitted (see _handle_tool_calls). For a turn
         someone is watching, re-joining the accumulated preambles into the
         delivered text duplicated the entire turn: invisible on a
@@ -1499,7 +1499,7 @@ class TurnRunner:
           `_UNWATCHED_TASK_MODES`) — they run on synthetic conv_ids no
           transport subscribed to, yet their `ToolResult.text` is parsed
           (heartbeat.py) and shown to the user afterwards
-          (interactive_terminal.py, heartbeat_tools.py, schedules.py).
+          (heartbeat_tools.py, schedules.py).
 
         Dropping the join for any of those silently loses everything the turn
         accumulated before hitting the wall. Children also run with

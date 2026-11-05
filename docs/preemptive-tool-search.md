@@ -80,7 +80,7 @@ Runs in every mode that goes through `ContextComposer.compose`:
 
 | Mode | Applies? |
 |---|---|
-| Interactive chat (web UI, Mattermost, terminal) | ✅ |
+| Interactive chat (web UI, Mattermost) | ✅ |
 | Child agent (`delegate_task`) | ✅ (matches on the task string) |
 | Heartbeat section runs | ✅ (matches on the section preamble) |
 | Scheduled tasks | ✅ (matches on the task preamble) |

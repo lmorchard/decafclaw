@@ -16,7 +16,6 @@ Each line is a JSON object with `role`, `content`, optional `tool_calls`/`tool_c
 
 - **Mattermost threads**: `conv_id` = `root_id` (the thread's root post)
 - **Mattermost top-level**: `conv_id` = `channel_id`
-- **Interactive mode**: `conv_id` = `"interactive"`
 
 ### Resume on restart
 

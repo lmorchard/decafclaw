@@ -1,4 +1,4 @@
-# Run interactively (no Mattermost, stdin/stdout)
+# Run the agent (server process root; headless duties if no inbound transport is configured)
 run:
 	uv run decafclaw
 
