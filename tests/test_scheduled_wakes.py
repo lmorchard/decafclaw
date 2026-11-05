@@ -172,7 +172,7 @@ async def test_schedule_list(ctx, mock_manager):
     assert list_res.widget.data["columns"] == [
         {"key": "schedule_id", "label": "Schedule ID"},
         {"key": "fire_at", "label": "Fire At"},
-        {"key": "remaining", "label": "Remaining (s)"},
+        {"key": "remaining", "label": "Remaining (s)", "type": "duration"},
         {"key": "reason", "label": "Reason"},
     ]
     assert isinstance(list_res.widget.data["rows"][0]["remaining"], int)

@@ -554,7 +554,7 @@ def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
                     "columns": [
                         {"key": "name", "label": "Name"},
                         {"key": "type", "label": "Type"},
-                        {"key": "size", "label": "Size (bytes)"},
+                        {"key": "size", "label": "Size (bytes)", "type": "bytes"},
                     ],
                     "rows": table_rows,
                 },
