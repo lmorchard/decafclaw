@@ -300,6 +300,32 @@ def test_apply_materializes_enabled_only_and_never_overwrites_hand(config):
     assert config.model_configs["local/llama3.2"].timeout == 99
 
 
+def test_disable_colliding_discovered_key_keeps_hand_config(config):
+    """Disabling a discovered model whose {provider}/{model_id} key collides
+    with a hand-authored model_configs entry must never prune the hand
+    config: apply_catalog may only claim keys it actually created."""
+    config.providers = {"local": ProviderConfig(type="openai-compat", url="http://x/v1")}
+    config.model_configs["local/m1"] = ModelConfig(provider="local", model="m1", timeout=99)
+    save_catalog(
+        config,
+        ModelCatalog(providers={"local": CatalogProvider(models=[CatalogModel(id="m1", enabled=True)])}),
+    )
+    apply_catalog(config, load_catalog(config))
+
+    # Collision: the hand entry survives untouched and is not catalog-owned.
+    assert config.model_configs["local/m1"].timeout == 99
+    assert "local/m1" not in config.catalog_materialized
+
+    # Disabling the discovered model keeps the hand config alive...
+    import asyncio
+
+    assert asyncio.run(set_model_enabled(config, "local/m1", False)) is not None
+    assert "local/m1" in config.model_configs
+    assert config.model_configs["local/m1"].timeout == 99
+    # ...and the picker still serves it.
+    assert picker_models(config) == ["local/m1"]
+
+
 def test_apply_prunes_disabled_and_vanished(config):
     config.providers = {"local": ProviderConfig(type="openai-compat", url="http://x/v1")}
     catalog = ModelCatalog(

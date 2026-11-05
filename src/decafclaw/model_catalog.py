@@ -311,6 +311,9 @@ def apply_catalog(config: "Config", catalog: ModelCatalog) -> None:
     Materializes every enabled discovered model into ``config.model_configs``
     (never overwriting a hand-authored entry under the same key) and prunes
     materialized entries that were disabled or vanished from the catalog.
+    Only entries this function actually creates are tracked in
+    ``catalog_materialized`` — a colliding hand-authored entry is never
+    catalog-owned, so disabling the discovered model cannot prune it.
     Writes no files; ``config.json`` is untouched.
     """
     live_keys: set[str] = set()
@@ -320,8 +323,13 @@ def apply_catalog(config: "Config", catalog: ModelCatalog) -> None:
                 continue
             key = catalog_model_key(provider_name, entry.id)
             live_keys.add(key)
-            if key not in config.model_configs:
-                config.model_configs[key] = materialize_model_config(provider_name, entry)
+            if key in config.model_configs:
+                # Hand-authored entry under the same key: never overwrite it,
+                # and never claim it as catalog-owned — disabling the
+                # discovered model must not prune the user's config. It is
+                # already tracked from the apply that created it.
+                continue
+            config.model_configs[key] = materialize_model_config(provider_name, entry)
             config.catalog_materialized.add(key)
 
     # Drop entries this issue materialized earlier that are no longer
