@@ -272,6 +272,35 @@ class Config:
             if key not in os.environ:
                 os.environ[key] = value
 
+    def apply_env_update(self, previous_env: dict[str, str]) -> None:
+        """Apply an env-section hot-reload, honoring apply_env's priority rule.
+
+        Config hot-reload (#149) captures the live env dict before applying
+        the fresh one and passes it as ``previous_env``. A reload may only
+        touch variables the previous section owned — detected by the live
+        environment still holding the previous config value. Changed keys are
+        updated, dropped keys are unset, and brand-new keys are set only when
+        absent, exactly like apply_env at startup.
+        """
+        for key in set(previous_env) | set(self.env):
+            old = previous_env.get(key)
+            new = self.env.get(key)
+            if old == new:
+                continue
+            current = os.environ.get(key)
+            # A key the previous section did not set but that already exists
+            # belongs to the real env/.env — apply_env would have skipped it.
+            if old is None and current is not None:
+                continue
+            # The previous section set it, but the live value differs — the
+            # real env/.env overrode us. Leave it alone.
+            if old is not None and current != old:
+                continue
+            if new is None:
+                del os.environ[key]
+            else:
+                os.environ[key] = new
+
     @property
     def agent_path(self) -> Path:
         """Admin-level agent directory (read-only to agent)."""

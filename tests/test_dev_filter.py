@@ -15,7 +15,7 @@ import pytest
 
 
 @pytest.fixture
-def dev_filter(monkeypatch):
+def dev_filter_module(monkeypatch):
     """Import decafclaw._dev_filter with a stubbed watchfiles module."""
     stub = types.ModuleType("watchfiles")
 
@@ -28,8 +28,16 @@ def dev_filter(monkeypatch):
 
     stub.PythonFilter = _StubPythonFilter
     monkeypatch.setitem(sys.modules, "watchfiles", stub)
-    module = importlib.import_module("decafclaw._dev_filter")
-    return module.DevFilter()
+    return importlib.import_module("decafclaw._dev_filter")
+
+
+@pytest.fixture
+def agent_env(monkeypatch, tmp_path):
+    """Point DATA_HOME/AGENT_ID at a scratch agent dir; skip .env loading."""
+    monkeypatch.setenv("DECACLAW_LOAD_DOTENV", "0")
+    monkeypatch.setenv("DATA_HOME", str(tmp_path / "data-home"))
+    monkeypatch.setenv("AGENT_ID", "test-agent")
+    return tmp_path / "data-home" / "test-agent"
 
 
 def _write(path, data: dict) -> None:
@@ -37,59 +45,80 @@ def _write(path, data: dict) -> None:
     path.write_text(json.dumps(data))
 
 
-def test_filter_matches_widget_and_config_paths_only(dev_filter, tmp_path):
-    """Non-.py paths must be widget or agent-config files; everything else drops."""
-    config_path = tmp_path / "data" / "test-agent" / "config.json"
-    _write(config_path, {"llm": {"model": "m"}})
-    assert dev_filter.__call__(None, str(config_path)) is False  # first sighting: cache only
+def test_first_unsafe_change_restarts(dev_filter_module, agent_env):
+    """Regression (#149 review): the filter must compare the first edit after
+    startup against the files as the server loaded them. The old
+    first-sighting-only-cached behavior let the in-process watcher stop the
+    server with no supervisor restart — a dead dev session."""
+    config_path = agent_env / "config.json"
+    _write(config_path, {"mattermost": {"url": "https://mm.example"}})
+    dev_filter = dev_filter_module.DevFilter()
 
-    _write(config_path, {"http": {"enabled": True}})
-    assert dev_filter.__call__(None, str(config_path)) is True  # agent config, unsafe delta
-    widget = str(tmp_path / "src" / "decafclaw" / "web" / "static" / "widgets" / "foo" / "widget.json")
-    assert dev_filter.__call__(None, widget) is True  # bundled widget
-    archive = str(tmp_path / "data" / "test-agent" / "workspace" / "conversations" / "x.jsonl")
-    assert dev_filter.__call__(None, archive) is False  # conversation archive
-    vault = str(tmp_path / "data" / "test-agent" / "workspace" / "vault" / "Page.md")
-    assert dev_filter.__call__(None, vault) is False  # vault page
+    _write(config_path, {"mattermost": {"url": "https://other.example"}})
+    assert dev_filter.__call__(None, str(config_path)) is True
 
 
-def test_filter_restart_required_config_change(dev_filter, tmp_path):
-    """An http-section delta restarts the dev server."""
-    config_path = tmp_path / "data" / "test-agent" / "config.json"
-    _write(config_path, {"llm": {"model": "custom-model"}})
-
-    assert dev_filter.__call__(None, str(config_path)) is False  # first sighting: cache only
-    assert dev_filter.__call__(None, str(config_path)) is False  # no change
-
-    _write(config_path, {"http": {"enabled": True}})
-    assert dev_filter.__call__(None, str(config_path)) is True  # unsafe delta
-
-
-def test_filter_safe_config_change_does_not_restart(dev_filter, tmp_path):
+def test_safe_first_change_does_not_restart(dev_filter_module, agent_env):
     """A safe-only delta must not restart — the watcher applies it in place."""
-    config_path = tmp_path / "data" / "test-agent" / "config.json"
-    _write(config_path, {})
+    config_path = agent_env / "config.json"
+    _write(config_path, {"llm": {"model": "start-model"}})
+    dev_filter = dev_filter_module.DevFilter()
 
-    assert dev_filter.__call__(None, str(config_path)) is False  # first sighting
     _write(config_path, {"llm": {"model": "custom-model"}})
     assert dev_filter.__call__(None, str(config_path)) is False
 
 
-def test_filter_mcp_servers_change_restarts(dev_filter, tmp_path):
-    """Any mcp_servers.json change is restart-required."""
-    mcp_path = tmp_path / "data" / "test-agent" / "mcp_servers.json"
+def test_mcp_servers_first_change_restarts(dev_filter_module, agent_env):
+    """Any mcp_servers.json change is restart-required, including the first."""
+    mcp_path = agent_env / "mcp_servers.json"
     _write(mcp_path, {"mcpServers": {}})
+    dev_filter = dev_filter_module.DevFilter()
 
-    assert dev_filter.__call__(None, str(mcp_path)) is False  # first sighting
     _write(mcp_path, {"mcpServers": {"x": {"command": "echo"}}})
     assert dev_filter.__call__(None, str(mcp_path)) is True
 
 
-def test_filter_torn_write_does_not_restart(dev_filter, tmp_path):
-    """Unparseable JSON (torn/partial write) never restarts the dev server."""
-    config_path = tmp_path / "data" / "test-agent" / "config.json"
+def test_created_config_with_unsafe_section_restarts(dev_filter_module, agent_env):
+    """A config.json appearing after startup with a restart-required section
+    restarts: the starting process loaded defaults, so this is a real delta."""
+    dev_filter = dev_filter_module.DevFilter()  # no config files yet
+
+    config_path = agent_env / "config.json"
     _write(config_path, {"http": {"enabled": True}})
-    assert dev_filter.__call__(None, str(config_path)) is False  # first sighting
+    assert dev_filter.__call__(None, str(config_path)) is True
+
+
+def test_torn_write_does_not_restart(dev_filter_module, agent_env):
+    """Unparseable JSON (torn/partial write) never restarts the dev server."""
+    config_path = agent_env / "config.json"
+    _write(config_path, {"http": {"enabled": True}})
+    dev_filter = dev_filter_module.DevFilter()
 
     config_path.write_text('{"http": {"en')
     assert dev_filter.__call__(None, str(config_path)) is False
+
+
+def test_only_the_resolved_agent_config_paths_match(dev_filter_module, agent_env, tmp_path):
+    """Exact-path matching (#149 review): a config.json outside the resolved
+    agent dir never matches, even under a literal data/ directory."""
+    dev_filter = dev_filter_module.DevFilter()
+
+    stray = tmp_path / "data" / "other-agent" / "config.json"
+    _write(stray, {"http": {"enabled": True}})
+    assert dev_filter.__call__(None, str(stray)) is False
+
+    # Non-config files under the agent dir still drop, widgets still pass.
+    archive = str(agent_env / "workspace" / "conversations" / "x.jsonl")
+    assert dev_filter.__call__(None, archive) is False
+    widget = str(tmp_path / "src" / "decafclaw" / "web" / "static" / "widgets" / "foo" / "widget.json")
+    assert dev_filter.__call__(None, widget) is True
+
+
+def test_deleted_config_file_restarts(dev_filter_module, agent_env):
+    """A config file vanishing mid-run is a change worth restarting for."""
+    config_path = agent_env / "config.json"
+    _write(config_path, {"mattermost": {"url": "https://mm.example"}})
+    dev_filter = dev_filter_module.DevFilter()
+
+    config_path.unlink()
+    assert dev_filter.__call__(None, str(config_path)) is True

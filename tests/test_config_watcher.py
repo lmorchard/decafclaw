@@ -2,9 +2,14 @@
 
 import asyncio
 import json
+import os
 
 from decafclaw.config import load_config
-from decafclaw.config_watcher import config_change_watcher
+from decafclaw.config_watcher import (
+    ConfigFileClassifier,
+    classifier_baseline,
+    config_change_watcher,
+)
 
 TEST_INTERVAL = 0.05
 RESTART_GRACE = 0.05
@@ -181,6 +186,174 @@ async def test_unsafe_section_signals_restart(ctx, monkeypatch, tmp_path):
         ctx.event_bus.unsubscribe(sub_id)
         if not task.done():
             await _cancel(task)
+
+
+async def test_startup_wired_sections_require_restart(ctx, monkeypatch, tmp_path):
+    """telemetry/schedules wire event subscribers and timers once at startup;
+    they cannot be rewired mid-run, so they are restart-required (#149 review)."""
+    _align_config(ctx, monkeypatch, tmp_path)
+
+    task, shutdown_event = await _run_watcher(ctx)
+    events: list[dict] = []
+    sub_id = ctx.event_bus.subscribe(events.append)
+
+    try:
+        await _settle()
+
+        _write_config(tmp_path, {"telemetry": {"tool_usage_enabled": False}})
+        await _wait_for(shutdown_event.is_set)
+        await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+
+        assert events == [{"type": "config_changed", "requires_restart": True, "keys": ["telemetry"]}]
+    finally:
+        ctx.event_bus.unsubscribe(sub_id)
+        if not task.done():
+            await _cancel(task)
+
+
+async def test_env_reload_updates_owned_vars_only(ctx, monkeypatch, tmp_path):
+    """env hot-apply must update config-owned vars, set new ones, leave
+    real-env overrides alone (#149 review: apply_env never updated anything)."""
+    _align_config(ctx, monkeypatch, tmp_path)
+    # Simulate the startup result: the config's env section set these.
+    ctx.config.env = {"PR1200_KEY": "old", "PR1200_KEPT": "kept"}
+    monkeypatch.setenv("PR1200_KEY", "old")
+    monkeypatch.setenv("PR1200_KEPT", "kept")
+    monkeypatch.setenv("PR1200_FOREIGN", "real")  # real env, config doesn't own it
+
+    task, shutdown_event = await _run_watcher(ctx)
+    events: list[dict] = []
+    sub_id = ctx.event_bus.subscribe(events.append)
+
+    try:
+        await _settle()
+
+        _write_config(
+            tmp_path,
+            {"env": {"PR1200_KEY": "new", "PR1200_KEPT": "kept", "PR1200_FOREIGN": "mine", "PR1200_ADDED": "added"}},
+        )
+        await _wait_for(lambda: ctx.config.env.get("PR1200_KEY") == "new")
+
+        assert not shutdown_event.is_set()
+        assert os.environ["PR1200_KEY"] == "new"  # owned → updated
+        assert os.environ["PR1200_KEPT"] == "kept"  # unchanged
+        assert os.environ["PR1200_FOREIGN"] == "real"  # foreign → untouched
+        assert os.environ["PR1200_ADDED"] == "added"  # new + absent → set
+        assert events[-1]["requires_restart"] is False
+        assert "env" in events[-1]["keys"]
+    finally:
+        ctx.event_bus.unsubscribe(sub_id)
+        await _cancel(task)
+
+
+async def test_env_reload_unsets_removed_owned_vars(ctx, monkeypatch, tmp_path):
+    """A key dropped from the env section is unset — if the config owned it."""
+    _align_config(ctx, monkeypatch, tmp_path)
+    ctx.config.env = {"PR1200_KEY": "old", "PR1200_KEPT": "kept"}
+    monkeypatch.setenv("PR1200_KEY", "old")
+    monkeypatch.setenv("PR1200_KEPT", "kept")
+    monkeypatch.setenv("PR1200_OVERRIDE", "real")  # foreign, dropped later too
+
+    task, shutdown_event = await _run_watcher(ctx)
+    events: list[dict] = []
+    sub_id = ctx.event_bus.subscribe(events.append)
+
+    try:
+        await _settle()
+
+        _write_config(tmp_path, {"env": {"PR1200_KEPT": "kept"}})
+        await _wait_for(lambda: "PR1200_KEY" not in ctx.config.env)
+
+        assert "PR1200_KEY" not in os.environ  # owned → unset
+        assert os.environ["PR1200_KEPT"] == "kept"
+        assert os.environ["PR1200_OVERRIDE"] == "real"  # never ours → untouched
+        assert events[-1]["requires_restart"] is False
+    finally:
+        ctx.event_bus.unsubscribe(sub_id)
+        await _cancel(task)
+
+
+async def test_providers_change_rebuilds_registry(ctx, monkeypatch, tmp_path):
+    """A providers section change re-runs init_providers (#149 review: the
+    registry was built once at startup, so the announce-alone claim lied)."""
+    _align_config(ctx, monkeypatch, tmp_path)
+    calls: list = []
+
+    def _fake_init(config) -> None:
+        calls.append(config)
+
+    monkeypatch.setattr("decafclaw.llm.init_providers", _fake_init)
+
+    task, shutdown_event = await _run_watcher(ctx)
+    events: list[dict] = []
+    sub_id = ctx.event_bus.subscribe(events.append)
+
+    try:
+        await _settle()
+
+        _write_config(
+            tmp_path,
+            {"providers": {"p1": {"type": "openai-compat", "url": "http://example.test", "api_key": "k"}}},
+        )
+        await _wait_for(lambda: "p1" in ctx.config.providers)
+
+        assert not shutdown_event.is_set()
+        assert calls == [ctx.config]
+        assert events[-1]["requires_restart"] is False
+        assert "providers" in events[-1]["keys"]
+    finally:
+        ctx.event_bus.unsubscribe(sub_id)
+        await _cancel(task)
+
+
+async def test_skill_catalog_change_rescans(ctx, monkeypatch, tmp_path):
+    """extra_skill_paths changes re-run the skill discovery mutation path
+    (#149 review: runtime-only catalog fields were never refreshed)."""
+    _align_config(ctx, monkeypatch, tmp_path)
+    calls: list = []
+
+    def _fake_rescan(config) -> list:
+        calls.append(config)
+        return []
+
+    monkeypatch.setattr("decafclaw.tools.skill_tools.rediscover_skills", _fake_rescan)
+
+    task, shutdown_event = await _run_watcher(ctx)
+    events: list[dict] = []
+    sub_id = ctx.event_bus.subscribe(events.append)
+
+    try:
+        await _settle()
+
+        extra = str(tmp_path / "extra-skills")
+        _write_config(tmp_path, {"extra_skill_paths": [extra]})
+        await _wait_for(lambda: ctx.config.extra_skill_paths == [extra])
+
+        assert not shutdown_event.is_set()
+        assert calls == [ctx.config]
+        assert events[-1]["requires_restart"] is False
+        assert "extra_skill_paths" in events[-1]["keys"]
+    finally:
+        ctx.event_bus.unsubscribe(sub_id)
+        await _cancel(task)
+
+
+def test_classifier_seeds_baseline_from_startup_files(tmp_path):
+    """The classifier diffs the first edit against the files as they were at
+    dev-server start (#149 review: first-sighting-only caching hid restart-
+    required changes from the supervisor)."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"mattermost": {"url": "a"}}))
+    clf = ConfigFileClassifier(classifier_baseline([config_path]))
+
+    config_path.write_text(json.dumps({"mattermost": {"url": "b"}}))
+    assert clf.is_restart_required(config_path) is True
+    assert clf.is_restart_required(config_path) is False  # no further delta
+
+    # A file absent at start compares against empty defaults once it appears.
+    created = tmp_path / "mcp_servers.json"
+    created.write_text(json.dumps({"mcpServers": {}}))
+    assert clf.is_restart_required(created) is True
 
 
 async def test_mcp_servers_change_requires_restart(ctx, monkeypatch, tmp_path):

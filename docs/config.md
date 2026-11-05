@@ -549,24 +549,40 @@ Arbitrary environment variables set at startup. Useful for API keys and tool-spe
 - Only sets vars not already in the environment (real env vars and `.env` take priority)
 - Displayed as secrets in `config show` (masked unless `--reveal`)
 - `config set env.MY_VAR value` and `config get env.MY_VAR` work
-- `reload_env(config)` re-reads the env section at runtime
+- Config hot-reload (#149) re-applies an updated env section via
+  `Config.apply_env_update(previous_env)`, which updates/unsets only
+  variables the config owns (the live value still matches what the previous
+  section set; real env vars and `.env` keep winning)
 
 ## Config hot-reload (#149)
 
 While the server process is running, the agent watches `data/{agent_id}/config.json`
 (and `mcp_servers.json`) and reacts to changes:
 
-- **Safe to apply in place** (no restart): every config section except the
-  restart-required ones below. Changed sections are applied onto the live config
-  (the `env` section re-runs `apply_env`) and announced with a `config_changed`
-  event (`requires_restart: false`), so the next agent turn picks them up.
-- **Require a process restart**: `http`, `mattermost`, and any change to
-  `mcp_servers.json` (MCP servers load once at startup, outside the `Config`
-  dataclass). The watcher publishes a `config_changed` event with
-  `requires_restart: true` and stops the process after a short grace delay.
-  Under `make dev`, the dev supervisor watches these files too and restarts
-  the process automatically; under a bare `make run` the process exits and
-  you restart it by hand.
+- **Require a process restart**: `http`, `mattermost`, `telemetry`, `schedules`,
+  and any change to `mcp_servers.json` (MCP servers load once at startup,
+  outside the `Config` dataclass). The watcher publishes a `config_changed`
+  event with `requires_restart: true` and stops the process after a short
+  grace delay. Under `make dev`, the dev supervisor watches the agent data
+  dir too and restarts the process automatically; under a bare `make run`
+  the process exits and you restart it by hand. `telemetry` and `schedules`
+  wire event subscribers and timer spawning once in `runner.run_all` and
+  cannot be rewired mid-run.
+- **Safe to apply in place** (no restart): every other section. Changed
+  sections are applied onto the live config and announced with a
+  `config_changed` event (`requires_restart: false`). Sections take effect
+  where their values are read at use time — which for most is every agent
+  turn. A few get an explicit re-application so the claim is honest:
+  - `env`: keys are updated/unset in the environment, but only where the
+    config owns the variable (see `apply_env_update` above).
+  - `providers`: the LLM provider registry is rebuilt (`init_providers`).
+  - `extra_skill_paths` / `skills_always_loaded`: the skill catalog is
+    re-scanned and the system prompt rebuilt (`rediscover_skills`).
+  - `heartbeat.interval`: re-read by the heartbeat timer each poll.
+- **Applied in place, best-effort**: a few safe sections are consumed only
+  at startup, so the updated value waits for the next restart — e.g.
+  `agent.data_home` / `agent.id`, which define where the config itself
+  lives. The event still announces them.
 - A file that changed but does not parse as JSON (a torn or partial write) is
   skipped until it parses again — `load_config` falls back to defaults on
   malformed JSON, and those defaults must never reach the live config.
@@ -574,7 +590,9 @@ While the server process is running, the agent watches `data/{agent_id}/config.j
   `{"type": "config_changed", "requires_restart": <bool>, "keys": [<section>, ...]}`.
 
 The classification lives in `src/decafclaw/config_watcher.py`; the `make dev`
-filter shares it via `src/decafclaw/_dev_filter.py`.
+filter shares it via `src/decafclaw/_dev_filter.py`. Both resolve the agent
+data dir from `DATA_HOME`/`AGENT_ID` (which `.env` may point outside the
+checkout), so worktrees and relocated data homes are watched correctly.
 
 ## Migrating from .env
 
