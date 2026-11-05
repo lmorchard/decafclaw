@@ -81,7 +81,13 @@ Models the gateway positively identifies as non-chat (embeddings, image,
 audio, realtime endpoints) are excluded entirely. Unknown capabilities are
 treated as *not capable*, never assumed. A newly discovered model lands
 **enabled** only when the gateway reports chat + tool support + context-window
-metadata; otherwise it lands **disabled** and you opt in.
+metadata **and** the id is live-confirmed; otherwise it lands **disabled**
+and you opt in. For the OpenAI-compatible family the gateway's own listing
+is the confirmation. For the curated Vertex static list, ids without live
+confirmation (`gemini-2.5-flash-lite`, `gemini-3.8-flash`, `gemini-4-argon`
+as of this writing) land **disabled** — flip them in `llm/providers/vertex.py`
+only with live evidence the project serves the id, so an unserved id never
+surfaces enabled and fails on first use.
 
 ### Enabling, disabling, and the default model
 

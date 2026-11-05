@@ -102,6 +102,11 @@ class DiscoveredModel:
     the fact, None when it does not. ``None`` never means "capable" —
     unknown capabilities gate auto-enablement and are surfaced to the
     catalog UI so the user can opt in deliberately (#1211).
+
+    ``confirmed`` marks a live-confirmed id: True when the gateway itself
+    listed the model (the default), False for curated static-list guesses
+    no live listing has verified — those land disabled by default so an
+    unserved id never surfaces enabled and fails on first use.
     """
 
     id: str
@@ -109,3 +114,4 @@ class DiscoveredModel:
     tools: bool | None = None
     context_window_size: int | None = None
     owned_by: str = ""
+    confirmed: bool = True

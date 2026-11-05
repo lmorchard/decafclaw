@@ -183,10 +183,39 @@ def test_vertex_discovery_static_fallback():
     models = asyncio.run(provider.discover_models())
     assert models, "static fallback must not be empty"
     for m in models:
-        # Full metadata: every entry lands enabled under the default-on policy.
+        # Full metadata: every entry reports chat + tools + context.
         assert m.chat is True
         assert m.tools is True
         assert m.context_window_size and m.context_window_size > 0
+
+    from decafclaw.model_catalog import default_enabled
+
+    by_id = {m.id: m for m in models}
+    # Live-confirmed ids land enabled under the default-on policy...
+    assert by_id["gemini-2.5-flash"].confirmed is True
+    assert default_enabled(by_id["gemini-2.5-flash"]) is True
+    assert by_id["gemini-2.5-pro"].confirmed is True
+    assert default_enabled(by_id["gemini-2.5-pro"]) is True
+    # ...ids without live confirmation land disabled (user opts in), so an
+    # unserved id never surfaces enabled and fails on first use. Every list
+    # entry must make this choice explicitly — keep this partition in sync
+    # with the evidence notes in _VERTEX_STATIC_MODELS.
+    for unconfirmed in ("gemini-2.5-flash-lite", "gemini-3.8-flash", "gemini-4-argon"):
+        assert by_id[unconfirmed].confirmed is False
+        assert default_enabled(by_id[unconfirmed]) is False
+
+
+def test_default_enabled_requires_live_confirmation():
+    """Identical gateway metadata, but an unconfirmed (curated static guess)
+    id lands disabled under the default-on policy."""
+    from dataclasses import replace
+
+    from decafclaw.llm.types import DiscoveredModel
+    from decafclaw.model_catalog import default_enabled
+
+    full = DiscoveredModel(id="m", chat=True, tools=True, context_window_size=8192)
+    assert default_enabled(full) is True
+    assert default_enabled(replace(full, confirmed=False)) is False
 
 
 # ---------------------------------------------------------------------------

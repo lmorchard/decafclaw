@@ -187,8 +187,9 @@ def _now_iso() -> str:
 def default_enabled(entry: DiscoveredModel) -> bool:
     """Default-on policy (#1211): a newly discovered model lands enabled
     only when the gateway reports chat + tool support + context-window
-    metadata; otherwise it lands disabled and the user opts in."""
-    return bool(entry.chat and entry.tools and entry.context_window_size)
+    metadata and the id is live-confirmed (a curated static-list guess is
+    not); otherwise it lands disabled and the user opts in."""
+    return bool(entry.chat and entry.tools and entry.context_window_size and entry.confirmed)
 
 
 async def _discover_provider(provider_name: str, provider: Any) -> tuple[list[DiscoveredModel] | None, str]:
