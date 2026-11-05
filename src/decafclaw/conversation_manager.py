@@ -36,6 +36,7 @@ from .heartbeat import is_background_wake_ok
 from .llm import call_llm_streaming
 from .llm.history import without_provider_data
 from .media import ToolResult
+from .model_catalog import effective_default_model
 from .workflow.journal import load_journal, save_journal
 from .workflow.paths import workflow_path
 
@@ -1283,7 +1284,9 @@ class ConversationManager:
         ctx.tools.extra = {}
         ctx.tools.extra_definitions = []
 
-        effective_model = model_name or (state.persisted.active_model if state else "") or self.config.default_model
+        effective_model = (
+            model_name or (state.persisted.active_model if state else "") or effective_default_model(self.config)
+        )
         ctx.active_model = effective_model
 
         chunks_received: list[str] = []

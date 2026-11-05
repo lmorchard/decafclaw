@@ -321,8 +321,23 @@ async def evaluate_response(
             response = await call_llm(config, messages, model_name=verifier)
         elif rc_model and rc_model in config.model_configs:
             response = await call_llm(config, messages, model_name=rc_model)
-        elif config.default_model and not rc_model:
-            response = await call_llm(config, messages, model_name=config.default_model)
+        elif not rc_model:
+            # Effective default (catalog pointer → default_model) when no
+            # reflection-specific model is set.
+            from .model_catalog import effective_default_model
+
+            fallback = effective_default_model(config)
+            if fallback:
+                response = await call_llm(config, messages, model_name=fallback)
+            else:
+                rc = config.reflection.resolved(config)
+                response = await call_llm(
+                    config,
+                    messages,
+                    llm_url=rc.url,
+                    llm_model=rc.model,
+                    llm_api_key=rc.api_key,
+                )
         else:
             # Reached two ways: reflection.model is set but is not a
             # model_configs key — a legacy raw model name, which outranks

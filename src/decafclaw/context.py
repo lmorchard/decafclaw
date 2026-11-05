@@ -208,12 +208,16 @@ class Context:
 
     def llm(self) -> BoundLlmClient:
         """Return an LLM client configured with the primary model ID."""
-        model_name = self.active_model or self.config.default_model
+        from .model_catalog import effective_default_model
+
+        model_name = self.active_model or effective_default_model(self.config)
         return BoundLlmClient(self.config, model_name)
 
     def aux_llm(self) -> BoundLlmClient:
         """Return an LLM client configured with the auxiliary model ID, or fallback to primary."""
-        model_name = self.config.auxiliary_model or self.active_model or self.config.default_model
+        from .model_catalog import effective_default_model
+
+        model_name = self.config.auxiliary_model or self.active_model or effective_default_model(self.config)
         return BoundLlmClient(self.config, model_name)
 
     # Turn kinds where no human can answer a confirmation prompt: it is emitted

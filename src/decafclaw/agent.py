@@ -430,6 +430,8 @@ async def _call_llm_with_events(
 
     Accepts model_name (new path) or llm_url/llm_model/llm_api_key (legacy).
     """
+    from .model_catalog import effective_default_model
+
     llm_kwargs: dict = {}
     if model_name:
         llm_kwargs["model_name"] = model_name
@@ -454,7 +456,7 @@ async def _call_llm_with_events(
             )
             target_model = resolved.model
         except Exception:
-            target_model = model_name or ctx.active_model or getattr(config, "default_model", "")
+            target_model = model_name or ctx.active_model or effective_default_model(config)
             if not target_model and hasattr(config, "llm"):
                 target_model = getattr(config.llm, "model", "")
 
@@ -524,7 +526,7 @@ async def _call_llm_with_events(
         content=response.get("content"),
         has_tool_calls=bool(response.get("tool_calls")),
         duration_ms=duration_ms,
-        model=model_name or ctx.active_model or config.default_model,
+        model=model_name or ctx.active_model or effective_default_model(config),
     )
     return response
 
@@ -629,7 +631,7 @@ def _resolve_model_override(ctx: "Context", config) -> dict[str, str]:
 
     if ctx.active_model:
         known = ", ".join(sorted(config.model_configs)) or "(none configured)"
-        fallback = config.default_model or config.llm.model
+        fallback = effective_default_model(config) or config.llm.model
         log.warning(
             "Unknown model %r requested — falling back to %s. Configured model_configs: %s",
             ctx.active_model,
