@@ -56,7 +56,9 @@ CATALOG_FILENAME = "model_catalog.json"
 MODELS_CHANGED_EVENT_TYPE = "models_changed"
 
 # Serializes sidecar read-modify-write cycles (refresh / toggle /
-# set-default) within one server process.
+# set-default) within one server process. The read happens inside the
+# lock too — discovery itself runs unlocked, and the lock covers
+# reload-merge-save-apply so user changes made during discovery survive.
 _catalog_lock = asyncio.Lock()
 
 
@@ -189,28 +191,40 @@ def default_enabled(entry: DiscoveredModel) -> bool:
     return bool(entry.chat and entry.tools and entry.context_window_size)
 
 
-async def _discover_provider(provider_name: str, provider: Any, existing: CatalogProvider) -> CatalogProvider:
-    """Discover one provider's models, merging with the cached entries.
+async def _discover_provider(provider_name: str, provider: Any) -> tuple[list[DiscoveredModel] | None, str]:
+    """Run one provider's discovery, without the catalog loaded or locked.
 
-    On success the model list is replaced, preserving the enable flag of
-    models still present. On failure the cached entries are kept untouched
-    and the error recorded — a gateway outage must not wipe the picker.
+    Returns ``(found, error)``. ``found`` is None on any failure —
+    unsupported provider or gateway error — and ``error`` carries the
+    message; the caller then keeps the cached entries untouched. A
+    gateway outage must not wipe the picker.
     """
     if not hasattr(provider, "discover_models"):
-        return CatalogProvider(
-            discovered_at=existing.discovered_at,
-            error="provider does not support model discovery",
-            models=existing.models,
-        )
+        return None, "provider does not support model discovery"
     try:
         found: list[DiscoveredModel] = [m for m in await provider.discover_models() if isinstance(m, DiscoveredModel)]
     except Exception as exc:
         log.warning("Model discovery failed for provider %r: %s", provider_name, exc)
-        return CatalogProvider(
-            discovered_at=existing.discovered_at,
-            error=str(exc),
-            models=existing.models,
+        return None, str(exc)
+    return found, ""
+
+
+def _merge_discovered(catalog: ModelCatalog, name: str, found: list[DiscoveredModel] | None, error: str) -> None:
+    """Merge one provider's discovery result into ``catalog`` (in-lock).
+
+    On success the model list is replaced, preserving the enable flag of
+    models still present. On failure the cached entries are kept untouched
+    and the error recorded. An unknown provider name leaves its cached
+    entry (if any) exactly as it was.
+    """
+    existing = catalog.providers.get(name) or CatalogProvider()
+    if found is None:
+        if not error:
+            return
+        catalog.providers[name] = CatalogProvider(
+            discovered_at=existing.discovered_at, error=error, models=existing.models
         )
+        return
     prev_enabled = {m.id: m.enabled for m in existing.models}
     models = [
         CatalogModel(
@@ -223,7 +237,7 @@ async def _discover_provider(provider_name: str, provider: Any, existing: Catalo
         )
         for d in found
     ]
-    return CatalogProvider(discovered_at=_now_iso(), error="", models=models)
+    catalog.providers[name] = CatalogProvider(discovered_at=_now_iso(), error="", models=models)
 
 
 async def refresh_catalog(
@@ -233,26 +247,32 @@ async def refresh_catalog(
 
     Runs on demand only — at startup and on explicit refresh, never a
     heartbeat poll. Discovers concurrently across providers; one failing
-    gateway does not affect the others. When ``event_bus`` is given,
+    gateway does not affect the others. Discovery runs without the catalog
+    loaded or locked; inside the lock the sidecar is reloaded and the
+    results merged into it, so user toggles and default-pointer changes
+    made during a slow discovery survive. When ``event_bus`` is given,
     publishes ``models_changed`` so connected UIs refresh their picker.
     """
     from .llm.registry import get_provider, list_providers
 
-    catalog = load_catalog(config)
     names = list(provider_names) if provider_names else list_providers()
 
-    async def one(name: str) -> tuple[str, CatalogProvider]:
-        entry = catalog.providers.get(name) or CatalogProvider()
+    async def one(name: str) -> tuple[str, list[DiscoveredModel] | None, str]:
         try:
             provider = get_provider(name)
         except KeyError:
-            return name, entry
-        return name, await _discover_provider(name, provider, entry)
+            return name, None, ""
+        found, error = await _discover_provider(name, provider)
+        return name, found, error
 
     results = await asyncio.gather(*(one(name) for name in names))
     async with _catalog_lock:
-        for name, entry in results:
-            catalog.providers[name] = entry
+        # Reload under the lock and merge into the fresh sidecar — never
+        # into a pre-discovery copy, which would revert changes made while
+        # discovery ran (lost-update review finding).
+        catalog = load_catalog(config)
+        for name, found, error in results:
+            _merge_discovered(catalog, name, found, error)
         save_catalog(config, catalog)
         apply_catalog(config, catalog)
     await _publish_models_changed(event_bus)
@@ -395,23 +415,29 @@ def _save_and_apply(config: "Config", catalog: ModelCatalog) -> None:
 
 async def set_model_enabled(config: "Config", key: str, enabled: bool, event_bus: Any = None) -> ModelCatalog | None:
     """Enable or disable a discovered model. Returns the updated catalog,
-    or None when the key names no catalog entry."""
-    catalog = load_catalog(config)
-    entry = _find_entry(catalog, key)
-    if entry is None:
-        return None
-    entry.enabled = enabled
+    or None when the key names no catalog entry.
+
+    The sidecar is loaded inside the lock so a concurrent refresh cannot
+    silently revert the toggle (lost-update review finding)."""
     async with _catalog_lock:
+        catalog = load_catalog(config)
+        entry = _find_entry(catalog, key)
+        if entry is None:
+            return None
+        entry.enabled = enabled
         _save_and_apply(config, catalog)
     await _publish_models_changed(event_bus)
     return catalog
 
 
 async def set_default_model(config: "Config", name: str, event_bus: Any = None) -> ModelCatalog:
-    """Set (name non-empty) or clear (name empty) the default-model pointer."""
-    catalog = load_catalog(config)
-    catalog.default_model = name
+    """Set (name non-empty) or clear (name empty) the default-model pointer.
+
+    The sidecar is loaded inside the lock so a concurrent refresh cannot
+    silently revert the change (lost-update review finding)."""
     async with _catalog_lock:
+        catalog = load_catalog(config)
+        catalog.default_model = name
         _save_and_apply(config, catalog)
     await _publish_models_changed(event_bus)
     return catalog

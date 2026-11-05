@@ -518,6 +518,67 @@ def test_enable_disable_persists_across_restart(config):
         clear_providers()
 
 
+async def test_changes_during_refresh_survive(config):
+    """Lost-update review finding: a toggle and a default-pointer change made
+    while discovery is in flight must survive the refresh. Discovery runs
+    without the catalog loaded; inside the lock the sidecar is reloaded and
+    the discovered results merged into it — never into a stale copy."""
+    config.providers = {"local": ProviderConfig(type="openai-compat", url="http://x/v1")}
+    import asyncio
+
+    from decafclaw.llm.registry import clear_providers, register_provider
+    from decafclaw.llm.types import DiscoveredModel
+
+    def _models():
+        return [
+            DiscoveredModel(id="m1", chat=True, tools=True, context_window_size=131072),
+            DiscoveredModel(id="qwen", chat=True, tools=True, context_window_size=131072),
+        ]
+
+    class Gateway:
+        async def discover_models(self):
+            return _models()
+
+    clear_providers()
+    register_provider("local", Gateway())
+    try:
+        await refresh_catalog(config)  # seed: m1 + qwen enabled, materialized
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        class SlowGateway:
+            async def discover_models(self):
+                entered.set()
+                await release.wait()
+                return _models()
+
+        clear_providers()
+        register_provider("local", SlowGateway())
+
+        refresh = asyncio.create_task(refresh_catalog(config))
+        await entered.wait()  # discovery in flight, catalog lock free
+
+        # User changes land while discovery runs.
+        assert await set_model_enabled(config, "local/m1", False) is not None
+        await set_default_model(config, "local/qwen")
+
+        release.set()
+        await refresh
+
+        # Neither change was clobbered by the refresh landing.
+        catalog = load_catalog(config)
+        assert catalog.default_model == "local/qwen"
+        by_id = {m.id: m for m in catalog.providers["local"].models}
+        assert by_id["m1"].enabled is False
+        assert by_id["qwen"].enabled is True
+        assert picker_models(config) == ["local/qwen"]
+        assert effective_default_model(config) == "local/qwen"
+        assert "local/m1" not in config.model_configs
+    finally:
+        clear_providers()
+
+
 def test_disable_default_model_falls_back(config):
     """Disabling the model the pointer names → resolution falls back."""
     _config_with_models(config)
