@@ -103,6 +103,27 @@ describe('DataTableWidget typed sorting/formatting (#1169)', () => {
     expect(el._renderCell(120, { key: 'remaining', label: 'Remaining', type: 'duration' })).toBe('2m 0s');
   });
 
+  it('sorts multi-unit duration strings by total seconds', () => {
+    const el = makeWidget({
+      columns: [{ key: 'remaining', label: 'Remaining', type: 'duration' }],
+      rows: [
+        { remaining: '10m' },
+        { remaining: '2m 30s' },
+        { remaining: '45s' },
+      ],
+    });
+    el._sortKey = 'remaining';
+    el._sortDir = 'asc';
+    const sorted = el._sortedRows(el.data.rows);
+    expect(sorted.map((r) => r.remaining)).toEqual(['45s', '2m 30s', '10m']);
+  });
+
+  it('renders array cells as JSON regardless of column type', () => {
+    const el = makeWidget({ columns: [{ key: 'tags', label: 'Tags' }], rows: [{ tags: ['a', 'b'] }] });
+    expect(el._renderCell(['a', 'b'], { key: 'tags', label: 'Tags' })).toBe('["a","b"]');
+    expect(el._renderCell([9, 2], { key: 'size', label: 'Size', type: 'bytes' })).toBe('[9,2]');
+  });
+
   it('text columns keep lexicographic sort', () => {
     const el = makeWidget({
       columns: [{ key: 'name', label: 'Name' }],

@@ -82,7 +82,8 @@ export class DataTableWidget extends LitElement {
    */
   _sortableNumber(v, col) {
     if (v == null) return null;
-    if (typeof v === 'object' && !Array.isArray(v)) {
+    if (Array.isArray(v)) return null;
+    if (typeof v === 'object') {
       const n = typeof v.value === 'number' ? v.value : null;
       return n;
     }
@@ -105,25 +106,17 @@ export class DataTableWidget extends LitElement {
       if (mult == null) return n;
       return n * mult;
     }
-    return n;
-  }
-
-  /** Humanized display value for a cell given its column type (#1169). */
-  _displayValue(v, col) {
-    const type = this._columnType(col);
-    if (v != null && typeof v === 'object' && !Array.isArray(v)) {
-      if (typeof v.display === 'string') return v.display;
-      const n = typeof v.value === 'number' ? v.value : null;
-      if (n == null) return '';
-      if (type === 'bytes') return formatBytes(n);
-      if (type === 'duration') return formatDuration(n);
-      return String(n);
+    if (type === 'duration') {
+      // Multi-unit aware: "2m 30s" sorts as 150, "10m" as 600 — plain digits
+      // count as seconds (#1169 review).
+      const unitMults = { '': 1, s: 1, m: 60, h: 3600, d: 86400 };
+      let total = 0;
+      for (const m of s.matchAll(/(-?\d+(?:\.\d+)?)\s*([smhd]?)/gi)) {
+        total += Number(m[1]) * unitMults[(m[2] || '').toLowerCase()];
+      }
+      return total;
     }
-    const n = typeof v === 'number' ? v : this._sortableNumber(v, col);
-    if (n == null) return v == null ? '' : String(v);
-    if (type === 'bytes') return formatBytes(n);
-    if (type === 'duration') return formatDuration(n);
-    return String(v);
+    return n;
   }
 
   /** @param {any[]} rows */
@@ -172,7 +165,11 @@ export class DataTableWidget extends LitElement {
   /** @param {any} v @param {any} col */
   _renderCell(v, col) {
     const type = this._columnType(col);
-    if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+    if (Array.isArray(v)) {
+      // Arrays have no typed meaning; keep the pre-#1169 JSON rendering.
+      try { return JSON.stringify(v); } catch { return String(v); }
+    }
+    if (v != null && typeof v === 'object') {
       // Decoupled typed cell: { value, display } — prefer the explicit display.
       if (typeof v.display === 'string') return v.display;
       const n = typeof v.value === 'number' ? v.value : null;
