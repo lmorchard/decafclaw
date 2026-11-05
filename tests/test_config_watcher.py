@@ -338,6 +338,77 @@ async def test_skill_catalog_change_rescans(ctx, monkeypatch, tmp_path):
         await _cancel(task)
 
 
+async def test_model_configs_reload_reapplies_model_catalog(ctx, monkeypatch, tmp_path):
+    """A model_configs hot-reload replaces config.model_configs wholesale,
+    which strands every catalog-materialized discovered model (the picker
+    still lists it, but selection fails with 'Unknown model') until a
+    restart. The watcher must re-apply the sidecar catalog so discovered
+    models and the default pointer keep working without a restart
+    (#1211 review finding)."""
+    _write_config(tmp_path, {"providers": {"local": {"type": "openai-compat", "url": "http://x/v1"}}})
+    _align_config(ctx, monkeypatch, tmp_path)
+    config = ctx.config
+
+    import asyncio
+
+    from decafclaw.config import resolve_model
+    from decafclaw.llm.registry import clear_providers, register_provider
+    from decafclaw.llm.types import DiscoveredModel
+    from decafclaw.model_catalog import (
+        effective_default_model,
+        picker_models,
+        refresh_catalog,
+        set_default_model,
+    )
+
+    class Gateway:
+        async def discover_models(self):
+            return [DiscoveredModel(id="m1", chat=True, tools=True, context_window_size=131072)]
+
+    clear_providers()
+    register_provider("local", Gateway())
+    try:
+        # Startup discovery materialized local/m1 and the user made it the
+        # global default.
+        await refresh_catalog(config)
+        await set_default_model(config, "local/m1")
+        assert "local/m1" in config.model_configs
+        assert picker_models(config) == ["local/m1"]
+
+        task, shutdown_event = await _run_watcher(ctx)
+        events: list[dict] = []
+        sub_id = ctx.event_bus.subscribe(events.append)
+        try:
+            await _settle()
+
+            # User edits config.json: adds a hand model. The fresh load
+            # replaces model_configs wholesale, dropping local/m1.
+            _write_config(
+                tmp_path,
+                {
+                    "providers": {"local": {"type": "openai-compat", "url": "http://x/v1"}},
+                    "model_configs": {"hand-model": {"provider": "local", "model": "hand"}},
+                },
+            )
+            await _wait_for(lambda: "hand-model" in config.model_configs and "local/m1" in config.model_configs)
+
+            assert not shutdown_event.is_set()
+            # Hand entry and re-materialized discovered entry coexist.
+            assert "hand-model" in config.model_configs
+            assert "local/m1" in config.catalog_materialized
+            assert picker_models(config) == ["hand-model", "local/m1"]
+            # The default pointer still resolves (was stranded before).
+            assert effective_default_model(config) == "local/m1"
+            _, mc = resolve_model(config, "local/m1")
+            assert mc.model == "m1"
+            assert events[-1]["requires_restart"] is False
+        finally:
+            ctx.event_bus.unsubscribe(sub_id)
+            await _cancel(task)
+    finally:
+        clear_providers()
+
+
 def test_classifier_seeds_baseline_from_startup_files(tmp_path):
     """The classifier diffs the first edit against the files as they were at
     dev-server start (#149 review: first-sighting-only caching hid restart-
