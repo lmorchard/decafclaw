@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..media import ToolResult
+from ..media import ToolResult, WidgetRequest
 from ..secret_policy import (
     is_redactable,
     is_refused,
@@ -38,6 +38,10 @@ log = logging.getLogger(__name__)
 MAX_READ_LINES = 200
 # Context lines shown in diffs
 DIFF_CONTEXT_LINES = 3
+# Max characters per file buffer before diff_view widget attachment is suppressed
+MAX_DIFF_WIDGET_CHARS = 50_000
+# Max total lines before diff_view widget attachment is suppressed
+MAX_DIFF_WIDGET_LINES = 1_000
 
 
 def _is_cancelled(ctx: "Context | None") -> bool:
@@ -410,6 +414,13 @@ def tool_admin_read(
         redacted_paths,
     )
 
+    widget = None
+    if not partial and total <= MAX_READ_LINES:
+        if any(path.lower().endswith(ext) for ext in (".md", ".markdown")):
+            widget = WidgetRequest(widget_type="markdown_document", data={"content": content}, target="inline")
+        else:
+            widget = WidgetRequest(widget_type="code_block", data={"code": content, "filename": path}, target="inline")
+
     if not partial and total > MAX_READ_LINES:
         end = MAX_READ_LINES
         selected = all_lines[:end]
@@ -438,6 +449,7 @@ def tool_admin_read(
     return ToolResult(
         text="\n".join(numbered),
         data={**base_data, "range": [1, total], "truncated": False},
+        widget=widget,
     )
 
 
@@ -480,9 +492,26 @@ def tool_admin_list(ctx: "Context", path: str = ".") -> str | ToolResult:
                 }
             )
         text = "\n".join(lines) if lines else "(empty directory)"
+        widget = None
+        if data_entries:
+            count_str = f"{len(data_entries)} item" if len(data_entries) == 1 else f"{len(data_entries)} items"
+            widget = WidgetRequest(
+                widget_type="data_table",
+                data={
+                    "caption": f"admin_list: {path} ({count_str})",
+                    "columns": [
+                        {"key": "name", "label": "Name"},
+                        {"key": "type", "label": "Type"},
+                        {"key": "size", "label": "Size (bytes)", "type": "bytes"},
+                    ],
+                    "rows": data_entries,
+                },
+                target="inline",
+            )
         return ToolResult(
             text=text,
             data={"path": path, "entries": data_entries},
+            widget=widget,
         )
     except PermissionError as e:
         return _file_error(e, path)
@@ -546,7 +575,26 @@ async def tool_admin_write(ctx: "Context", path: str, content: str) -> str | Too
             await asyncio.to_thread(re_resolved.write_text, content, encoding="utf-8")
             summary = f"Wrote {len(content)} characters to admin file '{path}'"
             if snapshot.exists and diff:
-                return f"{summary}\n\n{diff}"
+                oversized = (
+                    len(snapshot.content or "") > MAX_DIFF_WIDGET_CHARS
+                    or len(content) > MAX_DIFF_WIDGET_CHARS
+                    or (snapshot.content or "").count("\n") > MAX_DIFF_WIDGET_LINES
+                    or content.count("\n") > MAX_DIFF_WIDGET_LINES
+                )
+                if not oversized:
+                    return ToolResult(
+                        text=f"{summary}\n\n{diff}",
+                        widget=WidgetRequest(
+                            widget_type="diff_view",
+                            data={
+                                "before": snapshot.content or "",
+                                "after": content,
+                                "filename": path,
+                                "view": "unified",
+                            },
+                            target="inline",
+                        ),
+                    )
             return summary
         except PermissionError as e:
             return _file_error(e, path)
@@ -631,7 +679,26 @@ async def tool_admin_replace_lines(
                     f"Replaced lines {start_line}-{end_line} with {len(replacement)} line(s) in admin file '{path}'"
                 )
             if diff:
-                return f"{summary}\n\n{diff}"
+                oversized = (
+                    len(existing) > MAX_DIFF_WIDGET_CHARS
+                    or len(new_content) > MAX_DIFF_WIDGET_CHARS
+                    or existing.count("\n") > MAX_DIFF_WIDGET_LINES
+                    or new_content.count("\n") > MAX_DIFF_WIDGET_LINES
+                )
+                if not oversized:
+                    return ToolResult(
+                        text=f"{summary}\n\n{diff}",
+                        widget=WidgetRequest(
+                            widget_type="diff_view",
+                            data={
+                                "before": existing,
+                                "after": new_content,
+                                "filename": path,
+                                "view": "unified",
+                            },
+                            target="inline",
+                        ),
+                    )
             return summary
         except PermissionError as e:
             return _file_error(e, path)
@@ -716,7 +783,26 @@ async def tool_admin_edit(
             await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
             summary = f"Edited admin file '{path}': replaced {count} occurrence(s)"
             if diff:
-                return f"{summary}\n\n{diff}"
+                oversized = (
+                    len(content) > MAX_DIFF_WIDGET_CHARS
+                    or len(new_content) > MAX_DIFF_WIDGET_CHARS
+                    or content.count("\n") > MAX_DIFF_WIDGET_LINES
+                    or new_content.count("\n") > MAX_DIFF_WIDGET_LINES
+                )
+                if not oversized:
+                    return ToolResult(
+                        text=f"{summary}\n\n{diff}",
+                        widget=WidgetRequest(
+                            widget_type="diff_view",
+                            data={
+                                "before": content,
+                                "after": new_content,
+                                "filename": path,
+                                "view": "unified",
+                            },
+                            target="inline",
+                        ),
+                    )
             return summary
         except PermissionError as e:
             return _file_error(e, path)
