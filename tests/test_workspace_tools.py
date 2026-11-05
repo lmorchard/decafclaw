@@ -1058,7 +1058,7 @@ def test_workspace_list_attaches_data_table_widget(ctx):
     assert result.widget.data["columns"] == [
         {"key": "name", "label": "Name"},
         {"key": "type", "label": "Type"},
-        {"key": "size", "label": "Size (bytes)"},
+        {"key": "size", "label": "Size (bytes)", "type": "bytes"},
     ]
     assert len(result.widget.data["rows"]) == 1
     assert result.widget.data["rows"][0]["name"] == "file1.txt"

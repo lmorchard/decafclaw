@@ -1,16 +1,17 @@
 ---
 ghflow_project_facts: 1
-written: 2026-10-26
+written: 2026-11-04
 sources:
   - AGENTS.md 276be03fe4875c31eecb76cd0e1562b0f465ed67
   - CLAUDE.md 276be03fe4875c31eecb76cd0e1562b0f465ed67
-  - Makefile 5dbbaa53e9ea4c486b3ed9fcd44b58c7c9b56a20
+  - Makefile aa9ad167c73113fb7e05686c0dd2495ee908995f
   - .github/workflows/ci.yml 2de18948e0afc3ee4c14570649660a08aea316d5
   - conftest.py fb46496f6536760ece617b135afc7aef3c6eac93
-  - tests/conftest.py 40eed4d3c579e8ac92c078611042f0b3fdfd909d
-  - pyproject.toml aec1dec19c1e6be37fbc5d51ae35a93c59e74c48
+  - tests/conftest.py 49ff00ed9d4d72a8cc7aa2e07108a490c8802c0c
+  - pyproject.toml b705dda2e2f0e144f03fa64a344fdf9ef122232d
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
-  - docs/config.md cc3cbc8e7053729b82e02f8b5ace95dcd95811af
+  - docs/config.md 48849ad0b64c36fd14ce6144f5b92b31e857ae89
+  - docs/testing.md e30d35456d9757a42f84f13abeca170998145fd2
 ---
 # decafclaw project facts
 
@@ -32,7 +33,7 @@ sources:
 ## Test layout
 - Root `conftest.py` holds the shared fixtures `config`, `ctx`, `tmp_data`, and autouse `mock_embed_text`. `tests/conftest.py` adds `stub_llm`, an autouse guard that fails any unstubbed LLM call, and an autouse guard that fails tests leaking asyncio's running-loop mark. `tests/web/conftest.py` adds `http_config`, `app`, `client`.
 - One file: `uv run pytest tests/test_x.py -n 0` (`-n 0` turns off xdist). Default addopts: `-n auto --dist=worksteal -m 'not integration'`; `testpaths = ["tests", "contrib"]`.
-- Markers: `integration` hits real LLM APIs (`make test` excludes it); `live_llm` opts a test out of the unstubbed-LLM-call guard — real provider code with HTTP mocked below the guard. Browser tests need Playwright chromium.
+- Markers: `integration` hits real LLM APIs (`make test` excludes it); `live_llm` opts a test out of the unstubbed-LLM-call guard in tests/conftest.py — real provider code with HTTP mocked below the guard; `scripted_provider` drives the normal LLM path through the in-memory `decafclaw.testing.ScriptedProvider` (#923) while the real network providers stay guarded. Browser tests need Playwright chromium. `make ephemeral-test` runs the scripted end-to-end tool round-trip (#957; details in `docs/ephemeral-instance.md`).
 
 ## Session notes
 - `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `plan.md`, `notes.md`. Session docs are committed.

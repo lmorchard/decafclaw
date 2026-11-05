@@ -818,6 +818,105 @@ def test_browser_conversation_lifecycle(built_static, chromium, config):
         assert ConversationIndex(config).get(created["conv_id"]) is None
 
 
+def test_browser_diff_view_row_spacing(built_static, chromium, config):
+    """Source whitespace survives without template whitespace creating blank rows."""
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        page.add_style_tag(url=scenario.base + "/static/vendor/bundle/pico.min.css")
+        page.add_style_tag(url=scenario.base + "/static/style.css")
+        page.evaluate(
+            """async () => {
+            await import('/static/widgets/diff_view/widget.js');
+            document.body.replaceChildren();
+            for (const mode of ['inline', 'canvas']) {
+                const widget = document.createElement('dc-widget-diff-view');
+                widget.id = `diff-${mode}`;
+                widget.mode = mode;
+                widget.style.cssText = 'display: block; width: 700px; height: 400px';
+                widget.data = {
+                    before: 'def demo():\\n    return  1\\n\\nprint(demo())\\n',
+                    after: 'def demo():\\n    return  2\\n    # added\\n\\nprint(demo())\\n',
+                    language: 'python', filename: 'demo.py',
+                };
+                document.body.append(widget);
+                await widget.updateComplete;
+            }
+        }"""
+        )
+        expected = [
+            ["unchanged", " ", "def demo():"],
+            ["removed", "-", "    return  1"],
+            ["added", "+", "    return  2"],
+            ["added", "+", "    # added"],
+            ["unchanged", " ", " "],
+            ["unchanged", " ", "print(demo())"],
+        ]
+
+        def read_rows(selector):
+            return page.locator(selector).evaluate_all(
+                """rows => rows.map(row => ({
+                    content: [row.classList[1], row.querySelector('.diff-marker').textContent,
+                              row.querySelector('.diff-content')?.textContent ?? null],
+                    top: row.getBoundingClientRect().top,
+                    bottom: row.getBoundingClientRect().bottom,
+                }))"""
+            )
+
+        def assert_contiguous(rows):
+            assert len(rows) == len(expected)
+            heights = [row["bottom"] - row["top"] for row in rows]
+            assert max(heights) - min(heights) <= 1, heights
+            for previous, current in zip(rows, rows[1:]):
+                assert abs(current["top"] - previous["bottom"]) <= 1, rows
+
+        for mode in ("inline", "canvas"):
+            widget = page.locator(f"#diff-{mode}")
+            unified = read_rows(f"#diff-{mode} .diff-unified .diff-line")
+            assert [row["content"] for row in unified] == expected
+            assert_contiguous(unified)
+            assert widget.locator(".hljs-keyword").first.text_content() == "def"
+            colors = widget.locator(".diff-line.added, .diff-line.removed").evaluate_all(
+                "rows => rows.map(row => getComputedStyle(row).backgroundColor)"
+            )
+            assert all(color != "rgba(0, 0, 0, 0)" for color in colors)
+            assert colors[0] != colors[1]
+            widget.get_by_role("button", name="Split View", exact=True).click()
+            for side in ("left", "right"):
+                rows = read_rows(f"#diff-{mode} .{side}-pane .diff-line")
+                assert_contiguous(rows)
+                expected_side = [
+                    ["empty", " ", None] if row[0] == ("added" if side == "left" else "removed") else row
+                    for row in expected
+                ]
+                assert [row["content"] for row in rows] == expected_side
+            left = read_rows(f"#diff-{mode} .left-pane .diff-line")
+            right = read_rows(f"#diff-{mode} .right-pane .diff-line")
+            assert all(abs(a["top"] - b["top"]) <= 1 for a, b in zip(left, right))
+            widget.get_by_role("button", name="Unified View", exact=True).click()
+            rows = read_rows(f"#diff-{mode} .diff-unified .diff-line")
+            assert [row["content"] for row in rows] == expected
+            assert_contiguous(rows)
+
+            # Long content keeps wrapping, with horizontal overflow available on pre/panes.
+            long_line = "    # " + "long source text  " * 40
+            widget.evaluate(
+                """async (widget, line) => {
+                widget.data = {...widget.data, before: line + '\\n', after: line + '\\n'};
+                await widget.updateComplete;
+            }""",
+                long_line,
+            )
+            for view in ("unified", "split"):
+                contents = widget.locator(".diff-content")
+                assert all(text == long_line for text in contents.all_text_contents())
+                assert contents.first.bounding_box()["height"] > unified[0]["bottom"] - unified[0]["top"]
+                assert contents.first.evaluate("node => getComputedStyle(node.parentElement).whiteSpace") == "pre-wrap"
+                scroller = widget.locator(".diff-unified pre" if view == "unified" else ".diff-pane").first
+                assert scroller.evaluate("node => getComputedStyle(node).overflowX") == "auto"
+                if view == "unified":
+                    widget.get_by_role("button", name="Split View", exact=True).click()
+
+
 def test_browser_canvas_tabs_and_standalone_page(built_static, chromium, config):
     conv_id = seed_conversation(config, "Canvas test")
     with browser_scenario(built_static, chromium, config) as scenario:
