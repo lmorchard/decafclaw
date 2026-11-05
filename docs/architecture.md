@@ -8,34 +8,34 @@ This is a narrative walkthrough for developers new to the DecafClaw codebase. It
 ┌────────────────────────────────────────────────────────────────┐
 │                      runner.py (process root)                  │
 │                                                                │
-│   ┌─────────────┐  ┌──────────────┐                        │
-│   │ Mattermost  │  │   HTTP +     │                        │
-│   │ websocket   │  │   Web UI     │                        │
-│   └──────┬──────┘  └──────┬───────┘                        │
+│   ┌─────────────┐  ┌──────────────┐                            │
+│   │ Mattermost  │  │   HTTP +     │                            │
+│   │ websocket   │  │   Web UI     │                            │
+│   └──────┬──────┘  └──────┬───────┘                            │
 │          │                │                                    │
-│          └────────────────┼─────────────────────┘              │
-│                           ↓                                    │
+│          └───────┬────────┘                                    │
+│                  ↓                                             │
 │                 run_agent_turn(ctx, message, history)          │
 │                                                                │
-│   ┌────────────────────────────────────────────────────────┐  │
-│   │ 1. ContextComposer.compose()                           │  │
-│   │    → system prompt + vault + history + tools           │  │
-│   │ 2. call_llm(messages, tools)     ← loops              │  │
-│   │ 3. if tool_calls: execute concurrently                 │  │
-│   │ 4. append results, goto 2                              │  │
-│   │ 5. if final text: reflection → deliver                 │  │
-│   └────────────────────────────────────────────────────────┘  │
+│   ┌────────────────────────────────────────────────────────┐   │
+│   │ 1. ContextComposer.compose()                           │   │
+│   │    → system prompt + vault + history + tools           │   │
+│   │ 2. call_llm(messages, tools)     ← loops              │    │
+│   │ 3. if tool_calls: execute concurrently                 │   │
+│   │ 4. append results, goto 2                              │   │
+│   │ 5. if final text: reflection → deliver                 │   │
+│   └────────────────────────────────────────────────────────┘   │
 │                           │                                    │
 │                           ↓                                    │
-│   ┌────────────────────────────────────────────────────────┐  │
-│   │ EventBus (events.py): tool_status, llm_start/end, …    │  │
-│   │ Subscribers: Mattermost, web UI streams                │  │
-│   └────────────────────────────────────────────────────────┘  │
+│   ┌────────────────────────────────────────────────────────┐   │
+│   │ EventBus (events.py): tool_status, llm_start/end, …    │   │
+│   │ Subscribers: Mattermost, web UI streams                │   │
+│   └────────────────────────────────────────────────────────┘   │
 │                                                                │
-│   ┌────────────┐  ┌──────────────┐  ┌───────────────────┐    │
-│   │ Heartbeat  │  │  Scheduled   │  │  MCP client       │    │
-│   │ timer      │  │  task timer  │  │  (stdio + HTTP)   │    │
-│   └────────────┘  └──────────────┘  └───────────────────┘    │
+│   ┌────────────┐  ┌──────────────┐  ┌───────────────────┐      │
+│   │ Heartbeat  │  │  Scheduled   │  │  MCP client       │      │
+│   │ timer      │  │  task timer  │  │  (stdio + HTTP)   │      │
+│   └────────────┘  └──────────────┘  └───────────────────┘      │
 └────────────────────────────────────────────────────────────────┘
 ```
 
