@@ -191,15 +191,14 @@ disclaimer for the same reason.
 A turn that ran many iterations has already archived each iteration's
 assistant preamble as it was emitted (`_handle_tool_calls`), and every
 preamble was also published live as `text_before_tools` — rendered by
-Mattermost (`mattermost_display.on_text_complete`), the web UI
-(`web/websocket.py`), and the terminal (`interactive_terminal.on_event`) as
-the turn ran. `_finalize_with_note` (shared by the loop-breaker stop and the
+Mattermost (`mattermost_display.on_text_complete`) and the web UI
+(`web/websocket.py`) as the turn ran. `_finalize_with_note` (shared by the loop-breaker stop and the
 iteration-limit finalizer) always **archives only the note**. What it
 *delivers* as `ToolResult.text` depends on whether anyone was watching the
 turn live:
 
 - **Watched turns** deliver the note alone: interactive turns (Mattermost,
-  web UI, terminal) and background wakes, which fire on the user's *real*
+  web UI) and background wakes, which fire on the user's *real*
   conversation and therefore do have a live subscriber. The transport already
   rendered each preamble live, so re-joining them into the delivered text
   would duplicate the whole turn: invisible on a one-preamble turn, a wall of
@@ -220,8 +219,7 @@ turn live:
     `agent.py`'s `_UNWATCHED_TASK_MODES`). These run on synthetic conv_ids no
     transport subscribed to, so nothing renders their `text_before_tools` —
     yet their `ToolResult.text` *is* parsed (`heartbeat.py`) and displayed to
-    the user afterwards (`interactive_terminal.py`,
-    `tools/heartbeat_tools.py`, `schedules.py`). The original gate tested
+    the user afterwards (`tools/heartbeat_tools.py`, `schedules.py`). The original gate tested
     `ctx.is_child` alone, which encoded "child == no live viewer" and dropped
     everything these turns accumulated before hitting the wall.
 
@@ -333,13 +331,9 @@ rest, which doesn't correspond to any real intent.
 - `src/decafclaw/agent.py` — `TurnRunner._handle_tool_calls` wiring
   (`_extract_call_signatures`, nudge/redirect injection, `_finalize_loop_break`,
   `_finalize_with_note`, `_UNWATCHED_TASK_MODES`)
-- `src/decafclaw/interactive_terminal.py` — the terminal's
-  `text_before_tools` handler (streaming-guarded, so preambles render exactly
-  once whether or not the model streams)
 - `src/decafclaw/config_types.py` — `LoopBreakerConfig`
 - `src/decafclaw/prompts/AGENT.md` — the diagnosis / acknowledgement /
   phantom-call prompt guardrails
 - `tests/test_loop_breaker.py`, `tests/test_agent_loop_breaker.py` —
   detector unit tests + `TurnRunner` wiring tests
-- `tests/test_interactive_terminal.py` — terminal preamble rendering
 - `evals/diagnostic_discipline.yaml` — the bounded, real-LLM eval

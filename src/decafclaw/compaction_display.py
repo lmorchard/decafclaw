@@ -1,13 +1,11 @@
 """Shared compaction notice text for the Python transports.
 
-The ``compaction_end`` event is rendered by both the Mattermost post
-(``mattermost.py``) and the interactive terminal
-(``interactive_terminal.py``). This module owns the wording so each
-transport only adds its own framing (Mattermost's ``📦`` emoji prefix,
-the terminal's ``[ ]`` brackets) around the shared text. The web store
-and the TUI are separate languages and keep their own copies of the
-wording; this module is the reference they should be read against in
-review.
+The ``compaction_end`` event is rendered by the Mattermost post
+(``mattermost.py``). This module owns the wording so the transport only
+adds its own framing (Mattermost's ``📦`` emoji prefix) around the shared
+text. The web store and the TUI are separate languages and keep their own
+copies of the wording; this module is the reference they should be read
+against in review.
 """
 
 

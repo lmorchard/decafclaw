@@ -382,7 +382,7 @@ async def test_loop_break_delivers_preambles_for_unwatched_task_turns(ctx, task_
     Heartbeat and scheduled turns run on synthetic conv_ids no transport
     subscribed to, so nothing rendered their `text_before_tools` — yet their
     `ToolResult.text` is parsed (heartbeat.py) and shown to the user afterwards
-    (interactive_terminal.py, heartbeat_tools.py, schedules.py). Gating on
+    (heartbeat_tools.py, schedules.py). Gating on
     `is_child` alone dropped everything those turns did before hitting the
     wall.
     """

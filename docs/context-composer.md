@@ -173,7 +173,7 @@ The composer is mode-aware via `ComposerMode`:
 
 | Mode | Memory | Wiki | Vault guide | Tools | Use case |
 |------|--------|------|-------------|-------|----------|
-| `INTERACTIVE` | Yes | Yes | Yes | Full | Mattermost, web UI, terminal |
+| `INTERACTIVE` | Yes | Yes | Yes | Full | Mattermost, web UI |
 | `HEARTBEAT` | No | No | No | Full | Periodic heartbeat (set via `ctx.task_mode="heartbeat"`) |
 | `SCHEDULED` | No | No | No | Full | Scheduled tasks (set via `ctx.task_mode="scheduled"`) |
 | `CHILD_AGENT` | No | No | No | Full | `delegate_task` sub-agents (set via `ctx.is_child`) |
@@ -476,7 +476,7 @@ See [config.md#recent_journal](config.md#recent_journal). Config dataclass: `Rec
 
 Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/context_cleanup.py` — that makes two in-memory edits. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298. The **resolved-error pruning** pass (#540) stubs a tool *error* that a later success of the same tool has already resolved (`[tool error superseded by later success]`) — a recovered failure no longer earns attention budget either.
 
-**Resolved-error pruning** (#540). A tool error (a tool-role message whose `content` starts with `[error`, the `ToolResult(text="[error: ...]")` convention) is stubbed when a *later* result for the same tool name is not itself an error. It's more aggressive than the size/age clear: it applies regardless of size or age. Matching is by tool name by default; `cleanup.prune_resolved_same_args_only` makes it conservative (the later success must carry the same arguments as the failed call). It's skipped in non-interactive modes (heartbeat / scheduled / child agent), like memory retrieval — the size/age clear is unaffected by mode. Same in-memory-only invariant: the archive keeps the original.
+**Resolved-error pruning** (#540). A tool error (a tool-role message whose `content` starts with `[error`, the `ToolResult(text="[error: ...]")` convention) is stubbed when a *later* result for the same tool name is not itself an error. It's more aggressive than the size/age clear: it applies regardless of size or age. Matching is by tool name by default; `cleanup.prune_resolved_same_args_only` makes it conservative (the later success must carry the same arguments as the failed call). It's skipped in heartbeat / scheduled / child-agent turns, like memory retrieval — the size/age clear is unaffected by mode. Same in-memory-only invariant: the archive keeps the original.
 
 **Eligibility** (all must hold for a tool message to be size/age-cleared):
 
