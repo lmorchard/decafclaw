@@ -100,12 +100,29 @@ def _file_not_found_with_suggestions(config, path: str) -> ToolResult:
 
 # Max lines returned by workspace_read when no line range is specified
 MAX_READ_LINES = 200
-# Context lines shown in edit tool mini-diffs
-EDIT_CONTEXT_LINES = 3
 # Max characters per file buffer before diff_view widget attachment is suppressed
 MAX_DIFF_WIDGET_CHARS = 50_000
 # Max total lines before diff_view widget attachment is suppressed
 MAX_DIFF_WIDGET_LINES = 1_000
+# Code-block language by file extension (workspace_read code_block widget, #1172)
+_CODE_EXT_LANGUAGES = {
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".json": "json",
+    ".css": "css",
+    ".html": "html",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".md": "markdown",
+    ".sql": "sql",
+}
+# Context lines shown in edit tool mini-diffs
+EDIT_CONTEXT_LINES = 3
 
 
 def _mini_diff(old_text: str, new_text: str, path: str = "") -> str:
@@ -279,9 +296,28 @@ def tool_workspace_read(
             text=header + "\n".join(numbered),
             data={**base_data, "range": [start, end], "truncated": False},
         )
+    widget = None
+    if not partial and total <= MAX_READ_LINES:
+        if resolved.suffix.lower() in (".md", ".markdown"):
+            widget = WidgetRequest(
+                widget_type="markdown_document",
+                data={"content": content},
+                target="inline",
+            )
+        else:
+            widget = WidgetRequest(
+                widget_type="code_block",
+                data={
+                    "code": content,
+                    "language": _CODE_EXT_LANGUAGES.get(resolved.suffix.lower(), "text"),
+                    "filename": path,
+                },
+                target="inline",
+            )
     return ToolResult(
         text="\n".join(numbered),
         data={**base_data, "range": [1, total], "truncated": False},
+        widget=widget,
     )
 
 
