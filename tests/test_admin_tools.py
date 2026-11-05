@@ -176,6 +176,64 @@ def test_admin_list_subdir(ctx):
     assert "demo/" in text
 
 
+@pytest.mark.asyncio
+async def test_admin_write_existing_file_attaches_diff_view_widget(ctx):
+    """admin_write attaches a diff_view widget on a successful edit (#1170)."""
+    confirm_mock = _mock_confirm(approved=True)
+    ctx.request_confirmation = confirm_mock
+
+    target = ctx.config.agent_path / "prompts" / "greet.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("hello\n")
+
+    result = await tool_admin_write(ctx, "prompts/greet.txt", "hello\nworld\n")
+    assert isinstance(result, ToolResult)
+    assert result.widget is not None
+    assert result.widget.widget_type == "diff_view"
+    assert result.widget.data["before"] == "hello\n"
+    assert result.widget.data["after"] == "hello\nworld\n"
+
+
+def test_admin_list_attaches_data_table_widget(ctx):
+    """admin_list attaches a data_table widget for non-empty listings (#1170)."""
+    (ctx.config.agent_path / "skills").mkdir(parents=True, exist_ok=True)
+    (ctx.config.agent_path / "config.json").write_text("{}")
+
+    result = tool_admin_list(ctx, ".")
+    assert isinstance(result, ToolResult)
+    assert result.widget is not None
+    assert result.widget.widget_type == "data_table"
+    assert "admin_list" in result.widget.data["caption"]
+    assert result.widget.data["columns"][2] == {"key": "size", "label": "Size (bytes)", "type": "bytes"}
+    assert len(result.widget.data["rows"]) >= 2
+
+
+def test_admin_read_attaches_markdown_widget(ctx):
+    """admin_read attaches a markdown_document widget for markdown files (#1170)."""
+    target = ctx.config.agent_path / "prompts" / "NOTE.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# Note\nhello")
+
+    result = tool_admin_read(ctx, "prompts/NOTE.md")
+    assert isinstance(result, ToolResult)
+    assert result.widget is not None
+    assert result.widget.widget_type == "markdown_document"
+    assert result.widget.data["content"] == "# Note\nhello"
+
+
+def test_admin_read_attaches_code_block_widget_for_json(ctx):
+    """admin_read attaches a code_block widget for non-markdown files (#1170)."""
+    target = ctx.config.agent_path / "prompts" / "settings.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('{"agent": "test"}')
+
+    result = tool_admin_read(ctx, "prompts/settings.json")
+    assert isinstance(result, ToolResult)
+    assert result.widget is not None
+    assert result.widget.widget_type == "code_block"
+    assert result.widget.data["code"] == '{"agent": "test"}'
+
+
 # ---------------------------------------------------------------------------
 # Mutation tests (write, replace_lines, edit, delete)
 # ---------------------------------------------------------------------------
