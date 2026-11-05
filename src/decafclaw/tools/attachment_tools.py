@@ -8,7 +8,7 @@ from ..attachments import (
     read_attachment_base64,
     read_attachment_bytes,
 )
-from ..media import LocalFileMediaHandler, ToolResult
+from ..media import LocalFileMediaHandler, ToolResult, WidgetRequest
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -36,9 +36,26 @@ async def tool_list_attachments(ctx: "Context") -> str | ToolResult:
 
     items = list_conversation_attachments(ctx.config, conv_id)
     if not items:
-        return "No attachments in this conversation."
+        return ToolResult(text="No attachments in this conversation.")
 
-    return json.dumps(items, indent=2)
+    widget = WidgetRequest(
+        widget_type="data_table",
+        data={
+            "caption": f"list_attachments: {len(items)} attachment(s)",
+            "columns": [
+                {"key": "filename", "label": "Filename"},
+                {"key": "mime_type", "label": "Type"},
+                {"key": "size", "label": "Size (bytes)", "type": "bytes"},
+            ],
+            "rows": items,
+        },
+        target="inline",
+    )
+    return ToolResult(
+        text=json.dumps(items, indent=2),
+        data={"attachments": items},
+        widget=widget,
+    )
 
 
 async def tool_get_attachment(ctx: "Context", filename: str) -> str | ToolResult:

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from decafclaw import sticky as sticky_mod
 from decafclaw.events import emit_for_ctx
-from decafclaw.media import EndTurnConfirm, ToolResult
+from decafclaw.media import EndTurnConfirm, ToolResult, WidgetRequest
 from decafclaw.skills.project.plan_parser import (
     Step,
     insert_steps,
@@ -400,12 +400,38 @@ async def tool_project_list(ctx: "Context") -> str | ToolResult:
     """List all projects with their status."""
     projects = list_projects(ctx.config)
     if not projects:
-        return "No projects found."
+        return ToolResult(text="No projects found.")
 
     lines = ["| Slug | Status | Description | Updated |", "| --- | --- | --- | --- |"]
     for p in projects:
         lines.append(f"| {p.slug} | {p.status.value} | {p.description} | {p.updated_at} |")
-    return "\n".join(lines)
+
+    widget = WidgetRequest(
+        widget_type="data_table",
+        data={
+            "caption": f"project_list: {len(projects)} project(s)",
+            "columns": [
+                {"key": "slug", "label": "Slug"},
+                {"key": "status", "label": "Status"},
+                {"key": "description", "label": "Description"},
+                {"key": "updated_at", "label": "Updated"},
+            ],
+            "rows": [
+                {
+                    "slug": p.slug,
+                    "status": p.status.value,
+                    "description": p.description,
+                    "updated_at": p.updated_at,
+                }
+                for p in projects
+            ],
+        },
+        target="inline",
+    )
+    return ToolResult(
+        text="\n".join(lines),
+        widget=widget,
+    )
 
 
 async def tool_project_switch(ctx: "Context", project: str) -> str | ToolResult:
