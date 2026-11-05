@@ -6,7 +6,7 @@ An AI agent exploration. This is not a coherent product or framework. This is a 
 
 ## What it does
 
-Multi-channel AI agent with a shared knowledge vault. Connects to Mattermost as a chat bot, runs in a web UI with WYSIWYG wiki editing, or runs in terminal mode. Multi-provider LLM support (Vertex/Gemini, OpenAI, OpenAI-compatible) with named model configs and per-conversation model selection. Streams responses as they arrive.
+Multi-channel AI agent with a shared knowledge vault. Connects to Mattermost as a chat bot, runs in a web UI with WYSIWYG wiki editing, or runs headlessly via the server process. Multi-provider LLM support (Vertex/Gemini, OpenAI, OpenAI-compatible) with named model configs and per-conversation model selection. Streams responses as they arrive.
 
 See [docs/](docs/index.md) for the full feature list.
 
@@ -17,7 +17,7 @@ git clone https://github.com/lmorchard/decafclaw.git
 cd decafclaw
 uv sync
 cp .env.example .env    # then configure LLM provider — see docs/providers.md
-make run                 # interactive terminal mode (no Mattermost needed)
+make run                 # Run the agent (server process root; headless duties if no inbound transport is configured)
 ```
 
 See [Installation & Setup](docs/installation.md) for provider configuration, Mattermost bot setup, and all options.

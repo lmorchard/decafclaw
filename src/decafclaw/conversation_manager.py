@@ -2,7 +2,7 @@
 
 The conversation manager owns agent loop lifecycle, conversation history,
 confirmation state, and event streams. Transport adapters (WebSocket,
-Mattermost, interactive terminal) talk to the manager via its public API.
+Mattermost) talk to the manager via its public API.
 """
 
 import asyncio
