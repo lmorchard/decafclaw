@@ -4,9 +4,13 @@ run:
 
 # Run with auto-restart on source changes. Custom filter also triggers on
 # widget.json / widget.js edits under src/decafclaw/web/static/widgets/
-# so bundled widget iteration doesn't require a manual restart.
+# so bundled widget iteration doesn't require a manual restart. data/ is
+# watched too, but only agent config.json / mcp_servers.json pass the
+# filter (#149): a restart-required config change makes the in-process
+# watcher stop the server, and this is what restarts it. Safe config
+# changes pass through so the watcher can apply them in place.
 dev:
-	uv run --extra dev watchfiles --filter decafclaw._dev_filter.DevFilter --sigint-timeout 10 --sigkill-timeout 15 "decafclaw.main" src/
+	uv run --extra dev watchfiles --filter decafclaw._dev_filter.DevFilter --sigint-timeout 10 --sigkill-timeout 15 "decafclaw.main" src/ data/
 
 # Run with debug logging
 debug:

@@ -556,17 +556,25 @@ Arbitrary environment variables set at startup. Useful for API keys and tool-spe
 While the server process is running, the agent watches `data/{agent_id}/config.json`
 (and `mcp_servers.json`) and reacts to changes:
 
-- **Safe to apply in place** (no restart): the runtime-tunable config groups —
-  `llm`, `agent`, `compaction`, `embedding`, `heartbeat`, `notes`, `cleanup`,
-  `vault_retrieval`, `schedules`, `telemetry`, and others. The changed values are
-  applied onto the live config so the next agent turn picks them up.
-- **Require a process restart**: `http`, `mattermost`, and any MCP server config
-  change. The watcher publishes a `config_changed` event with
-  `requires_restart: true` and stops the watch loop; the process restarts.
+- **Safe to apply in place** (no restart): every config section except the
+  restart-required ones below. Changed sections are applied onto the live config
+  (the `env` section re-runs `apply_env`) and announced with a `config_changed`
+  event (`requires_restart: false`), so the next agent turn picks them up.
+- **Require a process restart**: `http`, `mattermost`, and any change to
+  `mcp_servers.json` (MCP servers load once at startup, outside the `Config`
+  dataclass). The watcher publishes a `config_changed` event with
+  `requires_restart: true` and stops the process after a short grace delay.
+  Under `make dev`, the dev supervisor watches these files too and restarts
+  the process automatically; under a bare `make run` the process exits and
+  you restart it by hand.
+- A file that changed but does not parse as JSON (a torn or partial write) is
+  skipped until it parses again — `load_config` falls back to defaults on
+  malformed JSON, and those defaults must never reach the live config.
 - Every handled change publishes a `config_changed` event of the shape
   `{"type": "config_changed", "requires_restart": <bool>, "keys": [<section>, ...]}`.
 
-The classification lives in `src/decafclaw/config_watcher.py`.
+The classification lives in `src/decafclaw/config_watcher.py`; the `make dev`
+filter shares it via `src/decafclaw/_dev_filter.py`.
 
 ## Migrating from .env
 

@@ -186,6 +186,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 
 ### Config and LLM
 - `config.py`, `config_types.py` — Config dataclasses
+- `config_watcher.py` — config hot-reload watcher: safe sections apply in place, restart-required ones stop the process (#149); also classifies changes for the `make dev` filter
 - `llm/` — Provider abstraction; `llm/providers/{openai_compat,openai,vertex}.py`
 
 ### Transports

@@ -248,15 +248,19 @@ class Config:
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
 
-    # Runtime-only (not in config file)
-    system_prompt: str = ""
-    discovered_skills: list[SkillInfo] = field(default_factory=list)
-    always_loaded_skill_tools: set[str] = field(default_factory=set)
+    # Runtime-only (not in config file). Marked with metadata so the
+    # config hot-reload watcher (#149) skips them when diffing a fresh
+    # load against the live config — a fresh load always differs here,
+    # and applying would clobber in-memory state like the assembled
+    # system prompt or discovered skills.
+    system_prompt: str = field(default="", metadata={"runtime_only": True})
+    discovered_skills: list[SkillInfo] = field(default_factory=list, metadata={"runtime_only": True})
+    always_loaded_skill_tools: set[str] = field(default_factory=set, metadata={"runtime_only": True})
     # Tool name → owning skill name. Built at skill discovery for the
     # subset of skills with has_native_tools. Used by the unknown-tool
     # error path and by tool_search to route hidden-tool-name guesses
     # back to the skill that owns the tool.
-    skill_tool_owners: dict[str, str] = field(default_factory=dict)
+    skill_tool_owners: dict[str, str] = field(default_factory=dict, metadata={"runtime_only": True})
 
     def apply_env(self) -> None:
         """Apply env vars from the config. Only sets vars not already in the environment.
