@@ -54,12 +54,15 @@ class DecisionSlice:
     decisions: list[DecisionEntry] = field(default_factory=list)
     open_questions: list[DecisionEntry] = field(default_factory=list)
     artifacts: list[DecisionEntry] = field(default_factory=list)
+    file_operations: list[DecisionEntry] = field(default_factory=list)
 
     def is_empty(self) -> bool:
-        return not (self.decisions or self.open_questions or self.artifacts)
+        return not (self.decisions or self.open_questions or self.artifacts or self.file_operations)
 
     def to_dict(self) -> dict:
-        return {cat: [asdict(e) for e in getattr(self, cat)] for cat in CATEGORIES}
+        out: dict = {cat: [asdict(e) for e in getattr(self, cat)] for cat in CATEGORIES}
+        out["file_operations"] = [asdict(e) for e in self.file_operations]
+        return out
 
     @classmethod
     def from_dict(cls, raw: dict) -> DecisionSlice:
@@ -76,6 +79,17 @@ class DecisionSlice:
                 if isinstance(text, str) and isinstance(created_at, str):
                     entries.append(DecisionEntry(text=text, created_at=created_at))
             kwargs[cat] = entries
+        file_raw = raw.get("file_operations") or []
+        file_entries: list[DecisionEntry] = []
+        if isinstance(file_raw, list):
+            for item in file_raw:
+                if not isinstance(item, dict):
+                    continue
+                text = item.get("text")
+                created_at = item.get("created_at")
+                if isinstance(text, str) and isinstance(created_at, str):
+                    file_entries.append(DecisionEntry(text=text, created_at=created_at))
+        kwargs["file_operations"] = file_entries
         return cls(**kwargs)
 
 
@@ -212,6 +226,27 @@ def merge_slice(
 
         merged_kwargs[cat] = merged
 
+    # File operations: same dedup-by-text semantics as the categories,
+    # FIFO-capped. The deterministic extraction is expected to be
+    # idempotent per tool-call identity, but the merge keeps the ledger
+    # correct even when an LLM re-states an op.
+    seen_fops: set[str] = set()
+    merged_fops: list[DecisionEntry] = []
+    for text in new_lists.get("file_operations", []) or []:
+        if text in seen_fops:
+            continue
+        seen_fops.add(text)
+        existing_fop = next((e for e in old.file_operations if e.text == text), None)
+        if existing_fop is not None:
+            merged_fops.append(existing_fop)
+        else:
+            merged_fops.append(DecisionEntry(text=text, created_at=timestamp))
+    if max_per_category > 0 and len(merged_fops) > max_per_category:
+        sorted_oldest_first = sorted(merged_fops, key=lambda e: e.created_at)
+        keep = set(id(e) for e in sorted_oldest_first[-max_per_category:])
+        merged_fops = [e for e in merged_fops if id(e) in keep]
+    merged_kwargs["file_operations"] = merged_fops
+
     return DecisionSlice(**merged_kwargs)
 
 
@@ -244,6 +279,12 @@ def format_slice(slice_: DecisionSlice) -> str:
         sections.append(f"### {heading}")
         sections.extend(f"- {e.text}" for e in entries)
         sections.append("")  # blank line between sections
+
+    fops = list(getattr(slice_, "file_operations") or [])
+    if fops:
+        sections.append("### File Operations")
+        sections.extend(f"- {e.text}" for e in fops)
+        sections.append("")
 
     if not sections:
         return ""

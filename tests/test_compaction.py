@@ -12,6 +12,7 @@ from decafclaw.compaction import (
     SUMMARY_PREFIX,
     _build_compaction_user_input,
     _build_sweep_user_input,
+    _extract_file_operations,
     _extract_previous_summary,
     _run_memory_sweep,
     _split_into_turns,
@@ -799,6 +800,43 @@ class TestMemorySweep:
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock, side_effect=Exception("LLM exploded")):
             # Should not raise
             await _run_memory_sweep(ctx, messages)
+
+
+# -- Deterministic file-operation extraction (#924) ----------------------------
+
+
+class TestExtractFileOperations:
+    def test_no_file_tools_returns_empty(self):
+        assert _extract_file_operations([{"role": "user", "content": "hello"}]) == []
+
+    def test_write_ok_extracted(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc1",
+                        "function": {"name": "workspace_write", "arguments": '{"path": "notes.md", "content": "hi"}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "tc1", "content": "Wrote notes.md"},
+        ]
+        ops = _extract_file_operations(messages)
+        assert ops == ["write notes.md :: call tc1 :: ok"]
+
+    def test_write_error_marked_failed(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "tc2", "function": {"name": "workspace_edit", "arguments": '{"path": "a.md"}'}}],
+            },
+            {"role": "tool", "tool_call_id": "tc2", "content": "[error: file not found: a.md]"},
+        ]
+        ops = _extract_file_operations(messages)
+        assert ops == ["edit a.md :: call tc2 :: failed"]
 
 
 # -- Decision-slice integration (#302) ----------------------------------------
