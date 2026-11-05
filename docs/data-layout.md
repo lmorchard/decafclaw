@@ -15,6 +15,7 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
   MEMORY_SWEEP.md                   # Pre-compaction memory sweep prompt
   HEARTBEAT.md                      # Admin heartbeat tasks (auto-approves tools)
   config.json                       # Resolved configuration
+  model_catalog.json                # Discovered models + enable flags + default-model pointer (#1211)
   mcp_servers.json                  # MCP server configuration
   skill_permissions.json            # Skill activation permissions
   shell_allow_patterns.json         # Approved shell command patterns

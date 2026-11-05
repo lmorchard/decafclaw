@@ -617,7 +617,9 @@ export class ConversationStore extends EventTarget {
         if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
         if (msg.active_model) this.#activeModel = msg.active_model;
         if (msg.available_models) this.#availableModels = msg.available_models;
-        if (msg.default_model) this.#defaultModel = msg.default_model;
+        // `in` (not truthiness): an explicitly cleared default arrives as ''
+        // and must clear the stale marker (#1211).
+        if ('default_model' in msg) this.#defaultModel = msg.default_model || '';
         if (msg.active_mode) this.#activeMode = msg.active_mode;
         if (msg.available_modes) this.#availableModes = msg.available_modes;
         if (msg.read_only) this.#readOnly = true;
@@ -731,7 +733,9 @@ export class ConversationStore extends EventTarget {
 
       case MESSAGE_TYPES.MODELS_AVAILABLE:
         if (msg.available_models) this.#availableModels = msg.available_models;
-        if (msg.default_model) this.#defaultModel = msg.default_model;
+        // `in` (not truthiness): an explicitly cleared default arrives as ''
+        // and must clear the stale marker (#1211).
+        if ('default_model' in msg) this.#defaultModel = msg.default_model || '';
         break;
 
       case MESSAGE_TYPES.COMMAND_LIST:
