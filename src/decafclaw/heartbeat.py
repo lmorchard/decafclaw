@@ -389,6 +389,13 @@ async def run_heartbeat_timer(config, event_bus, manager, shutdown_event, on_cyc
         )
 
     async def _tick():
+        # Re-read the interval each poll so a config hot-reload (#149) can
+        # tune it without a process restart.
+        interval = parse_interval(config.heartbeat.interval)
+        if interval is None:
+            log.debug("Heartbeat interval unset (disabled since startup); cycle skipped")
+            return
+
         # Check if enough time has passed since last heartbeat
         last = read_last_heartbeat(config)
         if last > 0 and (time.time() - last) < interval:
