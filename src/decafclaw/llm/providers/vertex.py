@@ -8,13 +8,28 @@ from typing import Any
 
 import httpx
 
-from ..types import StreamCallback
+from ..types import DiscoveredModel, StreamCallback
 from .openai_compat import _cancellable_sleep, _RetryableError
 
 log = logging.getLogger(__name__)
 
 _MAX_DIAGNOSTIC_EVENTS = 50
 _MAX_RETRIES = 3
+
+# Curated static fallback for model discovery (#1211). Vertex has no
+# practical REST endpoint that lists Gemini models, so discovery returns
+# this list instead of nothing. Chat + tools + context are reported for
+# every entry, so each lands enabled under the default-on policy. Update
+# as the Gemini lineup changes.
+_VERTEX_STATIC_MODELS: list[tuple[str, str]] = [
+    # (model id, owned_by label)
+    ("gemini-2.5-flash", "Google"),
+    ("gemini-2.5-flash-lite", "Google"),
+    ("gemini-2.5-pro", "Google"),
+    ("gemini-3.8-flash", "Google"),
+    ("gemini-4-argon", "Google"),
+]
+_GEMINI_CONTEXT_WINDOW = 1_048_576
 
 
 class VertexProvider:
@@ -288,6 +303,24 @@ class VertexProvider:
         except Exception as e:
             log.debug("Failed to get model info for %s from Vertex: %s", model, e)
         return None
+
+    async def discover_models(self, *, timeout: int = 30) -> list[DiscoveredModel]:
+        """Return the curated static Gemini list (#1211).
+
+        No practical Vertex REST endpoint lists Gemini models, so discovery
+        reports a small curated fallback (see ``_VERTEX_STATIC_MODELS``)
+        rather than failing or returning an untyped catalog.
+        """
+        return [
+            DiscoveredModel(
+                id=model_id,
+                chat=True,
+                tools=True,
+                context_window_size=_GEMINI_CONTEXT_WINDOW,
+                owned_by=owned_by,
+            )
+            for model_id, owned_by in _VERTEX_STATIC_MODELS
+        ]
 
 
 # ---------------------------------------------------------------------------

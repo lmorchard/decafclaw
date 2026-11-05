@@ -261,6 +261,11 @@ class Config:
     # error path and by tool_search to route hidden-tool-name guesses
     # back to the skill that owns the tool.
     skill_tool_owners: dict[str, str] = field(default_factory=dict, metadata={"runtime_only": True})
+    # Model names this process materialized into model_configs from the
+    # model catalog sidecar (#1211). Lets enable/disable and picker
+    # computation distinguish hand-authored entries from discovered ones
+    # without touching config.json.
+    catalog_materialized: set[str] = field(default_factory=set, metadata={"runtime_only": True})
 
     def apply_env(self) -> None:
         """Apply env vars from the config. Only sets vars not already in the environment.
@@ -364,10 +369,14 @@ def resolve_model(
 ) -> tuple[ProviderConfig, ModelConfig]:
     """Resolve a named model config to its provider + model config.
 
-    Falls back to config.default_model if name is empty.
+    Falls back to the effective default model if name is empty — the
+    model catalog sidecar's pointer when it names a selectable model,
+    else config.default_model (#1211).
     Raises KeyError if the model or its provider isn't found.
     """
-    model_name = name or config.default_model
+    from .model_catalog import effective_default_model  # deferred: llm pkg import cycle
+
+    model_name = name or effective_default_model(config)
     if not model_name:
         raise KeyError("No model name given and no default_model configured")
 
@@ -386,9 +395,12 @@ def resolve_model(
 def resolve_streaming(config: "Config", active_model: str = "") -> bool:
     """Resolve whether streaming is enabled for the given model.
 
-    Checks the active model config first, then default_model, then config.llm.
+    Checks the active model config first, then the effective default
+    model (catalog pointer → default_model, #1211), then config.llm.
     """
-    name = active_model or config.default_model
+    from .model_catalog import effective_default_model  # deferred: llm pkg import cycle
+
+    name = active_model or effective_default_model(config)
     if name and name in config.model_configs:
         return config.model_configs[name].streaming
     return config.llm.streaming

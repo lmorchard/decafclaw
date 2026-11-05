@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 # Provider type constants — used in config.json "providers" section
@@ -91,3 +92,20 @@ class Provider(Protocol):
     ) -> dict[str, Any] | None:
         """Get model metadata (e.g. token limits), or None if unsupported."""
         return None
+
+
+@dataclass
+class DiscoveredModel:
+    """One model entry returned by a provider's model listing.
+
+    Capability fields are tri-state: True/False when the gateway reports
+    the fact, None when it does not. ``None`` never means "capable" —
+    unknown capabilities gate auto-enablement and are surfaced to the
+    catalog UI so the user can opt in deliberately (#1211).
+    """
+
+    id: str
+    chat: bool | None = None
+    tools: bool | None = None
+    context_window_size: int | None = None
+    owned_by: str = ""

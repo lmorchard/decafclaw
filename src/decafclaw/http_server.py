@@ -3409,14 +3409,127 @@ async def models_list(request: Request, username: str) -> JSONResponse:
     A standalone route rather than a field on the schedules payload: the
     schedules page is reachable with no conversation open, and the WS
     `available_models` push is only populated once one loads.
+
+    Returns the picker's model list: hand-authored configs plus enabled
+    models discovered from providers (#1211), and the effective global
+    default (catalog pointer → config.json default_model).
     """
     config = request.app.state.config
+    from .model_catalog import effective_default_model, picker_models
+
     return JSONResponse(
         {
-            "models": sorted(config.model_configs),
-            "default": config.default_model,
+            "models": picker_models(config),
+            "default": effective_default_model(config),
         }
     )
+
+
+# -- Model catalog handlers (#1211) -------------------------------------------
+
+
+class CatalogModelEntry(BaseModel):
+    key: str
+    id: str
+    enabled: bool
+    chat: bool | None = None
+    tools: bool | None = None
+    context_window_size: int | None = None
+    owned_by: str = ""
+    selectable: bool = False
+
+
+class CatalogProviderEntry(BaseModel):
+    discovered_at: str = ""
+    error: str = ""
+    models: list[CatalogModelEntry]
+
+
+class ModelCatalogResponse(BaseModel):
+    """GET/POST /api/models/catalog* — discovery state + UI-managed flags."""
+
+    default_model: str
+    default_pointer: str
+    picker_models: list[str]
+    providers: dict[str, CatalogProviderEntry]
+
+
+class ModelCatalogUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str | None = None
+    enabled: bool | None = None
+    model: str | None = None
+
+
+@_authenticated
+async def models_catalog_get(request: Request, username: str) -> JSONResponse:
+    """GET /api/models/catalog — full catalog for the management UI."""
+    from .model_catalog import catalog_payload
+
+    return JSONResponse(catalog_payload(request.app.state.config))
+
+
+@_authenticated
+async def models_catalog_discover(request: Request, username: str) -> JSONResponse:
+    """POST /api/models/catalog/discover — run discovery on demand.
+
+    Explicit refresh only, user-triggered; never polled. A failing
+    gateway records its error and keeps cached entries.
+    """
+    from .model_catalog import catalog_payload, refresh_catalog
+
+    config = request.app.state.config
+    await refresh_catalog(config, event_bus=request.app.state.event_bus)
+    return JSONResponse(catalog_payload(config))
+
+
+@_authenticated
+async def models_catalog_set_enabled(request: Request, username: str) -> JSONResponse:
+    """POST /api/models/catalog/model — enable/disable a discovered model."""
+    from .model_catalog import catalog_payload, set_model_enabled
+
+    config = request.app.state.config
+    try:
+        body = await request.json()
+    except Exception as exc:
+        log.debug("models_catalog_set_enabled: invalid JSON body: %s", exc)
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("key"), str) or not body["key"]:
+        return JSONResponse({"error": "request body must include a model key"}, status_code=400)
+    if not isinstance(body.get("enabled"), bool):
+        return JSONResponse({"error": "request body must include a boolean 'enabled'"}, status_code=400)
+
+    catalog = await set_model_enabled(config, body["key"], body["enabled"], event_bus=request.app.state.event_bus)
+    if catalog is None:
+        return JSONResponse({"error": f"unknown catalog model: {body['key']}"}, status_code=404)
+    return JSONResponse(catalog_payload(config))
+
+
+@_authenticated
+async def models_catalog_set_default(request: Request, username: str) -> JSONResponse:
+    """POST /api/models/catalog/default — set or clear the default-model pointer.
+
+    An empty `model` clears the pointer (config.json's default_model takes
+    over again). A non-empty name must be selectable: an enabled discovered
+    model or a hand-authored config.
+    """
+    from .model_catalog import catalog_payload, picker_models, set_default_model
+
+    config = request.app.state.config
+    try:
+        body = await request.json()
+    except Exception as exc:
+        log.debug("models_catalog_set_default: invalid JSON body: %s", exc)
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
+        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
+
+    name = body["model"]
+    if name and name not in picker_models(config):
+        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
+    await set_default_model(config, name, event_bus=request.app.state.event_bus)
+    return JSONResponse(catalog_payload(config))
 
 
 # -- Schedule handlers --------------------------------------------------------
@@ -3984,6 +4097,50 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute("/api/models", models_list, methods=["GET"], response_model=ModelListResponse),
+        APIRoute(
+            "/api/models/catalog",
+            models_catalog_get,
+            methods=["GET"],
+            response_model=ModelCatalogResponse,
+        ),
+        APIRoute(
+            "/api/models/catalog/discover",
+            models_catalog_discover,
+            methods=["POST"],
+            response_model=ModelCatalogResponse,
+        ),
+        APIRoute(
+            "/api/models/catalog/model",
+            models_catalog_set_enabled,
+            methods=["POST"],
+            response_model=ModelCatalogResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(ModelCatalogUpdateRequest),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/models/catalog/default",
+            models_catalog_set_default,
+            methods=["POST"],
+            response_model=ModelCatalogResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(ModelCatalogUpdateRequest),
+                        },
+                    },
+                },
+            },
+        ),
         APIRoute("/api/schedules", schedules_list, methods=["GET"], response_model=ScheduleListResponse),
         APIRoute(
             "/api/schedules/{name}/run",

@@ -20,6 +20,7 @@ from decafclaw.commands import list_invokable_commands
 from decafclaw.conversation_manager import TurnKind
 from decafclaw.conversation_paths import approval_state_path
 from decafclaw.llm.history import without_provider_data
+from decafclaw.model_catalog import MODELS_CHANGED_EVENT_TYPE, effective_default_model, picker_models
 from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
 from decafclaw.web.auto_titling import maybe_auto_title
 from decafclaw.web.message_types import (
@@ -350,9 +351,11 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     if current_model is not None:
         response["active_model"] = current_model
     # Send available model configs so the UI can offer a picker
-    if config.model_configs:
-        response["available_models"] = sorted(config.model_configs.keys())
-        response["default_model"] = config.default_model
+    # (hand-authored + enabled discovered models, #1211)
+    picker = picker_models(config)
+    if picker:
+        response["available_models"] = picker
+        response["default_model"] = effective_default_model(config)
 
     # Send available session modes and active mode
     from ..modes import get_all_modes
@@ -1357,6 +1360,28 @@ def _make_vault_change_forwarder(ws_send: WSSendCallable):
     return _forward
 
 
+def _make_models_available_forwarder(ws_send: WSSendCallable, config):
+    """Forward `models_changed` events from the global bus to one socket.
+
+    Published when the model catalog or its default-model pointer changes
+    (#1211); the socket re-sends the full `models_available` payload so
+    every open tab refreshes its picker without a reload.
+    """
+
+    async def _forward(event: dict):
+        if event.get("type") != MODELS_CHANGED_EVENT_TYPE:
+            return
+        await ws_send(
+            {
+                "type": WSMessageType.MODELS_AVAILABLE,
+                "available_models": picker_models(config),
+                "default_model": effective_default_model(config),
+            }
+        )
+
+    return _forward
+
+
 def _make_conversation_status_forwarder(ws_send: WSSendCallable, config, index, username: str):
     """Forward `conversation_status` events from the global bus to a single socket.
 
@@ -1457,13 +1482,14 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     ws_send = _make_ws_send(websocket)
 
     # Send available models immediately so the picker is visible before
-    # any conversation is selected
-    if config.model_configs:
+    # any conversation is selected (hand-authored + enabled discovered, #1211)
+    picker = picker_models(config)
+    if picker:
         await ws_send(
             {
                 "type": WSMessageType.MODELS_AVAILABLE,
-                "available_models": sorted(config.model_configs.keys()),
-                "default_model": config.default_model,
+                "available_models": picker,
+                "default_model": effective_default_model(config),
             }
         )
 
@@ -1486,6 +1512,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     # subscriber. See docs/notifications.md for the push architecture.
     notif_sub_id = event_bus.subscribe(_make_notification_forwarder(ws_send))
     vault_sub_id = event_bus.subscribe(_make_vault_change_forwarder(ws_send))
+    models_sub_id = event_bus.subscribe(_make_models_available_forwarder(ws_send, config))
     status_sub_id = event_bus.subscribe(_make_conversation_status_forwarder(ws_send, config, index, username))
     renamed_sub_id = event_bus.subscribe(_make_conv_renamed_forwarder(ws_send, username))
 
@@ -1513,6 +1540,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
     finally:
         event_bus.unsubscribe(notif_sub_id)
         event_bus.unsubscribe(vault_sub_id)
+        event_bus.unsubscribe(models_sub_id)
         event_bus.unsubscribe(status_sub_id)
         event_bus.unsubscribe(renamed_sub_id)
         _unsubscribe_all(state)

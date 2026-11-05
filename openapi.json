@@ -1484,6 +1484,172 @@
         }
       }
     },
+    "/api/models/catalog": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_models_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/catalog/discover": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_models_catalog_discover_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/catalog/model": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_models_catalog_model_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "key": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Key"
+                  },
+                  "enabled": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Enabled"
+                  },
+                  "model": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Model"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "title": "ModelCatalogUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/catalog/default": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_models_catalog_default_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "key": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Key"
+                  },
+                  "enabled": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Enabled"
+                  },
+                  "model": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Model"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "title": "ModelCatalogUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/schedules": {
       "get": {
         "summary": "Wrapper",
@@ -3055,6 +3221,98 @@
         ],
         "title": "CanvasTabResponse"
       },
+      "CatalogModelEntry": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "chat": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chat"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tools"
+          },
+          "context_window_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Window Size"
+          },
+          "owned_by": {
+            "type": "string",
+            "title": "Owned By",
+            "default": ""
+          },
+          "selectable": {
+            "type": "boolean",
+            "title": "Selectable",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "id",
+          "enabled"
+        ],
+        "title": "CatalogModelEntry"
+      },
+      "CatalogProviderEntry": {
+        "properties": {
+          "discovered_at": {
+            "type": "string",
+            "title": "Discovered At",
+            "default": ""
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogModelEntry"
+            },
+            "type": "array",
+            "title": "Models"
+          }
+        },
+        "type": "object",
+        "required": [
+          "models"
+        ],
+        "title": "CatalogProviderEntry"
+      },
       "ConfigFileEntry": {
         "properties": {
           "name": {
@@ -3858,6 +4116,41 @@
           "description"
         ],
         "title": "McpCompletion"
+      },
+      "ModelCatalogResponse": {
+        "properties": {
+          "default_model": {
+            "type": "string",
+            "title": "Default Model"
+          },
+          "default_pointer": {
+            "type": "string",
+            "title": "Default Pointer"
+          },
+          "picker_models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Picker Models"
+          },
+          "providers": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CatalogProviderEntry"
+            },
+            "type": "object",
+            "title": "Providers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "default_model",
+          "default_pointer",
+          "picker_models",
+          "providers"
+        ],
+        "title": "ModelCatalogResponse",
+        "description": "GET/POST /api/models/catalog* \u2014 discovery state + UI-managed flags."
       },
       "ModelListResponse": {
         "properties": {

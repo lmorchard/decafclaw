@@ -83,6 +83,7 @@ async def run_all(app_ctx):
     heartbeat_task = None
     schedule_task = None
     config_watcher_task = None
+    discovery_task = None
 
     try:
         # Create conversation manager (shared across web + future transports)
@@ -192,6 +193,14 @@ async def run_all(app_ctx):
         config_watcher_task = asyncio.create_task(config_change_watcher(app_ctx, shutdown_event))
         log.info("Config change watcher started")
 
+        # Kick off model discovery (#1211): on-demand only (startup +
+        # explicit refresh, never polled). Fail-open — a gateway outage
+        # leaves the cached catalog in place. Tracked so shutdown can
+        # cancel it cleanly instead of leaking a pending task.
+        from .model_catalog import startup_discovery
+
+        discovery_task = asyncio.create_task(startup_discovery(config, app_ctx.event_bus))
+
         # Resume pending scheduled wake timers now that transports are listening (#1119 review)
         await manager.startup_scan_scheduled_wakes()
 
@@ -202,6 +211,7 @@ async def run_all(app_ctx):
         log.info("Shutting down...")
 
         # Stop subsystems in reverse order
+        await _cancel_task(discovery_task, "model discovery")
         await _cancel_task(config_watcher_task, "config watcher")
         await _cancel_task(schedule_task, "schedule timer")
         await _cancel_task(heartbeat_task, "heartbeat")

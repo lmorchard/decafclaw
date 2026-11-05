@@ -619,6 +619,8 @@ def _resolve_model_override(ctx: "Context", config) -> dict[str, str]:
     leftover from the removed effort system, and ran on the default model
     for months without a single log line saying so).
     """
+    from .model_catalog import effective_default_model  # deferred: llm pkg import cycle
+
     model_override: dict[str, str] = {}
     if ctx.active_model and ctx.active_model in config.model_configs:
         model_override = {"model_name": ctx.active_model}
@@ -635,9 +637,10 @@ def _resolve_model_override(ctx: "Context", config) -> dict[str, str]:
             known,
         )
 
-    if config.default_model:
-        model_override = {"model_name": config.default_model}
-        log.info("Agent turn: model=%s (default)", config.default_model)
+    default_name = effective_default_model(config)
+    if default_name:
+        model_override = {"model_name": default_name}
+        log.info("Agent turn: model=%s (default)", default_name)
     else:
         log.info("Agent turn: model=%s (legacy config.llm)", config.llm.model)
 
