@@ -266,6 +266,11 @@ export class DefaultService {
      *
      * Returns ``{folder, sessions}`` where each session carries its root
      * conversation metadata plus the nested subagent conversations.
+     *
+     * Subagent children are discovered from the archive layer — they have no
+     * ConversationIndex entries (see ``discover_child_convs``). A session's
+     * ``status`` reflects its root conversation only; children carry per-item
+     * status.
      * @param folder
      * @returns SessionListingResponse Successful Response
      * @throws ApiError
@@ -289,8 +294,10 @@ export class DefaultService {
      * List the conversations within one session.
      *
      * ``session_id`` may name a root conversation (optionally with delegated
-     * subagents) or a single subagent conversation id; both resolve to the
-     * conversation list for that session.
+     * subagents) or one of its subagent conversation ids; both resolve to the
+     * same session list — the root plus its subagent children. Children are
+     * discovered from the archive layer; they have no ConversationIndex
+     * entries (see ``discover_child_convs``).
      * @param sessionId
      * @returns SessionConversationsResponse Successful Response
      * @throws ApiError
