@@ -134,6 +134,18 @@ delegate_task(
 
 See #397 for the design rationale.
 
+## Session messaging (#1114)
+
+Delegated children run inside the parent's **session**: child conversation ids follow `{parent}--child-{hex}` (#1112), and a standalone conversation is its own single-conversation session. The `session_send` tool posts an asynchronous message from any conversation in that session to the session root or a child of it:
+
+- **Delivery is a WAKE turn.** The message triggers a real handling turn in the target conversation, queued behind any in-flight turn — it never interrupts one (#1114 success condition 3), even when `turn_on_new_message` is `"cancel"` (that interaction is USER-turn-only). It is not rendered as a user message. Wakes are rate-limited per conversation (`wake_max_per_window` within `wake_window_sec`); excess sends are dropped and reported to the sender.
+- **Fire-and-forget.** The call returns once the message is enqueued (the target's inbox append is the audit trail). It does not return the target's reply — a reply, if wanted, arrives later as another `session_send`. For a synchronous child result, use `delegate_task`.
+- **Session-scoped.** Sends to conversations outside the sender's session — anything that isn't the session root or a child of it — are refused.
+
+The primitive lives in `src/decafclaw/session_messaging.py` (`deliver_session_message`, plus the child-id helpers `is_child_conv_id` / `parent_conv_id_of`). Note that delegated children are ephemeral (see [Limitations](#limitations)), so the durable flow today is messaging toward the session root: a child posting progress or results to its parent, delivered as a wake turn once the parent's current turn finishes.
+
+See #1114 for the design rationale.
+
 ## Configuration
 
 | Env var | Default | Description |
