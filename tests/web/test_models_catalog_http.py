@@ -265,3 +265,48 @@ async def test_models_catalog_set_default(client, catalog_config):
     # Pointer at an unselectable model is rejected.
     resp = await client.post("/api/models/catalog/default", json={"model": "local/off"})
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_models_catalog_set_reflection(client, catalog_config):
+    """POST /api/models/catalog/reflection — pointer write/clear + validation (#1212)."""
+    _seed_catalog(catalog_config)
+
+    resp = await client.post("/api/models/catalog/reflection", json={"model": "local/on"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["reflection_pointer"] == "local/on"
+    assert data["reflection_model"] == "local/on"
+    # The verifier pointer is independent.
+    assert data["verifier_pointer"] == ""
+
+    # Clearing the pointer → inherit the config seed again.
+    resp = await client.post("/api/models/catalog/reflection", json={"model": ""})
+    assert resp.status_code == 200
+    assert resp.json()["reflection_pointer"] == ""
+
+    # A disabled (unselectable) model is rejected.
+    resp = await client.post("/api/models/catalog/reflection", json={"model": "local/off"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_models_catalog_set_verifier(client, catalog_config):
+    """POST /api/models/catalog/verifier — pointer write/clear + validation (#1212)."""
+    _seed_catalog(catalog_config)
+
+    resp = await client.post("/api/models/catalog/verifier", json={"model": "local/on"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["verifier_pointer"] == "local/on"
+    assert data["verifier_model"] == "local/on"
+    assert data["reflection_pointer"] == ""
+
+    # Clearing the pointer → inherit the config seed again.
+    resp = await client.post("/api/models/catalog/verifier", json={"model": ""})
+    assert resp.status_code == 200
+    assert resp.json()["verifier_pointer"] == ""
+
+    # A disabled (unselectable) model is rejected.
+    resp = await client.post("/api/models/catalog/verifier", json={"model": "local/off"})
+    assert resp.status_code == 400
