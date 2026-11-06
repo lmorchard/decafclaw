@@ -1,4 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
+import { parentConvIdOf } from '../lib/conversation-store.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 import './context-inspector.js';
 import './notification-inbox.js';
@@ -12,6 +13,7 @@ export class ConversationSidebar extends LitElement {
     store: { type: Object, attribute: false },
     authClient: { type: Object, attribute: false },
     _conversations: { type: Array, state: true },
+    _sessions: { type: Array, state: true },
     _chatFolders: { type: Array, state: true },
     _chatSection: { type: String, state: true },
     _chatFolder: { type: String, state: true },
@@ -43,6 +45,8 @@ export class ConversationSidebar extends LitElement {
     this.authClient = null;
     /** @type {Array<import("../lib/conversation-store.js").ConversationMeta | import("../lib/conversation-store.js").SystemConversationMeta>} */
     this._conversations = [];
+    /** @type {import("../lib/conversation-store.js").SessionEntry[]} server-grouped sessions (#1115) */
+    this._sessions = [];
     /** @type {import("../lib/conversation-store.js").FolderEntry[]} */
     this._chatFolders = [];
     /** @type {string} which section: '' (active), '_archived', '_system' */
@@ -107,6 +111,9 @@ export class ConversationSidebar extends LitElement {
       } else {
         this._conversations = [...(this.store?.conversations || [])];
         this._chatFolders = this.store?.folders || [];
+        // Server-grouped sessions (#1115) — the hierarchy data for the
+        // active section; client-side grouping remains as fallback.
+        this._sessions = [...(this.store?.sessions || [])];
       }
       this.requestUpdate();
     };
@@ -546,20 +553,9 @@ export class ConversationSidebar extends LitElement {
   }
 
   /**
-   * Parent conversation id for delegated children (`{root}--child-{hex}`),
-   * or '' for standalone conversations.
-   * @param {string} convId
-   * @returns {string}
-   */
-  #parentConvIdOf(convId) {
-    const id = String(convId || '');
-    const idx = id.indexOf('--child-');
-    return idx > 0 ? id.slice(0, idx) : '';
-  }
-
-  /**
    * Group a flat conversation list into sessions (root plus delegated
-   * subagent children) for the sidebar hierarchy (#1115).
+   * subagent children) for the sidebar hierarchy (#1115). Fallback for
+   * servers without `GET /api/sessions`.
    * @param {Array} convs
    * @returns {Array}
    */
@@ -568,7 +564,7 @@ export class ConversationSidebar extends LitElement {
     const order = [];
     for (const c of convs || []) {
       const convId = c?.conv_id || '';
-      const rootId = this.#parentConvIdOf(convId) || convId;
+      const rootId = parentConvIdOf(convId) || convId;
       if (!groups.has(rootId)) {
         groups.set(rootId, []);
         order.push(rootId);
@@ -596,11 +592,13 @@ export class ConversationSidebar extends LitElement {
   /**
    * Render the active conversation list as session groups (parent plus
    * expandable subagent children). Archived / system sections keep their flat
-   * render.
+   * render. Prefers the server-grouped sessions from `GET /api/sessions`
+   * (#1115); client-side grouping of the flat list is the fallback for
+   * servers without the endpoint.
    * @returns {import('lit').TemplateResult | typeof nothing}
    */
   #renderSessionGroups() {
-    const groups = this.#groupSessions(this._conversations);
+    const groups = this._sessions.length > 0 ? this._sessions : this.#groupSessions(this._conversations);
     if (groups.length === 0) return nothing;
     return html`
       ${groups.map((g) => html`<div class="conv-session">${this.#renderSessionGroup(g)}</div>`)}
@@ -700,6 +698,8 @@ export class ConversationSidebar extends LitElement {
       this.store?.listSystemConversations(folder);
     } else {
       this.store?.listConversations(folder);
+      // Sessions drive the active section's hierarchy rendering (#1115).
+      this.store?.listSessions(folder);
     }
   }
 

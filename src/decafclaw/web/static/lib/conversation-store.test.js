@@ -825,3 +825,102 @@ describe('ConversationStore conv_renamed (#1072)', () => {
     expect(store.conversations[0].updated_at).toBe('t1');
   });
 });
+
+// #1115 — delegated children (`{root}--child-{hex}`) are subagent transcripts:
+// viewable read-only; only the parent conversation can be prompted.
+describe('delegated child conversations are read-only (#1115)', () => {
+  let ws, store;
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = makeStore(ws);
+  });
+
+  it('marks a child-shaped conversation read-only immediately on selection', () => {
+    store.selectConversation('web-alice-1a2b3c4d--child-abcdef12');
+    expect(store.isReadOnly).toBe(true);
+    // Selecting a standalone conversation clears the gate again.
+    store.selectConversation('web-alice-1a2b3c4d');
+    expect(store.isReadOnly).toBe(false);
+  });
+
+  it('does not prompt a delegated child (no SEND frame, no optimistic echo)', () => {
+    store.selectConversation('web-alice-1a2b3c4d--child-abcdef12');
+    store.sendMessage('hello');
+    expect(ws.sent).not.toContainEqual(expect.objectContaining({ type: MESSAGE_TYPES.SEND }));
+    expect(store.currentMessages).toHaveLength(0);
+    expect(store.isBusy).toBe(false);
+  });
+
+  it('still allows cancelling a subagent turn (monitoring, not prompting)', () => {
+    store.cancelSubagent('web-alice-1a2b3c4d--child-abcdef12');
+    expect(ws.sent).toContainEqual({
+      type: MESSAGE_TYPES.CANCEL_TURN,
+      conv_id: 'web-alice-1a2b3c4d--child-abcdef12',
+    });
+  });
+});
+
+// #1115 — the sidebar hierarchy renders from `GET /api/sessions`
+// (server-grouped sessions, archive-discovered subagent children).
+describe('session hierarchy wiring (#1115)', () => {
+  let ws, store;
+  /** @type {import('vitest').Mock} */
+  let fetchMock;
+
+  const sessionBody = {
+    folder: '',
+    sessions: [
+      {
+        session_id: 'web-alice-r1',
+        title: 'Root chat',
+        created_at: '2026-01-01T00:00:00+00:00',
+        updated_at: '2026-01-02T00:00:00+00:00',
+        status: 'idle',
+        conversations: [
+          { conv_id: 'web-alice-r1', title: 'Root chat', kind: 'parent', status: 'idle' },
+          { conv_id: 'web-alice-r1--child-abcdef12', title: 'Subtask abcdef12', kind: 'subagent', status: 'busy' },
+        ],
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = makeStore(ws);
+    fetchMock = vi.fn(async (url) =>
+      new Response(JSON.stringify(
+        String(url).startsWith('/api/sessions')
+          ? sessionBody
+          : { folder: '', folders: [], conversations: [] }
+      ), { headers: { 'Content-Type': 'application/json' } })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('fetches sessions when the socket opens and syncs subagent statuses', async () => {
+    ws.fireOpen();
+    await flush();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/sessions'))).toBe(true);
+    expect(store.sessions).toHaveLength(1);
+    // Subagent statuses come from the session listing like any conv's.
+    expect(store.getConversationStatus('web-alice-r1--child-abcdef12')).toBe('busy');
+  });
+
+  it('refetches sessions when a turn completes (children may have spawned)', async () => {
+    store.selectConversation('web-alice-r1');
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MESSAGE_COMPLETE,
+      conv_id: 'web-alice-r1',
+      final: true,
+      role: 'assistant',
+      text: 'done',
+    });
+    await flush();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/sessions'))).toBe(true);
+  });
+});
