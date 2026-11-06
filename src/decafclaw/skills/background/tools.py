@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import uuid4
 
-from decafclaw.media import ToolResult
+from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.skills.background.parsers import BaseProgressParser, get_progress_parser
 
 if TYPE_CHECKING:
@@ -867,9 +867,27 @@ async def tool_shell_background_list(ctx: "Context") -> ToolResult:
             }
         )
 
+    widget = None
+    if jobs:
+        widget = WidgetRequest(
+            widget_type="data_table",
+            data={
+                "caption": f"shell_background_list: {len(jobs)} job(s)",
+                "columns": [
+                    {"key": "job_id", "label": "Job ID"},
+                    {"key": "status", "label": "Status"},
+                    {"key": "command", "label": "Command"},
+                    {"key": "pid", "label": "PID"},
+                    {"key": "elapsed_ms", "label": "Elapsed (ms)"},
+                ],
+                "rows": job_list,
+            },
+            target="inline",
+        )
     return ToolResult(
         text="\n".join(lines),
         data={"jobs": job_list},
+        widget=widget,
     )
 
 

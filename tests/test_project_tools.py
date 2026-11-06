@@ -280,8 +280,9 @@ class TestProjectManagement:
         await tool_project_create(ctx, "Second project", slug="second")
 
         result = await tool_project_list(ctx)
-        assert "first" in result
-        assert "second" in result
+        text = result.text if isinstance(result, ToolResult) else result
+        assert "first" in text
+        assert "second" in text
 
         result = await tool_project_status(ctx)
         assert "Second project" in result
