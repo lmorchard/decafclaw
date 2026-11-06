@@ -17,12 +17,13 @@ def config(tmp_path):
 
 def test_canvas_sidecar_path_basic(config):
     path = canvas._canvas_sidecar_path(config, "abc123")
-    expected = config.workspace_path / "conversations" / "abc123" / "canvas.json"
+    # #1112: a fresh conversation resolves under the session root.
+    expected = config.workspace_path / "sessions" / "abc123" / "canvas.json"
     assert path == expected.resolve()
 
 
 def test_canvas_sidecar_path_traversal_guard(config):
-    base = (config.workspace_path / "conversations").resolve()
+    base = (config.workspace_path / "sessions").resolve()
     bad = canvas._canvas_sidecar_path(config, "../etc/passwd")
     # ../etc/passwd → etcpasswd (slashes + dots stripped) → safe dir
     assert bad.is_relative_to(base)

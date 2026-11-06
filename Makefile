@@ -238,6 +238,14 @@ retrieval-report:
 migrate-sidecars-dry:
 	uv run python scripts/migrate_sidecars_to_dirs.py --dry-run
 
+# Migrate conversation dirs into the session-scoped layout (#1112)
+migrate-sessions:
+	uv run python scripts/migrate_sessions.py
+
+# Dry-run session migration (show what would change)
+migrate-sessions-dry:
+	uv run python scripts/migrate_sessions.py --dry-run
+
 # Migrate literal secrets in agent config.json to ${VAR} refs backed by the
 # external .env store (issue #1032). Idempotent — safe to re-run.
 migrate-secrets:

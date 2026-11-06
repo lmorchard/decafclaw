@@ -9,22 +9,22 @@ from decafclaw.archive import (
     read_compacted_history,
     write_compacted_history,
 )
-from decafclaw.conversation_paths import conversations_root
+from decafclaw.conversation_paths import sessions_root
 
 
 def test_archive_path(config):
-    # New (directory) layout for a fresh conversation:
-    # conversations/{id}/archive.jsonl
+    # New (session-scoped) layout for a fresh conversation:
+    # sessions/{id}/archive.jsonl (#1112)
     path = archive_path(config, "conv-123")
     assert "test-agent" in str(path)
-    assert str(path).endswith("conversations/conv-123/archive.jsonl")
+    assert str(path).endswith("sessions/conv-123/archive.jsonl")
 
 
 def test_archive_roundtrip_new_layout(config):
     conv_id = "dir-layout"
     append_message(config, conv_id, {"role": "user", "content": "hello"})
 
-    archive = conversations_root(config) / conv_id / "archive.jsonl"
+    archive = sessions_root(config) / conv_id / "archive.jsonl"
     assert archive.exists()
     msgs = read_archive(config, conv_id)
     assert len(msgs) == 1
@@ -40,7 +40,7 @@ def test_compacted_roundtrip_new_layout(config):
             {"role": "user", "content": "summary"},
         ],
     )
-    assert (conversations_root(config) / conv_id / "compacted.jsonl").exists()
+    assert (sessions_root(config) / conv_id / "compacted.jsonl").exists()
     restored = read_compacted_history(config, conv_id)
     assert restored is not None
     assert restored[0]["content"] == "summary"
@@ -56,7 +56,7 @@ def test_compacted_history_failure_preserves_previous(config, monkeypatch):
         conv_id,
         [{"role": "user", "content": "old"}],
     )
-    path = conversations_root(config) / conv_id / "compacted.jsonl"
+    path = sessions_root(config) / conv_id / "compacted.jsonl"
     assert read_compacted_history(config, conv_id)[0]["content"] == "old"
     before = set(path.parent.iterdir())
 

@@ -9,7 +9,7 @@ from decafclaw.attachments import (
     save_attachment,
     uploads_dir,
 )
-from decafclaw.conversation_paths import conversations_root
+from decafclaw.conversation_paths import sessions_root
 
 
 def test_save_attachment_writes_file(config):
@@ -94,13 +94,13 @@ def test_list_attachments_empty_for_missing_conv(config):
 
 def test_uploads_dir_traversal_stays_under_root(config):
     # conv_id from web routes is user-controlled; a traversal id must not
-    # escape the conversations root.
-    root = conversations_root(config)
+    # escape the sessions root (#1112: brand-new ids resolve there).
+    root = sessions_root(config)
     d = uploads_dir(config, "../../etc")
     assert d.resolve().is_relative_to(root)
 
 
 def test_uploads_dir_empty_id_resolves_to_invalid(config):
-    root = conversations_root(config)
+    root = sessions_root(config)
     d = uploads_dir(config, "")
     assert d == root / "_invalid" / "uploads"

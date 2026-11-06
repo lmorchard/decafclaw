@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
 from decafclaw.archive import append_message
+from decafclaw.conversation_paths import conversation_dir
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.web.auth import create_token
@@ -985,9 +986,9 @@ async def test_delete_conv_route(authed_client, http_config):
 
     # Add some archive content so we can verify file cleanup
     append_message(http_config, conv_id, {"role": "user", "content": "hello"})
-    conv_dir = http_config.workspace_path / "conversations"
-    (conv_dir / conv_id / "compacted.jsonl").write_text("{}\n")
-    (conv_dir / conv_id / "context.json").write_text("{}\n")
+    conv_dir = conversation_dir(http_config, conv_id, create=True)
+    (conv_dir / "compacted.jsonl").write_text("{}\n")
+    (conv_dir / "context.json").write_text("{}\n")
 
     resp = await authed_client.delete(f"/api/conversations/{conv_id}")
     assert resp.status_code == 200
@@ -1506,7 +1507,7 @@ async def test_lifecycle_preserves_then_deletes_storage(authed_client, http_conf
     response = await authed_client.post("/api/conversations", json={"folder": "Work/Nested"})
     conv_id = response.json()["conv_id"]
     append_message(http_config, conv_id, {"role": "user", "content": "kept"})
-    directory = http_config.workspace_path / "conversations" / conv_id
+    directory = conversation_dir(http_config, conv_id, create=True)
     (directory / "uploads").mkdir()
     (directory / "uploads" / "file.txt").write_text("attachment")
     (directory / "workflow.json").write_text("{}")
