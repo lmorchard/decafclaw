@@ -1,7 +1,7 @@
 """Per-conversation sticky-slot state — sidecar persistence + operations.
 
-The sticky slot is a web-only, single-widget surface pinned above the chat
-input, backed by a JSON sidecar at
+The sticky slot is a web-only, single-widget surface pinned above the
+conversation controls, backed by a JSON sidecar at
 ``workspace/conversations/{conv_id}/sticky.json``. State shape:
 
     {"schema_version": 1, "widget_type": "markdown_document" | null,

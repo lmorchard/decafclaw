@@ -1,6 +1,6 @@
 """Agent-facing sticky-slot tools.
 
-Pin a single display-only widget above the chat input, or clear it. The slot
+Pin a single display-only widget above the conversation controls, or clear it. The slot
 is single-occupancy — pinning replaces any previous widget. Workflow-driven
 producers (e.g. the checklist in #414) call decafclaw.sticky.set_sticky
 directly; these tools are the agent's explicit surface.
@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 
 async def tool_widget_pin_sticky(ctx: "Context", widget_type: str, data: dict) -> ToolResult:
-    """Pin a widget into the sticky slot above the chat input."""
+    """Pin a widget into the sticky slot above the conversation controls, which sit directly above the chat input."""
     log.info("[tool:widget_pin_sticky] widget=%s", widget_type)
     result = await sticky_mod.set_sticky(ctx.config, ctx.conv_id, widget_type, data, emit=emit_for_ctx(ctx))
     if not result.ok:
@@ -50,7 +50,8 @@ STICKY_TOOL_DEFINITIONS = [
             "name": "widget_pin_sticky",
             "description": (
                 "Pin a single display-only widget into the sticky slot directly "
-                "above the chat input, where it stays visible while a workflow is "
+                "above the conversation controls, which sit directly above the "
+                "chat input, where it stays visible while a workflow is "
                 "in progress (unlike inline widgets, which scroll away). The slot "
                 "holds ONE widget — pinning replaces any previous one. Use for "
                 "at-a-glance status the user should keep seeing. Clear it with "
@@ -79,7 +80,7 @@ STICKY_TOOL_DEFINITIONS = [
         "function": {
             "name": "widget_unpin_sticky",
             "description": (
-                "Clear the sticky slot above the chat input, hiding whatever "
+                "Clear the sticky slot above the conversation controls, hiding whatever "
                 "widget was pinned there. Use when the pinned status is no longer "
                 "relevant (e.g. the workflow finished)."
             ),
