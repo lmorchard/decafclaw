@@ -1019,6 +1019,26 @@ export class DefaultService {
      * @returns ModelCatalogResponse Successful Response
      * @throws ApiError
      */
+    public static wrapperApiModelsCatalogAuxApprovalPost(
+        requestBody: {
+            key?: (string | null);
+            enabled?: (boolean | null);
+            model?: (string | null);
+        },
+    ): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/models/catalog/aux_approval',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
     public static wrapperApiModelsCatalogProviderPost(
         requestBody: {
             provider: string;

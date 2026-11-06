@@ -90,6 +90,12 @@ class ModelCatalog:
     version: int = 1
     providers: dict[str, CatalogProvider] = field(default_factory=dict)
     default_model: str = ""
+    # Shell auto-approval judge pointer (#1213). Empty means "ride on the
+    # active conversation model" (today's behavior). Same shape and
+    # resolution rule as the default-model pointer and the #1212 reflection
+    # pointers: sidecar pointer outranks the config seed, which becomes the
+    # seed only when the pointer is empty.
+    aux_approval_model: str = ""
 
 
 def catalog_path(config: "Config") -> Any:
@@ -137,10 +143,12 @@ def catalog_from_dict(raw: Any) -> ModelCatalog:
             if isinstance(name, str) and name:
                 providers[name] = _coerce_provider(entry)
     pointer = raw.get("default_model")
+    aux_approval = raw.get("aux_approval_model")
     return ModelCatalog(
         version=raw.get("version", 1) if isinstance(raw.get("version", 1), int) else 1,
         providers=providers,
         default_model=pointer if isinstance(pointer, str) else "",
+        aux_approval_model=aux_approval if isinstance(aux_approval, str) else "",
     )
 
 
@@ -396,6 +404,32 @@ def effective_default_model(config: "Config") -> str:
     return config.default_model
 
 
+def effective_aux_approval_model(config: "Config", active_model: str = "") -> str:
+    """Shell auto-approval judge model, resolution order (#1213):
+
+    1. The sidecar's ``aux_approval_model`` pointer, when it names a
+       selectable model (enabled discovered or hand-configured).
+    2. ``config.json``'s ``shell.aux_approval_model`` (the seed; may itself
+       be a ``model_configs`` key or a legacy raw name).
+    3. ``active_model`` — the active conversation model, which is today's
+       behavior when nothing is set.
+
+    An empty pointer means "ride on the active conversation model"; an empty
+    seed likewise falls through. A pointer at a disabled or vanished model
+    falls back cleanly to the seed, then to the active conversation model.
+    """
+    pointer = load_catalog(config).aux_approval_model
+    if pointer and pointer in config.model_configs:
+        return pointer
+    seed = config.shell.aux_approval_model
+    if seed and seed in config.model_configs:
+        return seed
+    if seed:
+        # Legacy raw name — the same shape the judge path accepts.
+        return seed
+    return active_model or effective_default_model(config)
+
+
 # ---------------------------------------------------------------------------
 # Mutations (UI write path)
 # ---------------------------------------------------------------------------
@@ -439,6 +473,22 @@ async def set_default_model(config: "Config", name: str, event_bus: Any = None) 
     async with _catalog_lock:
         catalog = load_catalog(config)
         catalog.default_model = name
+        _save_and_apply(config, catalog)
+    await _publish_models_changed(event_bus)
+    return catalog
+
+
+async def set_aux_approval_model(config: "Config", name: str, event_bus: Any = None) -> ModelCatalog:
+    """Set (name non-empty) or clear (name empty) the shell auto-approval judge pointer (#1213).
+
+    Empty means "ride on the active conversation model" — resolution then
+    falls through to ``config.shell.aux_approval_model`` and on to the active
+    conversation model. The sidecar is loaded inside the lock so a concurrent
+    refresh or toggle cannot silently revert the change.
+    """
+    async with _catalog_lock:
+        catalog = load_catalog(config)
+        catalog.aux_approval_model = name
         _save_and_apply(config, catalog)
     await _publish_models_changed(event_bus)
     return catalog
@@ -493,9 +543,15 @@ def catalog_payload(config: "Config") -> dict:
             "error": pentry.error,
             "models": models,
         }
+    aux_approval_model = effective_aux_approval_model(config, "")
     return {
         "default_model": effective_default_model(config),
         "default_pointer": catalog.default_model,
         "picker_models": picker_models(config),
         "providers": providers,
+        # Shell auto-approval judge pointer (#1213): raw sidecar pointer plus
+        # the effective model it resolves to (empty = ride on the active
+        # conversation model).
+        "aux_approval_model": aux_approval_model,
+        "aux_approval_pointer": catalog.aux_approval_model,
     }

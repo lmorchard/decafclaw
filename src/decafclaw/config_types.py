@@ -192,6 +192,10 @@ class HttpConfig:
 @dataclass
 class ShellConfig:
     aux_approval_enabled: bool = False
+    # Dedicated model for the shell auto-approval judge (#1213). Empty = ride on
+    # the active conversation model (today's behavior). When set, names a
+    # model_configs key or a discovered "{provider}/{model_id}".
+    aux_approval_model: str = ""
     aux_approval_guidance: str = ""
     aux_approval_presets: dict[str, str] = field(default_factory=dict)
     active_aux_approval_presets: list[str] = field(default_factory=list)
