@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from ..conversation_paths import iter_conversation_archives
 from ..llm.history import without_provider_data
+from ..session_messaging import is_child_conv_id, parent_conv_id_of
 
 log = logging.getLogger(__name__)
 
@@ -74,26 +75,10 @@ def is_web_conv_for_user(conv_id: str, username: str) -> bool:
     return bool(sep and suffix) and user_part == username
 
 
-_CHILD_MARKER = "--child-"
-
-
-def parent_conv_id_of(conv_id: str) -> str | None:
-    """Return the parent conversation id when ``conv_id`` is a delegated child.
-
-    Child conversation ids follow the ``{parent}--child-{hex}`` session
-    convention (#1112 session layout / #1115 sidebar hierarchy). A conv id
-    without the marker is a standalone conversation, so it is its own session
-    root and this returns ``None``.
-    """
-    idx = conv_id.find(_CHILD_MARKER)
-    if idx <= 0:
-        return None
-    return conv_id[:idx]
-
-
-def is_child_conv_id(conv_id: str, parent_conv_id: str) -> bool:
-    """True when ``conv_id`` is a delegated subagent of ``parent_conv_id``."""
-    return bool(parent_conv_id) and conv_id.startswith(f"{parent_conv_id}{_CHILD_MARKER}")
+# Child-id helpers (parent_conv_id_of / is_child_conv_id) live in
+# session_messaging — the single source of truth for the
+# {parent}--child-{hex} convention (#1112/#1114/#1115); imported above and
+# re-exported here for the web layer's callers.
 
 
 def discover_child_convs(config, index: "ConversationIndex", username: str) -> list["ConversationMeta"]:
