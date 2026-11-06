@@ -16,6 +16,39 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+# HTTP content-type prefixes that carry code or markup, mapped to the
+# code_block widget's language label. Prose content types (text/plain and
+# anything unmapped) stay widget-less so the LLM-facing text contract is the
+# only surface for human-readable prose.
+_CODE_CONTENT_TYPE_LANGUAGES: tuple[tuple[str, str], ...] = (
+    ("text/html", "html"),
+    ("application/xhtml+xml", "html"),
+    ("text/xml", "xml"),
+    ("application/xml", "xml"),
+    ("text/javascript", "javascript"),
+    ("application/javascript", "javascript"),
+    ("application/x-javascript", "javascript"),
+    ("text/css", "css"),
+    ("application/json", "json"),
+    ("text/json", "json"),
+)
+
+
+def _code_language_for_content_type(content_type: str) -> str | None:
+    """Return the code_block language label for a content type, or None.
+
+    Accepts the full header value (``type/subtype; charset=...``) and matches
+    on the media type alone so parameters do not defeat the lookup.
+    """
+    normalized = (content_type or "").split(";", 1)[0].strip().lower()
+    if not normalized:
+        return None
+    for prefix, language in _CODE_CONTENT_TYPE_LANGUAGES:
+        if normalized.startswith(prefix):
+            return language
+    return None
+
+
 async def tool_web_fetch(ctx: "Context", url: str) -> str | ToolResult:
     """Fetch a URL and return the raw response body as text."""
     log.info(f"[tool:web_fetch] {url}")
@@ -26,7 +59,15 @@ async def tool_web_fetch(ctx: "Context", url: str) -> str | ToolResult:
         text = resp.text
         if len(text) > 50000:
             text = text[:50000] + "\n\n[truncated at 50000 chars]"
-        return text
+        widget = None
+        language = _code_language_for_content_type(resp.headers.get("content-type", ""))
+        if language and text.strip():
+            widget = WidgetRequest(
+                widget_type="code_block",
+                data={"code": text, "language": language, "filename": url},
+                target="inline",
+            )
+        return ToolResult(text=text, widget=widget)
     except httpx.HTTPError as e:
         return ToolResult(text=f"[error: {e}]")
 
@@ -117,7 +158,15 @@ def tool_debug_context(ctx: "Context") -> str | ToolResult:
             }
         )
 
-    return ToolResult(text=summary_text, media=media)
+    # Surface the structured context payload through the json_view widget so
+    # the web UI can render a collapsible tree instead of a flat text summary.
+    widget = WidgetRequest(
+        widget_type="json_view",
+        data={"value": full_context, "expand_depth": 1},
+        target="inline",
+    )
+
+    return ToolResult(text=summary_text, media=media, widget=widget)
 
 
 def tool_current_time(ctx: "Context") -> str | ToolResult:
