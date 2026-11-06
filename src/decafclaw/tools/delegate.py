@@ -143,7 +143,7 @@ async def run_child_turn(
     return_schema: dict | None = None,
     event_context_id_override: str | None = None,
     child_conv_id_override: str | None = None,
-    async_run: bool = True,
+    await_child: bool = True,
 ) -> tuple[str, dict | None]:
     """Run a child agent turn via ConversationManager, preserving the
     parent's tools, skills, and event routing.
@@ -154,6 +154,7 @@ async def run_child_turn(
         allowed_tools: Optional explicit allowlist for the child. When
             provided, the child sees ONLY these tools (still minus the
             categorical excludes: ``delegate_task``,
+            ``subagent_spawn``/``subagent_list``/``subagent_cancel``,
             ``activate_skill``, ``refresh_skills``, ``tool_search``,
             and the vault-write set). Use this from workflows to
             constrain a child agent narrowly. ``None`` (default) means
@@ -188,10 +189,10 @@ async def run_child_turn(
         child_conv_id_override: When non-None, use this child conv id
             instead of generating ``{parent}--child-{hex}`` (#1113, used
             by ``subagent_spawn`` so the parent can learn the ``child_conv_id``).
-        async_run: When True (default), await the spawned child turn and
+        await_child: When True (default), await the spawned child turn and
             return its result. When False, spawn only and return a spawn
-            ack without running the turn (#1113, used by ``subagent_spawn``
-            with ``async_run=False``).
+            ack while the turn still runs via the manager loop (#1113,
+            used by ``subagent_spawn`` fire-and-forget spawns).
 
     Returns ``(text, data)``:
         * On success without ``return_schema``: ``(child_text, None)``.
@@ -258,7 +259,19 @@ async def run_child_turn(
         # If parent has restricted allowed_tools, respect that restriction.
         # If an explicit `allowed_tools` was passed (workflow callers),
         # that narrows further.
-        excluded = {"delegate_task", "activate_skill", "refresh_skills", "tool_search"}
+        # #1113: subagent_spawn/subagent_list/subagent_cancel are excluded
+        # alongside delegate_task — a child spawning grandchildren would
+        # bypass the delegation recursion boundary, and subagent_cancel
+        # must never target a conversation the child doesn't own.
+        excluded = {
+            "delegate_task",
+            "subagent_spawn",
+            "subagent_list",
+            "subagent_cancel",
+            "activate_skill",
+            "refresh_skills",
+            "tool_search",
+        }
         # Vault and admin policy (#396, #955): writes are categorically
         # blocked for children; reads require explicit opt-in for vault.
         excluded |= _VAULT_WRITE_TOOLS | _ADMIN_WRITE_TOOLS
@@ -321,9 +334,10 @@ async def run_child_turn(
             context_setup=setup,
             user_id=parent_ctx.user_id,
         )
-        if not async_run:
-            # #1113: spawn-only mode (subagent_spawn with async_run=False)
-            # — return the spawn ack without awaiting the child turn.
+        if not await_child:
+            # #1113: spawn-only mode (subagent_spawn fire-and-forget) —
+            # return the spawn ack without awaiting the child turn. The
+            # enqueued turn still runs via the manager loop.
             return (f"[subagent spawned: {child_conv_id}]", None)
         result = await asyncio.wait_for(future, timeout=timeout)
     except asyncio.TimeoutError:
@@ -646,8 +660,11 @@ DELEGATE_TOOL_DEFINITIONS = [
                 "agents (forks) that run as independent agent turns with access "
                 "to the same tools and skills. Use this whenever the user asks "
                 "you to spin up, fork off, or hand off a task to a sub-agent / "
-                "child agent, or when a task has independent parts that benefit "
-                "from running in isolated contexts.\n\n"
+                "child agent and you need the child's result back in this turn, "
+                "or when a task has independent parts that benefit from running "
+                "in isolated contexts. For a background subagent run you can "
+                "poll or cancel (an id, subagent_list, subagent_cancel), use "
+                "subagent_spawn instead.\n\n"
                 "Result shapes on ToolResult.data:\n"
                 "- Single task: child's parsed return_schema object arrives on ToolResult.data.\n"
                 "- Task list: structured summary arrives on ToolResult.data with shape "
