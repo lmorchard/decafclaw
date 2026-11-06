@@ -182,7 +182,7 @@ async def test_check_shell_approval_passes_guidance_to_aux_llm(tmp_path: Path, m
             "content": '```json\n{"auto_approve": true, "reason": "pytest is approved under developer preset", "risk": "low"}\n```'
         }
 
-    ctx.aux_llm = MagicMock(return_value=mock_llm_call)
+    ctx.aux_approval_llm = MagicMock(return_value=mock_llm_call)
     ctx.publish = AsyncMock()
 
     result = await check_shell_approval(ctx, "pytest tests/test_foo.py")
@@ -581,7 +581,7 @@ async def test_check_shell_approval_feature_branch_push_with_developer_preset(tm
     mock_llm = AsyncMock(
         return_value={"content": '{"auto_approve": true, "risk": "low", "reason": "pushing to feature branch"}'}
     )
-    ctx.aux_llm = MagicMock(return_value=mock_llm)
+    ctx.aux_approval_llm = MagicMock(return_value=mock_llm)
 
     res = await check_shell_approval(ctx, "git push -u origin feat/my-new-feature")
     assert res.get("approved") is True
@@ -630,7 +630,7 @@ async def test_exception_rule_added_on_approval_surfaces_in_subsequent_aux_evalu
             )
         }
     )
-    ctx.aux_llm = MagicMock(return_value=mock_llm_decline)
+    ctx.aux_approval_llm = MagicMock(return_value=mock_llm_decline)
 
     with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
         # User approves and remembers the rule (possibly edited)
@@ -658,7 +658,7 @@ async def test_exception_rule_added_on_approval_surfaces_in_subsequent_aux_evalu
             )
         }
 
-    ctx.aux_llm = MagicMock(return_value=mock_llm_subsequent)
+    ctx.aux_approval_llm = MagicMock(return_value=mock_llm_subsequent)
     res2 = await check_shell_approval(ctx, "gh pr create --title 'Another PR'")
     assert res2.get("approved") is True
     assert len(captured_messages) == 1

@@ -606,7 +606,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
             had_guidance = bool(resolve_aux_approval_guidance(ctx))
             prompt = build_aux_approval_prompt(ctx, command)
             messages = [{"role": "user", "content": prompt}]
-            response = await ctx.aux_llm()(messages)
+            response = await ctx.aux_approval_llm()(messages)
             raw_text = response.get("content", "").strip()
 
             import re as re_mod

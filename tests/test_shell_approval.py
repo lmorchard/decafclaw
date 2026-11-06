@@ -191,7 +191,7 @@ async def test_allowlist_bypasses_aux_llm(ctx):
     _save_allow_pattern(ctx.config, "git status")
 
     mock_aux_llm = MagicMock(return_value=AsyncMock())
-    ctx.aux_llm = mock_aux_llm
+    ctx.aux_approval_llm = mock_aux_llm
 
     with patch(
         "decafclaw.tools.shell_tools._execute_command",
@@ -210,7 +210,7 @@ async def test_aux_llm_auto_approve(ctx):
 
     mock_call = AsyncMock(return_value={"content": '{"auto_approve": true, "reason": "Looks safe", "risk": "low"}'})
     mock_aux_llm = MagicMock(return_value=mock_call)
-    ctx.aux_llm = mock_aux_llm
+    ctx.aux_approval_llm = mock_aux_llm
 
     with patch(
         "decafclaw.tools.shell_tools._execute_command",
@@ -238,7 +238,7 @@ async def test_aux_llm_deny_or_error_falls_through(ctx):
     # Case 1: Aux LLM denies
     mock_call = AsyncMock(return_value={"content": '{"auto_approve": false, "reason": "Too risky", "risk": "high"}'})
     mock_aux_llm = MagicMock(return_value=mock_call)
-    ctx.aux_llm = mock_aux_llm
+    ctx.aux_approval_llm = mock_aux_llm
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -254,7 +254,7 @@ async def test_aux_llm_deny_or_error_falls_through(ctx):
     # Case 2: Aux LLM errors out (malformed JSON)
     mock_call = AsyncMock(return_value={"content": "INVALID JSON"})
     mock_aux_llm = MagicMock(return_value=mock_call)
-    ctx.aux_llm = mock_aux_llm
+    ctx.aux_approval_llm = mock_aux_llm
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -487,7 +487,7 @@ async def test_aux_llm_declined_passes_suggested_rule_and_applies_on_approval(ct
             )
         }
     )
-    ctx.aux_llm = MagicMock(return_value=mock_call)
+    ctx.aux_approval_llm = MagicMock(return_value=mock_call)
 
     with (
         patch(
@@ -528,7 +528,7 @@ async def test_add_rule_ignored_when_denied_or_no_suggested_rule(ctx):
             )
         }
     )
-    ctx.aux_llm = MagicMock(return_value=mock_call)
+    ctx.aux_approval_llm = MagicMock(return_value=mock_call)
 
     with (
         patch(
@@ -555,7 +555,7 @@ async def test_add_rule_ignored_when_denied_or_no_suggested_rule(ctx):
             )
         }
     )
-    ctx.aux_llm = MagicMock(return_value=mock_call2)
+    ctx.aux_approval_llm = MagicMock(return_value=mock_call2)
 
     with (
         patch(
@@ -608,7 +608,7 @@ async def test_aux_decline_confirmation_message_includes_risk_and_reason(ctx):
             )
         }
     )
-    ctx.aux_llm = MagicMock(return_value=mock_call)
+    ctx.aux_approval_llm = MagicMock(return_value=mock_call)
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -665,7 +665,7 @@ async def test_caller_message_takes_precedence(ctx):
     mock_call = AsyncMock(
         return_value={"content": json.dumps({"auto_approve": False, "reason": "Too risky", "risk": "high"})}
     )
-    ctx.aux_llm = MagicMock(return_value=mock_call)
+    ctx.aux_approval_llm = MagicMock(return_value=mock_call)
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",

@@ -129,6 +129,44 @@ resolves through the normal single-`ModelConfig` path.
 Disabling the model the pointer names is allowed — resolution falls back to
 the next step cleanly, on the next turn, without a restart.
 
+### Shell auto-approval model (#1213)
+
+The shell auto-approval LLM — the small structured-classification judge that
+screens commands when `shell.aux_approval_enabled` is on — rides on the
+legacy aux chain by default (`auxiliary_model`, else the active conversation
+model, else the global default). A dedicated judge is optional so an
+expensive or fast conversation model does not pay judgment prices it does
+not need.
+
+- **Config**: `shell.aux_approval_model` (`""` = ride on the legacy aux
+  chain: `auxiliary_model` → conversation model → default; when set, names a
+  `model_configs` key — discovered models materialize as keys).
+- **UI**: **⚙ Agent Config → Models → Auto-approval model** lists every
+  enabled catalog model plus an explicit **"use conversation model"** option
+  that clears the pointer and re-runs the chain. Writes land in the
+  `data/{agent_id}/model_catalog.json` sidecar under `aux_approval_model`.
+
+Resolution order for the auto-approval judge:
+
+1. The sidecar's `aux_approval_model` pointer, when it names a selectable model.
+2. `config.json`'s `shell.aux_approval_model` (the seed; a `model_configs`
+   key — a hand-written raw name has no endpoint to route through, so it is
+   treated as unset with a warning).
+3. `config.json`'s `auxiliary_model` — the legacy aux chain the judge rode
+   before dedicated pointers existed.
+4. The active conversation model, then the global default — today's
+   behavior when nothing is set.
+
+An empty pointer or seed inherits step 3 onward; a pointer at a disabled or
+vanished model falls back cleanly to the seed, then down the legacy chain.
+
+The judgment is a forced-tool structured-output call, so the picker warns
+when the selected model's discovery metadata reports no tool support
+(`tools: false`; an unknown capability stays silent).
+
+The agent cannot change its own auto-approval model — same user-only rule as
+the default model.
+
 ### Reflection and verifier model pickers (#1212)
 
 The **⚙ Agent Config → Models** tab also renders two judge pickers on top of
