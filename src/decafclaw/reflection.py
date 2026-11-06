@@ -315,17 +315,20 @@ async def evaluate_response(
         # load-bearing, not defensive: an unknown name handed to the provider
         # layer only logs a warning and falls through to the default provider,
         # which would silently look like the judge honoured the setting (#591).
-        verifier = config.reflection.verifier_model
-        rc_model = config.reflection.model
-        if verifier and verifier in config.model_configs:
-            response = await call_llm(config, messages, model_name=verifier)
+        from .model_catalog import effective_default_model, effective_reflection_model, effective_verifier_model
+
+        # #1212: reflection-judge / verifier pointers from the admin sidecar,
+        # empty meaning "inherit" (fall through to the config-level fields).
+        judge_name = effective_reflection_model(config)
+        verifier_name = effective_verifier_model(config)
+        rc_model = judge_name
+        if verifier_name and verifier_name in config.model_configs:
+            response = await call_llm(config, messages, model_name=verifier_name)
         elif rc_model and rc_model in config.model_configs:
             response = await call_llm(config, messages, model_name=rc_model)
         elif not rc_model:
             # Effective default (catalog pointer → default_model) when no
             # reflection-specific model is set.
-            from .model_catalog import effective_default_model
-
             fallback = effective_default_model(config)
             if fallback:
                 response = await call_llm(config, messages, model_name=fallback)

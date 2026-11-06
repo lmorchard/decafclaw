@@ -622,3 +622,89 @@ def test_disable_default_model_falls_back(config):
     # ...then disabled → pointer invalid → config.json default_model.
     asyncio.run(set_model_enabled(config, "local/on", False))
     assert effective_default_model(config) == "hand-model"
+
+
+# ---------------------------------------------------------------------------
+# Reflection / verifier model pointers (#1212)
+# ---------------------------------------------------------------------------
+
+
+def test_set_reflection_model_writes_pointer(config):
+    """Sidecar reflection pointer write/clear; empty means inherit."""
+    import asyncio
+
+    from decafclaw.model_catalog import set_reflection_model
+
+    catalog = asyncio.run(set_reflection_model(config, "local/on"))
+    assert catalog.reflection_model == "local/on"
+    assert load_catalog(config).reflection_model == "local/on"
+    assert asyncio.run(set_reflection_model(config, "")).reflection_model == ""
+
+
+def test_set_verifier_model_writes_pointer(config):
+    """Sidecar verifier pointer write/clear; empty means inherit."""
+    import asyncio
+
+    from decafclaw.model_catalog import set_verifier_model
+
+    catalog = asyncio.run(set_verifier_model(config, "local/on"))
+    assert catalog.verifier_model == "local/on"
+    assert load_catalog(config).verifier_model == "local/on"
+
+
+def test_reflection_payload_exposes_pointers(config):
+    """Catalog payload exposes raw pointers + effective reflection/verifier names."""
+    from decafclaw.model_catalog import catalog_payload
+
+    payload = catalog_payload(config)
+    assert payload["reflection_pointer"] == ""
+    assert payload["verifier_pointer"] == ""
+    assert payload["reflection_model"] == ""
+    assert payload["verifier_model"] == ""
+
+
+def test_reflection_resolution_pointer_overrides_config_seed(config):
+    """#1212: sidecar reflection pointer outranks the config-level seed."""
+    _config_with_models(config)
+    config.reflection.model = "hand-model"
+
+    import asyncio
+
+    from decafclaw.model_catalog import effective_reflection_model, effective_verifier_model, set_reflection_model
+
+    # No pointer → inherit the config seed.
+    assert effective_reflection_model(config) == "hand-model"
+    assert effective_verifier_model(config) == ""
+
+    asyncio.run(set_reflection_model(config, "local/on"))
+    assert effective_reflection_model(config) == "local/on"
+
+    # Clearing the pointer → inherit the seed again.
+    asyncio.run(set_reflection_model(config, ""))
+    assert effective_reflection_model(config) == "hand-model"
+
+
+def test_reflection_resolution_pointer_disabled_falls_back(config):
+    """#1212: disabling a referenced reflection model falls back cleanly."""
+    _config_with_models(config)
+    config.reflection.model = "hand-model"
+
+    import asyncio
+
+    from decafclaw.model_catalog import effective_reflection_model, set_model_enabled, set_reflection_model
+
+    asyncio.run(set_reflection_model(config, "local/on"))
+    assert effective_reflection_model(config) == "local/on"
+
+    # Disable the referenced model → pointer invalid → config seed takes over.
+    asyncio.run(set_model_enabled(config, "local/on", False))
+    assert effective_reflection_model(config) == "hand-model"
+
+
+def test_verifier_resolution_inherit_by_default(config):
+    """#1212: with no pointers and no seed, the verifier resolves empty."""
+    _config_with_models(config)
+
+    from decafclaw.model_catalog import effective_verifier_model
+
+    assert effective_verifier_model(config) == ""

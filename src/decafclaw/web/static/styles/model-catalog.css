@@ -172,3 +172,25 @@ button.model-catalog-bulk-btn {
   border: 1px solid var(--pico-primary);
   color: var(--pico-primary);
 }
+
+/* Reflection/verifier judge pickers (#1212) — same container idiom as the
+   default-model row, one bordered block per judge. */
+.model-catalog-judge {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.35rem;
+}
+
+/* #1212: explicitly selecting a judge equal to the active conversation
+   model means the author grades its own homework — allowed, warned (#591). */
+.model-catalog-judge-warning {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-left: 3px solid var(--pico-del-color, #b02a37);
+  border-radius: 0.35rem;
+  color: var(--pico-del-color, #b02a37);
+  font-size: 0.8rem;
+}
