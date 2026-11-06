@@ -13,6 +13,7 @@
  */
 
 import { LitElement, html, nothing } from 'lit';
+import { repeat } from 'lit/directives/repeat.js';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 
 export class ModelCatalog extends LitElement {
@@ -184,7 +185,9 @@ export class ModelCatalog extends LitElement {
 
         ${catalog ? this.#renderDefaultPicker(catalog) : nothing}
         ${catalog ? this.#renderFilter() : nothing}
-        ${catalog ? sections.map(s => this.#renderProvider(s.name, s.provider, s.models, filtering)) : nothing}
+        ${catalog
+          ? repeat(sections, s => s.name, s => this.#renderProvider(s.name, s.provider, s.models, filtering))
+          : nothing}
         ${catalog && filtering && providers.length > 0 && totalMatches === 0
           ? html`<p class="model-catalog-no-match">No models match '${this._filter.trim()}'.</p>`
           : nothing}
@@ -229,7 +232,7 @@ export class ModelCatalog extends LitElement {
           <option value="" ?selected=${catalog.default_pointer === ''}>
             (config.json default)
           </option>
-          ${catalog.picker_models.map(m => html`
+          ${repeat(catalog.picker_models, m => m, m => html`
             <option value="${m}" ?selected=${m === catalog.default_pointer}>${m}</option>
           `)}
         </select>
@@ -287,7 +290,7 @@ export class ModelCatalog extends LitElement {
           ? html`<p class="model-catalog-provider-empty">No models discovered.</p>`
           : html`
               <ul class="model-catalog-model-list">
-                ${shown.map(m => this.#renderModel(name, m))}
+                ${repeat(shown, m => m.key, m => this.#renderModel(name, m))}
               </ul>
             `}
       </details>

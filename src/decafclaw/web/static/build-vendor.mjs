@@ -32,6 +32,12 @@ const bundles = [
     external: ['lit'],
   },
   {
+    name: 'lit/directives/repeat',
+    entry: 'lit/directives/repeat.js',
+    outfile: join(outdir, 'lit-repeat.js'),
+    external: ['lit'],
+  },
+  {
     name: 'marked',
     entry: 'marked',
     outfile: join(outdir, 'marked.js'),

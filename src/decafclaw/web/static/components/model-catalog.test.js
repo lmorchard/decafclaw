@@ -38,7 +38,17 @@ async function mountCatalog(initialCatalog = CATALOG) {
     }
     if (u.pathname === '/api/models/catalog/model') {
       const body = JSON.parse(options.body);
-      return jsonResponse({ ...initialCatalog, toggled: body });
+      // Server truth: the response reflects the toggle.
+      const providers = Object.fromEntries(
+        Object.entries(initialCatalog.providers).map(([name, p]) => [
+          name,
+          {
+            ...p,
+            models: p.models.map(m => (m.key === body.key ? { ...m, enabled: body.enabled } : m)),
+          },
+        ])
+      );
+      return jsonResponse({ ...initialCatalog, providers });
     }
     if (u.pathname === '/api/models/catalog/provider') {
       const body = JSON.parse(options.body);
@@ -293,6 +303,39 @@ describe('model-catalog component', () => {
     await el.updateComplete;
     expect(input.value).toBe('');
     expect(el.querySelectorAll('.model-catalog-model').length).toBe(2);
+  });
+
+  it('toggle then filter keeps the checkbox in sync with the catalog', async () => {
+    // Both models start enabled; unchecking the first row makes its
+    // user-touched checkbox disagree with the (now false) attribute binding.
+    const bothEnabled = {
+      ...CATALOG,
+      providers: {
+        local: {
+          ...CATALOG.providers.local,
+          models: CATALOG.providers.local.models.map(m => ({ ...m, enabled: true })),
+        },
+      },
+    };
+    const { el } = await mountCatalog(bothEnabled);
+
+    const llama = el.querySelector('[data-model-key="local/llama3.2"]');
+    llama.querySelector('input[type="checkbox"]').click();
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 10));
+    expect(el.querySelector('[data-model-key="local/llama3.2"] input').checked).toBe(false);
+
+    // Filter down to only qwen2.5: its row must not inherit the touched
+    // checkbox from llama3.2's row via positional reuse.
+    const input = el.querySelector('.model-catalog-filter-input');
+    input.value = 'qwen';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    const qwen = el.querySelector('[data-model-key="local/qwen2.5"]');
+    expect(qwen).toBeTruthy();
+    // The catalog says qwen2.5 is enabled, so the checkbox must read enabled.
+    expect(qwen.querySelector('input[type="checkbox"]').checked).toBe(true);
   });
 
   it('a catalog refresh keeps the typed filter and filtered rows', async () => {
