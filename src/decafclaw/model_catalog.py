@@ -96,6 +96,13 @@ class ModelCatalog:
     # pointers: sidecar pointer outranks the config seed, which becomes the
     # seed only when the pointer is empty.
     aux_approval_model: str = ""
+    # Reflection-judge and verifier model pointers (#1212). Same shape and
+    # resolution rule as ``default_model``: empty means "inherit" and the
+    # seed (``config.reflection.model`` / ``config.reflection.verifier_model``)
+    # takes over. Never written from ``config.json`` — the sidecar is the
+    # admin/UI-owned store.
+    reflection_model: str = ""
+    verifier_model: str = ""
 
 
 def catalog_path(config: "Config") -> Any:
@@ -144,11 +151,15 @@ def catalog_from_dict(raw: Any) -> ModelCatalog:
                 providers[name] = _coerce_provider(entry)
     pointer = raw.get("default_model")
     aux_approval = raw.get("aux_approval_model")
+    reflection = raw.get("reflection_model")
+    verifier = raw.get("verifier_model")
     return ModelCatalog(
         version=raw.get("version", 1) if isinstance(raw.get("version", 1), int) else 1,
         providers=providers,
         default_model=pointer if isinstance(pointer, str) else "",
         aux_approval_model=aux_approval if isinstance(aux_approval, str) else "",
+        reflection_model=reflection if isinstance(reflection, str) else "",
+        verifier_model=verifier if isinstance(verifier, str) else "",
     )
 
 
@@ -430,6 +441,43 @@ def effective_aux_approval_model(config: "Config", active_model: str = "") -> st
     return active_model or effective_default_model(config)
 
 
+def effective_reflection_model(config: "Config") -> str:
+    """Reflection-judge model, resolution order (#1212):
+
+    1. The sidecar's ``reflection_model`` pointer, when it names a
+       selectable model (enabled discovered or hand-configured).
+    2. ``config.json``'s ``reflection.model`` (the seed — kept pristine,
+       the sidecar never overwrites it).
+    3. Empty string; callers fall through to the legacy default chain
+       via ``ReflectionConfig.resolved``.
+
+    A pointer at a disabled or vanished model falls back cleanly to the
+    seed, and an empty pointer inherits the seed — which itself may name
+    a ``model_configs`` key or a legacy raw name.
+    """
+    pointer = load_catalog(config).reflection_model
+    if pointer and pointer in config.model_configs:
+        return pointer
+    return config.reflection.model
+
+
+def effective_verifier_model(config: "Config") -> str:
+    """Verifier (second-opinion judge) model, resolution order (#1212):
+
+    1. The sidecar's ``verifier_model`` pointer, when it names a
+       selectable model (enabled discovered or hand-configured).
+    2. ``config.json``'s ``reflection.verifier_model`` (the seed).
+    3. Empty string; no verifier runs.
+
+    A pointer at a disabled or vanished model falls back cleanly to the
+    seed.
+    """
+    pointer = load_catalog(config).verifier_model
+    if pointer and pointer in config.model_configs:
+        return pointer
+    return config.reflection.verifier_model
+
+
 # ---------------------------------------------------------------------------
 # Mutations (UI write path)
 # ---------------------------------------------------------------------------
@@ -489,6 +537,38 @@ async def set_aux_approval_model(config: "Config", name: str, event_bus: Any = N
     async with _catalog_lock:
         catalog = load_catalog(config)
         catalog.aux_approval_model = name
+        _save_and_apply(config, catalog)
+    await _publish_models_changed(event_bus)
+    return catalog
+
+
+async def set_reflection_model(config: "Config", name: str, event_bus: Any = None) -> ModelCatalog:
+    """Set (name non-empty) or clear (name empty) the reflection-judge pointer (#1212).
+
+    Empty means "inherit": resolution then falls through to
+    ``config.reflection.model`` (the seed) and on to the legacy default
+    chain. The sidecar is loaded inside the lock so a concurrent refresh or
+    toggle cannot silently revert the change.
+    """
+    async with _catalog_lock:
+        catalog = load_catalog(config)
+        catalog.reflection_model = name
+        _save_and_apply(config, catalog)
+    await _publish_models_changed(event_bus)
+    return catalog
+
+
+async def set_verifier_model(config: "Config", name: str, event_bus: Any = None) -> ModelCatalog:
+    """Set (name non-empty) or clear (name empty) the verifier-model pointer (#1212).
+
+    Empty means "inherit": resolution then falls through to
+    ``config.reflection.verifier_model``. The sidecar is loaded inside the
+    lock so a concurrent refresh or toggle cannot silently revert the
+    change.
+    """
+    async with _catalog_lock:
+        catalog = load_catalog(config)
+        catalog.verifier_model = name
         _save_and_apply(config, catalog)
     await _publish_models_changed(event_bus)
     return catalog
@@ -554,4 +634,12 @@ def catalog_payload(config: "Config") -> dict:
         # conversation model).
         "aux_approval_model": aux_approval_model,
         "aux_approval_pointer": catalog.aux_approval_model,
+        # Reflection-judge / verifier pointers (#1212): the raw sidecar
+        # pointers plus the effective judge/verifier names they resolve to.
+        # An empty pointer resolves to the seed (config-level reflection
+        # fields), which in turn inherits the legacy default chain.
+        "reflection_model": effective_reflection_model(config),
+        "reflection_pointer": catalog.reflection_model,
+        "verifier_model": effective_verifier_model(config),
+        "verifier_pointer": catalog.verifier_model,
     }

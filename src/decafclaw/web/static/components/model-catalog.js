@@ -23,6 +23,8 @@ export class ModelCatalog extends LitElement {
     _busy: { state: true },
     _error: { state: true },
     _filter: { state: true },
+    store: { type: Object, attribute: false },
+    _activeModel: { type: String, state: true },
   };
   createRenderRoot() { return this; }
 
@@ -35,11 +37,44 @@ export class ModelCatalog extends LitElement {
     this._error = '';
     /** Client-side search text for the model list; only the input mutates it. */
     this._filter = '';
+    this.store = null;
+    this._activeModel = '';
   }
 
   connectedCallback() {
     super.connectedCallback();
+    if (this.store) {
+      this.store.addEventListener('change', this.#onStoreChange);
+      this.#syncFromStore();
+    }
     void this.#fetchCatalog();
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.store?.removeEventListener('change', this.#onStoreChange);
+  }
+
+  #onStoreChange = () => {
+    this.#syncFromStore();
+  };
+
+  #syncFromStore() {
+    if (!this.store) return;
+    this._activeModel = this.store.activeModel || '';
+  }
+
+  updated(changedProps) {
+    if (changedProps.has('store')) {
+      const oldStore = changedProps.get('store');
+      if (oldStore) oldStore.removeEventListener('change', this.#onStoreChange);
+      if (this.store) {
+        // app.js assigns the shared conversation store after connect, so the
+        // listener must be (re)registered here — same contract as ChatControls.
+        this.store.addEventListener('change', this.#onStoreChange);
+        this.#syncFromStore();
+      }
+    }
   }
 
   async #fetchCatalog() {
@@ -105,6 +140,34 @@ export class ModelCatalog extends LitElement {
       this._catalog = await DefaultService.wrapperApiModelsCatalogAuxApprovalPost({ model });
     } catch (e) {
       this._error = this.#errorText(e, 'Failed to set auto-approval model');
+      void this.#fetchCatalog();
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  /** @param {string} model */
+  async #setReflection(model) {
+    this._busy = true;
+    this._error = '';
+    try {
+      this._catalog = await DefaultService.wrapperApiModelsCatalogReflectionPost({ model });
+    } catch (e) {
+      this._error = this.#errorText(e, 'Failed to set reflection model');
+      void this.#fetchCatalog();
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  /** @param {string} model */
+  async #setVerifier(model) {
+    this._busy = true;
+    this._error = '';
+    try {
+      this._catalog = await DefaultService.wrapperApiModelsCatalogVerifierPost({ model });
+    } catch (e) {
+      this._error = this.#errorText(e, 'Failed to set verifier model');
       void this.#fetchCatalog();
     } finally {
       this._busy = false;
@@ -199,6 +262,8 @@ export class ModelCatalog extends LitElement {
 
         ${catalog ? this.#renderDefaultPicker(catalog) : nothing}
         ${catalog ? this.#renderAuxApprovalPicker(catalog) : nothing}
+        ${catalog ? this.#renderReflectionPicker(catalog) : nothing}
+        ${catalog ? this.#renderVerifierPicker(catalog) : nothing}
         ${catalog ? this.#renderFilter() : nothing}
         ${catalog
           ? repeat(sections, s => s.name, s => this.#renderProvider(s.name, s.provider, s.models, filtering))
@@ -275,6 +340,57 @@ export class ModelCatalog extends LitElement {
           `)}
         </select>
         <span class="model-catalog-default-hint" title="Judge that grades shell auto-approvals; empty = ride on the active conversation model">${catalog.aux_approval_model || '(use conversation model)'}</span>
+      </div>
+    `;
+  }
+
+  /** Reflection-model picker (#1212): enabled catalog models + explicit inherit. */
+  #renderReflectionPicker(catalog) {
+    // #1212: an explicitly selected judge equal to the active conversation
+    // model means the author grades its own homework — allowed, but surfaced
+    // as a warning (#591).
+    const judgeWarning = Boolean(catalog.reflection_pointer) && catalog.reflection_pointer === this._activeModel;
+    return html`
+      <div class="model-catalog-judge">
+        <label class="model-catalog-default-label" for="catalog-reflection-select">Reflection model</label>
+        <select
+          id="catalog-reflection-select"
+          class="model-catalog-default-select"
+          ?disabled=${this._busy}
+          @change=${(e) => void this.#setReflection(e.target.value)}
+        >
+          <option value="" ?selected=${!catalog.reflection_pointer}>${'(config.json reflection / inherit)'}</option>
+          ${repeat(catalog.picker_models, m => m, m => html`
+            <option value="${m}" ?selected=${m === catalog.reflection_pointer}>${m}</option>
+          `)}
+        </select>
+        <span class="model-catalog-default-hint" title="Judge that grades each turn; empty = inherit">${catalog.reflection_model || '(inherit)'}</span>
+        ${judgeWarning ? html`
+          <div class="model-catalog-judge-warning" role="status">
+            Reflection model is the active conversation model — the author would grade its own homework.
+          </div>
+        ` : nothing}
+      </div>
+    `;
+  }
+
+  /** Verifier-model picker (#1212): enabled catalog models + explicit inherit. */
+  #renderVerifierPicker(catalog) {
+    return html`
+      <div class="model-catalog-judge">
+        <label class="model-catalog-default-label" for="catalog-verifier-select">Verifier model</label>
+        <select
+          id="catalog-verifier-select"
+          class="model-catalog-default-select"
+          ?disabled=${this._busy}
+          @change=${(e) => void this.#setVerifier(e.target.value)}
+        >
+          <option value="" ?selected=${!catalog.verifier_pointer}>${'(config.json verifier / inherit)'}</option>
+          ${repeat(catalog.picker_models, m => m, m => html`
+            <option value="${m}" ?selected=${m === catalog.verifier_pointer}>${m}</option>
+          `)}
+        </select>
+        <span class="model-catalog-default-hint" title="Second-opinion judge; empty = inherit">${catalog.verifier_model || '(inherit)'}</span>
       </div>
     `;
   }
