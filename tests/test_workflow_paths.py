@@ -17,7 +17,19 @@ def test_workflow_dir_is_created(tmp_path):
     cfg = _cfg(tmp_path)
     d = workflow_dir(cfg, "abc123", create=True)
     assert d.is_dir()
-    assert d == tmp_path / "conversations" / "abc123"
+    # #1112: new conversations create under the session-scoped root.
+    assert d == tmp_path / "sessions" / "abc123"
+
+
+def test_workflow_path_prefers_session_layout_when_present(tmp_path):
+    # #1112: once the session-scoped dir exists, workflow paths resolve there.
+    cfg = _cfg(tmp_path)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    convdir = sessions / "abc123"
+    convdir.mkdir()
+    (convdir / "workflow.json").write_text("{}")
+    assert workflow_path(cfg, "abc123") == convdir / "workflow.json"
 
 
 def test_path_sandboxed_against_traversal(tmp_path):

@@ -6,6 +6,9 @@ from decafclaw.conversation_paths import (
     conversations_root,
     delete_conversation_files,
     iter_conversation_archives,
+    session_conversation_dir,
+    session_dir,
+    sessions_root,
     sidecar_path,
 )
 
@@ -27,7 +30,36 @@ def test_conversation_dir_create_makes_dir(tmp_path):
     cfg = _cfg(tmp_path)
     d = conversation_dir(cfg, "abc", create=True)
     assert d.is_dir()
-    assert d == conversations_root(cfg) / "abc"
+    # #1112: new conversations create under the session-scoped root.
+    assert d == sessions_root(cfg) / "abc"
+
+
+def test_conversation_dir_standalone_prefers_session_layout(tmp_path):
+    cfg = _cfg(tmp_path)
+    sessions_root(cfg).mkdir(parents=True)
+    convdir = sessions_root(cfg) / "abc"
+    convdir.mkdir(parents=True)
+    (convdir / "archive.jsonl").write_text("{}")
+    assert conversation_dir(cfg, "abc") == convdir
+
+
+def test_conversation_dir_legacy_fallback_before_migration(tmp_path):
+    cfg = _cfg(tmp_path)
+    convdir = conversations_root(cfg) / "abc"
+    convdir.mkdir(parents=True)
+    (convdir / "archive.jsonl").write_text("{}")
+    assert conversation_dir(cfg, "abc") == convdir
+    assert not (sessions_root(cfg) / "abc").exists()
+
+
+def test_conversation_dir_child_resolves_under_parent_session(tmp_path):
+    cfg = _cfg(tmp_path)
+    parent_conv = "parent-abc"
+    child_conv = "parent-abc--child-xyz"
+    parent_dir = sessions_root(cfg) / parent_conv
+    child_dir = parent_dir / child_conv
+    child_dir.mkdir(parents=True)
+    assert conversation_dir(cfg, child_conv) == child_dir
 
 
 def test_conversation_dir_without_create_does_not_make_dir(tmp_path):
