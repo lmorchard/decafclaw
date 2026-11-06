@@ -5,6 +5,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
 /** @typedef {import('./api-client/index.js').ConversationListingItem} ConversationMeta */
 /** @typedef {import('./api-client/index.js').SystemConversationListingItem} SystemConversationMeta */
 /** @typedef {import('./api-client/index.js').ConversationListingResponse['folders'][number]} FolderEntry */
+/** @typedef {import('./api-client/index.js').SessionEntry} SessionEntry */
 
 /**
  * @typedef {object} ChatMessage
@@ -94,6 +95,10 @@ export class ConversationStore extends EventTarget {
   #systemFolders = [];
   /** @type {string} */
   #systemCurrentFolder = '';
+
+  // -- Session hierarchy state (#1115) --
+  /** @type {SessionEntry[]} */
+  #sessions = [];
 
   // -- Activity status state --
   /** @type {Map<string, 'idle' | 'busy' | 'waiting' | 'finished'>} */
@@ -199,6 +204,8 @@ export class ConversationStore extends EventTarget {
   get systemFolders() { return this.#systemFolders; }
   /** @returns {string} */
   get systemCurrentFolder() { return this.#systemCurrentFolder; }
+  /** @returns {SessionEntry[]} */
+  get sessions() { return this.#sessions; }
   /** @returns {boolean} */
   get isReadOnly() { return this.#readOnly; }
   /**
@@ -289,6 +296,50 @@ export class ConversationStore extends EventTarget {
       if (err instanceof ApiError) return;
       console.error('Failed to list system conversations:', err);
     }
+  }
+
+  /**
+   * List sessions (root conversation + delegated subagents) from
+   * `GET /api/sessions` (#1115 sidebar hierarchy).
+   * @param {string} [folder]
+   */
+  async listSessions(folder = '') {
+    const reqSeq = this.#statusSequence;
+    try {
+      const data = await DefaultService.listSessionsApiSessionsGet(folder || undefined);
+      this.#sessions = data.sessions || [];
+      this.#syncConversationStatuses(
+        (this.#sessions || []).flatMap((s) => s.conversations || []),
+        reqSeq,
+      );
+      this.#emitChange();
+    } catch (err) {
+      if (err instanceof ApiError) return;
+      console.error('Failed to list sessions:', err);
+    }
+  }
+
+  /**
+   * Subagent conversations spawned under the given session root conv id
+   * (`{root}--child-{hex}`, #1112/#1115 session layout).
+   * @param {string} convId
+   * @returns {Array}
+   */
+  getSubagents(convId) {
+    const prefix = `${convId}--child-`;
+    const list = this.#conversations || [];
+    return list.filter((c) => c && c.conv_id && c.conv_id.startsWith(prefix) && c.conv_id !== convId);
+  }
+
+  /**
+   * Cancel an in-flight subagent turn (#1115). Sends the cancel signal for
+   * the child conversation; the server routes it through the conversation's
+   * turn machinery.
+   * @param {string} convId
+   */
+  cancelSubagent(convId) {
+    if (!convId) return;
+    this.#ws.send({ type: MESSAGE_TYPES.CANCEL_TURN, conv_id: convId });
   }
 
   /**
