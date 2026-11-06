@@ -38,13 +38,14 @@ class TestNotesPath:
     def test_returns_path_in_conversation_dir(self, config):
         p = notes_path(config, "abc")
         assert p.parent.name == "abc"
-        assert p.parent.parent.name == "conversations"
+        # #1112: a fresh conversation resolves under the session root.
+        assert p.parent.parent.name == "sessions"
         assert p.name == "notes.md"
 
     def test_traversal_strips_to_safe_name(self, config):
         """`/` and `..` get stripped, the leftover letters land
-        inside the conversations dir — not outside."""
-        root = (config.workspace_path / "conversations").resolve()
+        inside the sessions dir — not outside."""
+        root = (config.workspace_path / "sessions").resolve()
         p = notes_path(config, "../../etc/passwd")
         # ../../etc/passwd → etcpasswd (slashes + dots stripped) → safe
         assert p.is_relative_to(root)

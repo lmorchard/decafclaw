@@ -92,7 +92,10 @@ paths: `conversation_dir(config, conv_id, *, create=False)`,
 `iter_conversation_archives(config)`, and `delete_conversation_files(config,
 conv_id)`, plus the `SIDECAR_FILENAMES` constant (the migration mapping).
 `workflow/paths.py` delegates to it. New sidecars get a filename in this
-module rather than a new flat-suffix convention.
+module rather than a new flat-suffix convention. Enumeration covers both
+roots — including delegated children nested at
+`sessions/{parent}/{child_id}/` — and prefers the session-root copy when a
+conversation has a directory in both.
 
 ### Migrating from the legacy flat layout
 
@@ -123,8 +126,10 @@ conversations, and `conversations/{child_id}/` moves to
 never deletes data (only moves). Preview the moves first with
 `make migrate-sessions-dry`, then run `make migrate-sessions` once after
 upgrading. (The legacy `conversations/{conv_id}/` resolver stays as a
-read-only fallback during transition; new conversations create under the
-session layout via `conversation_dir(..., create=True)`.)
+read-only fallback for unmigrated conversations; a conversation is pinned to
+one root for its lifetime — a fresh conversation resolves under the session
+layout, so its first write materializes it there and later `create=True`
+callers cannot flip it mid-life.)
 
 ## Secret files
 
