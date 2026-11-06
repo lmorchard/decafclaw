@@ -481,4 +481,50 @@ describe('conversation-sidebar session hierarchy (#1115)', () => {
     await sidebar.updateComplete;
     expect(store.listSessions).toHaveBeenCalledWith('Work');
   });
+
+  it('collapses and re-expands subagent rows via the session chevron', async () => {
+    const { sidebar } = await mountSessions();
+    const toggle = /** @type {HTMLElement} */ (sidebar.querySelector('button.conv-session-toggle'));
+    expect(toggle).toBeTruthy();
+    // Expanded by default: subagent row visible.
+    expect(sidebar.querySelector('.conv-subagent')).toBeTruthy();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+
+    toggle.click();
+    await sidebar.updateComplete;
+    expect(sidebar.querySelector('.conv-subagent')).toBeFalsy();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+
+    toggle.click();
+    await sidebar.updateComplete;
+    expect(sidebar.querySelector('.conv-subagent')).toBeTruthy();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('renders no chevron for sessions without subagent rows', async () => {
+    const { sidebar } = await mountSessions({
+      sessions: [
+        {
+          session_id: 'web-alice-r1',
+          title: 'Root chat',
+          conversations: [{ ...parent, kind: 'parent' }],
+        },
+      ],
+    });
+    expect(sidebar.querySelector('button.conv-session-toggle')).toBeFalsy();
+  });
+
+  it('auto-expands a collapsed session when one of its conversations is selected', async () => {
+    const { sidebar, store } = await mountSessions();
+    /** @type {HTMLElement} */ (sidebar.querySelector('button.conv-session-toggle')).click();
+    await sidebar.updateComplete;
+    expect(sidebar.querySelector('.conv-subagent')).toBeFalsy();
+
+    // Selecting the child conversation (store change with a new currentConvId)
+    // re-expands the group.
+    store.currentConvId = 'web-alice-r1--child-abcdef12';
+    store.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+    expect(sidebar.querySelector('.conv-subagent')).toBeTruthy();
+  });
 });
