@@ -407,6 +407,43 @@ def effective_default_model(config: "Config") -> str:
     return config.default_model
 
 
+def effective_reflection_model(config: "Config") -> str:
+    """Reflection-judge model, resolution order (#1212):
+
+    1. The sidecar's ``reflection_model`` pointer, when it names a
+       selectable model (enabled discovered or hand-configured).
+    2. ``config.json``'s ``reflection.model`` (the seed — kept pristine,
+       the sidecar never overwrites it).
+    3. Empty string; callers fall through to the legacy default chain
+       via ``ReflectionConfig.resolved``.
+
+    A pointer at a disabled or vanished model falls back cleanly to the
+    seed, and an empty pointer inherits the seed — which itself may name
+    a ``model_configs`` key or a legacy raw name.
+    """
+    pointer = load_catalog(config).reflection_model
+    if pointer and pointer in config.model_configs:
+        return pointer
+    return config.reflection.model
+
+
+def effective_verifier_model(config: "Config") -> str:
+    """Verifier (second-opinion judge) model, resolution order (#1212):
+
+    1. The sidecar's ``verifier_model`` pointer, when it names a
+       selectable model (enabled discovered or hand-configured).
+    2. ``config.json``'s ``reflection.verifier_model`` (the seed).
+    3. Empty string; no verifier runs.
+
+    A pointer at a disabled or vanished model falls back cleanly to the
+    seed.
+    """
+    pointer = load_catalog(config).verifier_model
+    if pointer and pointer in config.model_configs:
+        return pointer
+    return config.reflection.verifier_model
+
+
 # ---------------------------------------------------------------------------
 # Mutations (UI write path)
 # ---------------------------------------------------------------------------
@@ -545,8 +582,8 @@ def catalog_payload(config: "Config") -> dict:
         # pointers plus the effective judge/verifier names they resolve to.
         # An empty pointer resolves to the seed (config-level reflection
         # fields), which in turn inherits the legacy default chain.
-        "reflection_model": catalog.reflection_model or config.reflection.model,
+        "reflection_model": effective_reflection_model(config),
         "reflection_pointer": catalog.reflection_model,
-        "verifier_model": catalog.verifier_model or config.reflection.verifier_model,
+        "verifier_model": effective_verifier_model(config),
         "verifier_pointer": catalog.verifier_model,
     }
