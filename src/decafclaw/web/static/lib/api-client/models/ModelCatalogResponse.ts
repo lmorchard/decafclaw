@@ -11,5 +11,9 @@ export type ModelCatalogResponse = {
     default_pointer: string;
     picker_models: Array<string>;
     providers: Record<string, CatalogProviderEntry>;
+    reflection_model?: string;
+    reflection_pointer?: string;
+    verifier_model?: string;
+    verifier_pointer?: string;
 };
 
