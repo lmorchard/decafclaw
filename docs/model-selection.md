@@ -94,6 +94,10 @@ surfaces enabled and fails on first use.
 All of this is managed in the web UI's **⚙ Agent Config → Models** tab:
 
 - Toggle any discovered model on/off for the conversation picker.
+- **Select all / Deselect all** buttons per provider bulk-enable or
+  bulk-disable that provider's discovered catalog entries in one request.
+  Catalog entries only — hand-authored `model_configs` entries (including
+  one under a colliding key) are never touched.
 - Providers render as collapsible sections (collapsed by default, with an
   enabled/total count in the summary), so a gateway reporting hundreds of
   models stays manageable.

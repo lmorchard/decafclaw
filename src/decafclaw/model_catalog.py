@@ -444,6 +444,30 @@ async def set_default_model(config: "Config", name: str, event_bus: Any = None) 
     return catalog
 
 
+async def set_provider_models_enabled(
+    config: "Config", provider_name: str, enabled: bool, event_bus: Any = None
+) -> ModelCatalog | None:
+    """Enable or disable every discovered model of one provider (bulk action).
+
+    Applies to the provider's catalog entries only — hand-authored
+    ``model_configs`` entries (including one under a colliding key) are
+    never touched, and ``config.json`` is never written. One lock
+    acquisition, one sidecar write, one ``models_changed`` broadcast, so
+    the atomicity story matches :func:`set_model_enabled`. Returns the
+    updated catalog, or None when the provider has no catalog entry.
+    """
+    async with _catalog_lock:
+        catalog = load_catalog(config)
+        pentry = catalog.providers.get(provider_name)
+        if pentry is None:
+            return None
+        for entry in pentry.models:
+            entry.enabled = enabled
+        _save_and_apply(config, catalog)
+    await _publish_models_changed(event_bus)
+    return catalog
+
+
 # ---------------------------------------------------------------------------
 # UI payload
 # ---------------------------------------------------------------------------

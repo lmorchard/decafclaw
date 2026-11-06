@@ -183,6 +183,70 @@ async def test_models_catalog_toggle_validation(client, catalog_config):
 
 
 @pytest.mark.asyncio
+async def test_models_catalog_provider_bulk_enable_disable(client, catalog_config):
+    """POST /api/models/catalog/provider — bulk enable/disable every
+    discovered model of one provider, persisted to the sidecar."""
+    _seed_catalog(catalog_config)
+    from decafclaw.model_catalog import apply_catalog
+
+    apply_catalog(catalog_config, load_catalog(catalog_config))
+
+    resp = await client.post("/api/models/catalog/provider", json={"provider": "local", "enabled": True})
+    assert resp.status_code == 200
+    data = resp.json()
+    models = {m["key"]: m for m in data["providers"]["local"]["models"]}
+    assert models["local/on"]["enabled"] is True
+    assert models["local/off"]["enabled"] is True
+    assert set(data["picker_models"]) == {"hand-model", "local/on", "local/off"}
+
+    resp = await client.post("/api/models/catalog/provider", json={"provider": "local", "enabled": False})
+    assert resp.status_code == 200
+    data = resp.json()
+    models = {m["key"]: m for m in data["providers"]["local"]["models"]}
+    assert models["local/on"]["enabled"] is False
+    assert models["local/off"]["enabled"] is False
+    assert data["picker_models"] == ["hand-model"]
+
+    # Sidecar persisted the bulk flags.
+    on_disk = json.loads(catalog_path(catalog_config).read_text())
+    assert all(m["enabled"] is False for m in on_disk["providers"]["local"]["models"])
+
+
+@pytest.mark.asyncio
+async def test_models_catalog_provider_bulk_unknown_404(client, catalog_config):
+    resp = await client.post("/api/models/catalog/provider", json={"provider": "nope", "enabled": True})
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_models_catalog_provider_bulk_validation(client, catalog_config):
+    resp = await client.post("/api/models/catalog/provider", json={"provider": ""})
+    assert resp.status_code == 400
+    resp = await client.post("/api/models/catalog/provider", json={"provider": "local", "enabled": "yes"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_models_catalog_provider_bulk_never_touches_hand_configs(client, catalog_config):
+    """Bulk disable prunes only catalog-owned entries; a hand-authored
+    config under a colliding key survives."""
+    from decafclaw.config_types import ModelConfig
+    from decafclaw.model_catalog import apply_catalog, catalog_model_key, load_catalog
+
+    _seed_catalog(catalog_config)
+    hand = ModelConfig(provider="local", model="hand-on")
+    colliding_key = catalog_model_key("local", "on")
+    catalog_config.model_configs[colliding_key] = hand
+    apply_catalog(catalog_config, load_catalog(catalog_config))
+    assert colliding_key not in catalog_config.catalog_materialized
+
+    resp = await client.post("/api/models/catalog/provider", json={"provider": "local", "enabled": False})
+    assert resp.status_code == 200
+    assert catalog_config.model_configs.get(colliding_key) == hand
+    assert colliding_key in resp.json()["picker_models"]
+
+
+@pytest.mark.asyncio
 async def test_models_catalog_set_default(client, catalog_config):
     """POST /api/models/catalog/default — pointer takes effect without restart."""
     _seed_catalog(catalog_config)

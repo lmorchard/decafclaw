@@ -3462,6 +3462,13 @@ class ModelCatalogUpdateRequest(BaseModel):
     model: str | None = None
 
 
+class CatalogProviderUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    enabled: bool
+
+
 @_authenticated
 async def models_catalog_get(request: Request, username: str) -> JSONResponse:
     """GET /api/models/catalog — full catalog for the management UI."""
@@ -3503,6 +3510,35 @@ async def models_catalog_set_enabled(request: Request, username: str) -> JSONRes
     catalog = await set_model_enabled(config, body["key"], body["enabled"], event_bus=request.app.state.event_bus)
     if catalog is None:
         return JSONResponse({"error": f"unknown catalog model: {body['key']}"}, status_code=404)
+    return JSONResponse(catalog_payload(config))
+
+
+@_authenticated
+async def models_catalog_set_provider_enabled(request: Request, username: str) -> JSONResponse:
+    """POST /api/models/catalog/provider — bulk enable/disable a provider's discovered models.
+
+    Applies to that provider's catalog entries only; hand-authored
+    `model_configs` entries are never touched and `config.json` is never
+    written.
+    """
+    from .model_catalog import catalog_payload, set_provider_models_enabled
+
+    config = request.app.state.config
+    try:
+        body = await request.json()
+    except Exception as exc:
+        log.debug("models_catalog_set_provider_enabled: invalid JSON body: %s", exc)
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("provider"), str) or not body["provider"]:
+        return JSONResponse({"error": "request body must include a provider name"}, status_code=400)
+    if not isinstance(body.get("enabled"), bool):
+        return JSONResponse({"error": "request body must include a boolean 'enabled'"}, status_code=400)
+
+    catalog = await set_provider_models_enabled(
+        config, body["provider"], body["enabled"], event_bus=request.app.state.event_bus
+    )
+    if catalog is None:
+        return JSONResponse({"error": f"unknown catalog provider: {body['provider']}"}, status_code=404)
     return JSONResponse(catalog_payload(config))
 
 
@@ -4136,6 +4172,22 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                     "content": {
                         "application/json": {
                             "schema": _request_schema(ModelCatalogUpdateRequest),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/models/catalog/provider",
+            models_catalog_set_provider_enabled,
+            methods=["POST"],
+            response_model=ModelCatalogResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(CatalogProviderUpdateRequest),
                         },
                     },
                 },

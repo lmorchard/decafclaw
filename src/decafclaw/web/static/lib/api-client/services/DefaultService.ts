@@ -1015,6 +1015,25 @@ export class DefaultService {
     }
     /**
      * Wrapper
+     * @param requestBody
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiModelsCatalogProviderPost(
+        requestBody: {
+            provider: string;
+            enabled: boolean;
+        },
+    ): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/models/catalog/provider',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
      * @returns ScheduleListResponse Successful Response
      * @throws ApiError
      */

@@ -93,6 +93,25 @@ export class ModelCatalog extends LitElement {
   }
 
   /**
+   * Bulk enable/disable every discovered model of one provider. Catalog
+   * entries only; hand-authored configs are never touched server-side.
+   * @param {string} provider
+   * @param {boolean} enabled
+   */
+  async #setProviderEnabled(provider, enabled) {
+    this._busy = true;
+    this._error = '';
+    try {
+      this._catalog = await DefaultService.wrapperApiModelsCatalogProviderPost({ provider, enabled });
+    } catch (e) {
+      this._error = this.#errorText(e, 'Failed to update provider models');
+      void this.#fetchCatalog();
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  /**
    * @param {unknown} err
    * @param {string} fallback
    * @returns {string}
@@ -167,6 +186,30 @@ export class ModelCatalog extends LitElement {
           <span class="model-catalog-provider-name">${name}</span>
           ${provider.error ? html`<span class="model-catalog-provider-error" title="${provider.error}">⚠ discovery failed</span>` : nothing}
           <span class="model-catalog-provider-tools">
+            ${provider.models.length > 0
+              ? html`
+                  <button
+                    class="model-catalog-bulk-btn outline"
+                    ?disabled=${this._busy}
+                    @click=${(e) => {
+                      // A button inside <summary> toggles the disclosure by
+                      // default; keep the bulk action click open-state-neutral.
+                      e.preventDefault();
+                      void this.#setProviderEnabled(name, true);
+                    }}
+                    title="Enable every discovered model of this provider"
+                  >Select all</button>
+                  <button
+                    class="model-catalog-bulk-btn outline"
+                    ?disabled=${this._busy}
+                    @click=${(e) => {
+                      e.preventDefault();
+                      void this.#setProviderEnabled(name, false);
+                    }}
+                    title="Disable every discovered model of this provider"
+                  >Deselect all</button>
+                `
+              : nothing}
             <span class="model-catalog-provider-count" title="Enabled / discovered models">${enabledCount}/${provider.models.length} enabled</span>
           </span>
         </summary>

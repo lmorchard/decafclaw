@@ -40,6 +40,10 @@ async function mountCatalog(initialCatalog = CATALOG) {
       const body = JSON.parse(options.body);
       return jsonResponse({ ...initialCatalog, toggled: body });
     }
+    if (u.pathname === '/api/models/catalog/provider') {
+      const body = JSON.parse(options.body);
+      return jsonResponse({ ...initialCatalog, bulk: body });
+    }
     if (u.pathname === '/api/models/catalog/default') {
       const body = JSON.parse(options.body);
       return jsonResponse({ ...initialCatalog, default_pointer: body.model });
@@ -92,6 +96,57 @@ describe('model-catalog component', () => {
     expect(details.open).toBe(false);
     const count = details.querySelector('.model-catalog-provider-count');
     expect(count.textContent).toContain('1/2 enabled');
+  });
+
+  it('select all posts a provider bulk enable', async () => {
+    const { el, fetchMock } = await mountCatalog();
+
+    el.querySelector('.model-catalog-bulk-btn').click();
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 10));
+
+    const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/provider'));
+    expect(post).toBeTruthy();
+    expect(JSON.parse(post[1].body)).toEqual({ provider: 'local', enabled: true });
+  });
+
+  it('deselect all posts a provider bulk disable', async () => {
+    const { el, fetchMock } = await mountCatalog();
+
+    const buttons = [...el.querySelectorAll('.model-catalog-bulk-btn')];
+    expect(buttons.length).toBe(2);
+    buttons[1].click();
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 10));
+
+    const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/provider'));
+    expect(post).toBeTruthy();
+    expect(JSON.parse(post[1].body)).toEqual({ provider: 'local', enabled: false });
+  });
+
+  it('bulk buttons keep the disclosure open-state neutral', async () => {
+    const { el } = await mountCatalog();
+
+    const details = el.querySelector('details.model-catalog-provider');
+    const button = details.querySelector('.model-catalog-bulk-btn');
+    // jsdom does not implement summary click-to-toggle, so assert the
+    // handler prevents the default the browser would act on.
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    button.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('omits bulk buttons for a provider with no models', async () => {
+    const { el } = await mountCatalog({
+      ...CATALOG,
+      providers: {
+        local: { discovered_at: '2026-11-05T12:00:00+00:00', error: '', models: [] },
+      },
+    });
+
+    const details = el.querySelector('details.model-catalog-provider');
+    expect(details.querySelectorAll('.model-catalog-bulk-btn').length).toBe(0);
+    expect(details.textContent).toContain('No models discovered.');
   });
 
   it('toggling a model posts the enable flag', async () => {

@@ -1223,6 +1223,20 @@ var DefaultService = class {
   }
   /**
    * Wrapper
+   * @param requestBody
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiModelsCatalogProviderPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/models/catalog/provider",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
    * @returns ScheduleListResponse Successful Response
    * @throws ApiError
    */

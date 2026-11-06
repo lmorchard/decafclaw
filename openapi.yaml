@@ -1027,6 +1027,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelCatalogResponse'
+  /api/models/catalog/provider:
+    post:
+      summary: Wrapper
+      operationId: wrapper_api_models_catalog_provider_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                provider:
+                  type: string
+                  title: Provider
+                enabled:
+                  type: boolean
+                  title: Enabled
+              additionalProperties: false
+              type: object
+              required:
+              - provider
+              - enabled
+              title: CatalogProviderUpdateRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelCatalogResponse'
   /api/schedules:
     get:
       summary: Wrapper

@@ -99,6 +99,13 @@ details.model-catalog-provider > .model-catalog-model-list {
   margin-left: auto;
 }
 
+button.model-catalog-bulk-btn {
+  padding: 0.1rem 0.55rem;
+  font-size: 0.75rem;
+  margin: 0;
+  flex-shrink: 0;
+}
+
 .model-catalog-provider-count {
   font-size: 0.8rem;
   color: var(--pico-muted-color);
