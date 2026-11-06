@@ -568,6 +568,38 @@ class TestEvaluateResponse:
         assert kwargs["llm_model"] == "cheap-judge-model"
 
     @pytest.mark.asyncio
+    async def test_reflection_judge_prefers_catalog_pointer(self, config):
+        """#1212: a sidecar reflection pointer outranks the config-level model."""
+        from decafclaw.config_types import ModelConfig as _MC
+
+        config.providers = {"local": ProviderConfig(type="openai-compat", url="http://x/v1")}
+        config.model_configs["local/on"] = _MC(provider="local", model="on")
+        from decafclaw.model_catalog import set_reflection_model
+
+        await set_reflection_model(config, "local/on")
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+            await evaluate_response(config, "hello", "Hi!", "")
+        _, kwargs = mock_call.call_args
+        assert kwargs["model_name"] == "local/on"
+
+    @pytest.mark.asyncio
+    async def test_verifier_prefers_catalog_pointer(self, config):
+        """#1212: a sidecar verifier pointer routes the judge call through it."""
+        from decafclaw.config_types import ModelConfig as _MC
+
+        config.providers = {"local": ProviderConfig(type="openai-compat", url="http://x/v1")}
+        config.model_configs["local/on"] = _MC(provider="local", model="on")
+        from decafclaw.model_catalog import set_verifier_model
+
+        await set_verifier_model(config, "local/on")
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+            await evaluate_response(config, "hello", "Hi!", "")
+        _, kwargs = mock_call.call_args
+        assert kwargs["model_name"] == "local/on"
+
+    @pytest.mark.asyncio
     async def test_prior_turn_summary_in_prompt(self, config):
         prior = 'Tools used in prior turns:\nTool: wiki_read(page="Therapy")'
         mock_response = {"content": '{"pass": true, "critique": ""}'}
