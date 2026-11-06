@@ -265,3 +265,24 @@ async def test_models_catalog_set_default(client, catalog_config):
     # Pointer at an unselectable model is rejected.
     resp = await client.post("/api/models/catalog/default", json={"model": "local/off"})
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_models_catalog_set_aux_approval(client, catalog_config):
+    """POST /api/models/catalog/aux_approval — pointer write/clear + validation (#1213)."""
+    _seed_catalog(catalog_config)
+
+    resp = await client.post("/api/models/catalog/aux_approval", json={"model": "local/on"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["aux_approval_pointer"] == "local/on"
+    assert data["aux_approval_model"] == "local/on"
+
+    # Clearing the pointer → ride on the active conversation model.
+    resp = await client.post("/api/models/catalog/aux_approval", json={"model": ""})
+    assert resp.status_code == 200
+    assert resp.json()["aux_approval_pointer"] == ""
+
+    # A disabled (unselectable) model is rejected.
+    resp = await client.post("/api/models/catalog/aux_approval", json={"model": "local/off"})
+    assert resp.status_code == 400

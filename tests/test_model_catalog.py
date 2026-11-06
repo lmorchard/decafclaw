@@ -622,3 +622,46 @@ def test_disable_default_model_falls_back(config):
     # ...then disabled → pointer invalid → config.json default_model.
     asyncio.run(set_model_enabled(config, "local/on", False))
     assert effective_default_model(config) == "hand-model"
+
+
+# ---------------------------------------------------------------------------
+# Aux-approval model resolution (#1213)
+# ---------------------------------------------------------------------------
+
+
+def test_set_aux_approval_model_writes_pointer(config):
+    """Sidecar aux-approval pointer write/clear; empty means ride on the conversation model."""
+    import asyncio
+
+    from decafclaw.model_catalog import set_aux_approval_model
+
+    catalog = asyncio.run(set_aux_approval_model(config, "local/on"))
+    assert catalog.aux_approval_model == "local/on"
+    assert load_catalog(config).aux_approval_model == "local/on"
+
+    cleared = asyncio.run(set_aux_approval_model(config, ""))
+    assert cleared.aux_approval_model == ""
+
+
+def test_aux_approval_resolution_inherit_and_fallback(config):
+    """#1213: aux-approval resolution — sidecar pointer → config seed → conversation model."""
+    _config_with_models(config)
+    config.shell.aux_approval_model = "hand-model"
+
+    from decafclaw.model_catalog import effective_aux_approval_model
+
+    # No pointer → inherit the config seed.
+    assert effective_aux_approval_model(config, "active") == "hand-model"
+
+    import asyncio
+
+    from decafclaw.model_catalog import set_aux_approval_model
+
+    asyncio.run(set_aux_approval_model(config, "local/on"))
+    assert effective_aux_approval_model(config, "active") == "local/on"
+
+    # Disabled → fall back to the config seed.
+    from decafclaw.model_catalog import set_model_enabled
+
+    asyncio.run(set_model_enabled(config, "local/on", False))
+    assert effective_aux_approval_model(config, "active") == "hand-model"
