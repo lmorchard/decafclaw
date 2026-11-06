@@ -104,3 +104,42 @@ def test_uploads_dir_empty_id_resolves_to_invalid(config):
     root = sessions_root(config)
     d = uploads_dir(config, "")
     assert d == root / "_invalid" / "uploads"
+
+
+# -- Legacy stored-path remap (#1220 follow-up) --------------------------------
+#
+# Messages saved before `make migrate-sessions` (#1112) carry attachment
+# paths like `conversations/{conv_id}/uploads/{name}`. The migration moved
+# those dirs under `sessions/` — standalone at `sessions/{conv_id}/`,
+# children at `sessions/{parent}/{child}/` — so stored paths went stale.
+# Reads must follow the file to its session location.
+
+
+def test_read_attachment_bytes_legacy_path_follows_session_layout(config):
+    data = b"scanned pdf bytes"
+    result = save_attachment(config, "conv1", "scan.pdf", data, "application/pdf")
+
+    # Simulate the pre-migration stored path: same tail, legacy root.
+    new_rel = result["path"]  # sessions/conv1/uploads/scan-<ts>.pdf
+    tail = new_rel.split("/", 1)[1]
+    legacy_attachment = {"filename": result["filename"], "path": f"conversations/{tail}"}
+
+    assert read_attachment_bytes(config, legacy_attachment) == data
+
+
+def test_read_attachment_base64_legacy_path_follows_session_layout(config):
+    data = b"child pdf bytes"
+    result = save_attachment(config, "parent1--child-abc123", "scan.pdf", data, "application/pdf")
+
+    # New rel: sessions/parent1/parent1--child-abc123/uploads/<file> —
+    # legacy rel: conversations/parent1--child-abc123/uploads/<file>.
+    parts = result["path"].split("/")
+    legacy_rel = "/".join(["conversations", parts[2], *parts[3:]])
+    assert legacy_rel.startswith("conversations/parent1--child-abc123/uploads/")
+
+    assert read_attachment_base64(config, {"path": legacy_rel}) == base64.b64encode(data).decode("ascii")
+
+
+def test_read_attachment_bytes_missing_everywhere_returns_none(config):
+    assert read_attachment_bytes(config, {"path": "conversations/ghost/uploads/x.pdf"}) is None
+    assert read_attachment_bytes(config, {"path": "vault/pages/Nope.md"}) is None

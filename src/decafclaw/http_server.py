@@ -1575,6 +1575,14 @@ async def serve_workspace_file(request: Request, username: str):
     if not str(resolved).startswith(str(workspace)):
         return JSONResponse({"error": "path outside workspace"}, status_code=403)
     if not resolved.is_file():
+        # Stored paths from before make migrate-sessions (#1112) point at
+        # conversations/{id}/...; follow the file to its session location.
+        from .conversation_paths import remap_legacy_rel_path
+
+        remapped = remap_legacy_rel_path(config, file_path)
+        if remapped:
+            resolved = (workspace / remapped).resolve()
+    if not resolved.is_file():
         return JSONResponse({"error": "not found"}, status_code=404)
     content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
     # Inline display only for safe image types; everything else (incl. SVG)

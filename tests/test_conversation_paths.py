@@ -328,3 +328,56 @@ def test_scheduled_wakes_path(tmp_path):
     cfg = _cfg(tmp_path)
     p = scheduled_wakes_path(cfg, "conv-123")
     assert p == cfg.agent_path / "scheduled_wakes" / "conv-123.json"
+
+
+# --- remap_legacy_rel_path ----------------------------------------------------
+
+
+def test_remap_legacy_rel_path_standalone(tmp_path):
+    from decafclaw.conversation_paths import remap_legacy_rel_path
+
+    cfg = _cfg(tmp_path)
+    target = sessions_root(cfg) / "abc" / "uploads" / "f.pdf"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x")
+
+    assert remap_legacy_rel_path(cfg, "conversations/abc/uploads/f.pdf") == "sessions/abc/uploads/f.pdf"
+
+
+def test_remap_legacy_rel_path_child_nested_under_parent(tmp_path):
+    from decafclaw.conversation_paths import remap_legacy_rel_path
+
+    cfg = _cfg(tmp_path)
+    target = sessions_root(cfg) / "parent1" / "parent1--child-abc" / "uploads" / "f.pdf"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x")
+
+    assert (
+        remap_legacy_rel_path(cfg, "conversations/parent1--child-abc/uploads/f.pdf")
+        == "sessions/parent1/parent1--child-abc/uploads/f.pdf"
+    )
+
+
+def test_remap_legacy_rel_path_non_legacy_returns_none(tmp_path):
+    from decafclaw.conversation_paths import remap_legacy_rel_path
+
+    cfg = _cfg(tmp_path)
+    assert remap_legacy_rel_path(cfg, "vault/pages/Foo.md") is None
+    assert remap_legacy_rel_path(cfg, "sessions/abc/uploads/f.pdf") is None
+    assert remap_legacy_rel_path(cfg, "") is None
+
+
+def test_remap_legacy_rel_path_missing_target_returns_none(tmp_path):
+    from decafclaw.conversation_paths import remap_legacy_rel_path
+
+    cfg = _cfg(tmp_path)
+    # No file at the session location — the remap must not claim success.
+    assert remap_legacy_rel_path(cfg, "conversations/ghost/uploads/f.pdf") is None
+
+
+def test_remap_legacy_rel_path_stays_under_sessions(tmp_path):
+    from decafclaw.conversation_paths import remap_legacy_rel_path
+
+    cfg = _cfg(tmp_path)
+    # A hostile stored path must not remap to something outside sessions/.
+    assert remap_legacy_rel_path(cfg, "conversations/../secrets/f.pdf") is None
