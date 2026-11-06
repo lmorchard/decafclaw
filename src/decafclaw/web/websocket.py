@@ -724,6 +724,19 @@ async def _handle_retitle_command(ws_send: WSSendCallable, index, conv_id: str, 
 
 async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:
     conv_id = msg.get("conv_id", "")
+    # Delegated children ({parent}--child-{hex}) have no index entry of their
+    # own — cancelling one requires owning the parent (#1115 subagent cancel).
+    # Non-attributable conv ids (system conversations, which any authenticated
+    # user can read) keep the pre-existing unguarded behavior; the broader
+    # ownership hole is pre-existing and tracked for follow-up.
+    from .conversations import parent_conv_id_of
+
+    parent_id = parent_conv_id_of(conv_id)
+    if parent_id:
+        parent = index.get(parent_id)
+        if parent is None or parent.user_id != username:
+            await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found"})
+            return
     manager = state.get("manager")
     if manager:
         await manager.cancel_turn(conv_id)
