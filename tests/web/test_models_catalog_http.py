@@ -278,10 +278,13 @@ async def test_models_catalog_set_aux_approval(client, catalog_config):
     assert data["aux_approval_pointer"] == "local/on"
     assert data["aux_approval_model"] == "local/on"
 
-    # Clearing the pointer → ride on the active conversation model.
+    # Clearing the pointer → ride on the active conversation model. The
+    # payload emits the empty inherit sentinel rather than naming the
+    # global default (#1213 review note).
     resp = await client.post("/api/models/catalog/aux_approval", json={"model": ""})
     assert resp.status_code == 200
     assert resp.json()["aux_approval_pointer"] == ""
+    assert resp.json()["aux_approval_model"] == ""
 
     # A disabled (unselectable) model is rejected.
     resp = await client.post("/api/models/catalog/aux_approval", json={"model": "local/off"})

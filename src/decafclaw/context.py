@@ -224,9 +224,10 @@ class Context:
         """Return an LLM client for the shell auto-approval judge (#1213).
 
         Resolution: sidecar ``aux_approval_model`` pointer →
-        ``config.shell.aux_approval_model`` → the active conversation model
-        (today's behavior). Empty everywhere means "ride on the active
-        conversation model".
+        ``config.shell.aux_approval_model`` → the legacy ``aux_llm`` chain
+        (``auxiliary_model`` → active conversation model → default), so an
+        install configured for a cheap aux judge keeps it until a user
+        picks a dedicated model.
         """
         from .model_catalog import effective_aux_approval_model
 

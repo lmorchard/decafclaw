@@ -667,6 +667,67 @@ def test_aux_approval_resolution_inherit_and_fallback(config):
     assert effective_aux_approval_model(config, "active") == "hand-model"
 
 
+def test_aux_approval_falls_back_to_auxiliary_model(config):
+    """#1213 review: with no pointer and no seed, the judge keeps riding the
+    legacy aux chain — auxiliary_model first, mirroring Context.aux_llm."""
+    _config_with_models(config)
+    config.auxiliary_model = "hand-model"
+
+    from decafclaw.model_catalog import effective_aux_approval_model
+
+    # auxiliary_model outranks the conversation model, exactly as aux_llm().
+    assert effective_aux_approval_model(config, "active") == "hand-model"
+
+    # Without auxiliary_model, the conversation model is next.
+    config.auxiliary_model = ""
+    assert effective_aux_approval_model(config, "active") == "active"
+
+    # A dedicated pointer still outranks the legacy aux chain.
+    config.auxiliary_model = "hand-model"
+    import asyncio
+
+    from decafclaw.model_catalog import set_aux_approval_model
+
+    asyncio.run(set_aux_approval_model(config, "local/on"))
+    assert effective_aux_approval_model(config, "active") == "local/on"
+
+
+def test_aux_approval_non_key_seed_treated_as_unset(config, caplog):
+    """#1213 review: a raw seed name is not routable (the shell group has no
+    legacy endpoint of its own) — warn and fall through instead of handing
+    it to the provider layer, where resolution would silently default."""
+    import logging
+
+    _config_with_models(config)
+    config.shell.aux_approval_model = "raw-name-not-a-key"
+
+    from decafclaw.model_catalog import effective_aux_approval_model
+
+    with caplog.at_level(logging.WARNING, logger="decafclaw.model_catalog"):
+        # Falls through to the conversation model, not the raw name.
+        assert effective_aux_approval_model(config, "active") == "active"
+    assert any("raw-name-not-a-key" in r.message for r in caplog.records)
+
+
+def test_aux_approval_payload_inherit_sentinel(config):
+    """#1213 review: with nothing explicit anywhere, the payload emits the
+    empty sentinel rather than naming the global default — the actual judge
+    is each conversation's model."""
+    _config_with_models(config)
+    config.default_model = "hand-model"
+
+    from decafclaw.model_catalog import catalog_payload
+
+    payload = catalog_payload(config)
+    assert payload["aux_approval_pointer"] == ""
+    assert payload["aux_approval_model"] == ""
+
+    # Naming the global default would imply it is judging; an explicit
+    # pointer or aux chain still resolves to a name.
+    config.auxiliary_model = "hand-model"
+    assert catalog_payload(config)["aux_approval_model"] == "hand-model"
+
+
 # ---------------------------------------------------------------------------
 # Reflection / verifier model pointers (#1212)
 # ---------------------------------------------------------------------------

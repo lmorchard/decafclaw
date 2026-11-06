@@ -136,8 +136,9 @@ screens commands when `shell.aux_approval_enabled` is on — rides on the active
 conversation model by default. A dedicated judge is optional so an expensive or
 fast conversation model does not pay judgment prices it does not need.
 
-- **Config**: `shell.aux_approval_model` (`""` = ride on the conversation
-  model; names a `model_configs` key or a discovered `{provider}/{model_id}`).
+- **Config**: `shell.aux_approval_model` (`""` = ride on the legacy aux
+  chain: `auxiliary_model` → conversation model → default; when set, names a
+  `model_configs` key — discovered models materialize as keys).
 - **UI**: **⚙ Agent Config → Models → Auto-approval model** lists every
   enabled catalog model plus an explicit **"use conversation model"** option
   that clears the pointer and re-runs the chain. Writes land in the
@@ -146,12 +147,20 @@ fast conversation model does not pay judgment prices it does not need.
 Resolution order for the auto-approval judge:
 
 1. The sidecar's `aux_approval_model` pointer, when it names a selectable model.
-2. `config.json`'s `shell.aux_approval_model` (the seed; may itself be a
-   `model_configs` key or a legacy raw name).
-3. The active conversation model — today's behavior when nothing is set.
+2. `config.json`'s `shell.aux_approval_model` (the seed; a `model_configs`
+   key — a hand-written raw name has no endpoint to route through, so it is
+   treated as unset with a warning).
+3. `config.json`'s `auxiliary_model` — the legacy aux chain the judge rode
+   before dedicated pointers existed.
+4. The active conversation model, then the global default — today's
+   behavior when nothing is set.
 
-An empty pointer or seed inherits step 3; a pointer at a disabled or vanished
-model falls back cleanly to the seed, then to the conversation model.
+An empty pointer or seed inherits step 3 onward; a pointer at a disabled or
+vanished model falls back cleanly to the seed, then down the legacy chain.
+
+The judgment is a forced-tool structured-output call, so the picker warns
+when the selected model's discovery metadata reports no tool support
+(`tools: false`; an unknown capability stays silent).
 
 The agent cannot change its own auto-approval model — same user-only rule as
 the default model.
