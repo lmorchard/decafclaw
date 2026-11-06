@@ -3,14 +3,15 @@
 # -- delegate_task vs activate_skill -----------------------------------------
 
 - name: delegate-vs-activate-research
-  scenario: "Spin up a separate sub-agent to dig through the linkding ingest skill source and summarize how the ingest pipeline routes pages."
+  scenario: "Spin up a separate sub-agent to dig through the linkding ingest skill source and summarize how the ingest pipeline routes pages — I need the summary back here when it's done."
   expected: delegate_task
-  near_miss: [activate_skill]
+  near_miss: [activate_skill, subagent_spawn]
   notes: |
     "Spin up a separate sub-agent" is delegate_task — fork a child
-    agent for an isolated task. activate_skill loads a skill's tools
-    into the current conversation; it doesn't run anything by itself.
-    The user is asking for delegated work, not for tool unlocking.
+    agent for an isolated task and get its result back. activate_skill
+    loads a skill's tools into the current conversation; it doesn't run
+    anything by itself. subagent_spawn's default is fire-and-forget,
+    which would strand the summary in the child conversation.
 
 - name: activate-vs-delegate-tool-access
   scenario: "I want to use the project skill in this conversation."
@@ -20,6 +21,30 @@
     "Use the X skill" → activate_skill loads its tools into this
     conversation. delegate_task is the wrong primitive — it's for
     doing work elsewhere, not for unlocking tools here.
+
+# -- subagent_spawn vs delegate_task (#1113) ---------------------------------
+
+- name: subagent-spawn-background-lifecycle
+  scenario: "Kick off a subagent in the background to reorganize the vault tag taxonomy, and give me its id so I can check on it and stop it if it goes sideways."
+  expected: subagent_spawn
+  near_miss: [delegate_task]
+  notes: |
+    Background run + "give me its id so I can check on it and stop it"
+    is the subagent lifecycle surface (#1113): subagent_spawn returns a
+    child_conv_id immediately (fire-and-forget by default) and pairs
+    with subagent_list / subagent_cancel. delegate_task blocks the
+    parent until the child finishes and returns no id to manage.
+
+- name: delegate-task-await-result
+  scenario: "Hand this off to a child agent and wait for it: summarize docs/deployment.md in three sentences and bring the summary back here."
+  expected: delegate_task
+  near_miss: [subagent_spawn]
+  notes: |
+    "Hand off ... and wait ... bring the summary back here" wants the
+    awaited result directly — delegate_task. subagent_spawn's default
+    is fire-and-forget, which would strand the answer in the child
+    conversation; picking it here (or without async_run=false) breaks
+    the caller's expectation.
 
 # -- Negative-control: no tool needed at all ---------------------------------
 
