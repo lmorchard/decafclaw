@@ -129,6 +129,33 @@ resolves through the normal single-`ModelConfig` path.
 Disabling the model the pointer names is allowed — resolution falls back to
 the next step cleanly, on the next turn, without a restart.
 
+### Shell auto-approval model (#1213)
+
+The shell auto-approval LLM — the small structured-classification judge that
+screens commands when `shell.aux_approval_enabled` is on — rides on the active
+conversation model by default. A dedicated judge is optional so an expensive or
+fast conversation model does not pay judgment prices it does not need.
+
+- **Config**: `shell.aux_approval_model` (`""` = ride on the conversation
+  model; names a `model_configs` key or a discovered `{provider}/{model_id}`).
+- **UI**: **⚙ Agent Config → Models → Auto-approval model** lists every
+  enabled catalog model plus an explicit **"use conversation model"** option
+  that clears the pointer and re-runs the chain. Writes land in the
+  `data/{agent_id}/model_catalog.json` sidecar under `aux_approval_model`.
+
+Resolution order for the auto-approval judge:
+
+1. The sidecar's `aux_approval_model` pointer, when it names a selectable model.
+2. `config.json`'s `shell.aux_approval_model` (the seed; may itself be a
+   `model_configs` key or a legacy raw name).
+3. The active conversation model — today's behavior when nothing is set.
+
+An empty pointer or seed inherits step 3; a pointer at a disabled or vanished
+model falls back cleanly to the seed, then to the conversation model.
+
+The agent cannot change its own auto-approval model — same user-only rule as
+the default model.
+
 The agent cannot trigger discovery or change models — selection is
 user-only, and the sidecar is outside the agent's writable workspace.
 

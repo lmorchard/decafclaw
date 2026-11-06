@@ -393,11 +393,16 @@ Settings for shell command execution and pre-approval logic (see #473).
 | Field | Type | Default | Env Var |
 |-------|------|---------|---------|
 | `aux_approval_enabled` | bool | `false` | `SHELL_AUX_APPROVAL_ENABLED` |
+| `aux_approval_model` | str | `""` | `SHELL_AUX_APPROVAL_MODEL` |
 | `aux_approval_guidance` | str | `""` | `SHELL_AUX_APPROVAL_GUIDANCE` |
 | `aux_approval_presets` | dict | `{}` | `SHELL_AUX_APPROVAL_PRESETS` |
 | `active_aux_approval_presets` | list[str] | `[]` | `SHELL_ACTIVE_AUX_APPROVAL_PRESETS` |
 
 When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxiliary LLM to screen unrecognized commands. If the aux LLM deems the command low-risk (e.g. `ls -la`, `git status`), it is auto-approved without prompting the user. If the aux LLM deems it risky or errors out, it falls through to standard interactive confirmation. Auto-approved patterns are temporarily cached per-conversation so repeated benign commands don't trigger redundant LLM calls.
+
+#### Dedicated auto-approval judge model
+
+`shell.aux_approval_model` (env `SHELL_AUX_APPROVAL_MODEL`) names a dedicated model for the auto-approval judge; empty (`""`) keeps the historical behavior of riding on the active conversation model. When set, it names a `model_configs` key or a discovered `{provider}/{model_id}`, and resolves through the same chain as the global default: the `data/{agent_id}/model_catalog.json` sidecar's `aux_approval_model` pointer → `shell.aux_approval_model` → the active conversation model. The sidecar pointer is the UI-managed path (the **Auto-approval model** picker in **⚙ Agent Config → Models**); an empty pointer or empty seed means "ride on the conversation model". See [Model selection](model-selection.md#shell-auto-approval-model).
 
 #### Guidance and Situational Presets
 
