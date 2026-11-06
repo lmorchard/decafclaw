@@ -85,6 +85,39 @@ def _session_id_for_conv(conv_id: str) -> str:
     return conv_id
 
 
+def remap_legacy_rel_path(config, rel_path: str) -> str | None:
+    """Session-layout workspace-relative path for a stored legacy path, or None.
+
+    Data written before ``make migrate-sessions`` (#1112) — attachment
+    dicts in message metadata, workspace file URLs — stores
+    workspace-relative paths like ``conversations/{conv_id}/uploads/f``.
+    After the migration those dirs live under ``sessions/`` (standalone at
+    ``sessions/{conv_id}/``, children at ``sessions/{parent}/{child}/``),
+    so stored paths go stale. Returns the remapped workspace-relative path
+    when the file exists at the session location; None when ``rel_path``
+    is not legacy-shaped or the file is not there either (callers keep
+    their own not-found handling).
+    """
+    prefix = "conversations/"
+    if not rel_path or not rel_path.startswith(prefix):
+        return None
+    rest = rel_path[len(prefix) :]
+    conv_id, sep, tail = rest.partition("/")
+    if not sep or not tail:
+        return None
+    if _is_child_conv_id(conv_id):
+        target = session_conversation_dir(config, _session_id_for_conv(conv_id), conv_id) / tail
+    else:
+        target = session_dir(config, conv_id) / tail
+    target = target.resolve()
+    workspace = config.workspace_path.resolve()
+    if not target.is_relative_to(sessions_root(config).resolve()):
+        return None
+    if not target.is_file():
+        return None
+    return str(target.relative_to(workspace))
+
+
 def conversation_dir(config, conv_id: str, *, create: bool = False) -> Path:
     """Session-aware conversation dir with legacy fallback (#1112).
 
