@@ -946,7 +946,7 @@ TOOL_DEFINITIONS = [
                         "type": "boolean",
                         "description": (
                             "Stream the job's live output to the sticky slot "
-                            "above the chat input (progress_tracker widget: "
+                            "above the conversation controls (progress_tracker widget: "
                             "throttled updates while running, final "
                             "completed/failed state on exit). Use for long "
                             "jobs the user should watch instead of polling. "
