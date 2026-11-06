@@ -308,6 +308,23 @@ async def test_serve_workspace_ascii_download_needing_quoting_uses_utf8_filename
 
 
 @pytest.mark.asyncio
+async def test_serve_workspace_legacy_attachment_path_follows_session_layout(
+    client,
+    http_config,
+):
+    # Post-migrate-sessions (#1112), messages still carry stored attachment
+    # paths under conversations/{id}/... — serving them must follow the file
+    # to its session location instead of 404ing.
+    uploads = http_config.workspace_path / "sessions" / "web-user-abc123" / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    (uploads / "scan.pdf").write_bytes(b"pdf")
+
+    resp = await client.get("/api/workspace/conversations/web-user-abc123/uploads/scan.pdf")
+    assert resp.status_code == 200
+    assert resp.content == b"pdf"
+
+
+@pytest.mark.asyncio
 async def test_serve_workspace_non_latin_download_uses_utf8_filename(
     client,
     http_config,

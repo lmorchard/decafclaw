@@ -10,7 +10,7 @@ import mimetypes
 from datetime import datetime
 from pathlib import Path
 
-from decafclaw.conversation_paths import conversation_dir
+from decafclaw.conversation_paths import conversation_dir, remap_legacy_rel_path
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +72,12 @@ def read_attachment_bytes(config, attachment: dict) -> bytes | None:
 
     if full_path.exists():
         return full_path.read_bytes()
+
+    # Attachments saved before `make migrate-sessions` (#1112) store
+    # conversations/{id}/... rel paths; the file now lives under sessions/.
+    remapped = remap_legacy_rel_path(config, rel_path)
+    if remapped is not None:
+        return (config.workspace_path / remapped).read_bytes()
 
     log.warning(f"Attachment file not found: {full_path}")
     return None
