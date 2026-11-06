@@ -248,6 +248,7 @@ describe('conversation-sidebar row keyboard access', () => {
       folders: [{ name: 'Work', path: 'Work' }],
       selectConversation: vi.fn(),
       listConversations: vi.fn(),
+      listSessions: vi.fn(),
       listArchivedConversations: vi.fn(),
       listSystemConversations: vi.fn(),
     });

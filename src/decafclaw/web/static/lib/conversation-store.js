@@ -58,6 +58,18 @@ import { ToolStatusStore } from './tool-status-store.js';
 import { WebSocketClient } from './websocket-client.js';
 
 /**
+ * Parent conversation id for delegated children (`{root}--child-{hex}`,
+ * #1112/#1115 session layout), or '' for standalone conversations.
+ * @param {string} convId
+ * @returns {string}
+ */
+export function parentConvIdOf(convId) {
+  const id = String(convId || '');
+  const idx = id.indexOf('--child-');
+  return idx > 0 ? id.slice(0, idx) : '';
+}
+
+/**
  * Central state store for conversations.
  * Conversation management (list, create, rename, archive, folders) uses REST.
  * Real-time chat streaming uses WebSocket.
@@ -142,7 +154,12 @@ export class ConversationStore extends EventTarget {
     this.#messageStore = new MessageStore(onChange);
     this.#toolStatusStore = new ToolStatusStore(onChange, wsClient, this.#messageStore);
     this.#ws.addEventListener('message', (e) => this.#handleMessage(/** @type {CustomEvent} */(e).detail));
-    this.#ws.addEventListener('open', () => this.listConversations());
+    // Sessions feed the sidebar hierarchy (#1115); refresh alongside the
+    // flat list so delegated children appear without a page reload.
+    this.#ws.addEventListener('open', () => {
+      this.listConversations();
+      this.listSessions();
+    });
     // A reconnect gives us a brand-new socket, and the server tracks stream
     // subscriptions per socket — so without this, every per-conversation push
     // (canvas_update, sticky, tool status, streamed output) is delivered to
@@ -320,18 +337,6 @@ export class ConversationStore extends EventTarget {
   }
 
   /**
-   * Subagent conversations spawned under the given session root conv id
-   * (`{root}--child-{hex}`, #1112/#1115 session layout).
-   * @param {string} convId
-   * @returns {Array}
-   */
-  getSubagents(convId) {
-    const prefix = `${convId}--child-`;
-    const list = this.#conversations || [];
-    return list.filter((c) => c && c.conv_id && c.conv_id.startsWith(prefix) && c.conv_id !== convId);
-  }
-
-  /**
    * Cancel an in-flight subagent turn (#1115). Sends the cancel signal for
    * the child conversation; the server routes it through the conversation's
    * turn machinery.
@@ -506,7 +511,11 @@ export class ConversationStore extends EventTarget {
     this.#contextLimit = 0;
     this.#activeModel = '';
     this.#activeMode = 'default';
-    this.#readOnly = false;
+    // Delegated children are viewable read-only (#1115): only the parent
+    // conversation can be prompted. Child-shaped ids are gated immediately
+    // — don't wait for the server's CONV_SELECTED read_only echo, or the
+    // input blinks enabled for the round-trip.
+    this.#readOnly = Boolean(parentConvIdOf(convId));
     this.#ws.send({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: convId });
     this.#ws.send({ type: MESSAGE_TYPES.LOAD_HISTORY, conv_id: convId, limit: 50 });
     // Not on socket `open`: #704's guard says a reconnect with nothing
@@ -553,6 +562,10 @@ export class ConversationStore extends EventTarget {
       this.createConversation('', this.#activeModel, this.#currentFolder);
       return;
     }
+    // Delegated children are read-only (#1115): the transcript is inspectable
+    // but not promptable. The server refuses sends to child conversations
+    // too; this keeps the optimistic local echo from lying about it.
+    if (parentConvIdOf(this.#currentConvId)) return;
     // `/terminal` and `/retitle` are human-only side-effect commands (#442, #1156):
     // they run NO agent turn, so they must not engage the conversation's busy/turn
     // machinery. Sending them like a normal message would set `#busy` with nothing
@@ -700,6 +713,9 @@ export class ConversationStore extends EventTarget {
           if (meter) this.#contextUsage = meter;
           if (msg.context_limit) this.#contextLimit = msg.context_limit;
           this.listConversations(this.#currentFolder);
+          // Refresh the session hierarchy: a finished turn may have spawned
+          // subagent children (#1115) that only a refetch will reveal.
+          this.listSessions(this.#currentFolder);
         }
       }
       this.#emitChange();
