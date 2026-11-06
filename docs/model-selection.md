@@ -132,9 +132,11 @@ the next step cleanly, on the next turn, without a restart.
 ### Shell auto-approval model (#1213)
 
 The shell auto-approval LLM — the small structured-classification judge that
-screens commands when `shell.aux_approval_enabled` is on — rides on the active
-conversation model by default. A dedicated judge is optional so an expensive or
-fast conversation model does not pay judgment prices it does not need.
+screens commands when `shell.aux_approval_enabled` is on — rides on the
+legacy aux chain by default (`auxiliary_model`, else the active conversation
+model, else the global default). A dedicated judge is optional so an
+expensive or fast conversation model does not pay judgment prices it does
+not need.
 
 - **Config**: `shell.aux_approval_model` (`""` = ride on the legacy aux
   chain: `auxiliary_model` → conversation model → default; when set, names a
