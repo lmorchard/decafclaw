@@ -1227,6 +1227,20 @@ var DefaultService = class {
    * @returns ModelCatalogResponse Successful Response
    * @throws ApiError
    */
+  static wrapperApiModelsCatalogAuxApprovalPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/models/catalog/aux_approval",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
   static wrapperApiModelsCatalogProviderPost(requestBody) {
     return request2(OpenAPI, {
       method: "POST",

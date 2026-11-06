@@ -220,6 +220,19 @@ class Context:
         model_name = self.config.auxiliary_model or self.active_model or effective_default_model(self.config)
         return BoundLlmClient(self.config, model_name)
 
+    def aux_approval_llm(self) -> BoundLlmClient:
+        """Return an LLM client for the shell auto-approval judge (#1213).
+
+        Resolution: sidecar ``aux_approval_model`` pointer →
+        ``config.shell.aux_approval_model`` → the active conversation model
+        (today's behavior). Empty everywhere means "ride on the active
+        conversation model".
+        """
+        from .model_catalog import effective_aux_approval_model
+
+        model_name = effective_aux_approval_model(self.config, self.active_model)
+        return BoundLlmClient(self.config, model_name)
+
     # Turn kinds where no human can answer a confirmation prompt: it is emitted
     # only to subscribers of an ephemeral conv_id, so it would block for confirmation
     # timeout (or indefinitely) and is then synthesized into a denial. Deliberately NOT

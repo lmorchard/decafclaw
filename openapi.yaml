@@ -1027,6 +1027,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ModelCatalogResponse'
+  /api/models/catalog/aux_approval:
+    post:
+      summary: Wrapper
+      operationId: wrapper_api_models_catalog_aux_approval_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                key:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Key
+                enabled:
+                  anyOf:
+                  - type: boolean
+                  - type: 'null'
+                  title: Enabled
+                model:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Model
+              additionalProperties: false
+              type: object
+              title: ModelCatalogUpdateRequest
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelCatalogResponse'
   /api/models/catalog/provider:
     post:
       summary: Wrapper
@@ -2583,6 +2618,14 @@ components:
             $ref: '#/components/schemas/CatalogProviderEntry'
           type: object
           title: Providers
+        aux_approval_model:
+          type: string
+          title: Aux Approval Model
+          default: ''
+        aux_approval_pointer:
+          type: string
+          title: Aux Approval Pointer
+          default: ''
       type: object
       required:
       - default_model
