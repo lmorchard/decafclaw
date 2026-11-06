@@ -432,6 +432,11 @@ class ConversationState:
     # Event stream subscribers: sub_id -> callback
     subscribers: dict[str, Callable] = field(default_factory=dict)
 
+    # Subagent task description for spawned children (#1113). Set by the
+    # manager as a child turn is dispatched (run_child_turn /
+    # subagent_spawn); surfaced by the `subagent_list` tool.
+    subagent_task: str = ""
+
 
 class ConversationManager:
     """Central orchestrator for agent loops and conversation state.
@@ -1340,6 +1345,17 @@ class ConversationManager:
     def get_state(self, conv_id: str) -> ConversationState | None:
         """Get current conversation state, or None if not tracked."""
         return self._conversations.get(conv_id)
+
+    def set_subagent_task(self, conv_id: str, task: str) -> None:
+        """Record the task description for a spawned subagent conversation (#1113).
+
+        Called from the child-turn setup closure so `subagent_list` can
+        report status + task per spawned subagent. No-op for conversations
+        that aren't tracked (e.g. state not yet created).
+        """
+        state = self._conversations.get(conv_id)
+        if state is not None:
+            state.subagent_task = task
 
     def get_activity_status(self, conv_id: str) -> str:
         """Get current activity status of a conversation ('idle', 'busy', or 'waiting')."""
