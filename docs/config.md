@@ -617,6 +617,33 @@ The ledger lives in the per-conversation `decisions.json` sidecar next to the
 decision slice and renders as a `### File Operations` section inside the
 `<decision_slice>` block.
 
+## Secrets and secret references (#1032)
+
+Secret values (LLM provider API keys, Mattermost bot tokens, email SMTP
+credentials, the HTTP callback secret, …) are **not** stored in
+`data/{agent_id}/config.json`. The file holds `${VAR_NAME}` references; the
+values live in an external `.env` store outside the agent dir and are resolved
+at config-load time by `decafclaw.secrets` (default driver: environment
+variables / the external `.env`).
+
+- Literal secret values in `config.json` are still accepted during the
+  transition and log a deprecation warning at load.
+- `decafclaw config show` / `make config` display `${VAR_NAME}` references as
+  plain text and mask resolved secret values unless `--reveal`.
+- Admin tools redact secret fields via the `secret` field annotation and refuse
+  agent access to the external secret store.
+
+### Migrating literals to references
+
+```bash
+make migrate-secrets        # extract literal secrets into the external .env and rewrite config.json to ${VAR} refs
+make migrate-secrets-dry    # preview only
+```
+
+The migration is idempotent and safe to re-run; secrets already holding
+`${VAR_NAME}` refs, empty values, and vars already staged in the external store
+are skipped.
+
 ## Migrating from .env
 
 ```bash
