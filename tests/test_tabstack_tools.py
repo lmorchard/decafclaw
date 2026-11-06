@@ -536,6 +536,20 @@ async def test_extract_json_returns_plain_dict(ctx, use_client):
     assert '"price": 42' in result.text
 
 
+async def test_extract_json_attaches_json_view_widget(ctx, use_client):
+    """tabstack_extract_json attaches a json_view widget when the payload is JSON."""
+    use_client(_FakeClient(extract=_FakeExtract({"price": 42})))
+
+    result = await tools.tool_tabstack_extract_json(ctx, url="http://x", json_schema={"type": "object"})
+
+    assert isinstance(result, ToolResult)
+    assert result.widget is not None
+    assert result.widget.widget_type == "json_view"
+    assert result.widget.target == "inline"
+    assert result.widget.data["value"] == {"price": 42}
+    assert result.widget.data.get("expand_depth") == 1
+
+
 async def test_generate_returns_plain_dict_json(ctx, use_client):
     use_client(_FakeClient(generate=_FakeGenerate({"summary": "hi"})))
 

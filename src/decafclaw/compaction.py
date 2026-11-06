@@ -1,6 +1,7 @@
 """Conversation compaction — summarize old history to stay within context budget."""
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -125,7 +126,8 @@ After your prose summary, append a JSON block in this exact shape:
 {
   "decisions": ["..."],
   "open_questions": ["..."],
-  "artifacts": ["..."]
+  "artifacts": ["..."],
+  "file_operations": ["<operation> <path> :: call <id> :: ok|failed", "..."]
 }
 ```
 
@@ -136,6 +138,11 @@ Each list contains short strings (≤ 200 chars):
   follow up on. Drop entries that have been answered.
 - artifacts: concrete things produced (files written, vault pages
   created, PRs opened, scripts shipped).
+- file_operations: deterministic file-operation ledger entries
+  (`"<operation> <path> :: call <id> :: ok|failed"`). Successful
+  reads/writes/edits survive compactions with their path, call identity,
+  and outcome; failed writes are never represented as successful
+  modifications.
 
 If a `<decision_slice>` block is provided in the input, **reuse existing
 entries verbatim** when they still apply — do NOT paraphrase. Add new
@@ -163,6 +170,78 @@ def _with_decisions_addendum(prompt: str, config) -> str:
     if config.compaction.decisions_enabled:
         return prompt + DECISIONS_PROMPT_ADDENDUM
     return prompt
+
+
+# Built-in workspace file tools whose side effects are captured into the
+# deterministic file-operation ledger during compaction (#924). Only these
+# built-ins are in scope; arbitrary shell filesystem changes are not inferred.
+_FILE_OPERATION_TOOLS = frozenset(
+    {
+        "workspace_read",
+        "workspace_write",
+        "workspace_append",
+        "workspace_edit",
+        "workspace_insert",
+        "workspace_replace_lines",
+        "workspace_move",
+        "workspace_copy",
+        "workspace_delete",
+    }
+)
+
+_OPERATION_NAME_ALIASES = {
+    "workspace_read": "read",
+    "workspace_write": "write",
+    "workspace_append": "append",
+    "workspace_edit": "edit",
+    "workspace_insert": "insert",
+    "workspace_replace_lines": "replace_lines",
+    "workspace_move": "move",
+    "workspace_copy": "copy",
+    "workspace_delete": "delete",
+}
+
+
+def _extract_file_operations(messages: list[dict]) -> list[str]:
+    """Deterministically derive file-operation ledger entries from history.
+
+    Scans flattened messages for built-in workspace file-tool calls and
+    their outcomes, returning one deterministic op string per operation:
+
+        ``"<operation> <path> :: call <tool_call_id> :: ok|failed"``
+
+    Reads and writes/edits are outcome-tagged here so a failed write is
+    never represented as a successful modification (#924).
+    """
+    calls: list[tuple[str, str, str]] = []
+    results: dict[str, str] = {}
+    for msg in messages:
+        role = msg.get("role")
+        if role == "assistant":
+            tool_calls = msg.get("tool_calls") or []
+            for tc in tool_calls:
+                fn = tc.get("function") or {}
+                name = fn.get("name") or ""
+                call_id = tc.get("id") or ""
+                if name not in _FILE_OPERATION_TOOLS:
+                    continue
+                try:
+                    args = json.loads(fn.get("arguments") or "{}") if fn.get("arguments") else {}
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    args = {}
+                path = args.get("path") or args.get("file_path") or args.get("target_path") or ""
+                calls.append((call_id, _OPERATION_NAME_ALIASES.get(name, name), str(path)))
+
+        elif role == "tool":
+            call_id = msg.get("tool_call_id") or ""
+            results[call_id] = str(msg.get("content") or "")
+
+    ops: list[str] = []
+    for call_id, operation, path in calls:
+        content = results.get(call_id, "")
+        ok = not content.startswith("[error:")
+        ops.append(f"{operation} {path} :: call {call_id} :: {'ok' if ok else 'failed'}")
+    return ops
 
 
 def _build_compaction_user_input(mode, old_slice_block: str = "") -> str:
@@ -622,9 +701,19 @@ async def compact_history(ctx: "Context", history: list) -> bool:
         if config.compaction.decisions_enabled:
             parsed = parse_slice_from_response(summary)
             if parsed is not None:
+                source_messages = (
+                    [m for turn in mode.newly_old_turns for m in turn] if mode.incremental else mode.old_messages
+                )
+                file_ops = _extract_file_operations(source_messages)
+                new_lists: dict[str, list[str]] = {
+                    "decisions": parsed.get("decisions", []) if parsed else [],
+                    "open_questions": parsed.get("open_questions", []) if parsed else [],
+                    "artifacts": parsed.get("artifacts", []) if parsed else [],
+                    "file_operations": file_ops,
+                }
                 merged = merge_slice(
                     old_slice or load_slice(config, conv_id),
-                    parsed,
+                    new_lists,
                     max_per_category=config.compaction.decisions_max_per_category,
                 )
                 save_slice(config, conv_id, merged)
