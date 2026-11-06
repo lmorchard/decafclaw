@@ -30,6 +30,7 @@ describe('conversation-sidebar model selector', () => {
       ],
       selectConversation: vi.fn(),
       listConversations: vi.fn(),
+      listSessions: vi.fn(),
       listArchivedConversations: vi.fn(),
       listSystemConversations: vi.fn(),
       setModel: vi.fn(),
@@ -201,6 +202,7 @@ describe('conversation-sidebar mode selector', () => {
       ],
       selectConversation: vi.fn(),
       listConversations: vi.fn(),
+      listSessions: vi.fn(),
       listArchivedConversations: vi.fn(),
       listSystemConversations: vi.fn(),
       setModel: vi.fn(),
@@ -299,6 +301,7 @@ describe('conversation-sidebar activity indicators', () => {
       defaultModel: '',
       selectConversation: vi.fn(),
       listConversations: vi.fn(),
+      listSessions: vi.fn(),
       getConversationStatus: (id) => statuses[id] || 'idle',
     });
     sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
@@ -376,6 +379,7 @@ describe('conversation-sidebar on-demand retitle action', () => {
       retitleConversation: vi.fn(),
       selectConversation: vi.fn(),
       listConversations: vi.fn(),
+      listSessions: vi.fn(),
     });
     sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
     document.body.append(sidebar);
@@ -391,5 +395,90 @@ describe('conversation-sidebar on-demand retitle action', () => {
 
     retitleBtn.click();
     expect(store.retitleConversation).toHaveBeenCalledWith('c1');
+  });
+});
+
+// #1115 — the sidebar renders the server-grouped session hierarchy
+// (`GET /api/sessions`) with subagent rows, status badges, and cancel.
+describe('conversation-sidebar session hierarchy (#1115)', () => {
+  const parent = { conv_id: 'web-alice-r1', title: 'Root chat', updated_at: '2026-01-02T00:00:00+00:00' };
+  const child = { conv_id: 'web-alice-r1--child-abcdef12', title: 'Subtask abcdef12', kind: 'subagent', status: 'busy' };
+  let sidebar;
+
+  afterEach(() => {
+    sidebar?.remove();
+  });
+
+  async function mountSessions(storeOverrides = {}) {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'web-alice-r1',
+      conversations: [parent],
+      sessions: [
+        {
+          session_id: 'web-alice-r1',
+          title: 'Root chat',
+          updated_at: '2026-01-02T00:00:00+00:00',
+          status: 'idle',
+          conversations: [{ ...parent, kind: 'parent' }, { ...child }],
+        },
+      ],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 0,
+      contextLimit: 0,
+      activeModel: '',
+      availableModels: [],
+      defaultModel: '',
+      activeMode: 'default',
+      availableModes: [],
+      commands: [],
+      getConversationStatus: vi.fn(() => 'busy'),
+      selectConversation: vi.fn(),
+      cancelSubagent: vi.fn(),
+      listConversations: vi.fn(),
+      listSessions: vi.fn(),
+      ...storeOverrides,
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    await sidebar.updateComplete;
+    return { sidebar, store };
+  }
+
+  it('renders server-grouped sessions with subagent rows, badges, and cancel', async () => {
+    const { sidebar } = await mountSessions();
+    const subagentRow = sidebar.querySelector('.conv-subagent');
+    expect(subagentRow).toBeTruthy();
+    expect(subagentRow.textContent).toContain('Subtask abcdef12');
+    expect(subagentRow.textContent).toContain('Running');
+    expect(sidebar.querySelector('.conv-subagent-cancel')).toBeTruthy();
+  });
+
+  it('cancel button calls store.cancelSubagent for the child conv', async () => {
+    const { sidebar, store } = await mountSessions();
+    /** @type {HTMLElement} */ (sidebar.querySelector('.conv-subagent-cancel')).click();
+    expect(store.cancelSubagent).toHaveBeenCalledWith('web-alice-r1--child-abcdef12');
+  });
+
+  it('falls back to client-side grouping of the flat list when sessions are empty', async () => {
+    const { sidebar } = await mountSessions({
+      sessions: [],
+      conversations: [
+        { conv_id: 'web-alice-r1', title: 'Root chat' },
+        { conv_id: 'web-alice-r1--child-abcdef12', title: 'Subtask abcdef12' },
+      ],
+    });
+    expect(sidebar.querySelector('.conv-subagent')).toBeTruthy();
+  });
+
+  it('navigating chat folders refreshes the session listing', async () => {
+    const { sidebar, store } = await mountSessions({ folders: [{ name: 'Work', path: 'Work' }] });
+    /** @type {HTMLElement} */ (sidebar.querySelector('.wiki-folder-item')).click();
+    await sidebar.updateComplete;
+    expect(store.listSessions).toHaveBeenCalledWith('Work');
   });
 });

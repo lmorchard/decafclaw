@@ -211,6 +211,69 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/sessions:
+    get:
+      summary: List Sessions
+      description: "List sessions (root conversation + delegated subagents) for the\
+        \ sidebar hierarchy.\n\nQuery params:\n    folder \u2014 optional folder path\
+        \ (default: top-level). Sessions whose\n        root conversation is assigned\
+        \ to the folder are returned.\n\nReturns ``{folder, sessions}`` where each\
+        \ session carries its root\nconversation metadata plus the nested subagent\
+        \ conversations.\n\nSubagent children are discovered from the archive layer\
+        \ \u2014 they have no\nConversationIndex entries (see ``discover_child_convs``).\
+        \ A session's\n``status`` reflects its root conversation only; children carry\
+        \ per-item\nstatus."
+      operationId: list_sessions_api_sessions_get
+      parameters:
+      - name: folder
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Folder
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionListingResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/sessions/{session_id}/conversations:
+    get:
+      summary: List Session Conversations
+      description: "List the conversations within one session.\n\n``session_id`` may\
+        \ name a root conversation (optionally with delegated\nsubagents) or one of\
+        \ its subagent conversation ids; both resolve to the\nsame session list \u2014\
+        \ the root plus its subagent children. Children are\ndiscovered from the archive\
+        \ layer; they have no ConversationIndex\nentries (see ``discover_child_convs``)."
+      operationId: list_session_conversations_api_sessions__session_id__conversations_get
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Session Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionConversationsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/conversations/{id}:
     get:
       summary: Wrapper
@@ -2994,6 +3057,99 @@ components:
       - schedule
       - modified
       title: ScheduleUpdateResponse
+    SessionConversationItem:
+      properties:
+        conv_id:
+          type: string
+          title: Conv Id
+        title:
+          type: string
+          title: Title
+        kind:
+          type: string
+          title: Kind
+          default: parent
+        created_at:
+          type: string
+          title: Created At
+          default: ''
+        updated_at:
+          type: string
+          title: Updated At
+          default: ''
+        status:
+          type: string
+          title: Status
+          default: idle
+      type: object
+      required:
+      - conv_id
+      - title
+      title: SessionConversationItem
+      description: "One conversation inside a session group \u2014 the parent or a\
+        \ subagent."
+    SessionConversationsResponse:
+      properties:
+        session_id:
+          type: string
+          title: Session Id
+        conversations:
+          items:
+            $ref: '#/components/schemas/SessionConversationItem'
+          type: array
+          title: Conversations
+      type: object
+      required:
+      - session_id
+      - conversations
+      title: SessionConversationsResponse
+    SessionEntry:
+      properties:
+        session_id:
+          type: string
+          title: Session Id
+        title:
+          type: string
+          title: Title
+        created_at:
+          type: string
+          title: Created At
+          default: ''
+        updated_at:
+          type: string
+          title: Updated At
+          default: ''
+        status:
+          type: string
+          title: Status
+          default: idle
+        conversations:
+          items:
+            $ref: '#/components/schemas/SessionConversationItem'
+          type: array
+          title: Conversations
+          default: []
+      type: object
+      required:
+      - session_id
+      - title
+      title: SessionEntry
+      description: 'A session: one root conversation plus its delegated subagent children.'
+    SessionListingResponse:
+      properties:
+        folder:
+          type: string
+          title: Folder
+        sessions:
+          items:
+            $ref: '#/components/schemas/SessionEntry'
+          type: array
+          title: Sessions
+      type: object
+      required:
+      - folder
+      - sessions
+      title: SessionListingResponse
     ShellPresetItem:
       properties:
         name:

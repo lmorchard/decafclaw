@@ -1,4 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
+import { parentConvIdOf } from '../lib/conversation-store.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 import './context-inspector.js';
 import './notification-inbox.js';
@@ -12,6 +13,7 @@ export class ConversationSidebar extends LitElement {
     store: { type: Object, attribute: false },
     authClient: { type: Object, attribute: false },
     _conversations: { type: Array, state: true },
+    _sessions: { type: Array, state: true },
     _chatFolders: { type: Array, state: true },
     _chatSection: { type: String, state: true },
     _chatFolder: { type: String, state: true },
@@ -43,6 +45,8 @@ export class ConversationSidebar extends LitElement {
     this.authClient = null;
     /** @type {Array<import("../lib/conversation-store.js").ConversationMeta | import("../lib/conversation-store.js").SystemConversationMeta>} */
     this._conversations = [];
+    /** @type {import("../lib/conversation-store.js").SessionEntry[]} server-grouped sessions (#1115) */
+    this._sessions = [];
     /** @type {import("../lib/conversation-store.js").FolderEntry[]} */
     this._chatFolders = [];
     /** @type {string} which section: '' (active), '_archived', '_system' */
@@ -107,6 +111,9 @@ export class ConversationSidebar extends LitElement {
       } else {
         this._conversations = [...(this.store?.conversations || [])];
         this._chatFolders = this.store?.folders || [];
+        // Server-grouped sessions (#1115) — the hierarchy data for the
+        // active section; client-side grouping remains as fallback.
+        this._sessions = [...(this.store?.sessions || [])];
       }
       this.requestUpdate();
     };
@@ -546,6 +553,138 @@ export class ConversationSidebar extends LitElement {
   }
 
   /**
+   * Group a flat conversation list into sessions (root plus delegated
+   * subagent children) for the sidebar hierarchy (#1115). Fallback for
+   * servers without `GET /api/sessions`.
+   * @param {Array} convs
+   * @returns {Array}
+   */
+  #groupSessions(convs) {
+    const groups = new Map();
+    const order = [];
+    for (const c of convs || []) {
+      const convId = c?.conv_id || '';
+      const rootId = parentConvIdOf(convId) || convId;
+      if (!groups.has(rootId)) {
+        groups.set(rootId, []);
+        order.push(rootId);
+      }
+      groups.get(rootId).push(c);
+    }
+    const sessions = order.map((rootId) => {
+      const members = groups.get(rootId) || [];
+      const root = members.find((c) => c?.conv_id === rootId) || members[0];
+      const children = members.filter((c) => c?.conv_id && c.conv_id !== rootId);
+      const conversations = children.length > 0 ? [root, ...children] : [root];
+      const updatedAts = members.map((c) => c?.updated_at || '').sort();
+      const updatedAt = updatedAts.length > 0 ? updatedAts[updatedAts.length - 1] : '';
+      return {
+        session_id: rootId,
+        title: root?.title || '',
+        updated_at: updatedAt,
+        conversations,
+      };
+    });
+    sessions.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+    return sessions;
+  }
+
+  /**
+   * Render the active conversation list as session groups (parent plus
+   * expandable subagent children). Archived / system sections keep their flat
+   * render. Prefers the server-grouped sessions from `GET /api/sessions`
+   * (#1115); client-side grouping of the flat list is the fallback for
+   * servers without the endpoint.
+   * @returns {import('lit').TemplateResult | typeof nothing}
+   */
+  #renderSessionGroups() {
+    const groups = this._sessions.length > 0 ? this._sessions : this.#groupSessions(this._conversations);
+    if (groups.length === 0) return nothing;
+    return html`
+      ${groups.map((g) => html`<div class="conv-session">${this.#renderSessionGroup(g)}</div>`)}
+    `;
+  }
+
+  /**
+   * Render one session group: the parent row plus (optionally) its subagent
+   * rows.
+   * @param {object} g
+   * @returns {import('lit').TemplateResult}
+   */
+  #renderSessionGroup(g) {
+    const convs = g.conversations || [];
+    const parent = convs[0];
+    const children = convs.slice(1);
+    const parentOpts = {
+      isActive: parent?.conv_id === this._activeId,
+      actionLabel: '\u00d7',
+      actionTitle: 'Archive conversation',
+      onAction: (id) => this.#handleArchive(id),
+      action2Label: '✨',
+      action2Title: 'Regenerate title',
+      onAction2: (id) => this.#handleRetitle(id),
+      onDblClick: (/** @type {Event} */ e) => { e.stopPropagation(); this.#handleRename(parent.conv_id, parent.title); },
+    };
+    const parentRow = this.#renderConversationItem(parent, parentOpts);
+    if (children.length === 0) return parentRow;
+    return html`
+      ${parentRow}
+      ${children.map((c) => this.#renderSubagentRow(c))}
+    `;
+  }
+
+  /**
+   * Render one subagent row — indented beneath its session parent — with its
+   * status badge and a cancel control while the child turn is running.
+   * @param {object} child
+   * @returns {import('lit').TemplateResult}
+   */
+  #renderSubagentRow(child) {
+    const status = this.store?.getConversationStatus?.(child.conv_id) || 'idle';
+    const isBusy = status === 'busy';
+    const isActive = child.conv_id === this._activeId;
+    const classes = ['conv-item', 'conv-subagent'];
+    if (isActive) classes.push('active');
+    const titleAttr = status && status !== 'idle' ? `${child.title} (${status})` : child.title;
+    return html`
+      <div
+        class=${classes.join(' ')}
+        tabindex="0"
+        aria-label=${`Open conversation ${child.title}`}
+        @click=${() => this.#handleSelect(child.conv_id)}
+        @keydown=${activateOnEnterOrSpace(() => this.#handleSelect(child.conv_id))}
+        title=${titleAttr}
+      >
+        <span class="conv-title">${child.title}</span>
+        ${this.#renderStatusIndicator(status)}
+        <span class="conv-subagent-badge">${this.#subagentBadgeText(child.conv_id)}</span>
+        ${isBusy ? html`
+          <button
+            class="conv-subagent-cancel"
+            @click=${(/** @type {Event} */ e) => { e.stopPropagation(); this.store?.cancelSubagent?.(child.conv_id); }}
+            title="Cancel subagent"
+            aria-label="Cancel subagent"
+          >${'✕'} Cancel</button>
+        ` : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * Subagent status badge text: Running / Idle / Done / Waiting.
+   * @param {string} convId
+   * @returns {string}
+   */
+  #subagentBadgeText(convId) {
+    const status = this.store?.getConversationStatus?.(convId) || 'idle';
+    if (status === 'busy') return 'Running';
+    if (status === 'waiting') return 'Waiting';
+    if (status === 'finished') return 'Done';
+    if (status === 'idle') return 'Idle';
+    return status || 'Idle';
+  }
+
+  /**
    * Navigate the chat sidebar to a section and folder.
    * @param {string} section — '' (active), '_archived', '_system'
    * @param {string} folder — folder path within the section
@@ -559,6 +698,8 @@ export class ConversationSidebar extends LitElement {
       this.store?.listSystemConversations(folder);
     } else {
       this.store?.listConversations(folder);
+      // Sessions drive the active section's hierarchy rendering (#1115).
+      this.store?.listSessions(folder);
     }
   }
 
@@ -668,16 +809,7 @@ export class ConversationSidebar extends LitElement {
                 badge: 'conv_type' in c ? c.conv_type : '',
                 titleSuffix: 'conv_type' in c ? c.conv_type : '',
               }))
-            : this._conversations.map(c => this.#renderConversationItem(c, {
-                isActive: c.conv_id === this._activeId,
-                actionLabel: '\u00d7',
-                actionTitle: 'Archive conversation',
-                onAction: (id) => this.#handleArchive(id),
-                action2Label: '✨',
-                action2Title: 'Regenerate title',
-                onAction2: (id) => this.#handleRetitle(id),
-                onDblClick: (/** @type {Event} */ e) => { e.stopPropagation(); this.#handleRename(c.conv_id, c.title); },
-              }))
+            : this.#renderSessionGroups()
         }
       </div>
       ${!this._hasControlsStrip && this._availableModes.length > 0 ? html`

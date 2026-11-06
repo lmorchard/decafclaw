@@ -33,6 +33,8 @@ import type { ScheduleListResponse } from '../models/ScheduleListResponse';
 import type { ScheduleResetResponse } from '../models/ScheduleResetResponse';
 import type { ScheduleRunResponse } from '../models/ScheduleRunResponse';
 import type { ScheduleUpdateResponse } from '../models/ScheduleUpdateResponse';
+import type { SessionConversationsResponse } from '../models/SessionConversationsResponse';
+import type { SessionListingResponse } from '../models/SessionListingResponse';
 import type { ShellPresetItem } from '../models/ShellPresetItem';
 import type { ShellPresetMutateResponse } from '../models/ShellPresetMutateResponse';
 import type { SideQuestionCancelResponse } from '../models/SideQuestionCancelResponse';
@@ -248,6 +250,66 @@ export class DefaultService {
             url: '/api/conversations/system',
             query: {
                 'folder': folder,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * List Sessions
+     * List sessions (root conversation + delegated subagents) for the sidebar hierarchy.
+     *
+     * Query params:
+     * folder — optional folder path (default: top-level). Sessions whose
+     * root conversation is assigned to the folder are returned.
+     *
+     * Returns ``{folder, sessions}`` where each session carries its root
+     * conversation metadata plus the nested subagent conversations.
+     *
+     * Subagent children are discovered from the archive layer — they have no
+     * ConversationIndex entries (see ``discover_child_convs``). A session's
+     * ``status`` reflects its root conversation only; children carry per-item
+     * status.
+     * @param folder
+     * @returns SessionListingResponse Successful Response
+     * @throws ApiError
+     */
+    public static listSessionsApiSessionsGet(
+        folder: string = '',
+    ): CancelablePromise<SessionListingResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/sessions',
+            query: {
+                'folder': folder,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * List Session Conversations
+     * List the conversations within one session.
+     *
+     * ``session_id`` may name a root conversation (optionally with delegated
+     * subagents) or one of its subagent conversation ids; both resolve to the
+     * same session list — the root plus its subagent children. Children are
+     * discovered from the archive layer; they have no ConversationIndex
+     * entries (see ``discover_child_convs``).
+     * @param sessionId
+     * @returns SessionConversationsResponse Successful Response
+     * @throws ApiError
+     */
+    public static listSessionConversationsApiSessionsSessionIdConversationsGet(
+        sessionId: string,
+    ): CancelablePromise<SessionConversationsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/sessions/{session_id}/conversations',
+            path: {
+                'session_id': sessionId,
             },
             errors: {
                 422: `Validation Error`,
