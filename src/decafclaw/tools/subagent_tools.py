@@ -5,7 +5,8 @@ tools so a parent agent can manage its own subagents from the tool
 surface:
 
 - ``subagent_spawn`` — launch a child turn in the current session, with
-  optional scoped vault-write permission.
+  optional scoped vault-write permission. Fire-and-forget by default
+  (``async_run=True``); pass ``async_run=False`` to await the child.
 - ``subagent_list`` — enumerate active/finished subagents of this
   session with status and task description.
 - ``subagent_cancel`` — abort an active subagent's turn.
@@ -41,7 +42,7 @@ def _child_conv_ids(ctx: "Context") -> list[str]:
     manager = ctx.manager
     parent_conv = _parent_conv_id(ctx)
     prefix = f"{parent_conv}--child-"
-    states = getattr(manager, "_conversations", None) or {}
+    states = manager._conversations if manager is not None else {}
     return sorted(conv_id for conv_id in states if conv_id.startswith(prefix) and conv_id != parent_conv)
 
 
@@ -58,6 +59,12 @@ async def subagent_spawn(
     skills, minus the delegation/activation excludes and minus the
     vault/admin write gates unless explicitly allowed.
 
+    By default (``async_run=True``) the spawn is asynchronous /
+    fire-and-forget: the child turn is enqueued and the tool returns the
+    spawn ack immediately — poll ``subagent_list`` for status and abort
+    via ``subagent_cancel``. With ``async_run=False`` the tool awaits
+    the child turn and returns its answer (delegate_task-style).
+
     Args:
         task: Task description string with enough context for the child
             agent to work independently.
@@ -66,31 +73,32 @@ async def subagent_spawn(
         allow_vault_write: When True, the child may persist pages via
             ``vault_write`` / ``vault_journal_append``. Default False —
             all vault writes stay blocked for children.
+        async_run: When True (default), run the child asynchronously and
+            return the spawn ack at once. When False, wait for the child
+            to finish and return its answer.
 
     Returns:
         ``ToolResult`` whose ``data["child_conv_id"]`` carries the spawned
         child's conversation id (``{parent}--child-{hex}``), whether the
-        turn was awaited (``async_run=True``, result lands on ``data`` as
-        the child answer) or spawn-only (``async_run=False``, spawn ack).
+        turn was fire-and-forget (``async_run=True``, spawn ack on
+        ``text``) or awaited (``async_run=False``, child answer on
+        ``text``).
     """
     if not task or not isinstance(task, str) or not task.strip():
         return ToolResult(text="[error: task description is required]")
 
     parent_conv = _parent_conv_id(ctx)
     child_conv_id = f"{parent_conv}--child-{secrets.token_hex(4)}"
+    # Tool-facing polarity (#1113): async_run=True = run asynchronously
+    # (fire-and-forget); async_run=False = await the child turn.
     text, data = await run_child_turn(
         ctx,
         task,
         model=model,
         allow_vault_write=allow_vault_write,
         child_conv_id_override=child_conv_id,
-        async_run=async_run,
+        await_child=not async_run,
     )
-
-    if not async_run:
-        # Spawn-only mode: the turn never started, so hand back the ack
-        # plus the child id for lifecycle tracking instead of a result.
-        return ToolResult(text=text, data={"child_conv_id": child_conv_id})
 
     result_data: dict = {"child_conv_id": child_conv_id}
     if isinstance(data, dict) and data:
@@ -102,14 +110,21 @@ def subagent_list(ctx: "Context") -> ToolResult:
     """List subagents spawned in the current session with status and task."""
     manager = ctx.manager
     subagents: list[dict] = []
-    states = getattr(manager, "_conversations", None) or {}
+    states = manager._conversations if manager is not None else {}
     for conv_id in _child_conv_ids(ctx):
         state = states.get(conv_id)
         if state is None:
             continue
-        task = getattr(state, "subagent_task", "") or ""
-        agent_task = getattr(state, "agent_task", None)
-        status = "running" if (state.busy and agent_task and not agent_task.done()) else "completed"
+        task = state.subagent_task or ""
+        agent_task = state.agent_task
+        if state.busy and agent_task and not agent_task.done():
+            status = "running"
+        elif state.inmemory_turn_data:
+            # A turn is enqueued but not yet dispatched (queued behind a
+            # busy turn or awaiting the drain) — not running, not done.
+            status = "queued"
+        else:
+            status = "completed"
         subagents.append(
             {
                 "child_conv_id": conv_id,
@@ -126,14 +141,15 @@ async def subagent_cancel(ctx: "Context", child_conv_id: str) -> ToolResult:
     """Abort an active subagent's turn.
 
     Cancels the in-flight child turn via the ConversationManager; the
-    child conversation stays tracked (it just stops running).
+    child conversation stays tracked (it just stops running). Only
+    subagents of the caller's own conversation are cancellable — the
+    target must be a tracked ``{caller}--child-{hex}`` conversation.
     """
     manager = ctx.manager
     if manager is None:
         return ToolResult(text="[error: subagent_cancel requires a ConversationManager]")
-    state = manager.get_state(child_conv_id)
-    if state is None:
-        return ToolResult(text=f"[error: no subagent conversation {child_conv_id}]")
+    if child_conv_id not in _child_conv_ids(ctx):
+        return ToolResult(text=f"[error: {child_conv_id} is not a subagent of this conversation]")
     await manager.cancel_turn(child_conv_id)
     return ToolResult(text=f"[subagent cancelled: {child_conv_id}]")
 
@@ -154,17 +170,28 @@ SUBAGENT_TOOL_DEFINITIONS = [
             "name": "subagent_spawn",
             "description": (
                 "Spawn a subagent (child agent) conversation in the current "
-                "session to run a focused subtask. The child runs as an "
-                "independent agent turn with access to the parent's tools "
-                "and skills, minus delegation/activation and (by default) all "
-                "vault access. Use this whenever the user asks you to spin up, "
-                "fork off, or hand off a task to a sub-agent / child agent.\n\n"
+                "session to run a focused subtask in the background. The "
+                "child runs as an independent agent turn with access to the "
+                "parent's tools and skills, minus delegation/activation and "
+                "(by default) all vault access. Use this when the caller "
+                "wants a subagent they can track or control — a background "
+                "run with an id to poll via subagent_list and abort via "
+                "subagent_cancel — or a child with scoped vault-write "
+                "authoring (allow_vault_write). If you just need a subtask's "
+                "result back in this turn, use delegate_task instead.\n\n"
+                "By default the spawn is asynchronous: the tool returns a "
+                "spawn ack immediately and the child runs in the background — "
+                "poll subagent_list for status and use subagent_cancel to "
+                "abort. Pass async_run=false to wait for the child to finish "
+                "and get its answer directly.\n\n"
                 "Result shapes on ToolResult.data:\n"
-                "- async_run=true (default): the awaited child answer lands on "
+                "- async_run=true (default): the spawn ack lands on "
+                "ToolResult.text and ToolResult.data carries "
+                '`{"child_conv_id": ...}`; the child\'s eventual answer is '
+                "not returned to this tool.\n"
+                "- async_run=false: the awaited child answer lands on "
                 "ToolResult.text, and ToolResult.data carries "
-                '`{"child_conv_id": ...}`.\n'
-                "- async_run=false: the spawn ack lands on ToolResult.text and "
-                'ToolResult.data carries `{"child_conv_id": ...}`.'
+                '`{"child_conv_id": ...}`.'
             ),
             "parameters": {
                 "type": "object",
@@ -187,6 +214,16 @@ SUBAGENT_TOOL_DEFINITIONS = [
                             "false; all other safety boundaries remain in place."
                         ),
                     },
+                    "async_run": {
+                        "type": "boolean",
+                        "description": (
+                            "When true (default), run the subagent asynchronously: "
+                            "return the spawn ack immediately, then poll "
+                            "subagent_list for status and use subagent_cancel to "
+                            "abort. When false, block until the subagent finishes "
+                            "and return its answer as this tool's result."
+                        ),
+                    },
                 },
                 "required": ["task"],
             },
@@ -199,8 +236,9 @@ SUBAGENT_TOOL_DEFINITIONS = [
             "name": "subagent_list",
             "description": (
                 "List subagents spawned in the current session with their "
-                "status (running/completed) and task description. Use to check "
-                "on or discover existing subagents before spawning another."
+                "status (queued/running/completed) and task description. Use "
+                "to poll background subagents spawned with subagent_spawn, or "
+                "to discover existing subagents before spawning another."
             ),
             "parameters": {
                 "type": "object",
@@ -216,7 +254,8 @@ SUBAGENT_TOOL_DEFINITIONS = [
             "description": (
                 "Abort an active subagent's turn. Provide the child_conv_id "
                 "returned by subagent_spawn (or visible in subagent_list) to "
-                "cancel a running subagent."
+                "cancel a running subagent. Only subagents of your own "
+                "conversation can be cancelled."
             ),
             "parameters": {
                 "type": "object",

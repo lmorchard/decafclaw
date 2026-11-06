@@ -1,6 +1,7 @@
 """Tests for subagent lifecycle tools and scoped vault write (#1113)."""
 
 import asyncio
+from contextlib import suppress
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,6 +17,7 @@ from decafclaw.tools.delegate import (
     tool_delegate_tasks,
 )
 from decafclaw.tools.subagent_tools import (
+    SUBAGENT_TOOL_DEFINITIONS,
     subagent_cancel,
     subagent_list,
     subagent_spawn,
@@ -128,8 +130,8 @@ class TestScopedVaultWrite:
 
 class TestRunChildTurnSpawn:
     @pytest.mark.asyncio
-    async def test_async_run_false_returns_spawn_ack(self, ctx):
-        """async_run=False → spawn ack, no turn execution, no timeout wait."""
+    async def test_await_child_false_returns_spawn_ack(self, ctx):
+        """await_child=False → spawn ack, no turn execution, no timeout wait."""
         ctx.config.agent.child_timeout_sec = 0.1
 
         async def boom(*args, **kwargs):
@@ -137,7 +139,7 @@ class TestRunChildTurnSpawn:
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.side_effect = boom
-            result = await run_child_turn(ctx, "spawn task", async_run=False)
+            result = await run_child_turn(ctx, "spawn task", await_child=False)
 
         text, data = result
         assert "spawned" in text
@@ -175,14 +177,17 @@ class TestSubagentTools:
         assert "error" in _text(result)
 
     @pytest.mark.asyncio
-    async def test_subagent_spawn_spawn_only_returns_child_id(self, ctx):
-        """async_run=False → spawn ack + child_conv_id on ToolResult.data."""
+    async def test_subagent_spawn_default_is_fire_and_forget(self, ctx):
+        """async_run defaults to True = spawn-only fire-and-forget (issue polarity).
+
+        The tool maps its issue-facing `async_run` onto run_child_turn's
+        internal `await_child` (polarity inverted)."""
         with patch(
             "decafclaw.tools.subagent_tools.run_child_turn",
             new_callable=AsyncMock,
             return_value=("[subagent spawned: test-conv--child-xyz]", None),
         ) as mock_run:
-            result = await subagent_spawn(ctx, "do a thing", async_run=False)
+            result = await subagent_spawn(ctx, "do a thing")
 
         assert isinstance(result, ToolResult)
         assert "spawned" in result.text
@@ -190,8 +195,75 @@ class TestSubagentTools:
         assert str(result.data["child_conv_id"]).startswith("test-conv--child-")
         mock_run.assert_called_once()
         kwargs = mock_run.call_args.kwargs
-        assert kwargs["async_run"] is False
+        assert kwargs["await_child"] is False
         assert kwargs["allow_vault_write"] is False
+
+    @pytest.mark.asyncio
+    async def test_subagent_spawn_awaits_when_async_run_false(self, ctx):
+        """async_run=False → awaited child turn (await_child=True)."""
+        with patch(
+            "decafclaw.tools.subagent_tools.run_child_turn",
+            new_callable=AsyncMock,
+            return_value=("child answer", None),
+        ) as mock_run:
+            result = await subagent_spawn(ctx, "do a thing", async_run=False)
+
+        assert result.text == "child answer"
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs["await_child"] is True
+
+    def test_subagent_spawn_tool_schema_exposes_async_run(self):
+        """The LLM-facing tool schema exposes async_run (issue polarity)."""
+        (spawn_def,) = [d for d in SUBAGENT_TOOL_DEFINITIONS if d["function"]["name"] == "subagent_spawn"]
+        props = spawn_def["function"]["parameters"]["properties"]
+        assert props["async_run"]["type"] == "boolean"
+        assert (
+            "default" in props["async_run"]["description"].lower()
+            or "true" in props["async_run"]["description"].lower()
+        )
+
+    @pytest.mark.asyncio
+    async def test_subagent_spawn_awaited_returns_child_answer(self, ctx):
+        """async_run=False with the real manager: the tool blocks until the
+        child finishes and its answer lands on ToolResult.text."""
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="child answer")
+            result = await subagent_spawn(ctx, "do it", async_run=False)
+
+        assert result.text == "child answer"
+        assert "child_conv_id" in (result.data or {})
+        mock_run.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_subagent_spawn_fire_and_forget_child_actually_runs(self, ctx):
+        """async_run=True (default) with the real manager: the spawn ack
+        returns before the child finishes, but the enqueued turn really
+        runs via the manager loop and completes."""
+        release = asyncio.Event()
+
+        async def slow_child(*args, **kwargs):
+            await release.wait()
+            return ToolResult(text="child answer")
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = slow_child
+            result = await subagent_spawn(ctx, "background task")
+
+            assert "spawned" in result.text
+            child_id = result.data["child_conv_id"]
+            assert child_id.startswith("test-conv--child-")
+            # Task text + running status are visible immediately after the
+            # ack (enqueue_turn runs the child setup synchronously).
+            subs = subagent_list(ctx).data["subagents"]
+            assert subs[0]["status"] == "running"
+            assert subs[0]["task"] == "background task"
+
+            child_task = ctx.manager.get_state(child_id).agent_task
+            release.set()
+            await child_task
+
+        assert mock_run.await_count == 1
+        assert subagent_list(ctx).data["subagents"][0]["status"] == "completed"
 
     @pytest.mark.asyncio
     async def test_subagent_list_empty_session(self, ctx):
@@ -202,6 +274,44 @@ class TestSubagentTools:
 
     @pytest.mark.asyncio
     async def test_subagent_list_reports_running_child(self, ctx):
+        child_id = "test-conv--child-abc123"
+        state = ConversationState(conv_id=child_id, busy=True)
+        state.agent_task = asyncio.create_task(asyncio.sleep(3600))
+        ctx.manager._conversations[child_id] = state
+        ctx.manager.set_subagent_task(child_id, "write the frobnicator")
+
+        try:
+            result = subagent_list(ctx)
+            subs = result.data["subagents"]
+            assert len(subs) == 1
+            assert subs[0]["child_conv_id"] == child_id
+            assert subs[0]["status"] == "running"
+            assert subs[0]["task"] == "write the frobnicator"
+        finally:
+            state.agent_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await state.agent_task
+
+    @pytest.mark.asyncio
+    async def test_subagent_list_reports_queued_child(self, ctx):
+        """Enqueued but not yet dispatched (turn pending in the per-conv
+        queue, busy still False) reports "queued", not "completed"."""
+        child_id = "test-conv--child-abc123"
+        state = ConversationState(conv_id=child_id)
+        state.inmemory_turn_data["turn-1"] = {
+            "future": asyncio.get_running_loop().create_future(),
+        }
+        ctx.manager._conversations[child_id] = state
+        ctx.manager.set_subagent_task(child_id, "queued job")
+
+        result = subagent_list(ctx)
+        subs = result.data["subagents"]
+        assert len(subs) == 1
+        assert subs[0]["status"] == "queued"
+        assert subs[0]["task"] == "queued job"
+
+    @pytest.mark.asyncio
+    async def test_subagent_list_reports_completed_child(self, ctx):
         child_id = "test-conv--child-abc123"
         ctx.manager._conversations[child_id] = ConversationState(conv_id=child_id)
         ctx.manager.set_subagent_task(child_id, "write the frobnicator")
@@ -225,6 +335,33 @@ class TestSubagentTools:
         mock_cancel.assert_awaited_once_with(child_id)
         assert child_id in _text(result)
         assert "cancelled" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_subagent_cancel_rejects_non_child_conversation(self, ctx):
+        """subagent_cancel only targets children of the CALLER's conversation:
+        neither the caller itself nor a tracked conversation that is another
+        conversation's child."""
+        foreign_child = "other-conv--child-deadbeef"
+        ctx.manager._conversations[foreign_child] = ConversationState(conv_id=foreign_child)
+
+        for target in ("test-conv", foreign_child):
+            with patch.object(ctx.manager, "cancel_turn", new_callable=AsyncMock) as mock_cancel:
+                result = await subagent_cancel(ctx, target)
+            assert "error" in _text(result), target
+            mock_cancel.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_child_turn_excludes_subagent_tools(self, ctx):
+        """Children never see the subagent lifecycle tools — a child spawning
+        grandchildren would bypass the delegate_task recursion boundary, and
+        subagent_cancel would target any tracked conversation."""
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await run_child_turn(ctx, "task")
+
+        child_ctx = mock_run.call_args[0][0]
+        for tool in ("subagent_spawn", "subagent_list", "subagent_cancel"):
+            assert tool not in child_ctx.tools.allowed, f"children must not see {tool}"
 
 
 # -- delegate_task / delegate_tasks threading (#1113) --------------------------
