@@ -716,6 +716,62 @@ var DefaultService = class {
     });
   }
   /**
+   * List Sessions
+   * List sessions (root conversation + delegated subagents) for the sidebar hierarchy.
+   *
+   * Query params:
+   * folder — optional folder path (default: top-level). Sessions whose
+   * root conversation is assigned to the folder are returned.
+   *
+   * Returns ``{folder, sessions}`` where each session carries its root
+   * conversation metadata plus the nested subagent conversations.
+   *
+   * Subagent children are discovered from the archive layer — they have no
+   * ConversationIndex entries (see ``discover_child_convs``). A session's
+   * ``status`` reflects its root conversation only; children carry per-item
+   * status.
+   * @param folder
+   * @returns SessionListingResponse Successful Response
+   * @throws ApiError
+   */
+  static listSessionsApiSessionsGet(folder = "") {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/sessions",
+      query: {
+        "folder": folder
+      },
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
+   * List Session Conversations
+   * List the conversations within one session.
+   *
+   * ``session_id`` may name a root conversation (optionally with delegated
+   * subagents) or one of its subagent conversation ids; both resolve to the
+   * same session list — the root plus its subagent children. Children are
+   * discovered from the archive layer; they have no ConversationIndex
+   * entries (see ``discover_child_convs``).
+   * @param sessionId
+   * @returns SessionConversationsResponse Successful Response
+   * @throws ApiError
+   */
+  static listSessionConversationsApiSessionsSessionIdConversationsGet(sessionId) {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/sessions/{session_id}/conversations",
+      path: {
+        "session_id": sessionId
+      },
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
    * Wrapper
    * @returns any Successful Response
    * @throws ApiError

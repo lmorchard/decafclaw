@@ -93,6 +93,14 @@ conversation-sidebar .conv-item .conv-archive:hover {
   opacity: 1;
 }
 
+/* Subagent rows rendered beneath a session parent in the conversation list
+   (#1115). Indented under their parent session, with a cancel control while
+   the child turn is running. */
+conversation-sidebar .conv-subagent {
+  padding-left: 1.25rem;
+  margin-left: 0.5rem;
+}
+
 /* Pinned Bookmarks section (Files/Vault tabs, #1086). */
 conversation-sidebar .bookmark-section {
   margin-bottom: 0.5rem;

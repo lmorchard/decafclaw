@@ -112,6 +112,29 @@ clears `custom_title` so subsequent periodic refinements continue running on
 their normal cadence. On failure (e.g. empty conversation history or LLM error),
 the command fails open with an error toast while preserving the existing title.
 
+**Session hierarchy (#1115).** The sidebar groups conversations into
+sessions: a root conversation plus its delegated subagent children
+(`{root}--child-{hex}` conv ids). Subagent rows render beneath their parent
+with a status badge (Running / Waiting / Done / Idle) and a Cancel control
+while the child's turn is running. Children are discovered from the archive
+layer (`iter_conversation_archives`) — they never receive ConversationIndex
+entries — and are attributed to the owner of their root conversation, so a
+session's folder is its root's assignment and archiving a root hides its
+whole session. The frontend renders from `GET /api/sessions`
+(server-grouped; refreshes on socket connect, folder navigation, and turn
+completion) and falls back to client-side grouping of the flat conversation
+list when the endpoint is unavailable.
+
+Child transcripts are **read-only**: only the parent conversation can be
+prompted. Selecting a subagent row opens the transcript with a disabled chat
+input (the client gates child-shaped conv ids immediately; the server also
+refuses sends to child conversations). Live child status comes from the
+pre-existing `conversation_status` WebSocket events — children run through
+the conversation manager like any conversation, so turn start/end and
+waiting-on-confirmation transitions broadcast to the session owner's socket
+and update the badges in place. A session's own `status` reflects its root
+conversation only; children carry per-item status.
+
 ### Vault editor
 
 WYSIWYG markdown editor for vault pages, accessible from the sidebar:
@@ -493,6 +516,8 @@ socket with no reconnect logic at all, so it is not covered by this.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/conversations?folder=` | List conversations + subfolders in a folder |
+| `GET` | `/api/sessions?folder=` | List sessions (root + delegated subagents) for the sidebar hierarchy |
+| `GET` | `/api/sessions/{session_id}/conversations` | List one session's conversations (a subagent id resolves to its parent session) |
 | `GET` | `/api/conversations/archived?folder=` | List archived conversations by folder |
 | `GET` | `/api/conversations/system?folder=` | List system conversations by type |
 | `POST` | `/api/conversations` | Create conversation (optional: folder, model) |
