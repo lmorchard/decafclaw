@@ -155,7 +155,7 @@ await tool_shell_background_start(
 ```
 
 With `pin_sticky=True`, the job's output is mirrored into the conversation's
-sticky slot above the chat input as a `progress_tracker` widget
+sticky slot above the conversation controls as a `progress_tracker` widget
 ([widgets.md](widgets.md#sticky-slot)) — out-of-band over WebSocket, with no
 conversational turns, no LLM tokens, and no archive writes during streaming:
 

@@ -3457,6 +3457,12 @@ class ModelCatalogResponse(BaseModel):
     # model).
     aux_approval_model: str = ""
     aux_approval_pointer: str = ""
+    # Reflection-judge / verifier pointers (#1212): raw sidecar pointers plus
+    # the effective judge/verifier names they resolve to. Empty pointer = inherit.
+    reflection_model: str = ""
+    reflection_pointer: str = ""
+    verifier_model: str = ""
+    verifier_pointer: str = ""
 
 
 class ModelCatalogUpdateRequest(BaseModel):
@@ -3596,6 +3602,60 @@ async def models_catalog_set_aux_approval(request: Request, username: str) -> JS
     if name and name not in picker_models(config):
         return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
     await set_aux_approval_model(config, name, event_bus=request.app.state.event_bus)
+    return JSONResponse(catalog_payload(config))
+
+
+@_authenticated
+async def models_catalog_set_reflection(request: Request, username: str) -> JSONResponse:
+    """POST /api/models/catalog/reflection — set or clear the reflection-judge pointer (#1212).
+
+    An empty `model` clears the pointer (config.json's `reflection.model`
+    takes over as the seed / inherits the legacy default chain). A non-empty
+    name must be selectable: an enabled discovered model or a hand-authored
+    config. The judge then resolves through it on the next reflection run —
+    no restart.
+    """
+    from .model_catalog import catalog_payload, picker_models, set_reflection_model
+
+    config = request.app.state.config
+    try:
+        body = await request.json()
+    except Exception as exc:
+        log.debug("models_catalog_set_reflection: invalid JSON body: %s", exc)
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
+        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
+
+    name = body["model"]
+    if name and name not in picker_models(config):
+        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
+    await set_reflection_model(config, name, event_bus=request.app.state.event_bus)
+    return JSONResponse(catalog_payload(config))
+
+
+@_authenticated
+async def models_catalog_set_verifier(request: Request, username: str) -> JSONResponse:
+    """POST /api/models/catalog/verifier — set or clear the verifier-model pointer (#1212).
+
+    An empty `model` clears the pointer (config.json's `reflection.verifier_model`
+    takes over). A non-empty name must be selectable: an enabled discovered
+    model or a hand-authored config.
+    """
+    from .model_catalog import catalog_payload, picker_models, set_verifier_model
+
+    config = request.app.state.config
+    try:
+        body = await request.json()
+    except Exception as exc:
+        log.debug("models_catalog_set_verifier: invalid JSON body: %s", exc)
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
+        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
+
+    name = body["model"]
+    if name and name not in picker_models(config):
+        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
+    await set_verifier_model(config, name, event_bus=request.app.state.event_bus)
     return JSONResponse(catalog_payload(config))
 
 
@@ -4211,6 +4271,38 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute(
             "/api/models/catalog/aux_approval",
             models_catalog_set_aux_approval,
+            methods=["POST"],
+            response_model=ModelCatalogResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(ModelCatalogUpdateRequest),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/models/catalog/reflection",
+            models_catalog_set_reflection,
+            methods=["POST"],
+            response_model=ModelCatalogResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(ModelCatalogUpdateRequest),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/models/catalog/verifier",
+            models_catalog_set_verifier,
             methods=["POST"],
             response_model=ModelCatalogResponse,
             openapi_extra={

@@ -156,6 +156,41 @@ model falls back cleanly to the seed, then to the conversation model.
 The agent cannot change its own auto-approval model — same user-only rule as
 the default model.
 
+### Reflection and verifier model pickers (#1212)
+
+The **⚙ Agent Config → Models** tab also renders two judge pickers on top of
+the global default:
+
+- **Reflection model** — the judge that grades each turn
+  (`reflection.model`). Lists every enabled catalog model (discovered +
+  hand-configured) plus an explicit **inherit** option that clears the
+  sidecar pointer so the existing resolution chain runs
+  (`reflection.model` → `default_model` → `config.llm.model`).
+- **Verifier model** — the optional second-opinion judge
+  (`reflection.verifier_model`), same picker shape.
+
+Both write the `reflection_model` / `verifier_model` keys of the
+`data/{agent_id}/model_catalog.json` sidecar; `config.json` stays
+read-only for this path.
+
+Reflection-judge resolution mirrors the default-model order:
+
+1. The sidecar's `reflection_model` pointer, when it names a selectable
+   model (enabled discovered or hand-configured).
+2. `config.json`'s `reflection.model` (the seed — it may itself be a
+   `model_configs` key or a legacy raw name).
+3. The legacy default chain via `reflection.resolved`.
+
+An empty pointer means **inherit**. Changes take effect on the next
+reflection run — no restart.
+
+Disabling a model a reflection pointer references falls back cleanly, the
+same rule as the default-model pointer.
+
+Selecting a reflection judge equal to the active conversation model is
+allowed but surfaces a warning in the UI — the point of a separate judge is
+that the author does not grade its own homework (#591).
+
 The agent cannot trigger discovery or change models — selection is
 user-only, and the sidecar is outside the agent's writable workspace.
 

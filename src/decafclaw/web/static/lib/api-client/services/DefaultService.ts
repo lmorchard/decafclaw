@@ -1039,6 +1039,46 @@ export class DefaultService {
      * @returns ModelCatalogResponse Successful Response
      * @throws ApiError
      */
+    public static wrapperApiModelsCatalogReflectionPost(
+        requestBody: {
+            key?: (string | null);
+            enabled?: (boolean | null);
+            model?: (string | null);
+        },
+    ): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/models/catalog/reflection',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiModelsCatalogVerifierPost(
+        requestBody: {
+            key?: (string | null);
+            enabled?: (boolean | null);
+            model?: (string | null);
+        },
+    ): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/models/catalog/verifier',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
     public static wrapperApiModelsCatalogProviderPost(
         requestBody: {
             provider: string;
