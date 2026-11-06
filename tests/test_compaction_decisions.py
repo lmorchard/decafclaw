@@ -106,15 +106,15 @@ class TestPersistence:
         assert s.is_empty()
 
     def test_slice_path_uses_dir_layout(self, config):
-        """Normal conv_id resolves to conversations/{id}/decisions.json."""
-        base = (config.workspace_path / "conversations").resolve()
+        """Normal conv_id resolves to sessions/{id}/decisions.json (#1112)."""
+        base = (config.workspace_path / "sessions").resolve()
         path = _slice_path(config, "abc")
         assert path == base / "abc" / "decisions.json"
 
     def test_slice_path_sandboxes_traversal(self, config):
         """Path traversal characters get stripped and the resolved
-        path is verified to stay within the conversations directory."""
-        base = (config.workspace_path / "conversations").resolve()
+        path is verified to stay within the sessions directory."""
+        base = (config.workspace_path / "sessions").resolve()
 
         # Empty after sanitization → sentinel dir.
         path_empty = _slice_path(config, "")

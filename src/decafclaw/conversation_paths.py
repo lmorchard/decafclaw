@@ -91,8 +91,16 @@ def conversation_dir(config, conv_id: str, *, create: bool = False) -> Path:
     New layout: standalone conversations live at sessions/{conv_id}/;
     delegated children live under their parent's session at
     sessions/{parent_session}/{child_conv_id}/. Legacy layout:
-    conversations/{conv_id}/. The legacy location wins while the session
-    location does not yet exist; `create` writes the session location.
+    conversations/{conv_id}/.
+
+    A conversation is pinned to one root for its lifetime (#1112 review):
+    the session location wins whenever it exists (migrated), the legacy
+    location wins while it is the only one that exists (unmigrated), and a
+    brand-new conversation — neither exists — resolves to the session
+    location so its first write materializes and pins it there. Without
+    the brand-new rule, a tool-less conversation would start in the legacy
+    root and flip mid-life at the first `create=True` caller (e.g.
+    tool_outputs materialization), splitting its archive across roots.
     """
     legacy_root = conversations_root(config)
     legacy = legacy_root / _safe_conv_id(conv_id)
@@ -101,7 +109,7 @@ def conversation_dir(config, conv_id: str, *, create: bool = False) -> Path:
         return legacy_root / "_invalid"
     sid = _session_id_for_conv(conv_id)
     new = session_conversation_dir(config, sid, conv_id) if _is_child_conv_id(conv_id) else session_dir(config, sid)
-    target = new if (create or new.exists()) else legacy
+    target = new if (new.exists() or not legacy.exists()) else legacy
     base = legacy_root if target == legacy else sessions_root(config)
     d = target.resolve()
     if not d.is_relative_to(base):
@@ -117,9 +125,18 @@ def sidecar_path(config, conv_id: str, filename: str) -> Path:
 
 
 def _conversation_dirs(config) -> list[Path]:
-    """Conversation dirs across the legacy and session roots, deduped by conv id."""
+    """Conversation dirs across the legacy and session roots, deduped by conv id.
+
+    The session root is two levels deep (#1112 review): standalone
+    conversations live at sessions/{conv_id}/ and delegated children nest
+    one level down at sessions/{parent}/{child_conv_id}/ — descend into
+    session dirs for child-shaped entries so migrated children are
+    enumerated. On a name collision with the legacy root (split state from
+    a pre-fix root flip plus the migration's skip-if-exists), the
+    session-root entry wins: it is the migrated, authoritative copy.
+    """
     found: dict[str, Path] = {}
-    for base in (conversations_root(config), sessions_root(config)):
+    for base, is_session in ((conversations_root(config), False), (sessions_root(config), True)):
         if not base.exists():
             continue
         try:
@@ -130,9 +147,31 @@ def _conversation_dirs(config) -> list[Path]:
             log.warning("Failed to list conversations dir %s: %s", base, exc)
             continue
         for child in children:
-            if child.is_dir():
+            if not child.is_dir():
+                continue
+            if is_session:
+                found[child.name] = child
+                _add_session_children(found, child)
+            else:
                 found.setdefault(child.name, child)
     return sorted(found.values())
+
+
+def _add_session_children(found: dict[str, Path], session_path: Path) -> None:
+    """Add delegated-child conversation dirs nested in a session dir (#1112).
+
+    Only child-shaped names ({parent}--child-{hex}) qualify, so
+    session-internal subdirs (tool_outputs, uploads) are never mistaken
+    for conversations. Session entries overwrite any legacy-root entry for
+    the same conv id."""
+    try:
+        nested = sorted(session_path.iterdir())
+    except OSError as exc:
+        log.warning("Failed to list session dir %s: %s", session_path, exc)
+        return
+    for sub in nested:
+        if sub.is_dir() and _is_child_conv_id(sub.name):
+            found[sub.name] = sub
 
 
 def iter_conversation_archives(config) -> Iterator[tuple[str, Path]]:
@@ -153,8 +192,19 @@ def delete_conversation_files(config, conv_id: str) -> None:
     migration-skipped instance — otherwise a "deleted" conversation could
     leave readable history on disk. This is cleanup-only; it never makes a
     flat file authoritative."""
-    d = conversation_dir(config, conv_id)
-    if d.exists():
+    # Remove every directory the conversation may occupy. The resolver pins
+    # a conversation to one root, but a conversation split across roots by
+    # a pre-fix mid-life flip (plus the migration's skip-if-exists) has a
+    # dir in both — deleting only the pinned one would let the stale copy
+    # resurface in listings (#1112 review).
+    sid = _session_id_for_conv(conv_id)
+    session_loc = (
+        session_conversation_dir(config, sid, conv_id) if _is_child_conv_id(conv_id) else session_dir(config, sid)
+    )
+    legacy_loc = conversations_root(config) / _safe_conv_id(conv_id)
+    for d in (session_loc, legacy_loc):
+        if not d.exists():
+            continue
         try:
             shutil.rmtree(d)
         except OSError as exc:
