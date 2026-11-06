@@ -234,6 +234,42 @@ describe('model-catalog component', () => {
     expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
   });
 
+  it('warns when the selected auto-approval model lacks tool support', async () => {
+    const catalog = {
+      ...CATALOG,
+      aux_approval_pointer: 'local/norulex',
+      aux_approval_model: 'local/norulex',
+      providers: {
+        local: {
+          ...CATALOG.providers.local,
+          models: [
+            { key: 'local/norulex', id: 'norulex', enabled: true, chat: true, tools: false, context_window_size: 4096, owned_by: '', selectable: true },
+          ],
+        },
+      },
+    };
+    const { el } = await mountCatalog(catalog);
+    expect(el.querySelector('#catalog-aux-approval-select')).toBeTruthy();
+    // The judgment is a forced-tool call — a model known to lack tool
+    // support gets a warning (#1213).
+    expect(el.querySelector('.model-catalog-judge-warning')).toBeTruthy();
+
+    // Unknown tool support (null) stays silent, as does no pointer at all.
+    const unknown = await mountCatalog({
+      ...catalog,
+      providers: {
+        local: {
+          ...catalog.providers.local,
+          models: catalog.providers.local.models.map(m => ({ ...m, tools: null })),
+        },
+      },
+    });
+    expect(unknown.el.querySelector('.model-catalog-judge-warning')).toBeFalsy();
+
+    const inherit = await mountCatalog({ ...catalog, aux_approval_pointer: '', aux_approval_model: '' });
+    expect(inherit.el.querySelector('.model-catalog-judge-warning')).toBeFalsy();
+  });
+
   it('reflection picker lists enabled models plus an inherit option', async () => {
     const { el } = await mountCatalog({
       ...CATALOG,

@@ -325,6 +325,13 @@ export class ModelCatalog extends LitElement {
 
   /** Auto-approval-model picker (#1213): enabled catalog models + explicit "use conversation model". */
   #renderAuxApprovalPicker(catalog) {
+    // The approval judgment is a forced-tool structured-output call, so a
+    // model known to lack tool support cannot do the job. `tools: null`
+    // means unknown — no warning rather than a false alarm.
+    const selected = catalog.aux_approval_pointer
+      ? Object.values(catalog.providers).flatMap(p => p.models).find(m => m.key === catalog.aux_approval_pointer)
+      : null;
+    const toolsWarning = Boolean(selected && selected.tools === false);
     return html`
       <div class="model-catalog-judge">
         <label class="model-catalog-default-label" for="catalog-aux-approval-select">Auto-approval model</label>
@@ -340,6 +347,11 @@ export class ModelCatalog extends LitElement {
           `)}
         </select>
         <span class="model-catalog-default-hint" title="Judge that grades shell auto-approvals; empty = ride on the active conversation model">${catalog.aux_approval_model || '(use conversation model)'}</span>
+        ${toolsWarning ? html`
+          <div class="model-catalog-judge-warning" role="status">
+            Selected auto-approval model reports no tool support — the approval judgment needs structured output.
+          </div>
+        ` : nothing}
       </div>
     `;
   }
