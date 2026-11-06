@@ -1619,3 +1619,150 @@ async def test_context_raw_system_conv(authed_client, http_config):
     resp = await authed_client.get(f"/api/conversations/{conv_id}/context/raw")
     assert resp.status_code == 200
     assert resp.json() == payload
+
+
+# -- Session hierarchy API tests (#1115) --------------------------------------
+
+
+def _child_meta(parent, suffix: str = "abcdef12"):
+    """Fabricate a delegated subagent ConversationMeta under ``parent``."""
+    from dataclasses import replace
+
+    return replace(
+        parent,
+        conv_id=f"{parent.conv_id}--child-{suffix}",
+        title=f"Subtask {suffix}",
+    )
+
+
+def _register_child(index: ConversationIndex, parent, suffix: str = "abcdef12") -> "ConversationMeta":
+    """Register a delegated subagent ConversationMeta under ``parent`` in the index."""
+    from dataclasses import asdict, replace
+
+    child = replace(
+        parent,
+        conv_id=f"{parent.conv_id}--child-{suffix}",
+        title=f"Subtask {suffix}",
+    )
+    data = index._load()
+    data.append(asdict(child))
+    index._save(data)
+    return child
+
+
+def test_group_conversations_into_sessions_singleton(config):
+    """A standalone conversation is its own single-conversation session."""
+    from decafclaw.web.conversations import group_conversations_into_sessions
+
+    parent = ConversationMeta(
+        conv_id="web-alice-12345678",
+        user_id="alice",
+        title="Standalone",
+        created_at="2026-01-01T00:00:00",
+        updated_at="2026-01-01T00:00:00",
+    )
+    sessions = group_conversations_into_sessions([parent], None)
+    assert len(sessions) == 1
+    s = sessions[0]
+    assert s["session_id"] == "web-alice-12345678"
+    assert s["title"] == "Standalone"
+    assert s["status"] == "idle"
+    assert len(s["conversations"]) == 1
+    assert s["conversations"][0]["kind"] == "parent"
+    assert s["conversations"][0]["conv_id"] == "web-alice-12345678"
+
+
+def test_group_conversations_into_sessions_parent_with_children(config):
+    """A root conversation groups with its delegated subagents."""
+    from decafclaw.web.conversations import group_conversations_into_sessions
+
+    parent = ConversationMeta(
+        conv_id="web-alice-12345678",
+        user_id="alice",
+        title="Parent chat",
+        created_at="2026-01-01T00:00:00",
+        updated_at="2026-01-02T00:00:00",
+    )
+    child = _child_meta(parent, "abcdef12")
+    other = ConversationMeta(
+        conv_id="web-alice-87654321",
+        user_id="alice",
+        title="Other chat",
+        created_at="2026-01-01T00:00:00",
+        updated_at="2026-01-03T00:00:00",
+    )
+    sessions = group_conversations_into_sessions([parent, child, other], None)
+    assert len(sessions) == 2
+    by_session = {s["session_id"]: s for s in sessions}
+    parent_session = by_session["web-alice-12345678"]
+    assert parent_session["title"] == "Parent chat"
+    assert len(parent_session["conversations"]) == 2
+    assert parent_session["conversations"][0]["kind"] == "parent"
+    assert parent_session["conversations"][0]["conv_id"] == "web-alice-12345678"
+    assert parent_session["conversations"][1]["kind"] == "subagent"
+    assert parent_session["conversations"][1]["conv_id"] == "web-alice-12345678--child-abcdef12"
+    # Newest-first ordering
+    assert [s["session_id"] for s in sessions] == [
+        "web-alice-87654321",
+        "web-alice-12345678",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_route(authed_client, http_config):
+    resp = await authed_client.post("/api/conversations", json={"title": "Chat 1"})
+    assert resp.status_code == 201
+    parent = ConversationIndex(http_config).get(resp.json()["conv_id"])
+
+    data = (await authed_client.get("/api/sessions")).json()
+    assert data["folder"] == ""
+    assert len(data["sessions"]) == 1
+    s = data["sessions"][0]
+    assert s["session_id"] == parent.conv_id
+    assert s["conversations"][0]["conv_id"] == parent.conv_id
+    assert s["conversations"][0]["kind"] == "parent"
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_returns_parent_with_children(authed_client, http_config):
+    parent = ConversationIndex(http_config).create("testuser", "Parent chat")
+    child = _register_child(ConversationIndex(http_config), parent, "abcdef12")
+
+    data = (await authed_client.get("/api/sessions")).json()
+    assert data["folder"] == ""
+    assert len(data["sessions"]) == 1
+    s = data["sessions"][0]
+    assert s["session_id"] == parent.conv_id
+    assert s["title"] == "Parent chat"
+    assert len(s["conversations"]) == 2
+    assert s["conversations"][0]["kind"] == "parent"
+    assert s["conversations"][0]["conv_id"] == parent.conv_id
+    assert s["conversations"][1]["kind"] == "subagent"
+    assert s["conversations"][1]["conv_id"] == child.conv_id
+
+
+@pytest.mark.asyncio
+async def test_list_session_conversations_route(authed_client, http_config):
+    parent = ConversationIndex(http_config).create("testuser", "Parent chat")
+    child = _register_child(ConversationIndex(http_config), parent, "abcdef12")
+
+    resp = await authed_client.get(f"/api/sessions/{parent.conv_id}/conversations")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_id"] == parent.conv_id
+    assert len(data["conversations"]) == 2
+    assert data["conversations"][0]["kind"] == "parent"
+    assert data["conversations"][1]["kind"] == "subagent"
+
+    resp_child = await authed_client.get(f"/api/sessions/{child.conv_id}/conversations")
+    assert resp_child.status_code == 200
+    child_data = resp_child.json()
+    assert child_data["session_id"] == child.conv_id
+    assert len(child_data["conversations"]) == 1
+    assert child_data["conversations"][0]["kind"] == "subagent"
+
+
+@pytest.mark.asyncio
+async def test_sessions_routes_require_auth(unauthed_client):
+    assert (await unauthed_client.get("/api/sessions")).status_code == 401
+    assert (await unauthed_client.get("/api/sessions/some-session/conversations")).status_code == 401
