@@ -186,7 +186,7 @@ Each context source produces a `SourceEntry` with token estimates, item counts, 
 
 ### Prompt-cache tokens (#480)
 
-The per-conversation diagnostics sidecar (`workspace/conversations/{conv_id}/context.json`, served by `GET /api/conversations/{id}/context`) also carries the prompt-cache figures providers report:
+The per-conversation diagnostics sidecar (`workspace/sessions/{session_id}/{conv_id}/context.json`, served by `GET /api/conversations/{id}/context`) also carries the prompt-cache figures providers report:
 
 | Field | Meaning |
 |-------|---------|
@@ -509,7 +509,7 @@ Compaction's prose summary is lossy for high-signal facts — architectural deci
 
 **Flow on each compaction:**
 
-1. Load the existing slice from `{workspace}/conversations/{conv_id}/decisions.json` (empty when missing).
+1. Load the existing slice from `{workspace}/sessions/{session_id}/{conv_id}/decisions.json` (empty when missing).
 2. If non-empty, prepend `Current state slice:\n<formatted>` to the prompt input so the LLM sees what's already captured.
 3. The LLM emits its prose summary plus a fenced ```json block with the new state of the three lists. The prompt instructs it to **reuse existing entries verbatim** when they still apply (so timestamps survive), add new entries, and drop entries that have been obsoleted.
 4. `parse_slice_from_response` extracts the JSON; `merge_slice` reconciles old + new (preserve verbatim entries' `created_at`, add new entries with `now`, drop missing entries, FIFO cap per category).
@@ -551,9 +551,9 @@ To maximize prompt cache hits (#1111, #1116):
 
 ## Context inspection
 
-After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}/context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
+After each turn, the agent writes a diagnostics sidecar file (`workspace/sessions/{session_id}/{conv_id}/context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
 
-On every LLM call, the agent also writes the request payload to a sidecar file (`workspace/conversations/{conv_id}/last_request.json`). It records the model name, the finalized canonical messages list, and the tools definition payload prepared for the provider. Each provider subsequently translates these canonical structures into its specific API wire format (e.g. Gemini `contents`/`systemInstruction` or OpenAI `input`). Each LLM call overwrites this file so the last call in a multi-step turn wins. Any write failure logs at debug level without failing the turn. Note that because this sidecar records the full prompt and injected context, it holds injected vault content and the full system prompt on disk.
+On every LLM call, the agent also writes the request payload to a sidecar file (`workspace/sessions/{session_id}/{conv_id}/last_request.json`). It records the model name, the finalized canonical messages list, and the tools definition payload prepared for the provider. Each provider subsequently translates these canonical structures into its specific API wire format (e.g. Gemini `contents`/`systemInstruction` or OpenAI `input`). Each LLM call overwrites this file so the last call in a multi-step turn wins. Any write failure logs at debug level without failing the turn. Note that because this sidecar records the full prompt and injected context, it holds injected vault content and the full system prompt on disk.
 
 **REST endpoints:**
 - `GET /api/conversations/{id}/context` returns the diagnostics sidecar data (`context.json`).
@@ -598,7 +598,7 @@ no-id `canvas_update`) are removed.
 Each successful call emits a `canvas_update` WebSocket event (with a `kind`
 field: `new_tab`, `update`, `close_tab`, `set_active`, or `clear`) to
 connected clients. The canvas state persists in
-`workspace/conversations/{conv_id}/canvas.json`.
+`workspace/sessions/{session_id}/{conv_id}/canvas.json`.
 
 ## Key files
 

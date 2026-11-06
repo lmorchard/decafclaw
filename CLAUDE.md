@@ -196,7 +196,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 
 ### Data and persistence
 - `archive.py` — JSONL conversation archive
-- `conversation_paths.py` — per-conversation sidecar path chokepoint: `conversations/{conv_id}/{file}` dir layout, archive iteration + delete helpers (one-time migration from the pre-#576 flat layout: `make migrate-sidecars`)
+- `conversation_paths.py` — per-conversation sidecar path chokepoint: session-aware conversation dirs (new `sessions/{session_id}/{conv_id}/` layout with legacy `conversations/{conv_id}/` fallback; new-conversation creation via `create=True`) + archive iteration + delete helpers (flat→dir migration: `make migrate-sidecars`; dir→session migration: `make migrate-sessions`)
 - `compaction.py` — Summarization + pre-compaction memory sweep
 - `compaction_decisions.py` — Structured decision slice threaded through compaction (decisions / open questions / artifacts; persisted to per-conv sidecar)
 - `compaction_display.py` — Shared compaction-notice wording for the Python transports (`compaction_notice`)
