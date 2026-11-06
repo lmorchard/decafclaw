@@ -74,6 +74,90 @@ def is_web_conv_for_user(conv_id: str, username: str) -> bool:
     return bool(sep and suffix) and user_part == username
 
 
+_CHILD_MARKER = "--child-"
+
+
+def parent_conv_id_of(conv_id: str) -> str | None:
+    """Return the parent conversation id when ``conv_id`` is a delegated child.
+
+    Child conversation ids follow the ``{parent}--child-{hex}`` session
+    convention (#1112 session layout / #1115 sidebar hierarchy). A conv id
+    without the marker is a standalone conversation, so it is its own session
+    root and this returns ``None``.
+    """
+    idx = conv_id.find(_CHILD_MARKER)
+    if idx <= 0:
+        return None
+    return conv_id[:idx]
+
+
+def is_child_conv_id(conv_id: str, parent_conv_id: str) -> bool:
+    """True when ``conv_id`` is a delegated subagent of ``parent_conv_id``."""
+    return bool(parent_conv_id) and conv_id.startswith(f"{parent_conv_id}{_CHILD_MARKER}")
+
+
+def _activity_status(manager, conv_id: str) -> str:
+    """Conversation activity status for the UI ('idle' | 'busy' | 'waiting' | ...)."""
+    return manager.get_activity_status(conv_id) if manager else "idle"
+
+
+def _session_item(conv: "ConversationMeta", kind: str, manager) -> dict:
+    """One conversation inside a session group, with its UI status."""
+    return {
+        "conv_id": conv.conv_id,
+        "title": conv.title,
+        "kind": kind,
+        "created_at": conv.created_at,
+        "updated_at": conv.updated_at,
+        "status": _activity_status(manager, conv.conv_id),
+    }
+
+
+def group_conversations_into_sessions(
+    convs: list["ConversationMeta"],
+    manager,
+) -> list[dict]:
+    """Group a user's conversations into sessions for the sidebar hierarchy.
+
+    A session is a root conversation plus its delegated subagent children
+    (``{root}--child-{hex}``). Standalone conversations are single-conversation
+    sessions. Returns sessions sorted newest-first by updated_at, each with its
+    ``conversations`` list ordered parent-first / children-descending.
+    """
+    groups: dict[str, list] = {}
+    order: list[str] = []
+    for conv in convs:
+        root = parent_conv_id_of(conv.conv_id) or conv.conv_id
+        if root not in groups:
+            groups[root] = []
+            order.append(root)
+        groups[root].append(conv)
+
+    sessions: list[dict] = []
+    for root in order:
+        members = groups[root]
+        root_conv = next((c for c in members if c.conv_id == root), None)
+        conversations: list[dict] = []
+        children = [c for c in members if c.conv_id != root]
+        if root_conv is not None:
+            conversations.append(_session_item(root_conv, "parent", manager))
+        for child in sorted(children, key=lambda c: c.updated_at, reverse=True):
+            conversations.append(_session_item(child, "subagent", manager))
+        anchor = root_conv if root_conv is not None else members[0]
+        sessions.append(
+            {
+                "session_id": root,
+                "title": anchor.title,
+                "created_at": anchor.created_at,
+                "updated_at": anchor.updated_at,
+                "status": _activity_status(manager, root),
+                "conversations": conversations,
+            }
+        )
+    sessions.sort(key=lambda s: s["updated_at"], reverse=True)
+    return sessions
+
+
 def list_system_conversations(config, username: str = "", limit: int = 100) -> list[dict]:
     """Discover system conversations from the archive directory.
 

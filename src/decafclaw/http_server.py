@@ -781,6 +781,38 @@ class SystemConversationListingResponse(BaseModel):
     conversations: list[SystemConversationListingItem]
 
 
+class SessionConversationItem(BaseModel):
+    """One conversation inside a session group — the parent or a subagent."""
+
+    conv_id: str
+    title: str
+    kind: str = "parent"
+    created_at: str = ""
+    updated_at: str = ""
+    status: str = "idle"
+
+
+class SessionEntry(BaseModel):
+    """A session: one root conversation plus its delegated subagent children."""
+
+    session_id: str
+    title: str
+    created_at: str = ""
+    updated_at: str = ""
+    status: str = "idle"
+    conversations: list[SessionConversationItem] = []
+
+
+class SessionListingResponse(BaseModel):
+    folder: str
+    sessions: list[SessionEntry]
+
+
+class SessionConversationsResponse(BaseModel):
+    session_id: str
+    conversations: list[SessionConversationItem]
+
+
 async def list_conversations(request: Request, folder: str = "") -> ConversationListingResponse | JSONResponse:
     """List conversations and subfolders for a specific folder.
 
@@ -919,6 +951,81 @@ async def list_system_conversations(
             "conversations": filtered,
         }
     )
+
+
+async def list_sessions(request: Request, folder: str = "") -> SessionListingResponse | JSONResponse:
+    """List sessions (root conversation + delegated subagents) for the sidebar hierarchy.
+
+    Query params:
+        folder — optional folder path (default: top-level). Sessions whose
+            root conversation is assigned to the folder are returned.
+
+    Returns ``{folder, sessions}`` where each session carries its root
+    conversation metadata plus the nested subagent conversations.
+    """
+    from .web.conversation_folders import ConversationFolderIndex
+    from .web.conversations import ConversationIndex, group_conversations_into_sessions
+
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    folder_param = folder.strip()
+    err = _validate_folder_param(folder_param)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    index = ConversationIndex(config)
+    folder_index = ConversationFolderIndex(config, username)
+    convs = index.list_for_user(username)
+    assignments = await folder_index.get_all_assignments()
+    if folder_param:
+        convs = [c for c in convs if assignments.get(c.conv_id, "") == folder_param]
+    manager = getattr(request.app.state, "manager", None)
+    sessions = group_conversations_into_sessions(convs, manager)
+    return SessionListingResponse.model_validate(
+        {
+            "folder": folder_param,
+            "sessions": sessions,
+        }
+    )
+
+
+async def list_session_conversations(request: Request, session_id: str) -> SessionConversationsResponse | JSONResponse:
+    """List the conversations within one session.
+
+    ``session_id`` may name a root conversation (optionally with delegated
+    subagents) or a single subagent conversation id; both resolve to the
+    conversation list for that session.
+    """
+    from .web.conversations import (
+        ConversationIndex,
+        _session_item,
+        parent_conv_id_of,
+    )
+
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    index = ConversationIndex(config)
+    conv = index.get(session_id)
+    manager = getattr(request.app.state, "manager", None)
+    if conv is None or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if parent_conv_id_of(session_id) is not None:
+        # A subagent conversation id: its session is the singleton it forms.
+        return SessionConversationsResponse.model_validate(
+            {"session_id": session_id, "conversations": [_session_item(conv, "subagent", manager)]}
+        )
+    conversations = [_session_item(conv, "parent", manager)]
+    children = [
+        c
+        for c in index.list_for_user(username)
+        if c.conv_id != session_id and parent_conv_id_of(c.conv_id) == session_id
+    ]
+    for child in sorted(children, key=lambda c: c.updated_at, reverse=True):
+        conversations.append(_session_item(child, "subagent", manager))
+    return SessionConversationsResponse.model_validate({"session_id": session_id, "conversations": conversations})
 
 
 # Schema-only input: the handler retains legacy JSON parsing and coercions.
@@ -3745,6 +3852,13 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             list_system_conversations,
             methods=["GET"],
             response_model=SystemConversationListingResponse,
+        ),
+        APIRoute("/api/sessions", list_sessions, methods=["GET"], response_model=SessionListingResponse),
+        APIRoute(
+            "/api/sessions/{session_id}/conversations",
+            list_session_conversations,
+            methods=["GET"],
+            response_model=SessionConversationsResponse,
         ),
         APIRoute(
             "/api/conversations",
