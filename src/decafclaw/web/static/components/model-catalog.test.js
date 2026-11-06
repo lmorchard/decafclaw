@@ -58,6 +58,10 @@ async function mountCatalog(initialCatalog = CATALOG) {
       const body = JSON.parse(options.body);
       return jsonResponse({ ...initialCatalog, default_pointer: body.model });
     }
+    if (u.pathname === '/api/models/catalog/aux_approval') {
+      const body = JSON.parse(options.body);
+      return jsonResponse({ ...initialCatalog, aux_approval_pointer: body.model, aux_approval_model: body.model });
+    }
     return jsonResponse({});
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -194,6 +198,32 @@ describe('model-catalog component', () => {
     expect(optionValues).toContain('');
     const selected = select.querySelector('option[selected]');
     expect(selected.value).toBe('local/llama3.2');
+  });
+
+  it('auto-approval picker lists the use-conversation-model default and posts the pointer', async () => {
+    const { el, fetchMock } = await mountCatalog({
+      ...CATALOG,
+      aux_approval_pointer: '',
+      aux_approval_model: '',
+    });
+
+    const select = el.querySelector('#catalog-aux-approval-select');
+    expect(select).toBeTruthy();
+    const optionValues = [...select.querySelectorAll('option')].map(o => o.value);
+    expect(optionValues).toContain('');
+    expect(optionValues).toContain('hand-model');
+    expect(optionValues).toContain('local/llama3.2');
+    // "Use conversation model" (empty) is the default when nothing is set.
+    expect(select.querySelector('option[selected]').value).toBe('');
+
+    select.value = 'hand-model';
+    select.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 10));
+
+    const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/aux_approval'));
+    expect(post).toBeTruthy();
+    expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
   });
 
   it('refresh button triggers discovery', async () => {
