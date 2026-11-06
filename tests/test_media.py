@@ -201,7 +201,8 @@ async def test_local_handler_save_media(tmp_path):
     handler = LocalFileMediaHandler(config)
     result = await handler.save_media("conv1", "test.png", b"png-data", "image/png")
     assert result.workspace_ref is not None
-    assert result.workspace_ref.startswith("workspace://conversations/conv1/uploads/")
+    # #1112: a fresh conversation resolves under the session root.
+    assert result.workspace_ref.startswith("workspace://sessions/conv1/uploads/")
     assert result.saved_filename is not None
     assert "test" in result.saved_filename
     # Verify file was actually saved

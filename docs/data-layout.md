@@ -34,7 +34,7 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
       agent/
         pages/                      # Curated wiki pages (revised over time)
         journal/                    # Daily journal entries (append-only)
-    conversations/                  # One directory per conversation
+    conversations/                  # Legacy per-conversation dirs (pre-#1112 fallback)
       {conv_id}/                    # All state for a single conversation
         archive.jsonl               # Message archive (JSONL)
         compacted.jsonl             # Pre-compaction history snapshot
@@ -48,6 +48,13 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
         vault_grants.json           # Per-conversation vault folder grants
         workflow.json               # Durable workflow journal
         uploads/                    # User-uploaded file attachments
+    sessions/                        # Session-scoped root (#1112)
+      {session_id}/                  # One session per conversation group
+        {conv_id}/                   # Conversation dir within the session
+          archive.jsonl             # Message archive (JSONL)
+          notes.md                  # Per-conversation scratchpad
+          workflow.json             # Durable workflow journal
+          uploads/                  # User-uploaded file attachments
     projects/                       # Project skill working directories
       {YYYY-MM-DD-HHMM}-{slug}/
     todos/                          # Per-conversation checklists (markdown checkboxes)
@@ -70,7 +77,11 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
 
 ## Per-conversation sidecar directories
 
-Everything belonging to a single conversation lives under one directory,
+Everything belonging to a single conversation lives under one directory.
+New conversations use the session-scoped layout —
+`workspace/sessions/{session_id}/{conv_id}/` (a standalone conversation is
+its own single-conversation session, so its sidecars sit directly in
+`sessions/{conv_id}/`). Legacy instances keep resolving the pre-#1112
 `workspace/conversations/{conv_id}/`. One listing shows all of a
 conversation's state, and one `rm -rf` (or one `delete_conversation_files`
 call) removes it.
@@ -81,7 +92,10 @@ paths: `conversation_dir(config, conv_id, *, create=False)`,
 `iter_conversation_archives(config)`, and `delete_conversation_files(config,
 conv_id)`, plus the `SIDECAR_FILENAMES` constant (the migration mapping).
 `workflow/paths.py` delegates to it. New sidecars get a filename in this
-module rather than a new flat-suffix convention.
+module rather than a new flat-suffix convention. Enumeration covers both
+roots — including delegated children nested at
+`sessions/{parent}/{child_id}/` — and prefers the session-root copy when a
+conversation has a directory in both.
 
 ### Migrating from the legacy flat layout
 
@@ -97,6 +111,25 @@ idempotent and never deletes data (only moves). Preview the moves first with
 `make migrate-sidecars-dry`, then run `make migrate-sidecars` once after
 upgrading. (There is no runtime fallback — run the migration before relying
 on pre-#576 conversations.)
+
+### Migrating to the session-scoped layout (#1112)
+
+Conversations now group into sessions. A standalone conversation is its own
+single-conversation session; delegated child conversations live under their
+parent's session (`{parent}--child-{hex}` moves to `sessions/{parent}/{child}/`).
+
+`make migrate-sessions` runs `scripts/migrate_sessions.py`, which moves
+existing per-conversation directories into the session-scoped layout:
+`conversations/{conv_id}/` moves to `sessions/{conv_id}/` for standalone
+conversations, and `conversations/{child_id}/` moves to
+`sessions/{parent}/{child_id}/` for delegated children. It is idempotent and
+never deletes data (only moves). Preview the moves first with
+`make migrate-sessions-dry`, then run `make migrate-sessions` once after
+upgrading. (The legacy `conversations/{conv_id}/` resolver stays as a
+read-only fallback for unmigrated conversations; a conversation is pinned to
+one root for its lifetime — a fresh conversation resolves under the session
+layout, so its first write materializes it there and later `create=True`
+callers cannot flip it mid-life.)
 
 ## Secret files
 
