@@ -139,8 +139,11 @@ async def run_child_turn(
     allowed_tools: list[str] | None = None,
     allow_vault_retrieval: bool = False,
     allow_vault_read: bool = False,
+    allow_vault_write: bool = False,
     return_schema: dict | None = None,
     event_context_id_override: str | None = None,
+    child_conv_id_override: str | None = None,
+    await_child: bool = True,
 ) -> tuple[str, dict | None]:
     """Run a child agent turn via ConversationManager, preserving the
     parent's tools, skills, and event routing.
@@ -151,6 +154,7 @@ async def run_child_turn(
         allowed_tools: Optional explicit allowlist for the child. When
             provided, the child sees ONLY these tools (still minus the
             categorical excludes: ``delegate_task``,
+            ``subagent_spawn``/``subagent_list``/``subagent_cancel``,
             ``activate_skill``, ``refresh_skills``, ``tool_search``,
             and the vault-write set). Use this from workflows to
             constrain a child agent narrowly. ``None`` (default) means
@@ -166,6 +170,12 @@ async def run_child_turn(
             ``vault_list``, ``vault_backlinks``,
             ``vault_show_sections``). Vault WRITE tools are
             categorically blocked regardless.
+        allow_vault_write: When False (default), vault WRITE tools are
+            categorically blocked for children (see #396/#955/#1113). Set
+            True to opt the child into the scoped authoring writes
+            (``vault_write``, ``vault_journal_append``); every other
+            safety boundary (admin writes, delegation excludes, read
+            gating) stays in place.
         return_schema: Optional JSON-schema-shaped dict (#395). When
             supplied, the child system prompt gets an addendum
             instructing it to emit a fenced JSON block matching the
@@ -176,6 +186,13 @@ async def run_child_turn(
             inheriting the parent's subscriber id. Used by
             ``delegate_tasks`` (#397) to suppress per-child progress
             events from the parent UI.
+        child_conv_id_override: When non-None, use this child conv id
+            instead of generating ``{parent}--child-{hex}`` (#1113, used
+            by ``subagent_spawn`` so the parent can learn the ``child_conv_id``).
+        await_child: When True (default), await the spawned child turn and
+            return its result. When False, spawn only and return a spawn
+            ack while the turn still runs via the manager loop (#1113,
+            used by ``subagent_spawn`` fire-and-forget spawns).
 
     Returns ``(text, data)``:
         * On success without ``return_schema``: ``(child_text, None)``.
@@ -217,7 +234,9 @@ async def run_child_turn(
 
     parent_conv = parent_ctx.conv_id or parent_ctx.channel_id
     # Per-call unique conv_id; short random suffix to avoid collisions.
-    child_conv_id = f"{parent_conv}--child-{secrets.token_hex(4)}"
+    # `subagent_spawn` overrides this with the id it generated so the
+    # parent can learn it back for subagent lifecycle tracking (#1113).
+    child_conv_id = child_conv_id_override or f"{parent_conv}--child-{secrets.token_hex(4)}"
     parent_event_id = parent_ctx.event_context_id or parent_ctx.context_id
 
     def setup(child_ctx: "Context"):
@@ -240,10 +259,27 @@ async def run_child_turn(
         # If parent has restricted allowed_tools, respect that restriction.
         # If an explicit `allowed_tools` was passed (workflow callers),
         # that narrows further.
-        excluded = {"delegate_task", "activate_skill", "refresh_skills", "tool_search"}
+        # #1113: subagent_spawn/subagent_list/subagent_cancel are excluded
+        # alongside delegate_task — a child spawning grandchildren would
+        # bypass the delegation recursion boundary, and subagent_cancel
+        # must never target a conversation the child doesn't own.
+        excluded = {
+            "delegate_task",
+            "subagent_spawn",
+            "subagent_list",
+            "subagent_cancel",
+            "activate_skill",
+            "refresh_skills",
+            "tool_search",
+        }
         # Vault and admin policy (#396, #955): writes are categorically
         # blocked for children; reads require explicit opt-in for vault.
         excluded |= _VAULT_WRITE_TOOLS | _ADMIN_WRITE_TOOLS
+        # #1113: the parent can opt the child into scoped vault authoring
+        # writes (vault_write / vault_journal_append); every other
+        # vault-write / admin tool stays blocked.
+        if allow_vault_write:
+            excluded -= {"vault_write", "vault_journal_append"}
         if not allow_vault_read:
             excluded |= _VAULT_READ_TOOLS
         all_tools = set(TOOLS) | set(parent_ctx.tools.extra)
@@ -273,6 +309,9 @@ async def run_child_turn(
         # Default-deny vault retrieval (#396); the parent opts in via
         # `allow_vault_retrieval=True` on `delegate_task`.
         child_ctx.skip_vault_retrieval = not allow_vault_retrieval
+        # Record the subagent task description for lifecycle tooling
+        # (#1113): subagent_list reports status + task per spawned child.
+        manager.set_subagent_task(child_conv_id, task if isinstance(task, str) else str(task))
 
         # Set active model: explicit override > parent's model
         child_ctx.active_model = model if model else parent_ctx.active_model
@@ -295,6 +334,11 @@ async def run_child_turn(
             context_setup=setup,
             user_id=parent_ctx.user_id,
         )
+        if not await_child:
+            # #1113: spawn-only mode (subagent_spawn fire-and-forget) —
+            # return the spawn ack without awaiting the child turn. The
+            # enqueued turn still runs via the manager loop.
+            return (f"[subagent spawned: {child_conv_id}]", None)
         result = await asyncio.wait_for(future, timeout=timeout)
     except asyncio.TimeoutError:
         return (f"[error: subtask timed out after {timeout}s]", None)
@@ -320,6 +364,7 @@ async def tool_delegate_task(
     model: str = "",
     allow_vault_retrieval: bool = False,
     allow_vault_read: bool = False,
+    allow_vault_write: bool = False,
     return_schema: dict | None = None,
 ) -> ToolResult:
     """Delegate a subtask (or a list of subtasks in parallel) to child agents.
@@ -333,7 +378,10 @@ async def tool_delegate_task(
     retrieval via ``allow_vault_retrieval=True`` and into the
     read-side vault tools via ``allow_vault_read=True``. Write
     tools are categorically blocked for children regardless. See
-    #396.
+    #396. The parent can additionally opt the child into the scoped
+    authoring writes (``vault_write``, ``vault_journal_append``) via
+    ``allow_vault_write=True`` (#1113) — all other safety boundaries
+    stay in place.
 
     When ``return_schema`` is supplied, the child is instructed to
     return prose followed by a fenced JSON block matching the shape;
@@ -355,6 +403,7 @@ async def tool_delegate_task(
             model=model,
             allow_vault_retrieval=allow_vault_retrieval,
             allow_vault_read=allow_vault_read,
+            allow_vault_write=allow_vault_write,
             return_schema=return_schema,
         )
 
@@ -362,10 +411,11 @@ async def tool_delegate_task(
         return ToolResult(text="[error: task description is required]")
 
     log.info(
-        "[tool:delegate_task] model=%s vault_retrieval=%s vault_read=%s schema=%s %s...",
+        "[tool:delegate_task] model=%s vault_retrieval=%s vault_read=%s vault_write=%s schema=%s %s...",
         model or "inherit",
         allow_vault_retrieval,
         allow_vault_read,
+        allow_vault_write,
         "yes" if return_schema else "no",
         task[:80],
     )
@@ -376,6 +426,7 @@ async def tool_delegate_task(
         model=model,
         allow_vault_retrieval=allow_vault_retrieval,
         allow_vault_read=allow_vault_read,
+        allow_vault_write=allow_vault_write,
         return_schema=return_schema,
     )
     # `run_child_turn` returns the error string in `text` (prefixed
@@ -399,6 +450,7 @@ async def _run_one_delegated(
     model: str,
     allow_vault_retrieval: bool,
     allow_vault_read: bool,
+    allow_vault_write: bool,
     return_schema: dict | None,
 ) -> dict:
     """Run one child of a `delegate_tasks` batch under a semaphore.
@@ -418,6 +470,7 @@ async def _run_one_delegated(
                 model=model,
                 allow_vault_retrieval=allow_vault_retrieval,
                 allow_vault_read=allow_vault_read,
+                allow_vault_write=allow_vault_write,
                 return_schema=return_schema,
                 event_context_id_override=f"delegate-tasks-child-{idx}",
             )
@@ -472,6 +525,7 @@ async def tool_delegate_tasks(
     model: str = "",
     allow_vault_retrieval: bool = False,
     allow_vault_read: bool = False,
+    allow_vault_write: bool = False,
     return_schema: dict | None = None,
 ) -> ToolResult:
     """Delegate a batch of subtasks to child agents in parallel (#397).
@@ -485,6 +539,8 @@ async def tool_delegate_tasks(
     All non-``tasks`` parameters are shared across the batch — same
     model, same vault flags, same return schema. (For per-task
     overrides, fall back to multiple ``delegate_task`` calls.)
+    ``allow_vault_write`` threads the scoped authoring-write opt-in
+    through every child in the batch (#1113).
 
     Per-child progress events are NOT routed to the parent UI; the
     parent emits one aggregate ``tool_status`` event per completion.
@@ -513,12 +569,13 @@ async def tool_delegate_tasks(
         )
 
     log.info(
-        "[tool:delegate_tasks] count=%d parallel<=%d model=%s vault_retrieval=%s vault_read=%s schema=%s",
+        "[tool:delegate_tasks] count=%d parallel<=%d model=%s vault_retrieval=%s vault_read=%s vault_write=%s schema=%s",
         len(tasks),
         cap_parallel,
         model or "inherit",
         allow_vault_retrieval,
         allow_vault_read,
+        allow_vault_write,
         "yes" if return_schema else "no",
     )
 
@@ -539,6 +596,7 @@ async def tool_delegate_tasks(
             model=model,
             allow_vault_retrieval=allow_vault_retrieval,
             allow_vault_read=allow_vault_read,
+            allow_vault_write=allow_vault_write,
             return_schema=return_schema,
         )
         for i, t in enumerate(tasks)
@@ -602,8 +660,11 @@ DELEGATE_TOOL_DEFINITIONS = [
                 "agents (forks) that run as independent agent turns with access "
                 "to the same tools and skills. Use this whenever the user asks "
                 "you to spin up, fork off, or hand off a task to a sub-agent / "
-                "child agent, or when a task has independent parts that benefit "
-                "from running in isolated contexts.\n\n"
+                "child agent and you need the child's result back in this turn, "
+                "or when a task has independent parts that benefit from running "
+                "in isolated contexts. For a background subagent run you can "
+                "poll or cancel (an id, subagent_list, subagent_cancel), use "
+                "subagent_spawn instead.\n\n"
                 "Result shapes on ToolResult.data:\n"
                 "- Single task: child's parsed return_schema object arrives on ToolResult.data.\n"
                 "- Task list: structured summary arrives on ToolResult.data with shape "
