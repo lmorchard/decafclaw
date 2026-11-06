@@ -58,6 +58,14 @@ async function mountCatalog(initialCatalog = CATALOG) {
       const body = JSON.parse(options.body);
       return jsonResponse({ ...initialCatalog, default_pointer: body.model });
     }
+    if (u.pathname === '/api/models/catalog/reflection') {
+      const body = JSON.parse(options.body);
+      return jsonResponse({ ...initialCatalog, reflection_pointer: body.model, reflection_model: body.model });
+    }
+    if (u.pathname === '/api/models/catalog/verifier') {
+      const body = JSON.parse(options.body);
+      return jsonResponse({ ...initialCatalog, verifier_pointer: body.model, verifier_model: body.model });
+    }
     return jsonResponse({});
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -194,6 +202,94 @@ describe('model-catalog component', () => {
     expect(optionValues).toContain('');
     const selected = select.querySelector('option[selected]');
     expect(selected.value).toBe('local/llama3.2');
+  });
+
+  it('reflection picker lists enabled models plus an inherit option', async () => {
+    const { el } = await mountCatalog({
+      ...CATALOG,
+      reflection_pointer: '',
+      reflection_model: '',
+    });
+
+    const select = el.querySelector('#catalog-reflection-select');
+    expect(select).toBeTruthy();
+    const optionValues = [...select.querySelectorAll('option')].map(o => o.value);
+    expect(optionValues).toContain('');
+    expect(optionValues).toContain('hand-model');
+    expect(optionValues).toContain('local/llama3.2');
+    // Inherit (empty pointer) is the default when nothing is selected.
+    expect(select.querySelector('option[selected]').value).toBe('');
+
+    const verifier = el.querySelector('#catalog-verifier-select');
+    expect(verifier).toBeTruthy();
+    expect([...verifier.querySelectorAll('option')].map(o => o.value)).toContain('');
+  });
+
+  it('reflection selector posts the judge pointer and shows the inherit default', async () => {
+    const { el, fetchMock } = await mountCatalog({
+      ...CATALOG,
+      reflection_pointer: 'local/llama3.2',
+      reflection_model: 'local/llama3.2',
+    });
+
+    const select = el.querySelector('#catalog-reflection-select');
+    const selected = select.querySelector('option[selected]');
+    expect(selected.value).toBe('local/llama3.2');
+
+    select.value = 'hand-model';
+    select.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 10));
+
+    const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/reflection'));
+    expect(post).toBeTruthy();
+    expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
+  });
+
+  it('verifier selector posts the verifier pointer', async () => {
+    const { el, fetchMock } = await mountCatalog({
+      ...CATALOG,
+      verifier_pointer: 'local/llama3.2',
+      verifier_model: 'local/llama3.2',
+    });
+
+    const select = el.querySelector('#catalog-verifier-select');
+    select.value = 'hand-model';
+    select.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 10));
+
+    const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/verifier'));
+    expect(post).toBeTruthy();
+    expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
+  });
+
+  it('warns when the reflection judge equals the active conversation model', async () => {
+    class FakeStore extends EventTarget {
+      constructor(activeModel = '') { super(); this._activeModel = activeModel; }
+      get activeModel() { return this._activeModel; }
+    }
+    const store = new FakeStore('local/llama3.2');
+    const { el } = await mountCatalog({
+      ...CATALOG,
+      reflection_pointer: 'local/llama3.2',
+      reflection_model: 'local/llama3.2',
+    });
+    el.store = store;
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 10));
+    await el.updateComplete;
+
+    expect(el.querySelector('.model-catalog-judge-warning')).toBeTruthy();
+
+    // A different judge is fine — no warning.
+    const select = el.querySelector('#catalog-reflection-select');
+    select.value = 'hand-model';
+    select.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 10));
+    await el.updateComplete;
+    expect(el.querySelector('.model-catalog-judge-warning')).toBeFalsy();
   });
 
   it('refresh button triggers discovery', async () => {

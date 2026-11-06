@@ -3,7 +3,7 @@ import { subscribe, currentSnapshot, toggleCollapsed } from '../lib/sticky-state
 import './widgets/widget-host.js';
 
 /**
- * Single-slot pinned widget above the chat input. Expanded shows the widget;
+ * Single-slot pinned widget above the conversation controls. Expanded shows the widget;
  * collapsed shows a one-line summary. Hidden when nothing is pinned.
  */
 class StickySlot extends LitElement {

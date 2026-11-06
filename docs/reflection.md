@@ -55,6 +55,12 @@ decafclaw config set reflection.model gemini-2.5-flash
 
 The name may be a [`model_configs`](config.md#model_configs) key or a raw model name; either way it outranks `default_model`. A raw name routes through the legacy `url`/`model`/`api_key` fallback, so set [`reflection.url`](config.md#reflection) and `reflection.api_key` too if the judge lives somewhere other than the `llm` group. See [Judge model](#judge-model) for the full resolution order. To route the judge through a named model config specifically, use [`verifier_model`](#verifier_model--the-shared-verifier-convention), which outranks this.
 
+### Picking a judge from the UI
+
+`reflection.model` and `reflection.verifier_model` are also settable without a hand edit: **⚙ Agent Config → Models** renders a **Reflection model** picker and a **Verifier model** picker next to the global default. Both list every enabled catalog model (discovered + hand-configured) plus an explicit **inherit** option that clears the sidecar pointer and re-runs the resolution chain above. Changes land in the `data/{agent_id}/model_catalog.json` sidecar (`reflection_model` / `verifier_model` keys) and take effect on the next reflection run — no restart.
+
+Selecting a reflection judge equal to the active conversation model is allowed but warns in the UI: the author must not grade its own homework (#591).
+
 ## Configuration
 
 All settings live under the `reflection` group in `config.json`. See [Configuration Reference](config.md#reflection) for the full table.
