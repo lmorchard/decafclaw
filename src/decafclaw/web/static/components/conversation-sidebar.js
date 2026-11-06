@@ -64,6 +64,8 @@ export class ConversationSidebar extends LitElement {
     this._isBusy = false;
     this._isReadOnly = false;
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+    /** @type {Set<string>} session ids the user collapsed (#1115 follow-up) */
+    this._collapsedSessions = new Set();
     this._mobileOpen = false;
     this._sidebarTab = 'conversations';
     this._contextInspectorOpen = false;
@@ -88,7 +90,19 @@ export class ConversationSidebar extends LitElement {
     document.addEventListener('toggle-context-inspector', this._onToggleInspector);
     this._onStoreChange = () => {
       const newId = this.store?.currentConvId;
-      if (newId !== this._activeId) this._contextInspectorOpen = false;
+      const newSessions = this.store?.sessions || [];
+      if (newId !== this._activeId) {
+        this._contextInspectorOpen = false;
+        // Selecting a conversation auto-expands its session group (#1115
+        // follow-up): the user may have collapsed it earlier, but clicking
+        // into that session's conversation signals interest again. Reads
+        // straight from the store so it also works on the same change
+        // event that first delivers the sessions data.
+        for (const g of newSessions) {
+          if ((g.conversations || []).some((c) => c?.conv_id === newId)) this._collapsedSessions.delete(g.session_id);
+        }
+        if (newSessions.length === 0 && newId) this._collapsedSessions.delete(parentConvIdOf(newId) || newId);
+      }
       this._activeId = newId;
       const newUsage = this.store?.contextUsage || 0;
       if (newUsage !== this._contextUsage) this._contextVersion++;
@@ -113,7 +127,7 @@ export class ConversationSidebar extends LitElement {
         this._chatFolders = this.store?.folders || [];
         // Server-grouped sessions (#1115) — the hierarchy data for the
         // active section; client-side grouping remains as fallback.
-        this._sessions = [...(this.store?.sessions || [])];
+        this._sessions = [...newSessions];
       }
       this.requestUpdate();
     };
@@ -606,8 +620,20 @@ export class ConversationSidebar extends LitElement {
   }
 
   /**
+   * Toggle one session's subagent rows (#1115 follow-up).
+   * @param {string} sessionId
+   */
+  #toggleSession(sessionId) {
+    if (this._collapsedSessions.has(sessionId)) this._collapsedSessions.delete(sessionId);
+    else this._collapsedSessions.add(sessionId);
+    this.requestUpdate();
+  }
+
+  /**
    * Render one session group: the parent row plus (optionally) its subagent
-   * rows.
+   * rows. Sessions with children get an expand/collapse chevron — expanded
+   * by default, collapsed on user toggle, re-expanded when a conversation
+   * in the session is selected (#1115 follow-up).
    * @param {object} g
    * @returns {import('lit').TemplateResult}
    */
@@ -627,9 +653,19 @@ export class ConversationSidebar extends LitElement {
     };
     const parentRow = this.#renderConversationItem(parent, parentOpts);
     if (children.length === 0) return parentRow;
+    const expanded = !this._collapsedSessions.has(g.session_id);
     return html`
-      ${parentRow}
-      ${children.map((c) => this.#renderSubagentRow(c))}
+      <div class="conv-session-head">
+        <button
+          class="conv-session-toggle${expanded ? ' open' : ''}"
+          @click=${(/** @type {Event} */ e) => { e.stopPropagation(); this.#toggleSession(g.session_id); }}
+          aria-expanded=${expanded ? 'true' : 'false'}
+          aria-label=${expanded ? 'Collapse subagents' : 'Expand subagents'}
+          title=${expanded ? 'Collapse subagents' : 'Expand subagents'}
+        >▸</button>
+        ${parentRow}
+      </div>
+      ${expanded ? children.map((c) => this.#renderSubagentRow(c)) : nothing}
     `;
   }
 

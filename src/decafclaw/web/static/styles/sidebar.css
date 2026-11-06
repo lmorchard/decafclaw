@@ -101,6 +101,40 @@ conversation-sidebar .conv-subagent {
   margin-left: 0.5rem;
 }
 
+/* Session group expand/collapse (#1115 follow-up): chevron beside the
+   parent row. Rotates 90° when expanded; hidden entirely for sessions
+   without subagent rows. */
+conversation-sidebar .conv-session-head {
+  display: flex;
+  align-items: stretch;
+}
+
+conversation-sidebar .conv-session-head > .conv-item {
+  flex: 1;
+  min-width: 0;
+}
+
+button.conv-session-toggle {
+  flex: 0 0 auto;
+  align-self: center;
+  border: none;
+  background: none;
+  color: var(--pico-muted-color);
+  cursor: pointer;
+  padding: 0.25rem 0.2rem;
+  font-size: 0.7rem;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+button.conv-session-toggle.open {
+  transform: rotate(90deg);
+}
+
+button.conv-session-toggle:hover {
+  color: inherit;
+}
+
 /* Pinned Bookmarks section (Files/Vault tabs, #1086). */
 conversation-sidebar .bookmark-section {
   margin-bottom: 0.5rem;

@@ -111,6 +111,8 @@ export class ConversationStore extends EventTarget {
   // -- Session hierarchy state (#1115) --
   /** @type {SessionEntry[]} */
   #sessions = [];
+  /** Debounce handle for the pushed-event hierarchy refresh (#1115 follow-up). */
+  #sessionsRefreshTimer = 0;
 
   // -- Activity status state --
   /** @type {Map<string, 'idle' | 'busy' | 'waiting' | 'finished'>} */
@@ -334,6 +336,34 @@ export class ConversationStore extends EventTarget {
       if (err instanceof ApiError) return;
       console.error('Failed to list sessions:', err);
     }
+  }
+
+  /**
+   * True when convId is already present in the store's listings — flat,
+   * session hierarchy, archived, or system. A pushed status event for an
+   * id the store has never seen is a freshly spawned subagent whose row
+   * cannot exist yet (#1115 follow-up).
+   * @param {string} convId
+   */
+  #knowsConversation(convId) {
+    const inList = (/** @type {Array<any>} */ list) => (list || []).some((c) => c?.conv_id === convId);
+    if (inList(this.#conversations) || inList(this.#archivedConversations) || inList(this.#systemConversations)) {
+      return true;
+    }
+    return (this.#sessions || []).some((s) => inList(s?.conversations));
+  }
+
+  /**
+   * Debounced hierarchy refetch: a spawn batch fires several pushed events
+   * (TURN_START + conversation_status per child) — one refetch covers them.
+   * Without this, subagent rows only appear on page reload or when the
+   * parent's whole turn finishes (#1115 follow-up).
+   */
+  #scheduleSessionsRefresh() {
+    clearTimeout(this.#sessionsRefreshTimer);
+    this.#sessionsRefreshTimer = setTimeout(() => {
+      void this.listSessions(this.#currentFolder);
+    }, 300);
   }
 
   /**
@@ -754,6 +784,10 @@ export class ConversationStore extends EventTarget {
             this.#setConversationStatus(convId, msg.status || 'idle');
           }
           this.#emitChange();
+          // A pushed status for a conversation the store has never seen is
+          // a freshly spawned subagent — refetch the hierarchy so its row
+          // appears without a page reload (#1115 follow-up).
+          if (!this.#knowsConversation(convId)) this.#scheduleSessionsRefresh();
         }
         break;
       }
@@ -776,6 +810,9 @@ export class ConversationStore extends EventTarget {
       case MESSAGE_TYPES.TURN_START:
         if (msg.conv_id) {
           this.#setConversationStatus(msg.conv_id, 'busy');
+          // Newly spawned subagent mid-parent-turn: its row doesn't exist
+          // yet — refetch the hierarchy (debounced) (#1115 follow-up).
+          if (!this.#knowsConversation(msg.conv_id)) this.#scheduleSessionsRefresh();
         }
         if (!msg.conv_id || msg.conv_id === this.#currentConvId) {
           this.#busy = true;

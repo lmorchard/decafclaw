@@ -923,4 +923,51 @@ describe('session hierarchy wiring (#1115)', () => {
     await flush();
     expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('/api/sessions'))).toBe(true);
   });
+
+  it('refetches sessions (debounced) when a pushed status names an unknown conversation', async () => {
+    // A subagent spawning mid-parent-turn pushes status for an id the store
+    // has never seen — the hierarchy must refetch so its row appears
+    // without a page reload (#1115 follow-up).
+    vi.useFakeTimers();
+    try {
+      ws.fireOpen();
+      await vi.advanceTimersByTimeAsync(0);
+      const sessionsCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).startsWith('/api/sessions')).length;
+      expect(sessionsCalls()).toBe(1);
+
+      ws.fireMessage({
+        type: MESSAGE_TYPES.CONVERSATION_STATUS,
+        conv_id: 'web-alice-r1--child-fresh999',
+        status: 'busy',
+      });
+      // Debounce: events inside the window coalesce into one refetch.
+      ws.fireMessage({ type: MESSAGE_TYPES.TURN_START, conv_id: 'web-alice-r1--child-fresh999' });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(sessionsCalls()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not refetch sessions for pushed statuses on known conversations', async () => {
+    vi.useFakeTimers();
+    try {
+      ws.fireOpen();
+      await vi.advanceTimersByTimeAsync(0);
+      const sessionsCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).startsWith('/api/sessions')).length;
+      expect(sessionsCalls()).toBe(1);
+
+      // The seeded child (sessionBody) is known — badge updates only.
+      ws.fireMessage({
+        type: MESSAGE_TYPES.CONVERSATION_STATUS,
+        conv_id: 'web-alice-r1--child-abcdef12',
+        status: 'finished',
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(sessionsCalls()).toBe(1);
+      expect(store.getConversationStatus('web-alice-r1--child-abcdef12')).toBe('finished');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
