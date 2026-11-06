@@ -430,6 +430,8 @@ async def _call_llm_with_events(
 
     Accepts model_name (new path) or llm_url/llm_model/llm_api_key (legacy).
     """
+    from .model_catalog import effective_default_model
+
     llm_kwargs: dict = {}
     if model_name:
         llm_kwargs["model_name"] = model_name
@@ -454,7 +456,7 @@ async def _call_llm_with_events(
             )
             target_model = resolved.model
         except Exception:
-            target_model = model_name or ctx.active_model or getattr(config, "default_model", "")
+            target_model = model_name or ctx.active_model or effective_default_model(config)
             if not target_model and hasattr(config, "llm"):
                 target_model = getattr(config.llm, "model", "")
 
@@ -524,7 +526,7 @@ async def _call_llm_with_events(
         content=response.get("content"),
         has_tool_calls=bool(response.get("tool_calls")),
         duration_ms=duration_ms,
-        model=model_name or ctx.active_model or config.default_model,
+        model=model_name or ctx.active_model or effective_default_model(config),
     )
     return response
 
@@ -619,6 +621,8 @@ def _resolve_model_override(ctx: "Context", config) -> dict[str, str]:
     leftover from the removed effort system, and ran on the default model
     for months without a single log line saying so).
     """
+    from .model_catalog import effective_default_model  # deferred: llm pkg import cycle
+
     model_override: dict[str, str] = {}
     if ctx.active_model and ctx.active_model in config.model_configs:
         model_override = {"model_name": ctx.active_model}
@@ -627,7 +631,7 @@ def _resolve_model_override(ctx: "Context", config) -> dict[str, str]:
 
     if ctx.active_model:
         known = ", ".join(sorted(config.model_configs)) or "(none configured)"
-        fallback = config.default_model or config.llm.model
+        fallback = effective_default_model(config) or config.llm.model
         log.warning(
             "Unknown model %r requested — falling back to %s. Configured model_configs: %s",
             ctx.active_model,
@@ -635,9 +639,10 @@ def _resolve_model_override(ctx: "Context", config) -> dict[str, str]:
             known,
         )
 
-    if config.default_model:
-        model_override = {"model_name": config.default_model}
-        log.info("Agent turn: model=%s (default)", config.default_model)
+    default_name = effective_default_model(config)
+    if default_name:
+        model_override = {"model_name": default_name}
+        log.info("Agent turn: model=%s (default)", default_name)
     else:
         log.info("Agent turn: model=%s (legacy config.llm)", config.llm.model)
 

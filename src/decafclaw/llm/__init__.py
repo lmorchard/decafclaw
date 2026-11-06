@@ -199,19 +199,22 @@ def _resolve(
         return ResolvedModel(OpenAICompatProvider(url=url, api_key=api_key), model, timeout)
 
     # Path 3: Default from registry (model from config.llm or default_model)
+    from ..model_catalog import effective_default_model  # deferred: llm pkg import cycle
+
     model = llm_model or config.llm.model
     timeout = getattr(config.llm, "timeout", 300)
 
     # Try named default first
-    if config.default_model and config.default_model in config.model_configs:
+    default_name = effective_default_model(config)
+    if default_name and default_name in config.model_configs:
         try:
-            mc = config.model_configs[config.default_model]
+            mc = config.model_configs[default_name]
             provider = get_provider(mc.provider)
             if mc.reasoning_effort is not None and config.providers[mc.provider].type != PROVIDER_OPENAI_RESPONSES:
                 raise ValueError("reasoning_effort requires an openai-responses provider")
             return ResolvedModel(provider, mc.model, mc.timeout, mc.reasoning_effort)
         except KeyError as exc:
-            log.debug("default model %r not in provider registry: %s; falling through", config.default_model, exc)
+            log.debug("default model %r not in provider registry: %s; falling through", default_name, exc)
 
     # Fall back to "default" provider in registry
     try:

@@ -206,6 +206,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `backlinks.py` — persistent inbound-link index (`{workspace}/backlinks.json`); `rebuild_index`/`load_index`/`inbound_count`/`update_for_page`; incremental update wired to the `vault_changed` event in `runner.py`
 - `tags.py` — first-class tag extraction/normalization + on-demand scan (`extract_tags`/`collect_all_tags`/`pages_with_tags`); tags from frontmatter + journal bullet + inline `#tags`, unioned at the query layer (#318)
 - `approval_state.py` — durable per-conversation shell approval state (rules, preset toggles, mode) at `data/{agent_id}/approval_state/{conv_id}.json` (#1160)
+- `model_catalog.py` — auto-discovered model catalog sidecar (`data/{agent_id}/model_catalog.json`): discovery cache, per-model enable flags, default-model pointer (#1211); `effective_default_model`/`picker_models` layer the pointer over `config.default_model`
 - `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py`, `memory_context.py`, `checklist.py`, `notes.py`, `scheduled_wakes.py`
 
 ### Tools

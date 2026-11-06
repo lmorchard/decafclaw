@@ -8,6 +8,7 @@ import { LitElement, html, nothing } from 'lit';
 import { DefaultService } from '../lib/api-client/index.js';
 import './wiki-editor.js';
 import './preset-manager.js';
+import './model-catalog.js';
 export class ConfigPanel extends LitElement {
   static properties = {
     _tab: { state: true },
@@ -21,7 +22,7 @@ export class ConfigPanel extends LitElement {
 
   constructor() {
     super();
-    /** @type {'files'|'presets'} */
+    /** @type {'files'|'presets'|'models'} */
     this._tab = 'files';
     /** @type {import('../lib/api-client/index.js').ConfigFileEntry[]} */
     this._files = [];
@@ -114,13 +115,22 @@ export class ConfigPanel extends LitElement {
           <button
             type="button"
             role="tab"
+            aria-selected=${this._tab === 'models'}
+            class="config-tab-btn ${this._tab === 'models' ? 'active' : ''}"
+            @click=${() => { this._tab = 'models'; }}
+          >Models</button>
+          <button
+            type="button"
+            role="tab"
             aria-selected=${this._tab === 'presets'}
             class="config-tab-btn ${this._tab === 'presets' ? 'active' : ''}"
             @click=${() => { this._tab = 'presets'; }}
           >Shell Presets</button>
         </div>
 
-        ${this._tab === 'presets' ? html`
+        ${this._tab === 'models' ? html`
+          <model-catalog></model-catalog>
+        ` : this._tab === 'presets' ? html`
           <preset-manager></preset-manager>
         ` : html`
           ${this._loading ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">Loading...</p>` : html`
