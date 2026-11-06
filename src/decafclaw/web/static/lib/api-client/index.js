@@ -1227,6 +1227,34 @@ var DefaultService = class {
    * @returns ModelCatalogResponse Successful Response
    * @throws ApiError
    */
+  static wrapperApiModelsCatalogReflectionPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/models/catalog/reflection",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiModelsCatalogVerifierPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/models/catalog/verifier",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
   static wrapperApiModelsCatalogProviderPost(requestBody) {
     return request2(OpenAPI, {
       method: "POST",
