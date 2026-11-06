@@ -124,8 +124,10 @@ async def test_get_attachment_not_found(ctx):
 async def test_list_attachments_tool(ctx):
     save_attachment(ctx.config, ctx.conv_id, "a.png", b"img", "image/png")
     result = await tool_list_attachments(ctx)
-    assert isinstance(result, str)
-    assert "a-" in result
+    assert isinstance(result, ToolResult)
+    assert "a-" in result.text
+    assert result.widget is not None
+    assert result.widget.widget_type == "data_table"
 
 
 @pytest.mark.asyncio
