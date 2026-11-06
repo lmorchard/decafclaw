@@ -238,6 +238,15 @@ retrieval-report:
 migrate-sidecars-dry:
 	uv run python scripts/migrate_sidecars_to_dirs.py --dry-run
 
+# Migrate literal secrets in agent config.json to ${VAR} refs backed by the
+# external .env store (issue #1032). Idempotent — safe to re-run.
+migrate-secrets:
+	uv run python scripts/migrate_secrets.py
+
+# Dry-run secret migration (show what would change)
+migrate-secrets-dry:
+	uv run python scripts/migrate_secrets.py --dry-run
+
 # Report git worktrees/branches whose work already landed (no changes made)
 prune-worktrees-dry:
 	uv run python scripts/prune_agent_worktrees.py
