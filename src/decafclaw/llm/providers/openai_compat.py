@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from ..history import without_provider_data
-from ..types import StreamCallback
+from ..types import DiscoveredModel, StreamCallback
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +35,112 @@ def _sanitize_tool_call_id(tc_id: str) -> str:
 def _clean_messages(messages: list) -> list:
     """Strip provider_data and internal UI/context keys before sending to OpenAI API."""
     return [{k: v for k, v in m.items() if k != "thinking"} for m in without_provider_data(messages)]
+
+
+# ---------------------------------------------------------------------------
+# Model-listing payload parsing (#1211)
+# ---------------------------------------------------------------------------
+#
+# ``GET {base}/models`` metadata quality varies wildly across gateways:
+# LiteLLM reports ``mode`` / ``supports_function_calling`` / ``max_input_tokens``,
+# OpenRouter reports ``architecture.modality`` / ``supported_parameters`` /
+# ``context_length``, Azure-style gateways report ``capabilities``, and
+# Ollama / vLLM / plain OpenAI return bare IDs. The parser normalizes the
+# known shapes and leaves everything else as unknown (None) — unknown is
+# never treated as capable.
+
+
+def _as_positive_int(value: Any) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def _parse_litellm_capabilities(entry: dict, caps: dict) -> None:
+    """LiteLLM proxy fields: mode, supports_function_calling, token limits."""
+    mode = entry.get("mode")
+    if isinstance(mode, str) and mode:
+        caps["chat"] = mode == "chat"
+    sfc = entry.get("supports_function_calling")
+    if isinstance(sfc, bool):
+        caps["tools"] = sfc
+    ctx = _as_positive_int(entry.get("max_input_tokens"))
+    if ctx:
+        caps["context_window_size"] = ctx
+
+
+def _parse_openrouter_capabilities(entry: dict, caps: dict) -> None:
+    """OpenRouter fields: architecture.modality, supported_parameters, context_length."""
+    arch = entry.get("architecture")
+    modality = arch.get("modality") if isinstance(arch, dict) else None
+    if isinstance(modality, str) and "->" in modality:
+        inputs, _, outputs = modality.partition("->")
+        # Chat models emit text; audio-input models are transcription/speech.
+        caps["chat"] = "text" in outputs.split("+") and "audio" not in inputs.split("+")
+    params = entry.get("supported_parameters")
+    if isinstance(params, list):
+        caps["tools"] = "tools" in params or "tool_choice" in params
+    ctx = _as_positive_int(entry.get("context_length"))
+    if ctx:
+        caps["context_window_size"] = ctx
+
+
+def _parse_azure_capabilities(entry: dict, caps: dict) -> None:
+    """Azure OpenAI-style ``capabilities`` object (chat_completion flag)."""
+    capabilities = entry.get("capabilities")
+    if not isinstance(capabilities, dict):
+        return
+    flag = capabilities.get("chat_completion")
+    if isinstance(flag, bool) and "chat" not in caps:
+        caps["chat"] = flag
+
+
+def parse_models_payload(payload: Any) -> list[DiscoveredModel]:
+    """Parse a ``GET {base}/models`` response into normalized entries.
+
+    Models the gateway positively identifies as non-chat (embeddings,
+    image/audio/realtime endpoints) are dropped — only chat-capable
+    candidates belong in the catalog (#1211). Bare-ID entries are kept
+    with unknown capabilities so the user can opt in from the catalog UI.
+    """
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return []
+
+    result: list[DiscoveredModel] = []
+    seen: set[str] = set()
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        model_id = entry.get("id") or entry.get("name")
+        if not isinstance(model_id, str) or not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+
+        caps: dict = {}
+        _parse_litellm_capabilities(entry, caps)
+        _parse_openrouter_capabilities(entry, caps)
+        _parse_azure_capabilities(entry, caps)
+
+        # Positively non-chat (embedding, image, audio, realtime, legacy
+        # completion endpoints) → excluded from the catalog. Unknown →
+        # kept as a disabled candidate.
+        if caps.get("chat") is False:
+            continue
+
+        owned_raw = entry.get("owned_by")
+        result.append(
+            DiscoveredModel(
+                id=model_id,
+                chat=caps.get("chat"),
+                tools=caps.get("tools"),
+                context_window_size=caps.get("context_window_size"),
+                owned_by=owned_raw if isinstance(owned_raw, str) else "",
+            )
+        )
+    return result
 
 
 class OpenAICompatProvider:
@@ -78,6 +184,34 @@ class OpenAICompatProvider:
         if url.endswith("/v1"):
             return url + "/embeddings"
         return url + "/v1/embeddings"
+
+    def _models_url(self) -> str:
+        """Derive the model-listing URL from the base URL (#1211).
+
+        Accepts the same shapes as ``_completions_url``/``_embeddings_url``:
+        a bare base, a ``/v1`` base, or a full endpoint URL ending in
+        ``/chat/completions``, ``/responses``, or ``/embeddings``.
+        """
+        url = self.url.rstrip("/")
+        for suffix in ("/chat/completions", "/responses", "/embeddings"):
+            if url.endswith(suffix):
+                url = url[: -len(suffix)]
+                break
+        if url.endswith("/v1"):
+            return url + "/models"
+        return url + "/v1/models"
+
+    async def discover_models(self, *, timeout: int = 30) -> list[DiscoveredModel]:
+        """List models the gateway serves via ``GET {base}/models`` (#1211).
+
+        Raises on HTTP/network errors — callers record the failure and fall
+        back to the cached catalog.
+        """
+        url = self._models_url()
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, headers=self._headers(), timeout=timeout)
+        resp.raise_for_status()
+        return parse_models_payload(resp.json())
 
     async def complete(
         self,

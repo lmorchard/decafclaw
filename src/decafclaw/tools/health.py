@@ -400,10 +400,14 @@ async def tool_health_status(ctx: "Context") -> str:
         active_model = ctx.active_model
         if active_model:
             sections.append(f"- **Active model:** {active_model}")
-        elif ctx.config.default_model:
-            sections.append(f"- **Active model:** {ctx.config.default_model} (default)")
         else:
-            sections.append(f"- **Active model:** {ctx.config.llm.model} (legacy config.llm)")
+            from ..model_catalog import effective_default_model
+
+            default_name = effective_default_model(ctx.config)
+            if default_name:
+                sections.append(f"- **Active model:** {default_name} (default)")
+            else:
+                sections.append(f"- **Active model:** {ctx.config.llm.model} (legacy config.llm)")
     except Exception as e:
         sections.append(f"### Process\n- [error: {e}]")
 

@@ -23,6 +23,7 @@ import type { ConversationPatchResponse } from '../models/ConversationPatchRespo
 import type { JsonValue } from '../models/JsonValue';
 import type { LoginResponse } from '../models/LoginResponse';
 import type { LogoutResponse } from '../models/LogoutResponse';
+import type { ModelCatalogResponse } from '../models/ModelCatalogResponse';
 import type { ModelListResponse } from '../models/ModelListResponse';
 import type { NotificationCountResponse } from '../models/NotificationCountResponse';
 import type { NotificationListResponse } from '../models/NotificationListResponse';
@@ -948,6 +949,87 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/models',
+        });
+    }
+    /**
+     * Wrapper
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiModelsCatalogGet(): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/models/catalog',
+        });
+    }
+    /**
+     * Wrapper
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiModelsCatalogDiscoverPost(): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/models/catalog/discover',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiModelsCatalogModelPost(
+        requestBody: {
+            key?: (string | null);
+            enabled?: (boolean | null);
+            model?: (string | null);
+        },
+    ): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/models/catalog/model',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiModelsCatalogDefaultPost(
+        requestBody: {
+            key?: (string | null);
+            enabled?: (boolean | null);
+            model?: (string | null);
+        },
+    ): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/models/catalog/default',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiModelsCatalogProviderPost(
+        requestBody: {
+            provider: string;
+            enabled: boolean;
+        },
+    ): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/models/catalog/provider',
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**

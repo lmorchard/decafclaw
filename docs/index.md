@@ -65,7 +65,7 @@ These docs are as much for me as they are for agents working on this project. Th
 ## LLM Configuration
 
 - [LLM Providers](providers.md) — Multi-provider LLM support: Vertex/Gemini, OpenAI, LiteLLM-compat, service accounts
-- [Model Selection](model-selection.md) — Named model configs, per-conversation model switching
+- [Model Selection](model-selection.md) — Named model configs, provider model discovery, per-conversation model switching
 
 ## Testing
 

@@ -16,6 +16,7 @@ from .compaction_decisions import (
     strip_json_block,
 )
 from .llm import call_llm
+from .model_catalog import effective_default_model
 from .prompts import wrap_xml
 from .util import estimate_tokens
 
@@ -74,7 +75,7 @@ async def _run_memory_sweep(ctx: "Context", old_messages: list[dict]) -> None:
             ctx.event_bus,
             user_id="memory-sweep",
             conv_id=conv_id,
-            active_model=config.auxiliary_model or ctx.active_model or config.default_model,
+            active_model=config.auxiliary_model or ctx.active_model or effective_default_model(config),
             task_mode="scheduled",
             skip_reflection=True,
             skip_vault_retrieval=True,

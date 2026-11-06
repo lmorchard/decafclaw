@@ -1173,6 +1173,70 @@ var DefaultService = class {
   }
   /**
    * Wrapper
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiModelsCatalogGet() {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/models/catalog"
+    });
+  }
+  /**
+   * Wrapper
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiModelsCatalogDiscoverPost() {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/models/catalog/discover"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiModelsCatalogModelPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/models/catalog/model",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiModelsCatalogDefaultPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/models/catalog/default",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiModelsCatalogProviderPost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/models/catalog/provider",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
    * @returns ScheduleListResponse Successful Response
    * @throws ApiError
    */

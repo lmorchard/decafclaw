@@ -131,10 +131,14 @@ async def embed_text(config, text: str, max_retries: int = 3) -> list[float] | N
     """
     ec = config.embedding
 
-    # Provider path: explicit provider > default model's provider > legacy
+    # Provider path: explicit provider > effective default model's provider > legacy
+    from .model_catalog import effective_default_model
+
     provider_name = ec.provider
-    if not provider_name and config.default_model and config.default_model in config.model_configs:
-        provider_name = config.model_configs[config.default_model].provider
+    if not provider_name:
+        default_name = effective_default_model(config)
+        if default_name and default_name in config.model_configs:
+            provider_name = config.model_configs[default_name].provider
 
     if provider_name and provider_name in config.providers:
         from .llm import get_provider

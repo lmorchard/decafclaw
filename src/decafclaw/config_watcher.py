@@ -194,6 +194,24 @@ def _rediscover_skills(config: Config) -> None:
         log.warning("Skill rediscovery rejected %s: %s", rejection.path, rejection.reason)
 
 
+def _reapply_model_catalog(config: Config) -> None:
+    """Re-apply the model catalog after a wholesale model_configs reload.
+
+    The reload replaces config.model_configs with the hand-authored entries
+    from config.json, dropping every catalog-materialized discovered model;
+    the runtime-only tracking set is stale with them. Clearing it and
+    re-applying the sidecar restores every still-enabled discovered model,
+    so selection and the default pointer keep working without a restart
+    (#1211 review).
+    """
+    # Function-level: keep the LLM layer off the dev-filter import path
+    # (same reason as _refresh_providers).
+    from .model_catalog import apply_catalog, load_catalog
+
+    config.catalog_materialized.clear()
+    apply_catalog(config, load_catalog(config))
+
+
 async def config_change_watcher(
     app_ctx,
     shutdown_event: asyncio.Event,
@@ -274,5 +292,7 @@ async def config_change_watcher(
             _refresh_providers(config)
         if SKILL_CATALOG_KEYS & set(changed):
             _rediscover_skills(config)
+        if "model_configs" in changed:
+            _reapply_model_catalog(config)
         await app_ctx.event_bus.publish({"type": "config_changed", "requires_restart": False, "keys": changed})
         log.info("Config change applied in place: %s", ", ".join(changed))

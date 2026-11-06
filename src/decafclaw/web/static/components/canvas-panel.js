@@ -35,9 +35,10 @@ export class CanvasPanel extends LitElement {
      * One `<dc-widget-host>` per tab, keyed by tab id, kept mounted across
      * tab switches so a widget's live connection (e.g. the terminal's
      * WebSocket) survives switching away and back. Managed imperatively
-     * (not via a Lit-rendered array) because `lit/directives/repeat.js`
-     * isn't in the vendor importmap — see canvas-panel.js history for
-     * details. Non-active hosts are hidden via the `hidden` attribute.
+     * (not via a Lit-rendered array) so the hosts never unmount — a keyed
+     * `repeat` (vendored as of #1211) would still drop hosts whose tab the
+     * render no longer lists. Non-active hosts are hidden via the `hidden`
+     * attribute.
      * @type {Map<string, HTMLElement & {widgetType: string, data: any, mode: string, convId: string|null, tabId: string|null, fallbackText: string}>}
      */
     this._hosts = new Map();
