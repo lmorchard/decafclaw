@@ -101,6 +101,14 @@ All of this is managed in the web UI's **⚙ Agent Config → Models** tab:
 - Providers render as collapsible sections (collapsed by default, with an
   enabled/total count in the summary), so a gateway reporting hundreds of
   models stays manageable.
+- Filter the model list with the search field above the sections: typing
+  filters the visible rows immediately (case-insensitive match on model
+  id, catalog key, or provider name — a provider-name match shows that
+  provider's whole list). Matching sections auto-expand while a filter is
+  active and zero-match sections hide, with an explicit "no models match"
+  note when nothing matches. It is a view-only filter: no API call, the
+  summary counts stay real totals, and Refresh or a toggle keeps the
+  typed text. Esc clears the field.
 - Set the global default model from any enabled model (discovered or
   hand-configured), or clear the pointer to fall back to `config.json`.
 

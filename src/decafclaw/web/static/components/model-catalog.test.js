@@ -196,6 +196,126 @@ describe('model-catalog component', () => {
     expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/api/models/catalog/discover'))).toBe(true);
   });
 
+  it('filters model rows on input, matching provider names too', async () => {
+    const { el } = await mountCatalog();
+
+    const input = el.querySelector('.model-catalog-filter-input');
+    input.value = 'llama';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    const rows = [...el.querySelectorAll('.model-catalog-model')];
+    expect(rows.length).toBe(1);
+    expect(rows[0].getAttribute('data-model-key')).toBe('local/llama3.2');
+
+    // A provider-name match shows that provider's whole list.
+    input.value = 'local';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    expect(el.querySelectorAll('.model-catalog-model').length).toBe(2);
+  });
+
+  it('filtering is case-insensitive, auto-expands sections, and keeps real counts', async () => {
+    const { el } = await mountCatalog();
+
+    const input = el.querySelector('.model-catalog-filter-input');
+    input.value = 'QWEN';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    const details = el.querySelector('details.model-catalog-provider');
+    // Matching sections are expanded while the filter is active…
+    expect(details.open).toBe(true);
+    expect(details.querySelectorAll('.model-catalog-model').length).toBe(1);
+    // …but the summary count stays a real total, not a filtered count.
+    expect(details.querySelector('.model-catalog-provider-count').textContent).toContain('1/2 enabled');
+  });
+
+  it('hides zero-match sections and says so when nothing matches', async () => {
+    const { el } = await mountCatalog({
+      ...CATALOG,
+      providers: {
+        ...CATALOG.providers,
+        other: {
+          discovered_at: '2026-11-05T12:00:00+00:00',
+          error: '',
+          models: [
+            { key: 'other/mistral', id: 'mistral', enabled: false, chat: true, tools: true, context_window_size: 8192, owned_by: '', selectable: true },
+          ],
+        },
+      },
+    });
+
+    const input = el.querySelector('.model-catalog-filter-input');
+    input.value = 'mistral';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    const names = [...el.querySelectorAll('details.model-catalog-provider')]
+      .map(d => d.querySelector('.model-catalog-provider-name').textContent);
+    expect(names).toEqual(['other']);
+
+    input.value = 'zzz-no-match';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    expect(el.querySelectorAll('details.model-catalog-provider').length).toBe(0);
+    expect(el.querySelector('.model-catalog-no-match')).toBeTruthy();
+  });
+
+  it('clearing the filter restores the full collapsed list', async () => {
+    const { el } = await mountCatalog();
+
+    const input = el.querySelector('.model-catalog-filter-input');
+    input.value = 'qwen';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    expect(el.querySelectorAll('.model-catalog-model').length).toBe(1);
+
+    input.value = '';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    expect(el.querySelectorAll('.model-catalog-model').length).toBe(2);
+    expect(el.querySelector('.model-catalog-no-match')).toBeFalsy();
+    // Without an active filter the disclosure is user-controlled again.
+    expect(el.querySelector('details.model-catalog-provider').open).toBe(false);
+  });
+
+  it('esc clears the filter', async () => {
+    const { el } = await mountCatalog();
+
+    const input = el.querySelector('.model-catalog-filter-input');
+    input.value = 'llama';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    expect(el.querySelectorAll('.model-catalog-model').length).toBe(1);
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await el.updateComplete;
+    expect(input.value).toBe('');
+    expect(el.querySelectorAll('.model-catalog-model').length).toBe(2);
+  });
+
+  it('a catalog refresh keeps the typed filter and filtered rows', async () => {
+    const { el, fetchMock } = await mountCatalog();
+
+    const input = el.querySelector('.model-catalog-filter-input');
+    input.value = 'qwen';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    expect(el.querySelectorAll('.model-catalog-model').length).toBe(1);
+
+    el.querySelector('.model-catalog-refresh-btn').click();
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 10));
+    await el.updateComplete;
+
+    expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/api/models/catalog/discover'))).toBe(true);
+    expect(input.value).toBe('qwen');
+    expect(el.querySelectorAll('.model-catalog-model').length).toBe(1);
+    expect(el.querySelector('[data-model-key="local/qwen2.5"]')).toBeTruthy();
+    expect(el.querySelector('[data-model-key="local/llama3.2"]')).toBeFalsy();
+  });
+
   it('shows an error banner when the catalog request fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ error: 'nope' }, 500)));
     const el = /** @type {any} */ (document.createElement('model-catalog'));

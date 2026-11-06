@@ -48,6 +48,19 @@
   color: var(--pico-muted-color);
 }
 
+/* Client-side search filter for the model list (#1211). */
+.model-catalog-filter-input {
+  width: 100%;
+  margin: 0;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.model-catalog-no-match {
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+}
+
 /* Collapsible provider section (#1211). Disclosure idiom follows the
    thought-block pattern in chat.css: bordered block, muted summary row. */
 details.model-catalog-provider {

@@ -2,8 +2,9 @@
  * Model catalog manager (#1211).
  *
  * Lists models auto-discovered from configured providers with
- * enable/disable toggles, a discovery refresh button, and the global
- * default-model selector. Enabled discovered models join hand-authored
+ * enable/disable toggles, a discovery refresh button, a client-side
+ * search filter, and the global default-model selector. Enabled
+ * discovered models join hand-authored
  * configs in the conversation model picker; the default pointer lives in
  * the model_catalog.json sidecar — config.json is never written here.
  *
@@ -20,6 +21,7 @@ export class ModelCatalog extends LitElement {
     _loading: { state: true },
     _busy: { state: true },
     _error: { state: true },
+    _filter: { state: true },
   };
   createRenderRoot() { return this; }
 
@@ -30,6 +32,8 @@ export class ModelCatalog extends LitElement {
     this._loading = false;
     this._busy = false;
     this._error = '';
+    /** Client-side search text for the model list; only the input mutates it. */
+    this._filter = '';
   }
 
   connectedCallback() {
@@ -121,8 +125,48 @@ export class ModelCatalog extends LitElement {
     return err instanceof Error && err.message ? `${fallback}: ${err.message}` : fallback;
   }
 
+  /** Trimmed, lowercased filter text; empty string means no filter. */
+  #filterQuery() {
+    return this._filter.trim().toLowerCase();
+  }
+
+  /**
+   * Models of one provider visible under the current filter. An empty
+   * query matches everything; otherwise the query is a case-insensitive
+   * substring of the model id, the catalog key, or the provider name —
+   * a provider-name match shows all of that provider's models.
+   * @param {string} name
+   * @param {import('../lib/api-client/index.js').CatalogProviderEntry} provider
+   * @param {string} query
+   * @returns {import('../lib/api-client/index.js').CatalogModelEntry[]}
+   */
+  #matchedModels(name, provider, query) {
+    if (!query) return provider.models;
+    return provider.models.filter(m => this.#modelMatches(name, m, query));
+  }
+
+  /**
+   * @param {string} name
+   * @param {import('../lib/api-client/index.js').CatalogModelEntry} m
+   * @param {string} query
+   */
+  #modelMatches(name, m, query) {
+    return m.id.toLowerCase().includes(query)
+      || m.key.toLowerCase().includes(query)
+      || name.toLowerCase().includes(query);
+  }
+
   render() {
     const catalog = this._catalog;
+    const query = this.#filterQuery();
+    const filtering = query !== '';
+    const providers = catalog ? Object.entries(catalog.providers) : [];
+    const sections = providers.map(([name, p]) => ({
+      name,
+      provider: p,
+      models: this.#matchedModels(name, p, query),
+    }));
+    const totalMatches = sections.reduce((n, s) => n + s.models.length, 0);
     return html`
       <div class="model-catalog">
         <div class="model-catalog-header">
@@ -139,13 +183,35 @@ export class ModelCatalog extends LitElement {
         ${this._loading && !catalog ? html`<p class="model-catalog-loading">Loading…</p>` : nothing}
 
         ${catalog ? this.#renderDefaultPicker(catalog) : nothing}
-        ${catalog ? Object.entries(catalog.providers).map(([name, p]) => this.#renderProvider(name, p)) : nothing}
-        ${catalog && Object.keys(catalog.providers).length === 0
+        ${catalog ? this.#renderFilter() : nothing}
+        ${catalog ? sections.map(s => this.#renderProvider(s.name, s.provider, s.models, filtering)) : nothing}
+        ${catalog && filtering && providers.length > 0 && totalMatches === 0
+          ? html`<p class="model-catalog-no-match">No models match '${this._filter.trim()}'.</p>`
+          : nothing}
+        ${catalog && providers.length === 0
           ? html`<p class="model-catalog-empty" style="padding: 1rem; color: var(--pico-muted-color);">
               No providers configured, or discovery has not run yet.
             </p>`
           : nothing}
       </div>
+    `;
+  }
+
+  /** Dynamic search field filtering the model list client-side. */
+  #renderFilter() {
+    return html`
+      <input
+        type="search"
+        class="model-catalog-filter-input"
+        placeholder="Filter models…"
+        title="Type to filter the model list; Esc clears"
+        aria-label="Filter models"
+        .value=${this._filter}
+        @input=${(e) => { this._filter = e.target.value; }}
+        @keydown=${(e) => {
+          if (e.key === 'Escape' && this._filter) this._filter = '';
+        }}
+      />
     `;
   }
 
@@ -177,11 +243,15 @@ export class ModelCatalog extends LitElement {
   /**
    * @param {string} name
    * @param {import('../lib/api-client/index.js').CatalogProviderEntry} provider
+   * @param {import('../lib/api-client/index.js').CatalogModelEntry[]} shown models after the filter
+   * @param {boolean} filtering whether a filter is active
    */
-  #renderProvider(name, provider) {
+  #renderProvider(name, provider, shown, filtering) {
+    if (filtering && shown.length === 0) return nothing;
+    // Summary counts are real totals, not filtered counts.
     const enabledCount = provider.models.filter(m => m.enabled).length;
     return html`
-      <details class="model-catalog-provider">
+      <details class="model-catalog-provider" ?open=${filtering || nothing}>
         <summary class="model-catalog-provider-header">
           <span class="model-catalog-provider-name">${name}</span>
           ${provider.error ? html`<span class="model-catalog-provider-error" title="${provider.error}">⚠ discovery failed</span>` : nothing}
@@ -217,7 +287,7 @@ export class ModelCatalog extends LitElement {
           ? html`<p class="model-catalog-provider-empty">No models discovered.</p>`
           : html`
               <ul class="model-catalog-model-list">
-                ${provider.models.map(m => this.#renderModel(name, m))}
+                ${shown.map(m => this.#renderModel(name, m))}
               </ul>
             `}
       </details>
