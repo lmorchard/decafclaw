@@ -97,6 +97,20 @@ export class ModelCatalog extends LitElement {
     }
   }
 
+  /** @param {string} model */
+  async #setAuxApproval(model) {
+    this._busy = true;
+    this._error = '';
+    try {
+      this._catalog = await DefaultService.wrapperApiModelsCatalogAuxApprovalPost({ model });
+    } catch (e) {
+      this._error = this.#errorText(e, 'Failed to set auto-approval model');
+      void this.#fetchCatalog();
+    } finally {
+      this._busy = false;
+    }
+  }
+
   /**
    * Bulk enable/disable every discovered model of one provider. Catalog
    * entries only; hand-authored configs are never touched server-side.
@@ -184,6 +198,7 @@ export class ModelCatalog extends LitElement {
         ${this._loading && !catalog ? html`<p class="model-catalog-loading">Loading…</p>` : nothing}
 
         ${catalog ? this.#renderDefaultPicker(catalog) : nothing}
+        ${catalog ? this.#renderAuxApprovalPicker(catalog) : nothing}
         ${catalog ? this.#renderFilter() : nothing}
         ${catalog
           ? repeat(sections, s => s.name, s => this.#renderProvider(s.name, s.provider, s.models, filtering))
@@ -239,6 +254,27 @@ export class ModelCatalog extends LitElement {
         <span class="model-catalog-default-hint" title="Used for conversations with no model selected">
           effective: ${catalog.default_model || '(none)'}
         </span>
+      </div>
+    `;
+  }
+
+  /** Auto-approval-model picker (#1213): enabled catalog models + explicit "use conversation model". */
+  #renderAuxApprovalPicker(catalog) {
+    return html`
+      <div class="model-catalog-judge">
+        <label class="model-catalog-default-label" for="catalog-aux-approval-select">Auto-approval model</label>
+        <select
+          id="catalog-aux-approval-select"
+          class="model-catalog-default-select"
+          ?disabled=${this._busy}
+          @change=${(e) => void this.#setAuxApproval(e.target.value)}
+        >
+          <option value="" ?selected=${!catalog.aux_approval_pointer}>${'(use conversation model)'}</option>
+          ${repeat(catalog.picker_models, m => m, m => html`
+            <option value="${m}" ?selected=${m === catalog.aux_approval_pointer}>${m}</option>
+          `)}
+        </select>
+        <span class="model-catalog-default-hint" title="Judge that grades shell auto-approvals; empty = ride on the active conversation model">${catalog.aux_approval_model || '(use conversation model)'}</span>
       </div>
     `;
   }
