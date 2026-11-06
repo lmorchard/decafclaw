@@ -3452,6 +3452,11 @@ class ModelCatalogResponse(BaseModel):
     default_pointer: str
     picker_models: list[str]
     providers: dict[str, CatalogProviderEntry]
+    # Shell auto-approval judge pointer (#1213): raw sidecar pointer plus the
+    # effective model it resolves to (empty = ride on the active conversation
+    # model).
+    aux_approval_model: str = ""
+    aux_approval_pointer: str = ""
     # Reflection-judge / verifier pointers (#1212): raw sidecar pointers plus
     # the effective judge/verifier names they resolve to. Empty pointer = inherit.
     reflection_model: str = ""
@@ -3571,6 +3576,32 @@ async def models_catalog_set_default(request: Request, username: str) -> JSONRes
     if name and name not in picker_models(config):
         return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
     await set_default_model(config, name, event_bus=request.app.state.event_bus)
+    return JSONResponse(catalog_payload(config))
+
+
+@_authenticated
+async def models_catalog_set_aux_approval(request: Request, username: str) -> JSONResponse:
+    """POST /api/models/catalog/aux_approval — set or clear the shell auto-approval judge pointer (#1213).
+
+    An empty `model` clears the pointer (resolution falls through to the
+    active conversation model, today's behavior). A non-empty name must be
+    selectable: an enabled discovered model or a hand-authored config.
+    """
+    from .model_catalog import catalog_payload, picker_models, set_aux_approval_model
+
+    config = request.app.state.config
+    try:
+        body = await request.json()
+    except Exception as exc:
+        log.debug("models_catalog_set_aux_approval: invalid JSON body: %s", exc)
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
+        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
+
+    name = body["model"]
+    if name and name not in picker_models(config):
+        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
+    await set_aux_approval_model(config, name, event_bus=request.app.state.event_bus)
     return JSONResponse(catalog_payload(config))
 
 
@@ -4224,6 +4255,22 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute(
             "/api/models/catalog/default",
             models_catalog_set_default,
+            methods=["POST"],
+            response_model=ModelCatalogResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(ModelCatalogUpdateRequest),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/models/catalog/aux_approval",
+            models_catalog_set_aux_approval,
             methods=["POST"],
             response_model=ModelCatalogResponse,
             openapi_extra={

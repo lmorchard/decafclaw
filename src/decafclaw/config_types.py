@@ -192,6 +192,13 @@ class HttpConfig:
 @dataclass
 class ShellConfig:
     aux_approval_enabled: bool = False
+    # Dedicated model for the shell auto-approval judge (#1213). Empty = ride
+    # on the legacy aux chain (auxiliary_model → active conversation model →
+    # default). When set, must name a model_configs key — discovered models
+    # materialize as keys, but a hand-written raw name is not routable (the
+    # shell group has no legacy endpoint of its own) and is treated as unset
+    # with a warning.
+    aux_approval_model: str = ""
     aux_approval_guidance: str = ""
     aux_approval_presets: dict[str, str] = field(default_factory=dict)
     active_aux_approval_presets: list[str] = field(default_factory=list)

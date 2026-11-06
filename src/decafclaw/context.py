@@ -220,6 +220,20 @@ class Context:
         model_name = self.config.auxiliary_model or self.active_model or effective_default_model(self.config)
         return BoundLlmClient(self.config, model_name)
 
+    def aux_approval_llm(self) -> BoundLlmClient:
+        """Return an LLM client for the shell auto-approval judge (#1213).
+
+        Resolution: sidecar ``aux_approval_model`` pointer →
+        ``config.shell.aux_approval_model`` → the legacy ``aux_llm`` chain
+        (``auxiliary_model`` → active conversation model → default), so an
+        install configured for a cheap aux judge keeps it until a user
+        picks a dedicated model.
+        """
+        from .model_catalog import effective_aux_approval_model
+
+        model_name = effective_aux_approval_model(self.config, self.active_model)
+        return BoundLlmClient(self.config, model_name)
+
     # Turn kinds where no human can answer a confirmation prompt: it is emitted
     # only to subscribers of an ephemeral conv_id, so it would block for confirmation
     # timeout (or indefinitely) and is then synthesized into a denial. Deliberately NOT

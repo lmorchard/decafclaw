@@ -133,6 +133,20 @@ export class ModelCatalog extends LitElement {
   }
 
   /** @param {string} model */
+  async #setAuxApproval(model) {
+    this._busy = true;
+    this._error = '';
+    try {
+      this._catalog = await DefaultService.wrapperApiModelsCatalogAuxApprovalPost({ model });
+    } catch (e) {
+      this._error = this.#errorText(e, 'Failed to set auto-approval model');
+      void this.#fetchCatalog();
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  /** @param {string} model */
   async #setReflection(model) {
     this._busy = true;
     this._error = '';
@@ -247,6 +261,7 @@ export class ModelCatalog extends LitElement {
         ${this._loading && !catalog ? html`<p class="model-catalog-loading">Loading…</p>` : nothing}
 
         ${catalog ? this.#renderDefaultPicker(catalog) : nothing}
+        ${catalog ? this.#renderAuxApprovalPicker(catalog) : nothing}
         ${catalog ? this.#renderReflectionPicker(catalog) : nothing}
         ${catalog ? this.#renderVerifierPicker(catalog) : nothing}
         ${catalog ? this.#renderFilter() : nothing}
@@ -304,6 +319,39 @@ export class ModelCatalog extends LitElement {
         <span class="model-catalog-default-hint" title="Used for conversations with no model selected">
           effective: ${catalog.default_model || '(none)'}
         </span>
+      </div>
+    `;
+  }
+
+  /** Auto-approval-model picker (#1213): enabled catalog models + explicit "use conversation model". */
+  #renderAuxApprovalPicker(catalog) {
+    // The approval judgment is a forced-tool structured-output call, so a
+    // model known to lack tool support cannot do the job. `tools: null`
+    // means unknown — no warning rather than a false alarm.
+    const selected = catalog.aux_approval_pointer
+      ? Object.values(catalog.providers).flatMap(p => p.models).find(m => m.key === catalog.aux_approval_pointer)
+      : null;
+    const toolsWarning = Boolean(selected && selected.tools === false);
+    return html`
+      <div class="model-catalog-judge">
+        <label class="model-catalog-default-label" for="catalog-aux-approval-select">Auto-approval model</label>
+        <select
+          id="catalog-aux-approval-select"
+          class="model-catalog-default-select"
+          ?disabled=${this._busy}
+          @change=${(e) => void this.#setAuxApproval(e.target.value)}
+        >
+          <option value="" ?selected=${!catalog.aux_approval_pointer}>${'(use conversation model)'}</option>
+          ${repeat(catalog.picker_models, m => m, m => html`
+            <option value="${m}" ?selected=${m === catalog.aux_approval_pointer}>${m}</option>
+          `)}
+        </select>
+        <span class="model-catalog-default-hint" title="Judge that grades shell auto-approvals; empty = ride on the active conversation model">${catalog.aux_approval_model || '(use conversation model)'}</span>
+        ${toolsWarning ? html`
+          <div class="model-catalog-judge-warning" role="status">
+            Selected auto-approval model reports no tool support — the approval judgment needs structured output.
+          </div>
+        ` : nothing}
       </div>
     `;
   }

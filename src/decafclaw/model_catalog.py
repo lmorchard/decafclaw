@@ -90,6 +90,12 @@ class ModelCatalog:
     version: int = 1
     providers: dict[str, CatalogProvider] = field(default_factory=dict)
     default_model: str = ""
+    # Shell auto-approval judge pointer (#1213). Empty means "ride on the
+    # active conversation model" (today's behavior). Same shape and
+    # resolution rule as the default-model pointer and the #1212 reflection
+    # pointers: sidecar pointer outranks the config seed, which becomes the
+    # seed only when the pointer is empty.
+    aux_approval_model: str = ""
     # Reflection-judge and verifier model pointers (#1212). Same shape and
     # resolution rule as ``default_model``: empty means "inherit" and the
     # seed (``config.reflection.model`` / ``config.reflection.verifier_model``)
@@ -144,12 +150,14 @@ def catalog_from_dict(raw: Any) -> ModelCatalog:
             if isinstance(name, str) and name:
                 providers[name] = _coerce_provider(entry)
     pointer = raw.get("default_model")
+    aux_approval = raw.get("aux_approval_model")
     reflection = raw.get("reflection_model")
     verifier = raw.get("verifier_model")
     return ModelCatalog(
         version=raw.get("version", 1) if isinstance(raw.get("version", 1), int) else 1,
         providers=providers,
         default_model=pointer if isinstance(pointer, str) else "",
+        aux_approval_model=aux_approval if isinstance(aux_approval, str) else "",
         reflection_model=reflection if isinstance(reflection, str) else "",
         verifier_model=verifier if isinstance(verifier, str) else "",
     )
@@ -407,6 +415,38 @@ def effective_default_model(config: "Config") -> str:
     return config.default_model
 
 
+def effective_aux_approval_model(config: "Config", active_model: str = "") -> str:
+    """Shell auto-approval judge model, resolution order (#1213):
+
+    1. The sidecar's ``aux_approval_model`` pointer, when it names a
+       selectable model (enabled discovered or hand-configured).
+    2. ``config.json``'s ``shell.aux_approval_model`` (the seed; a
+       ``model_configs`` key. The shell group has no legacy endpoint of
+       its own, so a non-key value is warned about and treated as unset —
+       handing it to the provider layer would only log and fall through).
+    3. ``config.auxiliary_model``, mirroring the ``Context.aux_llm`` chain
+       the judge rode before dedicated pointers existed.
+    4. ``active_model`` — the active conversation model — then the
+       effective default model, exactly as ``aux_llm`` falls through.
+
+    An empty pointer means "ride on the legacy chain"; an empty seed falls
+    through. A pointer at a disabled or vanished model falls back cleanly
+    to the seed, then down the legacy chain.
+    """
+    pointer = load_catalog(config).aux_approval_model
+    if pointer and pointer in config.model_configs:
+        return pointer
+    seed = config.shell.aux_approval_model
+    if seed and seed in config.model_configs:
+        return seed
+    if seed:
+        log.warning("shell.aux_approval_model %r is not a model_configs key; treating as unset", seed)
+    # Legacy fallback: the exact chain Context.aux_llm used before the
+    # dedicated pointer existed, so installs with auxiliary_model set keep
+    # their cheap judge until a user picks a dedicated one (#1213 review).
+    return config.auxiliary_model or active_model or effective_default_model(config)
+
+
 def effective_reflection_model(config: "Config") -> str:
     """Reflection-judge model, resolution order (#1212):
 
@@ -487,6 +527,22 @@ async def set_default_model(config: "Config", name: str, event_bus: Any = None) 
     async with _catalog_lock:
         catalog = load_catalog(config)
         catalog.default_model = name
+        _save_and_apply(config, catalog)
+    await _publish_models_changed(event_bus)
+    return catalog
+
+
+async def set_aux_approval_model(config: "Config", name: str, event_bus: Any = None) -> ModelCatalog:
+    """Set (name non-empty) or clear (name empty) the shell auto-approval judge pointer (#1213).
+
+    Empty means "ride on the active conversation model" — resolution then
+    falls through to ``config.shell.aux_approval_model`` and on to the active
+    conversation model. The sidecar is loaded inside the lock so a concurrent
+    refresh or toggle cannot silently revert the change.
+    """
+    async with _catalog_lock:
+        catalog = load_catalog(config)
+        catalog.aux_approval_model = name
         _save_and_apply(config, catalog)
     await _publish_models_changed(event_bus)
     return catalog
@@ -573,11 +629,23 @@ def catalog_payload(config: "Config") -> dict:
             "error": pentry.error,
             "models": models,
         }
+    aux_pointer = catalog.aux_approval_model
+    # Explicit somewhere (pointer, seed, or the legacy auxiliary chain) →
+    # name the effective judge. Pure inherit → empty sentinel: the judge is
+    # each conversation's own model, which a global payload cannot name, so
+    # the picker hint shows "(use conversation model)" instead of implying
+    # the global default is judging (#1213 review note).
+    aux_explicit = aux_pointer or config.shell.aux_approval_model or config.auxiliary_model
     return {
         "default_model": effective_default_model(config),
         "default_pointer": catalog.default_model,
         "picker_models": picker_models(config),
         "providers": providers,
+        # Shell auto-approval judge pointer (#1213): raw sidecar pointer plus
+        # the effective model it resolves to (empty = ride on the active
+        # conversation model).
+        "aux_approval_model": effective_aux_approval_model(config, "") if aux_explicit else "",
+        "aux_approval_pointer": aux_pointer,
         # Reflection-judge / verifier pointers (#1212): the raw sidecar
         # pointers plus the effective judge/verifier names they resolve to.
         # An empty pointer resolves to the seed (config-level reflection
