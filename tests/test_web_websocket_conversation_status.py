@@ -55,6 +55,47 @@ class TestConversationStatusForwarder:
         assert sent == []
 
     @pytest.mark.asyncio
+    async def test_forwards_delegated_child_status_for_owner(self, config):
+        """Child status transitions reach the owner (#1115 subagent monitoring).
+
+        Delegated children (`{parent}--child-{hex}`) run through the manager
+        like any conversation, so the pre-existing `conversation_status` bus
+        events are their live status source; the forwarder must recognize
+        child ids via `is_web_conv_for_user`.
+        """
+        sent, send = self._capture()
+        index = MagicMock()
+        forward = _make_conversation_status_forwarder(send, config, index, "testuser")
+        await forward(
+            {
+                "type": "conversation_status",
+                "conv_id": "web-testuser-c1--child-abcdef12",
+                "status": "busy",
+            }
+        )
+        assert sent == [
+            {
+                "type": WSMessageType.CONVERSATION_STATUS,
+                "conv_id": "web-testuser-c1--child-abcdef12",
+                "status": "busy",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_filters_delegated_children_of_other_users(self, config):
+        sent, send = self._capture()
+        index = MagicMock()
+        forward = _make_conversation_status_forwarder(send, config, index, "testuser")
+        await forward(
+            {
+                "type": "conversation_status",
+                "conv_id": "web-otheruser-secret--child-abcdef12",
+                "status": "busy",
+            }
+        )
+        assert sent == []
+
+    @pytest.mark.asyncio
     async def test_filters_username_prefix_collisions(self, config):
         sent, send = self._capture()
         index = MagicMock()
