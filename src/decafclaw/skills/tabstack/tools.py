@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from tabstack import APIStatusError, AsyncTabstack
 from tabstack.types import GeotargetGeoTarget
 
-from decafclaw.media import ToolResult
+from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.tools.confirmation import request_confirmation
 
 if TYPE_CHECKING:
@@ -78,9 +78,17 @@ async def tool_tabstack_extract_json(ctx: "Context", url: str, json_schema: dict
     try:
         # SDK >= 2.6: extract.json returns the parsed object directly (a dict).
         result = await _get_client().extract.json(url=url, json_schema=json_schema)
+        widget = None
+        if isinstance(result, (dict, list)):
+            widget = WidgetRequest(
+                widget_type="json_view",
+                data={"value": result, "expand_depth": 1},
+                target="inline",
+            )
         return ToolResult(
             text=json.dumps(result, indent=2),
             data={"url": url, "result": result},
+            widget=widget,
         )
     except Exception as e:
         return ToolResult(text=f"[error: {e}]")
