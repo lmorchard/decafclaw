@@ -616,11 +616,11 @@ who pinned it.
 
 ## Sticky slot
 
-A single-slot, display-only widget surface pinned directly above the chat
-input — unlike inline widgets (which scroll away with the conversation) or
-the canvas panel (a detached, multi-tab workspace), the sticky slot stays put
-so the user keeps seeing at-a-glance status while a workflow runs. Web UI
-only.
+A single-slot, display-only widget surface pinned directly above the
+conversation controls — which sit directly above the chat input — unlike
+inline widgets (which scroll away with the conversation) or the canvas panel
+(a detached, multi-tab workspace), the sticky slot stays put so the user
+keeps seeing at-a-glance status while a workflow runs. Web UI only.
 
 A widget opts in by adding `"sticky"` to its `modes` array in `widget.json`
 (alongside `"inline"` / `"canvas"`). `markdown_document` and
