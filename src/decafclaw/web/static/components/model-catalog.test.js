@@ -83,6 +83,17 @@ describe('model-catalog component', () => {
     expect(qwen.querySelector('.model-catalog-model-meta').textContent).toContain('tools?');
   });
 
+  it('renders each provider as a collapsed details with an enabled count', async () => {
+    const { el } = await mountCatalog();
+
+    const details = el.querySelector('details.model-catalog-provider');
+    expect(details).toBeTruthy();
+    // Collapsed by default — provider lists can be very long.
+    expect(details.open).toBe(false);
+    const count = details.querySelector('.model-catalog-provider-count');
+    expect(count.textContent).toContain('1/2 enabled');
+  });
+
   it('toggling a model posts the enable flag', async () => {
     const { el, fetchMock } = await mountCatalog();
 

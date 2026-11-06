@@ -160,12 +160,16 @@ export class ModelCatalog extends LitElement {
    * @param {import('../lib/api-client/index.js').CatalogProviderEntry} provider
    */
   #renderProvider(name, provider) {
+    const enabledCount = provider.models.filter(m => m.enabled).length;
     return html`
-      <div class="model-catalog-provider">
-        <div class="model-catalog-provider-header">
+      <details class="model-catalog-provider">
+        <summary class="model-catalog-provider-header">
           <span class="model-catalog-provider-name">${name}</span>
           ${provider.error ? html`<span class="model-catalog-provider-error" title="${provider.error}">⚠ discovery failed</span>` : nothing}
-        </div>
+          <span class="model-catalog-provider-tools">
+            <span class="model-catalog-provider-count" title="Enabled / discovered models">${enabledCount}/${provider.models.length} enabled</span>
+          </span>
+        </summary>
         ${provider.models.length === 0
           ? html`<p class="model-catalog-provider-empty">No models discovered.</p>`
           : html`
@@ -173,7 +177,7 @@ export class ModelCatalog extends LitElement {
                 ${provider.models.map(m => this.#renderModel(name, m))}
               </ul>
             `}
-      </div>
+      </details>
     `;
   }
 

@@ -48,16 +48,38 @@
   color: var(--pico-muted-color);
 }
 
-.model-catalog-provider {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+/* Collapsible provider section (#1211). Disclosure idiom follows the
+   thought-block pattern in chat.css: bordered block, muted summary row. */
+details.model-catalog-provider {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.35rem;
 }
 
-.model-catalog-provider-header {
+details.model-catalog-provider > summary.model-catalog-provider-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  margin-bottom: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+details.model-catalog-provider > summary.model-catalog-provider-header:hover {
+  background: var(--pico-secondary-hover-background);
+}
+
+details.model-catalog-provider > .model-catalog-model-list,
+details.model-catalog-provider > .model-catalog-provider-empty {
+  margin: 0;
+  padding: 0.35rem 0.6rem 0.5rem;
+}
+
+details.model-catalog-provider > .model-catalog-model-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .model-catalog-provider-name {
@@ -70,19 +92,22 @@
   cursor: help;
 }
 
-.model-catalog-provider-empty {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--pico-muted-color);
+.model-catalog-provider-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
 }
 
-.model-catalog-model-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+.model-catalog-provider-count {
+  font-size: 0.8rem;
+  color: var(--pico-muted-color);
+  white-space: nowrap;
+}
+
+.model-catalog-provider-empty {
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
 }
 
 .model-catalog-model {

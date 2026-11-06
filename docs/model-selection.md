@@ -94,6 +94,9 @@ surfaces enabled and fails on first use.
 All of this is managed in the web UI's **⚙ Agent Config → Models** tab:
 
 - Toggle any discovered model on/off for the conversation picker.
+- Providers render as collapsible sections (collapsed by default, with an
+  enabled/total count in the summary), so a gateway reporting hundreds of
+  models stays manageable.
 - Set the global default model from any enabled model (discovered or
   hand-configured), or clear the pointer to fall back to `config.json`.
 
