@@ -96,6 +96,42 @@ def is_child_conv_id(conv_id: str, parent_conv_id: str) -> bool:
     return bool(parent_conv_id) and conv_id.startswith(f"{parent_conv_id}{_CHILD_MARKER}")
 
 
+def discover_child_convs(config, index: "ConversationIndex", username: str) -> list["ConversationMeta"]:
+    """Discover delegated subagent conversations from the archive layer.
+
+    Manager-spawned children (``{parent}--child-{hex}``, see ``delegate.py``)
+    never receive index entries — the index only records
+    ``ConversationIndex.create()`` mints — so the session listing discovers
+    them from on-disk archives instead (#1115, #1223 review). A child is
+    attributed to the owner of its root conversation in the index; children
+    of unknown or archived roots are skipped (no user to inherit, or the
+    session is hidden together with its root). Titles follow
+    ``_classify_conv_id``'s delegated pattern; timestamps come from the
+    archive file.
+    """
+    root_ids = {c.conv_id for c in index.list_for_user(username)}
+    discovered: list[ConversationMeta] = []
+    for conv_id, path in iter_conversation_archives(config):
+        parent_id = parent_conv_id_of(conv_id)
+        if parent_id is None or parent_id not in root_ids or conv_id in root_ids:
+            continue
+        st = path.stat()
+        mtime = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
+        birth = getattr(st, "st_birthtime", None)
+        created = datetime.fromtimestamp(birth, tz=timezone.utc).isoformat() if birth else mtime
+        _, title = _classify_conv_id(conv_id)
+        discovered.append(
+            ConversationMeta(
+                conv_id=conv_id,
+                user_id=username,
+                title=title,
+                created_at=created,
+                updated_at=mtime,
+            )
+        )
+    return discovered
+
+
 def _activity_status(manager, conv_id: str) -> str:
     """Conversation activity status for the UI ('idle' | 'busy' | 'waiting' | ...)."""
     return manager.get_activity_status(conv_id) if manager else "idle"

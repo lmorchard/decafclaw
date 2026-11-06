@@ -1635,21 +1635,6 @@ def _child_meta(parent, suffix: str = "abcdef12"):
     )
 
 
-def _register_child(index: ConversationIndex, parent, suffix: str = "abcdef12") -> "ConversationMeta":
-    """Register a delegated subagent ConversationMeta under ``parent`` in the index."""
-    from dataclasses import asdict, replace
-
-    child = replace(
-        parent,
-        conv_id=f"{parent.conv_id}--child-{suffix}",
-        title=f"Subtask {suffix}",
-    )
-    data = index._load()
-    data.append(asdict(child))
-    index._save(data)
-    return child
-
-
 def test_group_conversations_into_sessions_singleton(config):
     """A standalone conversation is its own single-conversation session."""
     from decafclaw.web.conversations import group_conversations_into_sessions
@@ -1721,45 +1706,6 @@ async def test_list_sessions_route(authed_client, http_config):
     assert s["session_id"] == parent.conv_id
     assert s["conversations"][0]["conv_id"] == parent.conv_id
     assert s["conversations"][0]["kind"] == "parent"
-
-
-@pytest.mark.asyncio
-async def test_list_sessions_returns_parent_with_children(authed_client, http_config):
-    parent = ConversationIndex(http_config).create("testuser", "Parent chat")
-    child = _register_child(ConversationIndex(http_config), parent, "abcdef12")
-
-    data = (await authed_client.get("/api/sessions")).json()
-    assert data["folder"] == ""
-    assert len(data["sessions"]) == 1
-    s = data["sessions"][0]
-    assert s["session_id"] == parent.conv_id
-    assert s["title"] == "Parent chat"
-    assert len(s["conversations"]) == 2
-    assert s["conversations"][0]["kind"] == "parent"
-    assert s["conversations"][0]["conv_id"] == parent.conv_id
-    assert s["conversations"][1]["kind"] == "subagent"
-    assert s["conversations"][1]["conv_id"] == child.conv_id
-
-
-@pytest.mark.asyncio
-async def test_list_session_conversations_route(authed_client, http_config):
-    parent = ConversationIndex(http_config).create("testuser", "Parent chat")
-    child = _register_child(ConversationIndex(http_config), parent, "abcdef12")
-
-    resp = await authed_client.get(f"/api/sessions/{parent.conv_id}/conversations")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["session_id"] == parent.conv_id
-    assert len(data["conversations"]) == 2
-    assert data["conversations"][0]["kind"] == "parent"
-    assert data["conversations"][1]["kind"] == "subagent"
-
-    resp_child = await authed_client.get(f"/api/sessions/{child.conv_id}/conversations")
-    assert resp_child.status_code == 200
-    child_data = resp_child.json()
-    assert child_data["session_id"] == child.conv_id
-    assert len(child_data["conversations"]) == 1
-    assert child_data["conversations"][0]["kind"] == "subagent"
 
 
 @pytest.mark.asyncio

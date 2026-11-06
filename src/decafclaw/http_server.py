@@ -962,9 +962,19 @@ async def list_sessions(request: Request, folder: str = "") -> SessionListingRes
 
     Returns ``{folder, sessions}`` where each session carries its root
     conversation metadata plus the nested subagent conversations.
+
+    Subagent children are discovered from the archive layer — they have no
+    ConversationIndex entries (see ``discover_child_convs``). A session's
+    ``status`` reflects its root conversation only; children carry per-item
+    status.
     """
     from .web.conversation_folders import ConversationFolderIndex
-    from .web.conversations import ConversationIndex, group_conversations_into_sessions
+    from .web.conversations import (
+        ConversationIndex,
+        discover_child_convs,
+        group_conversations_into_sessions,
+        parent_conv_id_of,
+    )
 
     username = _get_username_or_401(request)
     if not username:
@@ -977,9 +987,20 @@ async def list_sessions(request: Request, folder: str = "") -> SessionListingRes
     index = ConversationIndex(config)
     folder_index = ConversationFolderIndex(config, username)
     convs = index.list_for_user(username)
+    convs = convs + discover_child_convs(config, index, username)
     assignments = await folder_index.get_all_assignments()
-    if folder_param:
-        convs = [c for c in convs if assignments.get(c.conv_id, "") == folder_param]
+
+    def _in_folder(c) -> bool:
+        # A session's folder is its root's assignment — children have no
+        # folder assignments of their own and ride with their root. Applied
+        # at every level: top-level ("") shows sessions whose root has no
+        # folder, mirroring the flat listing.
+        parent_id = parent_conv_id_of(c.conv_id)
+        if parent_id is None:
+            return assignments.get(c.conv_id, "") == folder_param
+        return assignments.get(parent_id, "") == folder_param
+
+    convs = [c for c in convs if _in_folder(c)]
     manager = getattr(request.app.state, "manager", None)
     sessions = group_conversations_into_sessions(convs, manager)
     return SessionListingResponse.model_validate(
@@ -994,12 +1015,15 @@ async def list_session_conversations(request: Request, session_id: str) -> Sessi
     """List the conversations within one session.
 
     ``session_id`` may name a root conversation (optionally with delegated
-    subagents) or a single subagent conversation id; both resolve to the
-    conversation list for that session.
+    subagents) or one of its subagent conversation ids; both resolve to the
+    same session list — the root plus its subagent children. Children are
+    discovered from the archive layer; they have no ConversationIndex
+    entries (see ``discover_child_convs``).
     """
     from .web.conversations import (
         ConversationIndex,
-        _session_item,
+        discover_child_convs,
+        group_conversations_into_sessions,
         parent_conv_id_of,
     )
 
@@ -1008,24 +1032,20 @@ async def list_session_conversations(request: Request, session_id: str) -> Sessi
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
     index = ConversationIndex(config)
-    conv = index.get(session_id)
-    manager = getattr(request.app.state, "manager", None)
-    if conv is None or conv.user_id != username:
+    # A subagent conversation id resolves to its parent session.
+    root_id = parent_conv_id_of(session_id) or session_id
+    root = index.get(root_id)
+    if root is None or root.user_id != username:
         return JSONResponse({"error": "not found"}, status_code=404)
-    if parent_conv_id_of(session_id) is not None:
-        # A subagent conversation id: its session is the singleton it forms.
-        return SessionConversationsResponse.model_validate(
-            {"session_id": session_id, "conversations": [_session_item(conv, "subagent", manager)]}
-        )
-    conversations = [_session_item(conv, "parent", manager)]
-    children = [
+    manager = getattr(request.app.state, "manager", None)
+    members = [root] + [
         c
-        for c in index.list_for_user(username)
-        if c.conv_id != session_id and parent_conv_id_of(c.conv_id) == session_id
+        for c in discover_child_convs(config, index, username)
+        if c.conv_id != root_id and parent_conv_id_of(c.conv_id) == root_id
     ]
-    for child in sorted(children, key=lambda c: c.updated_at, reverse=True):
-        conversations.append(_session_item(child, "subagent", manager))
-    return SessionConversationsResponse.model_validate({"session_id": session_id, "conversations": conversations})
+    sessions = group_conversations_into_sessions(members, manager)
+    conversations = sessions[0]["conversations"] if sessions else []
+    return SessionConversationsResponse.model_validate({"session_id": root_id, "conversations": conversations})
 
 
 # Schema-only input: the handler retains legacy JSON parsing and coercions.
