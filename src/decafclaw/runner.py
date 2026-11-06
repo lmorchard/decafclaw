@@ -82,6 +82,7 @@ async def run_all(app_ctx):
     mattermost_task = None
     heartbeat_task = None
     schedule_task = None
+    config_watcher_task = None
 
     try:
         # Create conversation manager (shared across web + future transports)
@@ -184,6 +185,13 @@ async def run_all(app_ctx):
         else:
             log.info("Schedule timer disabled (schedules.enabled=false)")
 
+        # Start config change watcher (#149): apply safe sections in place,
+        # restart for unsafe ones.
+        from .config_watcher import config_change_watcher
+
+        config_watcher_task = asyncio.create_task(config_change_watcher(app_ctx, shutdown_event))
+        log.info("Config change watcher started")
+
         # Resume pending scheduled wake timers now that transports are listening (#1119 review)
         await manager.startup_scan_scheduled_wakes()
 
@@ -194,6 +202,7 @@ async def run_all(app_ctx):
         log.info("Shutting down...")
 
         # Stop subsystems in reverse order
+        await _cancel_task(config_watcher_task, "config watcher")
         await _cancel_task(schedule_task, "schedule timer")
         await _cancel_task(heartbeat_task, "heartbeat")
 

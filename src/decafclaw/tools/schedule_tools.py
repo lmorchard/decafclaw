@@ -149,7 +149,7 @@ def tool_schedule_list(ctx: "Context") -> ToolResult:
             "columns": [
                 {"key": "schedule_id", "label": "Schedule ID"},
                 {"key": "fire_at", "label": "Fire At"},
-                {"key": "remaining", "label": "Remaining (s)"},
+                {"key": "remaining", "label": "Remaining (s)", "type": "duration"},
                 {"key": "reason", "label": "Reason"},
             ],
             "rows": [

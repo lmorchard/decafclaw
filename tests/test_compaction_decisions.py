@@ -31,6 +31,7 @@ class TestDecisionSlice:
         assert s.decisions == []
         assert s.open_questions == []
         assert s.artifacts == []
+        assert s.file_operations == []
 
     def test_to_from_dict_roundtrip(self):
         s = DecisionSlice(
@@ -47,6 +48,7 @@ class TestDecisionSlice:
             "artifacts": [
                 {"text": "vault://decisions/llm", "created_at": "2026-04-25T12:00:00Z"},
             ],
+            "file_operations": [],
         }
         roundtripped = DecisionSlice.from_dict(d)
         assert roundtripped == s
@@ -325,6 +327,37 @@ class TestMergeSlice:
         assert merged.open_questions == []
         assert [e.text for e in merged.artifacts] == ["a1"]
 
+    def test_file_operations_dedup_by_text(self):
+        """Deterministic file-op ledger dedupes repeated op strings."""
+        merged = merge_slice(
+            DecisionSlice(),
+            {"decisions": [], "open_questions": [], "artifacts": [], "file_operations": ["op-a", "op-a", "op-b"]},
+            max_per_category=10,
+            now="2026-05-01T00:00:00Z",
+        )
+        assert [e.text for e in merged.file_operations] == ["op-a", "op-b"]
+
+    def test_file_operations_keep_existing_created_at(self):
+        old = DecisionSlice(file_operations=[_entry("op-a", "2026-01-01T00:00:00Z")])
+        merged = merge_slice(
+            old,
+            {"decisions": [], "open_questions": [], "artifacts": [], "file_operations": ["op-a"]},
+            max_per_category=10,
+            now="2026-05-01T00:00:00Z",
+        )
+        assert len(merged.file_operations) == 1
+        assert merged.file_operations[0].created_at == "2026-01-01T00:00:00Z"
+
+    def test_file_operations_cap_fifo(self):
+        old = DecisionSlice(file_operations=[_entry("old", "2026-01-01T00:00:00Z")])
+        merged = merge_slice(
+            old,
+            {"decisions": [], "open_questions": [], "artifacts": [], "file_operations": ["old", "mid", "new"]},
+            max_per_category=2,
+            now="2026-05-01T00:00:00Z",
+        )
+        assert [e.text for e in merged.file_operations] == ["mid", "new"]
+
 
 # -- Format --------------------------------------------------------------------
 
@@ -356,5 +389,12 @@ class TestFormatSlice:
         out = format_slice(s)
         assert "<decision_slice>" in out
         assert "### Decisions" in out
+
+    def test_file_operations_render_section(self):
+        s = DecisionSlice(file_operations=[_entry("write notes.md :: call abc :: ok", "2026-04-25T12:00:00Z")])
+        out = format_slice(s)
+        assert "<decision_slice>" in out
+        assert "### File Operations" in out
+        assert "- write notes.md :: call abc :: ok" in out
         assert "### Open Questions" not in out
         assert "### Artifacts" not in out
