@@ -78,3 +78,23 @@
     max_tool_calls: 5
     max_tool_errors: 0
     expect_no_tool: delegate_task
+
+# -- session_send vs delegate_task (#1114) ----------------------------------
+# session_send posts an async session message (fire-and-forget wake turn);
+# delegate_task runs a child synchronously and returns its result. The
+# eval runner sets ctx.conv_id = "eval", so "eval" is the session root and
+# a valid session_send target.
+
+- name: "session_send for fire-and-forget session message"
+  setup:
+    config_overrides:
+      reflection.enabled: false
+  input: >-
+    Post a short asynchronous message to conversation id "eval" saying the
+    research step is complete. Do not wait for or fetch a reply — just
+    confirm you sent it.
+  expect:
+    expect_tool: session_send
+    expect_no_tool: delegate_task
+    max_tool_calls: 3
+    max_tool_errors: 0
