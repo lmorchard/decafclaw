@@ -181,6 +181,7 @@ SCHEDULE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "schedule_turn",
             "description": (
@@ -214,6 +215,7 @@ SCHEDULE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "schedule_cancel",
             "description": "Cancel a pending scheduled wake turn by its schedule_id.",
@@ -232,6 +234,7 @@ SCHEDULE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "schedule_list",
             "description": "List all pending scheduled wake turns for the current conversation.",

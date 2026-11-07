@@ -1102,6 +1102,7 @@ SHELL_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": True,
         "function": {
             "name": "shell_patterns",
             "description": (
@@ -1130,6 +1131,7 @@ SHELL_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "shell_guidance",
             "description": (
@@ -1180,6 +1182,7 @@ SHELL_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "critical",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "shell",
             "description": (

@@ -458,6 +458,7 @@ TOOLS = {
 TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "writes": False,
         "function": {
             "name": "tabstack_extract_markdown",
             "description": "Read a web page or PDF and return its content as clean, readable Markdown. Best for articles, documentation, and PDFs. Prefer this over web_fetch for readable content.",
@@ -479,6 +480,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": False,
         "function": {
             "name": "tabstack_extract_json",
             "description": "Extract structured data from a web page or PDF using a JSON schema. Best for pulling specific fields like prices, product details, tables, or lists.",
@@ -500,6 +502,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": False,
         "function": {
             "name": "tabstack_generate",
             "description": "Transform web page or PDF content into structured JSON using natural language instructions. Use for summaries, categorization, sentiment analysis, or reformatting content.",
@@ -528,6 +531,7 @@ TOOL_DEFINITIONS = [
         # Interactive runs add a user-confirmation round-trip plus tabstack's form-input
         # window (up to ~2 min), which can exceed the default 180s tool timeout.
         "timeout": 300,
+        "writes": True,
         "function": {
             "name": "tabstack_automate",
             "description": 'Automate web tasks using natural language. Has its own built-in web search — great for quick lookups like addresses, hours, prices, or simple facts. Also handles browser interactions: clicking, navigating, filling forms. Prefer this over tabstack_research for simple questions that just need a quick search. Takes 30-120 seconds.\n\nINTERACTIVE FORM-FILL: To let the browser agent fill a form with personal data, set interactive=true and pass the values in `data` (keys should match the form field labels, e.g. {"Email": "a@b.com", "Full name": "Ada"}). Each submission is shown to the user for confirmation before personal data is sent. If a required field is missing from `data`, the request is cancelled and the missing field names are reported back — gather them and re-run.',
@@ -572,6 +576,7 @@ TOOL_DEFINITIONS = [
         # 600s gives ~3-5x headroom for typical runs while bounding
         # runaway iteration bugs at 10 minutes. See #613 / #582 PR-610.
         "timeout": 600,
+        "writes": False,
         "function": {
             "name": "tabstack_research",
             "description": "Deep multi-source web research with synthesis and citations. Use ONLY for complex questions that need analysis of multiple sources: comparisons, fact-checking across sources, topic deep-dives. For simple lookups (addresses, hours, single facts), use tabstack_automate instead — it's faster and cheaper. Iterative research; typically takes 2-5 minutes per call.",

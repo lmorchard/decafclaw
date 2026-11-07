@@ -102,7 +102,6 @@ def test_not_a_git_checkout(tmp_path: Path):
 def test_seeds_config_and_launches_with_disabled_transports(main_clone: Path, tmp_path: Path):
     worktree = add_worktree(main_clone, tmp_path)
     source = seed_main_clone_config(main_clone)
-    # A second file in the main clone's agent dir must NOT be copied.
     (source.parent / "web_tokens.json").write_text('{"t": "x"}', encoding="utf-8")
     # A stale DATA_HOME in the worktree .env must not win over the seeded one.
     (worktree / ".env").write_text("DATA_HOME=/stale/should/not/win\nHTTP_PORT=18881\n", encoding="utf-8")
@@ -112,7 +111,8 @@ def test_seeds_config_and_launches_with_disabled_transports(main_clone: Path, tm
     assert result.returncode == 0, result.stdout + result.stderr
     seeded = worktree / "data-dev" / "decafclaw" / "config.json"
     assert seeded.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
-    assert not (worktree / "data-dev" / "decafclaw" / "web_tokens.json").exists()
+    seeded_tokens = worktree / "data-dev" / "decafclaw" / "web_tokens.json"
+    assert seeded_tokens.read_text(encoding="utf-8") == '{"t": "x"}'
 
     out = result.stdout
     assert "STUB_UV_CALLED run decafclaw" in out
@@ -211,3 +211,33 @@ def test_agent_id_from_worktree_env_file(main_clone: Path, tmp_path: Path):
     assert result.returncode == 0, result.stdout + result.stderr
     seeded = worktree / "data-dev" / "dotenv-agent" / "config.json"
     assert seeded.read_text(encoding="utf-8") == config.read_text(encoding="utf-8")
+
+
+def test_web_tokens_seed_created_once_and_not_overwritten(main_clone: Path, tmp_path: Path):
+    worktree = add_worktree(main_clone, tmp_path)
+    source = seed_main_clone_config(main_clone)
+    (source.parent / "web_tokens.json").write_text('{"t": "x"}', encoding="utf-8")
+    (worktree / ".env").write_text("HTTP_PORT=18886\n", encoding="utf-8")
+    extra = add_fake_uv(tmp_path)
+
+    first = run_script(worktree, extra)
+    assert first.returncode == 0, first.stdout + first.stderr
+    seeded_tokens = worktree / "data-dev" / "decafclaw" / "web_tokens.json"
+    assert seeded_tokens.read_text(encoding="utf-8") == '{"t": "x"}'
+
+    seeded_tokens.write_text('{"u": "lmorchard"}', encoding="utf-8")
+    second = run_script(worktree, extra)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert seeded_tokens.read_text(encoding="utf-8") == '{"u": "lmorchard"}'
+    assert "already seeded" in second.stdout
+
+
+def test_missing_web_tokens_seed_source_warns_and_skips(main_clone: Path, tmp_path: Path):
+    worktree = add_worktree(main_clone, tmp_path)
+    seed_main_clone_config(main_clone)
+    (worktree / ".env").write_text("HTTP_PORT=18887\n", encoding="utf-8")
+    result = run_script(worktree, add_fake_uv(tmp_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no web tokens seed source" in result.stderr
+    assert (worktree / "data-dev" / "decafclaw" / "config.json").is_file()

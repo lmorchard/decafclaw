@@ -98,3 +98,17 @@
     expect_no_tool: delegate_task
     max_tool_calls: 3
     max_tool_errors: 0
+
+# -- Read-only delegation (#87) ---------------------------------------------
+
+- name: "delegate_task read_only=true for analysis subtask"
+  setup:
+    config_overrides:
+      reflection.enabled: false
+  input: >-
+    Spin up a separate sub-agent to review the auth-rewrite vault page and
+    report its risks. It must not make, change, or delete anything.
+  expect:
+    expect_tool: delegate_task
+    max_tool_calls: 3
+    max_tool_errors: 0

@@ -675,6 +675,7 @@ TOOLS = {
 TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_create",
             "description": "Create a new project. Call project_next_task after this.",
@@ -690,6 +691,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_next_task",
             "description": "Get the current instruction for the project. Does NOT advance phases.",
@@ -698,6 +700,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_task_done",
             "description": "Signal that the current phase is complete. Triggers review or advances to next phase.",
@@ -706,6 +709,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": False,
         "function": {
             "name": "project_status",
             "description": "Show current project state and progress.",
@@ -714,6 +718,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": False,
         "function": {
             "name": "project_list",
             "description": "List all projects with their status.",
@@ -722,6 +727,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_switch",
             "description": "Switch to a different project.",
@@ -736,6 +742,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_update_spec",
             "description": "Write the project specification.",
@@ -750,6 +757,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_update_plan",
             "description": "Write the project plan with checkbox steps.",
@@ -764,6 +772,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_update_step",
             "description": "Mark a step as in_progress, done, or skipped.",
@@ -780,6 +789,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_add_steps",
             "description": "Insert new steps after an existing step.",
@@ -795,6 +805,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_advance",
             "description": "Go back to an earlier phase (e.g. 'planning', 'brainstorming'). Use project_task_done to go forward.",
@@ -811,6 +822,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "project_note",
             "description": "Append a timestamped note to the project.",

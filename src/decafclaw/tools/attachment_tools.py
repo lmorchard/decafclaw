@@ -120,6 +120,7 @@ ATTACHMENT_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "list_attachments",
             "description": (
@@ -137,6 +138,7 @@ ATTACHMENT_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "get_attachment",
             "description": (

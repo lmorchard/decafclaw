@@ -384,6 +384,8 @@ These skills ship with DecafClaw and provide tools when activated. Full details 
 
 Every tool declares a priority: `critical` (✓ above), `normal` (default), or `low`. When the active tool budget is exceeded, the classifier fills tier by tier: critical first, then normal, deferring `low`-priority tools behind `tool_search`. Pre-emptive search can promote tools to critical for a single turn based on user-message keyword matches. See [Tool Priority System](tool-priority.md), [Tool Search](tool-search.md), and [Pre-emptive Tool Search](preemptive-tool-search.md).
 
+Every tool definition also declares a top-level `writes` boolean: `true` when a call can change state outside the turn (file writes, shell, outbound messages, external service calls, admin/vault mutations, …); `false` for read-only tools. The flag drives delegated read-only filtering (`delegate_task(read_only=true)`) and backs the declaration invariant in tests. A tool whose definition lacks a `writes` key is treated as a write (fail-closed).
+
 ## Tool-owned prompt guidance (`prompt_guidelines`) (#928 & #998)
 
 Tool definitions can optionally declare top-level `prompt_guidelines: list[str]`. When a tool is in the active set, its guidelines are rendered into an authoritative `<tool_guidance>` system message injected into the prompt.
