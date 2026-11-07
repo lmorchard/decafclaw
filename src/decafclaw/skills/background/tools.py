@@ -916,6 +916,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "shell_background_start",
             "description": (
@@ -973,6 +974,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": False,
         "function": {
             "name": "shell_background_status",
             "description": (
@@ -995,6 +997,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": True,
         "function": {
             "name": "shell_background_stop",
             "description": (
@@ -1016,6 +1019,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": False,
         "function": {
             "name": "shell_background_list",
             "description": (

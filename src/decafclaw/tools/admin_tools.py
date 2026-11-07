@@ -1039,6 +1039,7 @@ ADMIN_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": False,
         "function": {
             "name": "admin_read",
             "description": (
@@ -1070,6 +1071,7 @@ ADMIN_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": False,
         "function": {
             "name": "admin_list",
             "description": (
@@ -1092,6 +1094,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "admin_write",
             "description": (
@@ -1120,6 +1123,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "admin_replace_lines",
             "description": (
@@ -1156,6 +1160,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "admin_edit",
             "description": (
@@ -1192,6 +1197,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "admin_delete",
             "description": (

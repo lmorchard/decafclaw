@@ -238,6 +238,7 @@ EMAIL_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "send_email",
             "description": (
