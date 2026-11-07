@@ -1226,6 +1226,7 @@ SKILL_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "critical",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "activate_skill",
             "description": (
@@ -1251,6 +1252,7 @@ SKILL_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": True,
         "function": {
             "name": "refresh_skills",
             "description": "Re-scan skill directories and update the available skills catalog. Use when new skills have been added or removed without restarting the agent.",
@@ -1264,6 +1266,7 @@ SKILL_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": False,
         "function": {
             "name": "skill_validate",
             "description": (

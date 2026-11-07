@@ -6,11 +6,14 @@ Backs the `make run-dev` target. It:
 1. Refuses to run from the primary checkout (the "main clone"): running
    there would serve the app against the live agent's setup. Only linked
    git worktrees are accepted.
-2. Seeds the worktree's gitignored `data-dev/` directory if missing, with
-   a copy of the main clone's `data/{agent_id}/config.json` only (no vault,
-   no conversations, no other admin files) — enough for the app to find its
-   providers/model config. config.json may itself hold provider keys; the
-   copy stays in the gitignored worktree dir on the same machine.
+2. Seeds the worktree's gitignored `data-dev/` directory if missing, with a
+   copy of the main clone's `data/{agent_id}/config.json` and
+   `data/{agent_id}/web_tokens.json` (no vault, no conversations, no other
+   admin files) — enough for the app to find its providers/model config and
+   accept web-UI tokens. Each file seeds created-if-missing (never overwriting
+   a user-edited copy) and a missing token source warns instead of failing, so
+   a partial admin setup still boots. The copies stay in the gitignored
+   worktree dir on the same machine.
 3. Launches `uv run decafclaw` with:
    - DATA_HOME pointed at the seeded data dir (this real env var wins over
      the .env file, since dotenv loads without overriding existing vars),
@@ -116,6 +119,28 @@ def seed_data_dir(checkout_root: Path, main_root: Path, agent_id: str) -> tuple[
     return target, True
 
 
+def seed_missing_source(
+    main_root: Path, checkout_root: Path, data_dir_name: str, agent_id: str, filename: str, label: str
+) -> bool:
+    """Seed one admin file into the worktree data dir when missing; warn when the source is absent.
+
+    Uses the same created-if-missing semantics as the config seed: a seeded copy is
+    never overwritten (a user may have edited it), and a missing seed source degrades to
+    a warning instead of a crash so a partial admin setup still boots. Returns whether
+    the file was created.
+    """
+    source = main_root / "data" / agent_id / filename
+    target = checkout_root / data_dir_name / agent_id / filename
+    if not source.is_file():
+        print(f"run-dev: warning: no {label} seed source at {source}; skipping it", file=sys.stderr)
+        return False
+    if target.exists():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    return True
+
+
 def env_file_value(env_file: Path, key: str) -> str | None:
     """Read one key from a dotenv-style file; None when the file or key is absent.
 
@@ -192,7 +217,12 @@ def main() -> int:
     except FileNotFoundError as exc:
         print(f"run-dev: {exc}", file=sys.stderr)
         return 1
-    if created:
+    tokens_created = seed_missing_source(
+        main_root, checkout_root, DATA_DIR_NAME, agent_id, "web_tokens.json", "web tokens"
+    )
+    if created and tokens_created:
+        print(f"run-dev: seeded {target.parent} (config.json, web_tokens.json) from {main_root}")
+    elif created:
         print(f"run-dev: seeded {target} (config.json only, from {main_root})")
     else:
         print(f"run-dev: data dir already seeded; leaving {target} as-is")

@@ -488,6 +488,7 @@ CORE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "writes": False,
         "function": {
             "name": "web_fetch",
             "description": "Fetch raw HTML from a URL via HTTP GET. Use this when you need the original markup or headers. If the tabstack skill is activated, prefer tabstack_extract_markdown for clean readable content.",
@@ -506,6 +507,7 @@ CORE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": True,
         "function": {
             "name": "debug_context",
             "description": "Dump the current conversation context for debugging. Writes full context as JSON to workspace/debug_context.json and a summary to workspace/debug_context_summary.txt. Returns a brief summary in the response. Use when asked to inspect or describe your context.",
@@ -519,6 +521,7 @@ CORE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": False,
         "function": {
             "name": "context_stats",
             "description": "Show token budget statistics for the current conversation. Reports estimated breakdown of system prompt, tool definitions, and history versus the compaction budget. Use when asked about context size, token usage, or why the agent might be forgetting things.",
@@ -532,6 +535,7 @@ CORE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "writes": False,
         "function": {
             "name": "current_time",
             "description": "Get the current date and time. Use this instead of shell commands like 'date'.",
@@ -545,6 +549,7 @@ CORE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": False,
         "function": {
             "name": "wait",
             "description": (
@@ -569,6 +574,7 @@ CORE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": True,
         "function": {
             "name": "ask_user_multiple_choice",
             "description": (
@@ -624,6 +630,7 @@ CORE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": True,
         "function": {
             "name": "ask_user_text",
             "description": (

@@ -759,6 +759,53 @@ class TestCoreToolsDeclarePriority:
         assert not invalid, f"Invalid priority values: {invalid}"
 
 
+# -- Invariant: every tool declares a boolean writes flag (#87) ------------------
+
+
+class TestCoreToolsDeclareWrites:
+    """Every entry in TOOL_DEFINITIONS must carry a boolean `writes` field.
+
+    Read-only delegation (#87) filters a child's tool set on `writes: False`;
+    a missing key must fail loudly instead of silently passing.
+    """
+
+    def test_all_core_tools_have_writes(self):
+        missing = []
+        for td in TOOL_DEFINITIONS:
+            if not isinstance(td.get("writes"), bool):
+                name = td.get("function", {}).get("name", "<unknown>")
+                missing.append((name, td.get("writes")))
+        assert not missing, (
+            f"Tool definitions missing boolean 'writes' field: {missing}. Every tool must declare writes=true|false."
+        )
+
+    def test_bundled_skill_tools_have_writes(self):
+        from decafclaw.skills.background.tools import TOOL_DEFINITIONS as BACKGROUND_TOOLS
+        from decafclaw.skills.dream.tools import TOOL_DEFINITIONS as DREAM_TOOLS
+        from decafclaw.skills.garden.tools import TOOL_DEFINITIONS as GARDEN_TOOLS
+        from decafclaw.skills.mcp.tools import TOOL_DEFINITIONS as MCP_TOOLS
+        from decafclaw.skills.newsletter.tools import TOOL_DEFINITIONS as NEWSLETTER_TOOLS
+        from decafclaw.skills.project.tools import TOOL_DEFINITIONS as PROJECT_TOOLS
+        from decafclaw.skills.tabstack.tools import TOOL_DEFINITIONS as TABSTACK_TOOLS
+        from decafclaw.skills.vault.tools import TOOL_DEFINITIONS as VAULT_TOOLS
+
+        missing = []
+        for td in (
+            *BACKGROUND_TOOLS,
+            *DREAM_TOOLS,
+            *GARDEN_TOOLS,
+            *MCP_TOOLS,
+            *NEWSLETTER_TOOLS,
+            *PROJECT_TOOLS,
+            *TABSTACK_TOOLS,
+            *VAULT_TOOLS,
+        ):
+            if not isinstance(td.get("writes"), bool):
+                name = td.get("function", {}).get("name", "<unknown>")
+                missing.append((name, td.get("writes")))
+        assert not missing, f"Bundled skill tool definitions missing boolean 'writes' field: {missing}."
+
+
 # -- No duplicate function declarations reach the provider (#684) --------------
 #
 # Providers reject a request carrying two declarations of the same function
@@ -868,10 +915,11 @@ class TestWorkspaceEditDescription:
         return next(td for td in TOOL_DEFINITIONS if td["function"]["name"] == "workspace_edit")
 
     def test_stays_within_token_budget(self):
-        """#989 pins the def at/below its original 386-token estimate. The
-        critical floor already exceeds max_active_tools (30), so a growing
-        definition only tightens the hard floor — keep it bounded."""
-        assert estimate_tool_tokens([self._workspace_edit_def()]) <= 386
+        """#989 pins the def at/below its original 386-token estimate (now
+        390 after the #87 `writes` flag was added). The critical floor already
+        exceeds max_active_tools (30), so a growing definition only tightens the
+        hard floor — keep it bounded."""
+        assert estimate_tool_tokens([self._workspace_edit_def()]) <= 390
 
     def test_is_default_not_sparing(self):
         desc = self._workspace_edit_def()["function"]["description"]

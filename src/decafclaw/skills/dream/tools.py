@@ -81,6 +81,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "dream_recent_runs",
             "description": (

@@ -108,6 +108,7 @@ SESSION_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "session_send",
             "description": (

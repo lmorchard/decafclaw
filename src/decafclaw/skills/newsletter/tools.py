@@ -533,6 +533,7 @@ TOOLS = {
 TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "writes": False,
         "function": {
             "name": "newsletter_list_scheduled_activity",
             "description": (
@@ -562,6 +563,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": False,
         "function": {
             "name": "newsletter_list_vault_changes",
             "description": (
@@ -590,6 +592,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "newsletter_publish",
             "description": (

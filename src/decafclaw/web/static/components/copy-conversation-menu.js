@@ -55,11 +55,21 @@ export class CopyConversationMenu extends LitElement {
       // the end of the page).
       const wrap = this.querySelector('.copy-menu-wrap');
       if (wrap) {
-        const r = wrap.getBoundingClientRect();
-        this._menuPosition = {
-          bottom: Math.max(0, window.innerHeight - r.bottom),
-          right: Math.max(0, r.right),
-        };
+        // Anchor on the trigger button, not the wrap: the wrap is a block-level
+        // div, so its rect spans the container instead of hugging the button.
+        const btn = wrap.querySelector('.copy-menu-trigger');
+        const r = (btn ?? wrap).getBoundingClientRect();
+        // Open ABOVE the trigger (the trigger can sit near the bottom of the
+        // viewport, so a downward menu can run past the end of the page). For
+        // position: fixed, `bottom` is measured from the viewport bottom, so the
+        // element's bottom edge lands at innerHeight - bottom — anchor just
+        // above the trigger's top edge.
+        const bottom = Math.max(0, window.innerHeight - r.top);
+        // For position: fixed, `right` is measured from the viewport's right
+        // edge, so the element's right edge lands at innerWidth - right — anchor
+        // at the trigger's right edge.
+        const right = Math.max(0, window.innerWidth - r.right);
+        this._menuPosition = { bottom, right };
       }
     } else {
       this._menuPosition = null;
