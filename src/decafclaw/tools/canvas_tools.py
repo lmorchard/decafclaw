@@ -132,6 +132,7 @@ CANVAS_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "canvas_new_tab",
             "description": (
@@ -181,6 +182,7 @@ CANVAS_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "canvas_update",
             "description": (
@@ -209,6 +211,7 @@ CANVAS_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "canvas_close_tab",
             "description": (
@@ -232,6 +235,7 @@ CANVAS_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "canvas_clear",
             "description": (
@@ -245,6 +249,7 @@ CANVAS_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "canvas_read",
             "description": (

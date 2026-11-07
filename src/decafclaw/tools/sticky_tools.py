@@ -46,6 +46,7 @@ STICKY_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "widget_pin_sticky",
             "description": (
@@ -77,6 +78,7 @@ STICKY_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "widget_unpin_sticky",
             "description": (

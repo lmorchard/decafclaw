@@ -209,6 +209,7 @@ TOOLS = {
 TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "vault_recompute_importance",
             "description": "Deterministically recompute every agent page's `importance` frontmatter...",
@@ -220,6 +221,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "writes": True,
         "function": {
             "name": "vault_reorganize_folders",
             "description": "Detect clusters of 3+ related agent pages and move them into dedicated folders. Resolves and updates wiki-links.",

@@ -223,6 +223,7 @@ HEARTBEAT_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": True,
         "function": {
             "name": "heartbeat_trigger",
             "description": (

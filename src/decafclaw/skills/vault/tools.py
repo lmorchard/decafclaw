@@ -1714,6 +1714,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "writes": False,
         "function": {
             "name": "vault_read",
             "description": (
@@ -1739,6 +1740,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "critical",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "vault_write",
             "description": (
@@ -1777,6 +1779,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "vault_delete",
             "description": (
@@ -1804,6 +1807,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "vault_rename",
             "description": (
@@ -1839,6 +1843,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "vault_grant_folder",
             "description": (
@@ -1873,6 +1878,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "writes": True,
         "function": {
             "name": "vault_journal_append",
             "description": (
@@ -1905,6 +1911,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "writes": False,
         "function": {
             "name": "vault_search",
             "description": (
@@ -1986,6 +1993,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "writes": False,
         "function": {
             "name": "vault_list",
             "description": (
@@ -2014,6 +2022,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "vault_recent",
             "description": (
@@ -2056,6 +2065,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "vault_tags",
             "description": (
@@ -2076,6 +2086,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "vault_backlinks",
             "description": (
@@ -2098,6 +2109,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": False,
         "function": {
             "name": "vault_show_sections",
             "description": (
@@ -2131,6 +2143,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": True,
         "function": {
             "name": "vault_move_lines",
             "description": (
@@ -2181,6 +2194,7 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "low",
+        "writes": True,
         "function": {
             "name": "vault_section",
             "description": (
@@ -2261,6 +2275,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "vault_update_frontmatter",
             "description": (
