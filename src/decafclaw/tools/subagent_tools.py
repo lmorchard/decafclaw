@@ -107,6 +107,7 @@ SUBAGENT_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "subagent_list",
             "description": (
@@ -125,6 +126,7 @@ SUBAGENT_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "subagent_cancel",
             "description": (

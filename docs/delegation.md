@@ -39,6 +39,18 @@ Each call spawns an independent child agent that:
 | `allow_vault_read` | No | Opt the child INTO read-side vault tools (`vault_read`, `vault_search`, etc.). Default `false`. See [Vault access](#vault-access). |
 | `return_schema` | No | JSON-schema-shaped object describing the structured return shape. When supplied, the child is instructed to emit prose followed by a fenced JSON block; the parsed object lands on `ToolResult.data`. See [Structured returns](#structured-returns). |
 | `background` | No | Run the child asynchronously (fire-and-forget). `true` returns a spawn ack with a `child_conv_id` immediately; the child runs in the background and its result is not returned to this turn. `false` (default) awaits the child and returns its answer. Cannot be combined with `return_schema`. |
+| `read_only` | No | Run the child in read-only mode: strip write-capable tools (per-tool `writes` flag) and append read-only instructions to the child system prompt. Use for analysis, review, search, and planning subtasks that must not change anything. Default `false`. |
+
+## Read-only mode
+
+For analysis, review, search, and planning subtasks that must not change anything, the parent passes `read_only=true` to `delegate_task` (or `delegate_tasks`).
+
+- The child's tool set is filtered down to tools whose definition declares `"writes": false`.
+- The child's system prompt gets a read-only instruction (`_READ_ONLY_INSTRUCTION`) telling it not to create, change, move, or delete anything and to report recommended changes in its answer.
+
+Write-capable tools — `workspace_write`, `shell`, `shell_background_*`, `http_request`, `send_email`, `send_notification`, admin and vault writes, and similar — are removed. Tools whose definitions are missing or lack a `writes` key count as writes (fail-closed), so dynamically registered contrib / workspace / MCP tools drop out too.
+
+The default (`read_only` unset) keeps today's behavior: inherit the parent's full tool set minus the categorical excludes.
 
 ## Vault access
 

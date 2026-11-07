@@ -67,6 +67,7 @@ NOTIFICATION_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "send_notification",
             "description": (
