@@ -12,6 +12,7 @@ from decafclaw.media import ToolResult
 from decafclaw.tools.delegate import (
     _VAULT_READ_TOOLS,
     _VAULT_WRITE_TOOLS,
+    DELEGATE_TOOL_DEFINITIONS,
     run_child_turn,
     tool_delegate_task,
     tool_delegate_tasks,
@@ -20,7 +21,6 @@ from decafclaw.tools.subagent_tools import (
     SUBAGENT_TOOL_DEFINITIONS,
     subagent_cancel,
     subagent_list,
-    subagent_spawn,
 )
 
 
@@ -172,72 +172,65 @@ class TestRunChildTurnSpawn:
 
 class TestSubagentTools:
     @pytest.mark.asyncio
-    async def test_subagent_spawn_requires_task(self, ctx):
-        result = await subagent_spawn(ctx, "   ")
+    async def test_delegate_task_background_requires_task(self, ctx):
+        """background=true still requires a task description."""
+        result = await tool_delegate_task(ctx, "   ", background=True)
         assert "error" in _text(result)
 
     @pytest.mark.asyncio
-    async def test_subagent_spawn_default_is_fire_and_forget(self, ctx):
-        """async_run defaults to True = spawn-only fire-and-forget (issue polarity).
-
-        The tool maps its issue-facing `async_run` onto run_child_turn's
-        internal `await_child` (polarity inverted)."""
+    async def test_delegate_task_background_true_is_spawn_only(self, ctx):
+        """background=true → fire-and-forget spawn: ack + child_conv_id, no await."""
         with patch(
-            "decafclaw.tools.subagent_tools.run_child_turn",
+            "decafclaw.tools.delegate.run_child_turn",
             new_callable=AsyncMock,
             return_value=("[subagent spawned: test-conv--child-xyz]", None),
         ) as mock_run:
-            result = await subagent_spawn(ctx, "do a thing")
+            result = await tool_delegate_task(ctx, "do a thing", background=True)
 
         assert isinstance(result, ToolResult)
         assert "spawned" in result.text
-        assert "child_conv_id" in (result.data or {})
+        assert result.data is not None
         assert str(result.data["child_conv_id"]).startswith("test-conv--child-")
-        mock_run.assert_called_once()
         kwargs = mock_run.call_args.kwargs
         assert kwargs["await_child"] is False
-        assert kwargs["allow_vault_write"] is False
+        assert kwargs["return_schema"] is None
 
     @pytest.mark.asyncio
-    async def test_subagent_spawn_awaits_when_async_run_false(self, ctx):
-        """async_run=False → awaited child turn (await_child=True)."""
+    async def test_delegate_task_default_awaits_child(self, ctx):
+        """background defaults to False → awaited child turn (delegate_task-style)."""
         with patch(
-            "decafclaw.tools.subagent_tools.run_child_turn",
+            "decafclaw.tools.delegate.run_child_turn",
             new_callable=AsyncMock,
             return_value=("child answer", None),
         ) as mock_run:
-            result = await subagent_spawn(ctx, "do a thing", async_run=False)
+            result = await tool_delegate_task(ctx, "do a thing")
 
         assert result.text == "child answer"
         kwargs = mock_run.call_args.kwargs
         assert kwargs["await_child"] is True
 
-    def test_subagent_spawn_tool_schema_exposes_async_run(self):
-        """The LLM-facing tool schema exposes async_run (issue polarity)."""
-        (spawn_def,) = [d for d in SUBAGENT_TOOL_DEFINITIONS if d["function"]["name"] == "subagent_spawn"]
-        props = spawn_def["function"]["parameters"]["properties"]
-        assert props["async_run"]["type"] == "boolean"
-        assert (
-            "default" in props["async_run"]["description"].lower()
-            or "true" in props["async_run"]["description"].lower()
-        )
+    def test_delegate_task_tool_schema_exposes_background(self):
+        """The LLM-facing delegate_task schema exposes the background flag."""
+        (task_def,) = [d for d in DELEGATE_TOOL_DEFINITIONS if d["function"]["name"] == "delegate_task"]
+        props = task_def["function"]["parameters"]["properties"]
+        assert props["background"]["type"] == "boolean"
+        assert "fire-and-forget" in props["background"]["description"].lower()
 
     @pytest.mark.asyncio
-    async def test_subagent_spawn_awaited_returns_child_answer(self, ctx):
-        """async_run=False with the real manager: the tool blocks until the
-        child finishes and its answer lands on ToolResult.text."""
+    async def test_delegate_task_awaited_returns_child_answer(self, ctx):
+        """background=false (default) with the real manager: the tool blocks
+        until the child finishes and its answer lands on ToolResult.text."""
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="child answer")
-            result = await subagent_spawn(ctx, "do it", async_run=False)
+            result = await tool_delegate_task(ctx, "do it")
 
         assert result.text == "child answer"
-        assert "child_conv_id" in (result.data or {})
         mock_run.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_subagent_spawn_fire_and_forget_child_actually_runs(self, ctx):
-        """async_run=True (default) with the real manager: the spawn ack
-        returns before the child finishes, but the enqueued turn really
+    async def test_delegate_task_background_true_child_actually_runs(self, ctx):
+        """background=true (fire-and-forget) with the real manager: the spawn
+        ack returns before the child finishes, but the enqueued turn really
         runs via the manager loop and completes."""
         release = asyncio.Event()
 
@@ -247,7 +240,7 @@ class TestSubagentTools:
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.side_effect = slow_child
-            result = await subagent_spawn(ctx, "background task")
+            result = await tool_delegate_task(ctx, "background task", background=True)
 
             assert "spawned" in result.text
             child_id = result.data["child_conv_id"]
@@ -352,15 +345,16 @@ class TestSubagentTools:
 
     @pytest.mark.asyncio
     async def test_child_turn_excludes_subagent_tools(self, ctx):
-        """Children never see the subagent lifecycle tools — a child spawning
+        """Children never see delegation or the subagent lifecycle tools — the
+        only spawn path (delegate_task) is excluded so a child spawning
         grandchildren would bypass the delegate_task recursion boundary, and
-        subagent_cancel would target any tracked conversation."""
+        subagent_cancel must never target a conversation the child doesn't own."""
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
             await run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
-        for tool in ("subagent_spawn", "subagent_list", "subagent_cancel"):
+        for tool in ("delegate_task", "subagent_list", "subagent_cancel"):
             assert tool not in child_ctx.tools.allowed, f"children must not see {tool}"
 
 

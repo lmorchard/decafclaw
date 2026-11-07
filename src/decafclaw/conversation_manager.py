@@ -434,7 +434,8 @@ class ConversationState:
 
     # Subagent task description for spawned children (#1113). Set by the
     # manager as a child turn is dispatched (run_child_turn /
-    # subagent_spawn); surfaced by the `subagent_list` tool.
+    # delegate_task background=true); surfaced by the `subagent_list`
+    # tool.
     subagent_task: str = ""
 
 

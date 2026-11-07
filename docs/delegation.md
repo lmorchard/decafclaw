@@ -38,6 +38,7 @@ Each call spawns an independent child agent that:
 | `allow_vault_retrieval` | No | Opt the child INTO proactive memory retrieval at turn start. Default `false`. See [Vault access](#vault-access). |
 | `allow_vault_read` | No | Opt the child INTO read-side vault tools (`vault_read`, `vault_search`, etc.). Default `false`. See [Vault access](#vault-access). |
 | `return_schema` | No | JSON-schema-shaped object describing the structured return shape. When supplied, the child is instructed to emit prose followed by a fenced JSON block; the parsed object lands on `ToolResult.data`. See [Structured returns](#structured-returns). |
+| `background` | No | Run the child asynchronously (fire-and-forget). `true` returns a spawn ack with a `child_conv_id` immediately; the child runs in the background and its result is not returned to this turn. `false` (default) awaits the child and returns its answer. Cannot be combined with `return_schema`. |
 
 ## Vault access
 
@@ -56,7 +57,8 @@ This is a behavior tightening from earlier versions where children inherited eve
 
 ## Results
 
-- Returns the child's text response wrapped in a `ToolResult`.
+- Awaited (`background` unset / `false`): returns the child's text response wrapped in a `ToolResult`.
+- Fire-and-forget (`background: true`): returns the spawn ack (`[subagent spawned: {child_conv_id}]`) with `ToolResult.data.child_conv_id` set; poll via `subagent_list` and abort via `subagent_cancel`.
 - When `return_schema` is supplied and the child emits valid JSON, the parsed object also lands on `ToolResult.data` — auto-rendered as a fenced JSON block in the tool result content for the parent agent.
 - Failures returned as error text — one child failing doesn't affect siblings.
 - Timeouts return `[subtask timed out after Ns]`.

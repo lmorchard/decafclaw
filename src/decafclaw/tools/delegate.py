@@ -154,7 +154,7 @@ async def run_child_turn(
         allowed_tools: Optional explicit allowlist for the child. When
             provided, the child sees ONLY these tools (still minus the
             categorical excludes: ``delegate_task``,
-            ``subagent_spawn``/``subagent_list``/``subagent_cancel``,
+            ``subagent_list``/``subagent_cancel``,
             ``activate_skill``, ``refresh_skills``, ``tool_search``,
             and the vault-write set). Use this from workflows to
             constrain a child agent narrowly. ``None`` (default) means
@@ -188,11 +188,13 @@ async def run_child_turn(
             events from the parent UI.
         child_conv_id_override: When non-None, use this child conv id
             instead of generating ``{parent}--child-{hex}`` (#1113, used
-            by ``subagent_spawn`` so the parent can learn the ``child_conv_id``).
+            by ``delegate_task(background=true)`` so the parent can learn
+            the ``child_conv_id``).
         await_child: When True (default), await the spawned child turn and
             return its result. When False, spawn only and return a spawn
             ack while the turn still runs via the manager loop (#1113,
-            used by ``subagent_spawn`` fire-and-forget spawns).
+            used by ``delegate_task(background=true)`` fire-and-forget
+            spawns).
 
     Returns ``(text, data)``:
         * On success without ``return_schema``: ``(child_text, None)``.
@@ -234,8 +236,9 @@ async def run_child_turn(
 
     parent_conv = parent_ctx.conv_id or parent_ctx.channel_id
     # Per-call unique conv_id; short random suffix to avoid collisions.
-    # `subagent_spawn` overrides this with the id it generated so the
-    # parent can learn it back for subagent lifecycle tracking (#1113).
+    # `delegate_task(background=true)` overrides this with the id it
+    # generated so the parent can learn it back for subagent lifecycle
+    # tracking (#1113).
     child_conv_id = child_conv_id_override or f"{parent_conv}--child-{secrets.token_hex(4)}"
     parent_event_id = parent_ctx.event_context_id or parent_ctx.context_id
 
@@ -259,13 +262,14 @@ async def run_child_turn(
         # If parent has restricted allowed_tools, respect that restriction.
         # If an explicit `allowed_tools` was passed (workflow callers),
         # that narrows further.
-        # #1113: subagent_spawn/subagent_list/subagent_cancel are excluded
-        # alongside delegate_task — a child spawning grandchildren would
-        # bypass the delegation recursion boundary, and subagent_cancel
-        # must never target a conversation the child doesn't own.
+        # #1113: delegate_task/subagent_list/subagent_cancel are excluded
+        # alongside the lifecycle guards — a child spawning grandchildren
+        # would bypass the delegation recursion boundary, and
+        # subagent_cancel must never target a conversation the child
+        # doesn't own. Spawn-only mode is `delegate_task(background=true)`;
+        # the retired `subagent_spawn` tool is no longer part of the surface.
         excluded = {
             "delegate_task",
-            "subagent_spawn",
             "subagent_list",
             "subagent_cancel",
             "activate_skill",
@@ -335,7 +339,7 @@ async def run_child_turn(
             user_id=parent_ctx.user_id,
         )
         if not await_child:
-            # #1113: spawn-only mode (subagent_spawn fire-and-forget) —
+            # #1113: spawn-only mode (delegate_task background=true fire-and-forget) —
             # return the spawn ack without awaiting the child turn. The
             # enqueued turn still runs via the manager loop.
             return (f"[subagent spawned: {child_conv_id}]", None)
@@ -366,6 +370,7 @@ async def tool_delegate_task(
     allow_vault_read: bool = False,
     allow_vault_write: bool = False,
     return_schema: dict | None = None,
+    background: bool = False,
 ) -> ToolResult:
     """Delegate a subtask (or a list of subtasks in parallel) to child agents.
 
@@ -388,6 +393,14 @@ async def tool_delegate_task(
     the parsed object lands on ``ToolResult.data`` and the prose half
     on ``ToolResult.text``. Parse failures fall through silently with
     a debug log — the parent gets the raw response as text. See #395.
+
+    Use ``background=true`` to run the child asynchronously
+    (fire-and-forget): the tool returns a spawn ack carrying a
+    ``child_conv_id`` immediately and the child runs in the background —
+    poll via ``subagent_list`` and abort via ``subagent_cancel``. Use
+    ``background=false`` (the default) to await the child and return its
+    answer. ``background=true`` cannot be combined with
+    ``return_schema`` (a structured return needs an awaited result).
     """
     if tasks is not None:
         batch = tasks
@@ -397,6 +410,10 @@ async def tool_delegate_task(
         batch = None
 
     if batch is not None:
+        if background:
+            # A background spawn has no awaited result to fan out over; the
+            # batch primitive always awaits its children.
+            return ToolResult(text="[error: background=true cannot be combined with a task list]")
         return await tool_delegate_tasks(
             ctx,
             batch,
@@ -410,6 +427,13 @@ async def tool_delegate_task(
     if not task or not isinstance(task, str) or not task.strip():
         return ToolResult(text="[error: task description is required]")
 
+    if background and return_schema is not None:
+        # A structured return needs an awaited result; a fire-and-forget
+        # spawn has no answer to parse.
+        return ToolResult(
+            text="[error: background=true cannot be combined with return_schema; return_schema requires an awaited child result]",
+        )
+
     log.info(
         "[tool:delegate_task] model=%s vault_retrieval=%s vault_read=%s vault_write=%s schema=%s %s...",
         model or "inherit",
@@ -420,6 +444,12 @@ async def tool_delegate_task(
         task[:80],
     )
 
+    child_conv_id: str | None = None
+    if background:
+        # Fire-and-forget spawn: mint the child id here so the tool can
+        # surface it on the ack (poll via subagent_list / abort via
+        # subagent_cancel).
+        child_conv_id = f"{ctx.conv_id or ctx.channel_id}--child-{secrets.token_hex(4)}"
     text, data = await run_child_turn(
         ctx,
         task,
@@ -427,12 +457,19 @@ async def tool_delegate_task(
         allow_vault_retrieval=allow_vault_retrieval,
         allow_vault_read=allow_vault_read,
         allow_vault_write=allow_vault_write,
-        return_schema=return_schema,
+        return_schema=None if background else return_schema,
+        child_conv_id_override=child_conv_id,
+        await_child=not background,
     )
     # `run_child_turn` returns the error string in `text` (prefixed
     # with "[error: ...]") and data=None for failures. Pass it through
     # as a text-only ToolResult so the agent sees the same shape it
     # always did.
+    if background:
+        # Fire-and-forget spawn: run_child_turn returns the spawn ack text
+        # and no parsed data; surface the minted child_conv_id so the
+        # parent can poll via subagent_list / abort via subagent_cancel.
+        return ToolResult(text=text, data={"child_conv_id": child_conv_id})
     if data is None:
         return ToolResult(text=text)
     return ToolResult(text=text, data=data)
@@ -662,9 +699,9 @@ DELEGATE_TOOL_DEFINITIONS = [
                 "you to spin up, fork off, or hand off a task to a sub-agent / "
                 "child agent and you need the child's result back in this turn, "
                 "or when a task has independent parts that benefit from running "
-                "in isolated contexts. For a background subagent run you can "
-                "poll or cancel (an id, subagent_list, subagent_cancel), use "
-                "subagent_spawn instead.\n\n"
+                "in isolated contexts. For a background subagent run set "
+                "background=true; for an awaited run keep background unset "
+                "(the default) and pass return_schema for structured output.\n\n"
                 "Result shapes on ToolResult.data:\n"
                 "- Single task: child's parsed return_schema object arrives on ToolResult.data.\n"
                 "- Task list: structured summary arrives on ToolResult.data with shape "
@@ -696,6 +733,16 @@ DELEGATE_TOOL_DEFINITIONS = [
                         "items": {"type": "string"},
                         "description": (
                             "Optional alias for passing a list of task descriptions to execute in parallel."
+                        ),
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": (
+                            "When true, run the subagent asynchronously (fire-and-forget): "
+                            "return a spawn ack immediately with a child_conv_id you can "
+                            "poll via subagent_list and abort via subagent_cancel; the child "
+                            "runs in the background and its result is not returned to this "
+                            "turn. Default false. Cannot be combined with return_schema."
                         ),
                     },
                     "model": {
