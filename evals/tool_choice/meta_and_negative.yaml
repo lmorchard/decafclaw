@@ -5,13 +5,14 @@
 - name: delegate-vs-activate-research
   scenario: "Spin up a separate sub-agent to dig through the linkding ingest skill source and summarize how the ingest pipeline routes pages — I need the summary back here when it's done."
   expected: delegate_task
-  near_miss: [activate_skill, subagent_spawn]
+  near_miss: [activate_skill]
   notes: |
     "Spin up a separate sub-agent" is delegate_task — fork a child
     agent for an isolated task and get its result back. activate_skill
     loads a skill's tools into the current conversation; it doesn't run
-    anything by itself. subagent_spawn's default is fire-and-forget,
-    which would strand the summary in the child conversation.
+    anything by itself. delegate_task(background=true) is the
+    fire-and-forget shape and would strand the summary in the child
+    conversation.
 
 - name: activate-vs-delegate-tool-access
   scenario: "I want to use the project skill in this conversation."
@@ -24,27 +25,29 @@
 
 # -- subagent_spawn vs delegate_task (#1113) ---------------------------------
 
-- name: subagent-spawn-background-lifecycle
+- name: delegate-task-background-lifecycle
   scenario: "Kick off a subagent in the background to reorganize the vault tag taxonomy, and give me its id so I can check on it and stop it if it goes sideways."
-  expected: subagent_spawn
-  near_miss: [delegate_task]
+  expected: delegate_task
+  near_miss: [delegate_tasks]
   notes: |
     Background run + "give me its id so I can check on it and stop it"
-    is the subagent lifecycle surface (#1113): subagent_spawn returns a
-    child_conv_id immediately (fire-and-forget by default) and pairs
-    with subagent_list / subagent_cancel. delegate_task blocks the
-    parent until the child finishes and returns no id to manage.
+    is the fire-and-forget shape now expressed as delegate_task
+    background=true (#1113, merged into delegate_task): it returns a
+    spawn ack carrying a child_conv_id immediately and pairs with
+    subagent_list / subagent_cancel for polling and abort. The awaited
+    shape (background unset) blocks the parent until the child finishes
+    and returns the answer instead.
 
 - name: delegate-task-await-result
   scenario: "Hand this off to a child agent and wait for it: summarize docs/deployment.md in three sentences and bring the summary back here."
   expected: delegate_task
-  near_miss: [subagent_spawn]
+  near_miss: [subagent_list]
   notes: |
     "Hand off ... and wait ... bring the summary back here" wants the
-    awaited result directly — delegate_task. subagent_spawn's default
-    is fire-and-forget, which would strand the answer in the child
-    conversation; picking it here (or without async_run=false) breaks
-    the caller's expectation.
+    awaited result directly — delegate_task with background unset (the
+    default). The fire-and-forget shape (background=true) would strand
+    the answer in the child conversation; picking it here breaks the
+    caller's expectation.
 
 # -- Negative-control: no tool needed at all ---------------------------------
 
