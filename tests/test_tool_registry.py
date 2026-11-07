@@ -870,8 +870,14 @@ class TestWorkspaceEditDescription:
     def test_stays_within_token_budget(self):
         """#989 pins the def at/below its original 386-token estimate. The
         critical floor already exceeds max_active_tools (30), so a growing
-        definition only tightens the hard floor — keep it bounded."""
-        assert estimate_tool_tokens([self._workspace_edit_def()]) <= 386
+        definition only tightens the hard floor — keep it bounded.
+
+        #1126 added the optional ``expected_version`` parameter to the edit
+        def (+~38 tokens on top of the pre-#1126 estimate); the bound moves
+        with that deliberate, feature-driven growth and must not creep
+        further without a new feature.
+        """
+        assert estimate_tool_tokens([self._workspace_edit_def()]) <= 424
 
     def test_is_default_not_sparing(self):
         desc = self._workspace_edit_def()["function"]["description"]

@@ -8,6 +8,7 @@ import pytest
 from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.tools.workspace_tools import (
     MAX_READ_LINES,
+    _content_version,
     _resolve_safe,
     tool_file_share,
     tool_workspace_append,
@@ -505,6 +506,91 @@ def test_edit_nonexistent_file(ctx):
     result = tool_workspace_edit(ctx, "nope.py", "a", "b")
     assert "error" in _text(result).lower()
     assert "not found" in _text(result).lower()
+
+
+# -- workspace read/edit content versions (issue #1126) --
+
+
+def _read_version(ctx, path: str) -> str:
+    """Return the content version token from a fresh full read of a file."""
+    result = tool_workspace_read(ctx, path)
+    assert isinstance(result, ToolResult)
+    version = result.data["version"]
+    assert isinstance(version, str) and version
+    return version
+
+
+def test_read_returns_content_version_token(ctx):
+    tool_workspace_write(ctx, "ver.txt", "hello\n")
+    result = tool_workspace_read(ctx, "ver.txt")
+    assert isinstance(result, ToolResult)
+    version = result.data["version"]
+    assert isinstance(version, str) and version
+
+
+def test_read_partial_range_returns_same_version(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\nccc\n")
+    full_version = _read_version(ctx, "f.txt")
+    partial = tool_workspace_read(ctx, "f.txt", start_line=1, end_line=2)
+    assert isinstance(partial, ToolResult)
+    assert partial.data["version"] == full_version
+
+
+def test_edit_with_matching_expected_version_succeeds(ctx):
+    tool_workspace_write(ctx, "code.py", "def hello():\n    pass\n")
+    version = _read_version(ctx, "code.py")
+    result = tool_workspace_edit(ctx, "code.py", "def hello", "def goodbye", expected_version=version)
+    text = _text(result)
+    assert "replaced 1" in text.lower()
+    assert "Version:" in text
+
+
+def test_edit_with_stale_expected_version_rejected_without_write(ctx):
+    tool_workspace_write(ctx, "code.py", "def hello():\n    pass\n")
+    stale_version = _content_version("some other content that changed after the read")
+    result = tool_workspace_edit(ctx, "code.py", "def hello", "def goodbye", expected_version=stale_version)
+    text = _text(result).lower()
+    assert "stale version" in text
+    assert "re-read the file with workspace_read" in text
+    content = ctx.config.workspace_path.joinpath("code.py").read_text()
+    assert "def hello" in content
+
+
+def test_second_edit_from_same_version_cannot_succeed(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\n")
+    version = _read_version(ctx, "f.txt")
+    result = tool_workspace_edit(ctx, "f.txt", "aaa", "AAA", expected_version=version)
+    assert "replaced 1" in _text(result).lower()
+    result = tool_workspace_edit(ctx, "f.txt", "AAA", "AAAA", expected_version=version)
+    text = _text(result).lower()
+    assert "stale version" in text
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    assert content == "AAA\nbbb\n"
+
+
+def test_unrelated_change_then_stale_edit_rejected_even_when_old_text_matches(ctx):
+    tool_workspace_write(ctx, "f.txt", "alpha\nbeta\ngamma\n")
+    version = _read_version(ctx, "f.txt")
+    result = tool_workspace_edit(ctx, "f.txt", "alpha", "ALPHA", expected_version=version)
+    assert "replaced 1" in _text(result).lower()
+    # The version is now stale; the old_text below would still match the
+    # current content, but the staleness check must reject before writing.
+    result = tool_workspace_edit(ctx, "f.txt", "gamma", "GAMMA", expected_version=version)
+    text = _text(result).lower()
+    assert "stale version" in text
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    assert "gamma" in content
+
+
+def test_edit_without_expected_version_retains_behavior(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\n")
+    result = tool_workspace_edit(ctx, "f.txt", "aaa", "AAA")
+    assert "replaced 1" in _text(result).lower()
+
+
+def test_content_version_normalizes_line_endings():
+    # CRLF and LF files with identical logical text share one version token.
+    assert _content_version("alpha\r\nbeta\n") == _content_version("alpha\nbeta\n")
 
 
 # -- workspace_edit line-ending preservation (issue #997) --
