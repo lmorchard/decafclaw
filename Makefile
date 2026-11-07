@@ -32,6 +32,12 @@ run-pro:
 run-dev:
 	uv run python scripts/run_dev.py
 
+# Stop a worktree dev server via its PIDfile (no port scan) (#1208):
+# reads the PID the run-dev launcher wrote to data-dev/.pid and SIGTERMs
+# exactly that process. Missing file or dead PID -> clear no-op message.
+stop-dev:
+	uv run python scripts/stop_dev.py
+
 # Lint with ruff
 lint:
 	uv run ruff check src/ tests/ scripts/ contrib/
