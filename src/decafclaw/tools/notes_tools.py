@@ -87,6 +87,7 @@ NOTES_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "writes": True,
         "function": {
             "name": "notes_append",
             "description": (
@@ -117,6 +118,7 @@ NOTES_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "notes_read",
             "description": (

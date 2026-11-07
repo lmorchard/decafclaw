@@ -899,3 +899,134 @@ class TestChildAbnormalTermination:
             result2 = await tool_delegate_task(ctx, tasks=["task1", "task2"])
             assert isinstance(result2, ToolResult)
             assert result2.data["summary"] == {"total": 2, "ok": 2, "failed": 0}
+
+
+class TestReadOnlyDelegation:
+    """`delegate_task(read_only=true)` strips write-capable tools and adds
+    read-only instructions (#87)."""
+
+    @pytest.mark.asyncio
+    async def test_read_only_strips_write_tools(self, ctx):
+        """With read_only=True, write tools (shell, workspace_write, send_email)
+        are absent and read-only tools (workspace_read) survive."""
+        from decafclaw.tools import TOOL_DEFINITIONS
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await run_child_turn(ctx, "task", read_only=True)
+
+        child_ctx = mock_run.call_args[0][0]
+        allowed = child_ctx.tools.allowed or set()
+        for name in (
+            ("shell", "workspace_write, send_email".replace(", send_email", ""))
+            if False
+            else ("shell", "workspace_write", "send_email")
+        ):
+            assert name not in allowed, f"{name} should be stripped in read-only mode"
+        assert "workspace_read" in allowed, "workspace_read should survive read-only filtering"
+
+    @pytest.mark.asyncio
+    async def test_read_only_keeps_only_writes_false_tools(self, ctx):
+        """Every surviving tool must declare writes:False; build expectation by iterating definitions."""
+        from decafclaw.tools import TOOL_DEFINITIONS
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await run_child_turn(ctx, "task", read_only=True)
+
+        child_ctx = mock_run.call_args[0][0]
+        allowed = child_ctx.tools.allowed or set()
+        for td in TOOL_DEFINITIONS:
+            fn = td.get("function") or {}
+            name = fn.get("name")
+            if name in allowed:
+                assert td.get("writes") is False, (
+                    f"{name} survived read-only filter but declares writes={td.get('writes')}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_read_only_default_keeps_write_tools(self, ctx):
+        """With read_only unset, the child tool set is unchanged (write tools present)."""
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await run_child_turn(ctx, "task")
+
+        child_ctx = mock_run.call_args[0][0]
+        allowed = child_ctx.tools.allowed or set()
+        for name in ("shell", "workspace_write", "send_email"):
+            assert name in allowed, f"{name} should survive when read_only is unset"
+
+    @pytest.mark.asyncio
+    async def test_read_only_adds_prompt_instruction(self, ctx, monkeypatch):
+        """Child system prompt contains the read-only instruction only when read_only=True."""
+        prompts = []
+
+        async def fake_run_agent_turn(child_ctx, user_message, history, **kwargs):
+            prompts.append(child_ctx.config.system_prompt)
+            return ToolResult(text="ok")
+
+        monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+        await run_child_turn(ctx, "task", read_only=True)
+        assert any("READ-ONLY MODE" in p for p in prompts)
+        await run_child_turn(ctx, "task")
+        assert prompts[-1] and "READ-ONLY MODE" not in prompts[-1]
+
+    @pytest.mark.asyncio
+    async def test_tool_wrapper_threads_read_only(self, ctx):
+        """`tool_delegate_task` / `tool_delegate_tasks` pass read_only through to run_child_turn."""
+        seen = []
+
+        async def fake_run(parent_ctx, task, model="", max_iterations=0, **kwargs):
+            seen.append(kwargs.get("read_only"))
+            return ("ok", None)
+
+        with patch("decafclaw.tools.delegate.run_child_turn", side_effect=fake_run):
+            await tool_delegate_task(ctx, "task", read_only=True)
+            await tool_delegate_tasks(ctx, ["a"], read_only=True)
+        assert seen == [True, True]
+
+    def test_writes_flag_matches_categorical_write_sets(self):
+        """Every vault_/admin_ tool declaring writes:True is in the matching categorical set."""
+        from decafclaw.skills.background.tools import TOOL_DEFINITIONS as BACKGROUND_TOOLS
+        from decafclaw.skills.dream.tools import TOOL_DEFINITIONS as DREAM_TOOLS
+        from decafclaw.skills.garden.tools import TOOL_DEFINITIONS as GARDEN_TOOLS
+        from decafclaw.skills.mcp.tools import TOOL_DEFINITIONS as MCP_TOOLS
+        from decafclaw.skills.newsletter.tools import TOOL_DEFINITIONS as NEWSLETTER_TOOLS
+        from decafclaw.skills.project.tools import TOOL_DEFINITIONS as PROJECT_TOOLS
+        from decafclaw.skills.tabstack.tools import TOOL_DEFINITIONS as TABSTACK_TOOLS
+        from decafclaw.skills.vault.tools import TOOL_DEFINITIONS as VAULT_TOOLS
+        from decafclaw.tools import TOOL_DEFINITIONS
+        from decafclaw.tools.delegate import _ADMIN_WRITE_TOOLS, _VAULT_WRITE_TOOLS
+
+        # Core + bundled-skill definitions. The read-only filter resolves a
+        # tool name against core TOOL_DEFINITIONS plus the context's skill
+        # extra_definitions, so the consistency check must span all three
+        # sources or vault_/admin_ tools only visible via a skill module read
+        # as "missing".
+        by_name: dict = {}
+        for td in (
+            *TOOL_DEFINITIONS,
+            *BACKGROUND_TOOLS,
+            *DREAM_TOOLS,
+            *GARDEN_TOOLS,
+            *MCP_TOOLS,
+            *NEWSLETTER_TOOLS,
+            *PROJECT_TOOLS,
+            *TABSTACK_TOOLS,
+            *VAULT_TOOLS,
+        ):
+            fn = td.get("function") or {}
+            name = fn.get("name")
+            if name and name not in by_name:
+                by_name[name] = td
+        for name in sorted(_VAULT_WRITE_TOOLS | _ADMIN_WRITE_TOOLS):
+            assert by_name.get(name, {}).get("writes") is True, (
+                f"{name} is a categorical child-blocked write tool but does not declare writes:True"
+            )
+        for name, td in sorted(by_name.items()):
+            if not (name.startswith("vault_") or name.startswith("admin_")):
+                continue
+            is_write = td.get("writes") is True
+            expected_in_set = name in _VAULT_WRITE_TOOLS if name.startswith("vault_") else name in _ADMIN_WRITE_TOOLS
+            assert is_write == expected_in_set, f"{name}: writes should be {expected_in_set} for a vault/admin tool"

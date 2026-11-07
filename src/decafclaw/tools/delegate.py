@@ -51,6 +51,15 @@ _VAULT_WRITE_TOOLS = frozenset(
         "vault_journal_append",
         "vault_move_lines",
         "vault_section",
+        # #87: tools the writes-flag work added `writes: True` to that the
+        # categorical child-blocked set did not yet cover. A writes-flagged
+        # tool must be in this set (and vice versa) — see
+        # TestReadOnlyDelegation::test_writes_flag_matches_categorical_write_sets.
+        "vault_grant_folder",
+        "vault_update_frontmatter",
+        # Garden-skill vault maintenance writes (#87 added their `writes: True`).
+        "vault_reorganize_folders",
+        "vault_recompute_importance",
     }
 )
 
@@ -81,6 +90,14 @@ You MUST return your output in the following form:
 Replace placeholder values with actual data; keep the field shape
 exactly as shown. Use `null` for missing values rather than
 omitting fields."""
+
+_READ_ONLY_INSTRUCTION = """\
+
+You are in READ-ONLY MODE. You must not create, change, move, or delete
+anything. Do not call write-capable tools (for example workspace_write,
+shell, http_request, send_email, or similar). Use read-only tools only,
+and report the changes you recommend in your answer instead of applying
+them."""
 
 _FENCED_JSON_RE = re.compile(
     r"```json\s*\n(?P<body>.+?)\n```",
@@ -144,6 +161,7 @@ async def run_child_turn(
     event_context_id_override: str | None = None,
     child_conv_id_override: str | None = None,
     await_child: bool = True,
+    read_only: bool = False,
 ) -> tuple[str, dict | None]:
     """Run a child agent turn via ConversationManager, preserving the
     parent's tools, skills, and event routing.
@@ -195,6 +213,11 @@ async def run_child_turn(
             ack while the turn still runs via the manager loop (#1113,
             used by ``delegate_task(background=true)`` fire-and-forget
             spawns).
+        read_only: When True, strip write-capable tools from the child's
+            allowed set (per-tool ``writes`` flag) and append
+            ``_READ_ONLY_INSTRUCTION`` to the child system prompt. For
+            analysis / review / search / planning subtasks that must not
+            change anything. Default False.
 
     Returns ``(text, data)``:
         * On success without ``return_schema``: ``(child_text, None)``.
@@ -224,6 +247,8 @@ async def run_child_turn(
         addendum = _render_schema_addendum(return_schema)
         if addendum:
             prompt_parts.append(addendum)
+    if read_only:
+        prompt_parts.append(_READ_ONLY_INSTRUCTION)
     child_system_prompt = "\n".join(prompt_parts)
 
     child_config = replace(
@@ -293,6 +318,12 @@ async def run_child_turn(
         if allowed_tools is not None:
             all_tools = all_tools & set(allowed_tools)
         child_ctx.tools.allowed = all_tools - excluded
+        if read_only:
+            # Read-only delegation (#87): keep only tools whose definition
+            # declares `writes: False`; fail-closed on missing/unknown defs.
+            child_ctx.tools.allowed = {
+                name for name in (child_ctx.tools.allowed or set()) if _tool_is_read_only(name, parent_ctx)
+            }
 
         # Carry over parent's activated skill tools and data
         child_ctx.tools.extra = parent_ctx.tools.extra
@@ -361,6 +392,25 @@ async def run_child_turn(
     return (prose or raw_text, parsed)
 
 
+def _tool_is_read_only(name: str, ctx: "Context") -> bool:
+    """Return True when tool ``name`` is read-only (``writes == False``).
+
+    Fail-closed: a tool whose definition is missing or lacks a boolean
+    ``writes`` key counts as a write, so the read-only filter strips it.
+    Resolves against the core ``TOOL_DEFINITIONS`` plus the context's
+    skill ``extra_definitions``; MCP tools are not in either today and
+    therefore drop out of read-only children.
+    """
+    from . import TOOL_DEFINITIONS  # deferred: circular dep
+
+    sources = list(TOOL_DEFINITIONS) + list(getattr(ctx.tools, "extra_definitions", None) or [])
+    for td in sources:
+        fn = td.get("function") or {}
+        if fn.get("name") == name:
+            return td.get("writes") is False
+    return False
+
+
 async def tool_delegate_task(
     ctx: "Context",
     task: str | list[str] | None = None,
@@ -371,6 +421,7 @@ async def tool_delegate_task(
     allow_vault_write: bool = False,
     return_schema: dict | None = None,
     background: bool = False,
+    read_only: bool = False,
 ) -> ToolResult:
     """Delegate a subtask (or a list of subtasks in parallel) to child agents.
 
@@ -401,6 +452,12 @@ async def tool_delegate_task(
     ``background=false`` (the default) to await the child and return its
     answer. ``background=true`` cannot be combined with
     ``return_schema`` (a structured return needs an awaited result).
+
+    Use ``read_only=true`` to run the child in read-only mode: its tool
+    set is filtered down to tools that cannot change state (per-tool
+    ``writes`` flag) and its system prompt gains read-only instructions.
+    Use for analysis, review, search, and planning subtasks that must not
+    change anything.
     """
     if tasks is not None:
         batch = tasks
@@ -422,6 +479,7 @@ async def tool_delegate_task(
             allow_vault_read=allow_vault_read,
             allow_vault_write=allow_vault_write,
             return_schema=return_schema,
+            read_only=read_only,
         )
 
     if not task or not isinstance(task, str) or not task.strip():
@@ -460,6 +518,7 @@ async def tool_delegate_task(
         return_schema=None if background else return_schema,
         child_conv_id_override=child_conv_id,
         await_child=not background,
+        read_only=read_only,
     )
     # `run_child_turn` returns the error string in `text` (prefixed
     # with "[error: ...]") and data=None for failures. Pass it through
@@ -489,6 +548,7 @@ async def _run_one_delegated(
     allow_vault_read: bool,
     allow_vault_write: bool,
     return_schema: dict | None,
+    read_only: bool = False,
 ) -> dict:
     """Run one child of a `delegate_tasks` batch under a semaphore.
 
@@ -510,6 +570,7 @@ async def _run_one_delegated(
                 allow_vault_write=allow_vault_write,
                 return_schema=return_schema,
                 event_context_id_override=f"delegate-tasks-child-{idx}",
+                read_only=read_only,
             )
         except Exception as exc:
             log.warning(
@@ -564,6 +625,7 @@ async def tool_delegate_tasks(
     allow_vault_read: bool = False,
     allow_vault_write: bool = False,
     return_schema: dict | None = None,
+    read_only: bool = False,
 ) -> ToolResult:
     """Delegate a batch of subtasks to child agents in parallel (#397).
 
@@ -635,6 +697,7 @@ async def tool_delegate_tasks(
             allow_vault_read=allow_vault_read,
             allow_vault_write=allow_vault_write,
             return_schema=return_schema,
+            read_only=read_only,
         )
         for i, t in enumerate(tasks)
     ]
@@ -690,6 +753,7 @@ DELEGATE_TOOL_DEFINITIONS = [
         "priority": "critical",
         # Owns its own child-agent timeout via asyncio.wait_for(child_timeout_sec).
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "delegate_task",
             "description": (
@@ -705,7 +769,10 @@ DELEGATE_TOOL_DEFINITIONS = [
                 "Result shapes on ToolResult.data:\n"
                 "- Single task: child's parsed return_schema object arrives on ToolResult.data.\n"
                 "- Task list: structured summary arrives on ToolResult.data with shape "
-                "{'summary': {'total': N, 'ok': M, 'failed': K}, 'results': [{'index': 0, 'ok': True, 'text': ..., 'data': ...}, ...]}."
+                "{'summary': {'total': N, 'ok': M, 'failed': K}, 'results': [{'index': 0, 'ok': True, 'text': ..., 'data': ...}, ...}].\n\n"
+                "For analysis, review, search, or planning subtasks that must not "
+                "change anything, pass read_only=true to strip write-capable tools "
+                "and add read-only instructions to the child."
             ),
             "parameters": {
                 "type": "object",
@@ -772,6 +839,16 @@ DELEGATE_TOOL_DEFINITIONS = [
                             "the parsed object arrives directly on ToolResult.data. "
                             "For a batch of tasks, each child's parsed object arrives under "
                             "ToolResult.data['results'][i]['data']. Treat as a hint."
+                        ),
+                    },
+                    "read_only": {
+                        "type": "boolean",
+                        "description": (
+                            "When true, run the child in read-only mode: its tool set is "
+                            "filtered to tools that cannot change state and its system "
+                            "prompt gains read-only instructions. Use for analysis, "
+                            "review, search, and planning subtasks that must not change "
+                            "anything. Default false."
                         ),
                     },
                 },

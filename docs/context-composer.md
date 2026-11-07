@@ -167,6 +167,10 @@ class ComposedContext:
     retrieved_context_text: str   # Formatted memory context (for reflection)
 ```
 
+### Read-only delegation and tool `writes`
+
+Tool definitions now carry a top-level `writes` boolean — `true` when a call can change state outside the turn (file writes, shell, outbound messages, external service calls, admin/vault mutations, …), `false` for read-only tools. The flag backs delegated read-only filtering: `delegate_task(read_only=true)` strips write-capable tools from the child and appends read-only instructions to the child system prompt. See [Sub-Agent Delegation](delegation.md#read-only-mode).
+
 ### Modes
 
 The composer is mode-aware via `ComposerMode`:

@@ -179,6 +179,7 @@ SEARCH_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        "writes": False,
         "function": {
             "name": "tool_search",
             "description": (
