@@ -39,6 +39,19 @@
     it with sed/heredoc. A single-value textual change with the target in view
     is a workspace_edit.
 
+- name: workspace-edit-stale-version-guard
+  scenario: |
+    The user asks you to change `def run` to `def run_fast` in src/app.py, passing
+    the content version token from the most recent read as expected_version.
+  expected: workspace_edit
+  near_miss: [shell]
+  notes: |
+    The stale-version rejection is a workspace_edit behavior (expected_version
+    comes from a fresh read). The steering question stays which tool owns the
+    edit: the answer is workspace_edit; the write action is workspace_edit, not
+    shell. The rejection itself is deterministic unit coverage in
+    tests/test_workspace_tools.py; this case pins the tool choice.
+
 # -- vault_search vs conversation_search --------------------------------------
 
 - name: vault-vs-conv-decisions
