@@ -87,6 +87,7 @@ async def test_subagent_replay_path(ctx):
             "allowed_tools": None,
             "allow_vault_retrieval": False,
             "allow_vault_read": False,
+            "strict": False,
         },
     )
     j.append((0,), "subagent", fp, "cached answer")
