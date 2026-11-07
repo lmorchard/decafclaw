@@ -4,7 +4,7 @@ written: 2026-11-07
 sources:
   - AGENTS.md 2b7577c48be4dc3927543e0cead60443cd242704
   - CLAUDE.md 2b7577c48be4dc3927543e0cead60443cd242704
-  - Makefile b8a9eefe78fd3fe4fe1a310f40b072c48a8c48c6
+  - Makefile b3638bb7cdc6406b35c2a1fec0249ca7c3064b25
   - .github/workflows/ci.yml 2de18948e0afc3ee4c14570649660a08aea316d5
   - conftest.py fb46496f6536760ece617b135afc7aef3c6eac93
   - tests/conftest.py 49ff00ed9d4d72a8cc7aa2e07108a490c8802c0c
