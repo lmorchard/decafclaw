@@ -22,12 +22,12 @@ Sandboxed file operations inside `data/{agent_id}/workspace/`. See [Data Layout]
 
 | Tool | Always | What it does |
 |------|:------:|--------------|
-| `workspace_read` | ✓ | Read a file (supports line ranges and targeted section retrieval) |
+| `workspace_read` | ✓ | Read a file (supports line ranges and targeted section retrieval). Returns a content version token per read; pass it as `expected_version` to `workspace_edit` to reject edits against a stale read |
 | `workspace_outline` | | Structural outline of classes, functions, and headings, or targeted section retrieval |
 | `workspace_write` | ✓ | Write/overwrite a file, creating parents |
 | `workspace_list` | | List files and directories |
 | `workspace_append` | | Append content to a file |
-| `workspace_edit` | ✓ | Surgical text edits (single- or multi-line); default tool for edits where the text is in view. Preserves the file's line endings (CRLF or LF), and when old_text is not found the error hints at a whitespace-only or near match with its line number |
+| `workspace_edit` | ✓ | Surgical text edits (single- or multi-line); default tool for edits where the text is in view. Preserves the file's line endings (CRLF or LF), and when old_text is not found the error hints at a whitespace-only or near match with its line number. Accepts optional `expected_version` from a fresh read; a stale version rejects the edit (error, no write) and a success result reports the new version |
 | `workspace_insert` | | Insert text at a specific line number |
 | `workspace_replace_lines` | | Replace or delete a range of lines |
 | `workspace_search` | | Regex search across workspace files |
@@ -36,6 +36,12 @@ Sandboxed file operations inside `data/{agent_id}/workspace/`. See [Data Layout]
 | `workspace_delete` | | Delete a file |
 | `workspace_diff` | | Unified diff between two files |
 | `file_share` | | Share a workspace file as a Mattermost attachment |
+
+### Content versions for read→edit staleness (#1126)
+
+`workspace_read` returns a content version token (sha256 over LF-normalized file content) in its tool data on every read — including partial line-range reads, which report the full-file version. `workspace_edit` accepts an optional `expected_version`; when the file content no longer matches that version, the edit is rejected with a stale-version error **before any write happens**, and a successful edit reports the new version via a trailing `Version: …` line in its result.
+
+Without `expected_version`, edits keep the historical behavior (no staleness guard). The guard is process-local (per-file locks within this process); it is not a filesystem-wide compare-and-swap and does not coordinate with arbitrary external writers or other mutation paths, so callers relying on cross-process freshness must re-read.
 
 ## Admin Files (`tools/admin_tools.py`)
 

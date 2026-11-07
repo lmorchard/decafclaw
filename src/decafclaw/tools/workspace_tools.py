@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import difflib
 import fnmatch
+import hashlib
 import logging
 import os
 import re
@@ -180,6 +181,18 @@ def _resolve_safe(config, path_str: str) -> Path | None:
     return target
 
 
+def _content_version(content: str) -> str:
+    """Content version token for read/compare flows (#1126).
+
+    Hashes the LF-normalized content so CRLF and LF files with identical
+    logical text share one version, keeping version comparisons consistent
+    across line-ending styles. Read results expose this version; edits accept
+    an ``expected_version`` and reject when it no longer matches.
+    """
+    normalized = content.replace("\r\n", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 def tool_workspace_read(
     ctx: "Context",
     path: str,
@@ -205,6 +218,7 @@ def tool_workspace_read(
         "path": path,
         "size": len(content.encode("utf-8")),
         "lines": total,
+        "version": _content_version(content),
     }
 
     if section is not None:
@@ -770,7 +784,12 @@ def _edit_not_found_hint(content: str, old_text: str) -> str:
 
 
 def tool_workspace_edit(
-    ctx: "Context", path: str, old_text: str, new_text: str, replace_all: bool = False
+    ctx: "Context",
+    path: str,
+    old_text: str,
+    new_text: str,
+    replace_all: bool = False,
+    expected_version: str | None = None,
 ) -> str | ToolResult:
     """Edit a file by replacing exact text matches."""
     log.info(f"[tool:workspace_edit] {path}")
@@ -786,6 +805,17 @@ def tool_workspace_edit(
             content = resolved.read_text(newline="")
         except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
             return _file_error(e, path)
+
+        version = _content_version(content)
+        if expected_version is not None and expected_version != version:
+            return ToolResult(
+                text=(
+                    f"[error: stale version for {path}: expected {expected_version}, but the file has "
+                    f"changed since the last read (current version: {version}). "
+                    "Re-read the file with workspace_read and retry the edit with the version "
+                    "returned by the fresh read.]"
+                )
+            )
 
         # Match on text normalized to \n so an LF old_text matches a CRLF
         # file (and vice versa), then convert the result back to the file's
@@ -823,6 +853,7 @@ def tool_workspace_edit(
         diff = _mini_diff(normalized, new_normalized, path)
         text = f"{summary}\n\n{diff}" if diff else summary
         has_diff = bool(diff)
+        new_version = _content_version(new_content)
         oversized = (
             len(normalized) > MAX_DIFF_WIDGET_CHARS
             or len(new_normalized) > MAX_DIFF_WIDGET_CHARS
@@ -844,7 +875,7 @@ def tool_workspace_edit(
             else None
         )
         return ToolResult(
-            text=text,
+            text=f"{text}\n\nVersion: {new_version}",
             widget=widget,
         )
 
@@ -1185,7 +1216,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         ],
         "function": {
             "name": "workspace_read",
-            "description": "Read a file from your workspace filesystem (blog posts, code, configs, scripts, project files). NOT for vault knowledge pages (use vault_read for those). Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive) or a targeted section by name/symbol. Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
+            "description": "Read a file from your workspace filesystem (blog posts, code, configs, scripts, project files). NOT for vault knowledge pages (use vault_read for those). Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive) or a targeted section by name/symbol. Paths are relative to the workspace root — do NOT prefix with 'workspace/'. Each read returns a content version token; pass it as expected_version to workspace_edit to reject edits against a stale read.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1416,7 +1447,12 @@ WORKSPACE_TOOL_DEFINITIONS = [
                 "old_text from a fresh workspace_read (or a prior edit's "
                 "diff) — never reconstruct it from memory. Fails if the text "
                 "isn't found or matches more than once."
-            )
+            ),
+            (
+                "Pass expected_version from the most recent workspace_read of the "
+                "same file on every edit to reject stale-content edits; on stale "
+                "the tool returns an error and no write happens."
+            ),
         ],
         "function": {
             "name": "workspace_edit",
@@ -1460,6 +1496,10 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     "replace_all": {
                         "type": "boolean",
                         "description": "Replace all occurrences instead of requiring a unique match (default: false)",
+                    },
+                    "expected_version": {
+                        "type": "string",
+                        "description": "Content version from a fresh workspace_read; when stale the edit is rejected and not written.",
                     },
                 },
                 "required": ["path", "old_text", "new_text"],

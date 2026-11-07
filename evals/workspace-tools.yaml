@@ -125,3 +125,26 @@
   expect_workspace:
     workspace_file_exists: ["src/config.txt"]
 
+# -- edit: stale version guard against an outdated read ------------------------
+# workspace_edit accepts an optional expected_version (from a fresh
+# workspace_read) and rejects the edit as stale without writing when the file
+# has moved on. This case pins the LLM-facing tool choice; the staleness
+# rejection itself is deterministic unit coverage in
+# tests/test_workspace_tools.py.
+
+- name: "rejects a workspace_edit that passes a stale expected_version"
+  setup:
+    workspace_files:
+      "src/app.py": |
+        def run():
+            pass
+  input: "Change src/app.py so def run becomes def run_fast, using the expected_version from the most recent read."
+  expect:
+    response_contains: "stale version"
+    max_tool_calls: 6
+    max_tool_errors: 0
+    expect_tool: workspace_edit
+    expect_no_tool: [shell]
+    config_overrides:
+      reflection.enabled: false
+
