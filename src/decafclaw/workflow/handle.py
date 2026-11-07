@@ -174,6 +174,7 @@ class WorkflowHandle:
         allow_vault_retrieval: bool = False,
         allow_vault_read: bool = False,
         model: str | None = None,
+        strict: bool = False,
     ) -> dict | str:
         """Dispatch a child agent loop as a journaled boundary crossing.
 
@@ -201,6 +202,7 @@ class WorkflowHandle:
                 "allowed_tools": sorted(allowed_tools) if allowed_tools else None,
                 "allow_vault_retrieval": allow_vault_retrieval,
                 "allow_vault_read": allow_vault_read,
+                "strict": strict,
             },
         )
         cached, hit = self._check_or_none(seq, "subagent", fp)
@@ -221,8 +223,19 @@ class WorkflowHandle:
             allow_vault_retrieval=allow_vault_retrieval,
             allow_vault_read=allow_vault_read,
             return_schema=schema,
+            strict=strict,
         )
         result: dict | str = data if schema is not None and data is not None else text
+        if (
+            strict
+            and isinstance(data, dict)
+            and isinstance(data.get("structured"), dict)
+            and data["structured"].get("ok") is False
+        ):
+            # Strict-mode validation failed (#1123): surface the explicit
+            # validation failure rather than a structured payload that never
+            # validated.
+            result = text
         self.journal.append(seq, "subagent", fp, result)
         save_journal(self.ctx.config, self.ctx.conv_id, self.journal)
         return result
