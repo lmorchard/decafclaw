@@ -1214,6 +1214,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "prompt_guidelines": [
             "Use workspace_read to see the exact current content and line numbers before modifying a file."
         ],
+        "writes": False,
         "function": {
             "name": "workspace_read",
             "description": "Read a file from your workspace filesystem (blog posts, code, configs, scripts, project files). NOT for vault knowledge pages (use vault_read for those). Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive) or a targeted section by name/symbol. Paths are relative to the workspace root — do NOT prefix with 'workspace/'. Each read returns a content version token; pass it as expected_version to workspace_edit to reject edits against a stale read.",
@@ -1247,6 +1248,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "prompt_guidelines": [
             "Use workspace_outline to inspect classes, functions, and headings before reading specific sections of large files."
         ],
+        "writes": False,
         "function": {
             "name": "workspace_outline",
             "description": "Show a structural outline of a workspace file (Python classes/functions or Markdown headings) with line numbers, or retrieve a specific section. Use this on large files before reading full contents to identify relevant code or documentation.",
@@ -1270,6 +1272,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_search and workspace_glob to find files first."],
+        "writes": False,
         "function": {
             "name": "workspace_search",
             "description": "Search for a regex pattern across files in the workspace. Returns matching lines with line numbers and surrounding context, grouped by file. Use the glob parameter to filter file types (e.g. '*.py'). Pass a specific file path to search within one file.",
@@ -1301,6 +1304,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_search and workspace_glob to find files first."],
+        "writes": False,
         "function": {
             "name": "workspace_glob",
             "description": "Find files by name/glob pattern, recursively. Returns matching file paths relative to workspace root with file sizes. Useful for finding files by extension or name pattern.",
@@ -1323,6 +1327,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "workspace_list",
             "description": "List files and directories in your workspace. Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
@@ -1342,6 +1347,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_diff to compare two files."],
+        "writes": False,
         "function": {
             "name": "workspace_diff",
             "description": "Show a unified diff between two workspace files. Useful for comparing versions, checking what changed, or reviewing differences.",
@@ -1368,6 +1374,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": False,
         "function": {
             "name": "workspace_preview_markdown",
             "description": (
@@ -1394,6 +1401,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "critical",
         "prompt_guidelines": ["Use workspace_write for new files or full rewrites only."],
+        "writes": True,
         "function": {
             "name": "workspace_write",
             "description": "Write content to a file in your workspace filesystem. Use this for blog posts, code, configs, scripts, and any project files. NOT for vault knowledge pages (use vault_write for those). NOT for HTML/CSS/JS demos the user wants to SEE — when the user asks you to 'show', 'display', 'render', or 'demo' interactive web content, use canvas_new_tab with widget_type='iframe_sandbox' so it renders directly in their UI instead of forcing them to open a saved file. Creates parent directories as needed. Paths are relative to the workspace root — do NOT prefix with 'workspace/' (use 'blog/post.md' not 'workspace/blog/post.md').",
@@ -1417,6 +1425,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_append to add to the end of a file."],
+        "writes": True,
         "function": {
             "name": "workspace_append",
             "description": "Append content to the end of a file in your workspace. Creates the file (and parent directories) if it doesn't exist. Adds a newline separator if the file doesn't end with one.",
@@ -1454,6 +1463,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
                 "the tool returns an error and no write happens."
             ),
         ],
+        "writes": True,
         "function": {
             "name": "workspace_edit",
             "description": (
@@ -1510,6 +1520,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "prompt_guidelines": ["Use workspace_insert for insertions by line number."],
+        "writes": True,
         "function": {
             "name": "workspace_insert",
             "description": "Insert text at a specific line number in a workspace file, pushing existing content down. Line numbers are 1-based. Use workspace_read first to see line numbers.",
@@ -1539,6 +1550,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "prompt_guidelines": [
             ("Use workspace_replace_lines for edits by line number (boundary rewrites, deletions by range).")
         ],
+        "writes": True,
         "function": {
             "name": "workspace_replace_lines",
             "description": "Replace a range of lines (1-based, inclusive) with new content. Pass empty content to delete lines. Use workspace_read first to see line numbers.",
@@ -1570,6 +1582,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_move and workspace_delete to rename or remove files."],
+        "writes": True,
         "function": {
             "name": "workspace_move",
             "description": "Move or rename a file within the workspace. Fails if the destination already exists.",
@@ -1592,6 +1605,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "workspace_mkdir",
             "description": "Create an empty directory (and its parents) in the workspace. No-op if it exists. Useful for scaffolding project layouts up front.",
@@ -1610,6 +1624,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "workspace_copy",
             "description": "Copy a file within the workspace. Fails if the destination already exists.",
@@ -1633,6 +1648,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_move and workspace_delete to rename or remove files."],
+        "writes": True,
         "function": {
             "name": "workspace_delete",
             "description": "Delete a file or directory from the workspace. By default, it will only delete files or empty directories. To delete a non-empty directory and its contents, you must set recursive to true. NEVER guess a filename if a target is described ambiguously (e.g. 'the Q1 report' with multiple matching files) — use workspace_list to check existing files or ask the user for clarification first.",
@@ -1655,6 +1671,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "writes": True,
         "function": {
             "name": "file_share",
             "description": "Share a file from the workspace as an attachment in the conversation. The file will be uploaded and displayed inline (images) or as a download (other files). Use this to share reports, images, logs, or any workspace file with the user.",

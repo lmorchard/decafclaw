@@ -638,6 +638,58 @@ def test_browser_conversation_export(built_static, chromium, config):
         ]
 
 
+def test_browser_copy_menu_position(built_static, chromium, config):
+    """#1224: the copy menu summoned from the context inspector must open above
+    the trigger and stay inside the viewport."""
+    conv_id = seed_conversation(config, "Copy menu position")
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        page.evaluate(
+            """async (convId) => {
+            await import('/static/components/copy-conversation-menu.js');
+            const el = document.createElement('copy-conversation-menu');
+            el.convId = convId;
+            document.body.append(el);
+            await el.updateComplete;
+            return el;
+        }""",
+            conv_id,
+        )
+        page.wait_for_function("document.querySelector('copy-conversation-menu') !== null")
+        menu = page.locator("copy-conversation-menu")
+        menu.locator(".copy-menu-trigger").click()
+        menu.locator(".copy-menu-list").wait_for(state="visible")
+        geom = page.evaluate(
+            """() => {
+                const menu = document.querySelector('copy-conversation-menu');
+                const list = menu.querySelector('.copy-menu-list');
+                const trigger = menu.querySelector('.copy-menu-trigger');
+                const mr = list.getBoundingClientRect();
+                const tr = trigger.getBoundingClientRect();
+                const cs = getComputedStyle(list);
+                return {
+                    open: menu._open,
+                    position: cs.position,
+                    bottom: cs.bottom,
+                    right: cs.right,
+                    menuTop: mr.top, menuBottom: mr.bottom, menuLeft: mr.left, menuRight: mr.right,
+                    triggerTop: tr.top, triggerBottom: tr.bottom, triggerLeft: tr.left, triggerRight: tr.right,
+                    innerHeight: window.innerHeight, innerWidth: window.innerWidth,
+                };
+            }"""
+        )
+        print("COPY MENU GEOM", geom)
+        assert geom["open"] is True
+        assert geom["position"] == "fixed"
+        # The menu must open above the trigger (bottom-anchored popover).
+        assert geom["menuBottom"] <= geom["triggerTop"] + 1
+        # The menu must stay inside the viewport — pre-fix it landed off-page.
+        assert geom["menuBottom"] <= geom["innerHeight"] + 1
+        # The menu must right-align with the trigger: its right edge should sit
+        # at the trigger's right edge, not at the far-left of the page.
+        assert abs(geom["menuRight"] - geom["triggerRight"]) < 2
+
+
 def test_browser_sticky_state(built_static, chromium, config):
     conv_id = seed_conversation(config, "Sticky test")
     payload = {"content": "# Doc", "extra": {"rows": [1, True, None, {"label": "nested"}]}}

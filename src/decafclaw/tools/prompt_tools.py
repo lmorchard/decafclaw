@@ -388,6 +388,7 @@ PROMPT_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "timeout": None,
+        "writes": True,
         "function": {
             "name": "update_system_prompt",
             "description": (
