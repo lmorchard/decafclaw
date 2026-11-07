@@ -44,6 +44,23 @@ def run_script(cwd: Path, extra_env: dict[str, str] | None = None) -> subprocess
     )
 
 
+STOP_DEV = REPO_ROOT / "scripts" / "stop_dev.py"
+
+
+def run_stop_script(
+    cwd: Path,
+    extra_env: dict[str, str] | None = None,
+    args: list[str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    if extra_env:
+        env.update(extra_env)
+    cmd = [sys.executable, str(STOP_DEV)]
+    if args:
+        cmd.extend(args)
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env, timeout=60)
+
+
 @pytest.fixture
 def main_clone(tmp_path: Path) -> Path:
     """A throwaway primary git checkout (no worktrees)."""
@@ -211,3 +228,63 @@ def test_agent_id_from_worktree_env_file(main_clone: Path, tmp_path: Path):
     assert result.returncode == 0, result.stdout + result.stderr
     seeded = worktree / "data-dev" / "dotenv-agent" / "config.json"
     assert seeded.read_text(encoding="utf-8") == config.read_text(encoding="utf-8")
+
+
+def _spawn_sleepy() -> subprocess.Popen:
+    """Spawn a short-lived python child for stop-dev liveness tests."""
+    return subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def test_run_dev_writes_pidfile(main_clone: Path, tmp_path: Path):
+    """`make run-dev` writes the launched pid to the worktree-local data-dev/.pid (#1208)."""
+    worktree = add_worktree(main_clone, tmp_path)
+    seed_main_clone_config(main_clone)
+    result = run_script(worktree, add_fake_uv(tmp_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    pidfile = worktree / "data-dev" / ".pid"
+    assert pidfile.is_file()
+    pid = int(pidfile.read_text(encoding="utf-8").strip())
+    assert pid > 0
+
+
+def test_stop_dev_missing_pidfile_noop(main_clone: Path, tmp_path: Path):
+    """`make stop-dev` with no pidfile -> clear no-op, exit 0 (never a port scan)."""
+    worktree = add_worktree(main_clone, tmp_path)
+    seed_main_clone_config(main_clone)
+    result = run_stop_script(worktree, add_fake_uv(tmp_path), ["--pidfile", str(worktree / "data-dev" / ".pid")])
+    assert result.returncode == 0
+    combined = result.stdout + result.stderr
+    assert "nothing to stop" in combined
+
+
+def test_stop_dev_dead_pid_noop(main_clone: Path, tmp_path: Path):
+    """`make stop-dev` with a dead pid -> clear no-op, exit 0."""
+    worktree = add_worktree(main_clone, tmp_path)
+    seed_main_clone_config(main_clone)
+    child = _spawn_sleepy()
+    child.kill()
+    child.wait(timeout=30)
+    pidfile = worktree / "data-dev" / ".pid"
+    pidfile.parent.mkdir(parents=True, exist_ok=True)
+    pidfile.write_text(f"{child.pid}\n", encoding="utf-8")
+    result = run_stop_script(worktree, add_fake_uv(tmp_path), ["--pidfile", str(pidfile)])
+    assert result.returncode == 0
+    combined = result.stdout + result.stderr
+    assert "not running" in combined
+
+
+def test_stop_dev_stops_live_pid(main_clone: Path, tmp_path: Path):
+    """`make stop-dev` SIGTERMs the live pid from the pidfile and waits for exit."""
+    worktree = add_worktree(main_clone, tmp_path)
+    seed_main_clone_config(main_clone)
+    child = _spawn_sleepy()
+    pidfile = worktree / "data-dev" / ".pid"
+    pidfile.parent.mkdir(parents=True, exist_ok=True)
+    pidfile.write_text(f"{child.pid}\n", encoding="utf-8")
+    result = run_stop_script(worktree, add_fake_uv(tmp_path), ["--pidfile", str(pidfile), "--stop-timeout", "5"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    child.wait(timeout=30)

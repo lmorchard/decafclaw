@@ -39,6 +39,7 @@ from pathlib import Path
 DEFAULT_AGENT_ID = "decafclaw"
 DEFAULT_HTTP_PORT = 18880  # matches HttpConfig.port
 DATA_DIR_NAME = "data-dev"  # gitignored; the worktree-local agent data home
+PIDFILE_NAME = ".pid"  # gitignored; worktree-local dev-server PIDfile (#1208)
 
 # Env applied to the launched app. Each key maps 1:1 to a config field
 # (see config_types.py), so the app's own resolution order does the rest.
@@ -57,6 +58,20 @@ def git_output(*args: str) -> str | None:
     if proc.returncode != 0:
         return None
     return proc.stdout.strip()
+
+
+def write_pidfile(checkout_root: Path) -> Path:
+    """Write the launched server's PID to the worktree-local pidfile (#1208).
+
+    The launch is an ``os.execvpe`` replacement, so the PID written here is
+    the PID the server keeps for its lifetime. A stale pidfile from a crashed
+    run is simply overwritten — stop-dev treats an unreadable/dead pid as a
+    no-op rather than scanning ports.
+    """
+    pidfile = checkout_root / DATA_DIR_NAME / PIDFILE_NAME
+    pidfile.parent.mkdir(parents=True, exist_ok=True)
+    pidfile.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    return pidfile
 
 
 def locate_checkouts() -> tuple[Path, Path] | None:
@@ -191,6 +206,9 @@ def main() -> int:
         )
     data_home = checkout_root / DATA_DIR_NAME
     print(f"run-dev: web UI on http://localhost:{port} (DATA_HOME={data_home}, Mattermost/email/DMs/heartbeat off)")
+
+    pidfile = write_pidfile(checkout_root)
+    print(f"run-dev: wrote server pid {os.getpid()} to {pidfile}")
 
     env = dict(os.environ)
     env["DATA_HOME"] = str(data_home)
