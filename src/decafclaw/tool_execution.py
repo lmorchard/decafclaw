@@ -23,7 +23,7 @@ from .archive import append_message
 from .conversation_paths import conversation_dir
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause
 from .telemetry import get_tracer
-from .tools import execute_tool
+from .tools import TOOL_DEFINITIONS, execute_tool
 
 _tracer = get_tracer(__name__)
 
@@ -31,6 +31,16 @@ if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
+
+# Batch execution policies (issue #1124). Within a single batch of tool calls:
+#   - `shared`: calls may overlap with each other, subject to the global
+#     semaphore / `max_concurrent_tools` budget.
+#   - `exclusive`: the call waits for preceding calls in the batch and blocks
+#     later calls until it completes.
+# When policy resolution fails for a call, the batch falls back to serial
+# execution (every call effectively exclusive, in order).
+EXEC_SHARED = "shared"
+EXEC_EXCLUSIVE = "exclusive"
 
 
 # `_archive` and `_check_cancelled` are duplicated from `agent.py` rather
@@ -315,6 +325,50 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
     return tool_msg, result.end_turn
 
 
+def _resolve_execution_policy(ctx: "Context", fn_name: str) -> str | None:
+    """Resolve the batch execution policy for one tool call (issue #1124).
+
+    Sources are checked in the same order ``execute_tool`` dispatches its
+    handlers: skill-provided extras, the global tool registry, then MCP (or the
+    MCP registry). Returns the policy for the first resolvable definition, or
+    ``None`` when nothing resolves for the name.
+
+    Precedence:
+      1. Explicit ``execution`` key on the tool def (``"shared"`` / ``"exclusive"``).
+      2. Derived from the ``writes`` flag — read-only (``False``) → shared,
+         mutating (``True``) → exclusive.
+      3. Default → shared.
+
+    An unresolvable name returns ``None``; the batch runner treats that as a
+    policy-resolution failure and falls back to serial execution.
+    """
+    sources: list[list] = []
+    sources.append(list(ctx.tools.extra_definitions or []))
+    sources.append(list(TOOL_DEFINITIONS))
+    if ctx.tools.mcp_definitions is not None:
+        sources.append(list(ctx.tools.mcp_definitions))
+    else:
+        from .mcp_client import get_registry
+
+        registry = get_registry()
+        sources.append(list(registry.get_tool_definitions()) if registry else [])
+    for source in sources:
+        for td in source:
+            fn = td.get("function") or {}
+            if fn.get("name") != fn_name:
+                continue
+            exec_mode = str(td.get("execution") or "").strip().lower()
+            if exec_mode in (EXEC_SHARED, EXEC_EXCLUSIVE):
+                return exec_mode
+            writes = td.get("writes")
+            if writes is False:
+                return EXEC_SHARED
+            if writes is True:
+                return EXEC_EXCLUSIVE
+            return EXEC_SHARED
+    return None
+
+
 async def execute_tool_calls(ctx: "Context", tool_calls, history, messages):
     """Execute tool calls concurrently, add results to history.
 
@@ -327,15 +381,53 @@ async def execute_tool_calls(ctx: "Context", tool_calls, history, messages):
 
     semaphore = asyncio.Semaphore(ctx.config.agent.max_concurrent_tools)
 
-    # Fork ctx per tool call so concurrent tools don't race on current_tool_call_id
-    tasks = []
+    # Resolve per-call batch execution policies (issue #1124). A `shared` call
+    # may overlap with other shared calls within the global semaphore budget; an
+    # `exclusive` call waits for preceding calls and blocks later calls until it
+    # completes. When policy resolution fails for a call, fall back to serial
+    # execution for the whole batch (fail safe).
+    policies: list[str | None] = []
     for tc in tool_calls:
-        call_ctx = ctx.fork_for_tool_call(tc["id"])
-        task = asyncio.create_task(
-            execute_single_tool(call_ctx, tc, semaphore),
-            name=f"tool-{tc['function']['name']}-{tc['id'][:8]}",
+        policies.append(_resolve_execution_policy(ctx, tc.get("function", {}).get("name") or ""))
+    if any(p is None for p in policies):
+        policies = [EXEC_EXCLUSIVE] * len(tool_calls)
+
+    count = len(tool_calls)
+    start_events: list[asyncio.Event] = [asyncio.Event() for _ in range(count)]
+    done_events: list[asyncio.Event] = [asyncio.Event() for _ in range(count)]
+    successors: list[list[int]] = [[] for _ in range(count)]
+    preds: list[list[int]] = [[] for _ in range(count)]
+    for j in range(count):
+        for i in range(j + 1, count):
+            # Exclusive calls wait for all preceding calls and block later
+            # calls until completion; shared calls only wait for preceding
+            # exclusive calls.
+            if policies[j] == EXEC_EXCLUSIVE or policies[i] == EXEC_EXCLUSIVE:
+                successors[j].append(i)
+                preds[i].append(j)
+    for i in range(count):
+        if not preds[i]:
+            # No preceding calls to wait for — start immediately.
+            start_events[i].set()
+
+    call_ctxs = [ctx.fork_for_tool_call(tc["id"]) for tc in tool_calls]
+
+    async def _run_batch_call(i: int):
+        try:
+            await start_events[i].wait()
+            return await execute_single_tool(call_ctxs[i], tool_calls[i], semaphore)
+        finally:
+            done_events[i].set()
+            for succ in successors[i]:
+                start_events[succ].set()
+
+    tasks = [
+        asyncio.create_task(
+            _run_batch_call(i),
+            name=f"tool-{tool_calls[i]['function']['name']}-{tool_calls[i]['id'][:8]}",
         )
-        tasks.append(task)
+        for i in range(count)
+    ]
 
     # Cancel watcher: if the cancel event fires, cancel all in-flight tasks
     cancel_event = ctx.cancelled

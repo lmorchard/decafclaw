@@ -386,6 +386,24 @@ Every tool declares a priority: `critical` (✓ above), `normal` (default), or `
 
 Every tool definition also declares a top-level `writes` boolean: `true` when a call can change state outside the turn (file writes, shell, outbound messages, external service calls, admin/vault mutations, …); `false` for read-only tools. The flag drives delegated read-only filtering (`delegate_task(read_only=true)`) and backs the declaration invariant in tests. A tool whose definition lacks a `writes` key is treated as a write (fail-closed).
 
+## Batch execution policy: shared vs exclusive (#1124)
+
+When the model emits several tool calls in one assistant message, they run as a **batch**: concurrently under the global semaphore (`max_concurrent_tools`), each on its own forked context. Within a batch, every call also carries an **execution policy** that orders calls against each other:
+
+- **`shared`** — the call may overlap with other shared calls, subject only to the global semaphore budget.
+- **`exclusive`** — the call waits for every preceding call in the batch to complete before it starts, and blocks every later call until it completes. A batch with one exclusive call in the middle therefore runs as: preceding calls concurrently → the exclusive call alone → later calls concurrently.
+
+**Resolution order** (first resolvable definition wins, mirroring `execute_tool` dispatch: skill extras → core registry → MCP):
+
+1. An explicit top-level `execution` key on the tool definition (`"shared"` or `"exclusive"`) — use it to override the `writes`-derived policy, e.g. for a mutating tool whose shared-state surface is already serialized by per-file locks.
+2. The `writes` flag: `false` → shared, `true` → exclusive.
+3. Resolvable but unannotated (contrib/workspace skill tools, MCP tools without `writes`) → shared — today's concurrent behavior is preserved.
+4. **Unresolvable name** (no definition in any source) → the whole batch falls back to serial execution, one call at a time in assistant order (fail-safe).
+
+**What the policy does and doesn't coordinate.** The batch policy orders calls *within one conversation's batch only*. It does not serialize across conversations, shell processes, or external editors — per-file mutation locks in `workspace_tools.py` still coordinate concurrent workspace file edits, and confirmations are unaffected. Exceptions and cancellation release the scheduling barriers: a failing or cancelled exclusive call still unblocks its successors, so a batch can never hang on the barrier. Results always retain assistant call order and `tool_call_id` attribution regardless of completion order.
+
+Policy resolution is static per tool definition (v1); argument-dependent policies — a tool with both independent and shared-state operations choosing per call — are not supported yet. The `execution` key is the extension point for that.
+
 ## Tool-owned prompt guidance (`prompt_guidelines`) (#928 & #998)
 
 Tool definitions can optionally declare top-level `prompt_guidelines: list[str]`. When a tool is in the active set, its guidelines are rendered into an authoritative `<tool_guidance>` system message injected into the prompt.
