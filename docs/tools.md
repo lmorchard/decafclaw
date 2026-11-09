@@ -182,6 +182,17 @@ Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.
 | `shell_patterns` | | Manage the approved shell command allow list |
 | `shell_guidance` | | Manage aux-LLM auto-approval prompt guidance and presets |
 
+### Auto-backgrounding on a foreground time budget (#1136)
+
+By default `shell` runs the command with a blocking call and a hard timeout (`shell.max_runtime_sec`, default 30s — the command's **total runtime limit**). An opt-in **foreground waiting budget** (`shell.foreground_wait_budget_sec`, default `None` = disabled) changes that: the command is started through the same managed runner as background jobs and awaited up to the budget.
+
+- **Finishes within the budget** → ordinary foreground result (same output shape as before). The job is dropped from the manager; no archive record, notification, or wake fires.
+- **Exceeds the budget** → the **same process** continues as a managed background job and the tool returns its handle (job ID, PID) with pointers to `shell_background_status` / `shell_background_stop`. The existing completion path (archive record + inbox notification + WAKE turn) fires exactly once when it exits. The agent no longer has to predict foreground vs background up front.
+
+Three distinct knobs, deliberately separate: the **wait budget** (how long to wait before handing off), the **total runtime limit** (`max_runtime_sec`, which becomes a handed-off job's `max_lifetime` and is enforced by the existing background-job expiry policy), and the **explicit-background default lifetime** (600s for `shell_background_start`, unchanged).
+
+Approval happens **once, before process creation** (the usual `check_shell_approval()`); the handoff neither bypasses nor repeats it. Cancellation ownership: a turn cancelled **before** the handoff kills the process with the turn (nothing is left unmanaged, no completion sequence); a job **after** handoff is owned by the manager like any explicitly started background job — stopping it is `shell_background_stop` or expiry. Output collection stays bounded: foreground results are built from the same 500-line deques background jobs use. If the background runner is unavailable, `shell` fails open to the legacy blocking path with a warning.
+
 ### Session Modes (`default`, `dev`, `research`, `admin`)
 
 Session Modes (#959) bundle a conversation's **shell auto-approval presets** together with its **promoted situational tools** into a switchable loadout:
