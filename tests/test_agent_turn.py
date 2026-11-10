@@ -201,8 +201,10 @@ async def test_execute_tool_calls_concurrent(ctx):
 
     tool_calls = [
         {
+            # `web_fetch` resolves to a read-only (shared) policy, so the batch
+            # is allowed to overlap — the fake tool stands in for a read-only call.
             "id": f"tc{i}",
-            "function": {"name": "slow_tool", "arguments": "{}"},
+            "function": {"name": "web_fetch", "arguments": "{}"},
         }
         for i in range(3)
     ]
@@ -233,7 +235,9 @@ async def test_execute_tool_calls_semaphore_limits(ctx):
         current_concurrency -= 1
         return ToolResult(text="done")
 
-    tool_calls = [{"id": f"tc{i}", "function": {"name": "slow_tool", "arguments": "{}"}} for i in range(3)]
+    # `web_fetch` resolves to a shared policy, so the batch is allowed to
+    # overlap — only the semaphore (max_concurrent_tools=1) keeps it sequential.
+    tool_calls = [{"id": f"tc{i}", "function": {"name": "web_fetch", "arguments": "{}"}} for i in range(3)]
     history = []
     messages = []
 
@@ -286,6 +290,153 @@ async def test_execute_tool_calls_preserves_order(ctx):
     assert history[0]["tool_call_id"] == "tc0"
     assert history[1]["tool_call_id"] == "tc1"
     assert history[2]["tool_call_id"] == "tc2"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_shared_calls_overlap(ctx):
+    """Two independent shared calls overlap within the configured limit (#1124)."""
+    barrier_reached = asyncio.Event()
+    all_started = []
+
+    async def _shared_fetch(ctx_arg, name, args):
+        all_started.append(ctx_arg.tools.current_call_id)
+        if len(all_started) >= 2:
+            barrier_reached.set()
+        # Wait for both to start — proves they ran concurrently
+        await asyncio.wait_for(barrier_reached.wait(), timeout=2.0)
+        return ToolResult(text="fetched")
+
+    tool_calls = [
+        {"id": "tc0", "function": {"name": "web_fetch", "arguments": "{}"}},
+        {"id": "tc1", "function": {"name": "web_fetch", "arguments": "{}"}},
+    ]
+    history = []
+    messages = []
+    ctx.config.agent.max_concurrent_tools = 2
+
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_shared_fetch):
+        cancelled, _ = await execute_tool_calls(ctx, tool_calls, history, messages)
+
+    assert cancelled is None
+    assert len(all_started) == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_exclusive_waits_for_preceding_and_blocks_later(ctx):
+    """Exclusive call waits for preceding calls; later calls wait for the exclusive call (#1124)."""
+    order: list[str] = []
+    slow_started = asyncio.Event()
+    slow_release = asyncio.Event()
+
+    async def _batch_tool(ctx_arg, name, args):
+        call_id = ctx_arg.tools.current_call_id
+        if call_id == "tc0":
+            order.append("web_fetch")
+            slow_started.set()
+            await slow_release.wait()
+            return ToolResult(text="fetch-done")
+        if call_id == "tc1":
+            # `shell` resolves to a mutating (exclusive) policy — it must wait
+            # for the preceding shared call to complete before running.
+            order.append("shell")
+            return ToolResult(text="shell-done")
+        order.append("web_fetch-2")
+        # Trailing shared call must wait for the exclusive call to complete.
+        return ToolResult(text="fetch-done-2")
+
+    tool_calls = [
+        {"id": "tc0", "function": {"name": "web_fetch", "arguments": "{}"}},
+        {"id": "tc1", "function": {"name": "shell", "arguments": "{}"}},
+        {"id": "tc2", "function": {"name": "web_fetch", "arguments": "{}"}},
+    ]
+    history = []
+    messages = []
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_batch_tool):
+        task = asyncio.create_task(execute_tool_calls(ctx, tool_calls, history, messages))
+        await slow_started.wait()
+        slow_release.set()
+        cancelled, _ = await asyncio.wait_for(task, timeout=15)
+    assert cancelled is None
+    assert order == ["web_fetch", "shell", "web_fetch-2"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_exception_releases_scheduling_barrier(ctx):
+    """An exclusive call that fails must release later calls without hanging (#1124)."""
+
+    async def _maybe_fail(ctx_arg, name, args):
+        call_id = ctx_arg.tools.current_call_id
+        if call_id == "tc0":
+            raise RuntimeError("boom")
+        return ToolResult(text=f"ok-{call_id}")
+
+    tool_calls = [
+        {"id": "tc0", "function": {"name": "shell", "arguments": "{}"}},
+        {"id": "tc1", "function": {"name": "web_fetch", "arguments": "{}"}},
+    ]
+    history = []
+    messages = []
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_maybe_fail):
+        cancelled, _ = await execute_tool_calls(ctx, tool_calls, history, messages)
+
+    assert cancelled is None
+    assert len(history) == 2
+    # The failing exclusive call produced an error result and the later call
+    # still ran — the scheduling barrier was released instead of hanging.
+    assert "error" in history[0]["content"]
+    assert "ok-tc1" in history[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_cancellation_releases_scheduling_barrier(ctx):
+    """Mid-batch cancellation releases scheduling barriers without hanging (#1124)."""
+    slow_started = asyncio.Event()
+
+    async def _slow_tool(ctx_arg, name, args):
+        call_id = ctx_arg.tools.current_call_id
+        if call_id == "tc0":
+            # Simulate a long-running exclusive call: block on an event that is
+            # never set, so only cancellation can release it.
+            slow_started.set()
+            await asyncio.Event().wait()
+        return ToolResult(text=f"ok-{call_id}")
+
+    tool_calls = [
+        {"id": "tc0", "function": {"name": "shell", "arguments": "{}"}},
+        {"id": "tc1", "function": {"name": "web_fetch", "arguments": "{}"}},
+    ]
+    history = []
+    messages = []
+    ctx.cancelled = asyncio.Event()
+
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_slow_tool):
+        task = asyncio.create_task(execute_tool_calls(ctx, tool_calls, history, messages))
+        await slow_started.wait()
+        # Cancel mid-batch: tc1 is still waiting on the exclusive barrier.
+        ctx.cancelled.set()
+        cancelled, _ = await asyncio.wait_for(task, timeout=15)
+
+    assert cancelled is not None
+    assert "cancelled" in cancelled.text
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_policy_resolution_failure_falls_back_to_serial(ctx):
+    """Unresolvable tool names fall back to serial batch execution (#1124)."""
+
+    async def _track(ctx_arg, name, args):
+        return ToolResult(text=f"ok-{ctx_arg.tools.current_call_id}")
+
+    tool_calls = [{"id": f"tc{i}", "function": {"name": "no_such_tool_xyz", "arguments": "{}"}} for i in range(3)]
+    history = []
+    messages = []
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_track):
+        cancelled, _ = await execute_tool_calls(ctx, tool_calls, history, messages)
+
+    assert cancelled is None
+    assert len(history) == 3
+    # Policy resolution failed for every call → serial fallback → order kept.
+    assert [m["tool_call_id"] for m in history] == ["tc0", "tc1", "tc2"]
 
 
 # -- end_turn tests ------------------------------------------------------------
