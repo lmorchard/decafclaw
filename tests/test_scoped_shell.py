@@ -344,7 +344,8 @@ async def test_scoped_pattern_rejects_backtick(ctx):
 # -- workspace env contract test --
 
 
-def test_execute_command_exposes_workspace_env(ctx):
+@pytest.mark.asyncio
+async def test_execute_command_exposes_workspace_env(ctx):
     """Shell-tool subprocesses get DECAFCLAW_WORKSPACE pointing at the workspace.
 
     Skill scripts (e.g. the ingest fetch.sh helpers) rely on this to put
@@ -354,7 +355,7 @@ def test_execute_command_exposes_workspace_env(ctx):
 
     ws = Path(ctx.config.workspace_path)
     ws.mkdir(parents=True, exist_ok=True)
-    result = _execute_command(ctx, "echo $DECAFCLAW_WORKSPACE")
+    result = await _execute_command(ctx, "echo $DECAFCLAW_WORKSPACE")
     assert result.text.strip() == str(ws)
 
 
