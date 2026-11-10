@@ -1001,3 +1001,21 @@ class TestToolOutputBounds:
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         cfg = load_config()  # must not raise
         assert cfg.max_tool_output_lines == 2000
+
+    def test_explicit_null_falls_back_to_default_for_bounded_knobs(self, tmp_path, monkeypatch):
+        """Hard-bounded knobs fall back to defaults on explicit null (#922).
+
+        Unlike ``max_tool_output_bytes`` (null disables the cap), the line and
+        disk bounds are safety limits — a null is not a usable value, so it falls
+        back to the default instead of flowing into the _StreamCollector, which
+        takes non-optional ints.
+        """
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(
+            json.dumps({"max_tool_output_lines": None, "max_tool_output_disk_bytes": None})
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        cfg = load_config()
+        assert cfg.max_tool_output_lines == 2000
+        assert cfg.max_tool_output_disk_bytes == 10 * 1024 * 1024
