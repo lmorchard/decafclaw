@@ -713,6 +713,15 @@ def load_config() -> Config:
     max_tool_output_disk_bytes = _resolve_top_level_int(
         file_data, "max_tool_output_disk_bytes", "MAX_TOOL_OUTPUT_DISK_BYTES", 10 * 1024 * 1024
     )
+    # The line and disk bounds are hard safety limits — they are never "turned
+    # off" — so an explicit null in config.json / an unset-but-null value falls
+    # back to the default instead of resolving to None. (max_tool_output_bytes is
+    # the exception: its null means "cap disabled", which is why it stays
+    # int | None downstream.)
+    if max_tool_output_lines is None:
+        max_tool_output_lines = 2000
+    if max_tool_output_disk_bytes is None:
+        max_tool_output_disk_bytes = 10 * 1024 * 1024
 
     # Migration: if no providers/model_configs but old-style llm config exists,
     # auto-generate a "default" openai-compat provider + model config
