@@ -361,6 +361,125 @@ class TestStructuredReturns:
         assert result.data == {"x": 1}
 
 
+class TestStrictReturnMode:
+    """Opt-in strict return mode (#1123): validate the child's structured
+    submission before accepting it; the permissive prose fallback stays the
+    default behavior."""
+
+    def test_token_matches_type_tokens(self):
+        from decafclaw.tools.delegate import _token_matches
+
+        assert _token_matches("int", 3) is True
+        assert _token_matches("int", True) is False  # bool is not an int
+        assert _token_matches("int", "3") is False
+        assert _token_matches("number", 2.5) is True
+        assert _token_matches("string", "x") is True
+        assert _token_matches("string", 5) is False
+        assert _token_matches("bool", True) is True
+        assert _token_matches("bool", 0) is False
+        assert _token_matches("null", None) is True
+        assert _token_matches("list[string]", ["a", "b"]) is True
+        assert _token_matches("list[string]", ["a", 1]) is False
+        assert _token_matches("list[string]", "a") is False
+        assert _token_matches("low|medium|high", "high") is True
+        assert _token_matches("low|medium|high", "red") is False
+
+    def test_validate_return_schema_errors(self):
+        from decafclaw.tools.delegate import _validate_return_schema
+
+        assert _validate_return_schema({"count": "int"}, {"count": 1}) == []
+        errors = _validate_return_schema({"count": "int", "severity": "string"}, {"count": 1})
+        assert errors == ["missing required field 'severity'"]
+
+    @pytest.mark.asyncio
+    async def test_strict_valid_submission_returns_parsed(self, ctx):
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text='Looks clean.\n```json\n{"count": 2}\n```')
+
+            text, data = await run_child_turn(ctx, "audit auth", return_schema={"count": "int"}, strict=True)
+
+        assert data == {"count": 2}
+        assert "Looks clean" in text
+        assert "```json" not in text
+
+    @pytest.mark.asyncio
+    async def test_strict_missing_field_fails(self, ctx):
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text='```json\n{"count": 2}\n```')
+
+            text, data = await run_child_turn(
+                ctx,
+                "audit auth",
+                return_schema={"count": "int", "severity": "string"},
+                strict=True,
+            )
+
+        assert text.startswith("[error:")
+        assert "missing required field 'severity'" in text
+        structured = data["structured"]
+        assert structured["ok"] is False
+        assert structured["errors"][0] == "missing required field 'severity'"
+
+    @pytest.mark.asyncio
+    async def test_strict_invalid_type_fails_with_field_error(self, ctx):
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text='```json\n{"count": "two"}\n```')
+
+            text, data = await run_child_turn(ctx, "audit auth", return_schema={"count": "int"}, strict=True)
+
+        assert text.startswith("[error:")
+        assert "field 'count'" in text
+        assert data["structured"]["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_strict_malformed_json_fails_explicitly(self, ctx):
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="prose only\n```json\n{bad json\n```")
+
+            text, data = await run_child_turn(ctx, "audit auth", return_schema={"count": "int"}, strict=True)
+
+        assert text.startswith("[error:")
+        assert "no parseable JSON block" in text
+        assert data["structured"]["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_strict_requires_return_schema(self, ctx):
+        result = await tool_delegate_task(ctx, "do thing", strict=True)
+
+        assert isinstance(result, ToolResult)
+        assert result.text.startswith("[error:")
+        assert "strict=true requires return_schema" in result.text
+
+    @pytest.mark.asyncio
+    async def test_strict_false_permissive_falls_back_to_prose(self, ctx):
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="just prose, no json")
+
+            text, data = await run_child_turn(ctx, "audit auth", return_schema={"count": "int"}, strict=False)
+
+        assert data is None
+        assert text == "just prose, no json"
+
+    @pytest.mark.asyncio
+    async def test_batch_strict_marks_failed_entry_not_silent(self, ctx):
+        async def fake_run(parent_ctx, task, **kwargs):
+            if task == "bad":
+                return (
+                    "[error: structured return validation failed: missing required field 'x']",
+                    {"structured": {"ok": False, "errors": ["missing required field 'x'"], "raw": "{}"}},
+                )
+            return ("prose ok", {"ok": True})
+
+        with patch("decafclaw.tools.delegate.run_child_turn", side_effect=fake_run):
+            result = await tool_delegate_tasks(ctx, ["bad", "good"], strict=True, return_schema={"x": "int"})
+
+        assert result.data["summary"]["ok"] == 1
+        assert result.data["summary"]["failed"] == 1
+        failed = result.data["results"][0]
+        assert failed["ok"] is False
+        assert "missing required field" in failed["error"]
+
+
 class TestDelegateRoutingThroughManager:
     @pytest.mark.asyncio
     async def test_delegate_routes_through_manager(self, ctx, monkeypatch):
