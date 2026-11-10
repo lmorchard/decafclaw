@@ -512,6 +512,18 @@
     the turn is shell_background_start. A regular shell call would block until
     timeout or hang the session.
 
+- name: shell-vs-background-start-unknown-duration
+  scenario: "Run 'python scripts/migrate.py' and tell me what it did. It usually finishes in a few seconds."
+  expected: shell
+  near_miss: [shell_background_start]
+  notes: |
+    A one-shot command the user wants run-and-reported, usually fast, is shell
+    (#1136): when a foreground time budget is configured, an unexpectedly long run
+    is automatically moved to the background with a job ID instead of being killed,
+    so there is no need to pre-emptively background it. shell_background_start is for
+    daemons/watchers known to be long-running up front, or an explicit background
+    request — not the default for a usually-fast script.
+
 - name: wait-vs-schedule-turn-short-poll
   scenario: "We just kicked off a test build in the background. Wait 10 seconds before we check its output."
   expected: wait
