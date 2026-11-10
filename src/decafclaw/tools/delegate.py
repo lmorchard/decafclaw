@@ -105,6 +105,66 @@ _FENCED_JSON_RE = re.compile(
 )
 
 
+_TYPE_LIST_RE = re.compile(r"^list\[(.+)\]$")
+
+
+def _token_matches(token: str, value: Any) -> bool:
+    """Check whether ``value`` satisfies a shorthand type token.
+
+    Tokens are the flat field-to-token maps used by ``return_schema``
+    (#395): primitives ("int", "number", "string", "bool", "null"),
+    parameterized lists ("list[string]", "list[int]"), and unions
+    ("low|medium|high" -- an allowed-enum set). Empty / unknown tokens are
+    permissive so novel schema fields do not hard-block valid payloads.
+    """
+    token = (token or "").strip().lower()
+    if token in ("", "any", "auto", "*"):
+        return True
+    if token in ("null", "none"):
+        return value is None
+    if token in ("bool", "boolean"):
+        return isinstance(value, bool)
+    if token in ("int", "integer"):
+        # bool is a subclass of int in Python -- exclude it so JSON `true`
+        # does not satisfy an `int` field.
+        return isinstance(value, int) and not isinstance(value, bool)
+    if token in ("float", "double", "number"):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if token in ("str", "string"):
+        return isinstance(value, str)
+    list_match = _TYPE_LIST_RE.match(token)
+    if list_match:
+        item_token = list_match.group(1).strip()
+        if not isinstance(value, list):
+            return False
+        return all(_token_matches(item_token, item) for item in value)
+    if "|" in token:
+        allowed = {t.strip().lower() for t in token.split("|") if t.strip()}
+        return isinstance(value, str) and value.lower() in allowed
+    return True
+
+
+def _validate_return_schema(schema: dict | None, payload: Any) -> list[str]:
+    """Return field-specific validation errors for a parsed structured
+    return. Empty list means valid; any entry means the payload is invalid.
+
+    ``schema`` is the flat field-to-token map from ``return_schema``; strict
+    mode (#1123) enforces it before accepting a child result. Missing fields
+    and mistyped fields each produce their own actionable error so the
+    correction loop can address them precisely.
+    """
+    if not isinstance(schema, dict) or not isinstance(payload, dict):
+        return [f"structured return must be a JSON object, got {type(payload).__name__}"]
+    errors: list[str] = []
+    for field, token in schema.items():
+        if field not in payload:
+            errors.append(f"missing required field '{field}'")
+            continue
+        if not _token_matches(token, payload[field]):
+            errors.append(f"field '{field}': expected type '{token}', got {type(payload[field]).__name__}")
+    return errors
+
+
 def _render_schema_addendum(schema: dict) -> str:
     """Render a JSON-schema-shaped dict into the structured-output
     prompt addendum. Returns "" on JSON-encoding failure (defensive
@@ -162,6 +222,7 @@ async def run_child_turn(
     child_conv_id_override: str | None = None,
     await_child: bool = True,
     read_only: bool = False,
+    strict: bool = False,
 ) -> tuple[str, dict | None]:
     """Run a child agent turn via ConversationManager, preserving the
     parent's tools, skills, and event routing.
@@ -218,6 +279,17 @@ async def run_child_turn(
             ``_READ_ONLY_INSTRUCTION`` to the child system prompt. For
             analysis / review / search / planning subtasks that must not
             change anything. Default False.
+        strict: When True, require the child to emit a parseable fenced
+            JSON block matching ``return_schema`` and validate the parsed
+            payload's fields / types before accepting the result (#1123).
+            Strict requires ``return_schema``; without one it errors. On a
+            missing / malformed / mistyped submission the text is an
+            ``[error: structured return validation failed: ...]`` string
+            and data carries ``{"structured": {"ok": False, "errors":
+            [...]}}`` so callers see the field-specific feedback. Strict
+            success returns ``(prose, parsed)`` like the permissive path;
+            correction attempts stay inside the same child turn (the child
+            re-emits its final answer — no restart of completed work).
 
     Returns ``(text, data)``:
         * On success without ``return_schema``: ``(child_text, None)``.
@@ -225,6 +297,9 @@ async def run_child_turn(
           ``(prose_with_block_stripped, parsed_dict)``.
         * On success WITH ``return_schema`` but no parseable block:
           ``(raw_text, None)`` (silent fallback).
+        * On strict validation failure: the text is an
+          ``[error: structured return validation failed: ...]`` string and
+          data is ``{"structured": {"ok": False, ...}}``.
         * On timeout / missing manager / child exception: the text is
           an ``[error: ...]`` string and data is ``None``. Callers can
           detect the error path via that prefix.
@@ -382,8 +457,32 @@ async def run_child_turn(
 
     raw_text = result.text if result and hasattr(result, "text") else str(result) if result else ""
     if return_schema is None:
+        if strict:
+            # Strict mode requires a structured return to validate against;
+            # without a schema there is nothing to validate, so fail loudly.
+            return ("[error: strict return requires return_schema]", None)
         return (raw_text, None)
     parsed, prose = _parse_structured_output(raw_text)
+    if strict:
+        # Opt-in strict return mode (#1123): validate before accepting so a
+        # missing / malformed / mistyped child submission is an explicit
+        # failure instead of the permissive silent fallback. Corrections stay
+        # inside this same child turn — the child re-emits its final answer and
+        # validation never re-runs side effects, so no restart of completed
+        # child work is needed.
+        if parsed is None:
+            errors = [f"no parseable JSON block in child response: {raw_text.strip()}"]
+            return (
+                f"[error: structured return validation failed: {errors[0]}]",
+                {"structured": {"ok": False, "errors": errors, "raw": raw_text}},
+            )
+        errors = _validate_return_schema(return_schema, parsed)
+        if errors:
+            return (
+                f"[error: structured return validation failed: {'; '.join(errors)}]",
+                {"structured": {"ok": False, "errors": errors, "raw": raw_text}},
+            )
+        return (prose or raw_text, parsed)
     if parsed is None:
         log.debug(
             "run_child_turn: child response had no parseable JSON block; falling back to prose-only return",
@@ -422,6 +521,7 @@ async def tool_delegate_task(
     return_schema: dict | None = None,
     background: bool = False,
     read_only: bool = False,
+    strict: bool = False,
 ) -> ToolResult:
     """Delegate a subtask (or a list of subtasks in parallel) to child agents.
 
@@ -458,6 +558,13 @@ async def tool_delegate_task(
     ``writes`` flag) and its system prompt gains read-only instructions.
     Use for analysis, review, search, and planning subtasks that must not
     change anything.
+
+    Use ``strict=true`` together with ``return_schema`` to require the
+    child to return a parseable JSON block matching the schema and validate
+    the parsed fields / types before accepting the result (#1123). A
+    missing field, mistyped field, or unparseable block becomes an explicit
+    ``[error: structured return validation failed: ...]`` instead of the
+    permissive prose fallback. Corrections stay inside the same child turn.
     """
     if tasks is not None:
         batch = tasks
@@ -465,6 +572,11 @@ async def tool_delegate_task(
         batch = task
     else:
         batch = None
+
+    if strict and return_schema is None:
+        # Strict mode validates the child's structured return; without a
+        # schema there is nothing to validate against (#1123).
+        return ToolResult(text="[error: strict=true requires return_schema]")
 
     if batch is not None:
         if background:
@@ -480,6 +592,7 @@ async def tool_delegate_task(
             allow_vault_write=allow_vault_write,
             return_schema=return_schema,
             read_only=read_only,
+            strict=strict,
         )
 
     if not task or not isinstance(task, str) or not task.strip():
@@ -519,6 +632,7 @@ async def tool_delegate_task(
         child_conv_id_override=child_conv_id,
         await_child=not background,
         read_only=read_only,
+        strict=strict,
     )
     # `run_child_turn` returns the error string in `text` (prefixed
     # with "[error: ...]") and data=None for failures. Pass it through
@@ -549,6 +663,7 @@ async def _run_one_delegated(
     allow_vault_write: bool,
     return_schema: dict | None,
     read_only: bool = False,
+    strict: bool = False,
 ) -> dict:
     """Run one child of a `delegate_tasks` batch under a semaphore.
 
@@ -571,6 +686,7 @@ async def _run_one_delegated(
                 return_schema=return_schema,
                 event_context_id_override=f"delegate-tasks-child-{idx}",
                 read_only=read_only,
+                strict=strict,
             )
         except Exception as exc:
             log.warning(
@@ -586,8 +702,16 @@ async def _run_one_delegated(
             }
         else:
             # `run_child_turn` surfaces failure via an ERROR_TEXT_PREFIX-tagged
-            # text + data=None; preserve it as the entry's error field.
-            if data is None and text.startswith(ERROR_TEXT_PREFIX):
+            # text + data=None (lenient errors) or via structured-validation
+            # failure data (strict mode, #1123); either way it is a failed task.
+            failed = data is None and text.startswith(ERROR_TEXT_PREFIX)
+            if (
+                isinstance(data, dict)
+                and isinstance(data.get("structured"), dict)
+                and data["structured"].get("ok") is False
+            ):
+                failed = True
+            if failed:
                 entry = {"index": idx, "ok": False, "error": text}
             elif data is None:
                 entry = {"index": idx, "ok": True, "text": text}
@@ -626,6 +750,7 @@ async def tool_delegate_tasks(
     allow_vault_write: bool = False,
     return_schema: dict | None = None,
     read_only: bool = False,
+    strict: bool = False,
 ) -> ToolResult:
     """Delegate a batch of subtasks to child agents in parallel (#397).
 
@@ -698,6 +823,7 @@ async def tool_delegate_tasks(
             allow_vault_write=allow_vault_write,
             return_schema=return_schema,
             read_only=read_only,
+            strict=strict,
         )
         for i, t in enumerate(tasks)
     ]
@@ -839,6 +965,15 @@ DELEGATE_TOOL_DEFINITIONS = [
                             "the parsed object arrives directly on ToolResult.data. "
                             "For a batch of tasks, each child's parsed object arrives under "
                             "ToolResult.data['results'][i]['data']. Treat as a hint."
+                        ),
+                    },
+                    "strict": {
+                        "type": "boolean",
+                        "description": (
+                            "When true, require the child to return a parseable JSON block matching "
+                            "return_schema and validate the parsed fields and types before accepting "
+                            "the result; validation failures return an explicit error instead of a "
+                            "silent fallback. Requires return_schema. Default false."
                         ),
                     },
                     "read_only": {

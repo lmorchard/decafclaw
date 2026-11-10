@@ -729,6 +729,9 @@ async def tool_shell(ctx: "Context", command: str) -> ToolResult:
         log.info(f"[tool:shell] command denied: {command} (reason: {reason})")
         return ToolResult(text=f"[error: command denied: {reason}]")
 
+    budget = ctx.config.shell.foreground_wait_budget_sec
+    if budget is not None and budget > 0:
+        return await _execute_command_with_handoff(ctx, command)
     return await _execute_command(ctx, command)
 
 
@@ -910,7 +913,6 @@ async def _execute_command(ctx: "Context", command: str, timeout: float = _DEFAU
     # survives manual/out-of-cwd invocation. Sits alongside DECAFCLAW_REPO /
     # CONTRIB, which the skill loader sets the same way.
     env = {**os.environ, "DECAFCLAW_WORKSPACE": str(ctx.config.workspace_path)}
-
     max_bytes = ctx.config.max_tool_output_bytes
     if max_bytes is None:  # collection bounding is a safety property, not a display preference
         max_bytes = 51200
@@ -1017,6 +1019,124 @@ async def _execute_command(ctx: "Context", command: str, timeout: float = _DEFAU
         prefix = f"[error: command timed out after {timeout:.0f} seconds]"
         return ToolResult(text=f"{prefix}\n\n{output}" if output else prefix)
 
+    return ToolResult(text=output or "(no output)")
+
+
+# How long to wait for the output reader after a foreground command exits. A
+# grandchild process can hold the pipes open past the parent's exit; we don't
+# block the turn on that — proceed with whatever was captured (#1136).
+_FOREGROUND_DRAIN_TIMEOUT_SEC = 5.0
+
+
+async def _execute_command_with_handoff(ctx: "Context", command: str) -> ToolResult:
+    """Run a command through the shared background-job runner, waiting up to
+    the configured foreground budget (#1136).
+
+    - Exits within the budget -> ordinary foreground result (same text shape as
+      ``_execute_command``); the job is dropped without a completion record.
+    - Budget expires -> the SAME process continues as a managed background job;
+      returns its job handle. The existing completion path (archive record +
+      notification + wake) fires exactly once when it exits.
+    - Turn cancelled before the handoff -> the process is killed so nothing is
+      left unmanaged, and the CancelledError propagates.
+
+    Approval already happened in ``tool_shell``; this never re-approves.
+    """
+    # Function-level import: decafclaw.skills.background.tools imports
+    # check_shell_approval from this module, so a module-level import would cycle.
+    try:
+        from decafclaw.skills.background.tools import _get_job_manager
+    except Exception as exc:  # noqa: BLE001 - fail open to the legacy path
+        log.warning(f"[tool:shell] background runner unavailable ({exc}); using blocking execution")
+        return await _execute_command(ctx, command)
+
+    budget = ctx.config.shell.foreground_wait_budget_sec
+    max_runtime = ctx.config.shell.max_runtime_sec
+    env = {**os.environ, "DECAFCLAW_WORKSPACE": str(ctx.config.workspace_path)}
+
+    manager = _get_job_manager(ctx)
+    try:
+        job = await manager.start(
+            command,
+            str(ctx.config.workspace_path),
+            max_lifetime=max_runtime,
+            config=ctx.config,
+            conv_id=ctx.conv_id,
+            event_bus=ctx.event_bus,
+            completion_tail_lines=ctx.config.background.default_completion_tail_lines,
+            manager=ctx.manager,
+            env=env,
+        )
+    except Exception as e:  # noqa: BLE001 - spawn failure must not escape
+        return ToolResult(text=f"[error: failed to start command: {e}]")
+
+    # Claim the job as foreground BEFORE waiting. While this is True the
+    # reader's finally skips _finalize_job, so a command that settles as a
+    # foreground result never also fires the background completion sequence.
+    job.foreground = True
+
+    try:
+        await asyncio.wait_for(job.process.wait(), timeout=budget)
+    except asyncio.TimeoutError:
+        # Budget expired: hand off. Clearing the claim synchronously (no await
+        # between read and write) means the reader's later finally sees
+        # foreground=False and runs _finalize_job exactly once.
+        job.foreground = False
+        log.info(
+            f"[tool:shell] command exceeded the {budget:.0f}s foreground budget; "
+            f"handed off to background job {job.job_id} (pid={job.pid})"
+        )
+        return ToolResult(
+            text=(
+                f"Command exceeded the {budget:.0f}s foreground budget and was moved to "
+                f"the background — the same process is still running.\n"
+                f"- **Job ID:** `{job.job_id}`\n"
+                f"- **PID:** {job.pid}\n"
+                f"- **Command:** `{command}`\n"
+                "Check progress with `shell_background_status` and stop it with "
+                "`shell_background_stop`. You will be woken when it completes."
+            ),
+            data={"job_id": job.job_id, "status": "running", "command": command, "pid": job.pid},
+        )
+    except asyncio.CancelledError:
+        # Turn cancelled before the handoff: kill the process so nothing is left
+        # unmanaged, then propagate. No archive record / notification / wake.
+        await manager.abort(job.job_id)
+        raise
+
+    # Process exited within the budget: drain the reader so the output deques
+    # are complete, then settle as an ordinary foreground result.
+    if job.reader_task is not None and not job.reader_task.done():
+        try:
+            await asyncio.wait_for(job.reader_task, timeout=_FOREGROUND_DRAIN_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            # A grandchild can hold the output pipes open past process exit;
+            # proceed with whatever was captured. wait_for already cancelled the
+            # reader, whose finally skips finalize and closes the transport.
+            log.debug(f"[tool:shell] output drain timed out for {job.job_id}; proceeding with captured buffers")
+        except asyncio.CancelledError:
+            # Turn cancelled while draining after the process exited. The command
+            # did not hand off; abort drops it without a completion record.
+            await manager.abort(job.job_id)
+            raise
+
+    # The reader may not have recorded the exit code (drain timeout); the
+    # process is reaped, so returncode is authoritative.
+    if job.exit_code is None:
+        job.exit_code = job.process.returncode
+
+    stdout_text = "\n".join(job.stdout_buffer)
+    stderr_text = "\n".join(job.stderr_buffer)
+    output = stdout_text
+    if stderr_text:
+        output += f"\n[stderr]\n{stderr_text}"
+    if job.exit_code is not None and job.exit_code != 0:
+        output += f"\n[exit code: {job.exit_code}]"
+
+    # Drop the job without settling it: it was never a background job. abort()
+    # is idempotent — the kill and reader-cancel are no-ops here, and it pops
+    # the job so nothing leaks in the manager.
+    await manager.abort(job.job_id)
     return ToolResult(text=output or "(no output)")
 
 
@@ -1455,7 +1575,11 @@ SHELL_TOOL_DEFINITIONS = [
                 "The command runs in the workspace directory. Use for tasks that "
                 "need system interaction: checking disk space, running scripts, "
                 "installing packages, etc. The user will see the command and must "
-                "approve it before it runs."
+                "approve it before it runs. If a foreground time budget is configured, "
+                "a command that exceeds it is automatically moved to the background: "
+                "you receive a job ID and can inspect or stop it with "
+                "shell_background_status / shell_background_stop — you do not need to "
+                "predict whether a command will run long."
             ),
             "parameters": {
                 "type": "object",
