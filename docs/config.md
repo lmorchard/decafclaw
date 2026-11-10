@@ -397,8 +397,14 @@ Settings for shell command execution and pre-approval logic (see #473).
 | `aux_approval_guidance` | str | `""` | `SHELL_AUX_APPROVAL_GUIDANCE` |
 | `aux_approval_presets` | dict | `{}` | `SHELL_AUX_APPROVAL_PRESETS` |
 | `active_aux_approval_presets` | list[str] | `[]` | `SHELL_ACTIVE_AUX_APPROVAL_PRESETS` |
+| `foreground_wait_budget_sec` | float \| None | `None` | `SHELL_FOREGROUND_WAIT_BUDGET_SEC` |
+| `max_runtime_sec` | float | `30.0` | `SHELL_MAX_RUNTIME_SEC` |
 
 When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxiliary LLM to screen unrecognized commands. If the aux LLM deems the command low-risk (e.g. `ls -la`, `git status`), it is auto-approved without prompting the user. If the aux LLM deems it risky or errors out, it falls through to standard interactive confirmation. Auto-approved patterns are temporarily cached per-conversation so repeated benign commands don't trigger redundant LLM calls.
+
+#### Foreground time budget (#1136)
+
+`foreground_wait_budget_sec` is opt-in (`None` = today's blocking behavior). When set (> 0), `shell` starts the command through the background skill's shared runner and awaits up to the budget: a command that finishes in time returns an ordinary result, while one that exceeds it hands off — the **same process** continues as a managed background job and the tool returns its handle (job ID, PID). `max_runtime_sec` is the command's total runtime limit: it bounds the legacy blocking path and becomes a handed-off job's `max_lifetime` (enforced by the existing background-job expiry policy). The explicit-background default lifetime (`shell_background_start`, 600s) is a separate knob and unchanged. See [Tools — Shell](tools.md#auto-backgrounding-on-a-foreground-time-budget-1136).
 
 #### Dedicated auto-approval judge model
 

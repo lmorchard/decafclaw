@@ -182,6 +182,17 @@ Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.
 | `shell_patterns` | | Manage the approved shell command allow list |
 | `shell_guidance` | | Manage aux-LLM auto-approval prompt guidance and presets |
 
+### Auto-backgrounding on a foreground time budget (#1136)
+
+By default `shell` runs the command with a blocking call and a hard timeout (`shell.max_runtime_sec`, default 30s — the command's **total runtime limit**). An opt-in **foreground waiting budget** (`shell.foreground_wait_budget_sec`, default `None` = disabled) changes that: the command is started through the same managed runner as background jobs and awaited up to the budget.
+
+- **Finishes within the budget** → ordinary foreground result (same output shape as before). The job is dropped from the manager; no archive record, notification, or wake fires.
+- **Exceeds the budget** → the **same process** continues as a managed background job and the tool returns its handle (job ID, PID) with pointers to `shell_background_status` / `shell_background_stop`. The existing completion path (archive record + inbox notification + WAKE turn) fires exactly once when it exits. The agent no longer has to predict foreground vs background up front.
+
+Three distinct knobs, deliberately separate: the **wait budget** (how long to wait before handing off), the **total runtime limit** (`max_runtime_sec`, which becomes a handed-off job's `max_lifetime` and is enforced by the existing background-job expiry policy), and the **explicit-background default lifetime** (600s for `shell_background_start`, unchanged).
+
+Approval happens **once, before process creation** (the usual `check_shell_approval()`); the handoff neither bypasses nor repeats it. Cancellation ownership: a turn cancelled **before** the handoff kills the process with the turn (nothing is left unmanaged, no completion sequence); a job **after** handoff is owned by the manager like any explicitly started background job — stopping it is `shell_background_stop` or expiry. Output collection stays bounded: foreground results are built from the same 500-line deques background jobs use. If the background runner is unavailable, `shell` fails open to the legacy blocking path with a warning.
+
 ### Session Modes (`default`, `dev`, `research`, `admin`)
 
 Session Modes (#959) bundle a conversation's **shell auto-approval presets** together with its **promoted situational tools** into a switchable loadout:
@@ -385,6 +396,24 @@ These skills ship with DecafClaw and provide tools when activated. Full details 
 Every tool declares a priority: `critical` (✓ above), `normal` (default), or `low`. When the active tool budget is exceeded, the classifier fills tier by tier: critical first, then normal, deferring `low`-priority tools behind `tool_search`. Pre-emptive search can promote tools to critical for a single turn based on user-message keyword matches. See [Tool Priority System](tool-priority.md), [Tool Search](tool-search.md), and [Pre-emptive Tool Search](preemptive-tool-search.md).
 
 Every tool definition also declares a top-level `writes` boolean: `true` when a call can change state outside the turn (file writes, shell, outbound messages, external service calls, admin/vault mutations, …); `false` for read-only tools. The flag drives delegated read-only filtering (`delegate_task(read_only=true)`) and backs the declaration invariant in tests. A tool whose definition lacks a `writes` key is treated as a write (fail-closed).
+
+## Batch execution policy: shared vs exclusive (#1124)
+
+When the model emits several tool calls in one assistant message, they run as a **batch**: concurrently under the global semaphore (`max_concurrent_tools`), each on its own forked context. Within a batch, every call also carries an **execution policy** that orders calls against each other:
+
+- **`shared`** — the call may overlap with other shared calls, subject only to the global semaphore budget.
+- **`exclusive`** — the call waits for every preceding call in the batch to complete before it starts, and blocks every later call until it completes. A batch with one exclusive call in the middle therefore runs as: preceding calls concurrently → the exclusive call alone → later calls concurrently.
+
+**Resolution order** (first resolvable definition wins, mirroring `execute_tool` dispatch: skill extras → core registry → MCP):
+
+1. An explicit top-level `execution` key on the tool definition (`"shared"` or `"exclusive"`) — use it to override the `writes`-derived policy, e.g. for a mutating tool whose shared-state surface is already serialized by per-file locks.
+2. The `writes` flag: `false` → shared, `true` → exclusive.
+3. Resolvable but unannotated (contrib/workspace skill tools, MCP tools without `writes`) → shared — today's concurrent behavior is preserved.
+4. **Unresolvable name** (no definition in any source) → the whole batch falls back to serial execution, one call at a time in assistant order (fail-safe).
+
+**What the policy does and doesn't coordinate.** The batch policy orders calls *within one conversation's batch only*. It does not serialize across conversations, shell processes, or external editors — per-file mutation locks in `workspace_tools.py` still coordinate concurrent workspace file edits, and confirmations are unaffected. Exceptions and cancellation release the scheduling barriers: a failing or cancelled exclusive call still unblocks its successors, so a batch can never hang on the barrier. Results always retain assistant call order and `tool_call_id` attribution regardless of completion order.
+
+Policy resolution is static per tool definition (v1); argument-dependent policies — a tool with both independent and shared-state operations choosing per call — are not supported yet. The `execution` key is the extension point for that.
 
 ## Tool-owned prompt guidance (`prompt_guidelines`) (#928 & #998)
 

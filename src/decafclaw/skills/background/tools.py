@@ -55,6 +55,13 @@ class BackgroundJob:
     finalized: bool = False
     manager: Any = None
     sticky_publish_task: asyncio.Task | None = None
+    # Foreground-claim flag (#1136): set by the budgeted `shell` path BEFORE it
+    # starts waiting on the process. While True, the reader's finally skips
+    # _finalize_job — a command that settles as a foreground result must not also
+    # fire the background completion sequence (archive record / notification /
+    # wake). The handoff path clears it synchronously on budget expiry, so a job
+    # that becomes background always settles exactly once through _finalize_job.
+    foreground: bool = False
 
 
 async def _read_stream(
@@ -128,9 +135,11 @@ async def _run_reader(job: BackgroundJob) -> None:
     finally:
         # Close the transport even if _finalize_job raises or the reader is
         # cancelled mid-finalize — the deterministic-cleanup guarantee (#605)
-        # must not depend on finalize succeeding.
+        # must not depend on finalize succeeding. Foreground-claimed jobs
+        # (#1136) skip finalize: the foreground path settles them (or aborts
+        # them on cancellation), so no background completion sequence fires.
         try:
-            if not cancelled:
+            if not cancelled and not job.foreground:
                 await _finalize_job(job)
         finally:
             _close_transport(job)
@@ -549,13 +558,17 @@ class BackgroundJobManager:
         manager: Any = None,
         pin_sticky: bool = False,
         progress_parser: str = "auto",
+        env: dict | None = None,
     ) -> BackgroundJob:
         """Start a background process. Returns immediately.
 
         ``config``, ``conv_id``, ``event_bus``, ``manager``, and ``pin_sticky``
         are carried into the job so the reader task can emit an inbox
         notification (and fan out to channel adapters), stream progress to the
-        sticky slot, and enqueue a WAKE turn when the process exits.
+        sticky slot, and enqueue a WAKE turn when the process exits. ``env``
+        replaces the inherited environment (None = inherit, as before); the
+        budgeted foreground shell path (#1136) uses it to expose
+        DECAFCLAW_WORKSPACE like the legacy foreground runner did.
         """
         process = await asyncio.create_subprocess_shell(
             command,
@@ -563,6 +576,7 @@ class BackgroundJobManager:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            env=env,
         )
 
         parser = get_progress_parser(progress_parser) if pin_sticky else None
@@ -626,6 +640,30 @@ class BackgroundJobManager:
         log.info(f"Stopped background job {job.job_id}")
         await _finalize_job(job)
         return job
+
+    async def abort(self, job_id: str) -> None:
+        """Kill a job WITHOUT the completion sequence (#1136).
+
+        No archive record, no inbox notification, no wake: the job never
+        "completed" — it was aborted. Used when a foreground-claimed command's
+        turn is cancelled before the handoff, so no unmanaged process survives.
+        Idempotent; unknown job IDs are a no-op.
+        """
+        job = self.jobs.pop(job_id, None)
+        if job is None:
+            return
+        try:
+            await _kill_process(job.process)
+        except Exception as exc:  # noqa: BLE001 - abort must not raise
+            log.warning(f"abort: killing process for job {job_id} failed: {exc}")
+        if job.reader_task is not None and not job.reader_task.done():
+            # The reader's finally skips _finalize_job for a cancelled reader
+            # and still closes the transport deterministically (#605).
+            job.reader_task.cancel()
+            try:
+                await job.reader_task
+            except asyncio.CancelledError:
+                pass  # expected: we just cancelled it
 
     def list_jobs(self) -> list[BackgroundJob]:
         """Return all tracked jobs (running and finished)."""
