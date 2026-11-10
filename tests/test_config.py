@@ -943,3 +943,79 @@ class TestConfirmationTimeoutConfig:
         monkeypatch.setenv("CONFIRMATION_TIMEOUT_SEC", "null")
         cfg = load_config()
         assert cfg.agent.confirmation_timeout_sec is None
+
+
+class TestToolOutputBounds:
+    """Top-level tool-output bound knobs (#922): env var > config.json > default.
+
+    max_tool_output_bytes existed but was never wired into load_config — these
+    tests pin the wiring for all three knobs.
+    """
+
+    def test_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))  # fresh home, no config.json
+        cfg = load_config()
+        assert cfg.max_tool_output_bytes == 51200
+        assert cfg.max_tool_output_lines == 2000
+        assert cfg.max_tool_output_disk_bytes == 10 * 1024 * 1024
+
+    def test_from_json(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "max_tool_output_bytes": 12345,
+                    "max_tool_output_lines": 777,
+                    "max_tool_output_disk_bytes": 999999,
+                }
+            )
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        cfg = load_config()
+        assert cfg.max_tool_output_bytes == 12345
+        assert cfg.max_tool_output_lines == 777
+        assert cfg.max_tool_output_disk_bytes == 999999
+
+    def test_env_beats_json(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"max_tool_output_lines": 777}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("MAX_TOOL_OUTPUT_LINES", "42")
+        cfg = load_config()
+        assert cfg.max_tool_output_lines == 42
+
+    def test_explicit_null_disables_byte_cap(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"max_tool_output_bytes": None}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        cfg = load_config()
+        assert cfg.max_tool_output_bytes is None
+
+    def test_malformed_value_falls_back_to_default(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"max_tool_output_lines": "not-an-int"}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        cfg = load_config()  # must not raise
+        assert cfg.max_tool_output_lines == 2000
+
+    def test_explicit_null_falls_back_to_default_for_bounded_knobs(self, tmp_path, monkeypatch):
+        """Hard-bounded knobs fall back to defaults on explicit null (#922).
+
+        Unlike ``max_tool_output_bytes`` (null disables the cap), the line and
+        disk bounds are safety limits — a null is not a usable value, so it falls
+        back to the default instead of flowing into the _StreamCollector, which
+        takes non-optional ints.
+        """
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(
+            json.dumps({"max_tool_output_lines": None, "max_tool_output_disk_bytes": None})
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        cfg = load_config()
+        assert cfg.max_tool_output_lines == 2000
+        assert cfg.max_tool_output_disk_bytes == 10 * 1024 * 1024

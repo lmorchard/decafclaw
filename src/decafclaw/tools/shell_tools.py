@@ -1,16 +1,20 @@
 """Shell tool with confirmation — requires user approval before execution."""
 
 import asyncio
+import codecs
 import fnmatch
+import io
 import json
 import logging
 import os
 import re
 import shlex
-import subprocess
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from decafclaw.conversation_paths import conversation_dir
+from decafclaw.output_truncation import format_size, tail_cut_to_bytes, truncate_tail, truncation_note
 from decafclaw.security_monitor import SecurityStatus, evaluate_command, evaluate_command_llm
 from decafclaw.shell_presets import (
     DEFAULT_AUX_APPROVAL_PRESETS,
@@ -728,11 +732,180 @@ async def tool_shell(ctx: "Context", command: str) -> ToolResult:
     budget = ctx.config.shell.foreground_wait_budget_sec
     if budget is not None and budget > 0:
         return await _execute_command_with_handoff(ctx, command)
-    return _execute_command(ctx, command)
+    return await _execute_command(ctx, command)
 
 
-def _execute_command(ctx: "Context", command: str) -> ToolResult:
-    """Execute a shell command and return the output."""
+# Foreground shell total runtime limit (seconds). #1136 makes this
+# configurable via shell.max_runtime_sec; until it lands, keep the historical
+# hardcoded 30s. The ``timeout`` parameter on _execute_command is a test seam.
+_DEFAULT_TIMEOUT_SEC = 30.0
+
+# How long to wait for output readers after the process exits. A grandchild
+# can hold a pipe open past its parent's exit; we don't block the turn on that
+# — proceed with whatever was captured (same bound as #1136's drain).
+_DRAIN_TIMEOUT_SEC = 5.0
+
+
+class _StreamCollector:
+    """Bounded in-memory accumulator for one subprocess stream (#922).
+
+    Decodes chunks with a streaming UTF-8 incremental decoder (multibyte
+    characters split across chunk boundaries stay valid), keeps a rolling tail
+    of at most ``max_bytes`` UTF-8 bytes, counts total lines/bytes, and spills
+    the full output to an artifact file once a limit is exceeded (capped at
+    ``disk_cap`` bytes). Memory stays O(max_bytes), never the full output.
+    """
+
+    def __init__(self, path: Path, max_bytes: int, disk_cap: int, max_lines: int):
+        self._path = path
+        self._max_bytes = max_bytes
+        self._disk_cap = disk_cap
+        self._max_lines = max_lines
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self._tail = ""  # rolling tail (decoded), bounded to max_bytes
+        self._newline_count = 0
+        self._open_line = False  # decoded so far doesn't end with a newline
+        self.total_bytes = 0  # raw bytes read from the pipe
+        self._spill: io.TextIOWrapper | None = None
+        self._spilled_bytes = 0
+        self.spilled = False  # spill file opened (stays true after close)
+        self._spill_failed = False
+        self._disk_capped = False
+
+    @property
+    def tail(self) -> str:
+        return self._tail
+
+    @property
+    def total_lines(self) -> int:
+        """Line count, splitlines() semantics (a trailing open line counts)."""
+        return self._newline_count + (1 if self._open_line else 0)
+
+    @property
+    def spilled_path(self) -> Path | None:
+        """The artifact path, or None if the stream never spilled (or the
+        spill file could not be opened)."""
+        return self._path if self.spilled else None
+
+    def feed(self, chunk: bytes) -> None:
+        """Feed one raw pipe read (EOF is b"" — call finish() instead)."""
+        self._feed_text(self._decoder.decode(chunk), len(chunk))
+
+    def finish(self) -> None:
+        """Flush the incremental decoder at EOF (a partial multibyte character
+        at the end of the stream decodes to U+FFFD — valid, never a crash)."""
+        self._feed_text(self._decoder.decode(b"", final=True), 0)
+
+    def _feed_text(self, text: str, raw_bytes: int) -> None:
+        self.total_bytes += raw_bytes
+        if not text:
+            return
+        self._newline_count += text.count("\n")
+        self._open_line = not text.endswith("\n")
+
+        # Spill decision (once): everything decoded so far is in the tail,
+        # because the tail has only been trimmed once a limit was exceeded.
+        if (
+            self._spill is None
+            and not self._spill_failed
+            and (self.total_bytes > self._max_bytes or self.total_lines > self._max_lines)
+        ):
+            self._open_spill()
+
+        # Live spill writes (disk-capped — the file stops growing, the
+        # preview keeps collecting).
+        if self._spill is not None:
+            if self._spilled_bytes >= self._disk_cap:
+                if not self._disk_capped:
+                    log.warning(
+                        f"[tool:shell] output artifact {self._path} reached the disk cap "
+                        f"({format_size(self._disk_cap)}); stopping writes, preview continues"
+                    )
+                    self._disk_capped = True
+            else:
+                try:
+                    self._spill.write(text)
+                    self._spilled_bytes += len(text.encode("utf-8"))
+                except OSError as exc:
+                    log.warning(f"[tool:shell] output artifact write failed ({self._path}): {exc}")
+                    self.close()
+
+        # Rolling tail (bounded to max_bytes, character-aligned).
+        self._tail += text
+        if len(self._tail.encode("utf-8")) > self._max_bytes:
+            self._tail = tail_cut_to_bytes(self._tail, self._max_bytes)
+
+    def _open_spill(self) -> None:
+        """Open the artifact and write everything captured so far (the
+        untrimmed tail); live chunks follow, so every decoded piece lands in
+        the file exactly once."""
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._spill = open(self._path, "w", encoding="utf-8")
+        except OSError as exc:
+            log.warning(f"[tool:shell] could not open output artifact {self._path}: {exc}")
+            self._spill_failed = True
+            return
+        try:
+            self._spill.write(self._tail)
+            self._spilled_bytes = len(self._tail.encode("utf-8"))
+        except OSError as exc:
+            log.warning(f"[tool:shell] output artifact write failed ({self._path}): {exc}")
+            self.close()
+        else:
+            self.spilled = True
+
+    def close(self) -> None:
+        """Close the spill file (idempotent). Call on every exit path."""
+        if self._spill is not None:
+            try:
+                self._spill.close()
+            except OSError as exc:
+                log.debug(f"[tool:shell] closing output artifact {self._path} failed: {exc}")
+            self._spill = None
+
+
+async def _kill_process_group(process: asyncio.subprocess.Process) -> None:
+    """Terminate the command's process group (SIGTERM, grace period, SIGKILL).
+
+    Reuses the background skill's _kill_process (function-level import —
+    module-level would cycle: that module imports check_shell_approval from
+    here). Falls back to a plain kill if the skill is unavailable.
+    """
+    try:
+        from decafclaw.skills.background.tools import _kill_process
+    except Exception as exc:  # noqa: BLE001 - bundled skill should always import
+        log.warning(f"[tool:shell] background _kill_process unavailable ({exc}); using plain kill")
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        return
+    await _kill_process(process)
+
+
+def _close_transport(process: asyncio.subprocess.Process) -> None:
+    """Deterministically close the subprocess transport (the background skill's
+    _close_transport pattern): Process.wait() reaps the child but never closes
+    the transport; asyncio only does that when the Process is GC'd, which can
+    land on a dead event loop and surface as PytestUnraisableExceptionWarning.
+    """
+    transport = getattr(process, "_transport", None)
+    if transport is not None:
+        try:
+            transport.close()
+        except Exception as exc:  # noqa: BLE001 - best-effort cleanup
+            log.debug(f"[tool:shell] closing subprocess transport failed: {exc}")
+
+
+async def _execute_command(ctx: "Context", command: str, timeout: float = _DEFAULT_TIMEOUT_SEC) -> ToolResult:
+    """Execute a shell command and return the output.
+
+    Streams stdout/stderr with bounded in-memory previews (#922): each stream
+    keeps a rolling tail of at most ``max_tool_output_bytes`` and spills the
+    full output to the conversation's tool_outputs/ artifact as it streams, so
+    memory stays bounded regardless of output size. On timeout or cancellation
+    the whole process group is killed and readers/files are closed cleanly.
+    """
     log.info(f"[tool:shell] executing command: {command}")
     # Expose the runtime workspace explicitly so skill scripts can place
     # state there rather than guessing from $0. The cwd is already the
@@ -740,25 +913,113 @@ def _execute_command(ctx: "Context", command: str) -> ToolResult:
     # survives manual/out-of-cwd invocation. Sits alongside DECAFCLAW_REPO /
     # CONTRIB, which the skill loader sets the same way.
     env = {**os.environ, "DECAFCLAW_WORKSPACE": str(ctx.config.workspace_path)}
-    max_runtime = ctx.config.shell.max_runtime_sec
+    max_bytes = ctx.config.max_tool_output_bytes
+    if max_bytes is None:  # collection bounding is a safety property, not a display preference
+        max_bytes = 51200
+    max_lines = ctx.config.max_tool_output_lines
+    disk_cap = ctx.config.max_tool_output_disk_bytes
+
+    # Artifact naming: the per-call id in production; a short uuid when called
+    # directly (tests) without a forked tool-call context.
+    call_id = ctx.tools.current_call_id or uuid.uuid4().hex[:8]
+    tool_outputs_dir = conversation_dir(ctx.config, ctx.conv_id, create=True) / "tool_outputs"
+    stdout_collector = _StreamCollector(tool_outputs_dir / f"{call_id}.stdout.txt", max_bytes, disk_cap, max_lines)
+    stderr_collector = _StreamCollector(tool_outputs_dir / f"{call_id}.stderr.txt", max_bytes, disk_cap, max_lines)
+
+    process = await asyncio.create_subprocess_shell(
+        command,
+        cwd=str(ctx.config.workspace_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,  # own process group — timeout/cancel kills the whole tree
+        env=env,
+    )
+
+    async def _read(stream: asyncio.StreamReader | None, collector: _StreamCollector) -> None:
+        if stream is None:
+            return
+        try:
+            while True:
+                chunk = await stream.read(65536)
+                if not chunk:
+                    break
+                collector.feed(chunk)
+            collector.finish()
+        except Exception as exc:  # noqa: BLE001 - a reader error must not kill the turn
+            log.debug(f"[tool:shell] output reader ended with error: {exc}")
+
+    # Two concurrent readers — sequential draining deadlocks on full pipes.
+    stdout_task = asyncio.create_task(_read(process.stdout, stdout_collector))
+    stderr_task = asyncio.create_task(_read(process.stderr, stderr_collector))
+
+    timed_out = False
     try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=max_runtime,
-            cwd=str(ctx.config.workspace_path),
-            env=env,
-        )
-        output = result.stdout
-        if result.stderr:
-            output += f"\n[stderr]\n{result.stderr}"
-        if result.returncode != 0:
-            output += f"\n[exit code: {result.returncode}]"
-        return ToolResult(text=output or "(no output)")
-    except subprocess.TimeoutExpired:
-        return ToolResult(text=f"[error: command timed out after {max_runtime:.0f} seconds]")
+        try:
+            await asyncio.wait_for(process.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            timed_out = True
+            log.info(f"[tool:shell] command timed out after {timeout:.0f}s; killing process group")
+            await _kill_process_group(process)
+        except asyncio.CancelledError:
+            # Turn cancelled mid-command: kill the process group so nothing is
+            # left unmanaged, then propagate (execute_single_tool produces the
+            # "[cancelled: shell]" result).
+            await _kill_process_group(process)
+            raise
+
+        # Drain both readers (bounded — a grandchild can hold a pipe open past
+        # exit; proceed with what was captured).
+        for task in (stdout_task, stderr_task):
+            try:
+                await asyncio.wait_for(task, timeout=_DRAIN_TIMEOUT_SEC)
+            except asyncio.TimeoutError:
+                log.debug("[tool:shell] output drain timed out; proceeding with captured buffers")
+            except asyncio.CancelledError:
+                raise  # finally closes everything; wait_for already cancelled the reader
+    finally:
+        for task in (stdout_task, stderr_task):
+            if not task.done():
+                task.cancel()
+        for task in (stdout_task, stderr_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass  # expected for cancelled readers; the stream is released below
+            except Exception as exc:  # noqa: BLE001 - reader errors are logged in _read
+                log.debug(f"[tool:shell] output reader ended with error: {exc}")
+        stdout_collector.close()
+        stderr_collector.close()
+        _close_transport(process)
+
+    exit_code = process.returncode
+    stdout_text = truncate_tail(stdout_collector.tail, max_lines=max_lines, max_bytes=max_bytes).content
+    stderr_text = truncate_tail(stderr_collector.tail, max_lines=max_lines, max_bytes=max_bytes).content
+
+    output = stdout_text
+    if stderr_text:
+        output += f"\n[stderr]\n{stderr_text}"
+    if not timed_out and exit_code is not None and exit_code != 0:
+        output += f"\n[exit code: {exit_code}]"
+
+    for label, collector in (("stdout", stdout_collector), ("stderr", stderr_collector)):
+        exceeded = collector.total_bytes > max_bytes or collector.total_lines > max_lines
+        if not exceeded:
+            continue
+        path = collector.spilled_path
+        if path is not None:
+            log.info(
+                f"[tool:shell] {label} truncated: {format_size(collector.total_bytes)} -> "
+                f"{format_size(len(collector.tail.encode('utf-8')))} preview, full output at {path}"
+            )
+            output += truncation_note(str(path))
+        else:  # a limit was exceeded but the spill file could not be opened
+            output += f"\n\n[Output truncated. Full {label} could not be saved ({format_size(collector.total_bytes)}).]"
+
+    if timed_out:
+        prefix = f"[error: command timed out after {timeout:.0f} seconds]"
+        return ToolResult(text=f"{prefix}\n\n{output}" if output else prefix)
+
+    return ToolResult(text=output or "(no output)")
 
 
 # How long to wait for the output reader after a foreground command exits. A
@@ -787,7 +1048,7 @@ async def _execute_command_with_handoff(ctx: "Context", command: str) -> ToolRes
         from decafclaw.skills.background.tools import _get_job_manager
     except Exception as exc:  # noqa: BLE001 - fail open to the legacy path
         log.warning(f"[tool:shell] background runner unavailable ({exc}); using blocking execution")
-        return _execute_command(ctx, command)
+        return await _execute_command(ctx, command)
 
     budget = ctx.config.shell.foreground_wait_budget_sec
     max_runtime = ctx.config.shell.max_runtime_sec

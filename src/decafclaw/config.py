@@ -100,6 +100,28 @@ def _parse_dict(value: str) -> dict:
     return {}
 
 
+def _resolve_top_level_int(file_data: dict, key: str, env_name: str, default: int) -> int | None:
+    """Resolve a top-level scalar field: env var > config.json > default.
+
+    Top-level fields don't go through load_sub_config (no env prefix), so each
+    needs an explicit lookup — same pattern as EXTRA_SKILL_PATHS. An explicit
+    null in config.json is honored (max_tool_output_bytes: null disables the
+    cap); a malformed value warns and falls back to the default.
+    """
+    raw = os.getenv(env_name)
+    if raw is None or raw == "":
+        if key not in file_data:
+            return default
+        raw = file_data[key]
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        log.warning("Invalid %s value %r; using default %d", env_name, raw, default)
+        return default
+
+
 def _coerce(value: str, field_type) -> object:
     """Coerce a string value to the target field type."""
     origin = get_origin(field_type)
@@ -239,6 +261,12 @@ class Config:
     auxiliary_model: str = ""
     extra_skill_paths: list[str] = field(default_factory=list)
     max_tool_output_bytes: int | None = 51200
+    # Tool-output preview line limit (#922) — paired with max_tool_output_bytes
+    # in the shared truncation (output_truncation.py).
+    max_tool_output_lines: int = 2000
+    # Cap on spilled tool-output artifact size (#922) — a runaway command must
+    # not fill the disk. The preview keeps collecting; only the file stops growing.
+    max_tool_output_disk_bytes: int = 10 * 1024 * 1024
     # Skill names to treat as always-loaded regardless of frontmatter.
     # Lets a user opt a trusted-tier skill (bundled / admin / extra)
     # into the system prompt without editing its SKILL.md. Workspace
@@ -678,6 +706,23 @@ def load_config() -> Config:
         raw_always_loaded = file_data.get("skills_always_loaded", [])
         skills_always_loaded = [str(s) for s in raw_always_loaded] if isinstance(raw_always_loaded, list) else []
 
+    # Tool-output bounds (#922). max_tool_output_bytes existed but was never
+    # wired into load_config — it could not be overridden; wire all three now.
+    max_tool_output_bytes = _resolve_top_level_int(file_data, "max_tool_output_bytes", "MAX_TOOL_OUTPUT_BYTES", 51200)
+    max_tool_output_lines = _resolve_top_level_int(file_data, "max_tool_output_lines", "MAX_TOOL_OUTPUT_LINES", 2000)
+    max_tool_output_disk_bytes = _resolve_top_level_int(
+        file_data, "max_tool_output_disk_bytes", "MAX_TOOL_OUTPUT_DISK_BYTES", 10 * 1024 * 1024
+    )
+    # The line and disk bounds are hard safety limits — they are never "turned
+    # off" — so an explicit null in config.json / an unset-but-null value falls
+    # back to the default instead of resolving to None. (max_tool_output_bytes is
+    # the exception: its null means "cap disabled", which is why it stays
+    # int | None downstream.)
+    if max_tool_output_lines is None:
+        max_tool_output_lines = 2000
+    if max_tool_output_disk_bytes is None:
+        max_tool_output_disk_bytes = 10 * 1024 * 1024
+
     # Migration: if no providers/model_configs but old-style llm config exists,
     # auto-generate a "default" openai-compat provider + model config
     from .llm.types import PROVIDER_OPENAI_COMPAT
@@ -731,6 +776,9 @@ def load_config() -> Config:
         auxiliary_model=auxiliary_model,
         extra_skill_paths=extra_skill_paths,
         skills_always_loaded=skills_always_loaded,
+        max_tool_output_bytes=max_tool_output_bytes,
+        max_tool_output_lines=max_tool_output_lines,
+        max_tool_output_disk_bytes=max_tool_output_disk_bytes,
         vault_retrieval=vault_retrieval,
         relevance=relevance,
         importance=importance,
