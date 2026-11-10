@@ -44,7 +44,7 @@ def _utf8_len(s: str) -> int:
     return len(s.encode("utf-8"))
 
 
-def _head_cut_to_bytes(s: str, max_bytes: int) -> str:
+def head_cut_to_bytes(s: str, max_bytes: int) -> str:
     """Longest prefix of ``s`` whose UTF-8 encoding is at most ``max_bytes``.
 
     Never splits a character: the result is a true prefix of ``s`` that
@@ -64,10 +64,10 @@ def _head_cut_to_bytes(s: str, max_bytes: int) -> str:
     return s[:lo]
 
 
-def _tail_cut_to_bytes(s: str, max_bytes: int) -> str:
+def tail_cut_to_bytes(s: str, max_bytes: int) -> str:
     """Longest suffix of ``s`` whose UTF-8 encoding is at most ``max_bytes``.
 
-    Mirror image of :func:`_head_cut_to_bytes` — keeps the END of an
+    Mirror image of :func:`head_cut_to_bytes` — keeps the END of an
     over-long line, which is what tail retention is for.
     """
     if _utf8_len(s) <= max_bytes:
@@ -105,7 +105,7 @@ def truncate_head(text: str, *, max_lines: int, max_bytes: int) -> TruncationRes
     while kept and size > max_bytes:
         if len(kept) == 1:
             # A single line alone exceeds the limit: cut it to fit.
-            kept[0] = _head_cut_to_bytes(kept[0], max_bytes)
+            kept[0] = head_cut_to_bytes(kept[0], max_bytes)
             size = _utf8_len(kept[0])  # now ≤ max_bytes; loop exits
         else:
             # Drop the last line (and its preceding newline).
@@ -154,7 +154,7 @@ def truncate_tail(text: str, *, max_lines: int, max_bytes: int) -> TruncationRes
     while kept and size > max_bytes:
         if len(kept) == 1:
             # A single line alone exceeds the limit: cut it to fit (keep its end).
-            kept[0] = _tail_cut_to_bytes(kept[0], max_bytes)
+            kept[0] = tail_cut_to_bytes(kept[0], max_bytes)
             size = _utf8_len(kept[0])  # now ≤ max_bytes; loop exits
         else:
             # Drop the first line (and its following newline).
