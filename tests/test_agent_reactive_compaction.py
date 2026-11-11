@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from decafclaw.agent import TurnRunner, _Continue, _Final
+from decafclaw.agent import TurnRunner, _Continue, _Final, _maybe_compact
+from decafclaw.context_composer import effective_compaction_threshold
 from decafclaw.conversation_manager import ConversationManager, TurnKind
 from decafclaw.events import EventBus
 from decafclaw.llm.types import ContextLengthExceededError
@@ -179,3 +180,63 @@ async def test_reactive_overflow_does_not_affect_second_conversation(manager, mo
     complete_c2 = [e for e in events_c2 if e.get("type") == "message_complete"]
     assert complete_c2
     assert complete_c2[-1].get("context_limit") == 10000
+
+
+# -- #1099: user-configurable auto-compaction threshold -----------------------
+
+
+def test_effective_compaction_threshold_fixed_cap_fallback(ctx, config):
+    """No ratio configured → historical fixed cap (default 100k)."""
+    config.compaction.max_tokens = 100000
+    config.compaction.threshold_ratio = None
+    assert effective_compaction_threshold(config, ctx) == 100000
+
+
+def test_effective_compaction_threshold_global_ratio_times_window(ctx, config):
+    """Global ``compaction.threshold_ratio`` × model context window (#1099 success condition 1)."""
+    config.compaction.max_tokens = 100000
+    config.compaction.threshold_ratio = 0.4
+    config.llm.context_window_size = 128000
+    assert effective_compaction_threshold(config, ctx) == 51200
+
+
+def test_effective_compaction_threshold_per_conv_absolute_override_wins(ctx, config):
+    """Per-conversation absolute override beats the global ratio (#1099 success condition 2)."""
+    config.compaction.max_tokens = 100000
+    config.compaction.threshold_ratio = 0.4
+    ctx.compaction_threshold_override = 25600
+    assert effective_compaction_threshold(config, ctx) == 25600
+
+
+def test_effective_compaction_threshold_per_conv_ratio_override_wins(ctx, config):
+    """Per-conversation ratio override beats the global ratio."""
+    config.compaction.max_tokens = 100000
+    config.compaction.threshold_ratio = 0.4
+    config.llm.context_window_size = 128000
+    ctx.compaction_threshold_ratio_override = 0.8
+    assert effective_compaction_threshold(config, ctx) == 102400
+
+
+def test_effective_compaction_threshold_lowered_beats_ratio(ctx, config):
+    """Turn-local reactive lowering beats a configured ratio for that turn."""
+    config.compaction.max_tokens = 100000
+    config.compaction.threshold_ratio = 0.4
+    config.llm.context_window_size = 128000
+    assert effective_compaction_threshold(config, ctx, lowered=51200) == 51200
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_fires_on_ratio_threshold(ctx, config, monkeypatch):
+    """Compaction fires when prompt_tokens exceed the ratio-derived threshold."""
+    mock_compact = AsyncMock()
+    monkeypatch.setattr("decafclaw.agent.compaction.compact_history", mock_compact)
+
+    config.compaction.max_tokens = 100000
+    config.compaction.threshold_ratio = 0.4
+    config.llm.context_window_size = 128000
+
+    await _maybe_compact(ctx, config, [], prompt_tokens=51200)
+    mock_compact.assert_not_awaited()
+
+    await _maybe_compact(ctx, config, [], prompt_tokens=51201)
+    mock_compact.assert_awaited_once()

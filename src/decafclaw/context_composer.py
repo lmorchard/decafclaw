@@ -235,6 +235,67 @@ class ComposerState:
         self.cleanup_cleared_bytes = 0
 
 
+def _model_context_window(config, ctx: "Context | None" = None) -> int:
+    """Resolve the model context window size (#1099).
+
+    Prefers the explicit ``context_window_size`` on the active model's
+    ``model_configs`` entry, then the global ``config.llm.context_window_size``,
+    then falls back to the legacy fixed ``compaction.max_tokens`` proxy.
+    """
+    window = int(getattr(getattr(config, "llm", None), "context_window_size", 0) or 0)
+    model_name = (getattr(ctx, "active_model", "") or "") if ctx is not None else ""
+    if model_name:
+        model_cfgs = getattr(config, "model_configs", None) or {}
+        mc = model_cfgs.get(model_name) if hasattr(model_cfgs, "get") else None
+        mc_window = int(getattr(mc, "context_window_size", 0) or 0) if mc is not None else 0
+        if mc_window > 0:
+            window = mc_window
+    return window
+
+
+def effective_compaction_threshold(config, ctx: "Context | None" = None, *, lowered: int | None = None) -> int:
+    """Resolve the effective auto-compaction token threshold (#1099).
+
+    Precedence (highest first):
+
+      1. ``lowered`` — turn-local reactive lowering applied by the agent
+         loop after a context-length-exceeded error. A safety valve for the
+         turn that just overflowed; it beats user- and config-set thresholds
+         so the runaway turn can compact its way out.
+      2. Per-conversation absolute override — ``ctx.compaction_threshold_override``
+         (persisted as ``PersistedTurnState.compaction_threshold``).
+      3. Per-conversation ratio override — ``ctx.compaction_threshold_ratio_override``
+         (persisted as ``PersistedTurnState.compaction_threshold_ratio``) applied
+         to the resolved model context window, else the global
+         ``config.compaction.threshold_ratio``.
+      4. Fixed ``config.compaction.max_tokens`` fallback.
+
+    ``threshold_ratio`` of ``None`` keeps the historical fixed-cap behaviour.
+    When set and the resolved model context window is known (``context_window_size
+    > 0``), the effective threshold becomes ``int(context_window * ratio)``; an
+    unknown window falls back to the fixed cap.
+    """
+    threshold = config.compaction.max_tokens
+    if lowered is not None and lowered > 0:
+        return int(lowered)
+    override = getattr(ctx, "compaction_threshold_override", None) if ctx is not None else None
+    if override:
+        return int(override)
+    ratio = None
+    if ctx is not None:
+        per_conv_ratio = getattr(ctx, "compaction_threshold_ratio_override", None)
+        if per_conv_ratio:
+            ratio = float(per_conv_ratio)
+    if ratio is None:
+        ratio = config.compaction.threshold_ratio
+    if ratio is None:
+        return threshold
+    window = _model_context_window(config, ctx)
+    if window > 0:
+        return int(window * float(ratio))
+    return threshold
+
+
 # -- Sidecar persistence ------------------------------------------------------
 
 
@@ -1838,6 +1899,17 @@ class ContextComposer:
         elif gui_idx is not None:
             messages.pop(gui_idx)
 
+    def get_effective_compaction_threshold(
+        self, config, ctx: "Context | None" = None, *, lowered: int | None = None
+    ) -> int:
+        """Effective auto-compaction token threshold for this context (#1099).
+
+        Turn-local reactive lowering > per-conversation absolute override >
+        per-conversation (else global) ``compaction.threshold_ratio`` applied to
+        the model context window > fixed ``compaction.max_tokens`` fallback.
+        """
+        return effective_compaction_threshold(config, ctx, lowered=lowered)
+
     def _get_context_window_size(self, config, ctx: Any = None) -> int:
         """Return the effective context window size.
 
@@ -1882,7 +1954,7 @@ class ContextComposer:
         self.state.last_completion_tokens_actual = completion_tokens
         self.state.last_cached_prompt_tokens_actual = cached_prompt_tokens
 
-    def build_diagnostics(self, config, composed: ComposedContext) -> dict:
+    def build_diagnostics(self, config, composed: ComposedContext, ctx: "Context | None" = None) -> dict:
         """Build the full diagnostics dict for the context sidecar file."""
         candidates = []
         for r in composed.memory_results:
@@ -1922,8 +1994,11 @@ class ContextComposer:
                 if self.state.last_prompt_tokens_actual
                 else 0.0
             ),
-            "context_window_size": self._get_context_window_size(config),
-            "compaction_threshold": config.compaction.max_tokens,
+            "context_window_size": self._get_context_window_size(config, ctx),
+            # Effective threshold (#1099): per-conversation override, then
+            # global/per-conv ratio × model window, then the fixed cap. The
+            # Context Inspector reads this to render the "Compact at" stat.
+            "compaction_threshold": self.get_effective_compaction_threshold(config, ctx),
             "sources": sources,
             "memory_candidates": candidates,
             "cleanup": {

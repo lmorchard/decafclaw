@@ -1121,6 +1121,11 @@ async def get_conversation(request: Request, username: str) -> JSONResponse:
 class ConversationPatchRequest(BaseModel):
     title: str | None = None
     folder: str | None = None
+    # Per-conversation auto-compaction threshold overrides (#1099). Applied
+    # through ConversationManager.set_flag so they land in the conversation's
+    # per-conversation persisted state and apply to subsequent turns.
+    compaction_threshold: int | None = None
+    compaction_threshold_ratio: float | None = None
 
 
 class ConversationPatchResponse(TypedDict):
@@ -1139,6 +1144,7 @@ async def rename_conversation(request: Request, id: str) -> JSONResponse:
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
+    manager = request.app.state.manager
     conv_id = id
     body = await request.json()
     index = ConversationIndex(config)
@@ -1164,6 +1170,13 @@ async def rename_conversation(request: Request, id: str) -> JSONResponse:
         ok, err = await folder_index.set_folder(conv_id, folder)
         if not ok:
             return JSONResponse({"error": err}, status_code=400)
+    # #1099 — per-conversation compaction threshold overrides. Accepted as
+    # optional fields on PATCH /api/conversations/{id}; applied through the
+    # manager so they persist in the conversation's per-conversation state.
+    if body.get("compaction_threshold") is not None:
+        manager.set_flag(conv_id, "compaction_threshold", body.get("compaction_threshold"))
+    if body.get("compaction_threshold_ratio") is not None:
+        manager.set_flag(conv_id, "compaction_threshold_ratio", body.get("compaction_threshold_ratio"))
     result = conv.to_dict()
     if folder is not None:
         result["folder"] = folder

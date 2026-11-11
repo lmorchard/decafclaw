@@ -178,6 +178,15 @@ class PersistedTurnState:
     aux_approval_guidance: list = field(default_factory=list, metadata={"replaceable": True})
     llm_approved_shell_patterns: list = field(default_factory=list, metadata={"replaceable": True})
     injection_cursors: InjectionCursors = field(default_factory=InjectionCursors, metadata={"replaceable": True})
+    # Per-conversation auto-compaction threshold overrides (#1099). Externally
+    # driven (ConversationManager.set_flag from the web / transport handlers) —
+    # save never writes these (they are not ctx-driven) and restore maps them onto
+    # ctx.compaction_threshold_override / ctx.compaction_threshold_ratio_override via
+    # the _PERSISTED_BINDINGS entries below. ``compaction_threshold`` is an absolute
+    # token budget; ``compaction_threshold_ratio`` is a fraction of the model
+    # context window (e.g. 0.4 = compact at 40% capacity).
+    compaction_threshold: int | None = None
+    compaction_threshold_ratio: float | None = None
 
 
 # Per-field reader/writer bindings between PersistedTurnState and the
@@ -230,6 +239,17 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
     "injection_cursors": (
         lambda ctx: ctx.composer.injection_cursors,
         lambda ctx, v: setattr(ctx.composer, "injection_cursors", v),
+    ),
+    # #1099 — per-conversation auto-compaction threshold overrides. The
+    # persisted value lands on the ctx slot the agent loop reads; save
+    # never writes these (they are externally driven, not ctx-driven).
+    "compaction_threshold": (
+        lambda ctx: getattr(ctx, "compaction_threshold_override", None),
+        lambda ctx, v: setattr(ctx, "compaction_threshold_override", v),
+    ),
+    "compaction_threshold_ratio": (
+        lambda ctx: getattr(ctx, "compaction_threshold_ratio_override", None),
+        lambda ctx, v: setattr(ctx, "compaction_threshold_ratio_override", v),
     ),
 }
 

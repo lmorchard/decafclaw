@@ -340,6 +340,8 @@ export class DefaultService {
         requestBody: {
             title?: (string | null);
             folder?: (string | null);
+            compaction_threshold?: (number | null);
+            compaction_threshold_ratio?: (number | null);
         },
     ): CancelablePromise<ConversationPatchResponse>;
     public static renameConversationApiConversationsIdPatch(
@@ -347,6 +349,8 @@ export class DefaultService {
         requestBody: {
             title?: (string | null);
             folder?: (string | null);
+            compaction_threshold?: (number | null);
+            compaction_threshold_ratio?: (number | null);
         },
         discardResponse: true,
     ): CancelablePromise<void>;
@@ -355,6 +359,8 @@ export class DefaultService {
         requestBody: {
             title?: (string | null);
             folder?: (string | null);
+            compaction_threshold?: (number | null);
+            compaction_threshold_ratio?: (number | null);
         },
         discardResponse = false,
     ): CancelablePromise<ConversationPatchResponse | void> {
