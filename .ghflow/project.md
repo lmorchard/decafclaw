@@ -1,16 +1,16 @@
 ---
 ghflow_project_facts: 1
-written: 2026-11-07
+written: 2026-11-11
 sources:
-  - AGENTS.md 2b7577c48be4dc3927543e0cead60443cd242704
-  - CLAUDE.md 2b7577c48be4dc3927543e0cead60443cd242704
+  - AGENTS.md 5415e78cbe686a7e6da1e412278e8a9af972f8fa
+  - CLAUDE.md 5415e78cbe686a7e6da1e412278e8a9af972f8fa
   - Makefile b3638bb7cdc6406b35c2a1fec0249ca7c3064b25
   - .github/workflows/ci.yml 2de18948e0afc3ee4c14570649660a08aea316d5
   - conftest.py fb46496f6536760ece617b135afc7aef3c6eac93
   - tests/conftest.py 49ff00ed9d4d72a8cc7aa2e07108a490c8802c0c
   - pyproject.toml b705dda2e2f0e144f03fa64a344fdf9ef122232d
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
-  - docs/config.md 62ba41da305b70875f6639da57b6cb85b69f2a66
+  - docs/config.md 0724a27eea7322d18e7fbd9b4d75bbd580433a87
   - docs/testing.md e30d35456d9757a42f84f13abeca170998145fd2
 ---
 # decafclaw project facts
