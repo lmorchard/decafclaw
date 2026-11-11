@@ -252,6 +252,31 @@ sidebar's containing block instead of being clipped by it.
 
 See [Context Composer](context-composer.md#context-inspection) for details.
 
+### Shell approval panel
+
+The per-conversation shell auto-approval panel (`<shell-approval-panel>`, #1159) gives the
+human a single view of why a conversation's shell commands are — or aren't — auto-approved,
+and the controls to change it:
+
+- **Conversation rules** (editable): the conversation's "remember why" rules added via
+  the "Approve + remember why" confirmation path. Add or delete rules here; each
+  add/remove clears the conversation's cached reviewer approval pattern so the next
+  prompt re-derives.
+- **Preset rules** (read-only): the active (not disabled) situational presets with source
+  (`builtin` / `config` / `custom`) and activation path.
+- **Always-on config guidance** (read-only): the static `shell.aux_approval_guidance`
+  from the agent config.
+- **Approved command patterns** (cached): the conversation's cached reviewer approvals;
+  revoke one to fall back to the reviewer.
+
+Edits that change the rules go through the conversation-scoped REST endpoints
+(`PUT /api/conversations/{id}/shell-approval/rules`, `DELETE .../rules`,
+`DELETE .../patterns`, `POST .../promote`); rule add/remove clears the cached pattern
+server-side. The panel portals to a body-level `shell-approval-panel-mount` div (the
+[portal pattern](web-ui-mobile.md#no-position-fixed-inside-transformed-ancestors)).
+Opened via the shell-approval trigger next to the Mode picker (sidebar fallback) or in the
+chat controls mode row (controls strip present).
+
 ### Copy conversation
 
 The conversation copy menu (`📋 Copy ▾`) lives inside the context inspector
@@ -407,6 +432,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |
 | `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter strip/panel: view-mode summary + tags, edit-mode typed controls and raw YAML editor |
 | `context-inspector` | `components/context-inspector.js` | Context diagnostics popover |
+| `shell-approval-panel` | `components/shell-approval-panel.js` | Per-conversation shell auto-approval panel: editable conversation rules, active preset rules, config guidance, cached approval patterns (#1159) |
 | `notification-inbox` | `components/notification-inbox.js` | Bell icon + dropdown inbox panel |
 | `config-panel` | `components/config-panel.js` | Admin config file editor & shell presets tab |
 | `preset-manager` | `components/preset-manager.js` | Shell auto-approval preset manager (list, create, edit, delete) |
@@ -604,6 +630,20 @@ See [Bookmarks](#bookmarks) for the UI.
 | `DELETE` | `/api/shell-approval/presets/{name}` | Delete a custom preset |
 
 PUT and DELETE on built-in or config preset names return 400. Successful mutations clear reviewer approval caches in active in-memory conversations that reference the modified preset.
+
+### Shell approval panel (per-conversation)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/conversations/{id}/shell-approval` | Per-conversation approval view: `conversation_rules`, active `presets`, `config_guidance`, and `cached_patterns`. Always readable; never mutates state |
+| `PUT` | `/api/conversations/{id}/shell-approval/rules` | Add or replace a conversation rule. Body `{"rule": "..."}`. Clears the conversation's cached reviewer approval patterns |
+| `DELETE` | `/api/conversations/{id}/shell-approval/rules` | Remove one conversation rule. Body `{"rule": "..."}`. Clears the conversation's cached reviewer approval patterns |
+| `DELETE` | `/api/conversations/{id}/shell-approval/patterns` | Revoke one cached approval pattern. Body `{"pattern": "..."}` |
+| `POST` | `/api/conversations/{id}/shell-approval/promote` | Copy a conversation rule into a custom preset. Body `{"rule": "...", "preset": "..."}`. Appends without duplicate; creates a new custom preset; 400 for built-in or config preset names |
+
+PUT and DELETE rule mutations are rejected with 409 while the conversation is `busy` or
+`waiting` (an interactive turn owns the reviewer surface). The web UI panel disables its
+editable surfaces in those states.
 
 ### Notifications
 
