@@ -1203,10 +1203,16 @@ def test_patch_openapi_contract(http_config):
         "schema": {"type": "string", "title": "Id"},
     }
     body = operation["requestBody"]["content"]["application/json"]["schema"]
-    assert set(body["properties"]) == {"title", "folder"}
+    assert set(body["properties"]) == {"title", "folder", "compaction_threshold", "compaction_threshold_ratio"}
     assert not body.get("required")
-    for field in body["properties"].values():
-        assert {part["type"] for part in field["anyOf"]} == {"string", "null"}
+    field_types = {
+        "title": {"string", "null"},
+        "folder": {"string", "null"},
+        "compaction_threshold": {"integer", "null"},
+        "compaction_threshold_ratio": {"number", "null"},
+    }
+    for name, field in body["properties"].items():
+        assert {part["type"] for part in field["anyOf"]} == field_types[name]
     response = schema["components"]["schemas"]["ConversationPatchResponse"]
     assert set(response["required"]) == {"conv_id", "title", "created_at", "updated_at"}
     assert response["properties"]["folder"]["type"] == "string"
