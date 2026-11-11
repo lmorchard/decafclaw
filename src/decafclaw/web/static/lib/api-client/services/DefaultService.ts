@@ -20,6 +20,7 @@ import type { ConversationFolderResponse } from '../models/ConversationFolderRes
 import type { ConversationLifecycleResponse } from '../models/ConversationLifecycleResponse';
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
+import type { ConversationShellApprovalResponse } from '../models/ConversationShellApprovalResponse';
 import type { JsonValue } from '../models/JsonValue';
 import type { LoginResponse } from '../models/LoginResponse';
 import type { LogoutResponse } from '../models/LogoutResponse';
@@ -1625,6 +1626,155 @@ export class DefaultService {
             url: '/api/shell-approval/presets/{name}',
             path: {
                 'name': name,
+            },
+        });
+    }
+    /**
+     * Get Conversation Shell Approval
+     * GET /api/conversations/{id}/shell-approval — per-conversation approval view.
+     *
+     * Returns the conversation's editable "remember why" rules, the active
+     * preset rules (read-only, source-tagged, disabled presets excluded), the
+     * always-on config guidance, and the cached reviewer approval patterns.
+     * Always readable; never mutates state.
+     * @param id
+     * @returns ConversationShellApprovalResponse Successful Response
+     * @throws ApiError
+     */
+    public static getConversationShellApprovalApiConversationsIdShellApprovalGet(
+        id: string,
+    ): CancelablePromise<ConversationShellApprovalResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/conversations/{id}/shell-approval',
+            path: {
+                'id': id,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Put Conversation Shell Rule
+     * PUT /api/conversations/{id}/shell-approval/rules — add (or re-set) a rule.
+     *
+     * Body: ``{"rule": "<text>"}``. Adds the rule to the conversation's editable
+     * guidance; re-putting the same text replaces it. Clears the conversation's
+     * cached reviewer approval patterns so the next prompt re-derives.
+     * @param id
+     * @param requestBody
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static putConversationShellRuleApiConversationsIdShellApprovalRulesPut(
+        id: string,
+        requestBody: {
+            rule?: string;
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/conversations/{id}/shell-approval/rules',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete Conversation Shell Rule
+     * DELETE /api/conversations/{id}/shell-approval/rules — remove one rule.
+     *
+     * Body: ``{"rule": "<text>"}``. Clears the conversation's cached reviewer
+     * approval patterns as well, since dropping a guidance rule invalidates them.
+     * @param id
+     * @param requestBody
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static deleteConversationShellRuleApiConversationsIdShellApprovalRulesDelete(
+        id: string,
+        requestBody: {
+            rule?: string;
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/conversations/{id}/shell-approval/rules',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete Conversation Shell Pattern
+     * DELETE /api/conversations/{id}/shell-approval/patterns — revoke one cached pattern.
+     *
+     * Body: ``{"pattern": "<glob>"}``. Removes the cached reviewer approval so the
+     * next matching command falls back to the reviewer again.
+     * @param id
+     * @param requestBody
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static deleteConversationShellPatternApiConversationsIdShellApprovalPatternsDelete(
+        id: string,
+        requestBody: {
+            pattern?: string;
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/conversations/{id}/shell-approval/patterns',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Post Conversation Shell Promote
+     * POST /api/conversations/{id}/shell-approval/promote — copy a rule into a preset.
+     *
+     * Body: ``{"rule": "<text>", "preset": "<name>"}``. Copies the conversation
+     * rule into an existing custom preset (append, no duplicate) or creates a new
+     * custom preset. Built-in or config preset names are rejected with 400.
+     * @param id
+     * @param requestBody
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static postConversationShellPromoteApiConversationsIdShellApprovalPromotePost(
+        id: string,
+        requestBody: {
+            rule?: string;
+            preset?: string;
+        },
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/shell-approval/promote',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
             },
         });
     }

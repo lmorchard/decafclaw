@@ -1729,6 +1729,196 @@ paths:
         required: true
         schema:
           type: string
+  /api/conversations/{id}/shell-approval:
+    get:
+      summary: Get Conversation Shell Approval
+      description: "GET /api/conversations/{id}/shell-approval \u2014 per-conversation\
+        \ approval view.\n\nReturns the conversation's editable \"remember why\" rules,\
+        \ the active\npreset rules (read-only, source-tagged, disabled presets excluded),\
+        \ the\nalways-on config guidance, and the cached reviewer approval patterns.\n\
+        Always readable; never mutates state."
+      operationId: get_conversation_shell_approval_api_conversations__id__shell_approval_get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationShellApprovalResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/conversations/{id}/shell-approval/rules:
+    put:
+      summary: Put Conversation Shell Rule
+      description: "PUT /api/conversations/{id}/shell-approval/rules \u2014 add (or\
+        \ re-set) a rule.\n\nBody: ``{\"rule\": \"<text>\"}``. Adds the rule to the\
+        \ conversation's editable\nguidance; re-putting the same text replaces it.\
+        \ Clears the conversation's\ncached reviewer approval patterns so the next\
+        \ prompt re-derives."
+      operationId: put_conversation_shell_rule_api_conversations__id__shell_approval_rules_put
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                rule:
+                  default: ''
+                  title: Rule
+                  type: string
+              title: ConversationShellApprovalRuleRequest
+              type: object
+    delete:
+      summary: Delete Conversation Shell Rule
+      description: "DELETE /api/conversations/{id}/shell-approval/rules \u2014 remove\
+        \ one rule.\n\nBody: ``{\"rule\": \"<text>\"}``. Clears the conversation's\
+        \ cached reviewer\napproval patterns as well, since dropping a guidance rule\
+        \ invalidates them."
+      operationId: delete_conversation_shell_rule_api_conversations__id__shell_approval_rules_delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                rule:
+                  default: ''
+                  title: Rule
+                  type: string
+              title: ConversationShellApprovalRuleRequest
+              type: object
+  /api/conversations/{id}/shell-approval/patterns:
+    delete:
+      summary: Delete Conversation Shell Pattern
+      description: "DELETE /api/conversations/{id}/shell-approval/patterns \u2014\
+        \ revoke one cached pattern.\n\nBody: ``{\"pattern\": \"<glob>\"}``. Removes\
+        \ the cached reviewer approval so the\nnext matching command falls back to\
+        \ the reviewer again."
+      operationId: delete_conversation_shell_pattern_api_conversations__id__shell_approval_patterns_delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                pattern:
+                  default: ''
+                  title: Pattern
+                  type: string
+              title: ConversationShellApprovalPatternRequest
+              type: object
+  /api/conversations/{id}/shell-approval/promote:
+    post:
+      summary: Post Conversation Shell Promote
+      description: "POST /api/conversations/{id}/shell-approval/promote \u2014 copy\
+        \ a rule into a preset.\n\nBody: ``{\"rule\": \"<text>\", \"preset\": \"<name>\"\
+        }``. Copies the conversation\nrule into an existing custom preset (append,\
+        \ no duplicate) or creates a new\ncustom preset. Built-in or config preset\
+        \ names are rejected with 400."
+      operationId: post_conversation_shell_promote_api_conversations__id__shell_approval_promote_post
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                rule:
+                  default: ''
+                  title: Rule
+                  type: string
+                preset:
+                  default: ''
+                  title: Preset
+                  type: string
+              title: ConversationShellApprovalPromoteRequest
+              type: object
   /api/wiki:
     get:
       summary: Wrapper
@@ -2659,6 +2849,88 @@ components:
       - created_at
       - updated_at
       title: ConversationPatchResponse
+    ConversationShellApprovalPresetItem:
+      properties:
+        name:
+          type: string
+          title: Name
+        source:
+          type: string
+          enum:
+          - builtin
+          - config
+          - custom
+          title: Source
+        rules:
+          items:
+            type: string
+          type: array
+          title: Rules
+          default: []
+        activated_via:
+          items:
+            type: string
+          type: array
+          title: Activated Via
+          default: []
+        active:
+          type: boolean
+          title: Active
+          default: true
+      type: object
+      required:
+      - name
+      - source
+      title: ConversationShellApprovalPresetItem
+      description: One active preset surfaced in the per-conversation approval panel
+        (#1159).
+    ConversationShellApprovalResponse:
+      properties:
+        conv_id:
+          type: string
+          title: Conv Id
+        status:
+          type: string
+          title: Status
+          default: idle
+        conversation_rules:
+          items:
+            type: string
+          type: array
+          title: Conversation Rules
+          default: []
+        presets:
+          items:
+            $ref: '#/components/schemas/ConversationShellApprovalPresetItem'
+          type: array
+          title: Presets
+          default: []
+        config_guidance:
+          type: string
+          title: Config Guidance
+          default: ''
+        cached_patterns:
+          items:
+            type: string
+          type: array
+          title: Cached Patterns
+          default: []
+      type: object
+      required:
+      - conv_id
+      title: ConversationShellApprovalResponse
+      description: 'Per-conversation shell auto-approval view (#1159).
+
+
+        ``conversation_rules`` are the conversation''s editable "remember why"
+
+        rules; ``presets`` are the active (not disabled) presets with their source
+
+        and activation path; ``config_guidance`` is the always-on configured
+
+        guidance; ``cached_patterns`` are the reviewer''s auto-approved command
+
+        patterns for this conversation.'
     FileCompletion:
       properties:
         type:
