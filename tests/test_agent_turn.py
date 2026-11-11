@@ -439,6 +439,97 @@ async def test_execute_tool_calls_policy_resolution_failure_falls_back_to_serial
     assert [m["tool_call_id"] for m in history] == ["tc0", "tc1", "tc2"]
 
 
+# -- Steering interrupt tests (issue #1125) -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_steer_interrupts_running_wait(ctx):
+    """Steering must interrupt an in-flight `wait` with a synthetic tool result.
+
+    Before the fix, the batch only watched `ctx.cancelled`; a steering event
+    left the blocking wait running to completion and the agent loop never
+    noticed before the tool result came back.
+    """
+    ctx.steer_event = asyncio.Event()
+
+    wait_started = asyncio.Event()
+    wait_release = asyncio.Event()
+
+    async def _wait_tool(ctx_arg, name, args):
+        wait_started.set()
+        await wait_release.wait()
+        return ToolResult(text="Waited 30 seconds.")
+
+    tool_calls = [
+        {
+            "id": "tc1",
+            "function": {
+                "name": "wait",
+                "arguments": json.dumps({"seconds": 30}),
+            },
+        }
+    ]
+    history = []
+    messages = []
+
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_wait_tool):
+        task = asyncio.create_task(execute_tool_calls(ctx, tool_calls, history, messages))
+        await asyncio.wait_for(wait_started.wait(), 5.0)
+        ctx.steer_event.set()
+        cancelled, end_turn = await asyncio.wait_for(task, timeout=10)
+
+    assert cancelled is None
+    assert end_turn is False
+    assert len(history) == 1
+    assert history[0]["tool_call_id"] == "tc1"
+    assert history[0]["content"] == "[interrupted by steering message]"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_steer_skips_pending_wait_after_exclusive_blocker(ctx):
+    """Steering skips a pending interruptible call queued behind a blocking exclusive call.
+
+    The blocking `shell` call runs to completion; the `wait` queued behind it
+    is skipped when steering arrives, and every call still gets a result.
+    """
+    ctx.steer_event = asyncio.Event()
+    blocker_started = asyncio.Event()
+    blocker_release = asyncio.Event()
+
+    async def _shell_tool(ctx_arg, name, args):
+        blocker_started.set()
+        await blocker_release.wait()
+        return ToolResult(text="shell-done")
+
+    tool_calls = [
+        {"id": "tc0", "function": {"name": "shell", "arguments": "{}"}},
+        {"id": "tc1", "function": {"name": "wait", "arguments": json.dumps({"seconds": 30})}},
+    ]
+    history = []
+    messages = []
+
+    # Force the `wait` call into the exclusive policy so it queues behind the
+    # blocking `shell` call instead of running concurrently.
+    ctx.tools.extra_definitions = [
+        {"type": "function", "function": {"name": "wait", "execution": "exclusive"}},
+    ]
+
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_shell_tool):
+        task = asyncio.create_task(execute_tool_calls(ctx, tool_calls, history, messages))
+        await asyncio.wait_for(blocker_started.wait(), 5.0)
+        ctx.steer_event.set()
+        blocker_release.set()
+        cancelled, end_turn = await asyncio.wait_for(task, timeout=15)
+
+    assert cancelled is None
+    assert end_turn is False
+    assert [m["tool_call_id"] for m in history] == ["tc0", "tc1"]
+    # The non-interruptible call ran to completion...
+    assert history[0]["content"] == "shell-done"
+    # ...and the pending interruptible call was skipped, not executed.
+    assert history[1]["content"] == "[skipped: interrupted by steering message]"
+
+
 # -- end_turn tests ------------------------------------------------------------
 
 

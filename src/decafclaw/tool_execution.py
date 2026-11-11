@@ -42,6 +42,13 @@ log = logging.getLogger(__name__)
 EXEC_SHARED = "shared"
 EXEC_EXCLUSIVE = "exclusive"
 
+# Tools that may be interrupted mid-flight when a steering message arrives
+# (issue #1125, Slice 1 — pure waits). `wait` sleeps on a bare `asyncio.sleep`
+# with no cooperative cancellation, so it is the one pure-wait tool an
+# interrupt can cleanly take; everything else runs to completion within the
+# batch. Mirrors how `loop_breaker.py` manages its `exempt_tools` set.
+INTERRUPTIBLE_TOOLS = frozenset({"wait"})
+
 
 # `_archive` and `_check_cancelled` are duplicated from `agent.py` rather
 # than extracted to a third shared module — they're trivial (4 + 8 lines)
@@ -429,6 +436,27 @@ async def execute_tool_calls(ctx: "Context", tool_calls, history, messages):
         for i in range(count)
     ]
 
+    # Steering watcher (issue #1125): when a steering message arrives while the
+    # batch is mid-flight, cancel in-flight tasks for interruptible tools and
+    # skip pending interruptible tasks. Non-interruptible calls are left alone
+    # and run to completion within the batch.
+    steer_event = ctx.steer_event
+    steered: set[int] = set()
+
+    async def _steer_watcher():
+        if steer_event is None:
+            return
+        await steer_event.wait()
+        for i, tc in enumerate(tool_calls):
+            fn_name = (tc.get("function") or {}).get("name") or ""
+            if fn_name not in INTERRUPTIBLE_TOOLS:
+                continue
+            task = tasks[i]
+            if task.done():
+                continue
+            task.cancel()
+            steered.add(i)
+
     # Cancel watcher: if the cancel event fires, cancel all in-flight tasks
     cancel_event = ctx.cancelled
 
@@ -439,14 +467,17 @@ async def execute_tool_calls(ctx: "Context", tool_calls, history, messages):
                 t.cancel()
 
     watcher = asyncio.create_task(_cancel_watcher()) if cancel_event else None
+    steer_watcher = asyncio.create_task(_steer_watcher()) if steer_event else None
 
     try:
         results = await asyncio.gather(*tasks, return_exceptions=True)
     finally:
-        if watcher:
-            watcher.cancel()
+        for w in (watcher, steer_watcher):
+            if w is None:
+                continue
+            w.cancel()
             try:
-                await watcher
+                await w
             except asyncio.CancelledError:
                 pass
 
@@ -468,10 +499,16 @@ async def execute_tool_calls(ctx: "Context", tool_calls, history, messages):
             # from the cancel watcher).
             err_type = type(result).__name__
             err_text = str(result) or err_type
+            content = f"[error: {err_text}]"
+            if i in steered:
+                # Steering arrived while this interruptible call was still
+                # pending (queued behind a blocking exclusive call) — it was
+                # skipped rather than executed.
+                content = "[skipped: interrupted by steering message]"
             tool_msg = {
                 "role": "tool",
                 "tool_call_id": tool_calls[i]["id"],
-                "content": f"[error: {err_text}]",
+                "content": content,
             }
             history.append(tool_msg)
             messages.append(tool_msg)
@@ -485,6 +522,11 @@ async def execute_tool_calls(ctx: "Context", tool_calls, history, messages):
                     end_turn_signal = end_turn
             elif end_turn and not isinstance(end_turn_signal, (EndTurnConfirm, WidgetInputPause)):
                 end_turn_signal = True
+            if i in steered:
+                # Steering cancelled an in-flight interruptible call (e.g. the
+                # `wait` sleeping in asyncio.sleep); replace the cancelled
+                # placeholder with the steering-interrupted synthetic result.
+                tool_msg["content"] = "[interrupted by steering message]"
             history.append(tool_msg)
             messages.append(tool_msg)
 
