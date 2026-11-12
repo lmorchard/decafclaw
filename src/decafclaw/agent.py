@@ -46,6 +46,7 @@ from .loop_breaker import (
 )
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
+from .recovery import RECOVERY_STOP, RecoveryState, decide_recovery_retry
 from .reflection_metrics import classify_outcome, response_delta
 from .skills import activate_always_loaded
 from .telemetry import get_tracer
@@ -869,7 +870,23 @@ class TurnRunner:
                 # Re-compose to pick up the compacted history
                 await self._compose()
                 return _Continue()
-            raise
+            # Bounded recovery policy (#1144): after a non-context-length LLM
+            # failure, choose retry / continue / stop from the turn's recovery
+            # state instead of blindly re-issuing a request whose output may
+            # already be committed.
+            action = decide_recovery_retry(
+                RecoveryState(
+                    phase="partial_text" if self.accumulated_text_parts else "pre_output",
+                    committed_output=bool(self.accumulated_text_parts),
+                ),
+                cancelled=bool(self.ctx.cancelled and self.ctx.cancelled.is_set()),
+            )
+            if action == RECOVERY_STOP:
+                log.warning("Agent recovery stopping after LLM failure: %s", exc)
+                return _Final(result=ToolResult(text="[error: agent recovery stopped: unable to continue safely]"))
+            # RECOVERY_RETRY (pre-output, nothing committed) or RECOVERY_CONTINUE
+            # (partial text committed) both resume the turn loop.
+            return _Continue()
 
         usage = response.get("usage")
         if usage:
