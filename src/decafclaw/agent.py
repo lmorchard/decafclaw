@@ -46,7 +46,7 @@ from .loop_breaker import (
 )
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
-from .recovery import RECOVERY_STOP, RecoveryState, decide_recovery_retry
+from .recovery import RECOVERY_CONTINUE, RECOVERY_STOP, RecoveryState, decide_recovery_retry
 from .reflection_metrics import classify_outcome, response_delta
 from .skills import activate_always_loaded
 from .telemetry import get_tracer
@@ -884,9 +884,15 @@ class TurnRunner:
             if action == RECOVERY_STOP:
                 log.warning("Agent recovery stopping after LLM failure: %s", exc)
                 return _Final(result=ToolResult(text="[error: agent recovery stopped: unable to continue safely]"))
-            # RECOVERY_RETRY (pre-output, nothing committed) or RECOVERY_CONTINUE
-            # (partial text committed) both resume the turn loop.
-            return _Continue()
+            if action == RECOVERY_CONTINUE:
+                # Partial text committed — bounded continuation, never a blind
+                # replay of a request whose output may already be committed.
+                return _Continue()
+            # RECOVERY_RETRY (pre-output, nothing committed) preserves the
+            # turn's error-settle semantics: provider-side retries already bound
+            # the transient attempts, so a residual failure settles the turn as
+            # an error rather than looping here.
+            raise
 
         usage = response.get("usage")
         if usage:
