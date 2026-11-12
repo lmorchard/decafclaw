@@ -885,8 +885,15 @@ class TurnRunner:
                 log.warning("Agent recovery stopping after LLM failure: %s", exc)
                 return _Final(result=ToolResult(text="[error: agent recovery stopped: unable to continue safely]"))
             if action == RECOVERY_CONTINUE:
-                # Partial text committed — bounded continuation, never a blind
-                # replay of a request whose output may already be committed.
+                # Partial text committed — persist it once, then resume from it
+                # (bounded continuation; never a blind replay of a request whose
+                # output may already be committed).
+                partial_text = "".join(self.accumulated_text_parts)
+                if partial_text:
+                    partial_assistant = {"role": "assistant", "content": partial_text}
+                    self.history.append(partial_assistant)
+                    self.messages.append(partial_assistant)
+                    _archive(self.ctx, partial_assistant)
                 return _Continue()
             # RECOVERY_RETRY (pre-output, nothing committed) preserves the
             # turn's error-settle semantics: provider-side retries already bound
