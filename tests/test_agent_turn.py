@@ -321,6 +321,57 @@ async def test_execute_tool_calls_shared_calls_overlap(ctx):
     assert len(all_started) == 2
 
 
+# -- #1240: workspace mutation tools resolve to shared batch policy -------------
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "workspace_write",
+        "workspace_append",
+        "workspace_edit",
+        "workspace_insert",
+        "workspace_replace_lines",
+        "workspace_move",
+        "workspace_mkdir",
+        "workspace_copy",
+        "workspace_delete",
+        "file_share",
+    ],
+)
+def test_workspace_mutation_tools_resolve_to_shared(ctx, tool_name):
+    """#1240: workspace file-mutation tools resolve to the shared batch policy.
+
+    The per-file mutation locks in workspace_tools / file_locks already serialize
+    same-file contention, so the writes-derived exclusive default is redundant for
+    cross-file batches — the explicit ``execution: shared`` declaration overrides it.
+    """
+    from decafclaw.tool_execution import _resolve_execution_policy
+
+    assert _resolve_execution_policy(ctx, tool_name) == "shared"
+
+
+def test_workspace_mutation_tool_defs_declare_shared_execution(ctx):
+    """#1240: the workspace mutation tool definitions carry execution=shared."""
+    from decafclaw.tools import TOOL_DEFINITIONS
+
+    names = (
+        "workspace_write",
+        "workspace_append",
+        "workspace_edit",
+        "workspace_insert",
+        "workspace_replace_lines",
+        "workspace_move",
+        "workspace_mkdir",
+        "workspace_copy",
+        "workspace_delete",
+        "file_share",
+    )
+    for tool_name in names:
+        td = next(t for t in TOOL_DEFINITIONS if t.get("function", {}).get("name") == tool_name)
+        assert td.get("execution") == "shared"
+
+
 @pytest.mark.asyncio
 async def test_execute_tool_calls_exclusive_waits_for_preceding_and_blocks_later(ctx):
     """Exclusive call waits for preceding calls; later calls wait for the exclusive call (#1124)."""
