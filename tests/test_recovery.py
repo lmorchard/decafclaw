@@ -116,6 +116,49 @@ async def test_agent_recovery_stops_when_cancelled(ctx, config, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_agent_recovery_stops_when_continuation_budget_exhausted(ctx, config, monkeypatch):
+    """Two bounded partial-text continuations are allowed; the third failure
+    settles as failed instead of issuing an unbounded follow-up completion."""
+    history = [{"role": "user", "content": "hello"}]
+    runner = TurnRunner(
+        ctx=ctx,
+        config=config,
+        history=history,
+        user_message="hello",
+        archive_text="",
+        attachments=None,
+    )
+    runner._compose = AsyncMock()
+    runner.composed = MagicMock()
+    runner.composed.total_tokens_estimated = 0
+    runner.messages = history.copy()
+    runner.history = history
+    runner.composer = MagicMock()
+    runner.accumulated_text_parts = ["partial answer"]
+
+    calls = {"n": 0}
+
+    async def mock_call_llm_with_events(*args, **kwargs):
+        calls["n"] += 1
+        raise LLMRetryExhaustedError("LLM failed after 3 retries (status 503): rate limited")
+
+    monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm_with_events)
+
+    outcome = await runner._run_iteration(0)
+    assert isinstance(outcome, _Continue)
+
+    runner.accumulated_text_parts = ["partial answer"]
+    outcome = await runner._run_iteration(1)
+    assert isinstance(outcome, _Continue)
+
+    runner.accumulated_text_parts = ["partial answer"]
+    outcome = await runner._run_iteration(2)
+    assert isinstance(outcome, _Final)
+    assert isinstance(outcome.result, ToolResult)
+    assert "continuation budget exhausted" in outcome.result.text
+
+
+@pytest.mark.asyncio
 async def test_agent_recovery_stops_when_retry_budget_exhausted(ctx, config, monkeypatch):
     """A typed retry-exhausted provider failure with nothing committed settles
     the turn as failed (uncertain outcome) instead of resuming the loop."""

@@ -70,6 +70,12 @@ _TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
 # likewise excluded. See docs/loop-breaker.md.
 _UNWATCHED_TASK_MODES = frozenset({"heartbeat", "scheduled", "child_agent"})
 
+# Max bounded partial-text continuations allowed in one agent turn before the
+# recovery policy settles the turn as failed (#1144). Each continuation persists
+# the committed partial transcript and resumes from it; past this budget the
+# loop stops instead of issuing unbounded follow-up completions.
+MAX_RECOVERY_CONTINUATIONS = 2
+
 log = logging.getLogger(__name__)
 
 # Track background tasks to prevent GC and surface exceptions
@@ -710,6 +716,7 @@ class TurnRunner:
     reflection_last_critique: str = ""
     turn_start_index: int = 0
     accumulated_text_parts: list[str] = field(default_factory=list)
+    recovery_continuations: int = 0
     model_override: dict[str, str] = field(default_factory=dict)
     retrieved_context_text: str = ""
     composed: "ComposedContext | None" = None
@@ -743,6 +750,7 @@ class TurnRunner:
             self.reflection_last_critique = ""
 
             self.accumulated_text_parts = []  # text from iterations that also had tool calls
+            self.recovery_continuations = 0
             self.budget = IterationBudget(
                 remaining=self.config.agent.max_tool_iterations,
             )
@@ -890,6 +898,14 @@ class TurnRunner:
                 # Partial text committed — persist it once, then resume from it
                 # (bounded continuation; never a blind replay of a request whose
                 # output may already be committed).
+                if self.recovery_continuations >= MAX_RECOVERY_CONTINUATIONS:
+                    log.warning(
+                        "Agent recovery continuation budget exhausted (%d) after LLM failure: %s",
+                        self.recovery_continuations,
+                        exc,
+                    )
+                    return _Final(result=ToolResult(text="[error: agent recovery continuation budget exhausted]"))
+                self.recovery_continuations += 1
                 partial_text = "".join(self.accumulated_text_parts)
                 if partial_text:
                     partial_assistant = {"role": "assistant", "content": partial_text}
