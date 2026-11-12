@@ -227,6 +227,18 @@ A notification was marked read (push from notification subsystem).
 - `ids` — array of string
 - `unread_count` — number
 
+### `recovery_decision`
+
+Bounded recovery policy outcome after a recoverable LLM failure: retry / continue / stop, with phase and retry-budget state (#1144).
+
+**Fields:**
+
+- `conv_id` — string
+- `action` — string
+- `phase` — string
+- `committed_output` — boolean
+- `retry_exhausted` — boolean
+
 ### `reflection_result`
 
 Output of the post-turn reflection step for a conversation.

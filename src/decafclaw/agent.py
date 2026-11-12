@@ -891,6 +891,15 @@ class TurnRunner:
                 ),
                 cancelled=bool(self.ctx.cancelled and self.ctx.cancelled.is_set()),
             )
+            # Surface the bounded recovery decision so transports / diagnostics
+            # can see what the policy chose (#1144).
+            await self.ctx.publish(
+                "recovery_decision",
+                action=action,
+                phase="partial_text" if self.accumulated_text_parts else "pre_output",
+                committed_output=bool(self.accumulated_text_parts),
+                retry_exhausted=isinstance(exc, LLMRetryExhaustedError),
+            )
             if action == RECOVERY_STOP:
                 log.warning("Agent recovery stopping after LLM failure: %s", exc)
                 return _Final(result=ToolResult(text="[error: agent recovery stopped: unable to continue safely]"))

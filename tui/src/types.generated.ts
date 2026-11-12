@@ -162,6 +162,15 @@ export interface SrvNotificationRead {
   unread_count: number;
 }
 
+export interface SrvRecoveryDecision {
+  type: "recovery_decision";
+  conv_id: string;
+  action: string;
+  phase: string;
+  committed_output: boolean;
+  retry_exhausted: boolean;
+}
+
 export interface SrvReflectionResult {
   type: "reflection_result";
   conv_id: string;
@@ -327,6 +336,7 @@ export type ServerMessage =
   | SrvModelsAvailable
   | SrvNotificationCreated
   | SrvNotificationRead
+  | SrvRecoveryDecision
   | SrvReflectionResult
   | SrvShellApproval
   | SrvStickyClear

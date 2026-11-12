@@ -159,6 +159,45 @@ async def test_agent_recovery_stops_when_continuation_budget_exhausted(ctx, conf
 
 
 @pytest.mark.asyncio
+async def test_agent_recovery_publishes_decision_event(ctx, config, monkeypatch):
+    """The bounded policy decision is surfaced on the event bus as a
+    recovery_decision event (consumed by the WebSocket/TUI forwarders)."""
+    history = [{"role": "user", "content": "hello"}]
+    runner = TurnRunner(
+        ctx=ctx,
+        config=config,
+        history=history,
+        user_message="hello",
+        archive_text="",
+        attachments=None,
+    )
+    runner._compose = AsyncMock()
+    runner.composed = MagicMock()
+    runner.composed.total_tokens_estimated = 0
+    runner.messages = history.copy()
+    runner.history = history
+    runner.composer = MagicMock()
+    runner.accumulated_text_parts = []
+
+    events = []
+    ctx.event_bus.subscribe(lambda e: events.append(e))
+
+    async def mock_call_llm_with_events(*args, **kwargs):
+        raise LLMRetryExhaustedError("LLM failed after 3 retries (status 503): rate limited")
+
+    monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm_with_events)
+
+    outcome = await runner._run_iteration(0)
+    assert isinstance(outcome, _Final)
+
+    decisions = [e for e in events if e.get("type") == "recovery_decision"]
+    assert decisions, "expected a recovery_decision event"
+    assert decisions[0]["action"] == "stop"
+    assert decisions[0]["phase"] == "pre_output"
+    assert decisions[0]["committed_output"] is False
+
+
+@pytest.mark.asyncio
 async def test_agent_recovery_stops_when_retry_budget_exhausted(ctx, config, monkeypatch):
     """A typed retry-exhausted provider failure with nothing committed settles
     the turn as failed (uncertain outcome) instead of resuming the loop."""
