@@ -36,6 +36,7 @@ from .conversation_paths import approval_state_path
 from .iteration_budget import IterationBudget
 from .llm import call_llm
 from .llm.history import assistant_message
+from .llm.types import LLMRetryExhaustedError
 from .loop_breaker import (
     CallSignature,
     LoopBreaker,
@@ -878,6 +879,7 @@ class TurnRunner:
                 RecoveryState(
                     phase="partial_text" if self.accumulated_text_parts else "pre_output",
                     committed_output=bool(self.accumulated_text_parts),
+                    retry_exhausted=isinstance(exc, LLMRetryExhaustedError),
                 ),
                 cancelled=bool(self.ctx.cancelled and self.ctx.cancelled.is_set()),
             )

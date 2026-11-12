@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from ..history import without_provider_data
-from ..types import DiscoveredModel, StreamCallback
+from ..types import DiscoveredModel, LLMRetryExhaustedError, StreamCallback
 
 log = logging.getLogger(__name__)
 
@@ -344,8 +344,11 @@ class OpenAICompatProvider:
                 break  # Success
             except _RetryableError as e:
                 if attempt >= _MAX_RETRIES:
-                    raise Exception(
-                        f"LLM failed after {_MAX_RETRIES} retries (status {e.status}): {e.body[:200]}"
+                    raise LLMRetryExhaustedError(
+                        f"LLM failed after {_MAX_RETRIES} retries (status {e.status}): {e.body[:200]}",
+                        status=e.status,
+                        body=e.body,
+                        retry_after=e.retry_after,
                     ) from e
                 delay = min(int(e.retry_after or 2**attempt), 30)
                 log.warning(

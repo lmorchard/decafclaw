@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from decafclaw.agent import TurnRunner, _Continue, _Final
+from decafclaw.llm.types import LLMRetryExhaustedError
 from decafclaw.media import ToolResult
 from decafclaw.recovery import (
     RECOVERY_CONTINUE,
@@ -20,6 +21,13 @@ from decafclaw.recovery import (
 
 def test_recovery_retry_when_nothing_committed():
     assert decide_recovery_retry(RecoveryState(phase="pre_output")) == RECOVERY_RETRY
+
+
+def test_recovery_stop_when_retry_budget_exhausted_pre_output():
+    """A bounded provider retry budget spent with nothing committed settles as
+    an explicit uncertain outcome (stop) — never a blind re-enter of the retry
+    path on a turn that already burned its attempts."""
+    assert decide_recovery_retry(RecoveryState(phase="pre_output", retry_exhausted=True)) == RECOVERY_STOP
 
 
 def test_recovery_continue_when_partial_text_committed():
@@ -99,6 +107,37 @@ async def test_agent_recovery_stops_when_cancelled(ctx, config, monkeypatch):
 
     async def mock_call_llm_with_events(*args, **kwargs):
         raise RuntimeError("stream exploded mid-text")
+
+    monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm_with_events)
+
+    outcome = await runner._run_iteration(0)
+    assert isinstance(outcome, _Final)
+    assert isinstance(outcome.result, ToolResult)
+
+
+@pytest.mark.asyncio
+async def test_agent_recovery_stops_when_retry_budget_exhausted(ctx, config, monkeypatch):
+    """A typed retry-exhausted provider failure with nothing committed settles
+    the turn as failed (uncertain outcome) instead of resuming the loop."""
+    history = [{"role": "user", "content": "hello"}]
+    runner = TurnRunner(
+        ctx=ctx,
+        config=config,
+        history=history,
+        user_message="hello",
+        archive_text="",
+        attachments=None,
+    )
+    runner._compose = AsyncMock()
+    runner.composed = MagicMock()
+    runner.composed.total_tokens_estimated = 0
+    runner.messages = history.copy()
+    runner.history = history
+    runner.composer = MagicMock()
+    runner.accumulated_text_parts = []
+
+    async def mock_call_llm_with_events(*args, **kwargs):
+        raise LLMRetryExhaustedError("LLM failed after 3 retries (status 503): rate limited")
 
     monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm_with_events)
 
