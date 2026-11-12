@@ -144,6 +144,11 @@ class CleanupConfig:
     # Conservative matching: only prune when the later success carries the
     # same arguments as the failed call. Default False = same-tool-only.
     prune_resolved_same_args_only: bool = False
+    # Superseded-read pruning (#1146): stub a successful full-file read whose
+    # path was later re-read successfully (full coverage) — the older copy can
+    # conflict with current content. Applies regardless of size/age; skipped in
+    # non-interactive modes. Disable via ``cleanup.prune_superseded_reads = false``.
+    prune_superseded_reads: bool = True
 
 
 @dataclass
