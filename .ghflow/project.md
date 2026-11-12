@@ -1,6 +1,6 @@
 ---
 ghflow_project_facts: 1
-written: 2026-11-10
+written: 2026-11-11
 sources:
   - AGENTS.md 5415e78cbe686a7e6da1e412278e8a9af972f8fa
   - CLAUDE.md 5415e78cbe686a7e6da1e412278e8a9af972f8fa
