@@ -14,6 +14,8 @@ from decafclaw.confirmations import ConfirmationResponse
 from decafclaw.context import Context
 from decafclaw.media import ToolResult
 from decafclaw.tools.admin_tools import (
+    MAX_DIFF_WIDGET_CHARS,
+    MAX_DIFF_WIDGET_LINES,
     MAX_READ_LINES,
     _resolve_admin_path,
     tool_admin_delete,
@@ -266,6 +268,80 @@ async def test_admin_edit_attaches_diff_view_widget(ctx):
     assert result.widget.widget_type == "diff_view"
     assert result.widget.data["before"] == "hello foo world\n"
     assert result.widget.data["after"] == "hello bar world\n"
+
+
+# ---------------------------------------------------------------------------
+# Oversized-edit suppression (#1210)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_write_oversized_edit_returns_summary_without_widget(ctx):
+    """Oversized admin_write edit suppresses the diff widget + diff text (#1210).
+
+    Over the diff thresholds the mutation returns the one-line summary only —
+    no diff_view widget and no diff text — instead of the pre-#1205 shape.
+    """
+    ctx.request_confirmation = _mock_confirm(approved=True)
+    target = ctx.config.agent_path / "prompts" / "big_write.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("line\n" * (MAX_DIFF_WIDGET_LINES + 1))
+
+    result = await tool_admin_write(ctx, "prompts/big_write.txt", "replacement\n")
+    text = _text(result)
+    assert "Wrote" in text
+    assert "+++" not in text
+    assert "@@" not in text
+    # Oversized edits return the one-line summary only — no widget, no diff text.
+    assert not isinstance(result, ToolResult) or result.widget is None
+
+
+@pytest.mark.asyncio
+async def test_admin_replace_lines_oversized_edit_returns_summary_without_widget(ctx):
+    """Oversized admin_replace_lines edit suppresses the diff widget + diff text (#1210)."""
+    ctx.request_confirmation = _mock_confirm(approved=True)
+    target = ctx.config.agent_path / "prompts" / "big_replace.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(f"line {i}" for i in range(1, MAX_DIFF_WIDGET_LINES + 2)) + "\n")
+
+    result = await tool_admin_replace_lines(ctx, "prompts/big_replace.md", 1, 1, "X\n")
+    text = _text(result)
+    assert "Replaced lines" in text
+    assert "+++" not in text
+    assert "@@" not in text
+    # Oversized edits return the one-line summary only — no widget, no diff text.
+    assert not isinstance(result, ToolResult) or result.widget is None
+
+
+@pytest.mark.asyncio
+async def test_admin_edit_oversized_edit_returns_summary_without_widget(ctx):
+    """Oversized admin_edit edit suppresses the diff widget + diff text (#1210)."""
+    ctx.request_confirmation = _mock_confirm(approved=True)
+    target = ctx.config.agent_path / "prompts" / "big_edit.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("needle\n" + "z" * (MAX_DIFF_WIDGET_CHARS - 6))
+
+    result = await tool_admin_edit(ctx, "prompts/big_edit.txt", "needle", "replacement")
+    text = _text(result)
+    assert "Edited" in text
+    assert "+++" not in text
+    assert "@@" not in text
+    # Oversized edits return the one-line summary only — no widget, no diff text.
+    assert not isinstance(result, ToolResult) or result.widget is None
+
+
+@pytest.mark.asyncio
+async def test_admin_write_diff_view_attaches_just_under_threshold(ctx):
+    """Just-under-threshold admin_write edit still attaches the diff widget (#1210)."""
+    ctx.request_confirmation = _mock_confirm(approved=True)
+    target = ctx.config.agent_path / "prompts" / "just_under_write.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("a\n" * MAX_DIFF_WIDGET_LINES)
+
+    result = await tool_admin_write(ctx, "prompts/just_under_write.txt", "b\n" * MAX_DIFF_WIDGET_LINES)
+    assert isinstance(result, ToolResult)
+    assert result.widget is not None
+    assert result.widget.widget_type == "diff_view"
 
 
 def test_admin_list_empty_directory_attaches_no_widget(ctx):
