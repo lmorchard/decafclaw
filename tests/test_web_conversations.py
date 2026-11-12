@@ -383,6 +383,38 @@ async def test_rename_conv_route(authed_client):
 
 
 @pytest.mark.asyncio
+async def test_patch_compaction_threshold_route(authed_client, http_config):
+    """#1099 / PR #1248 review follow-up — the user-facing context-inspector
+    controls save through PATCH /api/conversations/{id}, and an explicit JSON
+    null clears the per-conversation override back to the global / fixed cap."""
+    from decafclaw.conversation_manager import ConversationManager
+    from decafclaw.events import EventBus
+
+    mgr = ConversationManager(http_config, EventBus())
+    authed_client._transport.app.state.manager = mgr
+
+    create_resp = await authed_client.post("/api/conversations", json={"title": "Compaction"})
+    conv_id = create_resp.json()["conv_id"]
+
+    resp = await authed_client.patch(
+        f"/api/conversations/{conv_id}",
+        json={"compaction_threshold": 51200},
+    )
+    assert resp.status_code == 200
+    state = mgr._get_or_create(conv_id)
+    assert state.persisted.compaction_threshold == 51200
+    assert state.persisted.compaction_threshold_ratio is None
+
+    resp = await authed_client.patch(
+        f"/api/conversations/{conv_id}",
+        json={"compaction_threshold": None, "compaction_threshold_ratio": None},
+    )
+    assert resp.status_code == 200
+    state = mgr._get_or_create(conv_id)
+    assert state.persisted.compaction_threshold is None
+
+
+@pytest.mark.asyncio
 async def test_conv_routes_require_auth(unauthed_client):
     resp = await unauthed_client.get("/api/conversations")
     assert resp.status_code == 401

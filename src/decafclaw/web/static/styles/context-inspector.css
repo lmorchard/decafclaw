@@ -301,6 +301,51 @@
   text-align: right;
 }
 
+/* #1099 / PR #1248 review follow-up — per-conversation compaction controls */
+.context-inspector-mount .compaction {
+  margin-bottom: 0.75rem;
+  font-size: 0.75rem;
+}
+
+.context-inspector-mount .compaction h4 {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--pico-muted-color);
+}
+
+.context-inspector-mount .compaction-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.context-inspector-mount .compaction-summary span {
+  color: var(--pico-muted-color);
+}
+
+.context-inspector-mount .compaction-controls label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.7rem;
+  color: var(--pico-muted-color);
+}
+
+.context-inspector-mount .compaction-controls input[type='number'] {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.15rem;
+  padding: 0.25rem;
+  font-size: 0.75rem;
+}
+
+.context-inspector-mount .compaction-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
 /* Source breakdown */
 .context-inspector-mount .source-table {
   width: 100%;

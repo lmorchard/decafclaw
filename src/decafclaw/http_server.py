@@ -1173,9 +1173,12 @@ async def rename_conversation(request: Request, id: str) -> JSONResponse:
     # #1099 — per-conversation compaction threshold overrides. Accepted as
     # optional fields on PATCH /api/conversations/{id}; applied through the
     # manager so they persist in the conversation's per-conversation state.
-    if body.get("compaction_threshold") is not None:
+    # Key-presence based (not value-based) so an explicit JSON null clears an
+    # override — the context inspector reset control sends nulls while absent
+    # keys leave the override untouched.
+    if "compaction_threshold" in body:
         manager.set_flag(conv_id, "compaction_threshold", body.get("compaction_threshold"))
-    if body.get("compaction_threshold_ratio") is not None:
+    if "compaction_threshold_ratio" in body:
         manager.set_flag(conv_id, "compaction_threshold_ratio", body.get("compaction_threshold_ratio"))
     result = conv.to_dict()
     if folder is not None:
