@@ -415,6 +415,8 @@ When the model emits several tool calls in one assistant message, they run as a 
 
 Policy resolution is static per tool definition (v1); argument-dependent policies — a tool with both independent and shared-state operations choosing per call — are not supported yet. The `execution` key is the extension point for that.
 
+**Workspace file-mutation tools are declared `execution: shared` (#1240).** The per-file mutation locks in `workspace_tools.py` / `file_locks.py` already serialize same-file contention, so the batch-exclusive default (derived from `writes: true`) was redundant for cross-file mutation batches. The workspace mutation tools (`workspace_write`, `workspace_append`, `workspace_edit`, `workspace_insert`, `workspace_replace_lines`, `workspace_move`, `workspace_mkdir`, `workspace_copy`, `workspace_delete`, `file_share`) now carry an explicit top-level `execution: shared` on their definitions, so an LLM batch that writes several *different* workspace files can run them concurrently while same-file edits still serialize through the per-file locks.
+
 ## Tool-owned prompt guidance (`prompt_guidelines`) (#928 & #998)
 
 Tool definitions can optionally declare top-level `prompt_guidelines: list[str]`. When a tool is in the active set, its guidelines are rendered into an authoritative `<tool_guidance>` system message injected into the prompt.

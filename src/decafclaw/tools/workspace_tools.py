@@ -1401,6 +1401,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "critical",
         "prompt_guidelines": ["Use workspace_write for new files or full rewrites only."],
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "workspace_write",
@@ -1425,6 +1426,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_append to add to the end of a file."],
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "workspace_append",
@@ -1463,6 +1465,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
                 "the tool returns an error and no write happens."
             ),
         ],
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "workspace_edit",
@@ -1520,6 +1523,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "prompt_guidelines": ["Use workspace_insert for insertions by line number."],
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "workspace_insert",
@@ -1550,6 +1554,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "prompt_guidelines": [
             ("Use workspace_replace_lines for edits by line number (boundary rewrites, deletions by range).")
         ],
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "workspace_replace_lines",
@@ -1582,6 +1587,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_move and workspace_delete to rename or remove files."],
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "workspace_move",
@@ -1605,6 +1611,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "workspace_mkdir",
@@ -1624,6 +1631,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "workspace_copy",
@@ -1648,6 +1656,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_move and workspace_delete to rename or remove files."],
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "workspace_delete",
@@ -1671,6 +1680,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        "execution": "shared",
         "writes": True,
         "function": {
             "name": "file_share",

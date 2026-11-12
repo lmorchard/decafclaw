@@ -924,8 +924,13 @@ class TestWorkspaceEditDescription:
         def (+~38 tokens on top of the pre-#1126 estimate); the bound moves
         with that deliberate, feature-driven growth (to 428) and must not creep
         further without a new feature.
+
+        #1240 added the optional ``execution: shared`` key to the edit def
+        (+~5 tokens on top of the post-#1126 estimate); the bound moves with
+        that deliberate, feature-driven growth (to 433) and must not creep
+        further without a new feature.
         """
-        assert estimate_tool_tokens([self._workspace_edit_def()]) <= 428
+        assert estimate_tool_tokens([self._workspace_edit_def()]) <= 433
 
     def test_is_default_not_sparing(self):
         desc = self._workspace_edit_def()["function"]["description"]
