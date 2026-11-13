@@ -324,6 +324,16 @@ paths:
                   - type: string
                   - type: 'null'
                   title: Folder
+                compaction_threshold:
+                  anyOf:
+                  - type: integer
+                  - type: 'null'
+                  title: Compaction Threshold
+                compaction_threshold_ratio:
+                  anyOf:
+                  - type: number
+                  - type: 'null'
+                  title: Compaction Threshold Ratio
               title: ConversationPatchRequest
               type: object
     delete:

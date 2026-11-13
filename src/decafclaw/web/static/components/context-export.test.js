@@ -101,6 +101,76 @@ it.each(['network', 'clipboard', 'body'])('reports %s failures', async (failure)
   expect(showToast).toHaveBeenCalledWith(`Copy failed: ${failure} failed`);
 });
 
+// Issue #1099 / PR #1248 review follow-up — user-facing per-conversation
+// compaction threshold controls in the context inspector.
+it('renders the per-conversation compaction threshold controls from diagnostics', async () => {
+  fetchMock.mockResolvedValue(json({
+    total_tokens_estimated: 120, context_window_size: 1000, compaction_threshold: 800,
+    sources: [],
+  }));
+  const el = document.createElement('context-inspector');
+  el.convId = 'test-conv'; el.open = true;
+  document.body.append(el);
+  await el.updateComplete;
+  await vi.waitFor(() => expect(el._loading).toBe(false));
+  await el.updateComplete;
+
+  expect(el._panelMount.textContent).toContain('Compaction');
+  expect(el._panelMount.textContent).toContain('Window: 1,000 tokens');
+  expect(el._panelMount.textContent).toContain('Compact at: 800 tokens');
+  expect(el._panelMount.querySelector('#ctx-compaction-tokens')).not.toBeNull();
+  expect(el._panelMount.querySelector('#ctx-compaction-ratio')).not.toBeNull();
+  expect(el._panelMount.querySelector('.compaction-actions button')).not.toBeNull();
+});
+
+it('saves the per-conversation compaction override through the patch endpoint', async () => {
+  fetchMock.mockResolvedValue(json({}));
+  const el = document.createElement('context-inspector');
+  el.convId = 'test-conv'; el.open = true;
+  document.body.append(el);
+  await el.updateComplete;
+  await vi.waitFor(() => expect(el._loading).toBe(false));
+  await el.updateComplete;
+
+  el._compactionTokens = '25600';
+  el._compactionRatio = '';
+  const saveBtn = Array.from(el._panelMount.querySelectorAll('.compaction-actions button')).find(b => b.textContent === 'Save');
+  expect(saveBtn).toBeDefined();
+  saveBtn.click();
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/conversations/test-conv',
+    expect.objectContaining({ method: 'PATCH', credentials: 'same-origin' })));
+  await vi.waitFor(() => expect(el._compactionBusy).toBe(false));
+  await el.updateComplete;
+
+  const patchCall = fetchMock.mock.calls.map(c => c[1]).find(c => c?.method === 'PATCH');
+  expect(patchCall).toBeDefined();
+  expect(JSON.parse(patchCall.body)).toEqual({ compaction_threshold: 25600 });
+});
+
+it('resets the per-conversation compaction override by sending explicit nulls', async () => {
+  fetchMock.mockResolvedValue(json({}));
+  const el = document.createElement('context-inspector');
+  el.convId = 'test-conv'; el.open = true;
+  document.body.append(el);
+  await el.updateComplete;
+  await vi.waitFor(() => expect(el._loading).toBe(false));
+  await el.updateComplete;
+
+  el._compactionTokens = '25600';
+  el._compactionRatio = '0.5';
+  const resetBtn = Array.from(el._panelMount.querySelectorAll('.compaction-actions button')).find(b => b.textContent === 'Reset');
+  expect(resetBtn).toBeDefined();
+  resetBtn.click();
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/conversations/test-conv',
+    expect.objectContaining({ method: 'PATCH', credentials: 'same-origin' })));
+  await vi.waitFor(() => expect(el._compactionBusy).toBe(false));
+  await el.updateComplete;
+
+  const patchCall = fetchMock.mock.calls.map(c => c[1]).find(c => c?.method === 'PATCH');
+  expect(patchCall).toBeDefined();
+  expect(JSON.parse(patchCall.body)).toEqual({ compaction_threshold: null, compaction_threshold_ratio: null });
+});
+
 it('renders raw view and copies request JSON', async () => {
   const rawData = {
     model: 'test-model-4',

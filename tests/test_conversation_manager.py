@@ -2342,6 +2342,32 @@ def test_set_flag_writes_through_to_persisted(manager):
     assert state.persisted.skip_vault_retrieval is True
 
 
+def test_set_flag_compaction_threshold_writes_through_to_persisted(manager):
+    """#1099 — per-conversation compaction threshold overrides land on
+    ``state.persisted`` (externally driven via set_flag / PATCH)."""
+    manager.set_flag("flag-conv", "compaction_threshold", 51200)
+    manager.set_flag("flag-conv", "compaction_threshold_ratio", 0.5)
+    state = manager.get_state("flag-conv")
+    assert state.persisted.compaction_threshold == 51200
+    assert state.persisted.compaction_threshold_ratio == 0.5
+
+
+def test_restore_compaction_threshold_onto_ctx(manager, config):
+    """#1099 — restore maps persisted compaction overrides onto ctx so the
+    agent loop resolves the effective threshold per conversation."""
+    from decafclaw.context import Context
+
+    state = manager._get_or_create("rt-conv")
+    state.persisted.compaction_threshold = 51200
+    state.persisted.compaction_threshold_ratio = 0.4
+
+    ctx = Context(config=config, event_bus=manager.event_bus)
+    manager._restore_per_conv_state(state, ctx)
+
+    assert ctx.compaction_threshold_override == 51200
+    assert ctx.compaction_threshold_ratio_override == 0.4
+
+
 def test_save_truthy_only_preserves_sticky_semantics(manager, config):
     """Once a ctx-driven flag is True in persisted state, a later save
     with a False ctx value must not clobber it back to False."""

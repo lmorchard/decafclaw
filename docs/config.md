@@ -112,12 +112,15 @@ History compaction settings. Note: `url`, `model`, and `api_key` are deprecated 
 | `api_key` | str | (from llm) | `COMPACTION_LLM_API_KEY` | yes |
 | `max_tokens` | int | `100000` | `COMPACTION_MAX_TOKENS` | |
 | `llm_max_tokens` | int | `0` | `COMPACTION_LLM_MAX_TOKENS` | |
+| `threshold_ratio` | float | `None` | `COMPACTION_THRESHOLD_RATIO` | |
 | `preserve_turns` | int | `5` | `COMPACTION_PRESERVE_TURNS` | |
 | `memory_sweep_enabled` | bool | `true` | `COMPACTION_MEMORY_SWEEP_ENABLED` | |
 | `decisions_enabled` | bool | `true` | `COMPACTION_DECISIONS_ENABLED` | |
 | `decisions_max_per_category` | int | `30` | `COMPACTION_DECISIONS_MAX_PER_CATEGORY` | |
 
 `decisions_*` controls the structured decision slice that's threaded forward through every compaction (see [context-composer.md#decision-slice-through-compaction](context-composer.md#decision-slice-through-compaction) and #302). The slice persists at `{workspace}/conversations/{conv_id}/decisions.json`. `decisions_enabled: false` disables the prompt addendum, parse step, and sidecar write entirely. `decisions_max_per_category: 0` removes the FIFO cap.
+
+`threshold_ratio` (e.g. `0.4`) is the compaction trigger as a fraction of the model's context window: when set and the model window is known, the effective threshold is `int(context_window_size * ratio)` instead of the fixed `max_tokens` cap; when unset (`None`) the fixed `max_tokens` default applies. Per-conversation overrides (`compaction_threshold` / `compaction_threshold_ratio`) ride the same resolution through conversation state and the PATCH API (#1099).
 
 ### `notes`
 

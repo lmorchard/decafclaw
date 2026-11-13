@@ -166,6 +166,18 @@ class Context:
         self.skills = SkillState()
         self.composer = ComposerState()
 
+        # Per-conversation compaction threshold overrides (#1099). The
+        # absolute override (integer token budget) and the ratio override
+        # (fraction of the model context window to compact at) are externally
+        # driven — set per conversation via ConversationManager.set_flag /
+        # PATCH /api/conversations — and restored onto the ctx by
+        # ConversationManager._restore_per_conv_state through the
+        # PersistedTurnState bindings. The agent loop resolves the effective
+        # threshold via context_composer.effective_compaction_threshold; the
+        # global default rides on config.compaction.threshold_ratio.
+        self.compaction_threshold_override: int | None = None
+        self.compaction_threshold_ratio_override: float | None = None
+
         # Per-conversation state (set via fork() overrides)
         self.history: list | None = None
         self.messages: list | None = None

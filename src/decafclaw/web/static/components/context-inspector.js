@@ -69,6 +69,11 @@ export class ContextInspector extends LitElement {
     this._rawError = '';
     /** @type {HTMLElement|null} */
     this._panelMount = null;
+    /** #1099 / PR #1248 review follow-up — per-conversation compaction override inputs. */
+    this._compactionTokens = '';
+    this._compactionRatio = '';
+    this._compactionBusy = false;
+    this._compactionError = '';
   }
 
   connectedCallback() {
@@ -196,6 +201,58 @@ export class ContextInspector extends LitElement {
     }
   }
 
+  // #1099 / PR #1248 review follow-up — user-facing per-conversation
+  // compaction threshold controls. Saves via PATCH /api/conversations/{id};
+  // Reset sends explicit nulls so the override clears back to the global or
+  // fixed-default threshold.
+  async #saveCompaction() {
+    const convId = this.convId;
+    if (!convId || this._compactionBusy) return;
+    this._compactionBusy = true;
+    this._compactionError = '';
+    try {
+      const tokensRaw = this._compactionTokens;
+      const ratioRaw = this._compactionRatio;
+      const body = {};
+      const tokens = tokensRaw === null ? null : Number(tokensRaw);
+      const ratio = ratioRaw === null || ratioRaw === '' ? null : Number(ratioRaw);
+      if (tokens !== null && Number.isFinite(tokens) && tokens > 0) {
+        body.compaction_threshold = tokens;
+      }
+      if (ratio !== null && Number.isFinite(ratio) && ratio > 0) {
+        body.compaction_threshold_ratio = ratio;
+      }
+      await DefaultService.renameConversationApiConversationsIdPatch(convId, body);
+      await this.#fetchData();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this._compactionError = `Failed to save compaction threshold: ${msg}`;
+    } finally {
+      this._compactionBusy = false;
+    }
+  }
+
+  async #resetCompaction() {
+    const convId = this.convId;
+    if (!convId || this._compactionBusy) return;
+    this._compactionBusy = true;
+    this._compactionError = '';
+    try {
+      await DefaultService.renameConversationApiConversationsIdPatch(convId, {
+        compaction_threshold: null,
+        compaction_threshold_ratio: null,
+      });
+      this._compactionTokens = '';
+      this._compactionRatio = '';
+      await this.#fetchData();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this._compactionError = `Failed to reset compaction threshold: ${msg}`;
+    } finally {
+      this._compactionBusy = false;
+    }
+  }
+
   #onTabKeyDown(e) {
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
       e.preventDefault();
@@ -254,6 +311,60 @@ export class ContextInspector extends LitElement {
           <span class="legend-swatch" style="background:var(--pico-muted-border-color, #eee)"></span>
           Unused
         </span>
+      </div>
+    `;
+  }
+
+  // #1099 / PR #1248 review follow-up — user-facing per-conversation
+  // compaction threshold controls. The effective threshold (context window +
+  // compact-at) renders from the diagnostics payload; the override inputs
+  // save through PATCH /api/conversations/{id} and Reset clears the override.
+  #renderCompaction() {
+    if (!this._data) return nothing;
+    const d = this._data;
+    const effective = d.compaction_threshold;
+    const windowSize = d.context_window_size;
+    const effectiveLabel = effective ? `${effective.toLocaleString()} tokens` : '—';
+    const windowLabel = windowSize ? `${windowSize.toLocaleString()} tokens` : '—';
+    return html`
+      <div class="compaction">
+        <h4>Compaction</h4>
+        <div class="compaction-summary">
+          <span>Window: ${windowLabel}</span>
+          <span>Compact at: ${effectiveLabel}</span>
+        </div>
+        <div class="compaction-controls">
+          <label for="ctx-compaction-tokens">
+            <span>Threshold override (tokens)</span>
+            <input
+              id="ctx-compaction-tokens"
+              type="number"
+              min="1"
+              step="1"
+              inputmode="numeric"
+              placeholder="None — use global / default"
+              .value=${this._compactionTokens || ''}
+            />
+          </label>
+          <label for="ctx-compaction-ratio">
+            <span>Threshold override (ratio of window, 0–1)</span>
+            <input
+              id="ctx-compaction-ratio"
+              type="number"
+              min="0"
+              max="1"
+              step="0.05"
+              inputmode="decimal"
+              placeholder="None — use global / default"
+              .value=${this._compactionRatio || ''}
+            />
+          </label>
+          <div class="compaction-actions">
+            <button type="button" class="dc-small-btn" ?disabled=${this._compactionBusy} @click=${() => this.#saveCompaction()}>Save</button>
+            <button type="button" class="dc-small-btn" @click=${() => this.#resetCompaction()} ?disabled=${this._compactionBusy}>Reset</button>
+          </div>
+          ${this._compactionError ? html`<div class="error-msg">${this._compactionError}</div>` : nothing}
+        </div>
       </div>
     `;
   }
@@ -440,6 +551,7 @@ export class ContextInspector extends LitElement {
       diagContent = html`
         ${this.#renderWaffle(d.sources, d.context_window_size, d.total_tokens_actual)}
         ${this.#renderStats(d)}
+        ${this.#renderCompaction()}
         ${this.#renderSourceTable(d.sources)}
         ${this.#renderCandidates(d.memory_candidates)}
       `;

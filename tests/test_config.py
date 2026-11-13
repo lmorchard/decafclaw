@@ -113,6 +113,18 @@ class TestDefaults:
         c = Config(compaction=CompactionConfig(max_tokens=100000, llm_max_tokens=0))
         assert c.compaction_context_budget == 100000
 
+    def test_compaction_threshold_ratio_default(self):
+        """#1099 — global threshold_ratio defaults to None (fixed-cap mode)."""
+        c = Config()
+        assert c.compaction.threshold_ratio is None
+
+    def test_compaction_threshold_ratio_env_override(self, tmp_path, monkeypatch):
+        """#1099 — COMPACTION_THRESHOLD_RATIO env var drives the global ratio."""
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("COMPACTION_THRESHOLD_RATIO", "0.4")
+        c = load_config()
+        assert c.compaction.threshold_ratio == 0.4
+
     def test_vault_guide_defaults(self):
         """VaultGuideConfig defaults: enabled, AGENTS.md, 2000-token cap."""
         from decafclaw.config_types import VaultGuideConfig

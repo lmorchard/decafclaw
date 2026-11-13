@@ -95,6 +95,11 @@ class CompactionConfig:
     api_key: str = field(default="", metadata={"secret": True})
     max_tokens: int = 100000
     llm_max_tokens: int = 0  # 0 = use max_tokens
+    # User-configurable compaction threshold ratio (#1099). None = use
+    # ``max_tokens``; when set and the model context window is known
+    # (``context_window_size > 0``), the effective threshold is
+    # ``int(context_window_size * ratio)`` instead of the fixed cap.
+    threshold_ratio: float | None = None
     preserve_turns: int = 5
     memory_sweep_enabled: bool = True
     # Threaded structured slice (#302). When enabled, compaction emits

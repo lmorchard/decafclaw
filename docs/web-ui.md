@@ -236,6 +236,7 @@ Click the context usage bar in the sidebar to see a popover with:
 - **Diagnostics tab:**
   - Waffle chart showing token allocation by source
   - Summary stats (estimated vs actual tokens, window size, compaction threshold)
+  - Compaction controls: per-conversation auto-compaction threshold override via an absolute token budget or a ratio of the model context window, saved through `PATCH /api/conversations/{id}`; Reset clears the override back to the global / fixed-default threshold (see the [Context Composer](context-composer.md) docs and #1099)
   - Source breakdown table
   - Memory candidates with composite scores
 - **Raw tab:**

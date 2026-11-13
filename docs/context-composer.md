@@ -121,6 +121,7 @@ the slice guidance still lives in the system prompt via the addendum.
 
 - `context_window_size` on the model config is the hard upper bound
 - `compaction.max_tokens` triggers compaction based on `prompt_tokens` from the API (system prompt + tools + all messages)
+- `compaction.threshold_ratio` (optional, default `None`) sets the compaction trigger as a fraction of the model context window; when set and the model window is known (`context_window_size > 0`) the effective threshold is `int(context_window_size * ratio)`, otherwise the fixed `compaction.max_tokens` cap applies. Per-conversation overrides (`compaction_threshold` / `compaction_threshold_ratio`) ride the same resolution through conversation state (#1099).
 - Tool definitions are fixed overhead on every turn — [tool deferral](tool-search.md) keeps this in check
 - Vault context competes for remaining budget after fixed costs (see [Vault Retrieval](#vault-retrieval) below)
 

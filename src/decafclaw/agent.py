@@ -31,7 +31,7 @@ from .archive import append_message
 from .config_types import LoopBreakerConfig
 from .context import TurnLifecycle
 from .context_cleanup import clear_old_tool_results
-from .context_composer import ComposerMode, ContextComposer
+from .context_composer import ComposerMode, ContextComposer, effective_compaction_threshold
 from .conversation_paths import approval_state_path
 from .iteration_budget import IterationBudget
 from .llm import call_llm
@@ -159,7 +159,7 @@ def _composer_mode_for(ctx: "Context") -> ComposerMode:
     return ComposerMode.INTERACTIVE
 
 
-async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None:
+async def _maybe_compact(ctx: "Context", config, history, prompt_tokens, lowered: int | None = None) -> None:
     """Run the lightweight tool-result clear pass, then trigger
     full compaction if the token budget is exceeded.
 
@@ -186,9 +186,10 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None
         # signal we'd need to fix recurring failures.
         log.exception("Tool-result clearing failed")
 
-    log.info(f"Compaction check: prompt_tokens={prompt_tokens}, threshold={config.compaction.max_tokens}")
-    if prompt_tokens and prompt_tokens > config.compaction.max_tokens:
-        log.info(f"Token budget exceeded ({prompt_tokens} > {config.compaction.max_tokens}), triggering compaction")
+    threshold = effective_compaction_threshold(config, ctx, lowered=lowered)
+    log.info(f"Compaction check: prompt_tokens={prompt_tokens}, threshold={threshold}")
+    if prompt_tokens and prompt_tokens > threshold:
+        log.info(f"Token budget exceeded ({prompt_tokens} > {threshold}), triggering compaction")
         try:
             await compaction.compact_history(ctx, history)
         except Exception as e:
@@ -718,6 +719,13 @@ class TurnRunner:
     loop_breaker: LoopBreaker = field(
         default_factory=lambda: LoopBreaker(LoopBreakerConfig()),
     )
+    # Turn-local reactive compaction lowering applied after a
+    # context-length-exceeded error (#1099). Transient per turn — the
+    # TurnRunner is single-use per conversation turn, so it resets with
+    # the runner. Highest precedence in the threshold resolution; beats
+    # user- and config-set thresholds so a just-overflowed turn can
+    # compact its way out.
+    lowered_compaction_threshold: int | None = None
 
     async def run(self) -> "ToolResult":
         """Process a single user message through the agent loop."""
@@ -864,6 +872,10 @@ class TurnRunner:
                     ),
                 )
                 self.ctx.config = self.config
+                # #1099 — record the turn-local lowering so the threshold
+                # resolution prefers it over a configured global
+                # ``compaction.threshold_ratio`` for the rest of this turn.
+                self.lowered_compaction_threshold = lower_threshold
 
                 await compaction.compact_history(self.ctx, self.history)
                 # Re-compose to pick up the compacted history
@@ -1205,7 +1217,13 @@ class TurnRunner:
                 _archive(self.ctx, {"role": "reflection", "tool": label, "content": detail})
 
         await self._emit_reflection_metrics(content)
-        await _maybe_compact(self.ctx, self.config, self.history, self.prompt_tokens)
+        await _maybe_compact(
+            self.ctx,
+            self.config,
+            self.history,
+            self.prompt_tokens,
+            lowered=self.lowered_compaction_threshold,
+        )
         return _Final(result=self._extract_workspace_media(content, thinking=response.get("thinking")))
 
     async def _emit_reflection_metrics(self, final_content: str) -> None:
@@ -1442,6 +1460,7 @@ class TurnRunner:
             self.config,
             self.history,
             self.prompt_tokens,
+            lowered=self.lowered_compaction_threshold,
         )
         return self._extract_workspace_media(content)
 
@@ -1554,6 +1573,7 @@ class TurnRunner:
             self.config,
             self.history,
             self.prompt_tokens,
+            lowered=self.lowered_compaction_threshold,
         )
         return ToolResult(text=delivered, termination_reason=termination_reason)
 
@@ -1595,7 +1615,7 @@ class TurnRunner:
             try:
                 from .context_composer import write_context_sidecar
 
-                diagnostics = self.composer.build_diagnostics(self.config, self.composed)
+                diagnostics = self.composer.build_diagnostics(self.config, self.composed, ctx=self.ctx)
                 write_context_sidecar(self.config, conv_id, diagnostics)
             except Exception as exc:
                 log.debug("context sidecar write failed for %s: %s", conv_id, exc)
