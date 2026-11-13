@@ -1,0 +1,212 @@
+/* Shell auto-approval panel — light DOM styles, scoped to the body-level
+   .shell-approval-panel-mount portal (see shell-approval-panel.js, #1159).
+   Mirrors context-inspector.css (#1037). */
+
+.shell-approval-panel-mount .shell-approval-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.shell-approval-panel-mount .shell-approval-panel {
+  width: min(720px, calc(100vw - 3rem));
+  max-height: calc(100vh - 6rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--pico-card-background-color, #fff);
+  border: 1px solid var(--pico-muted-border-color, #ddd);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+  padding: 1rem 1.25rem;
+  font-size: 0.8rem;
+  color: var(--pico-color, #333);
+  box-sizing: border-box;
+}
+
+.shell-approval-panel-mount .sap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  flex-shrink: 0;
+}
+
+.shell-approval-panel-mount .sap-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.shell-approval-panel-mount .sap-body {
+  overflow-y: auto;
+}
+
+.shell-approval-panel-mount .sap-section {
+  margin-bottom: 1rem;
+}
+
+.shell-approval-panel-mount .sap-section-title {
+  font-weight: 600;
+  font-size: 0.8rem;
+  margin-bottom: 0.4rem;
+}
+
+.shell-approval-panel-mount .sap-config-guidance {
+  padding: 0.5rem;
+  border: 1px solid var(--pico-muted-border-color, #ddd);
+  border-radius: 6px;
+  background: var(--pico-background-color, #fff);
+}
+
+.shell-approval-panel-mount .sap-error-banner {
+  padding: 0.5rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--pico-del-color, #c0392b);
+  border-radius: 6px;
+  background: var(--pico-background-color, #fff);
+  color: var(--pico-del-color, #c0392b);
+}
+
+.shell-approval-panel-mount .sap-loading,
+.shell-approval-panel-mount .sap-empty {
+  text-align: center;
+  padding: 1rem;
+  color: var(--pico-muted-color);
+}
+
+.shell-approval-panel-mount .sap-rule-list,
+.shell-approval-panel-mount .preset-rules-list,
+.shell-approval-panel-mount .sap-pattern-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.shell-approval-panel-mount .sap-rule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color, #eee);
+}
+
+.shell-approval-panel-mount .sap-rule:last-child {
+  border-bottom: none;
+}
+
+.shell-approval-panel-mount .sap-rule-text {
+  flex: 1;
+}
+
+.shell-approval-panel-mount .sap-rule-actions {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.shell-approval-panel-mount .sap-add-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.shell-approval-panel-mount .sap-rule-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.shell-approval-panel-mount .sap-add-btn {
+  flex-shrink: 0;
+}
+
+.shell-approval-panel-mount .sap-preset {
+  border: 1px solid var(--pico-muted-border-color, #ddd);
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  background: var(--pico-card-background-color, #fff);
+}
+
+.shell-approval-panel-mount .sap-preset-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.shell-approval-panel-mount .sap-preset-name {
+  font-weight: 600;
+}
+
+.shell-approval-panel-mount .preset-source-badge.builtin {
+  background: var(--pico-primary);
+}
+
+.shell-approval-panel-mount .preset-source-badge.config {
+  background: var(--pico-color-orange-500, #e67e22);
+}
+
+.shell-approval-panel-mount .preset-source-badge.custom {
+  background: var(--pico-color-green-500, #27ae60);
+}
+
+.shell-approval-panel-mount .sap-activated-via {
+  font-size: 0.7rem;
+  color: var(--pico-muted-color);
+}
+
+.shell-approval-panel-mount .preset-rules-list {
+  margin: 0.35rem 0 0;
+  padding-left: 1rem;
+}
+
+.shell-approval-panel-mount .sap-pattern {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color, #eee);
+}
+
+.shell-approval-panel-mount .sap-pattern:last-child {
+  border-bottom: none;
+}
+
+.shell-approval-panel-mount .sap-pattern-text {
+  flex: 1;
+}
+
+.shell-approval-panel-mount .sap-promote-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.shell-approval-panel-mount .sap-promote-row select,
+.shell-approval-panel-mount .sap-promote-row input {
+  min-width: 0;
+}
+
+.shell-approval-panel-mount .sap-promote-btn,
+.shell-approval-panel-mount .sap-add-btn {
+  flex-shrink: 0;
+}
+
+.shell-approval-panel-mount .sap-cancel-btn {
+  flex-shrink: 0;
+}
+
+/* Sidebar / control-bar trigger next to the mode picker. */
+conversation-sidebar .shell-approval-open-btn {
+  margin-top: 0.25rem;
+  align-self: flex-start;
+}
+
+chat-controls .shell-approval-open-btn {
+  align-self: center;
+}

@@ -132,6 +132,17 @@ export class ChatControls extends LitElement {
     }));
   }
 
+  // The mode control row summons the per-conversation shell approval panel.
+  // The sidebar owns the panel; it listens for this event on document (the
+  // same pattern as toggle-context-inspector above).
+  #handleShellApprovalClick() {
+    this.dispatchEvent(new CustomEvent('toggle-shell-approval', {
+      detail: { convId: this.store?.currentConvId || '' },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   #getContextStatus() {
     if (this._contextLimit <= 0) return { pct: 0, formatted: '', cls: '', warn: false, danger: false };
     const pct = Math.round((this._contextUsage / this._contextLimit) * 100);
@@ -175,6 +186,13 @@ export class ChatControls extends LitElement {
               <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
             `)}
           </select>
+          <button
+            type="button"
+            class="shell-approval-open-btn dc-floating-btn"
+            title="Shell auto-approval"
+            aria-label="Open shell auto-approval panel"
+            @click=${this.#handleShellApprovalClick}
+          >&#9881;</button>
         </div>
       ` : nothing}
 

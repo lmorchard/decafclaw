@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from 'lit';
 import { parentConvIdOf } from '../lib/conversation-store.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 import './context-inspector.js';
+import './shell-approval-panel.js';
 import './notification-inbox.js';
 import './vault-sidebar.js';
 import './files-sidebar.js';
@@ -32,6 +33,7 @@ export class ConversationSidebar extends LitElement {
     _sidebarTab: { type: String, state: true },
     _contextInspectorOpen: { type: Boolean, state: true },
     _contextVersion: { type: Number, state: true },
+    _shellApprovalOpen: { type: Boolean, state: true },
     _openSchedule: { type: String, state: true },
     _hasControlsStrip: { type: Boolean, state: true },
   };
@@ -70,12 +72,18 @@ export class ConversationSidebar extends LitElement {
     this._sidebarTab = 'conversations';
     this._contextInspectorOpen = false;
     this._contextVersion = 0;
+    this._shellApprovalOpen = false;
     this._openSchedule = '';
     this._hasControlsStrip = document.querySelector('chat-controls') !== null;
   }
 
   openMobile() {
     this._mobileOpen = true;
+  }
+
+  /** Open the per-conversation shell approval panel (mode-picker trigger). */
+  #openShellApproval() {
+    this._shellApprovalOpen = true;
   }
 
   closeMobile() {
@@ -88,11 +96,16 @@ export class ConversationSidebar extends LitElement {
       this._contextInspectorOpen = !this._contextInspectorOpen;
     };
     document.addEventListener('toggle-context-inspector', this._onToggleInspector);
+    this._onToggleShellApproval = () => {
+      this._shellApprovalOpen = !this._shellApprovalOpen;
+    };
+    document.addEventListener('toggle-shell-approval', this._onToggleShellApproval);
     this._onStoreChange = () => {
       const newId = this.store?.currentConvId;
       const newSessions = this.store?.sessions || [];
       if (newId !== this._activeId) {
         this._contextInspectorOpen = false;
+        this._shellApprovalOpen = false;
         // Selecting a conversation auto-expands its session group (#1115
         // follow-up): the user may have collapsed it earlier, but clicking
         // into that session's conversation signals interest again. Reads
@@ -136,6 +149,7 @@ export class ConversationSidebar extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('toggle-context-inspector', this._onToggleInspector);
+    document.removeEventListener('toggle-shell-approval', this._onToggleShellApproval);
     this.store?.removeEventListener('change', this._onStoreChange);
   }
 
@@ -869,6 +883,7 @@ export class ConversationSidebar extends LitElement {
             `;
           })()}
         </select>
+        <button class="shell-approval-open-btn dc-icon-btn" title="Shell auto-approval" aria-label="Open shell auto-approval panel" @click=${() => this.#openShellApproval()}>&#9881;</button>
       </div>
       ` : nothing}
       ${!this._hasControlsStrip && this._availableModels.length > 0 ? html`
@@ -923,6 +938,11 @@ export class ConversationSidebar extends LitElement {
         .contextVersion=${this._contextVersion}
         @close=${() => { this._contextInspectorOpen = false; }}
       ></context-inspector>
+      <shell-approval-panel
+        .convId=${this._activeId || ''}
+        .open=${this._shellApprovalOpen}
+        @close=${() => { this._shellApprovalOpen = false; }}
+      ></shell-approval-panel>
       <div class="sidebar-footer">
         <div class="footer-icons">
           <theme-toggle></theme-toggle>
