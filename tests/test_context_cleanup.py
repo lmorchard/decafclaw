@@ -7,6 +7,7 @@ import dataclasses
 from decafclaw.config_types import CleanupConfig
 from decafclaw.context_cleanup import (
     _STUB_PREFIX,
+    _SUPERSEDED_READ_STUB,
     _SUPERSEDED_STUB,
     ClearStats,
     _build_tool_name_index,
@@ -433,3 +434,121 @@ class TestClearStats:
         a.merge(b)
         assert a.cleared_count == 5
         assert a.cleared_bytes == 3500
+
+
+# -- superseded file-read pruning (#1146) -------------------------------------
+
+
+class TestPruneSupersededReads:
+    """Pass 3: a later successful full read of the same path supersedes an
+    older read of it; range/section/truncating later reads do not."""
+
+    def _tool_call_args(self, call_id, name, arguments):
+        return {"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
+
+    def _history(self, read_bodies):
+        """History with a single `workspace_read` (c1) whose body is the
+        first entry of ``read_bodies``, followed by a second `workspace_read`
+        (c2) whose body is the second entry. Two user turns back so the read
+        is inside the pruning window."""
+        return [
+            _user("turn1"),
+            _assistant(tool_calls=[self._tool_call_args("c1", "workspace_read", '{"path": "notes.md"}')]),
+            _tool("c1", read_bodies[0]),
+            _assistant(tool_calls=[self._tool_call_args("c2", "workspace_read", '{"path": "notes.md"}')]),
+            _tool("c2", read_bodies[1]),
+            _assistant("synthesized"),
+            _user("turn2"),
+            _assistant("ok"),
+            _user("turn3"),
+            _assistant("hi"),
+        ]
+
+    def test_prunes_superseded_full_read(self):
+        """Older full read + later full read of same path → older is stubbed."""
+        history = self._history(
+            [
+                "1| hello world\n2| second line of the file\n3| third line here",
+                "1| hello world\n2| second line of the file\n3| third line here\n4| fourth line added",
+            ]
+        )
+        stats = clear_old_tool_results(history, _cfg())
+        assert history[2]["content"] == _SUPERSEDED_READ_STUB
+        assert (
+            history[4]["content"]
+            == "1| hello world\n2| second line of the file\n3| third line here\n4| fourth line added"
+        )
+        assert stats.cleared_count == 1
+        assert stats.cleared_bytes > 0
+
+    def test_range_read_does_not_supersede(self):
+        """A later range read is partial coverage → no supersession."""
+        history = self._history(["1| hello\n2| world", "Lines 2-4 of 10:\n2| x"])
+        stats = clear_old_tool_results(history, _cfg())
+        assert history[2]["content"] == "1| hello\n2| world"
+        assert stats.cleared_count == 0
+
+    def test_truncated_read_does_not_supersede(self):
+        """A later truncated read is not a full-file replacement → no supersession."""
+        history = self._history(
+            [
+                "1| hello\n2| world",
+                "File has 40 lines, showing first 200. Use start_line/end_line to read specific sections.\n1| hello",
+            ]
+        )
+        stats = clear_old_tool_results(history, _cfg())
+        assert history[2]["content"] == "1| hello\n2| world"
+        assert stats.cleared_count == 0
+
+    def test_disabled_config_no_prune(self):
+        history = self._history(
+            [
+                "1| hello world\n2| second line of the file\n3| third line here",
+                "1| hello world\n2| second line of the file\n3| third line here\n4| fourth line added",
+            ]
+        )
+        cfg = _cfg()
+        cfg.cleanup.prune_superseded_reads = False
+        stats = clear_old_tool_results(history, cfg)
+        assert history[2]["content"] == "1| hello world\n2| second line of the file\n3| third line here"
+        assert stats.cleared_count == 0
+
+    def test_pruned_in_interactive_mode_only(self):
+        history = self._history(
+            [
+                "1| hello world\n2| second line of the file\n3| third line here",
+                "1| hello world\n2| second line of the file\n3| third line here\n4| fourth line added",
+            ]
+        )
+        for mode in (ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT):
+            history = self._history(
+                [
+                    "1| hello world\n2| second line of the file\n3| third line here",
+                    "1| hello world\n2| second line of the file\n3| third line here\n4| fourth line added",
+                ]
+            )
+            clear_old_tool_results(history, _cfg(), mode=mode)
+            assert history[2]["content"] == "1| hello world\n2| second line of the file\n3| third line here", (
+                f"expected no prune in {mode}"
+            )
+        history = self._history(
+            [
+                "1| hello world\n2| second line of the file\n3| third line here",
+                "1| hello world\n2| second line of the file\n3| third line here\n4| fourth line added",
+            ]
+        )
+        clear_old_tool_results(history, _cfg(), mode=ComposerMode.INTERACTIVE)
+        assert history[2]["content"] == _SUPERSEDED_READ_STUB
+
+    def test_prune_idempotent(self):
+        history = self._history(
+            [
+                "1| hello world\n2| second line of the file\n3| third line here",
+                "1| hello world\n2| second line of the file\n3| third line here\n4| fourth line added",
+            ]
+        )
+        first = clear_old_tool_results(history, _cfg())
+        assert first.cleared_count == 1
+        second = clear_old_tool_results(history, _cfg())
+        assert second.cleared_count == 0
+        assert history[2]["content"] == _SUPERSEDED_READ_STUB

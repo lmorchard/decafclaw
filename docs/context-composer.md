@@ -479,9 +479,11 @@ See [config.md#recent_journal](config.md#recent_journal). Config dataclass: `Rec
 
 ## Tool-result clearing (lightweight tier)
 
-Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/context_cleanup.py` — that makes two in-memory edits. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298. The **resolved-error pruning** pass (#540) stubs a tool *error* that a later success of the same tool has already resolved (`[tool error superseded by later success]`) — a recovered failure no longer earns attention budget either.
+Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/context_cleanup.py` — that makes three in-memory edits. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298. The **resolved-error pruning** pass (#540) stubs a tool *error* that a later success of the same tool has already resolved (`[tool error superseded by later success]`) — a recovered failure no longer earns attention budget either. The **superseded-read pruning** pass (#1146) stubs a successful full-file read whose path a later successful full read re-read (`[tool output superseded by a later successful read]`) — an older copy of a file the agent has since re-read can conflict with current content.
 
 **Resolved-error pruning** (#540). A tool error (a tool-role message whose `content` starts with `[error`, the `ToolResult(text="[error: ...]")` convention) is stubbed when a *later* result for the same tool name is not itself an error. It's more aggressive than the size/age clear: it applies regardless of size or age. Matching is by tool name by default; `cleanup.prune_resolved_same_args_only` makes it conservative (the later success must carry the same arguments as the failed call). It's skipped in heartbeat / scheduled / child-agent turns, like memory retrieval — the size/age clear is unaffected by mode. Same in-memory-only invariant: the archive keeps the original.
+
+**Superseded-read pruning** (#1146). A successful full-file read (no range / section / truncation envelope) whose path a *later* successful full read of the same file re-read is stubbed with a pointer to the newer observation — `[tool output superseded by a later successful read]`. Only full reads supersede; range / section / truncated results never replace older coverage, and failed reads are never pruned. It's skipped in heartbeat / scheduled / child-agent turns, like the resolved-error pass. Same in-memory-only invariant: the archive keeps the original.
 
 **Eligibility** (all must hold for a tool message to be size/age-cleared):
 
@@ -500,7 +502,7 @@ Before the compaction threshold check fires, every iteration runs a cheap pass �
 
 The clear pass writes per-conversation cumulative stats (`cleanup.cleared_count`, `cleanup.cleared_bytes`) into the context sidecar — see below.
 
-Configuration tunables: `cleanup.enabled`, `min_turn_age`, `min_size_bytes`, `preserve_tools` (size/age clear); `cleanup.prune_resolved_errors` (default `true`), `prune_resolved_same_args_only` (default `false`) (resolved-error pruning). See [config.md#cleanup](config.md#cleanup).
+Configuration tunables: `cleanup.enabled`, `min_turn_age`, `min_size_bytes`, `preserve_tools` (size/age clear); `cleanup.prune_resolved_errors` (default `true`), `prune_resolved_same_args_only` (default `false`) (resolved-error pruning); `cleanup.prune_superseded_reads` (default `true`) (superseded-read pruning). See [config.md#cleanup](config.md#cleanup).
 
 ## Decision slice through compaction
 
