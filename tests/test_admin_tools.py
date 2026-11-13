@@ -344,6 +344,31 @@ async def test_admin_write_diff_view_attaches_just_under_threshold(ctx):
     assert result.widget.widget_type == "diff_view"
 
 
+@pytest.mark.asyncio
+async def test_admin_write_oversized_edit_over_both_thresholds_returns_summary_without_widget(ctx):
+    """A content over BOTH diff thresholds is oversized for admin_write (#1210).
+
+    The over-threshold branch must trip on either bound — here the content
+    exceeds both the char and line caps at once — and still return the
+    one-line summary only, with no diff_view widget and no diff text. This is
+    the shared-threshold shape called out in the issue scope: one mutator plus
+    a file over both ``MAX_DIFF_WIDGET_CHARS`` and ``MAX_DIFF_WIDGET_LINES``.
+    """
+    ctx.request_confirmation = _mock_confirm(approved=True)
+    target = ctx.config.agent_path / "prompts" / "huge_write.txt"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    huge_content = "\n".join(["z" * 600 for _ in range(MAX_DIFF_WIDGET_LINES + 2)])
+    target.write_text("a\n" * MAX_DIFF_WIDGET_LINES)
+
+    result = await tool_admin_write(ctx, "prompts/huge_write.txt", huge_content)
+    text = _text(result)
+    assert "Wrote" in text
+    assert "+++" not in text
+    assert "@@" not in text
+    # Oversized edits return the one-line summary only — no widget, no diff text.
+    assert not isinstance(result, ToolResult) or result.widget is None
+
+
 def test_admin_list_empty_directory_attaches_no_widget(ctx):
     """admin_list attaches no widget for an empty directory listing (#1170)."""
     (ctx.config.agent_path / "emptydir").mkdir(parents=True, exist_ok=True)
