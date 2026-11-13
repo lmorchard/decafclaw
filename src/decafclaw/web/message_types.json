@@ -102,6 +102,11 @@
       "description": "Output of the post-turn reflection step for a conversation.",
       "fields": {"conv_id": "string", "passed": "boolean", "critique": "string", "retry_number": "number", "raw_response": "string", "error": "string"}
     },
+    "recovery_decision": {
+      "direction": "server_to_client",
+      "description": "Bounded recovery policy outcome after a recoverable LLM failure: retry / continue / stop, with phase and retry-budget state (#1144).",
+      "fields": {"conv_id": "string", "action": "string", "phase": "string", "committed_output": "boolean", "retry_exhausted": "boolean"}
+    },
     "tool_end": {
       "direction": "server_to_client",
       "description": "Final result of a tool call. Replaces the in-flight tool_status with terminal state.",

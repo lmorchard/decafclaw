@@ -36,6 +36,7 @@ from .conversation_paths import approval_state_path
 from .iteration_budget import IterationBudget
 from .llm import call_llm
 from .llm.history import assistant_message
+from .llm.types import LLMRetryExhaustedError
 from .loop_breaker import (
     CallSignature,
     LoopBreaker,
@@ -46,6 +47,7 @@ from .loop_breaker import (
 )
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
+from .recovery import RECOVERY_CONTINUE, RECOVERY_STOP, RecoveryState, decide_recovery_retry
 from .reflection_metrics import classify_outcome, response_delta
 from .skills import activate_always_loaded
 from .telemetry import get_tracer
@@ -67,6 +69,12 @@ _TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
 # real conversation, which does have a live subscriber. `""` (interactive) is
 # likewise excluded. See docs/loop-breaker.md.
 _UNWATCHED_TASK_MODES = frozenset({"heartbeat", "scheduled", "child_agent"})
+
+# Max bounded partial-text continuations allowed in one agent turn before the
+# recovery policy settles the turn as failed (#1144). Each continuation persists
+# the committed partial transcript and resumes from it; past this budget the
+# loop stops instead of issuing unbounded follow-up completions.
+MAX_RECOVERY_CONTINUATIONS = 2
 
 log = logging.getLogger(__name__)
 
@@ -709,6 +717,7 @@ class TurnRunner:
     reflection_last_critique: str = ""
     turn_start_index: int = 0
     accumulated_text_parts: list[str] = field(default_factory=list)
+    recovery_continuations: int = 0
     model_override: dict[str, str] = field(default_factory=dict)
     retrieved_context_text: str = ""
     composed: "ComposedContext | None" = None
@@ -749,6 +758,7 @@ class TurnRunner:
             self.reflection_last_critique = ""
 
             self.accumulated_text_parts = []  # text from iterations that also had tool calls
+            self.recovery_continuations = 0
             self.budget = IterationBudget(
                 remaining=self.config.agent.max_tool_iterations,
             )
@@ -881,6 +891,53 @@ class TurnRunner:
                 # Re-compose to pick up the compacted history
                 await self._compose()
                 return _Continue()
+            # Bounded recovery policy (#1144): after a non-context-length LLM
+            # failure, choose retry / continue / stop from the turn's recovery
+            # state instead of blindly re-issuing a request whose output may
+            # already be committed.
+            action = decide_recovery_retry(
+                RecoveryState(
+                    phase="partial_text" if self.accumulated_text_parts else "pre_output",
+                    committed_output=bool(self.accumulated_text_parts),
+                    retry_exhausted=isinstance(exc, LLMRetryExhaustedError),
+                ),
+                cancelled=bool(self.ctx.cancelled and self.ctx.cancelled.is_set()),
+            )
+            # Surface the bounded recovery decision so transports / diagnostics
+            # can see what the policy chose (#1144).
+            await self.ctx.publish(
+                "recovery_decision",
+                action=action,
+                phase="partial_text" if self.accumulated_text_parts else "pre_output",
+                committed_output=bool(self.accumulated_text_parts),
+                retry_exhausted=isinstance(exc, LLMRetryExhaustedError),
+            )
+            if action == RECOVERY_STOP:
+                log.warning("Agent recovery stopping after LLM failure: %s", exc)
+                return _Final(result=ToolResult(text="[error: agent recovery stopped: unable to continue safely]"))
+            if action == RECOVERY_CONTINUE:
+                # Partial text committed — persist it once, then resume from it
+                # (bounded continuation; never a blind replay of a request whose
+                # output may already be committed).
+                if self.recovery_continuations >= MAX_RECOVERY_CONTINUATIONS:
+                    log.warning(
+                        "Agent recovery continuation budget exhausted (%d) after LLM failure: %s",
+                        self.recovery_continuations,
+                        exc,
+                    )
+                    return _Final(result=ToolResult(text="[error: agent recovery continuation budget exhausted]"))
+                self.recovery_continuations += 1
+                partial_text = "".join(self.accumulated_text_parts)
+                if partial_text:
+                    partial_assistant = {"role": "assistant", "content": partial_text}
+                    self.history.append(partial_assistant)
+                    self.messages.append(partial_assistant)
+                    _archive(self.ctx, partial_assistant)
+                return _Continue()
+            # RECOVERY_RETRY (pre-output, nothing committed) preserves the
+            # turn's error-settle semantics: provider-side retries already bound
+            # the transient attempts, so a residual failure settles the turn as
+            # an error rather than looping here.
             raise
 
         usage = response.get("usage")

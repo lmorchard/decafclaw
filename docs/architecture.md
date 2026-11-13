@@ -114,6 +114,7 @@ The EventBus (`events.py`) is a simple in-process pub/sub. Subscribers are callb
 - `llm_chunk` — streaming tokens (subscribed by the transport that's rendering)
 - `tool_confirm_request` / `tool_confirm_response` — confirmation round-trips for shell/skill approvals
 - `reflection_result` — self-reflection verdict (rendered per configured visibility)
+- `recovery_decision` — bounded recovery policy outcome after a recoverable LLM failure (`retry` / `continue` / `stop` with phase and retry-budget state; #1144)
 
 Every event carries enough correlation info (`tool_call_id`, `context_id`) that subscribers can match it to an in-flight UI element.
 

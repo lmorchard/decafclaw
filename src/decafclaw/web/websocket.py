@@ -1209,6 +1209,18 @@ def _subscribe_to_conv(state, conv_id):
                 }
             )
 
+        elif event_type == "recovery_decision":
+            await ws_send(
+                {
+                    "type": WSMessageType.RECOVERY_DECISION,
+                    "conv_id": event_conv_id,
+                    "action": event.get("action", ""),
+                    "phase": event.get("phase", ""),
+                    "committed_output": event.get("committed_output", False),
+                    "retry_exhausted": event.get("retry_exhausted", False),
+                }
+            )
+
         elif event_type == "shell_approval":
             await ws_send(
                 {

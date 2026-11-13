@@ -181,6 +181,14 @@ export function dispatch(s: State, m: ServerMessage): State {
       });
     }
 
+    // Bounded recovery policy outcome after a recoverable LLM failure (#1144).
+    // Surfaced as a system line; `stop` marks the turn settling without a
+    // further completion.
+    case "recovery_decision": {
+      const text = m.action === "stop" ? `[recovery stopped: ${m.phase}]` : `[recovery: ${m.action}]`;
+      return appendTranscript(s, { kind: "system", text });
+    }
+
     // Spike-deferred. Acknowledged in types.ts but not surfaced in UI.
     case "background_event":
     case "canvas_update":

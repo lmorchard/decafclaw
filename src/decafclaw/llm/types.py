@@ -36,6 +36,23 @@ class ContextLengthExceededError(Exception):
     pass
 
 
+class LLMRetryExhaustedError(Exception):
+    """Raised when a provider adapter's bounded retry budget is fully spent.
+
+    Carries the terminal retry status/body so the agent loop's recovery policy
+    can distinguish "retries exhausted, nothing committed" (stop as an explicit
+    uncertain outcome) from a live retry decision (#1144).
+    """
+
+    def __init__(
+        self, message: str, *, status: int | None = None, body: str | None = None, retry_after: str | None = None
+    ):
+        super().__init__(message)
+        self.status = status
+        self.body = body
+        self.retry_after = retry_after
+
+
 class Provider(Protocol):
     """Interface for LLM providers.
 
