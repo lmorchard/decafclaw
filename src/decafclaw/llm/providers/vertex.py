@@ -532,6 +532,68 @@ def _clean_schema(schema: dict) -> dict:
     return cleaned
 
 
+_SEMANTIC_CONSTRAINT_NOTES: dict[str, str] = {
+    # JSON-Schema keyword -> human-readable constraint text; ``{value}`` is interpolated
+    # for scalar constraints such as a numeric ``multipleOf``.
+    "multipleOf": "must be a multiple of {value}",
+}
+
+
+def _collect_semantic_notes(schema: dict, notes: list[str]) -> None:
+    """Collect stripped scalar constraints as readable notes, descending nested schemas."""
+    multiple_of = schema.get("multipleOf")
+    if isinstance(multiple_of, (int, float)) and not isinstance(multiple_of, bool):
+        notes.append(_SEMANTIC_CONSTRAINT_NOTES["multipleOf"].format(value=multiple_of))
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for value in properties.values():
+            if isinstance(value, dict):
+                _collect_semantic_notes(value, notes)
+    for key in ("items", "additionalProperties"):
+        value = schema.get(key)
+        if isinstance(value, dict):
+            _collect_semantic_notes(value, notes)
+    for key in ("oneOf", "anyOf", "allOf"):
+        value = schema.get(key)
+        if isinstance(value, list):
+            for entry in value:
+                if isinstance(entry, dict):
+                    _collect_semantic_notes(entry, notes)
+
+
+def _clean_schema_preserving(schema: dict) -> dict:
+    """Clean a tool-parameter schema for Vertex while preserving stripped semantic constraints.
+
+    Stripped JSON-Schema keys that carried semantic meaning (for example a numeric
+    bound expressed as ``multipleOf``) must not vanish silently from the model-facing
+    wire schema. This pass strips the same unsupported keys as :func:`_clean_schema`
+    and renders stripped scalar constraints as readable description text on the
+    cleaned schema, so the provider-facing declaration still says what the canonical
+    schema required.
+
+    The canonical registry schema is never mutated: every cleaned value is derived
+    from the incoming schema.
+    """
+    cleaned = {k: v for k, v in schema.items() if k not in _VERTEX_UNSUPPORTED_KEYS}
+    notes: list[str] = []
+    _collect_semantic_notes(schema, notes)
+    if "properties" in cleaned:
+        cleaned["properties"] = {
+            k: _clean_schema(v) if isinstance(v, dict) else v for k, v in cleaned["properties"].items()
+        }
+    for key in ("items", "additionalProperties"):
+        if key in cleaned and isinstance(cleaned[key], dict):
+            cleaned[key] = _clean_schema(cleaned[key])
+    for key in ("oneOf", "anyOf", "allOf"):
+        if key in cleaned and isinstance(cleaned[key], list):
+            cleaned[key] = [_clean_schema(s) if isinstance(s, dict) else s for s in cleaned[key]]
+    if notes:
+        text = "; ".join(notes)
+        base = cleaned.get("description") or ""
+        cleaned["description"] = f"{base}; {text}" if base else text
+    return cleaned
+
+
 def _content_to_parts(content) -> list[dict]:
     """Convert message content (string or multimodal list) to Vertex parts.
 
@@ -667,7 +729,7 @@ def _build_request_body(
             }
             params = func.get("parameters")
             if params:
-                decl["parameters"] = _clean_schema(params)
+                decl["parameters"] = _clean_schema_preserving(params)
             func_decls.append(decl)
         body["tools"] = [{"functionDeclarations": func_decls}]
 

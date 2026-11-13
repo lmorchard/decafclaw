@@ -276,6 +276,44 @@ def test_tool_schema_strips_all_unsupported_keywords():
         )
 
 
+def test_tool_schema_preserves_stripped_multiple_of_as_description():
+    """A stripped ``multipleOf`` semantic constraint must survive as readable description text.
+
+    The wire schema strips JSON-Schema keys Vertex/Gemini cannot process, but a
+    numeric bound expressed as ``multipleOf`` carries meaning that must not be
+    dropped silently from the model-facing declaration (#1147). The canonical
+    schema keeps the bound; the wire schema renders it as description text.
+    """
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "bounded_number",
+                "description": "A number with a bound",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"value": {"type": "number", "multipleOf": 5}},
+                    "required": ["value"],
+                },
+            },
+        }
+    ]
+    canonical = json.loads(json.dumps(tools[0]["function"]["parameters"]))
+    body = _build_request_body([], tools=tools)
+    decls = body["tools"][0]["functionDeclarations"]
+    params = decls[0]["parameters"]
+
+    # The unsupported key is stripped from the wire schema.
+    assert "multipleOf" not in params
+    assert params["properties"]["value"]["type"] == "number"
+
+    # The stripped semantic constraint is preserved as readable description text.
+    assert "must be a multiple of 5" in (params.get("description") or "")
+
+    # The canonical schema is not mutated by the cleaning pass.
+    assert canonical["properties"]["value"]["multipleOf"] == 5
+
+
 def test_tool_schema_scrubs_unsupported_keys_inside_combinator_branches():
     """``oneOf`` / ``anyOf`` / ``allOf`` branches contain full subschemas;
     unsupported keywords inside them must also be scrubbed, since Vertex
