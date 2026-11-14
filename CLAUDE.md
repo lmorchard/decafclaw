@@ -1,284 +1,197 @@
 # DecafClaw — Development Conventions
 
-AI agent testbed: chat bot (Mattermost), web UI, terminal REPL. Multi-provider LLM (Vertex/Gemini, OpenAI, LiteLLM-compat). Tabstack for web tools. Architecture overview: [docs/architecture.md](docs/architecture.md). Full doc index: [docs/index.md](docs/index.md).
+AI agent testbed with Mattermost, web, and terminal clients. Multi-provider LLMs (Vertex/Gemini, OpenAI, LiteLLM-compatible) and Tabstack web tools. Start with [architecture](docs/architecture.md) and the [doc index](docs/index.md).
+
+`AGENTS.md` links to this file. Keep shared instructions below 28 KiB to leave room under Codex's 32 KiB project-instruction budget. Keep feature details in `docs/`; read the linked page before changing that subsystem.
 
 ## Architecture
 
-- **Event-driven**: EventBus pub/sub (`events.py`) decouples tool execution from delivery.
-- **Forkable runtime context** (`context.py`): Go-inspired, carries config + event bus, forked per-request.
-- **Async throughout**: agent loop, LLM client, tool execution.
-- **Per-conversation state**: keyed by `root_id` (threads) or `channel_id` (top-level).
+- Event-driven: EventBus pub/sub (`events.py`) decouples tool execution from delivery.
+- Forkable runtime context (`context.py`) carries configuration and the event bus, forked per request.
+- Async throughout: agent loop, LLM client, and tool execution.
+- Per-conversation state: keyed by thread `root_id` or top-level `channel_id`.
+- `ConversationManager` owns every agent loop. Transports are thin adapters.
 
-## Conventions
+## Workflow
 
-### Code style
+- **All work happens in a worktree**, including one-file documentation changes. Leave the main clone and unrelated edits untouched. Concurrent sessions make shared checkouts unsafe.
+- Fetch before significant work: `git fetch origin`, then `git log --oneline main..origin/main`. Branch from `origin/main`, never the main clone's current branch.
+- Put worktrees under `.claude/worktrees/{branch}/`. If a branch is already checked out, another session owns it; choose a new branch.
+- Each code worktree needs its own venv: run `uv sync` or `make install`. Copy the main clone's `.env` (it points to shared agent data), then set a distinct `HTTP_PORT`. Run `make test` for a clean baseline. Documentation-only work can skip dependency setup and the baseline; say so.
+- **Bug fix = test first.** Demonstrate the failure, then fix it.
+- Commit each logical step after linting and appropriate tests. **Run `make fmt` before committing or opening a PR.** Use a branch for iterative changes; do not push rapid fixes to main.
+- **Open a PR by default**, including small changes. Les reviews before merge. Recommend a PR over local merge if a generic finishing skill presents both. The integration decision remains Les's; merge requires authorization.
+- After merging behavior changes, test live in Mattermost and the web UI. Unit tests do not establish live behavior.
+- Configure blame once per clone: `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
 
-- **Prefer clarity over abstraction.** Exploration project — readability beats cleverness.
-- **Files on disk, human-readable.** Markdown for memories/todos, JSONL for archives, SQLite for embeddings. Crash-recoverable by design.
-- **Stdlib imports at module level.** Function-level imports are for breaking import cycles only.
-- **New runtime state goes on the dataclass.** Don't `setattr` undeclared attributes on Config/Context. Don't `getattr(obj, "_field", fallback)` to read undeclared attributes — it's a maintenance trap.
-- **Never enumerate fields when copying, forking, snapshotting, or serializing.** Hand-maintained field lists rot silently — when someone adds a field, the copy/snapshot drops it on the floor and nothing complains. We've been bitten more than once: Config eval-runner lost search settings, and `Context.fork_for_tool_call` lost `task_mode` (silently disabling scheduled newsletter email for weeks). Use the right idiom for the shape:
-  - **Dataclass copies/forks:** `dataclasses.replace(obj, field=…)`. Nested: `dataclasses.replace(config, agent=dataclasses.replace(config.agent, ...))`.
-  - **Dataclass JSON round-trip:** `dataclasses.asdict(obj)` + `Cls(**d)`.
-  - **Plain-class snapshots/forks (e.g. `Context`):** `copy.copy(obj)` + explicit overrides for sub-objects that need fresh state.
-  - **Tests:** iterate `vars(obj)` or `dataclasses.fields(cls)` — never a hand-listed allowlist (it rots in lockstep with the bug it should catch).
-- **Use `asyncio.Lock` for concurrency guards.** Not boolean flags — locks auto-release on exception.
-- **Zero tolerance for warnings/traceback noise.** Even on shutdown, even if "harmless" — fix them. Bare `except: pass` is never acceptable; use `except Exception as exc: log.debug(...)`.
-- **No deprecated code for test compatibility.** Rewrite tests to the new path immediately.
+### Investigation and gates
 
-### Tools
-
-See [docs/tools.md](docs/tools.md), [docs/tool-priority.md](docs/tool-priority.md), [docs/tool-search.md](docs/tool-search.md), [docs/preemptive-tool-search.md](docs/preemptive-tool-search.md).
-
-- **Tools receive `ctx` as first param.** Always, even if unused. **Annotate it** — `ctx: "Context"`, with the import under `if TYPE_CHECKING:`. An unannotated `ctx` is implicit `Any`, so pyright cannot check a single `ctx.*` call: that is how #721 shipped a `ctx.publish("tool_status", {...})` positional-dict call that raised `TypeError` on every invocation while `make check` stayed green for two months. Two constraints make the exact form load-bearing:
-  - **The import must be `TYPE_CHECKING`-guarded.** `decafclaw.context` → `context_composer` → skill modules is a real cycle; a runtime `from decafclaw.context import Context` in a tool or skill module raises `cannot import name 'Context' from partially initialized module`.
-  - **Quote the annotation; do NOT add `from __future__ import annotations`** to a skill's `tools.py`. The skill loader `exec`s modules without registering them in `sys.modules`, and CPython's `dataclasses._is_type` resolves *string* annotations via `sys.modules.get(cls.__module__).__dict__` — so the future import turns any `@dataclass` in that file into `AttributeError: 'NoneType' object has no attribute '__dict__'` at load time, which surfaces as a skill silently missing from the tool catalog.
-- **`execute_tool` auto-detects sync vs async.** Sync tools run via `asyncio.to_thread`.
-- **Tool calls run concurrently** via `asyncio.gather` with a semaphore (`max_concurrent_tools`, default 5). Each call gets a forked ctx with its own `current_tool_call_id`. Within a batch, per-call **execution policies** order calls: `shared` (default; may overlap) vs `exclusive` (waits for preceding calls, blocks later ones until done). Policy resolves from an explicit `execution` key → the `writes` flag (`false`→shared, `true`→exclusive) → shared for unannotated skill/MCP tools; an unresolvable tool name falls the whole batch back to serial. Barriers release on exception/cancellation; results keep assistant call order. See [docs/tools.md](docs/tools.md#batch-execution-policy-shared-vs-exclusive-1124).
-- **Errors return `ToolResult(text="[error: ...]")`**, not bare strings. `ToolResult.data` for structured results — auto-rendered as a fenced JSON block.
-- **Group tools by noun, not verb.** `conversation_search` + `conversation_compact` in one module.
-- **Tool descriptions are a control surface.** Wording changes ("MUST", "NEVER", checklists) measurably change LLM behavior. Run `make eval-tools` to validate disambiguation between overlapping tools.
-- **Shell approval via shared `check_shell_approval()`** in `shell_tools.py`. Don't duplicate the approval checks.
-- **Shell auto-backgrounding (#1136)** is opt-in via `shell.foreground_wait_budget_sec` (default `None` = legacy blocking path with a hard timeout of `shell.max_runtime_sec`, default 30s). When set, `tool_shell` starts the command through the background skill's shared runner (`BackgroundJobManager.start`, function-level import — module-level would cycle) and awaits up to the budget; on expiry the SAME process hands off as a managed job (job handle returned, completion sequence fires exactly once via the `BackgroundJob.foreground` claim flag). Approval happens once before spawn; a pre-handoff cancellation kills the process via `manager.abort()`. See [docs/tools.md](docs/tools.md#auto-backgrounding-on-a-foreground-time-budget-1136).
-- **Per-tool timeout** wraps every non-MCP tool call (default 180s, env `TOOL_TIMEOUT_SEC`). Override via `timeout` key in `TOOL_DEFINITIONS`; `None` opts out. Confirmation-gated tools (`shell`, `shell_background_start`, `activate_skill`, `shell_guidance`, `admin_*`, `update_system_prompt`, `http_request`, `send_email`, `vault_*` mutations) and unbounded tools (`delegate_task`, `conversation_compact`, `claude_code_send`) opt out. Additionally, interactive confirmation pauses any tool watchdog while awaiting user response. MCP tools use their own per-server timeout.
-- **`end_turn=True` on `ToolResult`** mechanically ends the turn (one final no-tools LLM call, then return). For review gates use `end_turn=EndTurnConfirm(message=..., on_approve=..., on_deny=...)`. For input widgets (`accepts_input=true`), pair with `end_turn=True` and the loop auto-promotes to a `WidgetInputPause` that pauses via the confirmation infra and resumes with the user's selection injected as a synthetic user message. Priority in one batch: `WidgetInputPause` > `EndTurnConfirm` > `True`.
-- **Checklist tools (`checklist_create/_step_done/_abort/_status`)** are always-loaded. Iteration happens within a single turn: do step → step_done → next. Create/step_done/abort auto-emit a `progress_tracker` into the sticky slot (fail-open), see [docs/widgets.md](docs/widgets.md#progress_tracker-widget).
-- **Events for progress.** Tools publish `tool_status` via `ctx.publish()`.
-
-### Web UI styling
-
-See [docs/web-ui-design.md](docs/web-ui-design.md) for the primitive catalog and Pico-in-context conventions. Most-bitten gotchas:
-
-- **Pico v2 re-scopes `--pico-color` and `--pico-background-color` inside `<button>`.** Resolves to white-on-blue at button scope, not "document text on document bg." Use `color: inherit` or a non-aliased var (`--pico-card-background-color`).
-- **`--pico-secondary-background` is a TEXT color, not a background.** Misleading name. Don't reach for it as a panel/strip bg.
-- **Tag-qualify custom button rules** (`button.foo`, not `.foo`). Pico's `button:not(...)` is 0,1,1; bare `.foo` (0,1,0) loses regardless of load order.
-- **Never bind `.value` on a `<select>` whose `<option>`s come from a nested expression.** lit commits parts in tree order, so `.value` lands before the options exist and the browser resets to the first one — and it never self-heals. Use `?selected=${...}` per option (see `conversation-sidebar.js`). This shipped a configured model rendering as "(default)" in #732.
-- **Panel-scoped `element[attr]` selectors capture nested components' internals.** `.sched-md input[type="text"]` (0,2,0) beats a shared component's own `.dc-chip-input` (0,1,0). Reach for a child combinator (`.sched-md label > input[type="text"]`) so the rule matches what it reads like.
-- **Reach for primitives first** (`.dc-floating-btn`, `.dc-overlay-header`, `.dc-overlay-close-x`, `.dc-icon-btn` in `primitives.css`) before declaring per-component border / radius / shadow / hover-color. Cluster-style fragility is the failure mode this doc exists to prevent.
-- **Color palettes are a two-axis model** (`data-theme` × `data-palette`, managed by `lib/theme.js`). Palettes are the ONLY sanctioned place to set `--pico-primary-background`/`-inverse`, scoped under `[data-palette]`. See [docs/web-ui-design.md](docs/web-ui-design.md#color-palettes--theming).
-
-### Skills
-
-See [docs/skills.md](docs/skills.md).
-
-- **Lazy-loaded by default.** Catalog (name + description) in system prompt; full body and tools load on `activate_skill`. `always-loaded: true` opts a skill out (auto-activated, exempt from deferral).
-- **Bundled in `src/decafclaw/skills/`**. Each: SKILL.md (required) + `tools.py` (optional). Scan order: workspace > agent-level > bundled > `extra_skill_paths` (configured external dirs — common targets are `~/.claude/skills` and `~/.agents/skills` from `npx skills add`).
-- **Skills must use absolute imports** (`from decafclaw.skills.X.Y import ...`). The loader uses `importlib.spec_from_file_location` without package context, so relative imports fail at runtime.
-- **Skill config via `SkillConfig` dataclass in `tools.py`.** Resolved at activation by `load_sub_config` (env + `config.skills[name]` + defaults). `init(config, skill_config)` receives both.
-- **User-invokable commands** (`user-invocable: true`) trigger via `!name` (Mattermost) / `/name` (web UI). Supports `$ARGUMENTS`/`$0`/`$1`, `context: fork`, `allowed-tools`.
-- **`SCHEDULE.md` sidecar** turns a skill into a scheduled task. Bundled and admin-level skills have their SCHEDULE.md honored as-is; `extra_skill_paths` (contrib) SCHEDULE.md is forced `enabled: false` so a third-party install never silently activates a cron job — the user opts in via a copy-on-write overlay at `data/{agent_id}/schedules/{name}.md`. Workspace skills cannot self-schedule (no SCHEDULE.md scanning in workspace skill dirs). See [docs/schedules.md](docs/schedules.md).
-- **Permissions at `data/{agent_id}/skill_permissions.json`** — outside the workspace, so the agent can't grant itself permission.
-- **Any read of `discovered_skills` that grants capability must call `skills.grants_capability(info)`.** `workspace/skills/` is agent-writable AND the highest-precedence scan entry, so every consumer reads potentially agent-authored data. Nine capability vectors (#731, #737, #739, #740, #744) were one structural property with many exits, and gate-by-gate fixing didn't converge — the next reader got no protection by default. `tests/test_discovered_skills_consumers.py` enumerates all 23 reads and fails until each has a recorded tier decision. Don't spell out your own `!= "workspace"` check, and **don't reuse `schedules._PREAPPROVAL_TIERS`** — it excludes `extra`, which is where contrib skills live, so it would break `!rss-ingest` and five siblings. The two sets are different partitions of the same four names, with paired comments explaining why.
-- **Dynamic per-turn tools:** export `get_tools(ctx) -> (dict, list)` to vary tools by state.
-
-### Config and data
-
-See [docs/config.md](docs/config.md), [docs/data-layout.md](docs/data-layout.md), [docs/providers.md](docs/providers.md), [docs/model-selection.md](docs/model-selection.md).
-
-- **Resolution order:** dataclass defaults → `data/{agent_id}/config.json` → env vars (highest priority). Dataclasses in `config.py` / `config_types.py`.
-- **Agent data layout.** Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.json) at `data/{agent_id}/` root, read-only to agent file tools — except `USER.md`/`CUSTOM.md`, which the agent can rewrite via the confirmation-gated `update_system_prompt` tool (SOUL.md is guarded against agent modification). Agent read/write at `workspace/`.
-- **System prompt assembly.** SOUL.md + AGENT.md bundled in code, overridable per-agent. Each section wrapped in XML tags (`<soul>`, `<agent_role>`, `<user_context>`, `<custom_context>`, `<skill_catalog>`, `<loaded_skills>`, `<deferred_tools>`) — wrapping is additive in `load_system_prompt`/`build_deferred_list_text`. Source files stay plain markdown. See [docs/context-composer.md](docs/context-composer.md#section-delimiters).
-- **Vault** — unified knowledge base ([docs/vault.md](docs/vault.md)). Pages = curated knowledge (`vault_write`); journal = episodic (`vault_journal_append`); dream skill distills journal → pages. Obsidian-compatible.
-- **Multi-provider LLM** ([docs/providers.md](docs/providers.md)): two layers — `providers` (connection) + `model_configs` (named model + provider ref). Users switch models via UI; agent can't change its own model (cost control).
-- **MCP servers** ([docs/mcp-servers.md](docs/mcp-servers.md)) globally available, configured in `data/{agent_id}/mcp_servers.json`. Tools namespaced `mcp__<server>__<tool>`. Stdio servers auto-restart with backoff.
-- **Admin-tool secret protection** ([docs/tools.md](docs/tools.md#secret-file-protection), [docs/data-layout.md](docs/data-layout.md#secret-files)) is **harm-reduction-tiered and admin-extensible, not watertight**: one shared rule (`secret_policy.py`) decides which `data/{agent_id}/` paths are refused (all six admin tools), which config values are redacted, and the admin widens either tier via `config.secret_policy.{refuse_paths,redact_paths}`. The redaction set is the `secret` field annotation (the `config show` convention), never a key-name matcher; a write payload holding the `<redacted>` marker is refused (recovery path included).
-- **Scheduled tasks** ([docs/schedules.md](docs/schedules.md)) — cron-style markdown files in `data/{agent_id}/schedules/` (admin) and `workspace/schedules/` (agent-writable). 60s poll loop via `croniter`.
-- **Notification inbox** ([docs/notifications.md](docs/notifications.md)) — append-only JSONL under `workspace/notifications/`. Web UI bell is push-driven over WebSocket. Producers fail-open. Channel adapters (Mattermost DM, email, vault page) are EventBus subscribers in `notification_channels/`; adding a channel touches only its module + `notification_channels/__init__.py`. For agent-side wakes on job completion, see [docs/background-wake.md](docs/background-wake.md).
-- **Email** ([docs/email.md](docs/email.md)) is dual-surface: the `send_email` tool (allowlist-gated, falls through to confirmation; allowlist is a union of config + per-task `email-recipients` frontmatter, the latter only at admin/bundled schedule tier — see [docs/schedules.md](docs/schedules.md#permissions-are-tier-dependent)) and the email notification channel (its `recipient_addresses` config IS the trust boundary).
-- **`LOG_LEVEL=DEBUG`** for verbose logging.
-
-### Context assembly
-
-See [docs/context-composer.md](docs/context-composer.md), [docs/semantic-search.md](docs/semantic-search.md).
-
-- **All context for a turn assembled by `ContextComposer.compose()`** — produces a `ComposedContext` (messages, tools, deferred tools, token estimates, diagnostics). Stateful per-conversation via `ComposerState` on `ctx.composer`. Mode-aware: `INTERACTIVE`, `HEARTBEAT`, `SCHEDULED`, `CHILD_AGENT`. Tool assembly in the iteration loop still uses `_build_tool_list()` since fetched tools change mid-turn.
-- **Per-conversation scratchpad** ([docs/notes.md](docs/notes.md)). Always-loaded `notes_append` / `notes_read` tools (priority `critical`) backed by `{workspace}/conversations/{conv_id}/notes.md` (colocated with the archive and other sidecars). Use for transient conversation-scoped facts that should survive across turns and compactions but don't belong in the vault. The `ContextComposer._compose_notes` helper auto-injects the most-recent entries (`notes.context_max_entries` / `notes.context_max_chars`) as a `conversation_notes` role message remapped to `user` for the LLM — skipped in heartbeat / scheduled / child-agent modes. Disable via `notes.enabled = false`.
-- **Recent journal surfacing** (#306). `ContextComposer._compose_recent_journal` auto-injects recently written journal entries at interactive turn start on a small fixed budget (separate from the dynamic semantic pool), as a `recent_journal` role message remapped to `user`. Recency-windowed (`recent_journal.max_hours` / `max_entries` / `max_tokens`) with a per-conversation high-water mark (`ComposerState.last_recent_journal_ts`) so each entry surfaces at most once. Reader `read_recent_journal_entries` in `skills/vault/tools.py`. Skipped in heartbeat / scheduled / child-agent modes; disable via `recent_journal.enabled = false`. See [docs/context-composer.md#recent-journal-surfacing](docs/context-composer.md#recent-journal-surfacing).
-- **Tool-result clearing tier.** Before each compaction-threshold check, `clear_old_tool_results` (`context_cleanup.py`) replaces bodies of large, old tool messages in-memory with a short stub (`[tool output cleared: N bytes]`). Originals stay in the JSONL archive — only the in-memory view changes. Cheap (no LLM), runs every iteration. Preserve-tools allowlist + recent-N-turns protected window keep `activate_skill`, `checklist_*`, and the current/prior user turn intact. Tunables on `config.cleanup`. See [docs/context-composer.md#tool-result-clearing-lightweight-tier](docs/context-composer.md#tool-result-clearing-lightweight-tier).
-- **Decision slice through compaction.** Compaction emits a fenced `json` block alongside its prose summary listing `decisions`, `open_questions`, and `artifacts`. The slice (`compaction_decisions.py`) is threaded forward into every subsequent compaction so high-signal facts don't decay across iterated summarization — the LLM sees the existing slice as `Current state slice:` in the prompt input, reuses entries verbatim when still applicable, drops obsoleted ones, adds new ones. Persisted at `{workspace}/conversations/{conv_id}/decisions.json`; rendered as a `<decision_slice>` block (outer XML / markdown sub-headings inside, matching the system-prompt section convention from #304) prepended to the prose summary in the rebuilt history's first message. Per-category FIFO cap (`compaction.decisions_max_per_category`, default 30). Parse failures fall through silently with the existing slice unchanged. Disable via `compaction.decisions_enabled = false`. See [docs/context-composer.md#decision-slice-through-compaction](docs/context-composer.md#decision-slice-through-compaction).
-- **Memory retrieval** uses composite scoring (`w_similarity * sim + w_recency * rec + w_importance * imp`); dynamic budget allocation fills from top until exhausted. Wiki-link graph expansion follows `[[links]]` one hop. Fail-open — embedding errors silently return empty. Skipped for heartbeat/scheduled/child agents. Disabled silently if no embedding model configured. **Three injection modes** via `vault_retrieval.mode`: `always` (full bodies, default), `headlines` (compact `file_path · summary · score` lines; agent pulls bodies via `vault_read` on demand), `on_demand` (skip auto-retrieval entirely). `@[[Page]]` mentions inject regardless of mode. See [docs/context-composer.md#memory-retrieval-modes](docs/context-composer.md#memory-retrieval-modes).
-- **Vault page frontmatter** (`summary`, `keywords`, `tags`, `importance`) parsed by `frontmatter.py`; LLM-generated, human-editable. Composite embeddings prepend metadata to body.
-- **`@[[PageName]]` mentions** inject pages once per conversation as `vault_references` role messages.
-- **Diagnostics sidecar** at `workspace/conversations/{conv_id}/context.json`; `GET /api/conversations/{id}/context` serves it; UI popover with waffle chart.
-
-### Agent behavior
-
-- **One agent turn per conversation at a time.** Concurrent conversations are fine.
-- **`ConversationManager` owns agent loops.** Transports are thin adapters. All turn orchestration (user, heartbeat, scheduled, child-agent, wake) routes through `enqueue_turn(kind=...)`. The `TurnKind` enum drives per-kind context/circuit-breaker/persistence policy. Per-conversation busy flag serializes turn kinds.
-- **Confirmations are persistent conversation messages** (`role: "confirmation_request"` / `"confirmation_response"`). Pending confirmations survive page reload and server restart (startup scan recovers them). Typed `ConfirmationAction` handlers determine on-approve/on-deny behavior.
-- **Transports subscribe to per-conversation event streams** via `manager.subscribe(conv_id, callback)` — not the global bus. Manager bridges global → per-conversation.
-- **Self-reflection is fail-open** ([docs/reflection.md](docs/reflection.md)). Skipped for child agents, cancelled turns, empty responses. Retries consume `max_tool_iterations` budget.
-- **Per-turn loop breaker** ([docs/loop-breaker.md](docs/loop-breaker.md)) detects autonomous tool-call thrash (repeated identical calls or an error surge) and escalates: first trip injects an ephemeral (never archived) diagnostic nudge, a second trip hard-stops the turn. The related diagnostic/apology/phantom-call guardrail prompt text lives in `AGENT.md`, not in code.
-- **Pre-compaction memory sweep** runs as an isolated background child agent before compaction summarizes old history. Vault-only tools, fail-open, controlled by `compaction.memory_sweep_enabled`. Prompt at `data/{agent_id}/MEMORY_SWEEP.md` (bundled fallback).
-
-### Mattermost-specific
-
-See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui.md), [docs/files-tab.md](docs/files-tab.md), [docs/web-ui-mobile.md](docs/web-ui-mobile.md).
-
-- **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholders, threading.
-- **Web UI conversation management is REST-only.** WebSocket only for chat streaming, history loading, model changes, cancellation. Workspace files via `/api/workspace/*`. Conversation folders are metadata-only (per-user JSON index); archive files stay in place.
-- **`/terminal` is a server-side side-effect command** ([docs/web-terminal.md](docs/web-terminal.md)) — no LLM turn, no archive write; `terminals.py` must never be imported by `tools/` or `skills/` (enforced by a test) since the web terminal is human-only.
-- **Hand-written app code under `static/` is served raw.** Every import specifier must name a browser-loadable file. `make vendor` bundles third-party dependencies. `make gen-api-client` generates the OpenAPI TypeScript client and bundles its runtime as `lib/api-client/index.js`. `make check-js` regenerates that client before `tsc --noEmit`; the adjacent TypeScript supplies response types. `moduleResolution: "bundler"` can accept imports of missing JavaScript files, so `make check` also runs `tests/test_web_static_module_graph.py`. The browser test in `tests/test_web_browser_scenarios.py` exercises the generated session client. See [docs/web-ui.md](docs/web-ui.md#generated-session-client).
-- **WebSocket message types are centralized.** Add new wire types in `src/decafclaw/web/message_types.json` and run `make gen-message-types`. Code references `WSMessageType.X` in Python and `MESSAGE_TYPES.X` in JS — never bare string literals. The drift check (`make check-message-types`, wired into `make check`) catches manual edits to the generated files. See [docs/websocket-messages.md](docs/websocket-messages.md).
-- **Mattermost PATCH quirks.** Omitting `props` preserves existing props (including attachments) — to strip, send `props: {"attachments": []}`. Sending only `props` without `message` clears the text (shows "(message deleted)"). Always include the message text when patching props.
-- **Interactive button gotchas.** Button IDs must not contain underscores (callbacks silently dropped). `http_callback_base` must be reachable from MM server's network. Check `AllowedUntrustedInternalConnections` and laptop DHCP IP changes.
-- **One bot instance per Mattermost account.** A second silently misses websocket events.
-
-### Workflow
-
-- **Sync with `origin/main` before starting any significant task.** `git fetch origin && git log --oneline main..origin/main`. Stale local main → ghost references and missing docs in audits — every session that skipped this ended with conflicts or rework.
-- **A gate that exists can still run nowhere.** `make check` is *composed* from
-  `install-js check-npm-policy check-message-types fmt-check lint typecheck check-js check-browser-assets` — never give it (or CI) its
-  own copy of those commands. A
-  duplicated command means widening one copy silently gates nothing: that is how
-  `check-message-types` and `check-js` ran nowhere for months (#854), how `tui/`'s
-  typecheck sat failing on main (#855/#725), and how `scripts/` stayed outside every
-  gate while hiding a script that clobbered the live embedding index (#856). When you
-  add a gate: confirm CI invokes the *target*, read the job log to see the commands
-  actually execute, then probe it for teeth with a deliberate fault in a throwaway file.
-  Note `pyright` exits 0 when it reports only warnings — adding a path to
-  `pyrightconfig.json` makes it report without failing.
-- **Bug fix = test first.** Reproduce with a failing test, then fix.
-- **Search discipline & bounded investigation.** Never execute rapid, repetitive `grep` or `read` calls hunting for the same fact across variations. If 2–3 targeted queries do not locate what you need, STOP searching:
-  - When diagnosing a test failure, inspect the failure traceback and actual output directly (e.g. `pytest -vv -s` or inspect the failure data structure) rather than grepping for all potential callers or assumptions across the tree.
-  - If you find yourself formulating a 3rd or 4th grep for the same concept, pause and read the relevant caller/callee function top-to-bottom.
-- **Commit after each logical step.** Lint and test before committing.
-- **Run `make fmt` before you commit or open a PR.** `make check` (and so CI) runs `make fmt-check`, which fails on any file that `ruff format` would change. The tree was formatted in one mechanical commit (#857); it is listed in `.git-blame-ignore-revs`, so run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone to skip it in `git blame`.
-- **Iterative changes go in a branch.** Don't push rapid-fire fixes directly to main — regressions compound (especially in UX-sensitive code like streaming/placeholder logic).
-- **Always favor opening a PR.** Push the branch and open a PR as the default way to integrate work — reserve local merge for when a PR is absolutely infeasible. A PR is the review gate (Les reviews before merge) and the record; even solo/small changes go through one. When `superpowers:finishing-a-development-branch` presents its three-option menu, that skill is deliberately project-agnostic and lists "merge locally" first — say which option this repo defaults to instead of presenting the three as equally weighted. The integration decision is still Les's; the recommendation just has to be visible at the moment he makes it.
-- **All work happens in a worktree.** Not just long-running or risky work — everything, including one-file doc changes. The main clone stays on whatever branch it's on and is never the place edits get made. The reason is concurrency: multiple sessions (and multiple agents) work this repo at once, and a shared checkout has no way to keep them apart. Observed failure: two sessions on the same branch, `HEAD` moved mid-session while a second session was mid-task, and a 1259-line `plan.md` was one `Write` away from being silently overwritten by an agent that had read the directory listing before the file existed. Nothing about that is detectable after the fact. A worktree per unit of work makes it structurally impossible.
-- **Worktree setup.** Worktrees go under `.claude/worktrees/{branch}/`. Each needs its own venv — run `uv sync` (or `make install`) inside the worktree to create one. Copy `.env` from the main clone — it points at the main clone's `data/` directory, so the worktree shares conversations / vault / config without duplicating state. Then, add an `HTTP_PORT` setting to your copy of `.env` to avoid port conflicts with other worktrees. Run `make test` once for a clean baseline before starting work.
-  - Branch from `origin/main`, not from whatever the main clone happens to have checked out — otherwise unrelated unpushed work rides along in the PR.
-  - Git refuses two worktrees on one branch, which is a feature: if the branch you want is already checked out somewhere, another session owns it. Pick a new branch rather than working around it.
-  - A doc-only worktree can skip `uv sync` — there is nothing to run. Say so rather than silently skipping the baseline.
-  - `.claude/` is gitignored, so worktrees under it never show up as untracked files.
-- **Test live in Mattermost and the web UI after merging** — real behavior differs from unit tests.
-- **Test speed discipline.** Tests run in parallel via `pytest-xdist -n auto`:
-  - **Don't `asyncio.sleep(X)` to wait for work.** Wait on the right signal: `await job.reader_task`, `asyncio.wait_for(event.wait(), ...)`, or patch the clock (`_now_iso`/`time.monotonic`). Fixed sleeps are slower *and* flakier.
-  - **Anything that runs a real scheduler/timer must patch the work function.** `discover_schedules` picks up bundled scheduled skills (`dream`, `garden`); on a fresh `tmp_path` config they're "never run → due" and fire real `run_agent_turn` calls (one test bled to ~66s this way). Patch `decafclaw.schedules.run_schedule_task` even for "no tasks" scenarios.
-- **Check `pytest --durations=25` when adding tests.** Top-25 placement → missing mock or fixed sleep masquerading as a sync primitive.
-- **Collection scope is explicit: `testpaths = ["tests", "contrib"]`.** New tests must live under one of those two roots or they won't run. `contrib` is listed because contrib skill tests are colocated with the skill. Don't drop it back to rootdir collection — `data/` is the agent's writable workspace, and anything it scaffolds matching `test_*.py` would join the suite (#682). That failure is invisible in CI and in worktrees, since neither has a `data/` dir; it only shows up on a main clone. `tests/test_pytest_collection.py` enforces both halves.
+- Use bounded searches. After 2–3 targeted queries fail to locate a fact, stop varying searches and read the relevant caller/callee top-to-bottom.
+- For test failures, inspect the traceback and actual output (`pytest -vv -s`) instead of searching for every possible caller.
+- **Compose gates from their Make targets.** `make check` depends on `install-js check-npm-policy check-message-types fmt-check lint typecheck check-js check-browser-assets`. Do not duplicate their commands in `check` or CI.
+- When adding a gate, confirm CI invokes its target, inspect the job log for execution, and prove it fails on a deliberate fault in a throwaway file. Pyright exits 0 for warnings alone; reporting a path does not necessarily gate it.
+- Tests use `pytest-xdist -n auto`. Never use fixed `asyncio.sleep(X)` waits. Await the task/event or patch the clock.
+- Tests running a real scheduler/timer must patch the work function. Patch `decafclaw.schedules.run_schedule_task` even for “no tasks” cases: bundled `dream`/`garden` schedules can be due on fresh data.
+- Inspect `pytest --durations=25` when adding tests. Investigate new tests in the top 25 for missing mocks or fixed sleeps.
+- Collection is explicitly `testpaths = ["tests", "contrib"]`. Put new tests under those roots. Do not restore root-directory collection: it would collect agent-authored tests under live `data/`. `tests/test_pytest_collection.py` enforces this boundary.
 
 ### Evals
 
-See [docs/eval-loop.md](docs/eval-loop.md). Evals exercise LLM-driven behavior with real model calls; unit tests cover deterministic code. Both required.
+See [eval loop](docs/eval-loop.md). Unit tests cover deterministic behavior; evals exercise LLM behavior with real model calls.
 
-- **New or sharpened tool description → add a `tool_choice` case.** `evals/tool_choice/` covers tool-description disambiguation; `make eval-tools` is fast (~30s). PR #429's smoke test bit-rotted in three weeks because `notes_append` arrived later with no `tool_choice` case guarding the disambiguation — that's the rot vector this convention catches.
-- **Behavior-affecting feature → add a case in `evals/<theme>.yaml`.** New skill, new always-loaded tool, system-prompt change affecting routing, new command. Use `expect_tool` / `expect_no_tool` / `expect_tool_count_by_name` for rigorous assertions. Bound every test with `max_tool_calls` and `max_tool_errors`.
-- **Skip evals for non-LLM-visible work.** Pure refactors, storage changes, tool implementation tweaks. Each eval costs tokens and ~6-10 min of wall time.
-- **`expect_no_tool` + tight `max_tool_calls` needs `config_overrides: {reflection.enabled: false}`.** Reflection's judge can invoke unexpected tools on retries and break those assertions. Set it on tests that assert tool selection (see [docs/eval-loop.md](docs/eval-loop.md#config-overrides)). Positive `expect_tool` alone is fine to run with reflection on.
-- **Per-test config lives in `setup.config_overrides`** — dotted paths into the resolved `Config` (`vault_retrieval.mode: headlines`), applied by recursive `dataclasses.replace`. Don't add bespoke `setup.*` keys for new config knobs; the generic path already reaches them, and unknown paths raise rather than silently no-op.
-- **Check `make eval-history` after running the suite.** Trend deltas catch regressions that single-file smoke tests miss.
+- New or sharpened tool description: add a disambiguation case in `evals/tool_choice/`, then run `make eval-tools`.
+- Behavior-affecting features (skills, always-loaded tools, routing prompts, commands): add a case in `evals/<theme>.yaml`. Use `expect_tool`, `expect_no_tool`, or `expect_tool_count_by_name`; bound every case with `max_tool_calls` and `max_tool_errors`.
+- Skip evals for non-LLM-visible changes: pure refactors, storage changes, or implementation-only tool tweaks.
+- For `expect_no_tool` with tight call limits, set `setup.config_overrides: {reflection.enabled: false}`. Reflection retries can invoke tools. Positive `expect_tool` alone can leave reflection on.
+- Per-case configuration uses dotted paths under `setup.config_overrides`, applied with recursive `dataclasses.replace`. Do not add bespoke `setup.*` keys for new configuration fields.
+- Run `make eval-history` after evals to inspect trends.
 
-## Key files
+## Code style
 
-Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
+- Prefer clarity over abstraction. This is an exploration project.
+- Keep storage human-readable and crash-recoverable: Markdown, JSONL archives, SQLite embeddings.
+- Stdlib imports belong at module level. Function-level imports are for breaking import cycles only.
+- **Declare runtime state on its dataclass.** Do not `setattr` undeclared Config/Context fields or read them with fallback `getattr` calls.
+- **Never enumerate fields when copying, forking, snapshotting, or serializing.** Hand-maintained lists silently lose new fields. Use:
+  - Dataclass copies: `dataclasses.replace(obj, field=...)`; nested changes use nested `replace` calls.
+  - Dataclass JSON round-trip: `dataclasses.asdict(obj)` and `Cls(**d)`.
+  - Plain-class snapshots/forks (`Context`): `copy.copy(obj)` plus explicit overrides for sub-objects needing fresh state.
+  - Tests: iterate `vars(obj)` or `dataclasses.fields(cls)`, never a field allowlist that can omit the same new field.
+- Use `asyncio.Lock` for concurrency guards, never boolean flags.
+- Fix warnings and traceback noise, including shutdown. Never use bare `except: pass`; catch and log the exception appropriately.
+- Do not preserve deprecated code for test compatibility. Rewrite tests to the new path.
 
-### Core
-- `agent.py` — Agent loop: turn orchestration, LLM calls, iteration outcomes (`TurnRunner`, `run_agent_turn`)
-- `conversation_manager.py` — Central orchestrator: TurnKind dispatch, confirmation persistence, per-conversation event streams
-- `context.py` — Forkable runtime context (TokenUsage, ToolState, SkillState, ComposerState)
-- `context_composer.py` — Unified context assembly, relevance scoring, dynamic budget allocation
-- `events.py` — Pub/sub event bus; also hosts the shared `emit_for_ctx(ctx)` helper (the manager's `emit` or `None`) that canvas / sticky / checklist / project all import rather than replicate
-- `runner.py` — Top-level orchestrator: MCP, HTTP, Mattermost, heartbeat as parallel tasks
-- `tool_definitions.py` — Tool-registry assembly: classification, deferral, dynamic-skill providers (`build_tool_list`, `collect_all_tool_defs`, `refresh_dynamic_tools`)
-- `tool_execution.py` — Concurrent tool-call execution: media handling, widget validation, end-turn signals (`execute_tool_calls`, `execute_single_tool`, `process_tool_media`, `resolve_widget`)
-- `confirmations.py` — Confirmation types and handler registry
+## Tools
 
-### Config and LLM
-- `config.py`, `config_types.py` — Config dataclasses
-- `config_watcher.py` — config hot-reload watcher: safe sections apply in place, restart-required ones stop the process (#149); also classifies changes for the `make dev` filter
-- `llm/` — Provider abstraction; `llm/providers/{openai_compat,openai,vertex}.py`
+Read [tools](docs/tools.md), [priority](docs/tool-priority.md), [search](docs/tool-search.md), and [pre-emptive search](docs/preemptive-tool-search.md).
 
-### Transports
-- `mattermost.py`, `mattermost_display.py`, `mattermost_ui.py`
-- `http_server.py` — Starlette/uvicorn: button callbacks, health
-- `web/` — Web gateway: `auth.py`, `conversations.py`, `conversation_folders.py`, `websocket.py`, `workspace_paths.py`, `static/` (Lit components + service layer)
+- **Every tool receives `ctx: "Context"` first**, even when unused. Import Context under `if TYPE_CHECKING:` to avoid the context/composer/skill import cycle. An untyped ctx prevents Pyright checking its calls.
+- **Quote the annotation. Do not add `from __future__ import annotations` to a skill's `tools.py`.** The loader executes modules outside `sys.modules`; postponed dataclass annotations can crash loading and silently remove the skill from the catalog.
+- `execute_tool` detects sync/async; sync tools run through `asyncio.to_thread`. Calls run concurrently with `asyncio.gather` and a semaphore (`max_concurrent_tools`, default 5). Each gets a forked ctx and its own `current_tool_call_id`.
+- Return errors as `ToolResult(text="[error: ...]")`, never bare strings. `ToolResult.data` is structured output, rendered as fenced JSON.
+- Group tools by noun, not verb (`conversation_search` and `conversation_compact` share a module).
+- Descriptions control LLM behavior. Validate wording changes with the tool-choice eval.
+- Shell tools must use shared `check_shell_approval()` in `shell_tools.py`; do not duplicate approval logic.
+- Non-MCP tools have a per-call timeout (default 180s, `TOOL_TIMEOUT_SEC`). Definitions override it with `timeout`; `None` opts out. Confirmation-gated/unbounded tools opt out; confirmation waits pause watchdogs. MCP uses per-server timeouts. See the tool docs for the exemption list.
+- `ToolResult(end_turn=True)` ends the turn after one final no-tools LLM call. Review gates use `EndTurnConfirm(message=..., on_approve=..., on_deny=...)`.
+- Input widgets (`accepts_input=true`) pair with `end_turn=True`. The loop promotes this to `WidgetInputPause`, pauses through confirmation infrastructure, and resumes with a synthetic user selection. Batch precedence: `WidgetInputPause` > `EndTurnConfirm` > `True`.
+- Always-loaded checklist tools iterate within one turn: step → `checklist_step_done` → next. Create/done/abort emit the sticky `progress_tracker` fail-open. See [widgets](docs/widgets.md#progress_tracker-widget).
+- Publish progress with `ctx.publish("tool_status", ...)`.
 
-### Data and persistence
-- `archive.py` — JSONL conversation archive
-- `conversation_paths.py` — per-conversation sidecar path chokepoint: session-aware conversation dirs (new `sessions/{session_id}/{conv_id}/` layout with legacy `conversations/{conv_id}/` fallback; new-conversation creation via `create=True`) + archive iteration + delete helpers (flat→dir migration: `make migrate-sidecars`; dir→session migration: `make migrate-sessions`)
-- `compaction.py` — Summarization + pre-compaction memory sweep
-- `compaction_decisions.py` — Structured decision slice threaded through compaction (decisions / open questions / artifacts; persisted to per-conv sidecar)
-- `compaction_display.py` — Shared compaction-notice wording for the Python transports (`compaction_notice`)
-- `context_cleanup.py` — Lightweight clear tier: stubs old large tool messages before compaction
-- `canvas.py` — per-conversation canvas state sidecar + state operations
-- `sticky.py` — per-conversation sticky-slot sidecar (`sticky.json`) + `set_sticky`/`clear_sticky`
-- `backlinks.py` — persistent inbound-link index (`{workspace}/backlinks.json`); `rebuild_index`/`load_index`/`inbound_count`/`update_for_page`; incremental update wired to the `vault_changed` event in `runner.py`
-- `tags.py` — first-class tag extraction/normalization + on-demand scan (`extract_tags`/`collect_all_tags`/`pages_with_tags`); tags from frontmatter + journal bullet + inline `#tags`, unioned at the query layer (#318)
-- `approval_state.py` — durable per-conversation shell approval state (rules, preset toggles, mode) at `data/{agent_id}/approval_state/{conv_id}.json` (#1160)
-- `model_catalog.py` — auto-discovered model catalog sidecar (`data/{agent_id}/model_catalog.json`): discovery cache, per-model enable flags, default-model pointer (#1211); `effective_default_model`/`picker_models` layer the pointer over `config.default_model`
-- `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py`, `memory_context.py`, `checklist.py`, `notes.py`, `scheduled_wakes.py`
+## Web UI
 
-### Tools
-- `tools/tool_registry.py` — Priority-based classification, deferred catalog
-- `tools/search_tools.py` — `tool_search`
-- `tools/{core,admin_tools,prompt_tools,workspace_tools,conversation_tools,checklist_tools,notes_tools,schedule_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools,sticky_tools}.py`
-- `preempt_search.py` — Keyword-match for pre-emptive tool promotion
+Read [web UI design](docs/web-ui-design.md), [web UI](docs/web-ui.md), and [mobile UI](docs/web-ui-mobile.md).
 
-### Skills (bundled)
-`skills/{vault,tabstack,dream,garden,project,claude_code,health,postmortem,ingest,background,mcp,newsletter,skill-creator}/`. `vault`, `background`, `mcp` are always-loaded. Contrib (opt-in) skills live in `contrib/skills/`. `project` auto-emits a `progress_tracker` into the sticky slot while EXECUTING (fail-open), clearing on DONE or leaving EXECUTING.
+- Use shared primitives in `primitives.css` before adding component-specific border, radius, shadow, or hover rules: `.dc-floating-btn`, `.dc-overlay-header`, `.dc-overlay-close-x`, `.dc-icon-btn`.
+- Pico v2 re-scopes `--pico-color` and `--pico-background-color` inside buttons to button colors. Use `color: inherit` or a non-aliased variable such as `--pico-card-background-color`.
+- `--pico-secondary-background` is a text color, not a panel background.
+- Tag-qualify custom button rules (`button.foo`); `.foo` loses to Pico's `button:not(...)` specificity.
+- Never bind `.value` on a `<select>` whose options come from a nested Lit expression. The value commits before options exist. Use `?selected=${...}` on each option (`conversation-sidebar.js`).
+- Scope panel selectors to intended children. `.sched-md input[type="text"]` can override nested component styles; use `.sched-md label > input[type="text"]` where appropriate.
+- Themes have two axes: `data-theme` × `data-palette`, managed by `lib/theme.js`. Only palettes may set `--pico-primary-background`/`-inverse`, under `[data-palette]`.
+- Hand-written `static/` code is served raw. Import browser-loadable files. `make vendor` bundles dependencies; `make gen-api-client` generates OpenAPI types and `lib/api-client/index.js`.
+- `make check-js` regenerates the client before TypeScript checking. TypeScript's bundler resolution can accept missing JS imports; the static module-graph test and browser scenarios cover the served assets.
+- Add WebSocket wire types to `src/decafclaw/web/message_types.json` and run `make gen-message-types`. Use Python `WSMessageType.X` and JS `MESSAGE_TYPES.X`, never string literals. `make check-message-types` detects drift.
 
-### Workflows
-`workflow/` — Durable replay engine ([docs/workflows.md](docs/workflows.md)): `registry.py` (`@workflow` decorator), `engine.py` (`run_workflow`), `journal.py` (positional keyed journal + fingerprint), `handle.py` (`WorkflowHandle` — the `wf` object with `llm_call`/`user_input`/`tool_call`/`subagent`/`parallel`/`pipeline` primitives), `llm.py` (forced-tool structured-output), `errors.py` (`WorkflowSuspended`, `WorkflowNonDeterministic`, `WorkflowToolNotAllowed`), `paths.py` (per-conv file paths), `resume.py` (harness glue: `run_workflow_turn` + `WorkflowUserInputHandler`), `workflows/interview.py` (suspend/resume hero), `workflows/research.py` (multi-primitive hero — fan-out + pipeline + subagent).
+## Skills and trust
 
-### Other
-- `prompts/` — System prompt assembly
-- `commands.py` — User-invokable commands
-- `reflection.py` — Self-reflection (Reflexion pattern)
-- `loop_breaker.py` — Per-turn autonomous tool-call thrash detector (watermarked trip detection; nudge → redirect → hard-stop escalation, #598/#707)
-- `tool_telemetry.py` — Tool-usage telemetry subscriber + report (#310); `make tool-usage-report`
-- `metrics.py` — Prometheus metrics (#10); in-memory counters from EventBus events, scraped at `/metrics`, no sidecar ([docs/metrics.md](docs/metrics.md))
-- `reflection_metrics.py` — Reflection cost/effectiveness telemetry subscriber + stats (#409); `make reflection-stats`
-- `heartbeat.py`, `schedules.py`, `scheduled_wakes.py`, `polling.py`
-- `notifications.py`, `notification_channels/`, `mail.py`
-- `mcp_client.py`
-- `media.py`, `widgets.py`, `widget_input.py`, `web/static/widgets/` (incl. `web/static/widgets/progress_tracker/`), `web/static/components/widgets/widget-host.js`
-- `web/static/components/canvas-panel.js`, `web/static/lib/canvas-state.js`
-- `web/static/components/sticky-slot.js`, `web/static/lib/sticky-state.js` — sticky slot (pinned display-only widget above chat input)
-- `terminals.py` — human-only PTY session registry backing the web terminal ([docs/web-terminal.md](docs/web-terminal.md))
-- `subprocess_limits.py` — systemd memory-cap command prefix for heavy subagent CLIs (opencode / claude_code skills); fail-open with one warning when `systemd-run` or memory delegation is missing
-- `util.py`, `eval/`
+Read [skills](docs/skills.md) and [schedules](docs/schedules.md).
 
-## Running
+- Skills are lazy-loaded: the system prompt holds their catalog; `activate_skill` loads bodies/tools. `always-loaded: true` opts out of deferral.
+- Bundled skills live at `src/decafclaw/skills/`, with required `SKILL.md` and optional `tools.py`. Discovery precedence: workspace > agent-level > bundled > `extra_skill_paths`.
+- Use absolute imports (`from decafclaw.skills.X.Y import ...`); the loader has no package context for relative imports.
+- Define `SkillConfig` in `tools.py`. Activation resolves it through `load_sub_config` (defaults, `config.skills[name]`, env); `init(config, skill_config)` receives both.
+- `user-invocable: true` enables `!name` (Mattermost) or `/name` (web), with `$ARGUMENTS`/`$0`/`$1`, `context: fork`, and `allowed-tools`.
+- `SCHEDULE.md` can schedule bundled/admin skills as authored. Extra-path/contrib schedules are forced disabled until the user opts in through `data/{agent_id}/schedules/{name}.md`. Workspace skill directories cannot self-schedule.
+- Skill permissions live outside the writable workspace at `data/{agent_id}/skill_permissions.json`.
+- **Every capability-granting read of `discovered_skills` must call `skills.grants_capability(info)`.** Workspace skills are agent-writable and highest-precedence. Record each reader's tier decision in `tests/test_discovered_skills_consumers.py`.
+- Do not write your own `!= "workspace"` check or reuse `schedules._PREAPPROVAL_TIERS`: schedule preapproval excludes `extra`, while general capability grants include trusted contrib skills. They are different trust partitions.
+- Dynamic tools export `get_tools(ctx) -> (dict, list)`.
 
-```
-make run          # Run the agent (server process root; headless if no transport configured)
-make dev          # Auto-restart on file changes (10s graceful shutdown)
-make debug        # Debug logging
-make run-pro      # gemini-2.5-pro
-make lint         # ruff check over src/ tests/ scripts/ contrib/
-make typecheck    # Pyright
-make check-js     # Generate API client + tsc --checkJs
-make fmt          # ruff format over src/ tests/ scripts/ contrib/ (writes files)
-make fmt-check    # ruff format --check over the same paths (no writes)
-make check        # Full gate: install-js + check-npm-policy + check-message-types + fmt-check + lint + typecheck + check-js + check-browser-assets
-make check-npm-policy  # npm dependency policy: exact-pinned direct deps, no stale script-allowlist entries (#930)
-make test-js      # vitest (JS unit tests, web/static)
-make check-tui    # tsc --noEmit for tui/ (separate from `make check`)
-make test-tui     # vitest (tui/)
-make test         # Pytest
-make vendor       # Rebuild web UI vendor bundle
-make reindex      # Rebuild embedding index
-make prune-embeddings  # Drop stale rows from the embedding index (missing source files + legacy types)
-make prune-worktrees-dry  # Report git worktrees/branches whose work already landed
-make prune-worktrees   # Remove landed worktrees and delete their branches
-make build-eval-fixtures
-make config       # Show resolved config
-```
+## Configuration, data, and permissions
 
-**Only one bot instance can connect to Mattermost at a time** — a second silently misses websocket events. Les likely has `make dev` running; do NOT start `make run`/`dev`/`debug` without checking. Ask Les to kill the existing one if you need to capture logs.
+Read [configuration](docs/config.md), [data layout](docs/data-layout.md), [providers](docs/providers.md), [model selection](docs/model-selection.md), and [MCP](docs/mcp-servers.md).
+
+- Resolution: dataclass defaults → `data/{agent_id}/config.json` → environment (highest). Dataclasses live in `config.py`/`config_types.py`.
+- Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.json) live at the agent root and are read-only to file tools. The agent can rewrite USER.md/CUSTOM.md through confirmation-gated `update_system_prompt`. SOUL.md stays protected. Agent-writable files live in `workspace/`.
+- System sections use XML wrappers (`soul`, `agent_role`, `user_context`, `custom_context`, `skill_catalog`, `loaded_skills`, `deferred_tools`). Add wrappers during assembly; keep source Markdown plain.
+- Providers describe connections; `model_configs` name a model and provider reference. Users choose models; the agent cannot change its own model (cost control).
+- MCP servers are global, configured in `data/{agent_id}/mcp_servers.json`. Names use `mcp__<server>__<tool>`. Stdio servers restart with backoff.
+- **Use shared `secret_policy.py` for admin protection.** Its path-refusal rule covers all six admin tools. Redaction follows `secret` field annotations, never key-name matching. Admins can extend `secret_policy.refuse_paths`/`redact_paths`. Reject writes containing `<redacted>`. This is extensible harm reduction, not a watertight secret boundary.
+- [Vault](docs/vault.md): `vault_write` curates pages; `vault_journal_append` records episodes; `dream` distills journals into pages. Keep Obsidian compatibility.
+- [Schedules](docs/schedules.md): cron-style Markdown under admin `schedules/` or writable `workspace/schedules/`, polled every 60 seconds with `croniter`.
+- [Notifications](docs/notifications.md): append-only JSONL inbox under `workspace/notifications/`; producers fail-open. Delivery adapters subscribe to EventBus in `notification_channels/`. Adding a channel touches its module and `notification_channels/__init__.py`. See [background wakes](docs/background-wake.md) for job completion.
+- [Email](docs/email.md): `send_email` uses the configuration allowlist plus admin/bundled task `email-recipients`, otherwise confirmation. The notification channel's `recipient_addresses` configuration is its trust boundary.
+- `LOG_LEVEL=DEBUG` enables verbose logs.
+
+## Context and agent behavior
+
+Read [context composer](docs/context-composer.md), [semantic search](docs/semantic-search.md), [notes](docs/notes.md), [reflection](docs/reflection.md), and [loop breaker](docs/loop-breaker.md).
+
+- `ContextComposer.compose()` owns turn context (messages, tools, estimates, diagnostics), with per-conversation `ComposerState`. Modes: `INTERACTIVE`, `HEARTBEAT`, `SCHEDULED`, `CHILD_AGENT`. Iterations refresh tools through the shared `build_tool_list()` path.
+- Preserve prompt prefixes across ordinary turns. Archive hints/status in place; append new injections. Keyword matches suggest discovery without changing native schemas. Explicit capability/configuration changes can reset the prefix. See [cache stability](docs/context-composer.md#prompt-caching-prefix-stability).
+- Interactive history stays intact until compaction by default. `cleanup.preserve_prompt_cache: false` opts into in-memory tool-result clearing; original bodies remain archived. See [cleanup](docs/context-composer.md#tool-result-clearing-lightweight-tier).
+- Notes are transient conversation facts that survive turns/compaction without becoming vault knowledge. Notes and recent journals inject deltas after a baseline; their cursors reset on compaction. Skip automatic injection in heartbeat/scheduled/child modes. See the linked docs for budgets and switches.
+- Memory retrieval combines similarity, recency, and importance, follows wiki links one hop, and fills its budget by score. Embedding failures return empty; no embedding model disables retrieval. Skip it for heartbeat/scheduled/child modes.
+- `vault_retrieval.mode`: `always` injects bodies, `headlines` injects summaries for on-demand reads, `on_demand` skips automatic retrieval. Explicit `@[[PageName]]` references inject once per conversation regardless of retrieval mode.
+- Vault frontmatter (`summary`, `keywords`, `tags`, `importance`) is human-editable and contributes to embeddings.
+- Compaction carries forward a structured decision slice (`decisions`, `open_questions`, `artifacts`) in `decisions.json`. Retain applicable entries verbatim, remove obsolete ones, and add new ones. Parse failure preserves the existing slice. See [decision slices](docs/context-composer.md#decision-slice-through-compaction).
+- Context diagnostics live beside the conversation at `context.json`, served by `GET /api/conversations/{id}/context`.
+- **One turn per conversation at a time.** Concurrent conversations are fine. Route all turn kinds through `ConversationManager.enqueue_turn(kind=...)`; `TurnKind` selects context, persistence, and circuit-breaker policy.
+- Confirmations are persistent `confirmation_request`/`confirmation_response` messages. Recover pending confirmations after reload/restart; typed `ConfirmationAction` handlers own approval/denial behavior.
+- Transports subscribe through `manager.subscribe(conv_id, callback)`, never directly to the global bus. Use shared `events.emit_for_ctx(ctx)` for the manager's emitter.
+- Reflection is fail-open, skips children/cancelled/empty responses, and consumes the shared iteration budget on retries.
+- The loop breaker first injects an ephemeral diagnostic nudge, then hard-stops on a second trip. Keep diagnostic/apology/phantom-call prompt wording in `AGENT.md`, not code.
+- Pre-compaction memory sweeps use an isolated, vault-only background child, fail-open. Configuration: `compaction.memory_sweep_enabled`; prompt: agent `MEMORY_SWEEP.md` with a bundled fallback.
+
+## Transports and Mattermost
+
+Read [conversations](docs/conversations.md), [files](docs/files-tab.md), [web UI](docs/web-ui.md), and [terminal](docs/web-terminal.md).
+
+- Mattermost progress, placeholders, and threading stay in `mattermost.py`.
+- Web conversation management is REST-only. WebSocket handles chat streaming, history loading, model changes, and cancellation. Workspace files use `/api/workspace/*`. Folders are metadata only; archives stay in place.
+- `/terminal` is human-only: no LLM turn or archive write. **Never import `terminals.py` from `tools/` or `skills/`.** A test enforces the boundary.
+- Mattermost PATCH: omitting `props` preserves attachments; clear them with `props: {"attachments": []}`. Always include message text when patching props, or Mattermost clears it.
+- Mattermost button IDs cannot contain underscores. `http_callback_base` must be reachable from the Mattermost server; check `AllowedUntrustedInternalConnections` and laptop IP changes.
+- **One bot instance per Mattermost account.** A second misses WebSocket events. Les can already have `make dev` running: check before starting `make run`/`dev`/`debug`. Ask Les to stop it if live logs require replacing it.
+
+## Navigation and commands
+
+Python modules below are under `src/decafclaw/`. Use [docs/index.md](docs/index.md) for the full subsystem map.
+
+| Area | Entry points |
+| --- | --- |
+| Agent/runtime | `agent.py`, `conversation_manager.py`, `context.py`, `runner.py`, `events.py` |
+| Context | `context_composer.py`, `compaction.py`, `compaction_decisions.py`, `context_cleanup.py`, `memory_context.py` |
+| Tools | `tool_definitions.py`, `tool_execution.py`, `tools/tool_registry.py`, `tools/search_tools.py`, `preempt_search.py` |
+| Configuration/models | `config.py`, `config_types.py`, `config_watcher.py`, `model_catalog.py`, `llm/` |
+| Persistence | `archive.py`, `conversation_paths.py`, `persistence.py`, `approval_state.py`, `attachments.py`, `embeddings.py`, `frontmatter.py` |
+| UI/transports | `mattermost*.py`, `http_server.py`, `web/`, `terminals.py`, `canvas.py`, `sticky.py`, `widgets.py` |
+| Skills | `skills/` (vault/background/mcp always-loaded); opt-in skills under `contrib/skills/` |
+| Other subsystems | `notifications.py`, `notification_channels/`, `mail.py`, `schedules.py`, `scheduled_wakes.py`, `polling.py`, `heartbeat.py` |
+| Telemetry | `metrics.py`, `tool_telemetry.py`, `reflection_metrics.py`, `eval/` |
+
+[Workflows](docs/workflows.md) use the durable replay engine in `workflow/` (`engine.py`, `journal.py`, `handle.py`, `resume.py`). The project skill emits a sticky progress tracker while EXECUTING and clears it on DONE or leaving EXECUTING.
+
+Common Make targets (see `Makefile` for the complete list):
+
+| Purpose | Targets |
+| --- | --- |
+| Run | `run`, `dev`, `debug`, `run-pro`; worktree-only isolated server: `run-dev`, `stop-dev` |
+| Python | `lint`, `typecheck`, `fmt`, `fmt-check`, `test` |
+| Full gate | `check` (composes its prerequisite targets) |
+| Web | `check-js`, `test-js`, `vendor`, `gen-api-client`, `check-browser-assets` |
+| TUI | `check-tui`, `test-tui` (separate from `check`) |
+| Policy/generated types | `check-npm-policy`, `gen-message-types`, `check-message-types` |
+| Evals | `eval`, `eval-tools`, `eval-history`, `build-eval-fixtures` |
+| Data | `config`, `reindex`, `prune-embeddings`, `migrate-sidecars`, `migrate-sessions` |
+| Worktrees | `prune-worktrees-dry`, `prune-worktrees` |
 
 ## Project board
 
-[GitHub project board](https://github.com/users/lmorchard/projects/6) — columns: Backlog, Ready, In progress, In review, Done. Fields: Priority (P0/P1/P2), Size (XS/S/M/L/XL).
+[Board](https://github.com/users/lmorchard/projects/6): Priority P0/P1/P2; Size XS/S/M/L/XL. Check Ready first when picking work. Move work to In progress on start, In review when the PR is ready, and Done on merge (`Closes #N` can close the issue). File new issues on the board with priority and size.
 
-- Check **Ready** first when picking work.
-- Move to **In progress** on start, **In review** on PR, **Done** on merge (or let `Closes #N` auto-close).
-- File new issues onto the board with priority and size.
-
-Machine-readable declaration, for tools that automate the transitions above. Column values are
-the board's exact option names — note the lowercase `progress`/`review`:
+Machine-readable board declaration (exact option names):
 
 - **Owner:** `lmorchard`
 - **Number:** `6`
@@ -289,20 +202,10 @@ the board's exact option names — note the lowercase `progress`/`review`:
   - `in_review: In review`
   - `done: Done`
 
-## Dev sessions
+## Session records and documentation
 
-Session docs at `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` (`spec.md`, `plan.md`, `notes.md`).
-
-Protocol: start → brainstorm → **review spec for gaps** → plan → execute (commit per phase) → retro.
-
-## Keeping docs current
-
-`docs/` ([docs/index.md](docs/index.md)) is the source of truth for feature explanations. CLAUDE.md is for conventions and gotchas — push detail into the relevant `docs/` page, not here.
-
-When changing a feature: update its `docs/` page **as part of the same PR**, not a follow-up. Update `CLAUDE.md` only when conventions or the key-files list change. Update `README.md` to stay concise. Update `docs/context-composer.md` for any change to system prompt / tool definitions / context assembly.
-
-End of dev session: review `docs/` pages for accuracy; update key-files list if modules moved.
-
-## Known gaps
-
-- No hard history size limit (compaction helps but archive grows unbounded).
+- Session documents: `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` (`spec.md`, `plan.md`, `notes.md`). Protocol: brainstorm → review spec for gaps → plan → execute/commit per phase → retro.
+- `docs/` is the source of truth for feature explanations. This file holds conventions and gotchas, not a second feature manual.
+- Update the affected feature's documentation in the same PR. Keep README concise. Update this file for conventions or moved entry points; keep it below the size target.
+- System-prompt, tool-definition, and context-assembly changes also update `docs/context-composer.md`.
+- At session end, check doc accuracy and update navigation if modules moved.
