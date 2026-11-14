@@ -239,6 +239,22 @@ The provider abstraction lives in `src/decafclaw/llm/`:
 
 All providers normalize responses to the same internal format (`content`, `tool_calls`, `role`, `usage`). Tool definitions are sent in each provider's native format — OpenAI envelope for openai-compat/openai, `FunctionDeclaration` for Vertex/Gemini.
 
+## Tool schema adaptation
+
+Tool parameter schemas are canonical JSON-Schema in the registry. Each provider derives its own wire copy; none mutate the canonical object (pinned in `tests/test_openai_compat_schema_passthrough.py`).
+
+**Vertex is the only adapter that transforms schemas.** Vertex's tool-parameter schema is a restricted subset of OpenAPI 3, and MCP-provided schemas (e.g. Playwright) frequently use full JSON-Schema features that the API rejects with HTTP 400 `Unknown name "X"`. The adapter strips a denylist of unsupported keys (`$ref`, `$defs`/`definitions`, `propertyNames`, `patternProperties`, `dependencies`, `dependentRequired`/`dependentSchemas`, `if`/`then`/`else`, …) and, on top of that:
+
+- **Preserves scalar semantics as prose.** Stripped constraints that can be expressed in words (`multipleOf`, `propertyNames.pattern`, required-form dependencies) are rendered as description text on the node that carried them, so a multi-property schema keeps each constraint bound to its property.
+- **Resolves local `$ref`s** (`#/$defs/…`) so a referenced shape reaches the wire; sibling keys of a `$ref` are preserved on top of the resolved content. Unresolvable or circular references cannot be inlined — they are reported in diagnostics and annotated in the description ("this parameter is unconstrained") rather than silently dropped.
+- **Reports structural constructs** (`patternProperties`, `dependentSchemas`, `if`/`then`/`else`) in diagnostics, since their meaning cannot be rendered as prose.
+
+Diagnostics are logged once per tool name at warning level (then debug), so a schema that needs adaptation is visible without spamming every request.
+
+**OpenAI-family adapters pass through.** `openai-compat` sends the tools list as-is; `openai-responses` deep-copies each function entry (adding only the `strict` flag). Neither strips or rewrites parameter schemas.
+
+**Validation boundary.** Description text is guidance, not enforcement: tool dispatch (`execute_tool`) does not validate arguments against the schema. Enforcement lives in each tool's own body, and the only dispatch-level failure mode is Python signature binding — a missing or misspelled parameter surfaces as an `Expected parameters: …` error. Pinned in `tests/test_dispatch_validation_boundary.py`.
+
 ## Integration tests
 
 ```bash
