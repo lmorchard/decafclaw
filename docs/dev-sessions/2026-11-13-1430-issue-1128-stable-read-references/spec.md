@@ -46,7 +46,18 @@ Saved tool outputs and child results need references that stay useful after comp
 1. **Capture**: tool completes → body persisted (on truncation) under tool-call-scoped store; handle issued.
 2. **Reference**: handle enters conversation history as a reference (not a body).
 3. **Clear**: old tool bodies may be stubbed in-memory; handle + pointer remain.
-4. **Retrieve**: paged retrieval by handle; deletion semantics.
+4. **Retrieve**: paged retrieval by handle.
+5. **Delete**: conversation cleanup or explicit deletion removes the stored content; a deleted reference reports missing on retrieval, never stale or foreign content.
+
+### 2.1 Retrieval result states
+
+Retrieval by handle distinguishes five outcomes, each reported distinctly (and rendered distinctly in model-facing text):
+
+- **Complete** — full body captured; paging serves the whole content.
+- **Capped** — capture hit `max_tool_output_bytes`; only the stored prefix exists; retrieval reports the cap and serves pages of what was persisted.
+- **Failed capture** — persistence errored at tool completion; the reference records the failure and retrieval reports it (no silent empty body).
+- **Missing** — handle is known but the content file is absent (deleted, or never materialized because the output fit inline).
+- **Denied** — the handle resolves to another conversation's content without permission; retrieval refuses and never falls back to foreign content.
 
 ### 3. Ownership and authorization
 
@@ -56,13 +67,19 @@ Saved tool outputs and child results need references that stay useful after comp
 
 - Extend design to child results and retained history where storage supports it; first slice covers saved tool output.
 
+### 5. Compatibility with existing workspace paths
+
+- The first slice reuses the existing materialization: `{conv_dir}/tool_outputs/{tool_call_id}.txt` (session-aware conversation dir per `conversation_paths.py`). No new top-level workspace area is introduced.
+- Handles are conversation-scoped: two conversations with identical local identifiers resolve within their own `{conv_dir}` and cannot cross (mirrors §3).
+- The in-memory pointer (`[Output truncated. Full output saved to …]`) is the existing reference form; the design's handle syntax (open decision below) replaces or wraps it without moving where files live.
+- The JSONL archive retains original tool messages; handles address the materialized file and do not duplicate archived content.
+
 ## Acceptance criteria mapping
 
 - Trace saved output through completion → compaction → reload → paged retrieval → deletion — covered by §2.
-- Ownership and authorization — §3.
-- Two conversations with identical local identifiers — §3.
-- Distinguish complete/capped/failed/missing/denied — §2/§4.
-- Compatibility with existing workspace paths + small slice with observable tests — §5.
+- Ownership and authorization; two conversations with identical local identifiers resolve to their respective content — §3.
+- Distinguish complete/capped/failed-capture/missing/denied — §2.1.
+- Compatibility with existing workspace paths — §5; small slice with observable tests — "First implementation slice and proposed tests" below.
 
 ## First implementation slice and proposed tests
 
