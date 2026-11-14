@@ -49,6 +49,29 @@
     the answer in the child conversation; picking it here breaks the
     caller's expectation.
 
+# -- llm_query vs delegate_task (#1258) --------------------------------------
+
+- name: llm-query-vs-delegate-one-shot-extraction
+  scenario: "Use the small local model from my config to extract all email addresses from this support transcript and return them as a list. Here it is: <transcript>"
+  expected: llm_query
+  near_miss: [delegate_task]
+  notes: |
+    Narrow one-shot extraction against a named small model — llm_query's
+    shape: single completion, no tool schemas, result back in this turn.
+    delegate_task would spin up a full child agent with tool schemas and
+    multi-turn scaffolding that a small local model handles poorly, for no
+    benefit on a task that needs no tools.
+
+- name: delegate-vs-llm-query-needs-tools
+  scenario: "Spin up a sub-agent to search the vault for our deploy runbooks, read them, and cross-reference against the last three conversation threads to tell me what changed since the last deploy."
+  expected: delegate_task
+  near_miss: [llm_query]
+  notes: |
+    The subtask needs tools (vault search/read, conversation search) and
+    multi-turn reasoning — delegate_task. llm_query is a single completion
+    with no tool access; it cannot do this work at all, whatever model is
+    named.
+
 # -- Negative-control: no tool needed at all ---------------------------------
 
 - name: no-tool-greeting
