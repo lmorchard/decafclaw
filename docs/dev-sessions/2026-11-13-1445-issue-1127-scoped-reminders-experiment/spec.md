@@ -60,17 +60,17 @@ Rule shape (deterministic; every field machine-checkable):
 
 Malformed rules (bad JSON, unknown operator, unresolvable path) fail open: the rule is skipped with a warning log; tool execution never breaks because of the reminder file.
 
-### 2. Hook point: finalized arguments, before dispatch
+### 2. Hook point: finalized arguments, at dispatch
 
-The check runs in `_execute_single_tool_impl` (`tool_execution.py`) after `fn_args` parsing and before `execute_tool()` dispatch — the single chokepoint every tool call passes through (direct registry tools, skill extras, and MCP bridges alike), so direct calls and enabled tool bridges apply the same rule boundary.
+The check runs at the entry of `execute_tool` (`tool_execution.py`) — the single shared dispatch function. Both execution paths call it: the agent loop (`_execute_single_tool_impl`, after `fn_args` parsing) and the workflow engine (`wf.tool_call` in `workflow/handle.py`). Placing the check there — not in one caller — is what makes "direct calls and enabled tool bridges apply the same rule boundary" true for every dispatch path, including workflows.
 
 - Rules load once per agent start (and on config hot-reload); the check is a read-only, deterministic pass over one call's args — no shared mutable state, safe under concurrent batch execution (each call already runs in its own forked ctx).
-- The check is an **additional** pre-execution gate: it can only reject or remind. It never approves, so it cannot bypass shell approval, skill permissions, or child tool restrictions — those gates are untouched and still apply to every call that passes the check.
+- The check is an **additional** pre-execution gate: it can only reject or remind. It never approves, so it cannot bypass shell approval, skill permissions, child tool restrictions, or the workflow's own allowlist/blocklist — those gates are untouched and still apply to every call that passes the check.
 
 ### 3. Actions: reject and remind
 
-- **reject** — the call does not execute (no side effect). The tool result is `ToolResult(text="[error: <message>]")`, giving the model specific correction guidance it can act on.
-- **remind** — the call executes normally; after results are collected, a trusted reminder is injected as an **ephemeral message** mirroring the loop-breaker nudge: role `user` (models weight user-role directives more heavily), explicit non-authorship disclaimer ("the agent runtime sent this, not the user" — the #680 lesson), `[scoped-reminder]` prefix, appended to `self.messages` only — never archived, so `restore_history` can never resurrect it. Reminders stay distinguishable from untrusted tool output: they are separate messages, not text inside a tool result.
+- **reject** — the call does not execute (no side effect). `execute_tool` returns `ToolResult(text="[error: <message>]")`, giving the model specific correction guidance it can act on. Applies on every dispatch path, including workflow `wf.tool_call` (a safety gate fires wherever the tool would run; on replay, the journaled result is returned as recorded).
+- **remind** — the call executes normally; `execute_tool` annotates the returned `ToolResult` with the matched rule ID. On the agent-loop path, after results are collected a trusted reminder is injected as an **ephemeral message** mirroring the loop-breaker nudge: role `user` (models weight user-role directives more heavily), explicit non-authorship disclaimer ("the agent runtime sent this, not the user" — the #680 lesson), ``[scoped-reminder]`` prefix, appended to `self.messages` only — never archived, so `restore_history` can never resurrect it. Reminders stay distinguishable from untrusted tool output: they are separate messages, not text inside a tool result. On the workflow path, matches are recorded (event + sidecar) but no message is injected — the workflow's own context model governs what its LLM steps see.
 
 ### 4. Budgets (no retry loops, no context tax)
 
@@ -96,12 +96,12 @@ The check runs in `_execute_single_tool_impl` (`tool_execution.py`) after `fn_ar
 - Unrelated call → no reminder, normal result — §2 (check is a no-op when nothing matches).
 - Repeated matches stop within budget — §4.
 - Rules cannot bypass approvals/permissions — §2, §6.
-- Direct calls and enabled tool bridges apply same boundary or are explicitly excluded — §2 (single chokepoint); workspace-authored rules explicitly excluded in §6.
+- Direct calls and enabled tool bridges apply same boundary or are explicitly excluded — §2 (shared `execute_tool` dispatch covers agent loop and workflow paths); workspace-authored rules explicitly excluded in §6.
 - Trusted reminders distinguishable from untrusted tool output — §3 (ephemeral message, non-authorship disclaimer).
 
 ## First implementation slice and proposed tests
 
-- Slice: `reminders.json` loading + the check in `_execute_single_tool_impl` (both actions), budgets, and recording; `RemindersConfig` on the config dataclass.
+- Slice: `reminders.json` loading + the check at `execute_tool` entry (both actions), budgets, and recording; `RemindersConfig` on the config dataclass.
 - Unit tests: predicate matching (equals/contains/pattern/exists, AND semantics), reject produces no dispatch + error result, remind executes then injects ephemeral (never archived), budgets expire/terse as specified, malformed rules fail open.
 - Eval set (per the issue): genuine mistakes (should match), harmless lookalikes (must not — false-positive check), correction attempts (after a reject the model retries with corrected args and succeeds). Report false positives and added calls/tokens.
 
