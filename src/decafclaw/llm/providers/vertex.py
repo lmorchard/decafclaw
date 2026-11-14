@@ -501,35 +501,205 @@ _VERTEX_UNSUPPORTED_KEYS = frozenset(
 )
 
 
-def _clean_schema(schema: dict) -> dict:
-    """Strip JSON-Schema keywords Vertex/Gemini doesn't accept.
+_SEMANTIC_CONSTRAINT_NOTES: dict[str, str] = {
+    # JSON-Schema keyword -> human-readable constraint text; ``{value}`` is interpolated
+    # for scalar constraints such as a numeric ``multipleOf``. Extend this table to
+    # preserve more stripped keys as prose (#1147).
+    "multipleOf": "must be a multiple of {value}",
+}
 
-    Vertex's tool-parameter schema is a restricted subset of OpenAPI 3.
-    MCP-provided tool schemas (e.g. Playwright) frequently use full
-    JSON-Schema features like ``propertyNames`` or ``patternProperties``
-    that the Vertex API rejects with HTTP 400 ``Unknown name "X"``.
+# Stripped constructs that carry meaning but cannot be rendered as prose.
+# Dropping one changes what the model sees with no description to show for it,
+# so each occurrence is reported in diagnostics (#1147).
+_STRUCTURAL_CONSTRUCTS = frozenset({"patternProperties", "dependentSchemas", "if", "then", "else"})
 
-    The set of stripped keys is a denylist (see ``_VERTEX_UNSUPPORTED_KEYS``)
-    rather than an allowlist so we don't accidentally drop legitimate
-    constraints (``minLength``, ``enum``, etc.) that Vertex accepts. Add
-    keys here as new rejection cases surface.
+
+def _semantic_notes(schema: dict) -> list[str]:
+    """Render this node's stripped scalar constraints as readable notes.
+
+    Reads the pre-strip schema: every key named here is in
+    ``_VERTEX_UNSUPPORTED_KEYS`` and will not survive cleaning, so its meaning
+    must be re-expressed as description text on the same node. Notes attach to
+    the node where the constraint was found — never hoisted to a parent — so a
+    multi-property schema keeps each constraint bound to its property (#1147).
     """
-    cleaned = {k: v for k, v in schema.items() if k not in _VERTEX_UNSUPPORTED_KEYS}
-    # Recurse into nested schemas (properties, items, etc.)
+    notes: list[str] = []
+    for key, template in _SEMANTIC_CONSTRAINT_NOTES.items():
+        value = schema.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            notes.append(template.format(value=value))
+    property_names = schema.get("propertyNames")
+    if isinstance(property_names, dict) and isinstance(property_names.get("pattern"), str):
+        notes.append(f"property names must match pattern {property_names['pattern']}")
+    for key in ("dependencies", "dependentRequired"):
+        deps = schema.get(key)
+        if isinstance(deps, dict):
+            for prop, required in deps.items():
+                if isinstance(required, list) and all(isinstance(r, str) for r in required):
+                    verb = "is" if len(required) == 1 else "are"
+                    notes.append(f"if '{prop}' is present, {', '.join(required)} {verb} required")
+    return notes
+
+
+def _structural_diagnostics(schema: dict) -> list[str]:
+    """Name stripped constructs whose meaning cannot be rendered as prose."""
+    diags: list[str] = []
+    for key in _STRUCTURAL_CONSTRUCTS:
+        if key in schema:
+            diags.append(f"stripped structural construct '{key}' (not renderable as prose)")
+    for key in ("dependencies", "dependentRequired"):
+        deps = schema.get(key)
+        if isinstance(deps, dict):
+            for prop, required in deps.items():
+                if not (isinstance(required, list) and all(isinstance(r, str) for r in required)):
+                    diags.append(
+                        f"stripped '{key}' entry for {prop!r} (schema-form dependency, not renderable as prose)"
+                    )
+    return diags
+
+
+def _resolve_local_ref(schema: dict, root: dict, seen: set[str]) -> tuple[dict | None, str | None]:
+    """Resolve a local JSON-pointer ``$ref`` (e.g. ``#/$defs/Foo``) against the root schema.
+
+    Returns ``(resolved, None)`` on success or ``(None, diagnostic)`` when the
+    reference is external, unresolvable, or circular. Sibling keys of ``$ref``
+    are preserved on top of the resolved content by the caller.
+    """
+    ref = schema.get("$ref")
+    if not isinstance(ref, str) or not ref.startswith("#/"):
+        return None, f"unresolvable $ref {str(ref)!r}; parameter treated as unconstrained"
+    if ref in seen:
+        return None, f"circular $ref {ref!r}; parameter treated as unconstrained"
+    node: Any = root
+    for part in ref[2:].split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            return None, f"unresolvable $ref {ref!r}; parameter treated as unconstrained"
+    if not isinstance(node, dict):
+        return None, f"unresolvable $ref {ref!r} (non-object target); parameter treated as unconstrained"
+    return node, None
+
+
+def _clean_schema_preserving(
+    schema: dict, root: dict | None = None, seen_refs: set[str] | None = None
+) -> tuple[dict, list[str]]:
+    """Clean a tool-parameter schema for Vertex while preserving stripped semantic constraints.
+
+    Vertex's tool-parameter schema is a restricted subset of OpenAPI 3; MCP-provided
+    schemas (e.g. Playwright) frequently use full JSON-Schema features that the API
+    rejects with HTTP 400 ``Unknown name "X"``. The stripped keys are a denylist
+    (``_VERTEX_UNSUPPORTED_KEYS``) rather than an allowlist so legitimate constraints
+    (``minLength``, ``enum``, ...) survive. On top of that strip this pass:
+
+    - renders stripped scalar constraints (``multipleOf``, ``propertyNames.pattern``,
+      required-form dependencies) as readable description text **on the node where
+      they were found**, so a multi-property schema keeps each constraint bound to
+      its property (#1147);
+    - resolves local ``$ref``s (``#/$defs/...``, ``#/definitions/...``) so a
+      referenced shape is not silently dropped; unresolvable or circular refs are
+      reported in diagnostics and annotated in the description rather than left as
+      a silent unconstrained object;
+    - reports stripped structural constructs (``patternProperties``, ``if/then/else``,
+      ...) in diagnostics, since their meaning cannot be rendered as prose.
+
+    Returns ``(cleaned_schema, diagnostics)``. The canonical registry schema is
+    never mutated: every cleaned value is derived from the incoming schema, and
+    sibling keys of a resolved ``$ref`` are preserved on top of the referenced content.
+    """
+    if root is None:
+        root = schema
+    if seen_refs is None:
+        seen_refs = set()
+
+    diags: list[str] = []
+    source = schema
+
+    # Follow $ref chains until the node no longer references, or a ref is
+    # unresolvable/circular. ``seen_refs`` tracks the resolution path (shared
+    # with nested recursion) so a cycle is reported instead of followed forever.
+    resolved_path: list[str] = []
+    while True:
+        ref = source.get("$ref") if isinstance(source, dict) else None
+        if not isinstance(ref, str):
+            break
+        resolved, diag = _resolve_local_ref(source, root, seen_refs)
+        if resolved is None:
+            diags.append(diag or f"unresolvable $ref {str(ref)!r}")
+            # Keep sibling keys; the referenced shape is lost — say so in prose.
+            source = {k: v for k, v in source.items() if k != "$ref"}
+            note = "referenced schema could not be inlined; this parameter is unconstrained"
+            base = source.get("description") or ""
+            source["description"] = f"{base}; {note}" if base else note
+            break
+        seen_refs.add(ref)
+        resolved_path.append(ref)
+        source = {**resolved, **{k: v for k, v in source.items() if k != "$ref"}}
+
+    cleaned = {k: v for k, v in source.items() if k not in _VERTEX_UNSUPPORTED_KEYS}
+    diags.extend(_structural_diagnostics(source))
+
+    notes = _semantic_notes(source)
+    if notes:
+        text = "; ".join(notes)
+        base = cleaned.get("description") or ""
+        cleaned["description"] = f"{base}; {text}" if base else text
+
+    # Recurse with the preserving pass so nested nodes keep their own notes.
     if "properties" in cleaned:
-        cleaned["properties"] = {
-            k: _clean_schema(v) if isinstance(v, dict) else v for k, v in cleaned["properties"].items()
-        }
+        nested: dict = {}
+        for k, v in cleaned["properties"].items():
+            if isinstance(v, dict):
+                child, child_diags = _clean_schema_preserving(v, root, seen_refs)
+                nested[k] = child
+                diags.extend(f"properties.{k}: {d}" for d in child_diags)
+            else:
+                nested[k] = v
+        cleaned["properties"] = nested
     for key in ("items", "additionalProperties"):
         if key in cleaned and isinstance(cleaned[key], dict):
-            cleaned[key] = _clean_schema(cleaned[key])
+            child, child_diags = _clean_schema_preserving(cleaned[key], root, seen_refs)
+            cleaned[key] = child
+            diags.extend(f"{key}: {d}" for d in child_diags)
     # Recurse into combinator branches if present (Vertex supports oneOf/
     # anyOf/allOf in some versions, so we keep them but still scrub their
     # contents).
     for key in ("oneOf", "anyOf", "allOf"):
         if key in cleaned and isinstance(cleaned[key], list):
-            cleaned[key] = [_clean_schema(s) if isinstance(s, dict) else s for s in cleaned[key]]
-    return cleaned
+            branches: list = []
+            for i, s in enumerate(cleaned[key]):
+                if isinstance(s, dict):
+                    child, child_diags = _clean_schema_preserving(s, root, seen_refs)
+                    branches.append(child)
+                    diags.extend(f"{key}[{i}]: {d}" for d in child_diags)
+                else:
+                    branches.append(s)
+            cleaned[key] = branches
+
+    # Release this node's resolution path so sibling nodes that reference the
+    # same def are not mistaken for a cycle.
+    for ref in resolved_path:
+        seen_refs.discard(ref)
+
+    return cleaned, diags
+
+
+# Tool names whose schema adaptations have already been warned about. Bounded by
+# the number of distinct tool names; keeps per-request re-cleaning from spamming
+# the log with the same material transformation (#1147).
+_warned_adaptations: set[str] = set()
+
+
+def _log_schema_diagnostics(tool_name: str, diags: list[str]) -> None:
+    """Report material schema transformations once per tool (then at debug)."""
+    for diag in diags:
+        if tool_name not in _warned_adaptations:
+            log.warning("Vertex schema adaptation, tool %s: %s", tool_name, diag)
+        else:
+            log.debug("Vertex schema adaptation, tool %s: %s", tool_name, diag)
+    if diags:
+        _warned_adaptations.add(tool_name)
 
 
 def _content_to_parts(content) -> list[dict]:
@@ -667,7 +837,9 @@ def _build_request_body(
             }
             params = func.get("parameters")
             if params:
-                decl["parameters"] = _clean_schema(params)
+                cleaned, diags = _clean_schema_preserving(params)
+                decl["parameters"] = cleaned
+                _log_schema_diagnostics(str(func.get("name") or "?"), diags)
             func_decls.append(decl)
         body["tools"] = [{"functionDeclarations": func_decls}]
 

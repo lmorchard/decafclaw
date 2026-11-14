@@ -276,6 +276,290 @@ def test_tool_schema_strips_all_unsupported_keywords():
         )
 
 
+def test_tool_schema_preserves_stripped_multiple_of_as_description():
+    """A stripped ``multipleOf`` semantic constraint must survive as readable description text.
+
+    The wire schema strips JSON-Schema keys Vertex/Gemini cannot process, but a
+    numeric bound expressed as ``multipleOf`` carries meaning that must not be
+    dropped silently from the model-facing declaration (#1147). The canonical
+    schema keeps the bound; the wire schema renders it as description text on
+    the node where the constraint was found.
+    """
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "bounded_number",
+                "description": "A number with a bound",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"value": {"type": "number", "multipleOf": 5}},
+                    "required": ["value"],
+                },
+            },
+        }
+    ]
+    canonical = json.loads(json.dumps(tools[0]["function"]["parameters"]))
+    body = _build_request_body([], tools=tools)
+    decls = body["tools"][0]["functionDeclarations"]
+    params = decls[0]["parameters"]
+
+    # The unsupported key is stripped from the wire schema.
+    assert "multipleOf" not in params["properties"]["value"]
+    assert params["properties"]["value"]["type"] == "number"
+
+    # The stripped semantic constraint is preserved as readable description text
+    # on the property that carried it — not hoisted to the object level.
+    assert "must be a multiple of 5" in (params["properties"]["value"].get("description") or "")
+    assert "multiple of 5" not in (params.get("description") or "")
+
+    # The canonical schema is not mutated by the cleaning pass.
+    assert canonical["properties"]["value"]["multipleOf"] == 5
+
+
+def test_tool_schema_multi_property_constraints_attach_to_their_properties():
+    """Each constraint stays bound to the property that carried it (#1147).
+
+    A multi-property schema with two different ``multipleOf`` bounds must not
+    produce an ambiguous object-level description ("must be a multiple of 5;
+    must be a multiple of 3") — the model could not tell which bound applies to
+    which property. Each note attaches to its own node instead.
+    """
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "a": {"type": "number", "multipleOf": 5},
+            "b": {"type": "number", "multipleOf": 3, "description": "the b value"},
+        },
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    assert "must be a multiple of 5" in (cleaned["properties"]["a"].get("description") or "")
+    assert "must be a multiple of 3" in (cleaned["properties"]["b"].get("description") or "")
+    # Pre-existing description text is preserved, not replaced.
+    assert cleaned["properties"]["b"]["description"].startswith("the b value")
+    # Nothing was hoisted to the object level.
+    assert "description" not in cleaned or "multiple of" not in (cleaned.get("description") or "")
+    assert diags == []
+
+
+def test_tool_schema_nested_constraint_preserved_per_node():
+    """Constraints inside nested object schemas attach to the nested node."""
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "filter": {
+                "type": "object",
+                "properties": {"step": {"type": "number", "multipleOf": 0.5}},
+            },
+        },
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    nested = cleaned["properties"]["filter"]
+    assert "multipleOf" not in nested["properties"]["step"]
+    assert "must be a multiple of 0.5" in (nested["properties"]["step"].get("description") or "")
+    assert "multiple of" not in (nested.get("description") or "")
+    assert diags == []
+
+
+def test_tool_schema_property_names_resembling_keywords_survive():
+    """Property *names* that look like schema keywords are not stripped (#1147).
+
+    The denylist strips keys of a schema node, never the names inside its
+    ``properties`` dict — a property literally called ``enum`` or ``type`` must
+    survive the wire schema.
+    """
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "keyword_named_props",
+                "description": "Properties named like schema keywords",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "enum": {"type": "string"},
+                        "type": {"type": "number", "multipleOf": 2},
+                    },
+                },
+            },
+        }
+    ]
+    body = _build_request_body([], tools=tools)
+    params = body["tools"][0]["functionDeclarations"][0]["parameters"]
+
+    assert "enum" in params["properties"]
+    assert "type" in params["properties"]
+    # The constraint on the property named 'type' still renders.
+    assert "must be a multiple of 2" in (params["properties"]["type"].get("description") or "")
+
+
+def test_tool_schema_resolves_local_ref():
+    """A local ``$ref`` is resolved so the referenced shape reaches the wire (#1147).
+
+    Stripping both ``$ref`` and ``$defs`` would silently broaden a referenced
+    parameter into an unconstrained object; resolution prevents that.
+    """
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "$defs": {"Name": {"type": "string", "minLength": 1}},
+        "properties": {
+            "name": {"$ref": "#/$defs/Name"},
+        },
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    assert "$ref" not in cleaned["properties"]["name"]
+    assert cleaned["properties"]["name"]["type"] == "string"
+    assert cleaned["properties"]["name"]["minLength"] == 1
+    # The $defs block itself is metadata Vertex does not process.
+    assert "$defs" not in cleaned
+    assert diags == []
+
+
+def test_tool_schema_unresolvable_ref_diagnosed_and_annotated():
+    """An unresolvable ``$ref`` is reported and annotated, never silent (#1147)."""
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "target": {"$ref": "https://example.com/schemas/target.json"},
+        },
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    assert "$ref" not in cleaned["properties"]["target"]
+    # The model is told the parameter lost its shape.
+    assert "unconstrained" in (cleaned["properties"]["target"].get("description") or "")
+    assert any("unresolvable $ref" in d for d in diags)
+
+
+def test_tool_schema_circular_ref_diagnosed_without_hanging():
+    """A circular ``$ref`` chain is diagnosed, not followed forever (#1147)."""
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "$defs": {
+            "A": {"$ref": "#/$defs/B"},
+            "B": {"type": "object", "$ref": "#/$defs/A"},
+        },
+        "properties": {"node": {"$ref": "#/$defs/A"}},
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    assert any("circular $ref" in d for d in diags)
+    # The node is annotated rather than silently unconstrained.
+    assert "unconstrained" in (cleaned["properties"]["node"].get("description") or "")
+
+
+def test_tool_schema_structural_constructs_diagnosed():
+    """Stripped structural constructs are reported in diagnostics (#1147)."""
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "kw": {"type": "object", "patternProperties": {"^x_": {"type": "string"}}},
+            "branches": {
+                "type": "object",
+                "if": {"required": ["a"]},
+                "then": {"properties": {"b": {"type": "string"}}},
+            },
+        },
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    assert "patternProperties" not in cleaned["properties"]["kw"]
+    assert "if" not in cleaned["properties"]["branches"]
+    joined = "\n".join(diags)
+    assert "patternProperties" in joined
+    assert "'if'" in joined and "'then'" in joined
+
+
+def test_tool_schema_optional_null_and_maps_pass_through():
+    """Optional/null unions and maps are legitimate OpenAPI — they survive (#1147)."""
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "label": {"type": ["string", "null"]},
+            "tags": {"type": "object", "additionalProperties": {"type": "string"}},
+        },
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    assert cleaned["properties"]["label"]["type"] == ["string", "null"]
+    assert cleaned["properties"]["tags"]["additionalProperties"] == {"type": "string"}
+    assert diags == []
+
+
+def test_tool_schema_dependency_rendered_and_diagnosed():
+    """Required-form dependencies render as prose; schema-form ones are diagnosed."""
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "req": {"type": "object", "dependentRequired": {"url": ["method"]}},
+            "sch": {
+                "type": "object",
+                "dependencies": {"url": ["method"], "headers": {"type": "object"}},
+            },
+        },
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    # Required-form: rendered on the node, key stripped.
+    assert "dependentRequired" not in cleaned["properties"]["req"]
+    assert "if 'url' is present, method is required" in (cleaned["properties"]["req"].get("description") or "")
+    # Schema-form entry: diagnosed, not rendered.
+    assert "dependencies" not in cleaned["properties"]["sch"]
+    assert any("schema-form dependency" in d for d in diags)
+
+
+def test_vertex_adaptation_does_not_mutate_canonical_schema():
+    """The canonical registry schema survives provider adaptation unchanged (#1147).
+
+    Adaptation must derive a wire copy, never mutate the registry contract or
+    other providers' inputs — even with refs, constraints, and structural keys.
+    """
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "everything",
+                "description": "Exercises refs, constraints, and structural keys",
+                "parameters": {
+                    "type": "object",
+                    "$defs": {"Name": {"type": "string"}},
+                    "properties": {
+                        "name": {"$ref": "#/$defs/Name"},
+                        "n": {"type": "number", "multipleOf": 5},
+                        "kw": {
+                            "type": "object",
+                            "propertyNames": {"pattern": "^[a-z]+$"},
+                            "patternProperties": {"^x_": {"type": "string"}},
+                        },
+                    },
+                },
+            },
+        }
+    ]
+    canonical = json.loads(json.dumps(tools[0]["function"]["parameters"]))
+    _build_request_body([], tools=tools)
+    assert tools[0]["function"]["parameters"] == canonical
+
+
 def test_tool_schema_scrubs_unsupported_keys_inside_combinator_branches():
     """``oneOf`` / ``anyOf`` / ``allOf`` branches contain full subschemas;
     unsupported keywords inside them must also be scrubbed, since Vertex
