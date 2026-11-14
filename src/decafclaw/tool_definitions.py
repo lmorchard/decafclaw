@@ -237,7 +237,7 @@ def collect_trusted_tool_guidelines(ctx: "Context") -> dict[str, list[str]]:
     return guidelines
 
 
-def build_tool_list(ctx: "Context") -> tuple[list, str | None, str | None]:
+def build_tool_list(ctx: "Context", *, all_defs: list | None = None) -> tuple[list, str | None, str | None]:
     """Build the tool list, with optional deferred mode and tool-owned guidance.
 
     Returns (tool_definitions, deferred_text, guidance_text) where:
@@ -246,12 +246,14 @@ def build_tool_list(ctx: "Context") -> tuple[list, str | None, str | None]:
     - `guidance_text` is None if no active tool defines guidelines, or a
       <tool_guidance> system prompt block.
     """
-    all_defs = collect_all_tool_defs(ctx)
+    if all_defs is None:
+        all_defs = collect_all_tool_defs(ctx)
+    # Restoration walks activated skills from a set. Canonicalize candidates
+    # before budget selection so identical capabilities yield identical schemas.
+    all_defs = sorted(all_defs, key=lambda td: td.get("function", {}).get("name", ""))
     fetched = get_fetched_tools(ctx)
     # Skill tools (from activated skills) should never be deferred
     skill_tool_names = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions}
-    # Pre-emptive matches populated by ContextComposer at turn start;
-    # reused across iterations so mid-turn reclassification stays consistent.
     from .modes import resolve_active_mode
 
     active_mode_name = getattr(ctx, "active_mode", "default") or "default"
@@ -261,7 +263,8 @@ def build_tool_list(ctx: "Context") -> tuple[list, str | None, str | None]:
         ctx.config,
         fetched,
         skill_tool_names,
-        preempt_matches=ctx.tools.preempt_matches,
+        # Keyword matches are tail hints, not native-schema promotions (#1257).
+        # Explicit fetches and activation remain capability-change boundaries.
         promoted_tools=active_mode.promoted_tools,
     )
 
@@ -279,11 +282,11 @@ def build_tool_list(ctx: "Context") -> tuple[list, str | None, str | None]:
 
     trusted_guidelines = collect_trusted_tool_guidelines(ctx)
 
+    ctx.tools.deferred_pool = deferred
     if not deferred:
         return active, None, build_tool_guidance_text(active, trusted_guidelines)
 
     # Deferred mode: set the pool on ctx and add tool_search
-    ctx.tools.deferred_pool = deferred
     active = active + SEARCH_TOOL_DEFINITIONS
 
     # Build deferred list text for system prompt

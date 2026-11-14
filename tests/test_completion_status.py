@@ -29,6 +29,8 @@ from decafclaw.llm.types import (
 )
 from decafclaw.media import ToolResult
 
+pytestmark = pytest.mark.usefixtures("no_tail_notes")
+
 
 class FakeSSEEvent:
     """Simulates an httpx-sse ServerSentEvent."""

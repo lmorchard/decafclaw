@@ -90,10 +90,9 @@ class ToolState:
     # otherwise take the still-active shadowed skill's version with it, and
     # nothing would remain to rebind from. Insertion order is activation order.
     skill_contributions: dict[str, tuple[dict[str, Any], list[dict[str, Any]]]] = field(default_factory=dict)
-    # Tool names promoted for this turn by pre-emptive keyword matching
-    # against the raw user message only (#1049 — no history, no injected
-    # context). Populated once at the start of a turn by ContextComposer;
-    # reused across iterations so classify_tools() stays consistent mid-turn.
+    # Tool names suggested by keyword matching against raw user input.
+    # The composer turns deferred matches into archived discovery hints;
+    # this set never changes native schema classification (#1257).
     # See docs/preemptive-tool-search.md.
     preempt_matches: set[str] = field(default_factory=set)
     # MCP tool definitions snapshotted for this turn (#1148). Populated at the
@@ -113,7 +112,7 @@ class SkillState:
     # against the raw user message only (#1049 — no history, no injected
     # context). Skills already in `activated` (including always-loaded) are
     # excluded. Populated once at turn start by ContextComposer; rendered as
-    # a short hint system message so the agent considers activate_skill
+    # an archived tail hint so the agent considers activate_skill
     # without needing a failed-tool round-trip.
     preempt_matches: set[str] = field(default_factory=set)
     # Track authorization errors / security denials (e.g. workspace skill denied on unattended turn)
