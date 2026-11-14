@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import hashlib
 import html
 import json
 import logging
@@ -44,15 +45,9 @@ from .telemetry import get_tracer
 from .tool_definitions import (
     build_tool_list,
     collect_all_tool_defs,
-    collect_trusted_tool_guidelines,
     refresh_dynamic_tools,
 )
-from .tools import TOOL_DEFINITIONS
-from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
 from .tools.tool_registry import (
-    build_deferred_list_text,
-    build_tool_guidance_text,
-    classify_tools,
     estimate_tool_tokens,
     get_critical_names,
     get_fetched_tools,
@@ -76,6 +71,8 @@ ROLE_REMAP: dict[str, str] = {
     "recent_journal": "user",
     "cancel_marker": "user",
     "turn_aborted": "user",
+    "skill_hint": "user",
+    "context_status": "user",
 }
 
 
@@ -216,6 +213,8 @@ class ComposerState:
     injection_cursors: InjectionCursors = field(default_factory=InjectionCursors)
     # Track the baseline system context to detect mid-conversation changes (#776)
     baseline_system_context: str | None = None
+    # Digests only: describe deliberate prefix changes without logging content.
+    prefix_fingerprints: dict[str, str] = field(default_factory=dict)
     # Cumulative tool-result clearing stats for this conversation
     # (#298). Reset on compaction since the surviving summary
     # represents a fresh in-memory view.
@@ -230,6 +229,7 @@ class ComposerState:
         with a fresh baseline.
         """
         self.injected_paths.clear()
+        self.prefix_fingerprints = {}
         self.injection_cursors = InjectionCursors()
         self.cleanup_cleared_count = 0
         self.cleanup_cleared_bytes = 0
@@ -560,7 +560,6 @@ class ContextComposer:
                 "source": "system_update",
                 "content": "[System Update: The system context or available tools have changed.]",
             }
-            to_archive.append(system_update_msg)
 
         # -- Wiki context (injected before user message in history) --
         # Explicit @[[Page]] references are fixed costs — always included.
@@ -618,8 +617,8 @@ class ContextComposer:
             sources.append(recent_journal_entry)
 
         # -- Pre-emptive tool search (populate ctx.tools.preempt_matches) --
-        # Runs before tool classification so matches promote into the active
-        # set via the existing critical-tier mechanism.
+        # Match before classification; deferred matches become discovery
+        # hints rather than changing the native tools prefix (#1257).
         preempt_entry = self._compose_preempt_matches(
             ctx,
             config,
@@ -644,6 +643,22 @@ class ContextComposer:
         # -- Tools (compute before budget so we have actual token cost) --
         active_tools, deferred_tools, deferred_text, guidance_text, tools_entry = self._compose_tools(ctx, config)
         sources.append(tools_entry)
+
+        tool_hint_text = None
+        if preempt_entry is not None:
+            deferred_names = {t["function"]["name"] for t in deferred_tools}
+            owners = config.skill_tool_owners
+            suggested = sorted(ctx.tools.preempt_matches & deferred_names - owners.keys())
+            if suggested:
+                tool_hint_text = (
+                    "<preempt_tool_hint>\n"
+                    "These deferred tools may help. Use tool_search to load them before calling them:\n"
+                    + "\n".join(f"- {html.escape(chr(32).join(name.split()), quote=False)}" for name in suggested)
+                    + "\n</preempt_tool_hint>"
+                )
+            preempt_entry.tokens_estimated = estimate_tokens(tool_hint_text) if tool_hint_text else 0
+            preempt_entry.items_included = len(suggested)
+            preempt_entry.details["suggested"] = suggested
 
         # -- Compute fixed costs for dynamic budget allocation --
         # Fixed costs: system prompt + wiki refs + notes + tools + existing history
@@ -697,6 +712,8 @@ class ContextComposer:
         fixed_tokens += tools_entry.tokens_estimated
         if preempt_skill_entry is not None:
             fixed_tokens += preempt_skill_entry.tokens_estimated
+        if preempt_entry is not None:
+            fixed_tokens += preempt_entry.tokens_estimated
 
         # -- Vault guide (always-loaded authored vault doc, e.g. AGENTS.md) --
         vault_guide_text, vault_guide_entry = self._compose_vault_guide(config, mode)
@@ -735,6 +752,8 @@ class ContextComposer:
             sources.append(memory_entry)
 
         # -- User message (archived; appended to history at the end) --
+        if system_update_msg:
+            to_archive.append(system_update_msg)
         to_archive.append(user_msg)
 
         # -- Build LLM messages (filter + remap roles) --
@@ -796,9 +815,17 @@ class ContextComposer:
             messages.append({"role": "system", "content": guidance_text})
         messages.extend(llm_history)
 
-        # -- Pre-emptive skill hint (tail message to avoid busting system prefix cache, #1116) --
+        # -- Tail notes (#1116) --
+        # The skill hint and context status go after the user message rather
+        # than in the system prefix (Vertex folds system messages into
+        # systemInstruction, which would bust the prefix cache every turn).
+        # They are archived and kept in history at this position, so later
+        # turns replay them where they were sent and the cached prefix holds.
+        tail_msgs: list[dict] = []
+        if tool_hint_text:
+            tail_msgs.append({"role": "skill_hint", "content": tool_hint_text})
         if preempt_skill_text:
-            messages.append({"role": "user", "content": preempt_skill_text})
+            tail_msgs.append({"role": "skill_hint", "content": preempt_skill_text})
 
         # -- Publish memory context event (after user message for UI ordering) --
         if mc_results and config.vault_retrieval.show_in_ui:
@@ -808,9 +835,6 @@ class ContextComposer:
         total_tokens = sum(s.tokens_estimated for s in sources)
 
         # -- Context status note (for agent self-regulation) --
-        # Emitted as role: "user" at the very tail so providers like Vertex
-        # do not pull it into systemInstruction, which would bust the prefix cache
-        # on every turn (#1116).
         if config.agent.show_context_status:
             effective_window = self._get_context_window_size(config, ctx)
             status_line = self._build_context_status(
@@ -819,7 +843,11 @@ class ContextComposer:
                 history_msg_count,
             )
             if status_line:
-                messages.append({"role": "user", "content": status_line})
+                tail_msgs.append({"role": "context_status", "content": status_line})
+
+        for tm in tail_msgs:
+            messages.append({**tm, "role": ROLE_REMAP[tm["role"]]})
+            to_archive.append(tm)
 
         # -- Update state --
         self.state.last_sources = sources
@@ -828,11 +856,8 @@ class ContextComposer:
         # Preserve the load-bearing side effect: caller (agent.py) continues
         # to read self.history after compose() returns. Append this turn's
         # injections in the same order as `combined` above.
-        history.extend(wiki_msgs)
-        history.extend(notes_msgs)
-        history.extend(recent_journal_msgs)
-        history.extend(memory_msgs)
-        history.append(user_msg)
+        history.extend(combined[len(history) :])
+        history.extend(tail_msgs)
 
         return ComposedContext(
             messages=messages,
@@ -1560,9 +1585,9 @@ class ContextComposer:
         """Run pre-emptive keyword match, populate ``ctx.tools.preempt_matches``.
 
         Matches the raw user message against tool names + descriptions.
-        Matched tool names get promoted to critical for this turn via
-        ``classify_tools``'s ``preempt_matches`` parameter. See
-        docs/preemptive-tool-search.md.
+        Deferred matches become archived tail hints after classification.
+        Native schemas stay stable until an explicit fetch or capability
+        change. See docs/preemptive-tool-search.md and #1257.
 
         Only the user's own input is evaluated (#1049): injected memory /
         wiki / journal context and prior assistant responses are excluded
@@ -1620,6 +1645,8 @@ class ContextComposer:
                 continue
             if allowed is not None and name not in allowed:
                 continue
+            if name in (ctx.tools.disallowed or set()):
+                continue
             candidates.append(td)
 
         matches = match_tools(input_tokens, candidates, cfg.max_matches)
@@ -1630,21 +1657,17 @@ class ContextComposer:
         ctx.tools.preempt_matches = matched_names
 
         log.info(
-            "preemptive match: promoted %d tool(s) for conv %s: %s",
+            "preemptive match: suggested %d tool(s) for conv %s: %s",
             len(matches),
             (ctx.conv_id or ctx.context_id)[:12],
             ", ".join(f"{m['name']}({m['score']})" for m in matches),
         )
 
-        # Diagnostics: "tokens_estimated" is the full estimated cost of
-        # the promoted tool defs (not a true delta vs. the no-match
-        # baseline — a true delta would require a second classification
-        # pass, and this approximation is fine for the inspector).
-        promoted_defs = [td for td in all_defs if td.get("function", {}).get("name", "") in matched_names]
-        tokens_added = estimate_tool_tokens(promoted_defs)
+        # The rendered hint cost is filled after classification, which
+        # determines which matches actually need a discovery hint.
         return SourceEntry(
             source="preempt_matches",
-            tokens_estimated=tokens_added,
+            tokens_estimated=0,
             items_included=len(matches),
             details={
                 "input_tokens": sorted(input_tokens),
@@ -1770,38 +1793,10 @@ class ContextComposer:
         """Classify tools into active and deferred sets, and render tool guidance.
 
         Returns (active_tools, deferred_tools, deferred_text, guidance_text, source_entry).
-        Replicates the logic in tool_definitions.build_tool_list() with diagnostics.
+        Uses the same assembly path as iteration requests, with diagnostics.
         """
-        all_defs = collect_all_tool_defs(ctx)
-        fetched = get_fetched_tools(ctx)
-        # Skill tools (from activated skills) should never be deferred
-        skill_tool_names = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions}
-        from .modes import resolve_active_mode
-
-        active_mode_name = getattr(ctx, "active_mode", "default") or "default"
-        active_mode = resolve_active_mode(config, active_mode_name)
-        active, deferred = classify_tools(
-            all_defs,
-            config,
-            fetched,
-            skill_tool_names,
-            preempt_matches=ctx.tools.preempt_matches,
-            promoted_tools=active_mode.promoted_tools,
-        )
-
-        # Apply allowed_tools filter
-        allowed = ctx.tools.allowed
-        if allowed is not None:
-            active = [t for t in active if t.get("function", {}).get("name") in allowed]
-
-        deferred_text = None
-        if deferred:
-            ctx.tools.deferred_pool = deferred
-            active = active + SEARCH_TOOL_DEFINITIONS
-            core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
-            deferred_text = build_deferred_list_text(deferred, core_names=core_names)
-
-        guidance_text = build_tool_guidance_text(active, collect_trusted_tool_guidelines(ctx))
+        active, deferred_text, guidance_text = build_tool_list(ctx, all_defs=collect_all_tool_defs(ctx))
+        deferred = ctx.tools.deferred_pool
 
         tool_tokens = estimate_tool_tokens(active)
         text_tokens = estimate_tokens(deferred_text) if deferred_text else 0
@@ -1831,7 +1826,32 @@ class ContextComposer:
         refresh_dynamic_tools(ctx)
         all_tools, deferred_text, guidance_text = build_tool_list(ctx)
         self.sync_tool_messages(messages, deferred_text, guidance_text)
+        self._record_prefix(ctx, messages, all_tools)
         return all_tools
+
+    def _record_prefix(self, ctx: "Context", messages: list[dict], tools: list[dict]) -> None:
+        """Explain early-prompt changes at the actual iteration boundary (#1257).
+
+        Rebuild from current capabilities every time: cached schemas must never
+        preserve a revoked tool or suppress an explicit activation/config update.
+        """
+        components = {
+            "model": ctx.active_model or ctx.config.default_model,
+            "tools": tools,
+            "system": [m for m in messages if m.get("role") == "system"],
+        }
+        fingerprints = {
+            name: hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+            for name, value in components.items()
+        }
+        previous = self.state.prefix_fingerprints
+        changed = [name for name, digest in fingerprints.items() if previous and previous.get(name) != digest]
+        if changed:
+            log.info("Prompt prefix reset for conv %s: %s changed", ctx.conv_id, ", ".join(changed))
+        self.state.prefix_fingerprints = fingerprints
+        for source in self.state.last_sources:
+            if source.source == "tools":
+                source.details["prefix_changes"] = changed
 
     @staticmethod
     def sync_tool_messages(

@@ -479,6 +479,8 @@ See [config.md#recent_journal](config.md#recent_journal). Config dataclass: `Rec
 
 ## Tool-result clearing (lightweight tier)
 
+Interactive turns skip this tier by default to preserve prompt caches. Set `cleanup.preserve_prompt_cache: false` to enable it between compactions. Other turn modes retain their existing cleanup policy.
+
 Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/context_cleanup.py` — that makes three in-memory edits. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298. The **resolved-error pruning** pass (#540) stubs a tool *error* that a later success of the same tool has already resolved (`[tool error superseded by later success]`) — a recovered failure no longer earns attention budget either. The **superseded-read pruning** pass (#1146) stubs a successful full-file read whose path a later successful full read re-read (`[tool output superseded by a later successful read]`) — an older copy of a file the agent has since re-read can conflict with current content.
 
 **Resolved-error pruning** (#540). A tool error (a tool-role message whose `content` starts with `[error`, the `ToolResult(text="[error: ...]")` convention) is stubbed when a *later* result for the same tool name is not itself an error. It's more aggressive than the size/age clear: it applies regardless of size or age. Matching is by tool name by default; `cleanup.prune_resolved_same_args_only` makes it conservative (the later success must carry the same arguments as the failed call). It's skipped in heartbeat / scheduled / child-agent turns, like memory retrieval — the size/age clear is unaffected by mode. Same in-memory-only invariant: the archive keeps the original.
@@ -546,15 +548,23 @@ The rebuilt history's summary message looks like:
 Earlier turns covered ... (prose summary)
 ```
 
-## Prompt caching prefix stability (append-only between compactions)
+## Prompt caching prefix stability
 
-Provider prompt caching (OpenAI automatic, Gemini 2.5+ implicit, Anthropic prompt caching) discounts requests that share an exact matching prefix with an earlier request. Billing discounts apply up to the first byte that differs; everything after that point is full price.
+A prompt cache reuses a previously processed sequence of tokens from the start of a request. Changes invalidate reuse from the first differing token. Model templates can place native tool schemas before system messages, so changing tools can invalidate the entire prompt.
 
-To maximize prompt cache hits (#1111, #1116):
-- **Append-only between compactions**: Once context has been sent, it remains byte-identical across later turns and iterations. New content (scratchpad notes deltas, recent journal entries, pre-emptive skill hints, context status notes) is appended at the tail, never rewritten or inserted ahead of archived history.
-- **Delta-only injections**: Conversation scratchpad notes and recent journal entries inject their full baseline on turn 1 (and after compaction), and inject only newly added delta entries on subsequent turns.
-- **Status line and skill hints at the tail**: Pre-emptive skill hints are appended as tail messages (`role: "preempt_skill_hint"` remapped to `user`) rather than placed in the system prompt prefix. The context status note (`[Context: ...]`) is emitted as `role: "user"` at the very tail so providers like Vertex do not pull it into `systemInstruction` where it would invalidate prefix caching on every turn.
-- **Compaction starts a fresh cache session**: A full prefix rebuild is expected after compaction. Compaction resets high-water marks and injected paths (`ComposerState.reset_for_compaction()`) so the next turn starts with a complete baseline.
+Ordinary turns preserve the prefix (#1257):
+
+- Native tools use declared priorities, configured budgets, session modes, activated skills, and explicit fetches. Keyword matches produce archived discovery hints instead of promoting native tools.
+- Turn-start accounting and iteration requests use `build_tool_list()`. Candidates use tool-name order so skill restoration cannot change budget selection. That function also builds the deferred catalog and trusted guidance.
+- Notes, journal entries, references, and retrieved pages enter history at their original position. Later turns append new context rather than rebuilding earlier injections.
+- Skill hints, tool hints, and context status notes follow the user message. They remain in live history and the archive. Internal `skill_hint` and `context_status` roles map to `user` for the LLM. The UI hides them, and compaction skips them.
+- Interactive history stays unchanged until compaction by default. Set `cleanup.preserve_prompt_cache: false` to restore opportunistic tool-result clearing. That policy trades prefix reuse for a smaller context.
+
+Explicit changes can rebuild the prefix. These include `tool_search`, skill activation, session-mode or model changes, configuration updates, and dynamic tool availability. Removing a capability always takes effect. Adding a tool schema changes the prefix even when the array only grows. Sorting cannot eliminate that change.
+
+Before each iteration request, the composer compares digests of the model selection, tool schemas, and system messages. A change produces an INFO log such as `Prompt prefix reset for conv …: tools, system changed`. The log contains component names, never prompt contents. Tool diagnostics also record `prefix_changes`. These indicate client-side changes, not a measured provider cache hit or miss.
+
+Compaction deliberately rebuilds history. It resets injection cursors and prefix diagnostics, then the next turn establishes a fresh baseline. Configuration changes also use current system context immediately. A system-update notification does not preserve the old prefix.
 
 ## Context inspection
 

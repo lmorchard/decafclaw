@@ -108,7 +108,6 @@ def classify_tools(
     fetched_names: set[str] | None = None,
     skill_tool_names: set[str] | None = None,
     *,
-    preempt_matches: set[str] | None = None,
     promoted_tools: list[str] | set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Split tool definitions into active and deferred sets by priority.
@@ -125,14 +124,12 @@ def classify_tools(
     Input order within a tier is preserved so callers can influence
     tie-breaks by ordering the input list.
 
-    ``preempt_matches`` is a set of tool names promoted by pre-emptive
-    keyword matching on the current user message; they're treated as
-    critical for this turn (same hard-floor semantics as fetched and
-    skill tools). See docs/preemptive-tool-search.md.
+    Keyword discovery does not affect classification (#1257). Explicitly
+    fetched tools persist in ``fetched_names`` instead of changing schemas
+    for each user message.
     """
     fetched_names = fetched_names or set()
     skill_tool_names = skill_tool_names or set()
-    preempt_matches = preempt_matches or set()
     skill_tool_owners = getattr(config, "skill_tool_owners", {}) or {}
 
     always_loaded_tools = get_always_loaded_tool_names(config)
@@ -150,7 +147,6 @@ def classify_tools(
     force_critical = get_critical_names(config)
     force_critical |= fetched_names
     force_critical |= undeclared_on_demand
-    force_critical |= preempt_matches
 
     budget = config.tool_context_budget
     max_active = getattr(config.agent, "max_active_tools", 40)

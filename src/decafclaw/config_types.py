@@ -131,6 +131,7 @@ class CleanupConfig:
     """
 
     enabled: bool = True
+    preserve_prompt_cache: bool = True  # no interactive history rewrites between compactions
     min_turn_age: int = 2  # tool messages from the last N user turns are protected
     min_size_bytes: int = 1024  # smaller messages aren't worth clearing
     preserve_tools: list[str] = field(

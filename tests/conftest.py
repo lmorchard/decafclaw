@@ -5,6 +5,13 @@ import pytest
 from opentelemetry import trace
 
 
+@pytest.fixture
+def no_tail_notes(config):
+    """Keep exact-dialogue tests focused; prefix tests cover archived metadata."""
+    config.agent.show_context_status = False
+    config.agent.preemptive_search.enabled = False
+
+
 class StubLlmCalls(list):
     """List of captured LLM calls with customizable canned response."""
 
