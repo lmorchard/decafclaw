@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from decafclaw.agent import _maybe_compact
+from decafclaw.config_types import ModelConfig
 from decafclaw.context_composer import ContextComposer
 from decafclaw.llm.providers.openai_compat import OpenAICompatProvider, _clean_messages
 from decafclaw.skills import discover_skills
@@ -227,3 +228,37 @@ def test_skill_restore_order_cannot_change_budget_selection(ctx):
     first = build_tool_list(ctx, all_defs=definitions)
     restored = build_tool_list(ctx, all_defs=list(reversed(definitions)))
     assert first == restored
+
+
+@pytest.mark.scripted_provider
+async def test_disk_archive_replays_model_visible_prefix_after_restart(tmp_path):
+    requests = []
+    for prompt in ("Hello?", "A follow-up after restarting the manager"):
+        async with AgentHarness(tmp_path) as harness:
+            harness.config.discovered_skills = discover_skills(harness.config)
+            harness.config.agent.show_context_status = True
+            harness.config.agent.preemptive_search.enabled = True
+            harness.script(ScriptedResponse.text("Hello!"))
+            await (await harness.enqueue(prompt))
+            requests.append(deepcopy(harness.provider.requests[0]))
+    first, restored = requests
+    assert restored.tools == first.tools
+    # JSONL adds archive timestamps; chat templates do not consume that key.
+    replay = [{k: v for k, v in m.items() if k != "timestamp"} for m in restored.messages]
+    assert replay[: len(first.messages)] == first.messages
+
+
+@pytest.mark.parametrize("named", [True, False])
+async def test_model_setting_change_resets_diagnostics_without_alias_change(ctx, composer, caplog, named):
+    if named:
+        ctx.active_model = "same-alias"
+        ctx.config.model_configs["same-alias"] = ModelConfig(model="original-model")
+    request = await composer.compose(ctx, "Hello?", [])
+    composer.update_iteration_tools(ctx, request.messages)
+    if named:
+        ctx.config.model_configs["same-alias"].model = "changed-model"
+    else:
+        ctx.config.llm.model = "changed-model"
+    with caplog.at_level("INFO"):
+        composer.update_iteration_tools(ctx, request.messages)
+    assert any("model changed" in r.message for r in caplog.records if "Prompt prefix reset" in r.message)

@@ -32,3 +32,18 @@ Next: read final validation logs, commit, publish draft, review exact head, then
 - First deferral eval: 3/4. New discovery case passed. Postmortem activation passed its routing assertion but later actions exceeded the unrelated six-call cap (seven calls). Bound that case to one agent iteration so it tests activation routing alone.
 - Unchanged-main deferral eval: 4/4. Final modified routing eval remains pending.
 - LM Studio localhost:1234 responds HTTP 401. Existing agent configuration has no matching provider credential. No live cache speedup or hit-rate claim is made.
+
+## Draft and review corrections
+
+Draft PR: https://github.com/lmorchard/decafclaw/pull/1259
+Published checkpoint: 0635950489b77f2a4fd8e13f0c4ef2e70503b8cb (author and committer verified remotely as MokaGnome). The host gh login differs; all writes use the configured ghflow identity.
+
+Final routing eval: 4/4 passed (17.1s). The postmortem case now checks initial activation in one agent iteration instead of testing its later vault workflow. `make eval-history` checked after the run.
+
+Same-session review of the checkpoint found two evidence/diagnostic gaps: no real disk-archive restart regression, and model digests only tracked aliases. Added the restart regression and model-setting regressions for named and legacy configuration. All 16 prefix tests pass. Disabling the model-config digest makes both new model-setting tests fail, confirming coverage. Full gates with duration reporting pending after these corrections.
+
+Earlier verify-commit invocation used the literal remote HEAD, which resolves main. Repeated verification with the full checkpoint SHA confirmed the branch commit and both MokaGnome identities. No attribution change was required.
+
+Correction validation: `make check` passed. `PYTEST_ADDOPTS=--durations=25 make test` passed: 5375 passed, 2 skipped in 24.21s. No new prefix regression appears among the top 25 durations. The focused 4/4 routing eval covers the unchanged hint/loadout behavior; the corrections only extend diagnostics and replay coverage.
+
+Project Priority=P1 and Size=M update was rejected by automatic approval review because field values need a user decision. No field write ran. An optional approval request is pending; implementation and submission do not depend on it.

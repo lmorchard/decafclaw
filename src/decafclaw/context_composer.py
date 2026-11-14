@@ -13,7 +13,7 @@ import hashlib
 import html
 import json
 import logging
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -650,10 +650,11 @@ class ContextComposer:
             owners = config.skill_tool_owners
             suggested = sorted(ctx.tools.preempt_matches & deferred_names - owners.keys())
             if suggested:
+                safe_names = [html.escape(" ".join(name.split()), quote=False) for name in suggested]
                 tool_hint_text = (
                     "<preempt_tool_hint>\n"
                     "These deferred tools may help. Use tool_search to load them before calling them:\n"
-                    + "\n".join(f"- {html.escape(chr(32).join(name.split()), quote=False)}" for name in suggested)
+                    + "\n".join(f"- {name}" for name in safe_names)
                     + "\n</preempt_tool_hint>"
                 )
             preempt_entry.tokens_estimated = estimate_tokens(tool_hint_text) if tool_hint_text else 0
@@ -1835,8 +1836,10 @@ class ContextComposer:
         Rebuild from current capabilities every time: cached schemas must never
         preserve a revoked tool or suppress an explicit activation/config update.
         """
+        selection = ctx.active_model or ctx.config.default_model
+        model_config = ctx.config.model_configs.get(selection)
         components = {
-            "model": ctx.active_model or ctx.config.default_model,
+            "model": {"selection": selection, "config": asdict(model_config) if model_config else ctx.config.llm.model},
             "tools": tools,
             "system": [m for m in messages if m.get("role") == "system"],
         }
