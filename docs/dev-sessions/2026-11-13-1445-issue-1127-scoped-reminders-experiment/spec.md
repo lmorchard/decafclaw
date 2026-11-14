@@ -62,7 +62,7 @@ Malformed rules (bad JSON, unknown operator, unresolvable path) fail open: the r
 
 ### 2. Hook point: finalized arguments, at dispatch
 
-The check runs at the entry of `execute_tool` (`tool_execution.py`) — the single shared dispatch function. Both execution paths call it: the agent loop (`_execute_single_tool_impl`, after `fn_args` parsing) and the workflow engine (`wf.tool_call` in `workflow/handle.py`). Placing the check there — not in one caller — is what makes "direct calls and enabled tool bridges apply the same rule boundary" true for every dispatch path, including workflows.
+The check runs at the entry of `execute_tool` (`src/decafclaw/tools/__init__.py`) — the single shared dispatch function. Both execution paths call it: the agent loop (`_execute_single_tool_impl` in `tool_execution.py`, after `fn_args` parsing) and the workflow engine (`wf.tool_call` in `workflow/handle.py`). Placing the check there — not in one caller — is what makes "direct calls and enabled tool bridges apply the same rule boundary" true for every dispatch path, including workflows.
 
 - Rules load once per agent start (and on config hot-reload); the check is a read-only, deterministic pass over one call's args — no shared mutable state, safe under concurrent batch execution (each call already runs in its own forked ctx).
 - The check is an **additional** pre-execution gate: it can only reject or remind. It never approves, so it cannot bypass shell approval, skill permissions, child tool restrictions, or the workflow's own allowlist/blocklist — those gates are untouched and still apply to every call that passes the check.
@@ -111,5 +111,5 @@ The check runs at the entry of `execute_tool` (`tool_execution.py`) — the sing
 
 ## Evidence
 
-- `src/decafclaw/loop_breaker.py`, `src/decafclaw/tool_execution.py`, oh-my-pi TSR injection lifecycle docs.
+- `src/decafclaw/tools/__init__.py` (`execute_tool` dispatch), `src/decafclaw/tool_execution.py`, `src/decafclaw/loop_breaker.py`, oh-my-pi TSR injection lifecycle docs.
 - Coordination: #530 pre-write judge.
