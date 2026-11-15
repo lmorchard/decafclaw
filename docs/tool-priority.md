@@ -17,7 +17,7 @@ Tiers are string values on the tool definition, parsed as the `Priority` enum in
 Priority is resolved per tool with this precedence (highest first):
 
 1. **`CRITICAL_TOOLS` env override** — names in this set are promoted to `critical` regardless of what the tool declares. Useful for pinning a specific MCP tool or giving a custom skill priority.
-2. **Fetched / pre-emptive promotion** — tools fetched via `tool_search` and pre-emptive keyword matches are promoted to `critical` for that turn.
+2. **Explicit fetches** — tools fetched via `tool_search` are promoted to `critical` and remain fetched for the conversation. Keyword matches append discovery hints without changing native schemas (#1257).
 3. **On-demand skill activation** — tools from activated on-demand skills without declared priority are promoted to `critical`.
 4. **Declared `priority` field** on the tool definition dict (`critical`, `normal`, `low`). Used by core tools and native tools of always-loaded skills (`vault`, `background`, `mcp`).
 5. **Default `normal`** — any tool without an explicit declaration (e.g. MCP server tools, which the MCP layer exposes without priority metadata).
@@ -72,7 +72,7 @@ See `classify_tools()` in `src/decafclaw/tools/tool_registry.py`:
 5. Append `low` tools the same way, only if room remains.
 6. Whatever didn't make the cut becomes the deferred set, surfaced via `tool_search` and the deferred catalog.
 
-Input order within a tier is preserved, so callers can influence ordering by how they order the input list.
+`classify_tools` preserves input order within each tier. Production assembly sorts candidates by tool name before classification, so skill restoration order cannot change budget selection (#1257). Session-mode promotions still take precedence within the normal tier.
 
 ## Deferred catalog sort
 

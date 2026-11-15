@@ -21,6 +21,9 @@ from decafclaw.reflection import ReflectionResult
 from decafclaw.tool_definitions import build_tool_list, refresh_dynamic_tools
 from decafclaw.tool_execution import execute_tool_calls
 
+pytestmark = pytest.mark.usefixtures("no_tail_notes")
+
+
 # -- Helper tests --------------------------------------------------------------
 
 

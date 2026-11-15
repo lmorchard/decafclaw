@@ -2290,6 +2290,7 @@ def test_save_restore_round_trip(manager, config):
         journal_boundary=frozenset({"entry"}),
     )
     save_ctx.composer.injection_cursors = sentinel_cursors
+    save_ctx.composer.prefix_fingerprints = {"tools": "sentinel-digest"}
     manager.set_flag("rt-conv", "active_model", "sentinel-model")
 
     manager._save_conversation_state(state, save_ctx)
@@ -2305,6 +2306,7 @@ def test_save_restore_round_trip(manager, config):
     assert restore_ctx.active_mode == "sentinel-mode"
     assert restore_ctx.active_model == "sentinel-model"
     assert restore_ctx.composer.injection_cursors == sentinel_cursors
+    assert restore_ctx.composer.prefix_fingerprints == {"tools": "sentinel-digest"}
 
     # Reset cursors to None / empty (e.g. after compaction) and verify they persist and restore
     save_ctx.composer.reset_for_compaction()
@@ -2312,6 +2314,7 @@ def test_save_restore_round_trip(manager, config):
     restore_ctx2 = Context(config=config, event_bus=manager.event_bus)
     manager._restore_per_conv_state(state, restore_ctx2)
     assert restore_ctx2.composer.injection_cursors == InjectionCursors()
+    assert restore_ctx2.composer.prefix_fingerprints == {}
 
 
 def test_save_does_not_overwrite_externally_driven_fields(manager, config):

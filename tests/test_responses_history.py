@@ -19,6 +19,8 @@ from decafclaw.llm.providers.openai_responses import OpenAIResponsesProvider, _R
 from decafclaw.media import EndTurnConfirm, ToolResult
 from decafclaw.reflection import ReflectionResult
 
+pytestmark = pytest.mark.usefixtures("no_tail_notes")
+
 
 def wire(text="Done", calls=False, status="completed"):
     items = [{"type": "reasoning", "id": "rs", "summary": [], "encrypted_content": "opaque" * 500}]

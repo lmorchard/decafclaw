@@ -1,8 +1,7 @@
 # Tool deferral — does the agent reach for `tool_search` when (and only when)
 # the answer isn't reachable from already-loaded critical tools? Designed
 # against the system: a small "critical" tier is always-loaded; everything
-# else is deferred behind `tool_search` (keyword fetch) or promoted into
-# the active set by pre-emptive keyword matching against the user message.
+# else is deferred behind `tool_search` (keyword fetch) with keyword hints that suggest which deferred tools to fetch.
 # See docs/preemptive-tool-search.md for the matching design.
 
 # -- No-fetch on critical-priority answer ------------------------------------
@@ -23,20 +22,22 @@
     max_tool_errors: 0
     expect_no_tool: tool_search
 
-# -- Pre-emptive promotion (keyword match) -----------------------------------
-#
-# `context_stats` is low-priority (normally deferred) but its description
-# mentions "context", "tokens", "budget", and "stats". A prompt saturated
-# with those keywords should pre-empt the tool into the active set, so the
-# agent calls it directly without going through tool_search.
+# -- Discovery hints preserve native schemas (#1257) -------------------------
+# Force normal/low tools into deferral. Keyword matches must guide discovery,
+# rather than promoting schemas before the first request.
 
-- name: "pre-empted tool callable without tool_search"
+- name: "keyword hint discovers deferred context stats through tool_search"
+  setup:
+    config_overrides:
+      agent.tool_context_budget_pct: 0.001
+      reflection.enabled: false
   input: "Show me the current context token budget stats for this conversation — give me the numbers."
   expect:
-    max_tool_calls: 3
+    max_tool_calls: 5
     max_tool_errors: 0
     expect_tool: context_stats
-    expect_no_tool: tool_search
+    expect_tool_count_by_name:
+      tool_search: 1
 
 # -- Deferred-tool reachability end-to-end ----------------------------------
 #
@@ -65,6 +66,11 @@
 # still routes to activate_skill after trimming. (expect_tool is fine with
 # reflection on.)
 - name: "preempt skill hint activates the clearly-relevant skill"
+  setup:
+    config_overrides:
+      # Test initial routing, not the activated skill's subsequent vault writes.
+      agent.max_tool_iterations: 1
+      reflection.enabled: false
   input: "Do a blameless postmortem of what went wrong in this conversation — root causes and specific fixes, please."
   expect:
     max_tool_calls: 6

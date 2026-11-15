@@ -5224,7 +5224,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         async def serve_index(request: Request):
             return FileResponse(static_dir / "index.html")
 
+        async def serve_favicon(request: Request):
+            return FileResponse(static_dir / "icons" / "favicon.ico")
+
         routes.append(APIRoute("/", serve_index, methods=["GET"]))
+        routes.append(APIRoute("/favicon.ico", serve_favicon, methods=["GET"], include_in_schema=False))
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir)), name="static"))
 
     app = FastAPI(routes=routes)

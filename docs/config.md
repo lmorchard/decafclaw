@@ -151,11 +151,14 @@ Auto-surface recently written journal entries at interactive turn start on a sma
 
 ### `cleanup`
 
-Tool-result clearing — a lightweight pre-compaction tier with three in-memory passes. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: N chars]`) so the agent loop doesn't keep paying attention budget on raw tool output it has already synthesized. The **resolved-error pruning** pass (#540) stubs a tool error a later same-tool success has resolved (`[tool error superseded by later success]`). The **superseded-read pruning** pass (#1146) stubs a successful full-file read whose path a later successful full read re-read (`[tool output superseded by a later successful read]`); all three passes run every iteration (cheap, in-memory). The original tool body remains durably written to the per-conversation JSONL archive — only the in-memory copy is edited. See [context-composer.md#tool-result-clearing-lightweight-tier](context-composer.md#tool-result-clearing-lightweight-tier) and #298.
+Interactive turns preserve sent history by default. Set `preserve_prompt_cache: false` to allow the following cleanup passes between compactions. Other turn modes retain their existing cleanup policy.
+
+Tool-result clearing — a lightweight pre-compaction tier with three in-memory passes. The **size/age clear** replaces large old tool-message bodies with a short stub (`[tool output cleared: N chars]`) so the agent loop doesn't keep paying attention budget on raw tool output it has already synthesized. The **resolved-error pruning** pass (#540) stubs a tool error a later same-tool success has resolved (`[tool error superseded by later success]`). The **superseded-read pruning** pass (#1146) stubs a successful full-file read whose path a later successful full read re-read (`[tool output superseded by a later successful read]`); all three passes run every eligible iteration (cheap, in-memory). The original tool body remains durably written to the per-conversation JSONL archive — only the in-memory copy is edited. See [context-composer.md#tool-result-clearing-lightweight-tier](context-composer.md#tool-result-clearing-lightweight-tier) and #298.
 
 | Field | Type | Default | Env Var |
 |-------|------|---------|---------|
 | `enabled` | bool | `true` | `CLEANUP_ENABLED` |
+| `preserve_prompt_cache` | bool | `true` | `CLEANUP_PRESERVE_PROMPT_CACHE` |
 | `min_turn_age` | int | `2` | `CLEANUP_MIN_TURN_AGE` |
 | `min_size_bytes` | int | `1024` | `CLEANUP_MIN_SIZE_BYTES` |
 | `preserve_tools` | list[str] | `["activate_skill", "checklist_create", "checklist_step_done", "checklist_abort", "checklist_status"]` | `CLEANUP_PRESERVE_TOOLS` |
