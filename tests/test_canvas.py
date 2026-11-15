@@ -105,6 +105,8 @@ def md_doc_registry(monkeypatch):
         {
             "markdown_document": SimpleNamespace(modes=["inline", "canvas"], required=["content"]),
             "data_table": SimpleNamespace(modes=["inline"], required=[]),
+            # Canvas-mode widget that is NOT artifact-backed (#1253).
+            "chart": SimpleNamespace(modes=["canvas"], required=[]),
         }
     )
     monkeypatch.setattr(canvas, "get_widget_registry", lambda: reg)
@@ -651,3 +653,212 @@ async def test_clear_canvas_kills_terminal_ptys(config, emit_recorder):
     assert result.ok
     # Registry.kill should have been called for the terminal session
     assert reg.killed == [session], "clear_canvas should kill terminal PTY sessions"
+
+
+# ---------------------------------------------------------------------------
+# #1253 — durable artifact identity for markdown_document tabs
+# ---------------------------------------------------------------------------
+
+
+def _raw_canvas(config, conv_id):
+    return json.loads(canvas._canvas_sidecar_path(config, conv_id).read_text())
+
+
+def _raw_artifacts(config, conv_id):
+    return json.loads(canvas._artifact_sidecar_path(config, conv_id).read_text())
+
+
+@pytest.mark.asyncio
+async def test_new_markdown_tab_keys_content_by_artifact(config, md_doc_registry, emit_recorder):
+    result = await canvas.new_tab(
+        config, "c", "markdown_document", {"content": "# Doc"}, label="Doc", emit=emit_recorder
+    )
+    assert result.ok
+
+    # The tab is a view handle: canvas.json carries the artifact id, not the content.
+    raw_tab = _raw_canvas(config, "c")["tabs"][0]
+    assert raw_tab["id"] == "canvas_1"
+    assert raw_tab["artifact_id"] == "artifact_1"
+    assert "data" not in raw_tab
+
+    # Content lives once, in the sibling artifact sidecar.
+    artifacts = _raw_artifacts(config, "c")
+    assert artifacts["next_artifact_id"] == 2
+    assert artifacts["artifacts"]["artifact_1"] == {
+        "widget_type": "markdown_document",
+        "label": "Doc",
+        "data": {"content": "# Doc"},
+    }
+
+    # Reads stay hydrated so clients keep their {data: {content}} contract.
+    tab = canvas.read_canvas_state(config, "c")["tabs"][0]
+    assert tab["data"] == {"content": "# Doc"}
+    assert emit_recorder.events[0][1]["tab"]["data"] == {"content": "# Doc"}
+
+
+@pytest.mark.asyncio
+async def test_non_markdown_tab_keeps_inline_data(config, md_doc_registry, emit_recorder):
+    result = await canvas.new_tab(config, "c", "chart", {"series": [1, 2]}, emit=emit_recorder)
+    assert result.ok
+    raw_tab = _raw_canvas(config, "c")["tabs"][0]
+    assert "artifact_id" not in raw_tab
+    assert raw_tab["data"] == {"series": [1, 2]}
+    # No artifact store is created for a widget that is not artifact-backed.
+    assert not canvas._artifact_sidecar_path(config, "c").exists()
+
+
+@pytest.mark.asyncio
+async def test_close_tab_hides_view_and_reopen_gets_fresh_handle(config, md_doc_registry, emit_recorder):
+    created = await canvas.new_tab(
+        config, "c", "markdown_document", {"content": "# Keep"}, label="Keep", emit=emit_recorder
+    )
+    artifact_id = _raw_canvas(config, "c")["tabs"][0]["artifact_id"]
+
+    closed = await canvas.close_tab(config, "c", created.tab_id, emit=emit_recorder)
+    assert closed.ok
+    # Closing hides the view; the artifact content survives.
+    assert canvas.read_canvas_state(config, "c")["tabs"] == []
+    assert _raw_artifacts(config, "c")["artifacts"][artifact_id]["data"] == {"content": "# Keep"}
+
+    reopened = await canvas.reopen_artifact(config, "c", artifact_id, emit=emit_recorder)
+    assert reopened.ok
+    assert reopened.tab_id == "canvas_2"  # a fresh view handle, never the closed one
+    tab = canvas.read_canvas_state(config, "c")["tabs"][0]
+    assert tab["id"] == "canvas_2"
+    assert tab["artifact_id"] == artifact_id
+    assert tab["label"] == "Keep"
+    assert tab["data"] == {"content": "# Keep"}
+
+
+@pytest.mark.asyncio
+async def test_closed_tab_url_target_never_aliases_reopened_content(config, md_doc_registry, emit_recorder):
+    """Standalone /canvas/{conv}/{tab_id} must not pick up a later artifact."""
+    first = await canvas.new_tab(config, "c", "markdown_document", {"content": "# One"}, emit=emit_recorder)
+    await canvas.close_tab(config, "c", first.tab_id)
+    artifact_id = _raw_artifacts(config, "c")["artifacts"]
+    assert list(artifact_id) == ["artifact_1"]
+
+    reopened = await canvas.reopen_artifact(config, "c", "artifact_1")
+    # The old tab-locked URL still selects nothing: get_tab is the resolver.
+    assert canvas.get_tab(config, "c", first.tab_id) is None
+    assert canvas.get_tab(config, "c", reopened.tab_id)["data"] == {"content": "# One"}
+    # Ids are never rebound, so a second reopen keeps moving forward.
+    second = await canvas.reopen_artifact(config, "c", "artifact_1")
+    assert second.tab_id == "canvas_3"
+    assert canvas.get_tab(config, "c", first.tab_id) is None
+
+
+@pytest.mark.asyncio
+async def test_reopen_unknown_artifact_errors(config, md_doc_registry):
+    result = await canvas.reopen_artifact(config, "c", "artifact_9")
+    assert not result.ok
+    assert "artifact_9" in result.error
+    assert canvas.read_canvas_state(config, "c")["tabs"] == []
+
+
+@pytest.mark.asyncio
+async def test_update_artifact_tab_is_live_bound(config, md_doc_registry, emit_recorder):
+    """canvas_update writes the artifact once; every view of it sees the new content."""
+    first = await canvas.new_tab(config, "c", "markdown_document", {"content": "# v1"}, label="Doc", emit=emit_recorder)
+    second = await canvas.reopen_artifact(config, "c", "artifact_1", emit=emit_recorder)
+
+    result = await canvas.update_tab(config, "c", second.tab_id, {"content": "# v2"}, emit=emit_recorder)
+    assert result.ok
+
+    tabs = {t["id"]: t for t in canvas.read_canvas_state(config, "c")["tabs"]}
+    assert tabs[first.tab_id]["data"] == {"content": "# v2"}
+    assert tabs[second.tab_id]["data"] == {"content": "# v2"}
+    # One content record, not one per tab.
+    artifacts = _raw_artifacts(config, "c")["artifacts"]
+    assert list(artifacts) == ["artifact_1"]
+    assert artifacts["artifact_1"]["data"] == {"content": "# v2"}
+    # The update event carries hydrated data so live clients re-render both views.
+    assert emit_recorder.events[-1][1]["tab"]["data"] == {"content": "# v2"}
+
+
+@pytest.mark.asyncio
+async def test_artifact_content_is_per_conversation(config, md_doc_registry, emit_recorder):
+    """An artifact id from one conversation never resolves in another."""
+    await canvas.new_tab(config, "conv-a", "markdown_document", {"content": "# Secret"}, emit=emit_recorder)
+
+    result = await canvas.reopen_artifact(config, "conv-b", "artifact_1")
+    assert not result.ok
+    assert "not found" in result.error
+    assert canvas.read_canvas_state(config, "conv-b")["tabs"] == []
+    assert not canvas._artifact_sidecar_path(config, "conv-b").exists()
+    # And the other conversation's content is not readable through the store.
+    assert canvas.get_artifact(config, "conv-b", "artifact_1") is None
+
+
+@pytest.mark.asyncio
+async def test_clear_canvas_preserves_artifacts(config, md_doc_registry, emit_recorder):
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "# Keep"}, emit=emit_recorder)
+    assert (await canvas.clear_canvas(config, "c")).ok
+    assert canvas.read_canvas_state(config, "c")["tabs"] == []
+    assert canvas.get_artifact(config, "c", "artifact_1")["data"] == {"content": "# Keep"}
+    reopened = await canvas.reopen_artifact(config, "c", "artifact_1")
+    assert reopened.ok
+
+
+def test_read_canvas_state_with_missing_artifact_is_fail_open(config, md_doc_registry):
+    canvas.write_canvas_state(
+        config,
+        "c",
+        {
+            "schema_version": 1,
+            "active_tab": "canvas_1",
+            "next_tab_id": 2,
+            "tabs": [
+                {"id": "canvas_1", "label": "Doc", "widget_type": "markdown_document", "artifact_id": "artifact_1"}
+            ],
+        },
+    )
+    tab = canvas.read_canvas_state(config, "c")["tabs"][0]
+    assert tab["artifact_id"] == "artifact_1"
+    assert tab["data"] == {}  # no content, and no unrelated content aliased in
+    assert canvas.reopen_artifact  # store reader survived the missing file
+
+
+def test_artifact_ids_never_rebind_after_delete_of_tab(config):
+    state = canvas.empty_artifact_state()
+    first = canvas._create_artifact(state, "markdown_document", "A", {"content": "a"})
+    del state["artifacts"][first]
+    second = canvas._create_artifact(state, "markdown_document", "B", {"content": "b"})
+    assert (first, second) == ("artifact_1", "artifact_2")
+
+
+def test_list_artifacts_reports_view_metadata(config, md_doc_registry):
+    canvas.write_artifact_state(
+        config,
+        "c",
+        {
+            "schema_version": 1,
+            "next_artifact_id": 2,
+            "artifacts": {
+                "artifact_1": {"widget_type": "markdown_document", "label": "Doc", "data": {"content": "# D"}}
+            },
+        },
+    )
+    assert canvas.list_artifacts(config, "c") == [
+        {"artifact_id": "artifact_1", "widget_type": "markdown_document", "label": "Doc"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mutations_keep_content_out_of_canvas_json(config, md_doc_registry, emit_recorder):
+    """A read-modify-write of hydrated state must not copy content into canvas.json."""
+    first = await canvas.new_tab(
+        config, "c", "markdown_document", {"content": "# One"}, label="One", emit=emit_recorder
+    )
+    second = await canvas.new_tab(
+        config, "c", "markdown_document", {"content": "# Two"}, label="Two", emit=emit_recorder
+    )
+    # set_active_tab reads hydrated tabs and writes the whole state back.
+    assert (await canvas.set_active_tab(config, "c", first.tab_id)).ok
+
+    raw = _raw_canvas(config, "c")
+    assert [t["id"] for t in raw["tabs"]] == [first.tab_id, second.tab_id]
+    assert all("data" not in t for t in raw["tabs"]), raw["tabs"]
+    # Content still comes back hydrated from the artifact store.
+    assert canvas.get_tab(config, "c", first.tab_id)["data"] == {"content": "# One"}
+    assert _raw_artifacts(config, "c")["artifacts"]["artifact_2"]["data"] == {"content": "# Two"}

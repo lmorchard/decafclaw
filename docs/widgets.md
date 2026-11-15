@@ -364,15 +364,40 @@ returned by `canvas_new_tab` and required as arguments by the mutating
 tools — the implicit active-tab model from Phase 3 is gone. See
 [Context Composer](context-composer.md#canvas-tools) for descriptions.
 
-- `canvas_new_tab(widget_type, data, label?)` — append a new tab; set
-  it active; return `tab_id` in `ToolResult.data["tab_id"]`.
+- `canvas_new_tab(widget_type, data, label?, artifact_id?)` — append a new
+  tab; set it active; return `tab_id` in `ToolResult.data["tab_id"]`.
+  A `markdown_document` tab also gets a durable `artifact_id` (see below).
+  Passing `artifact_id` (and no `widget_type`/`data`) reopens that artifact
+  in a fresh tab.
 - `canvas_update(tab_id, data)` — replace data on the identified tab
   (errors if `tab_id` not found).
 - `canvas_close_tab(tab_id)` — remove the identified tab; activate left
   neighbor (or right; or clear active if last). Last tab → panel hides.
-- `canvas_clear()` — empty all tabs; hide the panel.
+  For an artifact-backed tab this only hides the view; the content stays.
+- `canvas_clear()` — empty all tabs; hide the panel. Artifacts are kept.
 - `canvas_read()` — return `{active_tab, tabs: [{id, label,
-  widget_type, data}, ...]}` via `ToolResult.data`.
+  widget_type, data, artifact_id?}, ...], artifacts: [{artifact_id,
+  widget_type, label}]}` via `ToolResult.data`. The `artifacts` list
+  includes content whose tab was closed, so the agent can reopen it.
+
+### Durable artifact identity (#1253)
+
+A tab is a *view*. For `markdown_document` the content is stored once in
+`artifacts.json` beside `canvas.json`, under an `artifact_id` that survives
+closing the tab; the tab carries the id instead of `data`. Reads (`/api/canvas`,
+`canvas_read`, the standalone page) hydrate `data` back onto each tab, so
+clients and tools see the same shape as before.
+
+- **Close hides, never deletes.** `canvas_close_tab`/`canvas_clear` remove views
+  and leave artifacts in place.
+- **Reopen creates a fresh handle.** `canvas_new_tab(artifact_id=...)` (state op
+  `canvas.reopen_artifact`) adds `canvas_N` pointing at the same content. Tab ids
+  are never rebound, so a tab-locked URL `/canvas/{conv}/{tab_id}` for the closed
+  tab keeps selecting nothing.
+- **Live binding.** `canvas_update` on any view writes the shared artifact, so
+  every tab viewing it renders the new content.
+- **Per-conversation.** The store is that conversation's sidecar; an artifact id
+  from another conversation does not resolve (see the no-leak tests).
 
 ## `iframe_sandbox` widget
 

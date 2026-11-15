@@ -446,3 +446,46 @@ async def test_canvas_update_event_skipped_for_other_conv():
     callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
     await callback({"type": "canvas_update", "conv_id": "OTHER", "kind": "set", "active_tab": None, "tab": None})
     assert sent == []
+
+
+# ---------------------------------------------------------------------------
+# #1253 — artifact-backed markdown tabs over the canvas REST API
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_canvas_state_hydrates_artifact_backed_markdown(authed_client, owned_conv, http_config):
+    """The wire shape stays {data: {content}} and adds the durable artifact_id."""
+    created = await authed_client.post(
+        f"/api/canvas/{owned_conv}/new_tab",
+        json={"widget_type": "markdown_document", "data": {"content": "# Shared doc"}, "label": "Doc"},
+    )
+    assert created.status_code == 200
+
+    resp = await authed_client.get(f"/api/canvas/{owned_conv}")
+    assert resp.status_code == 200
+    tab = resp.json()["tabs"][0]
+    assert tab["artifact_id"] == "artifact_1"
+    assert tab["data"] == {"content": "# Shared doc"}
+
+    # Content is stored beside canvas.json, not inside it.
+    from decafclaw import canvas as canvas_mod
+
+    raw = json.loads(canvas_mod._canvas_sidecar_path(http_config, owned_conv).read_text())
+    assert "data" not in raw["tabs"][0]
+    stored = json.loads(canvas_mod._artifact_sidecar_path(http_config, owned_conv).read_text())
+    assert stored["artifacts"]["artifact_1"]["data"] == {"content": "# Shared doc"}
+
+
+@pytest.mark.asyncio
+async def test_canvas_state_never_serves_another_conversations_artifact(
+    authed_client, owned_conv, other_user_conv, http_config
+):
+    """A second conversation cannot see the first's artifact content (no leak)."""
+    await authed_client.post(
+        f"/api/canvas/{owned_conv}/new_tab",
+        json={"widget_type": "markdown_document", "data": {"content": "# Secret"}},
+    )
+    resp = await authed_client.get(f"/api/canvas/{other_user_conv}")
+    assert resp.status_code == 404
+    assert "Secret" not in resp.text

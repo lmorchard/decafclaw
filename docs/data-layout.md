@@ -43,6 +43,7 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
         context.json                # Per-turn context diagnostics sidecar
         last_request.json           # Latest LLM request payload (model, messages, tools; holds full prompt)
         canvas.json                 # Canvas panel state
+        artifacts.json              # Canvas artifact content, keyed by artifact_id (#1253)
         skills.json                 # Activated-skill state
         skill_data.json             # Per-skill persisted data
         vault_grants.json           # Per-conversation vault folder grants

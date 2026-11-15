@@ -348,6 +348,17 @@ opens tabs with `canvas_new_tab` (returns a `tab_id`), updates by
 tabs. See [Widgets — canvas tools](widgets.md#canvas-tools-always-loaded-1)
 for the full tool descriptions.
 
+**Artifacts (#1253):** a `markdown_document` tab is a view of a durable
+artifact. Its content lives in `artifacts.json` beside `canvas.json`, keyed by
+`artifact_id`, and the tab carries that id instead of `data`. Closing a tab
+hides the view and keeps the content; `canvas_new_tab(artifact_id=…)` reopens
+it in a fresh tab (new `canvas_N`, so a tab-locked URL for the closed tab still
+selects nothing). `canvas_update` on any view writes the shared artifact, so all
+views of it show the new content. `GET /api/canvas/{conv_id}` still returns each
+tab's hydrated `data` plus its `artifact_id`, so the client contract is
+unchanged. The store is per-conversation: an artifact id from another
+conversation does not resolve.
+
 **Tab strip (desktop):** horizontal strip above the content area.
 Each tab has a label (truncated) + `[×]` close button. Click a tab body
 → switch active; click `[×]` → close that tab. Active tab highlighted with

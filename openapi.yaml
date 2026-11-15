@@ -2378,6 +2378,11 @@ components:
             $ref: '#/components/schemas/JsonValue'
           type: object
           title: Data
+        artifact_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Artifact Id
       type: object
       required:
       - id

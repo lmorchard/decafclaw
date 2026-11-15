@@ -3472,6 +3472,8 @@ class CanvasTabResponse(BaseModel):
     label: str
     widget_type: str
     data: dict[str, JsonValue]
+    # Durable content handle for artifact-backed tabs (#1253).
+    artifact_id: str | None = None
 
 
 class CanvasStateResponse(BaseModel):
