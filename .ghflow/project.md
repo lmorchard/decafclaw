@@ -1,16 +1,16 @@
 ---
 ghflow_project_facts: 1
-written: 2026-11-11
+written: 2026-11-14
 sources:
-  - AGENTS.md 5415e78cbe686a7e6da1e412278e8a9af972f8fa
-  - CLAUDE.md 5415e78cbe686a7e6da1e412278e8a9af972f8fa
+  - AGENTS.md 930bed5be4fc8cfe267d5bb23bd3818d78fc94e4
+  - CLAUDE.md 930bed5be4fc8cfe267d5bb23bd3818d78fc94e4
   - Makefile b3638bb7cdc6406b35c2a1fec0249ca7c3064b25
   - .github/workflows/ci.yml 2de18948e0afc3ee4c14570649660a08aea316d5
   - conftest.py fb46496f6536760ece617b135afc7aef3c6eac93
-  - tests/conftest.py 49ff00ed9d4d72a8cc7aa2e07108a490c8802c0c
+  - tests/conftest.py 6ba9db5b8e4149d7aabd375dc1d57a283f7bfbe1
   - pyproject.toml b705dda2e2f0e144f03fa64a344fdf9ef122232d
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
-  - docs/config.md 0724a27eea7322d18e7fbd9b4d75bbd580433a87
+  - docs/config.md 02e25d2ce219a502b2047b0767340c3181943f94
   - docs/testing.md e30d35456d9757a42f84f13abeca170998145fd2
 ---
 # decafclaw project facts
@@ -39,7 +39,7 @@ sources:
 - `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `plan.md`, `notes.md`. Session docs are committed.
 
 ## Running the app
-- `make run-dev` from a worktree (#1096): refuses to run from the main clone, seeds the worktree's `data-dev/` (gitignored) with a copy of the main clone's `data/decafclaw/config.json` only, and runs `uv run decafclaw` with `DATA_HOME` set to it, `MATTERMOST_ENABLED=false`, `EMAIL_ENABLED=false`, `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED=false`, `HEARTBEAT_INTERVAL=0` (interval of 0 disables the heartbeat timer), `HTTP_ENABLED=true`, and the worktree's `HTTP_PORT` (from the worktree's `.env`; default 18880). Mattermost stays off unless an issue calls for it, and then only attended with Les's go-ahead.
+- `make run-dev` from a worktree (#1096): refuses to run from the main clone, seeds the worktree's `data-dev/` (gitignored) with created-if-missing copies of the main clone's `data/{agent_id}/config.json` and `web_tokens.json`, writes a PIDfile at `data-dev/.pid` for `make stop-dev` (#1208), and runs `uv run decafclaw` with `DATA_HOME` set to it, `MATTERMOST_ENABLED=false`, `EMAIL_ENABLED=false`, `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED=false`, `HEARTBEAT_INTERVAL=0` (interval of 0 disables the heartbeat timer), `HTTP_ENABLED=true`, and the worktree's `HTTP_PORT` (from the worktree's `.env`; default 18880). Mattermost stays off unless an issue calls for it, and then only attended with Les's go-ahead.
 
 ## Commits and PRs
 - Subjects mostly `type(scope): summary`, for example `fix(agent): ...`. Every change goes through a PR. `Closes #N` closes the issue on merge.
