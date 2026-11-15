@@ -32,6 +32,7 @@ These docs are as much for me as they are for agents working on this project. Th
 - [Dream Consolidation](dream-consolidation.md) — Periodic journal review and vault page gardening
 - [Conversations](conversations.md) — Archive, resume, turn-lifecycle events, and compaction of conversation history
 - [Notes (Scratchpad)](notes.md) — Per-conversation persistent scratchpad with always-loaded `notes_append` / `notes_read` and auto-inject on turn start
+- [Tool Output References](tool-output-references.md) — Stable `tool_output://` handles for saved tool output: paged reads that survive truncation, clearing, compaction, and reload
 
 ## Tools & Skills
 

@@ -172,6 +172,14 @@ Tools for scheduling asynchronous wake turns in long-running workflows (#1103). 
 | `schedule_cancel` | | Cancel a pending scheduled wake turn by schedule_id |
 | `schedule_list` | | List all pending scheduled wake turns for the current conversation |
 
+## Tool Output (`tools/tool_output_tools.py`)
+
+| Tool | Always | What it does |
+|------|:------:|--------------|
+| `tool_output_read` | | Read a saved tool output by its stable `tool_output://` handle, one page at a time |
+
+Saved outputs are addressed by handle rather than path, so they stay readable after truncation, context clearing, compaction, and restart. See [Tool Output References](tool-output-references.md).
+
 ## Shell (`tools/shell_tools.py`)
 
 Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.

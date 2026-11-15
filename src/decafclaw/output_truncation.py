@@ -186,10 +186,18 @@ def retention_for_tool(tool_name: str) -> str:
     return "tail" if tool_name in _TAIL_TOOLS else "head"
 
 
-def truncation_note(filepath: str) -> str:
+def truncation_note(filepath: str, handle: str | None = None) -> str:
     """The standard note appended to a truncated preview (stable wording —
-    the LLM has learned this phrasing; keep it identical across call sites)."""
-    return f"\n\n[Output truncated. Full output saved to {filepath}. Use the 'read' tool to inspect it.]"
+    the LLM has learned this phrasing; keep it identical across call sites).
+
+    ``handle`` adds the stable reference (#1128) next to the path, so a reader
+    can page the artifact back by handle after compaction or reload. The
+    original sentence stays verbatim for the path form.
+    """
+    note = f"\n\n[Output truncated. Full output saved to {filepath}. Use the 'read' tool to inspect it.]"
+    if handle:
+        note += f" Stable handle: {handle} (pass it to tool_output_read to page through the saved output)."
+    return note
 
 
 def format_size(n: int) -> str:
