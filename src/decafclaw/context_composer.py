@@ -27,6 +27,7 @@ from decafclaw.skills.vault.tools import (
 from .archive import LLM_ROLES
 from .attachments import resolve_attachments
 from .conversation_paths import sidecar_path
+from .image_budget import apply_image_budget
 from .memory_context import (
     _trim_to_token_budget,
     format_memory_context,
@@ -793,7 +794,22 @@ class ContextComposer:
         # Fix: pull tool results out and reattach them right after their
         # matching assistant message; drop any with no match.
         llm_history = _reorder_tool_results(llm_history)
+        # Keep the pre-resolve list so the image budget can attribute filenames
+        # to omission notices; resolve_attachments inlines images as data-URLs.
+        llm_history_originals = llm_history
         llm_history = [resolve_attachments(config, m) for m in llm_history]
+
+        # -- Image / payload budget (#1143) --
+        # Clamp the outbound request's images to the active provider's count and
+        # byte limits. Runs on the resolved view; never mutates originals or the
+        # archive entries, and fails open when the model can't be resolved.
+        llm_history, image_report = apply_image_budget(
+            config,
+            getattr(ctx, "active_model", ""),
+            llm_history,
+            originals=llm_history_originals,
+            tools=active_tools,
+        )
 
         # -- History source entry --
         # history_tokens / history_msg_count were computed above (budget side);
@@ -802,7 +818,17 @@ class ContextComposer:
             source="history",
             tokens_estimated=history_tokens,  # computed earlier, single source of truth
             items_included=history_msg_count,
-            details={"total_llm_messages": len(llm_history)},
+            details={
+                "total_llm_messages": len(llm_history),
+                "image_budget": {
+                    "images_included": image_report.images_included,
+                    "images_omitted": image_report.images_omitted,
+                    "inline_bytes": image_report.inline_bytes,
+                    "other_bytes": image_report.other_bytes,
+                    "provider_type": image_report.provider_type,
+                    "vision_unsupported": image_report.vision_unsupported,
+                },
+            },
         )
         sources.append(history_entry)
 

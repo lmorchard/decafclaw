@@ -11,6 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from dataclasses import fields as dc_fields
 
+# Provider type constants (llm.types imports only stdlib, so this is cycle-free:
+# config -> config_types -> llm.types never loops back to config). Used as keys
+# for the verified image-budget limits below.
+from .llm.types import PROVIDER_OPENAI, PROVIDER_OPENAI_COMPAT, PROVIDER_VERTEX
+
 
 @dataclass
 class LlmConfig:
@@ -443,6 +448,12 @@ class ModelConfig:
     timeout: int = 300
     streaming: bool = True
     reasoning_effort: str | None = None
+    # Tri-state vision capability (#1143): True/False when known, None = unknown.
+    # ``False`` makes the image budget turn every inbound image into an omission
+    # notice (the model cannot see images, so sending them is wasted bytes).
+    # ``None``/True budget normally. Discovered models may set this from the
+    # gateway's capability report; hand-written configs leave it None.
+    supports_vision: bool | None = None
 
     def __post_init__(self):
         if self.reasoning_effort is not None and self.reasoning_effort not in (
@@ -455,6 +466,86 @@ class ModelConfig:
             "max",
         ):
             raise ValueError(f"Invalid reasoning_effort: {self.reasoning_effort!r}")
+
+
+# Verified per-provider-type image/request limits (official docs, web-verified
+# 2026-11). ``max_images`` caps the number of inline images per request;
+# ``max_request_bytes`` caps the whole serialized request body. A provider type
+# absent here (openai-responses / litellm / scripted) has no verified limit and
+# is deliberately unenforced (None) — coverage grows as limits are verified.
+# ``openai`` subclasses the openai-compat contract, so it shares its limits.
+_VERIFIED_IMAGE_LIMITS: dict[str, dict] = {
+    PROVIDER_OPENAI_COMPAT: {"max_images": 1500, "max_request_bytes": 512 * 1024 * 1024},
+    PROVIDER_OPENAI: {"max_images": 1500, "max_request_bytes": 512 * 1024 * 1024},
+    PROVIDER_VERTEX: {"max_images": 3600, "max_request_bytes": 20 * 1024 * 1024},
+}
+
+
+@dataclass(frozen=True)
+class ResolvedImageLimits:
+    """The effective image/request limits for one provider type.
+
+    ``None`` on a field means "no enforcement" for that dimension (the provider
+    type has no verified limit). Built by :meth:`ImageBudgetConfig.resolved`.
+    """
+
+    provider_type: str | None = None
+    max_images: int | None = None
+    max_request_bytes: int | None = None
+
+
+@dataclass
+class ImageBudgetConfig:
+    """Whole-request image + serialized-payload budget (#1143).
+
+    Applied to the outbound request view after attachment resolution, before a
+    provider call. See :mod:`decafclaw.image_budget` and docs/context-composer.md.
+
+    ``providers`` holds per-provider-type overrides as plain dicts (the generic
+    config loader does not auto-build a dict-of-dataclass). Each value may set
+    ``max_images`` and/or ``max_request_bytes``; unset keys fall back to the
+    verified defaults in :data:`_VERIFIED_IMAGE_LIMITS`. A provider type with no
+    entry and no verified default is unenforced.
+    """
+
+    providers: dict[str, dict] = field(default_factory=dict)
+
+    def resolved(self, provider_type: str | None) -> ResolvedImageLimits:
+        """Merge the verified defaults for ``provider_type`` with any override.
+
+        For each dimension (``max_images``, ``max_request_bytes``): an explicit
+        override value wins — including an explicit null, which *disables* that
+        dimension (e.g. keep a provider's byte cap but drop its count cap). With
+        no override, the verified default applies; with neither, ``None`` (no
+        enforcement). An unknown/empty provider type yields all-None.
+        """
+        if not provider_type:
+            return ResolvedImageLimits(provider_type=provider_type or None)
+        defaults = _VERIFIED_IMAGE_LIMITS.get(provider_type, {})
+        override = self.providers.get(provider_type) or {}
+
+        def pick(key: str):
+            # An explicit override (key present) wins, null included (= disable).
+            if key in override:
+                val = override[key]
+            elif key in defaults:
+                val = defaults[key]
+            else:
+                return None
+            if val is None:
+                return None
+            if isinstance(val, str):  # env-var path stringifies values
+                v = val.strip().lower()
+                if v in ("", "none", "null"):
+                    return None
+                val = int(v)
+            return int(val)
+
+        return ResolvedImageLimits(
+            provider_type=provider_type,
+            max_images=pick("max_images"),
+            max_request_bytes=pick("max_request_bytes"),
+        )
 
 
 @dataclass

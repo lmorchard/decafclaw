@@ -28,6 +28,7 @@ from .config_types import (
     EmbeddingConfig,
     HeartbeatConfig,
     HttpConfig,
+    ImageBudgetConfig,
     ImportanceConfig,
     LlmConfig,
     LoopBreakerConfig,
@@ -245,6 +246,7 @@ class Config:
     mattermost: MattermostConfig = field(default_factory=MattermostConfig)
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     cleanup: CleanupConfig = field(default_factory=CleanupConfig)
+    image_budget: ImageBudgetConfig = field(default_factory=ImageBudgetConfig)
     notes: NotesConfig = field(default_factory=NotesConfig)
     reminders: RemindersConfig = field(default_factory=RemindersConfig)
     recent_journal: RecentJournalConfig = field(default_factory=RecentJournalConfig)
@@ -567,6 +569,8 @@ def load_config() -> Config:
 
     cleanup = load_sub_config(CleanupConfig, file_data.get("cleanup", {}), "CLEANUP")
 
+    image_budget = load_sub_config(ImageBudgetConfig, file_data.get("image_budget", {}), "IMAGE_BUDGET")
+
     notes = load_sub_config(NotesConfig, file_data.get("notes", {}), "NOTES")
 
     reminders = load_sub_config(RemindersConfig, file_data.get("reminders", {}), "REMINDERS")
@@ -763,6 +767,7 @@ def load_config() -> Config:
         mattermost=mattermost,
         compaction=compaction,
         cleanup=cleanup,
+        image_budget=image_budget,
         notes=notes,
         reminders=reminders,
         recent_journal=recent_journal,

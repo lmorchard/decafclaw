@@ -1290,7 +1290,23 @@ class ConversationManager:
 
         from .attachments import resolve_attachments
 
+        # Keep the pre-resolve list so the image budget can attribute filenames
+        # to omission notices; resolve_attachments inlines images as data-URLs.
+        snapshot_originals = snapshot_messages
         snapshot_messages = [resolve_attachments(self.config, m) for m in snapshot_messages]
+
+        # Image / payload budget (#1143): clamp the history's images to the
+        # active provider's count/byte limits. Side questions strip all tools, so
+        # none are counted toward the byte budget. Fails open on resolution.
+        from .image_budget import apply_image_budget
+
+        effective_model = (
+            model_name or (state.persisted.active_model if state else "") or effective_default_model(self.config)
+        )
+        snapshot_messages, _image_report = apply_image_budget(
+            self.config, effective_model, snapshot_messages, originals=snapshot_originals
+        )
+
         messages: list[dict[str, Any]] = [{"role": "system", "content": SIDE_QUESTION_SYSTEM_PROMPT}]
         messages.extend(without_provider_data(snapshot_messages))
 
@@ -1316,9 +1332,7 @@ class ConversationManager:
         ctx.tools.extra = {}
         ctx.tools.extra_definitions = []
 
-        effective_model = (
-            model_name or (state.persisted.active_model if state else "") or effective_default_model(self.config)
-        )
+        # effective_model was resolved above (for the image budget); reuse it.
         ctx.active_model = effective_model
 
         chunks_received: list[str] = []
