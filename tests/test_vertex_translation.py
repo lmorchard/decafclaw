@@ -457,8 +457,48 @@ def test_tool_schema_circular_ref_diagnosed_without_hanging():
     cleaned, diags = _clean_schema_preserving(schema)
 
     assert any("circular $ref" in d for d in diags)
-    # The node is annotated rather than silently unconstrained.
-    assert "unconstrained" in (cleaned["properties"]["node"].get("description") or "")
+    # The node is annotated rather than silently dropped, and the annotation
+    # says what happened: a recursive shape is not an unconstrained parameter.
+    desc = cleaned["properties"]["node"].get("description") or ""
+    assert "recursive reference" in desc
+    assert "nested structure not inlined" in desc
+    assert "unconstrained" not in desc
+
+
+def test_tool_schema_recursive_ref_keeps_outer_shape_and_says_so():
+    """A self-recursive ``$ref`` drops only the nested level, and the dropped
+    level is described as recursive — not as an unconstrained parameter (#1147).
+
+    Recursive shapes (a JSON tree argument is the common MCP case) are a
+    real construct, not a broken reference: the outer object still reaches the
+    wire, and the model is told the recursion was cut rather than that
+    anything goes.
+    """
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "$defs": {
+            "Tree": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "kids": {"type": "array", "items": {"$ref": "#/$defs/Tree"}},
+                },
+            },
+        },
+        "properties": {"root": {"$ref": "#/$defs/Tree"}},
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    root = cleaned["properties"]["root"]
+    # Outer shape reaches the wire; only the recursive level is cut.
+    assert root["type"] == "object"
+    assert root["properties"]["label"] == {"type": "string"}
+    note = root["properties"]["kids"]["items"].get("description") or ""
+    assert "recursive reference" in note
+    assert "unconstrained" not in note
+    assert any("circular $ref" in d for d in diags)
 
 
 def test_tool_schema_structural_constructs_diagnosed():

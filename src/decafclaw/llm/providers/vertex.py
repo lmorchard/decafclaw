@@ -624,12 +624,20 @@ def _clean_schema_preserving(
         ref = source.get("$ref") if isinstance(source, dict) else None
         if not isinstance(ref, str):
             break
+        # ``_resolve_local_ref`` reports circularity exactly when the ref is
+        # already on this node's resolution path, so the two failures get
+        # different prose: a recursive shape is dropped, not unconstrained.
+        circular = ref in seen_refs
         resolved, diag = _resolve_local_ref(source, root, seen_refs)
         if resolved is None:
             diags.append(diag or f"unresolvable $ref {str(ref)!r}")
             # Keep sibling keys; the referenced shape is lost — say so in prose.
             source = {k: v for k, v in source.items() if k != "$ref"}
-            note = "referenced schema could not be inlined; this parameter is unconstrained"
+            note = (
+                "recursive reference; nested structure not inlined"
+                if circular
+                else "referenced schema could not be inlined; this parameter is unconstrained"
+            )
             base = source.get("description") or ""
             source["description"] = f"{base}; {note}" if base else note
             break
