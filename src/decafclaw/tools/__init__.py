@@ -7,6 +7,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..media import ToolResult
+from ..reminders import check as check_reminders
+from ..reminders import reject_text
 from .admin_tools import ADMIN_TOOL_DEFINITIONS, ADMIN_TOOLS
 from .attachment_tools import ATTACHMENT_TOOL_DEFINITIONS, ATTACHMENT_TOOLS
 from .canvas_tools import CANVAS_TOOL_DEFINITIONS, CANVAS_TOOLS
@@ -344,6 +346,18 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
     disallowed = ctx.tools.disallowed or set()
     if name in disallowed:
         return ToolResult(text=f"[error: tool '{name}' is blocked by this context's allowlist/blocklist]")
+
+    # Scoped reminders (#1127): admin-authored rules over the finalized
+    # arguments, checked at this shared dispatch entry so the agent loop and
+    # workflow `wf.tool_call` path get the same boundary. A reject stops the
+    # call before dispatch; a remind queues an ephemeral message the agent loop
+    # injects after the batch (workflows record but do not inject). Fail-open:
+    # a malformed rules file yields no hits and never breaks execution.
+    reminder_hit = await check_reminders(ctx, name, arguments)
+    if reminder_hit is not None:
+        if reminder_hit.action == "reject":
+            return ToolResult(text=reject_text(reminder_hit))
+        ctx.reminder_hits.append(reminder_hit)
 
     # Route MCP tools to the MCP registry (different call signature — no ctx)
     if name.startswith("mcp__"):

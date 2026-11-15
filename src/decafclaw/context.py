@@ -42,6 +42,22 @@ class TokenUsage:
 
 
 @dataclass
+class ReminderState:
+    """Per-turn scratch for the scoped-reminder gate (#1127).
+
+    Conversation-scoped match counts are seeded lazily from the
+    `{conv_dir}/reminders.jsonl` ledger (see `reminders.py`) so budgets survive
+    restarts; `injections_this_turn` is the per-turn cap and resets with the
+    turn's context. Shared with tool-call forks (shallow copy keeps the same
+    object), which is what lets concurrent calls debit one budget.
+    """
+
+    match_counts: dict[str, int] = field(default_factory=dict)
+    seeded_rules: set[str] = field(default_factory=set)
+    injections_this_turn: int = 0
+
+
+@dataclass
 class ToolState:
     """Tool-related state for the current conversation."""
 
@@ -165,6 +181,14 @@ class Context:
         self.tools = ToolState()
         self.skills = SkillState()
         self.composer = ComposerState()
+
+        # Scoped reminders (#1127). `reminder_state` holds the budget
+        # bookkeeping; `reminder_hits` is the per-turn inbox the dispatch gate
+        # writes and the agent loop drains into ephemeral messages. Both live
+        # on the ctx because the tool-call forks share them and neither is
+        # archived: restore_history must never resurrect a reminder.
+        self.reminder_state = ReminderState()
+        self.reminder_hits: list[Any] = []
 
         # Per-conversation compaction threshold overrides (#1099). The
         # absolute override (integer token budget) and the ratio override

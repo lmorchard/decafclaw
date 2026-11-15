@@ -66,6 +66,26 @@ class NotesConfig:
 
 
 @dataclass
+class RemindersConfig:
+    """Scoped reminders (#1127): admin-authored rules checked against a
+    tool call's finalized arguments before dispatch.
+
+    Rules live at ``data/{agent_id}/reminders.json`` — the admin tier, so the
+    agent cannot author or edit them. A match either rejects the call with
+    correction guidance or lets it run and injects one ephemeral reminder
+    message (never archived). Disabled by default: this is an experiment.
+    """
+
+    enabled: bool = False
+    # Matches allowed per rule per conversation. A reject rule keeps rejecting
+    # after this budget, with terse text instead of the full message; a remind
+    # rule stops injecting (advisory context becomes tax once repeated).
+    max_matches_per_rule: int = 3
+    # Per-turn cap on injected reminders, bounding worst-case context growth.
+    max_per_turn: int = 2
+
+
+@dataclass
 class RecentJournalConfig:
     """Auto-surface recent journal entries (#306).
 
