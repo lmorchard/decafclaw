@@ -1,153 +1,53 @@
 # Pre-emptive Tool Search
 
-When a user message arrives, DecafClaw runs a cheap keyword match against tool names and descriptions. Matched tools get promoted into the active tool set for that turn — the agent doesn't need to call `tool_search` first to discover them.
+When a user message arrives, DecafClaw matches its keywords against tool names and descriptions. Deferred matches appear in an archived hint after the user message. The hint directs the agent to `tool_search` before calling a deferred tool.
 
-The same pass also matches against the **skill catalog**: non-activated skills whose name + description overlap the user's keywords get surfaced as a short hint message ("these skills look relevant — call `activate_skill`"). This shortcuts the painful "call a skill tool → fail with unknown tool → search → activate → call again" round-trip.
+Keyword matches do not change native tool schemas, the deferred catalog, or tool guidance (#1257). This preserves the prompt prefix across ordinary turns. Explicit `tool_search` fetches still load tools and deliberately change the prefix.
 
-This is a partial implementation of [issue #257](https://github.com/lmorchard/decafclaw/issues/257) covering the pre-emptive search signal. The remaining situational signals (scoring layer, tiered visibility, explicit user mention, MCP disconnect penalty, recent-usage boost) are deferred follow-ups.
+## Matching
 
-## How it works
+`ContextComposer._compose_preempt_matches` uses the raw user message. It excludes prior replies and injected context (#1049).
 
-At turn start, `ContextComposer._compose_preempt_matches` runs before tool classification:
+1. Lowercase the input and split it at non-alphanumeric boundaries.
+2. Remove short tokens and common English stopwords.
+3. Score each candidate by the count of shared tokens in its name and description.
+4. Sort by decreasing score, then tool name. Keep at most `max_matches` candidates.
+5. After normal tool classification, render a hint for matches that remain deferred.
 
-1. **Assemble match input** — tokenize the raw user message only (no history, no injected context — see [#1049](https://github.com/lmorchard/decafclaw/issues/1049)).
-2. **Tokenize** — lowercase, split on non-alphanumeric boundaries, drop tokens shorter than 3 characters, drop a small set of common English stopwords.
-3. **Score candidates** — for each tool that isn't already force-critical (declared `critical` priority, env-overridden, activated skill tool, already-fetched), compute `score = |input_tokens ∩ tokenize(name + description)|`. Tools with `score ≥ 1` are matches.
-4. **Cap by `max_matches`** — sort by `(-score, name)`, keep the top N (default 10).
-5. **Promote** — matched tool names land on `ctx.tools.preempt_matches`. The tool classifier treats them as critical for this turn, bypassing the normal/low budget split.
+The hint excludes disallowed tools and hidden skill tools. Already active tools need no hint. Hidden tools remain discoverable through their owning skill.
 
-The match runs once at turn start. `_build_tool_list` reuses the same set across agent iterations within the turn, so reclassification after a tool call stays consistent.
+The hint uses `<preempt_tool_hint>` and the internal `skill_hint` archive role. It maps to `user` for the LLM, remains at its original history position, and stays hidden in the UI.
 
-## Skill catalog match
+## Skill catalog hints
 
-Right after the tool match, `ContextComposer._compose_preempt_skill_matches` runs the same tokenization against the discovered skill catalog. Skills already in `ctx.skills.activated` (which includes always-loaded bundled skills like `vault`, `background`, `mcp` that auto-activate at turn start) are excluded from the candidate pool — surfacing them again would be noise.
+The composer also matches non-activated skills against the user message. `<preempt_skill_hint>` names the strongest matches and directs the agent to `activate_skill`.
 
-For each remaining skill, score is `|input_tokens ∩ tokenize(name + description)|`. Top matches (capped by the same `max_matches`) land on `ctx.skills.preempt_matches` and a short system message is appended to the prompt:
+The visible skill hint keeps candidates scoring at least `max(2, top_score - 1)`, with at least one result. This keeps weak matches from obscuring a clear winner (#604). Activation still follows the existing trust rules.
 
-```
-<preempt_skill_hint>
-These skills look relevant to the current message. Call activate_skill(name) to load their tools.
-
-- project
-- ingest
-</preempt_skill_hint>
-```
-
-Unlike the tool match, this is purely a **hint** — no auto-activation. The agent still calls `activate_skill` (which is frictionless for trusted-tier skills; workspace-tier skills still route through the user confirmation flow). The hint pairs with the skill-level progressive disclosure model from [skills.md](skills.md): the catalog tells the agent which skills exist, the preempt hint flags which look relevant for the current message, and `activate_skill` is the loading mechanism.
-
-The wording is intentionally bulleted (one skill per line) rather than comma-joined inline — small parent models attend to visual structure more reliably than to running prose, and the activation directive sits at the top where the model is most likely to read it.
-
-**Hint trimming (#604).** On generic tokens the raw match set can run ~10 skills — a clearly-relevant skill buried among several score-1 matches. A dense hint dilutes the routing signal (the model tends to fall back to always-loaded general tools instead of activating the relevant skill). So the **visible hint** lists only skills scoring within a small gap of the top match — `score >= max(_HINT_MIN_SCORE, top_score - _HINT_SCORE_GAP)` (constants in `context_composer.py`, currently floor 2 / gap 1) — always keeping at least one. Crucially this trims *only the hint text*: the full match set still lands on `ctx.skills.preempt_matches`, so a lower-scoring but genuinely-relevant skill's tools are still promoted for the turn — it just isn't named in the hint.
-
-Diagnostics surface as a parallel source entry, `preempt_skill_matches`. `details.matches` is the full promoted set (with score and matched tokens); `details.hinted` is the subset actually named in the hint, and `promoted_count` / `hinted_count` record the split.
-
-## Why the raw user message only?
-
-The match input is the user's own message — nothing else. It does **not** include prior assistant responses, and it never sees the injected memory / wiki / journal context.
-
-This matters because the injected memory context is background retrieval, not a user intent signal. When proactive retrieval surfaces vault pages full of keywords (e.g. a page mentioning `meta-ingest` or `opencode`), letting those keywords feed the matcher created a feedback loop: background retrieval induced irrelevant tool/skill promotions and `<preempt_skill_hint>` lines even when the user's actual prompt had nothing to do with them. Scoping the input to the raw user message breaks that loop — the matcher only reacts to what the user actually typed this turn. (#1049)
-
-The trade-off is that short keyword-less follow-ups ("yes, another one") no longer inherit topical continuity from the previous assistant reply. That is accepted: a keyword-less user message simply produces no pre-emptive promotion, and the agent can still reach deferred tools explicitly via `tool_search`.
-
-## Ephemeral, not persistent
-
-Pre-emptive matches are **recomputed fresh every turn** from the raw user message. They don't persist like tools the agent explicitly fetched via `tool_search`, which stay loaded for the rest of the conversation. If the user pivots topics, the previous match drops out on the very next turn.
-
-Calling a matched tool does **not** automatically add it to `fetched_tools`. The auto-fetch fallback in `execute_tool` only fires when a tool name is in the deferred pool but not resolvable — a matched tool resolves directly because it's in the active set, so that path isn't triggered. This is intentional: "matched once" isn't a strong enough signal to persist across topic shifts.
+Both types of hint are suggestions. They do not activate skills or grant capabilities.
 
 ## Configuration
 
-Under `agent.preemptive_search` in `config.json`:
+Under `agent.preemptive_search`:
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | bool | `true` | Master toggle for the match |
-| `max_matches` | int | `10` | Cap on tools promoted per turn, sorted by score then name |
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Enable tool and skill discovery hints |
+| `max_matches` | `10` | Limit candidates for each keyword match |
 
-No env-var aliases for v1. Disable with:
+There are no environment aliases for these fields. Set `enabled: false` to disable both hint passes.
 
-```json
-{
-  "agent": {
-    "preemptive_search": {"enabled": false}
-  }
-}
-```
+Matching runs in composer-driven interactive, heartbeat, scheduled, and child-agent turns. Reflection and compaction use their own tool sets.
 
-## When it applies
+## Diagnostics
 
-Runs in every mode that goes through `ContextComposer.compose`:
+INFO logs identify suggested tools and matched skills. The context sidecar records `preempt_matches` and `preempt_skill_matches` sources. Tool matches include `input_tokens`, candidate `matches`, and the deferred tools actually `suggested`. The token estimate covers the rendered hint rather than schemas that were never loaded.
 
-| Mode | Applies? |
-|---|---|
-| Interactive chat (web UI, Mattermost) | ✅ |
-| Child agent (`delegate_task`) | ✅ (matches on the task string) |
-| Heartbeat section runs | ✅ (matches on the section preamble) |
-| Scheduled tasks | ✅ (matches on the task preamble) |
-| Reflection judge | ❌ (no tool calls) |
-| Compaction / memory sweep | ❌ (purpose-specific tool sets) |
-
-Heartbeat and scheduled tasks run with no conversation history — matching runs on the task prompt only.
-
-## Debugging
-
-**Logs (INFO level):** every match fires a log line with the conv ID and promoted tool names:
-
-```
-preemptive match: promoted 2 tool(s) for conv ws-abc123: vault_backlinks(2), vault_search(1)
-```
-
-**Context diagnostics sidecar** — after each turn, DecafClaw writes `workspace/conversations/{conv_id}/context.json` containing the source breakdown. Look for the `preempt_matches` source entry:
-
-```json
-{
-  "source": "preempt_matches",
-  "tokens_estimated": 342,
-  "items_included": 2,
-  "details": {
-    "input_tokens": ["backlinks", "decafclaw", "vault"],
-    "matches": [
-      {"name": "vault_backlinks", "score": 2, "matched_tokens": ["backlinks", "vault"]},
-      {"name": "vault_search", "score": 1, "matched_tokens": ["vault"]}
-    ],
-    "max_matches": 10
-  }
-}
-```
-
-**Web UI** — click the context bar in the web UI to open the context inspector popover. Matches show up as a Pre-emptive matches row with the promoted tool names and scores.
-
-## Interactions with other mechanisms
-
-- **`tool_search` / `fetched_tools`** — complementary. If the agent explicitly fetches, those persist. Pre-emptive match runs first and may surface the same tool automatically; a subsequent `tool_search` for the same name is a harmless no-op.
-- **`_suggest_tool_names` "did you mean" errors** — those fire in the error path when the agent makes a wrong-name call. Pre-emptive match runs before any call happens. Independent mechanisms.
-- **Hyphen/underscore normalization** for MCP tool names — tool identifiers entering the candidate pool already have hyphens normalized to underscores (see `docs/mcp-servers.md`). Matching operates on whatever's in the pool, so this is transparent.
-
-## Design rationale (v1 scope)
-
-**Why keyword overlap and not TF-IDF or embeddings?**
-
-Keyword is the lowest-overhead option: microseconds per turn, no tunable weights, deterministic and debuggable. Tool descriptions are already a control surface in DecafClaw — authors write them to be LLM-readable, which also makes them match-friendly.
-
-The obvious limitation is synonyms (a user saying "browse" won't match a "fetch" tool). Real-world impact depends on how often users phrase requests differently from how tools are described. We'll measure with real traffic before adding TF-IDF or embeddings as follow-ups.
-
-**Why ephemeral promotion and not persistent fetching?**
-
-`tool_search` explicit fetching persists because it reflects agent intent — the agent deliberately chose to pull a tool into the active set. Keyword matches are a heuristic that rides on surface-level word overlap. Persisting every match would accumulate cruft as user messages drift across topics, inflating the active tool context without obvious benefit.
-
-## Follow-ups tracked in #257
-
-- Scoring model combining multiple situational signals (not just keyword match)
-- Tiered visibility (Active / Summary / Search-only / Hidden) instead of binary in/out
-- Recent-usage boost for tools the agent has called this conversation
-- Explicit user mention (e.g., `@vault_read` or backticked tool names)
-- MCP disconnected-server penalty — hide their tools entirely when offline
-- TF-IDF or embedding-based matching upgrade paths
-- Evaluating a maintained stopword library (`stop-words` PyPI, scikit-learn, spaCy)
+Matches reset each turn. Archived hints remain in history. Explicitly fetched tools remain loaded through the existing fetched-tool state.
 
 ## Related
 
-- [Tool priority system](tool-priority.md) — critical/normal/low tiers that pre-emptive matches layer onto
-- [Tool search](tool-search.md) — `tool_search` tool and the deferred catalog format
-- [MCP servers](mcp-servers.md) — how MCP tools enter the candidate pool
-- [Context map](context-map.md) — overall turn-lifecycle diagram
+- [Prompt prefix stability](context-composer.md#prompt-caching-prefix-stability)
+- [Tool priority](tool-priority.md)
+- [Tool search](tool-search.md)
+- [Skills](skills.md)

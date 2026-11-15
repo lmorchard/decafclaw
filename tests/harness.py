@@ -108,6 +108,8 @@ class AgentHarness:
                 data_home=str(self.tmp_path),
                 id="harness-agent",
                 user_id="harness-tester",
+                # Exact-dialogue tests opt into archived metadata explicitly.
+                show_context_status=False,
             ),
             reflection=ReflectionConfig(enabled=reflection),
             # The harness data dir has no vault content to retrieve and
@@ -128,6 +130,7 @@ class AgentHarness:
             },
             default_model=MODEL_NAME,
         )
+        self.config.agent.preemptive_search.enabled = False
         self.tools: dict[str, Any] = {}
         self.tool_definitions: list[dict[str, Any]] = []
         self.manager = ConversationManager(self.config, EventBus())

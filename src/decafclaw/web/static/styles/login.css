@@ -12,6 +12,14 @@ login-view .login-card {
   padding: 2rem;
 }
 
+login-view .login-logo {
+  display: block;
+  margin-bottom: 0.75rem;
+  /* The artwork has a ~2px cream margin around its rounded square;
+     clip to the square so dark theme shows no light rim. */
+  clip-path: inset(2px round 14px);
+}
+
 login-view .login-card h2 {
   margin-bottom: 1rem;
 }

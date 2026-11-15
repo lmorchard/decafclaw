@@ -37,6 +37,7 @@ export class LoginView extends LitElement {
   render() {
     return html`
       <div class="login-card">
+        <img class="login-logo" src="/static/icons/favicon-128.png" alt="" width="64" height="64">
         <h2>DecafClaw</h2>
         <p>Enter your access token to continue.</p>
         <form @submit=${this.#handleSubmit}>

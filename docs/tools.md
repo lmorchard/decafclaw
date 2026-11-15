@@ -313,6 +313,20 @@ See [Sub-Agent Delegation](delegation.md).
 |------|:------:|--------------|
 | `delegate_task` | ✓ | Fork a child agent for a subtask (call multiple times for parallel work) |
 
+## LLM Query (`tools/llm_tools.py`)
+
+One-shot completions against a named model — no tool schemas, no conversation history (#1258).
+
+| Tool | What it does |
+|------|--------------|
+| `llm_query` | Single-shot completion (or a batch of up to 25, concurrency 5) against a `config.model_configs` entry. For narrow text transformation — extraction, summarization, classification — especially against small local models |
+
+- `model=""` inherits the conversation's active model; an unknown name is a hard error that lists configured models (no silent fallback).
+- `return_schema` requests a fenced JSON block via prompt-level instruction; a compliant block parses to `ToolResult.data`. `strict=true` turns non-compliant output into an error with field-level feedback.
+- Each item runs under its own per-item timeout (default 60s); the tool opts out of the global watchdog. Usage accumulates into the turn's token counters, same as agent LLM calls.
+
+For a subtask that needs tools or multi-turn reasoning, use `delegate_task` instead.
+
 ## Skills (`tools/skill_tools.py`)
 
 See [Skills System](skills.md).

@@ -171,23 +171,25 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens, lowered
     """Run the lightweight tool-result clear pass, then trigger
     full compaction if the token budget is exceeded.
 
-    The clear pass is cheap (in-memory string surgery, no LLM call)
-    so it runs every iteration. Full compaction only fires when
-    history is large enough to justify the LLM summarization cost.
+    Interactive turns preserve sent history by default. Opting out via
+    cleanup.preserve_prompt_cache restores per-iteration clearing. Full
+    compaction remains the normal history-rewrite boundary.
     """
     # Lightweight tier first — see #298 and docs/context-composer.md. The
     # composer mode gates the resolved-error pruning pass (#540); the
     # size/age clear inside is mode-independent.
     try:
-        delta = clear_old_tool_results(history, config, mode=_composer_mode_for(ctx))
-        ctx.composer.cleanup_cleared_count += delta.cleared_count
-        ctx.composer.cleanup_cleared_bytes += delta.cleared_bytes
-        if delta.cleared_count:
-            log.info(
-                "Tool-result clear: %d message(s), %d bytes reclaimed",
-                delta.cleared_count,
-                delta.cleared_bytes,
-            )
+        mode = _composer_mode_for(ctx)
+        if not config.cleanup.preserve_prompt_cache or mode != ComposerMode.INTERACTIVE:
+            delta = clear_old_tool_results(history, config, mode=mode)
+            ctx.composer.cleanup_cleared_count += delta.cleared_count
+            ctx.composer.cleanup_cleared_bytes += delta.cleared_bytes
+            if delta.cleared_count:
+                log.info(
+                    "Tool-result clear: %d message(s), %d bytes reclaimed (prompt prefix changed)",
+                    delta.cleared_count,
+                    delta.cleared_bytes,
+                )
     except Exception:
         # Cleanup is fail-open. Use log.exception so the traceback
         # actually surfaces in logs — without it we lose the diagnostic

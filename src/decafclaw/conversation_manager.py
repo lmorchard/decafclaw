@@ -178,6 +178,7 @@ class PersistedTurnState:
     aux_approval_guidance: list = field(default_factory=list, metadata={"replaceable": True})
     llm_approved_shell_patterns: list = field(default_factory=list, metadata={"replaceable": True})
     injection_cursors: InjectionCursors = field(default_factory=InjectionCursors, metadata={"replaceable": True})
+    prefix_fingerprints: dict[str, str] = field(default_factory=dict, metadata={"replaceable": True})
     # Per-conversation auto-compaction threshold overrides (#1099). Externally
     # driven (ConversationManager.set_flag from the web / transport handlers) —
     # save never writes these (they are not ctx-driven) and restore maps them onto
@@ -240,6 +241,10 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
         lambda ctx: ctx.composer.injection_cursors,
         lambda ctx, v: setattr(ctx.composer, "injection_cursors", v),
     ),
+    "prefix_fingerprints": (
+        lambda ctx: ctx.composer.prefix_fingerprints,
+        lambda ctx, v: setattr(ctx.composer, "prefix_fingerprints", v),
+    ),
     # #1099 — per-conversation auto-compaction threshold overrides. The
     # persisted value lands on the ctx slot the agent loop reads; save
     # never writes these (they are externally driven, not ctx-driven).
@@ -269,6 +274,7 @@ _CTX_DRIVEN_FIELDS: frozenset[str] = frozenset(
         "aux_approval_guidance",
         "llm_approved_shell_patterns",
         "injection_cursors",
+        "prefix_fingerprints",
     }
 )
 

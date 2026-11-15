@@ -1,4 +1,4 @@
-# DecafClaw
+<h1 align="center"><img src="./docs/assets/brand/decafclaw-logo.png" alt="DecafClaw" width="480"></h1>
 
 An AI agent exploration. This is not a coherent product or framework. This is a laboratory in the shape of a Rube Goldberg machine. Built to explore agent development patterns. Increasingly focused on personal knowledge management and writing tools, with an Obsidian-like shared vault where user and agent collaborate on markdown documents.
 
