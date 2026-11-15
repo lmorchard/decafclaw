@@ -8,8 +8,17 @@ Field metadata supports:
 
 from __future__ import annotations
 
+import ast
+import logging
 from dataclasses import dataclass, field, replace
 from dataclasses import fields as dc_fields
+
+# Provider type constants (llm.types imports only stdlib, so this is cycle-free:
+# config -> config_types -> llm.types never loops back to config). Used as keys
+# for the verified image-budget limits below.
+from .llm.types import PROVIDER_OPENAI, PROVIDER_OPENAI_COMPAT, PROVIDER_VERTEX
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -443,6 +452,12 @@ class ModelConfig:
     timeout: int = 300
     streaming: bool = True
     reasoning_effort: str | None = None
+    # Tri-state vision capability (#1143): True/False when known, None = unknown.
+    # ``False`` makes the image budget turn every inbound image into an omission
+    # notice (the model cannot see images, so sending them is wasted bytes).
+    # ``None``/True budget normally. Discovered models may set this from the
+    # gateway's capability report; hand-written configs leave it None.
+    supports_vision: bool | None = None
 
     def __post_init__(self):
         if self.reasoning_effort is not None and self.reasoning_effort not in (
@@ -455,6 +470,122 @@ class ModelConfig:
             "max",
         ):
             raise ValueError(f"Invalid reasoning_effort: {self.reasoning_effort!r}")
+
+
+# Verified per-provider-type image/request limits, from the providers' own docs.
+# ``max_images`` caps the number of inline images per request; ``max_request_bytes``
+# caps the whole serialized request body. A provider type absent here
+# (openai-responses / litellm / scripted) has no verified limit and is
+# deliberately unenforced (None) — coverage grows as limits are verified.
+# ``openai`` subclasses the openai-compat contract, so it shares its limits.
+#
+# Sources (re-verified 2026-11-15):
+# - OpenAI, "Images and vision": "Request size | Up to 512 MB total payload per
+#   request", "Image count | Up to 1,500 images per request".
+#   https://developers.openai.com/api/docs/guides/images-vision
+# - Vertex AI, "Image understanding": Gemini 3+ / 2.5 "Maximum images per prompt:
+#   3,000 (images and PDFs combined)"; "Maximum inline part size: 256 MB"
+#   (30 MiB on non-migrated Gemini 2.5 endpoints); total generateContent payload
+#   ≤ 500 MiB compressed. The byte cap here is the per-inline-part ceiling: the
+#   budget is omit-only, so it also keeps the whole body under the payload limit.
+#   https://cloud.google.com/vertex-ai/docs/generative-ai/docs/multimodal/image-understanding
+_VERIFIED_IMAGE_LIMITS: dict[str, dict] = {
+    PROVIDER_OPENAI_COMPAT: {"max_images": 1500, "max_request_bytes": 512 * 1024 * 1024},
+    PROVIDER_OPENAI: {"max_images": 1500, "max_request_bytes": 512 * 1024 * 1024},
+    PROVIDER_VERTEX: {"max_images": 3000, "max_request_bytes": 256 * 1024 * 1024},
+}
+
+
+@dataclass(frozen=True)
+class ResolvedImageLimits:
+    """The effective image/request limits for one provider type.
+
+    ``None`` on a field means "no enforcement" for that dimension (the provider
+    type has no verified limit). Built by :meth:`ImageBudgetConfig.resolved`.
+    """
+
+    provider_type: str | None = None
+    max_images: int | None = None
+    max_request_bytes: int | None = None
+
+
+@dataclass
+class ImageBudgetConfig:
+    """Whole-request image + serialized-payload budget (#1143).
+
+    Applied to the outbound request view after attachment resolution, before a
+    provider call. See :mod:`decafclaw.image_budget` and docs/context-composer.md.
+
+    ``providers`` holds per-provider-type overrides as plain dicts (the generic
+    config loader does not auto-build a dict-of-dataclass). Each value may set
+    ``max_images`` and/or ``max_request_bytes``; unset keys fall back to the
+    verified defaults in :data:`_VERIFIED_IMAGE_LIMITS`. A provider type with no
+    entry and no verified default is unenforced.
+    """
+
+    providers: dict[str, dict] = field(default_factory=dict)
+
+    def resolved(self, provider_type: str | None) -> ResolvedImageLimits:
+        """Merge the verified defaults for ``provider_type`` with any override.
+
+        For each dimension (``max_images``, ``max_request_bytes``): an explicit
+        override value wins — including an explicit null, which *disables* that
+        dimension (e.g. keep a provider's byte cap but drop its count cap). With
+        no override, the verified default applies; with neither, ``None`` (no
+        enforcement). An unknown/empty provider type yields all-None.
+
+        Malformed values fail open: a non-numeric dimension value or an
+        unparseable per-provider mapping logs a warning and disables that
+        dimension (or the whole override) rather than raising on every turn.
+        """
+        if not provider_type:
+            return ResolvedImageLimits(provider_type=provider_type or None)
+        defaults = _VERIFIED_IMAGE_LIMITS.get(provider_type, {})
+        override = self.providers.get(provider_type) or {}
+        if isinstance(override, str):
+            # The generic loader's env path stringifies nested values
+            # (``_parse_dict`` maps every value through ``str()``), so a
+            # per-provider mapping arrives as its Python repr. Parse it back;
+            # anything that is not a clean mapping is ignored (with a warning)
+            # rather than raising on every turn.
+            try:
+                parsed = ast.literal_eval(override)
+            except (ValueError, SyntaxError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                override = parsed
+            else:
+                log.warning("image_budget: unparseable providers[%r] override %r; ignoring", provider_type, override)
+                override = {}
+
+        def pick(key: str):
+            # An explicit override (key present) wins, null included (= disable).
+            if key in override:
+                val = override[key]
+            elif key in defaults:
+                val = defaults[key]
+            else:
+                return None
+            if val is None:
+                return None
+            if isinstance(val, str):  # env-var path stringifies values
+                v = val.strip().lower()
+                if v in ("", "none", "null"):
+                    return None
+                val = v
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                log.warning(
+                    "image_budget: non-numeric %s=%r for provider %r; disabling that dimension", key, val, provider_type
+                )
+                return None
+
+        return ResolvedImageLimits(
+            provider_type=provider_type,
+            max_images=pick("max_images"),
+            max_request_bytes=pick("max_request_bytes"),
+        )
 
 
 @dataclass

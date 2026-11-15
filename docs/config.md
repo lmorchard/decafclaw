@@ -168,6 +168,16 @@ Tool-result clearing — a lightweight pre-compaction tier with three in-memory 
 
 `min_turn_age: 2` means tool messages from the current and previous user turn stay intact; older results are eligible for clearing. `min_size_bytes: 1024` is a floor — messages smaller than the stub itself wouldn't be worth clearing. `preserve_tools` is a hard allowlist for tools whose output is fundamentally load-bearing (e.g. `activate_skill` announces the tools the agent will use; `checklist_*` carries the per-conversation execution-loop state). `prune_resolved_errors: true` enables the resolved-error pruning pass (disabled = errors are left to the size/age clear alone); `prune_resolved_same_args_only: true` makes that pass conservative, pruning only when the resolving success used the same arguments as the failed call (default `false` = match on tool name alone). `prune_superseded_reads: true` enables the superseded-read pruning pass (default `true`), which stubs an older successful full-file read once a later successful full read of the same path supersedes it.
 
+### `image_budget`
+
+Whole-request image + serialized-payload budget (#1143). Applied to the outbound request view after attachment resolution, before a provider call. See [context-composer.md#image--payload-budget-1143](context-composer.md).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `providers` | dict[str, dict] | `{}` | `IMAGE_BUDGET_PROVIDERS` |
+
+`providers` is a per-provider-type override map (the generic loader does not auto-build a dict-of-dataclass, so values are plain objects). Each entry may set `max_images` (int) and/or `max_request_bytes` (int). An explicit `null` disables that dimension; unset keys fall back to the verified defaults — `openai-compat`/`openai`: 1,500 images / 512 MB (OpenAI's [images guide](https://developers.openai.com/api/docs/guides/images-vision)); `vertex`: 3,000 images / 256 MB (Gemini's [image-understanding limits](https://cloud.google.com/vertex-ai/docs/generative-ai/docs/multimodal/image-understanding)). Provider types with no entry and no verified default (`openai-responses`, `litellm`, `scripted`) are unenforced. A model config's `supports_vision: false` (on `model_configs`) turns every inbound image into an omission notice regardless of these limits.
+
 ### `vault`
 
 Vault location and write-gate settings. See [vault.md](vault.md).
@@ -500,6 +510,7 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 | `timeout` | int | `300` | HTTP timeout in seconds |
 | `streaming` | bool | `true` | Use streaming responses |
 | `reasoning_effort` | str or null | `null` | OpenAI Responses only: reasoning effort; omitted/null uses model default |
+| `supports_vision` | bool or null | `null` | Tri-state vision capability (#1143): `false` turns every inbound image into an omission notice; `null`/true budgets normally |
 
 `default_model` (top-level string) sets which model config to use when none is explicitly selected.
 

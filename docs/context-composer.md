@@ -506,6 +506,35 @@ The clear pass writes per-conversation cumulative stats (`cleanup.cleared_count`
 
 Configuration tunables: `cleanup.enabled`, `min_turn_age`, `min_size_bytes`, `preserve_tools` (size/age clear); `cleanup.prune_resolved_errors` (default `true`), `prune_resolved_same_args_only` (default `false`) (resolved-error pruning); `cleanup.prune_superseded_reads` (default `true`) (superseded-read pruning). See [config.md#cleanup](config.md#cleanup).
 
+## Image / payload budget (#1143)
+
+Many individually-acceptable images can collectively exceed a provider's image-count or request-body limit; a token estimate or per-image cap does not cover that. `apply_image_budget` in `src/decafclaw/image_budget.py` clamps the assembled multimodal request before submission, provider-aware and deterministic. It runs on the **outbound request view** — right after `resolve_attachments` has inlined images as base64 data-URL parts — in both the composer (`compose()`) and the side-question path. It never mutates archive entries or the pre-resolve originals; it returns a new message list (only messages whose images were evicted are copied) plus an `ImageBudgetReport` for diagnostics.
+
+**Dual clamp, in order:** (1) image count, then (2) total serialized request bytes.
+
+- **Count** — counts `image_url` parts in **user-role messages only** (the only role carrying images today; assistant/tool content is string-typed, and a synthetic assistant image part is a model output no serializer replays, so it is never counted or evicted). When the count exceeds `max_images`, evicts oldest-first down to the cap.
+- **Bytes** — accounts each image as its full data-URL length (base64 is ASCII, so characters == bytes) plus the non-image content (`other_bytes`: text + tool schemas, JSON-serialized with images removed) plus a fixed 64 KB **envelope reservation** for post-clamp request fields (the provider's own system prompt, model/limits/stream fields). `image_room = max_request_bytes − other_bytes − envelope`. When the inline bytes exceed the room, keeps images newest-first while they fit and evicts the rest oldest-first — protecting the most recent message's images.
+
+**Vision-unsupported:** a model config with `supports_vision: false` turns every inbound image into an omission notice (no budget math — pixels sent to a non-vision model are pure waste). `supports_vision: null` (unknown) budgets normally.
+
+**Omission notices:** each evicted image part is replaced, in place, by a text part `[image omitted: provider image limit (filename)]` — the filename attributed from the pre-resolve `attachments`, with a uniform fallback when none can be. The model (and a user) can target a reread of exactly what was dropped; the original file and archive entry are untouched.
+
+**Verified limits** (from each provider's own docs; sources recorded on `_VERIFIED_IMAGE_LIMITS` and pinned by `test_verified_defaults_match_provider_docs`), keyed by provider type:
+
+| Provider type | `max_images` / request | `max_request_bytes` |
+|---|---|---|
+| `openai-compat`, `openai` | 1,500 | 512 MB ([OpenAI](https://developers.openai.com/api/docs/guides/images-vision): 1,500 images, 512 MB payload) |
+| `vertex` | 3,000 | 256 MB ([Vertex](https://cloud.google.com/vertex-ai/docs/generative-ai/docs/multimodal/image-understanding): 3,000 images and PDFs combined, 256 MB inline part) |
+| `openai-responses`, `litellm`, `scripted` | unconfigured (`None`) — no enforcement, deliberate coverage growth |
+
+Two caveats on the Vertex row: non-migrated Gemini 2.5 endpoints cap the inline part at 30 MiB, and the provider's 500 MiB figure applies to the compressed payload while this budget measures the uncompressed body. The byte cap is the per-inline-part ceiling, so both stay satisfied for mainstream endpoints. Provider *types* also cannot express a gateway's upstream limits — a Claude model reached through `openrouter` (type `openai-compat`) is capped here at OpenAI's numbers, not Anthropic's own per-request image limit.
+
+**Configuration:** `image_budget.providers` is a plain per-provider-type override map (the generic loader does not auto-build a dict-of-dataclass). Each entry may set `max_images` and/or `max_request_bytes`; an explicit `null` disables that dimension, unset keys fall back to the verified defaults above. See [config.md#image_budget](config.md#image_budget).
+
+**Diagnostics:** the report (images included/omitted, inline + other bytes, provider type, vision flag) lands in the history `SourceEntry.details.image_budget`, surfaced by the context popover.
+
+**Failure modes are fail-open.** An unresolvable model (empty/unknown name, missing provider) applies no enforcement rather than breaking the turn. The byte accounting is a provider-agnostic estimate of the OpenAI-format body; the 64 KB envelope reservation absorbs each provider's structural differences, and tests verify the budgeted request fits under the real `openai-compat` / `vertex` serializers.
+
 ## Decision slice through compaction
 
 Compaction's prose summary is lossy for high-signal facts — architectural decisions, unresolved questions, artifacts produced — and that loss compounds across iterated compactions. Alongside the prose, compaction emits a **structured slice** that's threaded forward into every subsequent compaction so once an entry lands it's not re-derived from prose each cycle. See `src/decafclaw/compaction_decisions.py` and #302.

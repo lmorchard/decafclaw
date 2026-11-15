@@ -89,6 +89,10 @@ The web UI supports drag-and-drop file uploads in the chat input. Files are sent
 
 Supported content types include images (shown inline), documents, and arbitrary binaries (linked for download).
 
+## Image budget on the outbound request (#1143)
+
+When a turn's history is assembled for an LLM call, `resolve_attachments` inlines every image as a base64 data-URL. Many individually-small images can still collectively exceed a provider's image-count or request-body limit, so `apply_image_budget` (see [context-composer.md#image--payload-budget-1143](context-composer.md)) clamps them before submission: a provider-aware count clamp, then a byte clamp that protects the most recent images and evicts older ones oldest-first. Evicted images become readable omission notices (`[image omitted: provider image limit (filename)]`); the stored files and archive entries are never modified. Models with `supports_vision: false` get every image turned into a notice.
+
 ## debug_context attachments
 
 The `debug_context` tool uploads the full JSON context and system prompt as file attachments in Mattermost, making it easy to inspect the full LLM context without reading workspace files.
