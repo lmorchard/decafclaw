@@ -41,6 +41,7 @@ from .config_types import (
     RecentJournalConfig,
     ReflectionConfig,
     RelevanceConfig,
+    RemindersConfig,
     SchedulesConfig,
     SecretPolicyConfig,
     ShellConfig,
@@ -245,6 +246,7 @@ class Config:
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     cleanup: CleanupConfig = field(default_factory=CleanupConfig)
     notes: NotesConfig = field(default_factory=NotesConfig)
+    reminders: RemindersConfig = field(default_factory=RemindersConfig)
     recent_journal: RecentJournalConfig = field(default_factory=RecentJournalConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
@@ -567,6 +569,8 @@ def load_config() -> Config:
 
     notes = load_sub_config(NotesConfig, file_data.get("notes", {}), "NOTES")
 
+    reminders = load_sub_config(RemindersConfig, file_data.get("reminders", {}), "REMINDERS")
+
     recent_journal = load_sub_config(RecentJournalConfig, file_data.get("recent_journal", {}), "RECENT_JOURNAL")
 
     embedding = load_sub_config(
@@ -760,6 +764,7 @@ def load_config() -> Config:
         compaction=compaction,
         cleanup=cleanup,
         notes=notes,
+        reminders=reminders,
         recent_journal=recent_journal,
         embedding=embedding,
         heartbeat=heartbeat,

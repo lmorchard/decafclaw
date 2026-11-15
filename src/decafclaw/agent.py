@@ -49,6 +49,7 @@ from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspa
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .recovery import RECOVERY_CONTINUE, RECOVERY_STOP, RecoveryState, decide_recovery_retry
 from .reflection_metrics import classify_outcome, response_delta
+from .reminders import reminder_message
 from .skills import activate_always_loaded
 from .telemetry import get_tracer
 from .tool_definitions import build_tool_list, reconcile_mcp_tools, refresh_dynamic_tools
@@ -1039,6 +1040,12 @@ class TurnRunner:
         if cancelled:
             return _Final(result=cancelled)
 
+        # Scoped reminders (#1127): a `remind` rule matches during dispatch and
+        # queues a hit on the ctx. Inject after the batch so the messages land
+        # behind their tool results, and append to self.messages only — never
+        # archived, so restore_history can never resurrect one.
+        self._inject_scoped_reminders()
+
         if self.ctx.steer_event and self.ctx.steer_event.is_set():
             log.info("Agent loop interrupted by steering message")
             text = "\n\n".join(self.accumulated_text_parts) if self.accumulated_text_parts else ""
@@ -1661,6 +1668,23 @@ class TurnRunner:
                     thinking=thinking,
                 )
         return ToolResult(text=content or "", termination_reason=termination_reason, thinking=thinking)
+
+    def _inject_scoped_reminders(self) -> None:
+        """Drain queued reminder hits into the LLM-facing message list only.
+
+        Ephemeral by design (#1127): the same reasoning as the loop-breaker
+        nudge — a user-role message in the archive would be re-read by
+        restore_history on restart and pollute every later turn. The hits were
+        budget-checked in `reminders.check`, so this only formats and appends.
+        """
+        hits = self.ctx.reminder_hits
+        if not hits:
+            return
+        # Rebind rather than clear: tool-call forks keep a reference to the old
+        # list, and they are all done by the time this runs.
+        self.ctx.reminder_hits = []
+        for hit in hits:
+            self.messages.append(reminder_message(hit))
 
     async def _write_diagnostics(self) -> None:
         """Persist context diagnostics + skill state on any turn-exit path.
