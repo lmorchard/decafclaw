@@ -22,6 +22,7 @@ from decafclaw.shell_presets import (
     format_rules,
     split_rules,
 )
+from decafclaw.tool_outputs import CAPPED, COMPLETE, format_handle, record_artifact
 
 from ..media import ToolResult
 from .confirmation import request_confirmation
@@ -787,6 +788,12 @@ class _StreamCollector:
         spill file could not be opened)."""
         return self._path if self.spilled else None
 
+    @property
+    def disk_capped(self) -> bool:
+        """True once the artifact stopped growing at the disk cap (#922), so a
+        reader knows the file holds only a prefix of the stream."""
+        return self._disk_capped
+
     def feed(self, chunk: bytes) -> None:
         """Feed one raw pipe read (EOF is b"" — call finish() instead)."""
         self._feed_text(self._decoder.decode(chunk), len(chunk))
@@ -1011,7 +1018,23 @@ async def _execute_command(ctx: "Context", command: str, timeout: float = _DEFAU
                 f"[tool:shell] {label} truncated: {format_size(collector.total_bytes)} -> "
                 f"{format_size(len(collector.tail.encode('utf-8')))} preview, full output at {path}"
             )
-            output += truncation_note(str(path))
+            handle = format_handle(ctx.conv_id, path.name) if ctx.conv_id else None
+            if handle is not None:
+                try:
+                    stored_bytes = path.stat().st_size
+                except OSError:
+                    stored_bytes = 0
+                record_artifact(
+                    ctx.config,
+                    ctx.conv_id,
+                    path.name,
+                    state=CAPPED if collector.disk_capped else COMPLETE,
+                    total_bytes=collector.total_bytes,
+                    stored_bytes=stored_bytes,
+                    tool="shell",
+                    tool_call_id=call_id,
+                )
+            output += truncation_note(str(path), handle=handle)
         else:  # a limit was exceeded but the spill file could not be opened
             output += f"\n\n[Output truncated. Full {label} could not be saved ({format_size(collector.total_bytes)}).]"
 

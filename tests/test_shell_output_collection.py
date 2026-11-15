@@ -87,6 +87,16 @@ async def test_large_stdout_bounded_preview_full_artifact(ctx):
     # stderr was empty — no stderr artifact.
     assert not (_artifact_dir(ctx) / "call-test.stderr.txt").exists()
 
+    # #1128: the note carries a stable handle, and the saved stream reads back
+    # through it — the shell artifact is addressable, not just a path.
+    from decafclaw.tool_outputs import format_handle, read_page
+
+    handle = format_handle(ctx.conv_id, stdout_file.name)
+    assert f"Stable handle: {handle}" in result.text
+    page = read_page(ctx.config, ctx.conv_id, handle, limit=10)
+    assert page.state == "complete"
+    assert page.content.startswith("1\n")
+
 
 @pytest.mark.asyncio
 async def test_per_stream_identity(ctx):

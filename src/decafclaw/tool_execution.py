@@ -23,6 +23,7 @@ from .archive import append_message
 from .conversation_paths import conversation_dir
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause
 from .telemetry import get_tracer
+from .tool_outputs import COMPLETE, capture, handle_note
 from .tools import TOOL_DEFINITIONS, execute_tool
 
 _tracer = get_tracer(__name__)
@@ -310,14 +311,32 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
     if max_bytes is not None:
         content_bytes = content.encode("utf-8")
         if len(content_bytes) > max_bytes:
-            tool_outputs_dir = conversation_dir(call_ctx.config, call_ctx.conv_id, create=True) / "tool_outputs"
-            tool_outputs_dir.mkdir(parents=True, exist_ok=True)
-            filepath = tool_outputs_dir / f"{tool_call_id}.txt"
-            filepath.write_bytes(content_bytes)
-
-            truncated_bytes = content_bytes[:max_bytes]
-            content = truncated_bytes.decode("utf-8", errors="replace")
-            content += f"\n\n[Output truncated. Full output saved to {filepath}. Use the 'read' tool to inspect it.]"
+            preview = content_bytes[:max_bytes].decode("utf-8", errors="replace")
+            if call_ctx.conv_id:
+                # Stable handle (#1128): the pointer names an address that
+                # survives compaction and reload, not a filesystem path. The
+                # artifact keeps the full body (the preview is what got capped).
+                captured = capture(
+                    call_ctx.config,
+                    call_ctx.conv_id,
+                    tool_call_id,
+                    content_bytes,
+                    tool=fn_name,
+                )
+                if captured.state == COMPLETE:
+                    content = preview + handle_note(captured)
+                else:
+                    content = preview + f"\n\n[Output truncated. Full output could not be saved ({captured.message}).]"
+            else:
+                # No conversation id (bare harness call): keep the path pointer.
+                tool_outputs_dir = conversation_dir(call_ctx.config, call_ctx.conv_id, create=True) / "tool_outputs"
+                tool_outputs_dir.mkdir(parents=True, exist_ok=True)
+                filepath = tool_outputs_dir / f"{tool_call_id}.txt"
+                filepath.write_bytes(content_bytes)
+                content = preview
+                content += (
+                    f"\n\n[Output truncated. Full output saved to {filepath}. Use the 'read' tool to inspect it.]"
+                )
 
     tool_msg = {
         "role": "tool",

@@ -26,18 +26,19 @@ async def test_tool_output_exceeding_limit_is_managed(ctx):
 
     content = tool_msg["content"]
     assert "Output truncated" in content
-    assert "Full output saved to" in content
-    assert "Use the 'read' tool to inspect it." in content
+    # #1128: the pointer carries the stable handle, not a filesystem path, so
+    # the saved body stays addressable after compaction and reload.
+    assert "Full output saved as tool_output://test-conv/call_123.txt" in content
+    assert "tool_output_read" in content
 
-    # Verify the truncated size
-    # The file path logic puts it in:
-    # workspace/conversations/{conv_id}/tool_outputs/{tool_call_id}.txt
+    # The artifact keeps the full body (the preview is what got capped), at the
+    # existing location — the handle wraps the materialization rather than
+    # moving it.
     from decafclaw.conversation_paths import conversation_dir
 
     tool_outputs_dir = conversation_dir(ctx.config, ctx.conv_id, create=False) / "tool_outputs"
     filepath = tool_outputs_dir / "call_123.txt"
 
-    assert str(filepath) in content
     assert filepath.exists()
     assert filepath.read_text() == long_text
 

@@ -88,7 +88,17 @@ Retrieval by handle distinguishes five outcomes, each reported distinctly (and r
 
 ## Open design decisions
 
-- Reference syntax (bare handle vs. typed envelope) and cross-conversation access model remain decisions for this design; the implementation slice must not hard-code either.
+Settled when the first slice was implemented (2026-11-15):
+
+- **Reference syntax: typed envelope.** `tool_output://{conv_id}/{filename}`. The scheme makes a reference self-describing in model-facing text, the conversation id makes the scope explicit rather than implicit, and the filename lets one grammar address `{tool_call_id}.txt` and shell's `{tool_call_id}.stdout.txt` / `.stderr.txt` artifacts without a second form. A malformed handle is rejected, never resolved as a path.
+- **Cross-conversation access: denied by default.** A handle whose conversation id differs from the reader's returns the `denied` state and no content. There is no permission path yet; adding one later changes the authorization step, not the syntax.
+
+## Delivered slice
+
+`docs/tool-output-references.md` documents the implementation: `src/decafclaw/tool_outputs.py` (capture, paged read, delete, state reporting), the `tool_output_read` tool, handle-bearing notes for both the generic truncation path and shell's streamed artifacts, and a metadata sidecar (`{filename}.meta.json`) recording whether an artifact holds the complete body or only its prefix. Tests live in `tests/test_tool_outputs.py` and `tests/test_shell_output_collection.py`.
+
+Not in this slice, per the design: handles for child results and retained history, and an explicit user-facing delete surface (conversation deletion removes artifacts, after which their handles report `missing`).
+
 
 ## Evidence
 
