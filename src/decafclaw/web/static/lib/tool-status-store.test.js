@@ -159,6 +159,7 @@ describe('ToolStatusStore', () => {
                 expect(mockNotification).toHaveBeenCalledTimes(1);
                 expect(mockNotification).toHaveBeenCalledWith('DecafClaw: Approval for shell', {
                     body: 'Run git status?',
+                    icon: '/static/icons/favicon-128.png',
                 });
                 expect(notificationInstances.length).toBe(1);
 

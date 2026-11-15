@@ -215,6 +215,7 @@ export class ToolStatusStore {
             const title = msg.tool ? `DecafClaw: Approval for ${msg.tool}` : 'DecafClaw: Approval needed';
             const notif = new Notification(title, {
               body: msg.message || msg.command || 'Approval requested by agent.',
+              icon: '/static/icons/favicon-128.png',
             });
             notif.onclick = () => {
               window.focus();

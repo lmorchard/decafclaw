@@ -489,7 +489,7 @@ The HTTP server (`src/decafclaw/http_server.py`) serves both the web UI and the 
 
 - **REST API** — all conversation and vault management
 - **WebSocket** (`/ws/chat`) — real-time chat streaming, history loading, model changes, turn cancellation
-- **Static files** — serves the frontend from `src/decafclaw/web/static/`
+- **Static files** — serves the frontend from `src/decafclaw/web/static/`. Favicons and the app icon live in `static/icons/` (also served at `/favicon.ico` for clients that ignore the `<link>` tags); full-size logo artwork is in `docs/assets/brand/`.
 
 ### REST vs WebSocket
 
