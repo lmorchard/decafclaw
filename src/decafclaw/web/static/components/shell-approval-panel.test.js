@@ -24,9 +24,16 @@ function jsonResponse(body, status = 200) {
 }
 
 async function mountPanel() {
+  // Server-side preset list; promote appends to it like ShellPresetStore does,
+  // so a test can tell a post-promote store reload from a stale cache.
+  /** @type {Array<{name: string, source: string, rules: string[]}>} */
+  const serverPresets = [{ name: 'custom_work', source: 'custom', rules: ['Auto-approve git status'] }];
   const fetchMock = vi.fn(async (url, options) => {
     const u = new URL(url, 'http://test');
     const method = (options?.method || 'GET').toUpperCase();
+    if (u.pathname === '/api/shell-approval/presets') {
+      return jsonResponse(serverPresets);
+    }
     if (u.pathname === '/api/conversations/c1/shell-approval') {
       return jsonResponse(APPROVAL_RESPONSE);
     }
@@ -47,6 +54,12 @@ async function mountPanel() {
     if (u.pathname === '/api/conversations/c1/shell-approval/promote') {
       if (method === 'POST') {
         const body = JSON.parse(options.body);
+        const existing = serverPresets.find(p => p.name === body.preset);
+        if (existing) {
+          if (!existing.rules.includes(body.rule)) existing.rules.push(body.rule);
+        } else {
+          serverPresets.push({ name: body.preset, source: 'custom', rules: [body.rule] });
+        }
         return jsonResponse({ ok: true });
       }
     }
@@ -184,5 +197,46 @@ describe('shell-approval-panel component', () => {
       rule: 'Auto-approve make test in this repo',
       preset: 'backend_tests',
     });
+  });
+
+  it('shows the conversation rule being copied in the promote form', async () => {
+    const { el } = await mountPanel();
+    el._panelMount.querySelector('.sap-rule .sap-promote-btn').click();
+    await el.updateComplete;
+
+    const ruleEl = el._panelMount.querySelector('.sap-promote-rule');
+    expect(ruleEl?.textContent).toBe('Auto-approve make test in this repo');
+    // The picker offers existing custom presets without another view loading the store.
+    await vi.waitFor(() => expect(el._presets.map(p => p.name)).toContain('custom_work'));
+    await el.updateComplete;
+    const options = Array.from(el._panelMount.querySelectorAll('.sap-preset-select option')).map(o => o.value);
+    expect(options).toContain('custom_work');
+  });
+
+  it('reloads the preset store after promote and confirms the new preset', async () => {
+    const { el } = await mountPanel();
+    el._panelMount.querySelector('.sap-rule .sap-promote-btn').click();
+    await el.updateComplete;
+    const nameInput = el._panelMount.querySelector('.sap-new-preset-input');
+    nameInput.value = 'backend_tests';
+    nameInput.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    el._panelMount.querySelector('.sap-promote-row .sap-promote-btn').click();
+
+    // Success is visible and names both sides of the copy.
+    await vi.waitFor(() => expect(el._promoteNotice).toContain('backend_tests'));
+    await el.updateComplete;
+    const banner = el._panelMount.querySelector('.sap-success-banner');
+    expect(banner?.textContent).toContain('Auto-approve make test in this repo');
+    expect(banner?.textContent).toContain('backend_tests');
+    // The form closes on success, so the banner is the only confirmation.
+    expect(el._panelMount.querySelector('.sap-new-preset-input')).toBeNull();
+
+    // The shared preset store reloaded, so the picker can offer it right away.
+    await vi.waitFor(() => expect(el._presets.map(p => p.name)).toContain('backend_tests'));
+    el._panelMount.querySelector('.sap-rule .sap-promote-btn').click();
+    await el.updateComplete;
+    const options = Array.from(el._panelMount.querySelectorAll('.sap-preset-select option')).map(o => o.value);
+    expect(options).toContain('backend_tests');
   });
 });
