@@ -805,7 +805,7 @@ class ContextComposer:
         # archive entries, and fails open when the model can't be resolved.
         llm_history, image_report = apply_image_budget(
             config,
-            getattr(ctx, "active_model", ""),
+            ctx.active_model,
             llm_history,
             originals=llm_history_originals,
             tools=active_tools,
@@ -825,6 +825,8 @@ class ContextComposer:
                     "images_omitted": image_report.images_omitted,
                     "inline_bytes": image_report.inline_bytes,
                     "other_bytes": image_report.other_bytes,
+                    "max_images": image_report.max_images,
+                    "max_request_bytes": image_report.max_request_bytes,
                     "provider_type": image_report.provider_type,
                     "vision_unsupported": image_report.vision_unsupported,
                 },

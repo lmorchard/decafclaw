@@ -28,6 +28,10 @@ import json
 import logging
 from dataclasses import dataclass
 
+# model_catalog imports only config_types + llm.types (both cycle-free and
+# lightweight), so a module-level import is safe.
+from .model_catalog import effective_default_model
+
 log = logging.getLogger(__name__)
 
 # Body bytes added after the clamp sees the context: injected reminders, the
@@ -100,8 +104,6 @@ def _resolve(config, model_name: str):
     """
     name = model_name or ""
     if not name:
-        from .model_catalog import effective_default_model  # deferred: avoid cycle
-
         try:
             name = effective_default_model(config) or ""
         except Exception as exc:  # fail-open on any resolution surprise
@@ -121,19 +123,30 @@ def _resolve(config, model_name: str):
     return provider_type, limits.max_images, limits.max_request_bytes, supports_vision
 
 
-def _omission_notice(originals: list[dict] | None, msg_index: int, image_ordinal: int = 0) -> str:
+def _omission_notice(
+    originals: list[dict] | None, msg_index: int, image_ordinal: int = 0, image_part_count: int | None = None
+) -> str:
     """Omission-notice text for an evicted image.
 
     Attributes the pre-resolve attachment filename to this part: the k-th image
     part in a message maps to the k-th ``image/*`` attachment (the order
     :func:`decafclaw.attachments.resolve_attachments` inlines them). A uniform
-    fallback is used when no filename can be attributed (no ``originals``, or a
-    missing-file shift). The filename lets the model — and a user — target a
-    reread of exactly what was dropped.
+    fallback is used when no filename can be attributed (no ``originals``, an
+    unattributable ordinal, or a missing-file shift). The filename lets the
+    model — and a user — target a reread of exactly what was dropped.
+
+    ``image_part_count`` is the number of image parts actually present in the
+    resolved message. The k-th part maps to the k-th ``image/*`` attachment only
+    when every image attachment inlined: a file missing from the workspace
+    yields a text placeholder, not an image part, which shifts the mapping. A
+    count mismatch means naming a file would misattribute, so fall back to the
+    uniform notice.
     """
     if originals is not None and 0 <= msg_index < len(originals):
         atts = originals[msg_index].get("attachments") or []
         image_names = [a.get("filename") for a in atts if (a.get("mime_type") or "").startswith("image/")]
+        if image_part_count is not None and len(image_names) != image_part_count:
+            return "[image omitted: provider image limit]"
         if 0 <= image_ordinal < len(image_names) and image_names[image_ordinal]:
             return f"[image omitted: provider image limit ({image_names[image_ordinal]})]"
     return "[image omitted: provider image limit]"
@@ -203,6 +216,8 @@ def apply_image_budget(
     def mark(msg_index: int, part_index: int) -> None:
         evict_by_msg.setdefault(msg_index, set()).add(part_index)
 
+    other_bytes = 0  # measured only when the byte dimension is enforced
+
     if supports_vision is False:
         # The model cannot see images: every image part becomes a notice. No
         # budget math — sending pixels to a non-vision model is pure waste.
@@ -267,7 +282,7 @@ def apply_image_budget(
         images_included=included,
         images_omitted=total_images - included,
         inline_bytes=inline_bytes,
-        other_bytes=_other_serialized_bytes(llm_history, tools) if max_request_bytes is not None else 0,
+        other_bytes=other_bytes,  # measured in the byte clamp above (0 when unenforced)
         envelope_bytes=ENVELOPE_RESERVATION_BYTES if max_request_bytes is not None else 0,
     )
 
@@ -307,13 +322,18 @@ def _apply_evictions(
             new.append(m)
             continue
         # Map each content index to its ordinal among the message's image parts,
-        # so a notice names the specific attachment that was dropped.
+        # so a notice names the specific attachment that was dropped. The part
+        # count guards filename attribution against missing-file shifts (see
+        # _omission_notice).
         ordinal = 0
+        image_part_count = sum(1 for p in content if _is_image_part(p))
         new_content = []
         for j, p in enumerate(content):
             if _is_image_part(p):
                 if j in part_set:
-                    new_content.append({"type": "text", "text": _omission_notice(originals, i, ordinal)})
+                    new_content.append(
+                        {"type": "text", "text": _omission_notice(originals, i, ordinal, image_part_count)}
+                    )
                 else:
                     new_content.append(p)
                 ordinal += 1

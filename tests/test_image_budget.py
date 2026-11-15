@@ -10,6 +10,7 @@ Covers all five acceptance criteria:
   AC5 — replayed inputs vs non-replayed outputs; fresh limits on provider/config change.
 """
 
+import copy
 import json
 
 from decafclaw.config import Config
@@ -296,7 +297,6 @@ def test_ac4_originals_and_archive_unchanged():
     ]
     # Simulate resolve_attachments output: image parts inlined, attachments stripped.
     llm_history = [{"role": "user", "content": [{"type": "text", "text": f"m{i}"}, _img(s)]} for i in range(3)]
-    import copy
 
     originals_before = copy.deepcopy(originals)
     history_before = copy.deepcopy(llm_history)
@@ -336,6 +336,57 @@ def test_ac4_omission_notice_names_the_file():
     ]
     assert any("photo0.png" in t for t in notice_texts)
     assert any("photo1.png" in t for t in notice_texts)
+
+
+def test_ac4_missing_file_shift_falls_back_to_uniform_notice():
+    """A missing earlier attachment shifts the part↔attachment mapping; no filename.
+
+    ``resolve_attachments`` emits a text placeholder (not an image part) for a
+    file missing from the workspace, so the k-th image part no longer maps to
+    the k-th ``image/*`` attachment. Naming a file would misattribute, so the
+    notice must use the uniform fallback.
+    """
+    cfg = _vertex_config()
+    s = 100_000
+    cfg.image_budget.providers["vertex"] = {
+        "max_images": None,
+        # Room for exactly one image; this single (larger) one does not fit.
+        "max_request_bytes": ENVELOPE_RESERVATION_BYTES + s - 1,
+    }
+
+    # Original: two image/* attachments; the first file is missing on disk.
+    originals = [
+        {
+            "role": "user",
+            "content": "m0",
+            "attachments": [
+                {"filename": "gone.png", "mime_type": "image/png"},  # missing → placeholder
+                {"filename": "kept.png", "mime_type": "image/png"},  # inlined → the image part
+            ],
+        }
+    ]
+    # Resolved view: placeholder text + one image part (the mapping has shifted).
+    llm_history = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "m0"},
+                {"type": "text", "text": "[attachment missing: gone.png]"},
+                _img(s),  # this is kept.png, but it is the 0th image part
+            ],
+        }
+    ]
+
+    new, rep = apply_image_budget(cfg, "m", llm_history, originals=originals)
+
+    assert rep.images_omitted == 1
+    texts = [
+        p["text"] for p in new[0]["content"] if p.get("type") == "text" and p["text"].startswith("[image omitted:")
+    ]
+    assert len(texts) == 1
+    # Uniform fallback — must not name either file (naming "gone.png" would be
+    # wrong: that part was never sent; the mapping cannot be trusted).
+    assert texts[0] == "[image omitted: provider image limit]"
 
 
 def test_ac4_report_fields_populated():
@@ -432,3 +483,46 @@ def test_ac5_unresolvable_model_fails_open():
     assert rep.max_images is None and rep.max_request_bytes is None
     assert rep.images_included == 1 and rep.images_omitted == 0
     assert new is hist
+
+
+# ---------------------------------------------------------------------------
+# Config robustness — resolved() must never raise on a turn
+# ---------------------------------------------------------------------------
+
+
+def test_config_env_path_stringified_override_parses():
+    """The generic loader's env path stringifies nested values; resolved() parses them back.
+
+    ``IMAGE_BUDGET_PROVIDERS='{"vertex": {"max_images": 10}}'`` arrives as
+    ``providers["vertex"] == "{'max_images': 10}"`` (a string) because
+    ``_parse_dict`` maps every value through ``str()``.
+    """
+    from decafclaw.config_types import ImageBudgetConfig
+
+    cfg = ImageBudgetConfig(providers={"vertex": "{'max_images': 10}"})
+    limits = cfg.resolved("vertex")
+
+    assert limits.max_images == 10  # parsed from the stringified mapping
+    assert limits.max_request_bytes == 20 * 1024 * 1024  # verified default still applies
+
+
+def test_config_non_numeric_override_disables_dimension():
+    """A non-numeric override value disables that dimension rather than raising."""
+    from decafclaw.config_types import ImageBudgetConfig
+
+    cfg = ImageBudgetConfig(providers={"vertex": {"max_images": "abc", "max_request_bytes": None}})
+    limits = cfg.resolved("vertex")
+
+    assert limits.max_images is None  # "abc" → disabled, no exception
+    assert limits.max_request_bytes is None  # explicit null → disabled
+
+
+def test_config_unparseable_override_ignored():
+    """An unparseable per-provider mapping is ignored (verified defaults apply)."""
+    from decafclaw.config_types import ImageBudgetConfig
+
+    cfg = ImageBudgetConfig(providers={"vertex": "max_images 10"})  # not a mapping
+    limits = cfg.resolved("vertex")
+
+    assert limits.max_images == 3600  # verified default, override ignored
+    assert limits.max_request_bytes == 20 * 1024 * 1024

@@ -8,6 +8,8 @@ Field metadata supports:
 
 from __future__ import annotations
 
+import ast
+import logging
 from dataclasses import dataclass, field, replace
 from dataclasses import fields as dc_fields
 
@@ -15,6 +17,8 @@ from dataclasses import fields as dc_fields
 # config -> config_types -> llm.types never loops back to config). Used as keys
 # for the verified image-budget limits below.
 from .llm.types import PROVIDER_OPENAI, PROVIDER_OPENAI_COMPAT, PROVIDER_VERTEX
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -518,11 +522,30 @@ class ImageBudgetConfig:
         dimension (e.g. keep a provider's byte cap but drop its count cap). With
         no override, the verified default applies; with neither, ``None`` (no
         enforcement). An unknown/empty provider type yields all-None.
+
+        Malformed values fail open: a non-numeric dimension value or an
+        unparseable per-provider mapping logs a warning and disables that
+        dimension (or the whole override) rather than raising on every turn.
         """
         if not provider_type:
             return ResolvedImageLimits(provider_type=provider_type or None)
         defaults = _VERIFIED_IMAGE_LIMITS.get(provider_type, {})
         override = self.providers.get(provider_type) or {}
+        if isinstance(override, str):
+            # The generic loader's env path stringifies nested values
+            # (``_parse_dict`` maps every value through ``str()``), so a
+            # per-provider mapping arrives as its Python repr. Parse it back;
+            # anything that is not a clean mapping is ignored (with a warning)
+            # rather than raising on every turn.
+            try:
+                parsed = ast.literal_eval(override)
+            except (ValueError, SyntaxError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                override = parsed
+            else:
+                log.warning("image_budget: unparseable providers[%r] override %r; ignoring", provider_type, override)
+                override = {}
 
         def pick(key: str):
             # An explicit override (key present) wins, null included (= disable).
@@ -538,8 +561,14 @@ class ImageBudgetConfig:
                 v = val.strip().lower()
                 if v in ("", "none", "null"):
                     return None
-                val = int(v)
-            return int(val)
+                val = v
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                log.warning(
+                    "image_budget: non-numeric %s=%r for provider %r; disabling that dimension", key, val, provider_type
+                )
+                return None
 
         return ResolvedImageLimits(
             provider_type=provider_type,
