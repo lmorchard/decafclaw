@@ -275,8 +275,10 @@ Edits that change the rules go through the conversation-scoped REST endpoints
 `DELETE .../patterns`, `POST .../promote`); rule add/remove clears the cached pattern
 server-side. The panel portals to a body-level `shell-approval-panel-mount` div (the
 [portal pattern](web-ui-mobile.md#no-position-fixed-inside-transformed-ancestors)).
-Opened via the shell-approval trigger next to the Mode picker (sidebar fallback) or in the
-chat controls mode row (controls strip present).
+Opened via the shell-approval gear in the chat controls' conversation-action cluster
+(compact 32px sizing, level with the terminal and side-question buttons) or from the
+sidebar trigger when the controls strip is absent. Both triggers share the
+`.shell-approval-open-btn` class the panel listens for.
 
 ### Copy conversation
 

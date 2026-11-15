@@ -126,4 +126,24 @@ describe('chat-controls', () => {
     const { el } = await mount();
     expect(el.querySelector('copy-conversation-menu')).toBeNull();
   });
+
+  // Issue #1263: the shell-approval gear must sit in the compact actions
+  // cluster. In the mode control it kept the 44px floating-btn floor and
+  // rendered larger than the buttons beside it.
+  it('places the shell-approval trigger in the compact actions cluster', async () => {
+    const { el } = await mount();
+    const trigger = el.querySelector('button.shell-approval-open-btn');
+    expect(trigger).toBeTruthy();
+    expect(trigger.closest('.actions-control')).toBeTruthy();
+    expect(trigger.closest('.mode-control')).toBeNull();
+    // Same cluster as the other compact conversation controls.
+    for (const cls of ['.terminal-open-btn', '.side-question-action-btn']) {
+      expect(trigger.closest('.actions-control')).toBe(el.querySelector(cls).closest('.actions-control'));
+    }
+  });
+
+  it('keeps the shell-approval trigger available without configured modes', async () => {
+    const { el } = await mount({ availableModes: [] });
+    expect(el.querySelector('button.shell-approval-open-btn')).toBeTruthy();
+  });
 });
