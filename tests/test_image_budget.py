@@ -33,7 +33,7 @@ def _user(text: str, images: list[dict]) -> dict:
 
 
 def _vertex_config(**overrides) -> Config:
-    """A config whose active model routes to a vertex provider (3600 / 20 MB)."""
+    """A config whose active model routes to a vertex provider (3,000 / 256 MB)."""
     base = dict(
         providers={"v": ProviderConfig(type="vertex", project="p")},
         model_configs={"m": ModelConfig(provider="v", model="gemini-2.5-flash")},
@@ -87,7 +87,7 @@ def _image_parts(messages: list[dict], role: str = "user") -> int:
 
 def test_ac1_many_small_images_within_limits_all_included():
     """Many individually-small images that fit the provider limits all go out."""
-    cfg = _vertex_config()  # vertex: 3600 images / 20 MB — generous
+    cfg = _vertex_config()  # vertex: 3,000 images / 256 MB — generous
     hist = [_user(f"msg {i}", [_img(120)]) for i in range(50)]
     new, rep = apply_image_budget(cfg, "m", hist)
 
@@ -444,7 +444,6 @@ def test_ac5_fresh_limits_on_provider_change():
     hist = [_user(f"m{i}", [_img(s)]) for i in range(3)]
 
     generous = _vertex_config(model_configs={"m": ModelConfig(provider="v", model="gemini-2.5-flash")})
-    generous.image_budget.providers["vertex"] = {"max_images": None, "max_request_bytes": 20 * 1024 * 1024}
     _, rep_generous = apply_image_budget(generous, "m", hist)
 
     tight = _vertex_config(model_configs={"m": ModelConfig(provider="v", model="gemini-2.5-flash")})
@@ -503,7 +502,7 @@ def test_config_env_path_stringified_override_parses():
     limits = cfg.resolved("vertex")
 
     assert limits.max_images == 10  # parsed from the stringified mapping
-    assert limits.max_request_bytes == 20 * 1024 * 1024  # verified default still applies
+    assert limits.max_request_bytes == 256 * 1024 * 1024  # verified default still applies
 
 
 def test_config_non_numeric_override_disables_dimension():
@@ -524,5 +523,39 @@ def test_config_unparseable_override_ignored():
     cfg = ImageBudgetConfig(providers={"vertex": "max_images 10"})  # not a mapping
     limits = cfg.resolved("vertex")
 
-    assert limits.max_images == 3600  # verified default, override ignored
-    assert limits.max_request_bytes == 20 * 1024 * 1024
+    assert limits.max_images == 3000  # verified default, override ignored
+    assert limits.max_request_bytes == 256 * 1024 * 1024
+
+
+# ---------------------------------------------------------------------------
+# Verified provider limits — pinned to the providers' documented values
+# ---------------------------------------------------------------------------
+
+
+def test_verified_defaults_match_provider_docs():
+    """Pin the per-provider-type defaults to the documented limits.
+
+    Sources are recorded on ``_VERIFIED_IMAGE_LIMITS`` in ``config_types``:
+    OpenAI (512 MB payload / 1,500 images per request) and Vertex AI / Gemini
+    (3,000 images and PDFs combined; 256 MB inline part). Changing a number
+    here means re-verifying the provider doc first — that is the point of the
+    pin.
+    """
+    from decafclaw.config_types import ImageBudgetConfig
+
+    cfg = ImageBudgetConfig()
+
+    for provider_type in ("openai", "openai-compat"):
+        limits = cfg.resolved(provider_type)
+        assert limits.max_images == 1500
+        assert limits.max_request_bytes == 512 * 1024 * 1024
+
+    vertex = cfg.resolved("vertex")
+    assert vertex.max_images == 3000
+    assert vertex.max_request_bytes == 256 * 1024 * 1024
+
+    # Provider types without a verified limit stay unenforced.
+    for provider_type in ("openai-responses", "litellm", "scripted", None, ""):
+        limits = cfg.resolved(provider_type)
+        assert limits.max_images is None
+        assert limits.max_request_bytes is None

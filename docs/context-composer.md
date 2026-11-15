@@ -519,13 +519,15 @@ Many individually-acceptable images can collectively exceed a provider's image-c
 
 **Omission notices:** each evicted image part is replaced, in place, by a text part `[image omitted: provider image limit (filename)]` — the filename attributed from the pre-resolve `attachments`, with a uniform fallback when none can be. The model (and a user) can target a reread of exactly what was dropped; the original file and archive entry are untouched.
 
-**Verified limits** (official docs, web-verified 2026-11), keyed by provider type:
+**Verified limits** (from each provider's own docs; sources recorded on `_VERIFIED_IMAGE_LIMITS` and pinned by `test_verified_defaults_match_provider_docs`), keyed by provider type:
 
 | Provider type | `max_images` / request | `max_request_bytes` |
 |---|---|---|
-| `openai-compat`, `openai` | 1,500 | 512 MB |
-| `vertex` | 3,600 | 20 MB |
+| `openai-compat`, `openai` | 1,500 | 512 MB ([OpenAI](https://developers.openai.com/api/docs/guides/images-vision): 1,500 images, 512 MB payload) |
+| `vertex` | 3,000 | 256 MB ([Vertex](https://cloud.google.com/vertex-ai/docs/generative-ai/docs/multimodal/image-understanding): 3,000 images and PDFs combined, 256 MB inline part) |
 | `openai-responses`, `litellm`, `scripted` | unconfigured (`None`) — no enforcement, deliberate coverage growth |
+
+Two caveats on the Vertex row: non-migrated Gemini 2.5 endpoints cap the inline part at 30 MiB, and the provider's 500 MiB figure applies to the compressed payload while this budget measures the uncompressed body. The byte cap is the per-inline-part ceiling, so both stay satisfied for mainstream endpoints. Provider *types* also cannot express a gateway's upstream limits — a Claude model reached through `openrouter` (type `openai-compat`) is capped here at OpenAI's numbers, not Anthropic's own per-request image limit.
 
 **Configuration:** `image_budget.providers` is a plain per-provider-type override map (the generic loader does not auto-build a dict-of-dataclass). Each entry may set `max_images` and/or `max_request_bytes`; an explicit `null` disables that dimension, unset keys fall back to the verified defaults above. See [config.md#image_budget](config.md#image_budget).
 

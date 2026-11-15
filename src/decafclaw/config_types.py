@@ -472,16 +472,27 @@ class ModelConfig:
             raise ValueError(f"Invalid reasoning_effort: {self.reasoning_effort!r}")
 
 
-# Verified per-provider-type image/request limits (official docs, web-verified
-# 2026-11). ``max_images`` caps the number of inline images per request;
-# ``max_request_bytes`` caps the whole serialized request body. A provider type
-# absent here (openai-responses / litellm / scripted) has no verified limit and
-# is deliberately unenforced (None) — coverage grows as limits are verified.
+# Verified per-provider-type image/request limits, from the providers' own docs.
+# ``max_images`` caps the number of inline images per request; ``max_request_bytes``
+# caps the whole serialized request body. A provider type absent here
+# (openai-responses / litellm / scripted) has no verified limit and is
+# deliberately unenforced (None) — coverage grows as limits are verified.
 # ``openai`` subclasses the openai-compat contract, so it shares its limits.
+#
+# Sources (re-verified 2026-11-15):
+# - OpenAI, "Images and vision": "Request size | Up to 512 MB total payload per
+#   request", "Image count | Up to 1,500 images per request".
+#   https://developers.openai.com/api/docs/guides/images-vision
+# - Vertex AI, "Image understanding": Gemini 3+ / 2.5 "Maximum images per prompt:
+#   3,000 (images and PDFs combined)"; "Maximum inline part size: 256 MB"
+#   (30 MiB on non-migrated Gemini 2.5 endpoints); total generateContent payload
+#   ≤ 500 MiB compressed. The byte cap here is the per-inline-part ceiling: the
+#   budget is omit-only, so it also keeps the whole body under the payload limit.
+#   https://cloud.google.com/vertex-ai/docs/generative-ai/docs/multimodal/image-understanding
 _VERIFIED_IMAGE_LIMITS: dict[str, dict] = {
     PROVIDER_OPENAI_COMPAT: {"max_images": 1500, "max_request_bytes": 512 * 1024 * 1024},
     PROVIDER_OPENAI: {"max_images": 1500, "max_request_bytes": 512 * 1024 * 1024},
-    PROVIDER_VERTEX: {"max_images": 3600, "max_request_bytes": 20 * 1024 * 1024},
+    PROVIDER_VERTEX: {"max_images": 3000, "max_request_bytes": 256 * 1024 * 1024},
 }
 
 

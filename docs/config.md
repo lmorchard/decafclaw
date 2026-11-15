@@ -176,7 +176,7 @@ Whole-request image + serialized-payload budget (#1143). Applied to the outbound
 |-------|------|---------|---------|
 | `providers` | dict[str, dict] | `{}` | `IMAGE_BUDGET_PROVIDERS` |
 
-`providers` is a per-provider-type override map (the generic loader does not auto-build a dict-of-dataclass, so values are plain objects). Each entry may set `max_images` (int) and/or `max_request_bytes` (int). An explicit `null` disables that dimension; unset keys fall back to the verified defaults — `openai-compat`/`openai`: 1,500 images / 512 MB; `vertex`: 3,600 images / 20 MB. Provider types with no entry and no verified default (`openai-responses`, `litellm`, `scripted`) are unenforced. A model config's `supports_vision: false` (on `model_configs`) turns every inbound image into an omission notice regardless of these limits.
+`providers` is a per-provider-type override map (the generic loader does not auto-build a dict-of-dataclass, so values are plain objects). Each entry may set `max_images` (int) and/or `max_request_bytes` (int). An explicit `null` disables that dimension; unset keys fall back to the verified defaults — `openai-compat`/`openai`: 1,500 images / 512 MB (OpenAI's [images guide](https://developers.openai.com/api/docs/guides/images-vision)); `vertex`: 3,000 images / 256 MB (Gemini's [image-understanding limits](https://cloud.google.com/vertex-ai/docs/generative-ai/docs/multimodal/image-understanding)). Provider types with no entry and no verified default (`openai-responses`, `litellm`, `scripted`) are unenforced. A model config's `supports_vision: false` (on `model_configs`) turns every inbound image into an omission notice regardless of these limits.
 
 ### `vault`
 
