@@ -194,6 +194,6 @@ data/{agent_id}/workspace/
   embeddings.db              # Semantic search index (includes conversation messages)
 ```
 
-**Canvas sidecar shape (Phase 4 multi-tab):** `{schema_version: 1, active_tab: "canvas_2" | null, next_tab_id: 3, tabs: [{id, label, widget_type, data}]}`. `next_tab_id` is a monotonic counter — closed tab IDs are never reused. Phase 3 sidecars without `next_tab_id` get the field synthesized on first read.
+**Canvas sidecar shape (Phase 4 multi-tab):** `{schema_version: 1, active_tab: "canvas_2" | null, next_tab_id: 3, tabs: [{id, label, widget_type, data}]}`. `next_tab_id` is a monotonic counter — closed tab IDs are never reused. Phase 3 sidecars without `next_tab_id` get the field synthesized on first read. Artifact-backed tabs (#1253, currently `markdown_document`) omit `data` and carry an `artifact_id`; their content lives in the sibling `artifacts.json` (`{schema_version, next_artifact_id, artifacts: {artifact_id: {widget_type, label, data}}}`) and is hydrated back onto the tab on read.
 
 All files are human-readable (JSON/JSONL) and crash-recoverable (append-only writes, atomic folder index updates).
