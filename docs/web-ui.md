@@ -269,6 +269,11 @@ and the controls to change it:
   from the agent config.
 - **Approved command patterns** (cached): the conversation's cached reviewer approvals;
   revoke one to fall back to the reviewer.
+- **Promote to custom preset**: the 🏆 button on a conversation rule opens a form that
+  shows the rule being copied, then offers existing custom presets plus a new-name field.
+  On success the panel confirms what was promoted into which preset and reloads the shared
+  presets store, so the promote picker and Config → Shell Presets offer the new preset
+  immediately. A promoted preset stays inactive — activation is a separate action.
 
 Edits that change the rules go through the conversation-scoped REST endpoints
 (`PUT /api/conversations/{id}/shell-approval/rules`, `DELETE .../rules`,

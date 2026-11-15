@@ -15,7 +15,7 @@
 
 import { LitElement, html, nothing, render } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
-import { subscribe } from '../lib/presets-store.js';
+import { load, subscribe } from '../lib/presets-store.js';
 
 /** @typedef {import('../lib/api-client/index.js').ConversationShellApprovalResponse} ApprovalData */
 /** @typedef {import('../lib/api-client/index.js').ConversationShellApprovalPresetItem} PresetView */
@@ -39,6 +39,7 @@ export class ShellApprovalPanel extends LitElement {
     _promoteRule: { type: String, state: true },
     _promotePreset: { type: String, state: true },
     _newPresetName: { type: String, state: true },
+    _promoteNotice: { type: String, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -58,6 +59,7 @@ export class ShellApprovalPanel extends LitElement {
     this._promoteRule = '';
     this._promotePreset = '';
     this._newPresetName = '';
+    this._promoteNotice = '';
     /** @type {HTMLElement | null} */
     this._panelMount = null;
   }
@@ -95,6 +97,8 @@ export class ShellApprovalPanel extends LitElement {
           document.addEventListener('click', this._onDocClick, true);
         });
         void this.#fetchData();
+        // A previous promote's confirmation does not carry into a new visit.
+        this._promoteNotice = '';
       } else {
         this.#cleanupListeners();
       }
@@ -122,6 +126,16 @@ export class ShellApprovalPanel extends LitElement {
       render(nothing, this._panelMount);
       this._panelMount.remove();
       this._panelMount = null;
+    }
+  }
+
+  async #loadPresets() {
+    try {
+      await load();
+    } catch (e) {
+      // Fail-open: the approval view works without the preset list; only the
+      // promote picker is poorer for it, which does not deserve a banner.
+      console.debug('shell-approval: preset load failed', e);
     }
   }
 
@@ -192,7 +206,13 @@ export class ShellApprovalPanel extends LitElement {
       this._promoteRule = '';
       this._promotePreset = '';
       this._newPresetName = '';
-      await this.#fetchData();
+      // The form closes on success, so say what happened; without this a
+      // successful promote looked exactly like a no-op (#1266).
+      this._promoteNotice = `Copied "${rule}" into preset "${presetName}". The preset is not active; activate it in Config → Shell Presets.`;
+      // The new preset is custom (not active), so it cannot show up in the
+      // read-only "Preset Rules" list. Reload the shared store so the promote
+      // picker and Config → Presets offer it instead.
+      await Promise.all([this.#loadPresets(), this.#fetchData()]);
     } catch (e) {
       this._error = e instanceof ApiError ? e.body?.error || `HTTP ${e.status}` : e.message || 'Failed to promote rule';
     } finally {
@@ -317,6 +337,7 @@ export class ShellApprovalPanel extends LitElement {
     return html`
       <div class="sap-section">
         <div class="sap-section-title">Promote Rule to Custom Preset</div>
+        <div class="sap-promote-rule">${this._promoteRule}</div>
         <div class="sap-promote-row">
           <select class="sap-preset-select" ?disabled=${busy} @change=${(/** @type {any} */ e) => { this._promotePreset = e.target.value; }}>
             <option value="">New preset…</option>
@@ -345,6 +366,11 @@ export class ShellApprovalPanel extends LitElement {
     this._promoteRule = rule;
     this._promotePreset = '';
     this._newPresetName = '';
+    this._promoteNotice = '';
+    // The picker offers custom presets, so the panel cannot rely on another
+    // view having loaded the store: a preset promoted here must be offered
+    // here immediately (#1266).
+    void this.#loadPresets();
   }
 
   #cancelPromote() {
@@ -366,6 +392,7 @@ export class ShellApprovalPanel extends LitElement {
           <div class="sap-body">
             ${this._loading ? html`<div class="sap-loading">Loading…</div>` : nothing}
             ${this._error ? html`<div class="sap-error-banner">${this._error}</div>` : nothing}
+            ${this._promoteNotice ? html`<div class="sap-success-banner" role="status">${this._promoteNotice}</div>` : nothing}
             ${data ? html`
               ${this.#renderConfigGuidance(data)}
               ${this._promoteRule ? this.#renderPromoteForm() : nothing}
