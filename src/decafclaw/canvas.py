@@ -14,6 +14,24 @@ Phase 4 multi-tab. ``next_tab_id`` is a monotonic counter so closed-then-
 recreated tab IDs never rebind. Phase 3 sidecars (no ``next_tab_id``)
 get one synthesized on first read.
 
+Durable artifact identity (#1253, design: PR #1247): a tab is a *view*. For
+artifact-backed widget types (``ARTIFACT_WIDGET_TYPES``) the content is stored
+once in the sibling ``artifacts.json`` sidecar under an ``artifact_id``, and the
+tab carries that id instead of ``data``:
+
+    artifacts.json:
+    {
+      "schema_version": 1,
+      "next_artifact_id": 2,
+      "artifacts": {"artifact_1": {"widget_type", "label", "data"}},
+    }
+
+Closing a tab hides the view and leaves the artifact; ``reopen_artifact``
+creates a fresh tab handle for the same content, and ``update_tab`` on any view
+writes the shared artifact (live binding). ``read_canvas_state`` hydrates
+``data`` back onto each tab so clients and tools keep their existing shape, and
+``write_canvas_state`` strips it again so the two files stay separate.
+
 Mutation functions emit ``canvas_update`` events with one of these
 ``kind`` values: ``new_tab``, ``update``, ``close_tab``, ``set_active``,
 ``clear``. Disk I/O is fail-open: corrupt or missing files are treated
@@ -33,14 +51,112 @@ log = logging.getLogger(__name__)
 
 EmitFn = Callable[[str, dict], Awaitable[None]]
 
+# Widget types whose canvas content lives in artifacts.json rather than in the
+# tab. Terminals and other widgets keep their inline ``data`` (see #1253 scope).
+ARTIFACT_WIDGET_TYPES = frozenset({"markdown_document"})
+
 
 def empty_canvas_state() -> dict:
     """Return a fresh empty canvas-state dict."""
     return {"schema_version": 1, "active_tab": None, "next_tab_id": 1, "tabs": []}
 
 
+def empty_artifact_state() -> dict:
+    """Return a fresh empty artifact-store dict (``artifacts.json``)."""
+    return {"schema_version": 1, "next_artifact_id": 1, "artifacts": {}}
+
+
 def _canvas_sidecar_path(config, conv_id: str) -> Path:
     return sidecar_path(config, conv_id, "canvas.json")
+
+
+def _artifact_sidecar_path(config, conv_id: str) -> Path:
+    return sidecar_path(config, conv_id, "artifacts.json")
+
+
+def _write_sidecar(path: Path, payload: dict, label: str) -> bool:
+    """Write a sidecar via tmp-file-then-rename for atomicity; log on failure."""
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(payload, indent=2) + "\n")
+        tmp.replace(path)
+        return True
+    except OSError:
+        log.warning("Failed to write %s", label, exc_info=True)
+        # Best-effort cleanup of the partial tmp file.
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError as cleanup_exc:
+            log.debug("%s tmp cleanup failed: %s", label, cleanup_exc)
+        return False
+
+
+def read_artifact_state(config, conv_id: str) -> dict:
+    """Read the artifact store; fail-open with an empty store on any error."""
+    path = _artifact_sidecar_path(config, conv_id)
+    if not path.exists():
+        return empty_artifact_state()
+    try:
+        state = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        log.warning("Failed to read artifacts for %s; treating as empty", conv_id, exc_info=True)
+        return empty_artifact_state()
+    if not isinstance(state, dict) or not isinstance(state.get("artifacts"), dict):
+        log.warning("Malformed artifacts sidecar for %s; treating as empty", conv_id)
+        return empty_artifact_state()
+    if "next_artifact_id" not in state:
+        state["next_artifact_id"] = _derive_next_artifact_id(state["artifacts"])
+    return state
+
+
+def write_artifact_state(config, conv_id: str, state: dict) -> bool:
+    """Persist the artifact store atomically. False on I/O failure (logged)."""
+    return _write_sidecar(_artifact_sidecar_path(config, conv_id), state, f"artifacts for {conv_id}")
+
+
+def _derive_next_artifact_id(artifacts: dict) -> int:
+    """Compute next_artifact_id from existing ids (artifact_N format)."""
+    max_n = 0
+    for artifact_id in artifacts:
+        if isinstance(artifact_id, str) and artifact_id.startswith("artifact_"):
+            try:
+                max_n = max(max_n, int(artifact_id.split("_", 1)[1]))
+            except (ValueError, IndexError):
+                continue
+    return max_n + 1
+
+
+def _create_artifact(artifacts_state: dict, widget_type: str, label: str, data: dict) -> str:
+    """Allocate an artifact id and store its content. Ids are never rebound."""
+    next_n = artifacts_state.get("next_artifact_id", 1)
+    artifact_id = f"artifact_{next_n}"
+    artifacts_state.setdefault("artifacts", {})[artifact_id] = {
+        "widget_type": widget_type,
+        "label": label,
+        "data": data,
+    }
+    artifacts_state["next_artifact_id"] = next_n + 1
+    return artifact_id
+
+
+def get_artifact(config, conv_id: str, artifact_id: str) -> dict | None:
+    """Return an artifact's stored record, or None when this conversation has no such artifact."""
+    return read_artifact_state(config, conv_id).get("artifacts", {}).get(artifact_id)
+
+
+def list_artifacts(config, conv_id: str) -> list[dict]:
+    """List this conversation's artifacts as view metadata (no content)."""
+    artifacts = read_artifact_state(config, conv_id).get("artifacts", {})
+    return [
+        {
+            "artifact_id": artifact_id,
+            "widget_type": record.get("widget_type", ""),
+            "label": record.get("label", ""),
+        }
+        for artifact_id, record in artifacts.items()
+    ]
 
 
 def _derive_next_tab_id(tabs: list) -> int:
@@ -57,8 +173,8 @@ def _derive_next_tab_id(tabs: list) -> int:
     return max_n + 1
 
 
-def read_canvas_state(config, conv_id: str) -> dict:
-    """Read canvas state from disk; fail-open with empty state on any error."""
+def _read_canvas_raw(config, conv_id: str) -> dict:
+    """Read canvas.json as stored (artifact-backed tabs carry no ``data``)."""
     path = _canvas_sidecar_path(config, conv_id)
     if not path.exists():
         return empty_canvas_state()
@@ -73,29 +189,44 @@ def read_canvas_state(config, conv_id: str) -> dict:
     return state
 
 
+def read_canvas_state(config, conv_id: str) -> dict:
+    """Read canvas state from disk; fail-open with empty state on any error.
+
+    Artifact-backed tabs are hydrated with their stored ``data`` so callers
+    (web client, tools) keep their existing ``{data: {...}}`` view. A missing
+    artifact yields empty data rather than another artifact's content.
+    """
+    state = _read_canvas_raw(config, conv_id)
+    tabs = state.get("tabs", [])
+    if any(tab.get("artifact_id") for tab in tabs):
+        artifacts = read_artifact_state(config, conv_id).get("artifacts", {})
+        for tab in tabs:
+            artifact_id = tab.get("artifact_id")
+            if not artifact_id:
+                continue
+            record = artifacts.get(artifact_id) or {}
+            tab["data"] = dict(record.get("data") or {})
+    return state
+
+
+def _strip_tab_for_disk(tab: dict) -> dict:
+    """Drop hydrated ``data`` from artifact-backed tabs; content lives in artifacts.json."""
+    if tab.get("artifact_id"):
+        return {key: value for key, value in tab.items() if key != "data"}
+    return tab
+
+
 def write_canvas_state(config, conv_id: str, state: dict) -> bool:
     """Write canvas state via tmp-file-then-rename for atomicity.
 
-    Returns True on success, False on I/O failure (logged). Callers
-    should propagate the False result so the agent / web UI sees a
+    This is the single serialization point: artifact-backed tabs are written
+    without ``data`` so content cannot fork between canvas.json and
+    artifacts.json. Returns True on success, False on I/O failure (logged).
+    Callers should propagate the False result so the agent / web UI sees a
     clear error rather than crashing the loop.
     """
-    path = _canvas_sidecar_path(config, conv_id)
-    tmp = path.with_suffix(".json.tmp")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(state, indent=2) + "\n")
-        tmp.replace(path)
-        return True
-    except OSError:
-        log.warning("Failed to write canvas state for %s", conv_id, exc_info=True)
-        # Best-effort cleanup of the partial tmp file.
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError as cleanup_exc:
-            log.debug("canvas tmp cleanup failed: %s", cleanup_exc)
-        return False
+    payload = {**state, "tabs": [_strip_tab_for_disk(tab) for tab in state.get("tabs", [])]}
+    return _write_sidecar(_canvas_sidecar_path(config, conv_id), payload, f"canvas state for {conv_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -270,23 +401,79 @@ async def new_tab(
     next_n = state.get("next_tab_id", 1)
     tab_id = f"canvas_{next_n}"
     final_label = label or _derive_label(widget_type, data)
+    artifact_id: str | None = None
+    if widget_type in ARTIFACT_WIDGET_TYPES:
+        artifacts_state = read_artifact_state(config, conv_id)
+        artifact_id = _create_artifact(artifacts_state, widget_type, final_label, data)
+        if not write_artifact_state(config, conv_id, artifacts_state):
+            return CanvasOpResult(ok=False, error="failed to write artifacts to disk")
+    new_tab_dict: dict[str, object] = {
+        "id": tab_id,
+        "label": final_label,
+        "widget_type": widget_type,
+    }
+    if artifact_id is not None:
+        new_tab_dict["artifact_id"] = artifact_id
+    else:
+        new_tab_dict["data"] = data
+    state["tabs"].append(new_tab_dict)
+    state["active_tab"] = tab_id
+    state["next_tab_id"] = next_n + 1
+    if not write_canvas_state(config, conv_id, state):
+        return CanvasOpResult(ok=False, error="failed to write canvas state to disk")
+    await _emit_canvas_update(emit, conv_id, "new_tab", active_tab=tab_id, tab={**new_tab_dict, "data": data})
+    return CanvasOpResult(ok=True, text="tab created", tab_id=tab_id)
+
+
+async def reopen_artifact(
+    config,
+    conv_id: str,
+    artifact_id: str,
+    label: str | None = None,
+    emit: EmitFn | None = None,
+) -> CanvasOpResult:
+    """Open a new tab viewing an existing artifact. Content is not copied.
+
+    The new tab gets a fresh handle, so a tab-locked URL for the closed tab
+    still selects nothing. Only this conversation's artifact store is
+    searched, so an id from another conversation cannot resolve.
+    """
+    artifact = get_artifact(config, conv_id, artifact_id)
+    if artifact is None:
+        return CanvasOpResult(ok=False, error=f"artifact '{artifact_id}' not found")
+    state = read_canvas_state(config, conv_id)
+    next_n = state.get("next_tab_id", 1)
+    tab_id = f"canvas_{next_n}"
+    widget_type = artifact.get("widget_type", "")
+    final_label = label or artifact.get("label") or _derive_label(widget_type, artifact.get("data") or {})
     new_tab_dict = {
         "id": tab_id,
         "label": final_label,
         "widget_type": widget_type,
-        "data": data,
+        "artifact_id": artifact_id,
     }
     state["tabs"].append(new_tab_dict)
     state["active_tab"] = tab_id
     state["next_tab_id"] = next_n + 1
     if not write_canvas_state(config, conv_id, state):
         return CanvasOpResult(ok=False, error="failed to write canvas state to disk")
-    await _emit_canvas_update(emit, conv_id, "new_tab", active_tab=tab_id, tab=new_tab_dict)
-    return CanvasOpResult(ok=True, text="tab created", tab_id=tab_id)
+    await _emit_canvas_update(
+        emit,
+        conv_id,
+        "new_tab",
+        active_tab=tab_id,
+        tab={**new_tab_dict, "data": dict(artifact.get("data") or {})},
+    )
+    return CanvasOpResult(ok=True, text=f"artifact {artifact_id} opened as tab {tab_id}", tab_id=tab_id)
 
 
 async def update_tab(config, conv_id: str, tab_id: str, data: dict, emit: EmitFn | None = None) -> CanvasOpResult:
-    """Replace data of an existing tab; preserves widget_type + label."""
+    """Replace data of an existing tab; preserves widget_type + label.
+
+    For an artifact-backed tab the content is written to the shared artifact,
+    so every tab viewing it shows the new content (live binding), and the tab
+    list on disk is left untouched.
+    """
     state = read_canvas_state(config, conv_id)
     for tab in state.get("tabs", []):
         if tab.get("id") == tab_id:
@@ -296,6 +483,23 @@ async def update_tab(config, conv_id: str, tab_id: str, data: dict, emit: EmitFn
             registry = get_widget_registry()
             if registry is not None:
                 data = registry.normalize(tab["widget_type"], data)
+            artifact_id = tab.get("artifact_id")
+            if artifact_id:
+                artifacts_state = read_artifact_state(config, conv_id)
+                artifact = artifacts_state.get("artifacts", {}).get(artifact_id)
+                if artifact is None:
+                    return CanvasOpResult(ok=False, error=f"artifact '{artifact_id}' not found")
+                artifact["data"] = data
+                if not write_artifact_state(config, conv_id, artifacts_state):
+                    return CanvasOpResult(ok=False, error="failed to write artifacts to disk")
+                await _emit_canvas_update(
+                    emit,
+                    conv_id,
+                    "update",
+                    active_tab=state.get("active_tab"),
+                    tab={**tab, "data": data},
+                )
+                return CanvasOpResult(ok=True, text=f"tab {tab_id} updated")
             tab["data"] = data
             if not write_canvas_state(config, conv_id, state):
                 return CanvasOpResult(ok=False, error="failed to write canvas state to disk")

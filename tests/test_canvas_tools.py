@@ -151,7 +151,7 @@ async def test_canvas_clear_with_tabs(config, md_doc_registry):
 async def test_canvas_read_empty(config, md_doc_registry):
     ctx = _make_ctx(config, MagicMock(emit=AsyncMock()))
     result = await canvas_tools.tool_canvas_read(ctx)
-    assert result.data == {"active_tab": None, "tabs": []}
+    assert result.data == {"active_tab": None, "tabs": [], "artifacts": []}
 
 
 @pytest.mark.asyncio
@@ -238,3 +238,58 @@ async def test_canvas_close_tab_passes_registry(config, md_doc_registry, monkeyp
     # Assert registry was passed and matches sentinel
     assert "registry" in captured_kwargs, "tool_canvas_close_tab must pass 'registry' to canvas.close_tab"
     assert captured_kwargs["registry"] is sentinel, "passed registry must match ctx.terminal_registry"
+
+
+# ---------------------------------------------------------------------------
+# #1253 — durable artifact handle through the tools
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_canvas_new_tab_reports_artifact_id(config, md_doc_registry, manager_mock):
+    ctx = _make_ctx(config, manager_mock)
+    result = await canvas_tools.tool_canvas_new_tab(ctx, "markdown_document", {"content": "# Doc"})
+    assert result.data["artifact_id"] == "artifact_1"
+    assert "artifact_1" in result.text
+
+
+@pytest.mark.asyncio
+async def test_canvas_new_tab_reopens_closed_artifact(config, md_doc_registry, manager_mock):
+    ctx = _make_ctx(config, manager_mock)
+    created = await canvas_tools.tool_canvas_new_tab(ctx, "markdown_document", {"content": "# Doc"}, label="Doc")
+    tab_id = created.data["tab_id"]
+    artifact_id = created.data["artifact_id"]
+    assert (
+        await canvas_tools.tool_canvas_close_tab(ctx, tab_id)
+    ).text == "tab canvas_1 closed (canvas hidden — no tabs left)"
+
+    # The artifact survives the close and is listed by canvas_read.
+    read = await canvas_tools.tool_canvas_read(ctx)
+    assert read.data["tabs"] == []
+    assert read.data["artifacts"] == [{"artifact_id": artifact_id, "widget_type": "markdown_document", "label": "Doc"}]
+    assert "artifact_1(Doc)" in read.text
+
+    reopened = await canvas_tools.tool_canvas_new_tab(ctx, artifact_id=artifact_id)
+    assert reopened.ok if hasattr(reopened, "ok") else True
+    assert reopened.data["tab_id"] == "canvas_2"
+    assert reopened.data["artifact_id"] == artifact_id
+    assert "/canvas/conv1/canvas_2" in reopened.text
+
+    read = await canvas_tools.tool_canvas_read(ctx)
+    assert read.data["tabs"][0]["data"] == {"content": "# Doc"}
+    assert read.data["tabs"][0]["artifact_id"] == artifact_id
+
+
+@pytest.mark.asyncio
+async def test_canvas_new_tab_without_content_or_artifact_errors(config, md_doc_registry, manager_mock):
+    ctx = _make_ctx(config, manager_mock)
+    result = await canvas_tools.tool_canvas_new_tab(ctx)
+    assert result.text.startswith("[error:")
+
+
+@pytest.mark.asyncio
+async def test_canvas_new_tab_unknown_artifact_errors(config, md_doc_registry, manager_mock):
+    ctx = _make_ctx(config, manager_mock)
+    result = await canvas_tools.tool_canvas_new_tab(ctx, artifact_id="artifact_7")
+    assert result.text.startswith("[error:")
+    assert "artifact_7" in result.text

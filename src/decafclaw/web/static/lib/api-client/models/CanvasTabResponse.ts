@@ -8,5 +8,6 @@ export type CanvasTabResponse = {
     label: string;
     widget_type: string;
     data: Record<string, JsonValue>;
+    artifact_id?: (string | null);
 };
 

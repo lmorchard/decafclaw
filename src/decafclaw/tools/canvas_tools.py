@@ -27,8 +27,32 @@ def _canvas_url(conv_id: str, tab_id: str | None = None) -> str:
     return base
 
 
-async def tool_canvas_new_tab(ctx: "Context", widget_type: str, data: dict, label: str | None = None) -> ToolResult:
-    """Create a new canvas tab and make it active."""
+async def tool_canvas_new_tab(
+    ctx: "Context",
+    widget_type: str | None = None,
+    data: dict | None = None,
+    label: str | None = None,
+    artifact_id: str | None = None,
+) -> ToolResult:
+    """Create a new canvas tab and make it active, or reopen an existing artifact."""
+    if artifact_id:
+        log.info("[tool:canvas_new_tab] reopen artifact=%s label=%r", artifact_id, label)
+        reopened = await canvas_mod.reopen_artifact(
+            ctx.config,
+            ctx.conv_id,
+            artifact_id,
+            label=label,
+            emit=emit_for_ctx(ctx),
+        )
+        if not reopened.ok:
+            return ToolResult(text=f"[error: {reopened.error}]")
+        url = _canvas_url(ctx.conv_id, reopened.tab_id)
+        return ToolResult(
+            text=(f"artifact {artifact_id} reopened as tab (id={reopened.tab_id}) — view at {url}"),
+            data={"tab_id": reopened.tab_id, "artifact_id": artifact_id},
+        )
+    if not widget_type or data is None:
+        return ToolResult(text="[error: widget_type and data are required unless artifact_id is given]")
     log.info("[tool:canvas_new_tab] widget=%s label=%r", widget_type, label)
     result = await canvas_mod.new_tab(
         ctx.config,
@@ -41,9 +65,22 @@ async def tool_canvas_new_tab(ctx: "Context", widget_type: str, data: dict, labe
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
     url = _canvas_url(ctx.conv_id, result.tab_id)
+    # Report the durable handle so the tab can be reopened after it is closed.
+    tab = canvas_mod.get_tab(ctx.config, ctx.conv_id, result.tab_id or "") or {}
+    payload = {"tab_id": result.tab_id}
+    if tab.get("artifact_id"):
+        payload["artifact_id"] = tab["artifact_id"]
+        return ToolResult(
+            text=(
+                f"tab created (id={result.tab_id}, artifact={tab['artifact_id']}) — view at {url}. "
+                "Closing the tab hides it; the content stays and canvas_new_tab with "
+                f"artifact_id='{tab['artifact_id']}' reopens it."
+            ),
+            data=payload,
+        )
     return ToolResult(
         text=f"tab created (id={result.tab_id}) — view at {url}",
-        data={"tab_id": result.tab_id},
+        data=payload,
     )
 
 
@@ -107,15 +144,21 @@ async def tool_canvas_read(ctx: "Context") -> ToolResult:
                 "label": t.get("label", ""),
                 "widget_type": t["widget_type"],
                 "data": t.get("data", {}),
+                **({"artifact_id": t["artifact_id"]} if t.get("artifact_id") else {}),
             }
             for t in state.get("tabs", [])
         ],
+        # Durable content handles, including ones whose tab was closed.
+        "artifacts": canvas_mod.list_artifacts(ctx.config, ctx.conv_id),
     }
     if not payload["tabs"]:
         text = "canvas is empty (no tabs)"
     else:
         labels = ", ".join(f"{t['id']}({t['label']})" for t in payload["tabs"])
         text = f"canvas has {len(payload['tabs'])} tab(s): {labels}; active={payload['active_tab']}"
+    if payload["artifacts"]:
+        kept = ", ".join(f"{a['artifact_id']}({a['label'] or a['widget_type']})" for a in payload["artifacts"])
+        text += f"; {len(payload['artifacts'])} artifact(s) kept: {kept}"
     return ToolResult(text=text, data=payload)
 
 
@@ -142,6 +185,10 @@ CANVAS_TOOL_DEFINITIONS = [
                 "or interactive demos you intend to revise across multiple "
                 "turns. Returns a tab_id you MUST keep to target this tab in "
                 "subsequent canvas_update or canvas_close_tab calls. "
+                "A markdown_document also gets a durable artifact_id: closing its "
+                "tab only hides it, and calling canvas_new_tab with that "
+                "artifact_id (no widget_type/data) reopens the same content in a "
+                "fresh tab — use canvas_read to list kept artifacts. "
                 "Currently supports widget_type='markdown_document' "
                 "with data={content: <markdown>}, widget_type='code_block' "
                 "with data={code: <string>, language?: <string>, filename?: <string>}, "
@@ -164,18 +211,22 @@ CANVAS_TOOL_DEFINITIONS = [
                 "properties": {
                     "widget_type": {
                         "type": "string",
-                        "description": "Registered canvas-mode widget name.",
+                        "description": "Registered canvas-mode widget name. Required unless artifact_id is given.",
                     },
                     "data": {
                         "type": "object",
-                        "description": "Widget payload; must conform to the widget's data_schema.",
+                        "description": "Widget payload; must conform to the widget's data_schema. Required unless artifact_id is given.",
                     },
                     "label": {
                         "type": "string",
                         "description": "Optional tab label. Defaults to first H1 of content for markdown_document, filename for code_block, else humanized widget_type.",
                     },
+                    "artifact_id": {
+                        "type": "string",
+                        "description": "Reopen an existing artifact (e.g. 'artifact_1' from canvas_read) in a fresh tab instead of creating content. Omit widget_type and data when using this.",
+                    },
                 },
-                "required": ["widget_type", "data"],
+                "required": [],
             },
         },
     },
