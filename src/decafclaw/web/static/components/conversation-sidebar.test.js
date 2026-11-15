@@ -486,7 +486,7 @@ describe('conversation-sidebar session hierarchy (#1115)', () => {
     const { sidebar } = await mountSessions();
     const toggle = /** @type {HTMLElement} */ (sidebar.querySelector('button.conv-session-toggle'));
     expect(toggle).toBeTruthy();
-    // Expanded by default: subagent row visible.
+    // The mounted conversation belongs to this session, so it starts expanded.
     expect(sidebar.querySelector('.conv-subagent')).toBeTruthy();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
 
@@ -499,6 +499,72 @@ describe('conversation-sidebar session hierarchy (#1115)', () => {
     await sidebar.updateComplete;
     expect(sidebar.querySelector('.conv-subagent')).toBeTruthy();
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('starts every session collapsed when none of their conversations is selected', async () => {
+    const { sidebar } = await mountSessions({ currentConvId: '' });
+    expect(sidebar.querySelector('.conv-subagent')).toBeFalsy();
+    const toggle = /** @type {HTMLElement} */ (sidebar.querySelector('button.conv-session-toggle'));
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.getAttribute('aria-label')).toBe('Expand subagents');
+  });
+
+  it('expands the selected session and collapses its siblings (#1262)', async () => {
+    const sibling = {
+      session_id: 'web-alice-r2',
+      title: 'Other chat',
+      updated_at: '2026-01-01T00:00:00+00:00',
+      status: 'idle',
+      conversations: [
+        { conv_id: 'web-alice-r2', title: 'Other chat', kind: 'parent' },
+        { conv_id: 'web-alice-r2--child-99999999', title: 'Other subtask', kind: 'subagent', status: 'idle' },
+      ],
+    };
+    const { sidebar, store } = await mountSessions();
+    store.sessions = [...store.sessions, sibling];
+    store.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+
+    const groups = [...sidebar.querySelectorAll('.conv-session')];
+    expect(groups.length).toBe(2);
+    const [selected, other] = groups;
+    // The selected session shows its subagent; the unselected one does not.
+    expect(selected.querySelector('.conv-subagent')).toBeTruthy();
+    expect(selected.querySelector('button.conv-session-toggle').getAttribute('aria-expanded')).toBe('true');
+    expect(other.querySelector('.conv-subagent')).toBeFalsy();
+    expect(other.querySelector('button.conv-session-toggle').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps a manual expansion of an unselected session across re-render (#1262)', async () => {
+    const sibling = {
+      session_id: 'web-alice-r2',
+      title: 'Other chat',
+      updated_at: '2026-01-01T00:00:00+00:00',
+      status: 'idle',
+      conversations: [
+        { conv_id: 'web-alice-r2', title: 'Other chat', kind: 'parent' },
+        { conv_id: 'web-alice-r2--child-99999999', title: 'Other subtask', kind: 'subagent', status: 'idle' },
+      ],
+    };
+    const { sidebar, store } = await mountSessions();
+    store.sessions = [...store.sessions, sibling];
+    store.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+
+    const other = [...sidebar.querySelectorAll('.conv-session')][1];
+    /** @type {HTMLElement} */ (other.querySelector('button.conv-session-toggle')).click();
+    await sidebar.updateComplete;
+    expect(other.querySelector('.conv-subagent')).toBeTruthy();
+
+    // An unrelated store change re-renders the list; the explicit expansion stays.
+    store.contextUsage = 1234;
+    store.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+    const otherAgain = [...sidebar.querySelectorAll('.conv-session')][1];
+    expect(otherAgain.querySelector('.conv-subagent')).toBeTruthy();
+    expect(otherAgain.querySelector('button.conv-session-toggle').getAttribute('aria-expanded')).toBe('true');
+    // The selected session is still expanded too.
+    expect([...sidebar.querySelectorAll('.conv-session')][0].querySelector('.conv-subagent')).toBeTruthy();
   });
 
   it('renders no chevron for sessions without subagent rows', async () => {

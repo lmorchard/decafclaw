@@ -68,6 +68,8 @@ export class ConversationSidebar extends LitElement {
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
     /** @type {Set<string>} session ids the user collapsed (#1115 follow-up) */
     this._collapsedSessions = new Set();
+    /** @type {Set<string>} session ids the user expanded (#1262) */
+    this._expandedSessions = new Set();
     this._mobileOpen = false;
     this._sidebarTab = 'conversations';
     this._contextInspectorOpen = false;
@@ -634,20 +636,42 @@ export class ConversationSidebar extends LitElement {
   }
 
   /**
-   * Toggle one session's subagent rows (#1115 follow-up).
-   * @param {string} sessionId
+   * Whether one session's subagent rows are shown.
+   *
+   * An explicit user toggle wins for the rest of the page session. Otherwise
+   * only the selected session is expanded (#1262): the sidebar lists many
+   * sessions, and showing every session's subagents by default buries the one
+   * the user is working in.
+   * @param {object} g
+   * @returns {boolean}
    */
-  #toggleSession(sessionId) {
-    if (this._collapsedSessions.has(sessionId)) this._collapsedSessions.delete(sessionId);
-    else this._collapsedSessions.add(sessionId);
+  #isSessionExpanded(g) {
+    if (this._collapsedSessions.has(g.session_id)) return false;
+    if (this._expandedSessions.has(g.session_id)) return true;
+    return (g.conversations || []).some((c) => c?.conv_id === this._activeId);
+  }
+
+  /**
+   * Toggle one session's subagent rows (#1115 follow-up, default inverted in #1262).
+   * @param {object} g
+   */
+  #toggleSession(g) {
+    if (this.#isSessionExpanded(g)) {
+      this._collapsedSessions.add(g.session_id);
+      this._expandedSessions.delete(g.session_id);
+    } else {
+      this._expandedSessions.add(g.session_id);
+      this._collapsedSessions.delete(g.session_id);
+    }
     this.requestUpdate();
   }
 
   /**
    * Render one session group: the parent row plus (optionally) its subagent
-   * rows. Sessions with children get an expand/collapse chevron — expanded
-   * by default, collapsed on user toggle, re-expanded when a conversation
-   * in the session is selected (#1115 follow-up).
+   * rows. Sessions with children get an expand/collapse chevron — expanded for
+   * the selected session, collapsed for the rest, an explicit user toggle
+   * winning until the page is reloaded, and re-expanded when a conversation in
+   * the session is selected (#1115 follow-up, #1262).
    * @param {object} g
    * @returns {import('lit').TemplateResult}
    */
@@ -667,12 +691,12 @@ export class ConversationSidebar extends LitElement {
     };
     const parentRow = this.#renderConversationItem(parent, parentOpts);
     if (children.length === 0) return parentRow;
-    const expanded = !this._collapsedSessions.has(g.session_id);
+    const expanded = this.#isSessionExpanded(g);
     return html`
       <div class="conv-session-head">
         <button
           class="conv-session-toggle${expanded ? ' open' : ''}"
-          @click=${(/** @type {Event} */ e) => { e.stopPropagation(); this.#toggleSession(g.session_id); }}
+          @click=${(/** @type {Event} */ e) => { e.stopPropagation(); this.#toggleSession(g); }}
           aria-expanded=${expanded ? 'true' : 'false'}
           aria-label=${expanded ? 'Collapse subagents' : 'Expand subagents'}
           title=${expanded ? 'Collapse subagents' : 'Expand subagents'}
