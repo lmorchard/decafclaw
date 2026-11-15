@@ -99,4 +99,4 @@ Environment overrides follow the standard pattern: `REMINDERS_ENABLED`, `REMINDE
 
 ## Evaluating the experiment
 
-The spec's eval set is `evals/reminders.yaml`: a genuine mistake (blocked), a harmless lookalike (must not fire), and a correction attempt (retries with corrected arguments and succeeds). Run it with `make eval FILE=evals/reminders.yaml` and report false positives, added calls, and added tokens. The point is evidence for adopting or dropping the mechanism, not the rule format.
+The spec's eval set is `evals/reminders.yaml`: a genuine mistake (blocked), a harmless lookalike (must not fire), and a correction attempt (retries with corrected arguments and succeeds). Run it with `uv run python -m decafclaw.eval evals/reminders.yaml` and report false positives, added calls, and added tokens. The point is evidence for adopting or dropping the mechanism, not the rule format.
