@@ -135,6 +135,13 @@ waiting-on-confirmation transitions broadcast to the session owner's socket
 and update the badges in place. A session's own `status` reflects its root
 conversation only; children carry per-item status.
 
+A session with children gets a chevron. Only the **selected** session is
+expanded by default (#1262); the others stay collapsed so their subagent rows
+don't bury the session in use. An explicit toggle wins for the rest of the page
+session — expanding an unselected session keeps it open across re-renders and
+store updates — and selecting a conversation in a collapsed session re-expands
+it (#1115 follow-up).
+
 ### Vault editor
 
 WYSIWYG markdown editor for vault pages, accessible from the sidebar:
