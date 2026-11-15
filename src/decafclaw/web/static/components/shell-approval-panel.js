@@ -208,7 +208,7 @@ export class ShellApprovalPanel extends LitElement {
       this._newPresetName = '';
       // The form closes on success, so say what happened; without this a
       // successful promote looked exactly like a no-op (#1266).
-      this._promoteNotice = `Copied "${rule}" into preset "${presetName}". The preset is not active; activate it in Config → Presets.`;
+      this._promoteNotice = `Copied "${rule}" into preset "${presetName}". The preset is not active; activate it in Config → Shell Presets.`;
       // The new preset is custom (not active), so it cannot show up in the
       // read-only "Preset Rules" list. Reload the shared store so the promote
       // picker and Config → Presets offer it instead.
