@@ -206,7 +206,3 @@ conversation-sidebar .shell-approval-open-btn {
   margin-top: 0.25rem;
   align-self: flex-start;
 }
-
-chat-controls .shell-approval-open-btn {
-  align-self: center;
-}

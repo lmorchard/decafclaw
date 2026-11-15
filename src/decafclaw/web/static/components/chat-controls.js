@@ -186,13 +186,6 @@ export class ChatControls extends LitElement {
               <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
             `)}
           </select>
-          <button
-            type="button"
-            class="shell-approval-open-btn dc-floating-btn"
-            title="Shell auto-approval"
-            aria-label="Open shell auto-approval panel"
-            @click=${this.#handleShellApprovalClick}
-          >&#9881;</button>
         </div>
       ` : nothing}
 
@@ -203,7 +196,12 @@ export class ChatControls extends LitElement {
            Issue #1192: the copy-conversation-menu moved OUT of this cluster
            into the context inspector raw pane (conversation export copy now
            lives there), so the cluster keeps the canvas resummon pill, the
-           terminal button, and the side-question button. -->
+           terminal button, and the side-question button.
+
+           Issue #1263: the shell-approval gear lives here too — the cluster's
+           compact 32px sizing is what keeps it level with its neighbours; in
+           the mode control it kept the 44px floating-btn floor and looked
+           oversized. -->
       ${convId ? html`
         <div class="control actions-control">
           ${showResummon && canvas ? html`
@@ -230,6 +228,13 @@ export class ChatControls extends LitElement {
             aria-label="Ask side question"
             @click=${this.#handleSideQuestion}
           >&#x2753;</button>
+          <button
+            type="button"
+            class="shell-approval-open-btn dc-floating-btn"
+            title="Shell auto-approval"
+            aria-label="Open shell auto-approval panel"
+            @click=${this.#handleShellApprovalClick}
+          >&#9881;</button>
         </div>
       ` : nothing}
 
