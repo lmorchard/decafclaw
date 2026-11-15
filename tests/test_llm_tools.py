@@ -207,6 +207,18 @@ class TestBatch:
         assert provider.requests == []
 
     @pytest.mark.asyncio
+    async def test_batch_publishes_progress_events(self, ctx, provider):
+        """Each completed item emits an aggregate tool_status event."""
+        events: list[dict] = []
+        ctx.event_bus.subscribe(events.append)
+        provider.extend([ScriptedResponse.text("one"), ScriptedResponse.text("two"), ScriptedResponse.text("three")])
+
+        await tool_llm_query(ctx, prompt=["a", "b", "c"], model=MODEL_NAME)
+
+        statuses = [e for e in events if e.get("type") == "tool_status"]
+        assert {e["message"] for e in statuses} == {"1/3 completions", "2/3 completions", "3/3 completions"}
+
+    @pytest.mark.asyncio
     async def test_per_item_timeout_fails_only_that_item(self, ctx, provider):
         """A held response trips the per-item timeout; other items complete."""
         hold = asyncio.Event()  # never released: the item must time out

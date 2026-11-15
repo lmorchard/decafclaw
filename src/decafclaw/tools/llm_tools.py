@@ -117,6 +117,9 @@ async def _run_one(
     timeout: int,
     completion_options: dict[str, Any],
     semaphore: asyncio.Semaphore | None = None,
+    progress: dict | None = None,
+    progress_lock: asyncio.Lock | None = None,
+    total: int | None = None,
 ) -> dict:
     """Run one completion and return a per-item result entry.
 
@@ -198,10 +201,31 @@ async def _run_one(
                 "error": f"{ERROR_TEXT_PREFIX} llm_query call failed: {exc}",
             }
 
+    async def _finished(entry: dict) -> dict:
+        """Emit the aggregate progress event (batch calls only)."""
+        if progress is None or progress_lock is None or total is None:
+            return entry
+        async with progress_lock:
+            progress["done"] += 1
+            done = progress["done"]
+        try:
+            await ctx.publish(
+                "tool_status",
+                tool="llm_query",
+                message=f"{done}/{total} completions",
+            )
+        except Exception:
+            log.debug(
+                "llm_query: failed to publish progress event (item %s)",
+                idx,
+                exc_info=True,
+            )
+        return entry
+
     if semaphore is not None:
         async with semaphore:
-            return await _guarded()
-    return await _guarded()
+            return await _finished(await _guarded())
+    return await _finished(await _guarded())
 
 
 async def tool_llm_query(
@@ -227,7 +251,7 @@ async def tool_llm_query(
             return ToolResult(
                 text=(
                     f"[error: too many prompts ({len(prompt)}); cap is "
-                    f"{MAX_PROMPTS_PER_CALL} per call. Split the batch.] "
+                    f"{MAX_PROMPTS_PER_CALL} per call. Split the batch.]"
                 )
             )
         for i, p in enumerate(prompt):
@@ -274,6 +298,8 @@ async def tool_llm_query(
         return result
 
     semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
+    progress: dict = {"done": 0}
+    progress_lock = asyncio.Lock()
     coros = [
         _run_one(
             ctx,
@@ -287,6 +313,9 @@ async def tool_llm_query(
             timeout=timeout,
             completion_options=completion_options,
             semaphore=semaphore,
+            progress=progress,
+            progress_lock=progress_lock,
+            total=len(prompt),
         )
         for i, p in enumerate(prompt)
     ]
