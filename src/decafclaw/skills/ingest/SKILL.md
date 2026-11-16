@@ -59,6 +59,7 @@ Decide what pages to touch:
 - **One primary page** (required):
   - If a strong match under `agent/pages/` exists, update it. Keep the existing path.
   - Otherwise, create a new page under `agent/pages/`. Choose the subfolder based on content — prefer existing folders where they fit (`agent/pages/tools/`, `agent/pages/papers/`, `agent/pages/people/`, `agent/pages/projects/`, etc.). Create a new subfolder only when the topic is distinct and likely to grow.
+  - **Cross-platform safe page names:** Never use `:`, `?`, `*`, `"`, `<`, `>`, or `|` in filenames. Replace colons in article titles with spaced dashes (`" - "`) to prevent sync failures on mobile/Android.
 - **Zero or more secondary pages** (optional): related pages under `agent/pages/` that should get a sentence or a cross-link added. Do not rewrite them wholesale. Skip any related page that lives outside `agent/pages/`.
 - **Cap total pages at ~5** (primary + secondary). If more seem relevant, list them in the summary as candidates for the next garden pass rather than touching them this turn.
 

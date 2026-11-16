@@ -12,7 +12,7 @@ Fetch recent Mastodon posts and integrate interesting content into the vault kno
 
 ## Output Folder
 
-Write all Mastodon-derived pages **directly under `agent/pages/mastodon/`** as a flat namespace — no topical subdirectories. Use `[[wiki-links]]` between pages to express relationships, and link out to related pages elsewhere in the vault. The garden skill handles promoting clusters to subdirectories when they earn it.
+Write all Mastodon-derived pages **directly under `agent/pages/mastodon/`** as a flat namespace — no topical subdirectories. Use `[[wiki-links]]` between pages to express relationships, and link out to related pages elsewhere in the vault. The garden skill handles promoting clusters to subdirectories when they earn it. **Page names must be cross-platform safe:** never include `:`, `?`, `*`, `"`, `<`, `>`, or `|` in filenames (replace colons with `" - "`).
 
 ## Configuration
 
@@ -67,7 +67,7 @@ For each interesting post:
 1. `vault_search` to find existing relevant pages.
 2. If a page exists with existing frontmatter: `vault_read` it, revise with new context. PRESERVE the existing frontmatter as-is. If this post has a URL, APPEND a new entry to the `sources:` list for it (don't modify earlier entries — they record when each source was first added); if there's no URL, leave `sources:` as-is. Either way, append the post to the body `## Sources` section. `vault_write` the updated page.
 3. If a page exists WITHOUT frontmatter: add a full frontmatter block on this write. If this post has a URL, seed `sources:` with just this post; otherwise omit the `sources:` key. Don't backfill historical sources from the body `## Sources` section.
-4. If no page exists: create a new page with full YAML frontmatter (see shape below), a body with `[[wiki-links]]`, and a `## Sources` section listing this post.
+4. If no page exists: create a new page with a cross-platform safe title (no `:`, `?`, `*`, `"`, `<`, `>`, `|`; replace colons with `" - "`), full YAML frontmatter (see shape below), a body with `[[wiki-links]]`, and a `## Sources` section listing this post.
 
 New-page frontmatter:
 

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.frontmatter import parse_frontmatter
+from decafclaw.media import ToolResult
 from decafclaw.skills.vault._grants import add_grant
 from decafclaw.skills.vault.tools import (
     GateOutcome,
@@ -2051,3 +2052,56 @@ class TestVaultUpdateFrontmatter:
         assert "updated" in result.text.lower()
         meta, _ = parse_frontmatter(p.read_text())
         assert meta["summary"] == "s"
+
+
+class TestVaultSanitization:
+    def test_sanitize_vault_page_name(self):
+        from decafclaw.skills.vault.tools import sanitize_vault_page_name
+
+        assert (
+            sanitize_vault_page_name("agent/pages/MDN Frontend Rebuild: Under the Hood")
+            == "agent/pages/MDN Frontend Rebuild - Under the Hood"
+        )
+        assert (
+            sanitize_vault_page_name("agent/pages/MDN Frontend Rebuild: Under the Hood.md")
+            == "agent/pages/MDN Frontend Rebuild - Under the Hood.md"
+        )
+        assert (
+            sanitize_vault_page_name("agent/pages/bookmarks/Working With AI: A Concrete Example")
+            == "agent/pages/bookmarks/Working With AI - A Concrete Example"
+        )
+        assert (
+            sanitize_vault_page_name("agent/pages/Question? Yes* | Maybe <No>") == "agent/pages/Question Yes - Maybe No"
+        )
+        assert sanitize_vault_page_name("agent/pages/trailing dots...") == "agent/pages/trailing dots"
+
+    @pytest.mark.asyncio
+    async def test_vault_write_sanitizes_colon_filename(self, ctx, vault_dir):
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(
+                ctx,
+                "agent/pages/Topic: Subtopic",
+                "# Content",
+            )
+        assert isinstance(result, ToolResult)
+        assert "saved" in result.text.lower()
+        assert "Topic - Subtopic" in result.text
+        assert (vault_dir / "agent" / "pages" / "Topic - Subtopic.md").exists()
+        assert not (vault_dir / "agent" / "pages" / "Topic: Subtopic.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_vault_rename_sanitizes_target_filename(self, ctx, agent_pages):
+        (agent_pages / "Old.md").write_text("body")
+        with (
+            patch("decafclaw.embeddings.delete_entries"),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            result = await tool_vault_rename(
+                ctx,
+                "agent/pages/Old",
+                "agent/pages/New: Name",
+            )
+        assert "renamed" in result.text.lower()
+        assert (agent_pages / "New - Name.md").exists()
+        assert not (agent_pages / "Old.md").exists()
+        assert not (agent_pages / "New: Name.md").exists()

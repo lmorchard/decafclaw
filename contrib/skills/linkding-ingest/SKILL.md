@@ -16,7 +16,7 @@ Fetch recent bookmarks from Linkding, delegate per-bookmark analysis to child ag
 
 ## Output Folder
 
-All bookmark-derived pages live **directly under `agent/pages/bookmarks/`** as a flat namespace — no topical subdirectories. Children acting independently can't coordinate categorization and tend to create one-page subdirs that don't pay off. Use `[[wiki-links]]` between pages instead of folder structure to express relationships, and link out to related pages elsewhere in the vault.
+All bookmark-derived pages live **directly under `agent/pages/bookmarks/`** as a flat namespace — no topical subdirectories. **Page names must be cross-platform safe:** never include `:`, `?`, `*`, `"`, `<`, `>`, or `|` in filenames (replace colons with `" - "`). Children acting independently can't coordinate categorization and tend to create one-page subdirs that don't pay off. Use `[[wiki-links]]` between pages instead of folder structure to express relationships, and link out to related pages elsewhere in the vault.
 
 ## Configuration
 
@@ -97,7 +97,7 @@ Steps:
 1. Fetch the article with tabstack_extract_markdown. If it fails (paywall, dead link, error stub), work from the title/tags/description only.
 2. Search the vault for related pages (vault_search). Read any strong matches (vault_read) so you can extend them rather than creating duplicates.
 3. Decide what should be written:
-   - Primary: ONE page for this bookmark. If a strong match already exists under `agent/pages/`, return its existing path and the FULL revised content. Otherwise create a new page directly under `agent/pages/bookmarks/` — flat namespace, no subdirectories.
+   - Primary: ONE page for this bookmark. If a strong match already exists under `agent/pages/`, return its existing path and the FULL revised content. Otherwise create a new page directly under `agent/pages/bookmarks/` — flat namespace, no subdirectories. **Page titles must be cross-platform safe:** never use `:`, `?`, `*`, `"`, `<`, `>`, or `|` in filenames. Replace colons in bookmark titles with spaced dashes (`" - "`) to prevent mobile sync failures.
    - Secondary (optional): a small number of related pages under `agent/pages/` to extend with a sentence or cross-link. Return the FULL updated content for each.
    - Cap total writes at ~3. If more pages seem relevant, mention them in `notes` instead of writing them.
    - Do NOT touch pages outside `agent/pages/`. If a strong match lives elsewhere (user notes, admin pages), leave it alone and link to it from your primary page.
