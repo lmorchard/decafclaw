@@ -103,6 +103,12 @@ class ModelCatalog:
     # admin/UI-owned store.
     reflection_model: str = ""
     verifier_model: str = ""
+    # Shell auto-approval rule condensation pointer (#1267). Same shape and
+    # resolution rule as ``aux_approval_model``: sidecar pointer outranks the
+    # config seed (``config.shell.condense_model``); empty means "ride on the
+    # active conversation model" (then the effective default). Unlike
+    # ``aux_approval_model`` there is no legacy auxiliary_model step.
+    condense_model: str = ""
 
 
 def catalog_path(config: "Config") -> Any:
@@ -153,6 +159,7 @@ def catalog_from_dict(raw: Any) -> ModelCatalog:
     aux_approval = raw.get("aux_approval_model")
     reflection = raw.get("reflection_model")
     verifier = raw.get("verifier_model")
+    condense = raw.get("condense_model")
     return ModelCatalog(
         version=raw.get("version", 1) if isinstance(raw.get("version", 1), int) else 1,
         providers=providers,
@@ -160,6 +167,7 @@ def catalog_from_dict(raw: Any) -> ModelCatalog:
         aux_approval_model=aux_approval if isinstance(aux_approval, str) else "",
         reflection_model=reflection if isinstance(reflection, str) else "",
         verifier_model=verifier if isinstance(verifier, str) else "",
+        condense_model=condense if isinstance(condense, str) else "",
     )
 
 
@@ -447,6 +455,35 @@ def effective_aux_approval_model(config: "Config", active_model: str = "") -> st
     return config.auxiliary_model or active_model or effective_default_model(config)
 
 
+def effective_condense_model(config: "Config", active_model: str = "") -> str:
+    """Shell auto-approval rule condensation model, resolution order (#1267):
+
+    1. The sidecar's ``condense_model`` pointer, when it names a
+       selectable model (enabled discovered or hand-configured).
+    2. ``config.json``'s ``shell.condense_model`` (the seed; a
+       ``model_configs`` key. The shell group has no legacy endpoint of its
+       own, so a non-key value is warned about and treated as unset — same
+       shape as ``aux_approval_model``).
+    3. ``active_model`` — the active conversation model — then the effective
+       default model.
+
+    Unlike :func:`effective_aux_approval_model` there is no ``auxiliary_model``
+    step: condensation is new and has no legacy behavior to preserve. An empty
+    pointer means "ride on the active conversation model"; an empty seed falls
+    through. A pointer at a disabled or vanished model falls back cleanly to
+    the seed, then down the chain.
+    """
+    pointer = load_catalog(config).condense_model
+    if pointer and pointer in config.model_configs:
+        return pointer
+    seed = config.shell.condense_model
+    if seed and seed in config.model_configs:
+        return seed
+    if seed:
+        log.warning("shell.condense_model %r is not a model_configs key; treating as unset", seed)
+    return active_model or effective_default_model(config)
+
+
 def effective_reflection_model(config: "Config") -> str:
     """Reflection-judge model, resolution order (#1212):
 
@@ -548,6 +585,22 @@ async def set_aux_approval_model(config: "Config", name: str, event_bus: Any = N
     return catalog
 
 
+async def set_condense_model(config: "Config", name: str, event_bus: Any = None) -> ModelCatalog:
+    """Set (name non-empty) or clear (name empty) the shell rule-condensation pointer (#1267).
+
+    Empty means "ride on the active conversation model" — resolution then
+    falls through to ``config.shell.condense_model`` and on to the active
+    conversation model. The sidecar is loaded inside the lock so a concurrent
+    refresh or toggle cannot silently revert the change.
+    """
+    async with _catalog_lock:
+        catalog = load_catalog(config)
+        catalog.condense_model = name
+        _save_and_apply(config, catalog)
+    await _publish_models_changed(event_bus)
+    return catalog
+
+
 async def set_reflection_model(config: "Config", name: str, event_bus: Any = None) -> ModelCatalog:
     """Set (name non-empty) or clear (name empty) the reflection-judge pointer (#1212).
 
@@ -636,6 +689,10 @@ def catalog_payload(config: "Config") -> dict:
     # the picker hint shows "(use conversation model)" instead of implying
     # the global default is judging (#1213 review note).
     aux_explicit = aux_pointer or config.shell.aux_approval_model or config.auxiliary_model
+    # Condensation (#1267) has no legacy auxiliary chain, so "explicit" is
+    # just pointer or seed. Pure inherit → empty sentinel: condensation rides
+    # on each conversation's own model, which a global payload cannot name.
+    condense_explicit = catalog.condense_model or config.shell.condense_model
     return {
         "default_model": effective_default_model(config),
         "default_pointer": catalog.default_model,
@@ -646,6 +703,11 @@ def catalog_payload(config: "Config") -> dict:
         # conversation model).
         "aux_approval_model": effective_aux_approval_model(config, "") if aux_explicit else "",
         "aux_approval_pointer": aux_pointer,
+        # Shell rule-condensation pointer (#1267): raw sidecar pointer plus the
+        # effective model it resolves to (empty = ride on the active conversation
+        # model, then the effective default).
+        "condense_model": effective_condense_model(config, "") if condense_explicit else "",
+        "condense_pointer": catalog.condense_model,
         # Reflection-judge / verifier pointers (#1212): the raw sidecar
         # pointers plus the effective judge/verifier names they resolve to.
         # An empty pointer resolves to the seed (config-level reflection
