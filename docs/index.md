@@ -85,4 +85,4 @@ These docs are as much for me as they are for agents working on this project. Th
 
 ## Maintenance
 
-- [Code Debt & Refactoring Backlog](code-debt.md) — Epic-grouped code-quality findings for a cleanup/refactoring sprint
+- [Code Debt & Refactoring Backlog](code-debt/README.md) — Epic-grouped, filing-ready issue drafts for a cleanup/refactoring sprint
