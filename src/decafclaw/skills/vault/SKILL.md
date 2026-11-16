@@ -23,6 +23,13 @@ Your files live under `agent/` in the vault:
 - **Pages** (`vault_write`) are for curated knowledge — distilled, organized, revised over time. Living documents.
 - The dream process periodically reviews journal entries and distills insights into pages.
 
+## Page Naming and Cross-Platform Safety
+
+Vault pages sync across Linux, macOS, Windows, and mobile devices (Android / iOS).
+- **Never use forbidden filename characters:** `:`, `?`, `*`, `"`, `<`, `>`, or `|` in page titles or paths. These cause immediate sync failures and "out of sync" errors on Android and Windows filesystems.
+- **Convert colons in titles:** When naming pages based on articles, topics, or subtitles with colons (e.g., `Topic: Subtopic`), always replace `:` with a spaced dash (`Topic - Subtopic`).
+- Keep page titles concise, descriptive, and filesystem-friendly.
+
 ## Boundaries
 
 - `vault_write` modifies files in the vault. Default to writing in `agent/pages/`.

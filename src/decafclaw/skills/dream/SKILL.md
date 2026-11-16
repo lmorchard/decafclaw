@@ -44,7 +44,7 @@ For each finding from the gather phase:
    - Update the `## Sources` section with where the new information came from
    - `vault_write` the updated page
 3. If no relevant page exists:
-   - Create a new page in `agent/pages/` with a descriptive title
+   - Create a new page in `agent/pages/` with a descriptive, cross-platform safe title (never use `:`, `?`, `*`, `"`, `<`, `>`, `|`; replace colons with ` - ` to prevent Android/Windows sync failures)
    - Use `[[wiki-links]]` to connect to related pages
    - Include a `## Sources` section
    - `vault_write` the new page

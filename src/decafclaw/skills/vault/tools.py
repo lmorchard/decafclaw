@@ -143,17 +143,53 @@ def suggest_pages(config, page: str) -> list[str]:
     return suggestions[:3]
 
 
-def _safe_write_path(config, page: str) -> Path | None:
+def sanitize_vault_page_name(page: str) -> str:
+    """Sanitize a vault page path for cross-platform compatibility (Android/Windows).
+
+    Replaces colons and pipes with spaced dashes ('-') and removes characters
+    forbidden on Android / Windows filesystems (: * ? " < > | \\).
+    """
+    if not isinstance(page, str) or not page.strip():
+        return page
+    has_md = page.endswith(".md")
+    raw = page[:-3] if has_md else page
+
+    parts = raw.split("/")
+    cleaned = []
+    for part in parts:
+        if not part:
+            cleaned.append(part)
+            continue
+        # Replace colons and pipes with spaced dashes
+        s = re.sub(r"\s*[:|]\s*", " - ", part)
+        # Strip illegal characters and control chars
+        s = re.sub(r"[\x00-\x1f?*\"<>\\^]", "", s)
+        # Collapse whitespace
+        s = re.sub(r"\s+", " ", s).strip()
+        # Windows / Android forbid trailing dots or spaces in path segments
+        s = s.rstrip(". ")
+        cleaned.append(s)
+
+    result = "/".join(cleaned)
+    if has_md:
+        result += ".md"
+    return result
+
+
+def _safe_write_path(config, page: str, sanitize: bool = False) -> Path | None:
     """Validate and return a safe write path within the vault root.
 
     Returns None for invalid names (empty, trailing slash, path traversal)
-    or paths that would escape the vault directory.
+    or paths that would escape the vault directory. When sanitize=True,
+    cleans illegal characters (: * ? " < > | \\) in page names.
     """
     if not isinstance(page, str):
         return None
     page = page.strip()
     if not page:
         return None
+    if sanitize:
+        page = sanitize_vault_page_name(page)
     if ".." in page or page.startswith("/") or page.endswith("/"):
         return None
     # Strip .md suffix if the caller included it (prevents Foo.md.md)
@@ -383,6 +419,7 @@ async def tool_vault_read(ctx: "Context", page: str) -> str | ToolResult:
 async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | ToolResult:
     """Create or overwrite a vault page."""
     log.info(f"[tool:vault_write] page={page}")
+    page = sanitize_vault_page_name(page)
     path = _safe_write_path(ctx.config, page)
     if path is None:
         return ToolResult(text=f"[error: invalid page name '{page}' — must be within vault directory]")
@@ -522,6 +559,7 @@ async def tool_vault_rename(ctx: "Context", page: str, rename_to: str) -> ToolRe
     require confirmation per call (or grant/allowlist short-circuit). A single
     confirmation covers both source and target paths."""
     log.info(f"[tool:vault_rename] {page} -> {rename_to}")
+    rename_to = sanitize_vault_page_name(rename_to)
     old_path = _safe_write_path(ctx.config, page)
     if old_path is None:
         return ToolResult(text=f"[error: invalid page name '{page}' — must be within vault directory]")
