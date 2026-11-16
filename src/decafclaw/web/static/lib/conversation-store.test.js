@@ -399,8 +399,12 @@ describe('conversation creation transport', () => {
 });
 
 describe.each([
-  ['archiveConversation', 'POST', '/archive', false, true, 1],
-  ['unarchiveConversation', 'POST', '/unarchive', true, false, 1],
+  // `events` counts emitted change events on success. #1274 added a session
+  // hierarchy refetch to each lifecycle op, so archive/unarchive emit twice
+  // (flat-list + sessions); delete's redundant explicit emit was replaced by the
+  // sessions refetch, keeping it at two.
+  ['archiveConversation', 'POST', '/archive', false, true, 2],
+  ['unarchiveConversation', 'POST', '/unarchive', true, false, 2],
   ['deleteConversation', 'DELETE', '', true, true, 2],
 ])('lifecycle %s transport', (method, verb, suffix, archived, clears, events) => {
   const id = 'web-user-日本語 & + #%?';
@@ -431,7 +435,10 @@ describe.each([
     expect(options.credentials).toBe('same-origin');
     expect(options.body).toBeUndefined();
     expect(fetchMock.mock.calls[1][0]).toBe(`/api/conversations${archived ? '/archived' : ''}?folder=Work%2FNested`);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // #1274 — the mutation also refreshes the session hierarchy (sidebar source).
+    expect(new URL(fetchMock.mock.calls[2][0], 'http://test').searchParams.get('folder')).toBe('Work/Nested');
+    expect(String(fetchMock.mock.calls[2][0])).toContain('/api/sessions');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(store.currentConvId).toBe(clears ? null : id);
     expect(store.currentMessages).toHaveLength(clears ? 0 : 1);
     expect(archived ? store.archivedFolders : store.folders).toEqual(refreshed.folders);
@@ -966,6 +973,139 @@ describe('session hierarchy wiring (#1115)', () => {
       await vi.advanceTimersByTimeAsync(500);
       expect(sessionsCalls()).toBe(1);
       expect(store.getConversationStatus('web-alice-r1--child-abcdef12')).toBe('finished');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// #1274 — the sidebar's active section renders from the session hierarchy
+// (`GET /api/sessions`), but conversation mutations only refreshed the flat
+// listing, so archive/rename/unarchive/delete/move left the hierarchy stale
+// until a full page reload. Each mutation must refresh the hierarchy too.
+describe('session hierarchy follows conversation mutations (#1274)', () => {
+  let ws, store;
+  /** @type {import('vitest').Mock} */
+  let fetchMock;
+
+  // One session containing the conversation under test, so a hierarchy refresh
+  // is observable. The mock returns this for every `/api/sessions` call — the
+  // assertion is that a refresh *happens* (the server would reflect the change),
+  // not that this fixed body models the removal.
+  const sessionBody = {
+    folder: '',
+    sessions: [
+      {
+        session_id: 'web-alice-r1',
+        title: 'Root chat',
+        created_at: 't0',
+        updated_at: 't1',
+        status: 'idle',
+        conversations: [
+          { conv_id: 'web-alice-r1', title: 'Root chat', kind: 'parent', status: 'idle' },
+        ],
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = makeStore(ws);
+    fetchMock = vi.fn(async (url) => {
+      const u = String(url);
+      let body;
+      if (u.startsWith('/api/sessions')) {
+        body = sessionBody;
+      } else if (u.startsWith('/api/conversations/')) {
+        // rename/move/delete/archive/unarchive — a conv-shaped ack.
+        body = { conv_id: 'web-alice-r1', title: 'Renamed', created_at: 't0', updated_at: 't2' };
+      } else {
+        body = { folder: '', folders: [], conversations: [] };
+      }
+      return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const sessionsCalls = () =>
+    fetchMock.mock.calls.filter(([u]) => String(u).startsWith('/api/sessions')).length;
+
+  it('refreshes the session hierarchy after archiving a conversation', async () => {
+    await store.listSessions();
+    expect(sessionsCalls()).toBe(1);
+    await store.archiveConversation('web-alice-r1');
+    expect(sessionsCalls()).toBe(2);
+  });
+
+  it('refreshes the session hierarchy after renaming a conversation', async () => {
+    await store.listSessions();
+    expect(sessionsCalls()).toBe(1);
+    await store.renameConversation('web-alice-r1', 'Renamed');
+    expect(sessionsCalls()).toBe(2);
+  });
+
+  it('refreshes the session hierarchy after unarchiving a conversation', async () => {
+    await store.listSessions();
+    expect(sessionsCalls()).toBe(1);
+    await store.unarchiveConversation('web-alice-r1');
+    expect(sessionsCalls()).toBe(2);
+  });
+
+  it('refreshes the session hierarchy after deleting a conversation', async () => {
+    await store.listSessions();
+    expect(sessionsCalls()).toBe(1);
+    await store.deleteConversation('web-alice-r1');
+    expect(sessionsCalls()).toBe(2);
+  });
+
+  it('refreshes the session hierarchy after moving a conversation to another folder', async () => {
+    await store.listSessions();
+    expect(sessionsCalls()).toBe(1);
+    await store.moveConversation('web-alice-r1', 'Work');
+    expect(sessionsCalls()).toBe(2);
+  });
+
+  it('schedules a debounced hierarchy refresh on a background rename of a listed conversation', async () => {
+    vi.useFakeTimers();
+    try {
+      ws.fireOpen();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sessionsCalls()).toBe(1);
+
+      // A background auto-title (#1072) for a conversation present in the
+      // hierarchy must refresh it (debounced) rather than wait for a reload.
+      ws.fireMessage({
+        type: MESSAGE_TYPES.CONV_RENAMED,
+        conv_id: 'web-alice-r1',
+        title: 'Refined title',
+        updated_at: 't9',
+      });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(sessionsCalls()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule a hierarchy refresh for a background rename of an unlisted conversation', async () => {
+    vi.useFakeTimers();
+    try {
+      ws.fireOpen();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sessionsCalls()).toBe(1);
+
+      // A rename for a conversation the store has never loaded is not in the
+      // hierarchy — no refetch (avoids a stray request for an unknown id).
+      ws.fireMessage({
+        type: MESSAGE_TYPES.CONV_RENAMED,
+        conv_id: 'web-alice-ghost',
+        title: 'Ghost title',
+        updated_at: 't9',
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(sessionsCalls()).toBe(1);
     } finally {
       vi.useRealTimers();
     }
