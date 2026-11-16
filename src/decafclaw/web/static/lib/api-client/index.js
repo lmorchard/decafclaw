@@ -492,9 +492,11 @@ var request2 = (config, options) => {
   const shellApprovalGet = options.method === "GET" && options.url === "/api/conversations/{id}/shell-approval";
   const shellApprovalPut = options.method === "PUT" && options.url === "/api/conversations/{id}/shell-approval/rules";
   const shellApprovalRulesDelete = options.method === "DELETE" && options.url === "/api/conversations/{id}/shell-approval/rules";
+  const shellApprovalRulesReplace = options.method === "PUT" && options.url === "/api/conversations/{id}/shell-approval/rules/replace";
   const shellApprovalPatternsDelete = options.method === "DELETE" && options.url === "/api/conversations/{id}/shell-approval/patterns";
   const shellApprovalPromote = options.method === "POST" && options.url === "/api/conversations/{id}/shell-approval/promote";
-  const shellApprovalConversation = shellApprovalGet || shellApprovalPut || shellApprovalRulesDelete || shellApprovalPatternsDelete || shellApprovalPromote;
+  const shellApprovalCondense = options.method === "POST" && options.url === "/api/conversations/{id}/shell-approval/condense";
+  const shellApprovalConversation = shellApprovalGet || shellApprovalPut || shellApprovalRulesDelete || shellApprovalRulesReplace || shellApprovalPatternsDelete || shellApprovalPromote || shellApprovalCondense;
   if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && !shellPresets && !shellApprovalConversation && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }

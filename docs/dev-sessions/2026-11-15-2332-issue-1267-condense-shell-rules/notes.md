@@ -33,13 +33,20 @@
 
 ## Plan / phases (commit per phase)
 
-1. [ ] Config knob `shell.condense_model` + model_catalog (sidecar pointer, effective_condense_model, set_condense_model, catalog_payload) + tests/test_model_catalog.py resolution tests.
-2. [ ] HTTP endpoints: rules/replace + condense (+ set-condense-pointer) in http_server.py; pydantic models; route table. tests/web/test_shell_approval_panel_http.py replace+condense tests.
-3. [ ] `make gen-api-client` (regenerate TS client for new endpoints).
-4. [ ] Panel JS edit mode + condense (shell-approval-panel.js) + extend shell-approval-panel.test.js.
+1. [x] Config knob `shell.condense_model` + model_catalog (sidecar pointer, effective_condense_model, set_condense_model, catalog_payload) + tests/test_model_catalog.py resolution tests. → commit 86b4a7e8
+2. [x] HTTP endpoints: rules/replace + condense (+ set-condense-pointer) in http_server.py; pydantic models; route table. tests/web/test_shell_approval_panel_http.py replace+condense tests + test_models_catalog_http.py condense pointer. → commit 40c04e16
+3. [x] `make gen-api-client` (regenerate TS client for new endpoints) — in commit 40c04e16. Generated methods: `putConversationShellRulesReplaceApiConversationsIdShellApprovalRulesReplacePut(id,{rules})`, `postConversationShellCondenseApiConversationsIdShellApprovalCondensePost(id)`, `wrapperApiModelsCatalogCondensePost({model})`.
+4. [x] Panel JS edit mode + condense (shell-approval-panel.js) + extend shell-approval-panel.test.js. Includes the transport fix: `scripts/sticky_api_request.ts` must list rules/replace + condense in the shellApproval family, or they ride the stock transport (no same-origin credentials → 401 in production; header-gated body decode breaks the headers-less test mocks).
 5. [ ] model-catalog.js condense picker + extend model-catalog.test.js.
 6. [ ] Docs: config.md, model-selection.md, web-ui.md (panel + API table), tools.md.
 7. [ ] Gates: make fmt, make check (lint/typecheck/check-js/browser-assets), make test, make test-js.
+
+## Draft PR published (checkpoint 1)
+
+- **PR: https://github.com/lmorchard/decafclaw/pull/1289** (DRAFT, base main, head 40c04e16)
+- Author + commit authors: MokaGnome (no attribution finding). verify-commit --pr-head is_pr_head=True.
+- Body: docs/dev-sessions/.../pr-body-draft.md (draft, "Part of #1267", no Closes).
+- Continuing on the same branch; will push JS + docs commits to this draft. Do NOT mark ready (handoff: leave open).
 
 ## Success conditions → evidence map
 
@@ -53,3 +60,4 @@
 
 - Baseline `make test`: 5502 passed, 2 skipped in 42s (clean).
 - Port: HTTP_PORT=18961 set in worktree .env.
+- Resume 2026-11-16: found the panel condense flow dead on arrival — the two new endpoints were missing from `scripts/sticky_api_request.ts`'s shellApproval family, so they rode the stock transport. Added both; regenerated the client (`make gen-api-client`, idempotent 3-line diff). Panel suite 13/13, full JS suite 687 passed, `make check-js` (tsc) clean.

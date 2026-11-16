@@ -221,6 +221,68 @@
   flex-shrink: 0;
 }
 
+/* ── Bulk-edit draft + LLM condensation (#1267) ─────────────────── */
+
+.shell-approval-panel-mount .sap-rules-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.shell-approval-panel-mount .sap-rules-header .sap-section-title {
+  margin-bottom: 0;
+}
+
+.shell-approval-panel-mount .sap-edit-btn {
+  flex-shrink: 0;
+}
+
+.shell-approval-panel-mount .sap-draft-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.shell-approval-panel-mount .sap-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.shell-approval-panel-mount .sap-edit-spacer {
+  flex: 1;
+}
+
+.shell-approval-panel-mount .sap-condense-btn,
+.shell-approval-panel-mount .sap-save-btn {
+  flex-shrink: 0;
+}
+
+/* Diff markers follow the widgets.css diff-line tint convention. */
+.shell-approval-panel-mount .sap-rule-added {
+  background-color: rgba(46, 160, 67, 0.15);
+}
+
+.shell-approval-panel-mount .sap-rule-removed {
+  background-color: rgba(248, 81, 73, 0.15);
+}
+
+.shell-approval-panel-mount .sap-rule-removed .sap-rule-text {
+  text-decoration: line-through;
+  color: var(--pico-muted-color);
+}
+
+.shell-approval-panel-mount .sap-removed-label {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
+.shell-approval-panel-mount .sap-removed-list {
+  margin-bottom: 0.5rem;
+}
+
 /* Sidebar / control-bar trigger next to the mode picker. */
 conversation-sidebar .shell-approval-open-btn {
   margin-top: 0.25rem;
