@@ -363,6 +363,29 @@ class ConversationShellApprovalPromoteRequest(BaseModel):
     preset: str = ""
 
 
+class ConversationShellApprovalRulesReplaceRequest(BaseModel):
+    """Full-list replace for the bulk-edit draft (#1267). An empty list clears
+    every conversation rule."""
+
+    rules: list[str] = []
+
+
+class ConversationShellApprovalRulesReplaceResponse(BaseModel):
+    ok: Literal[True]
+    conv_id: str
+    conversation_rules: list[str]
+
+
+class ConversationShellApprovalCondenseResponse(BaseModel):
+    """The condensation proposal (#1267). Never mutates state — the rules land
+    on disk only when the user reviews and saves them through the replace
+    endpoint."""
+
+    ok: Literal[True]
+    conv_id: str
+    rules: list[str]
+
+
 class BookmarkAddRequest(BaseModel):
     target: Literal["files", "vault"]
     path: str
@@ -2750,6 +2773,152 @@ async def delete_conversation_shell_rule(request: Request, id: str) -> JSONRespo
     return JSONResponse({"ok": True, "conv_id": conv_id, "conversation_rules": new_list})
 
 
+async def put_conversation_shell_rules_replace(request: Request, id: str) -> JSONResponse:
+    """PUT /api/conversations/{id}/shell-approval/rules/replace — replace the full rule list (#1267).
+
+    Body: ``{"rules": ["...", ...]}``. Atomically replaces the conversation's
+    entire editable guidance with the given list (an empty result clears every
+    rule). Clears the conversation's cached reviewer approval patterns so the
+    next prompt re-derives, same as the single-rule endpoints. Returns 409 when
+    the conversation is busy or waiting, same as they do. The single-rule PUT/
+    DELETE forms stay unchanged for one-at-a-time edits.
+    """
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    conv_id = id
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    manager = getattr(request.app.state, "manager", None)
+    status = manager.get_activity_status(conv_id) if manager else "idle"
+    if status in ("busy", "waiting"):
+        # A turn-end save would silently undo an in-flight bulk edit.
+        return JSONResponse({"error": f"conversation is {status}"}, status_code=409)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    rules = body.get("rules")
+    if not isinstance(rules, list):
+        return JSONResponse({"error": "rules must be a list of strings"}, status_code=400)
+    if any(not isinstance(r, str) for r in rules):
+        return JSONResponse({"error": "each rule must be a string"}, status_code=400)
+    # Strip and drop blanks: blanking a row in the draft removes that rule. The
+    # remaining set is authoritative (no dedup — it is what the user reviewed).
+    new_list = [r.strip() for r in rules if r.strip()]
+
+    if manager is None:
+        return JSONResponse({"error": "manager not available"}, status_code=503)
+    manager.set_flag(conv_id, "aux_approval_guidance", new_list)
+    manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
+    return JSONResponse({"ok": True, "conv_id": conv_id, "conversation_rules": new_list})
+
+
+def _build_condense_prompt(rules: list[str]) -> str:
+    """Prompt for the rule-condensation one-shot call (#1267).
+
+    Rules are free-text guidance for an LLM judge, so the model is asked to
+    merge near-duplicates and generalize into fewer summary rules that preserve
+    the same intent. It must return a bare JSON object with a ``rules`` list.
+    """
+    numbered = "\n".join(f"{i}. {r}" for i, r in enumerate(rules, 1))
+    return (
+        "You are condensing shell auto-approval rules for a conversation. Each rule below is a "
+        "free-text instruction to an LLM that decides whether to auto-approve a shell command. "
+        "Rewrite them into fewer, more general summary rules that preserve the same intent and "
+        "coverage: merge near-duplicates, generalize specific commands into their category where "
+        "safe, and drop any rule fully subsumed by a more general one. Do not invent new "
+        "permissions the rules do not already imply. Return ONLY JSON of the form "
+        '{"rules": ["...", ...]} with no prose outside the JSON.\n\n'
+        f"Current rules:\n{numbered}"
+    )
+
+
+async def post_conversation_shell_condense(request: Request, id: str) -> JSONResponse:
+    """POST /api/conversations/{id}/shell-approval/condense — propose condensed rules (#1267).
+
+    Builds a prompt from the conversation's current rules and asks the resolved
+    condense model to rewrite them into fewer, more general summary rules as a
+    one-shot completion (no tools). Returns the proposal; it never mutates state
+    — rules on disk and cached patterns are unchanged. The proposal lands in the
+    panel's bulk-edit draft, where the user reviews before/after and saves it
+    through the replace endpoint. Returns 409 when the conversation is busy or
+    waiting; a model error or unparseable response returns an error and the panel
+    keeps its current draft.
+    """
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    conv_id = id
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    manager = getattr(request.app.state, "manager", None)
+    status = manager.get_activity_status(conv_id) if manager else "idle"
+    if status in ("busy", "waiting"):
+        return JSONResponse({"error": f"conversation is {status}"}, status_code=409)
+
+    state = manager.get_state(conv_id) if manager else None
+    conversation_rules: list[str] = []
+    active_model = ""
+    if state is not None:
+        live_tools = state.active_context.tools if (state.active_context is not None) else None
+        if live_tools is not None:
+            conversation_rules = _as_str_list(getattr(live_tools, "aux_approval_guidance", None))
+        else:
+            conversation_rules = _as_str_list(getattr(state.persisted, "aux_approval_guidance", None))
+        active_model = getattr(state.persisted, "active_model", "") or ""
+
+    if not conversation_rules:
+        return JSONResponse({"error": "no rules to condense"}, status_code=400)
+
+    # Function-level import on purpose: the test stub patches
+    # ``decafclaw.llm.call_llm`` and a module-level binding would not see it.
+    from .llm import call_llm
+    from .model_catalog import effective_condense_model
+
+    model_name = effective_condense_model(config, active_model)
+    messages = [{"role": "user", "content": _build_condense_prompt(conversation_rules)}]
+
+    try:
+        response = await call_llm(config, messages, model_name=model_name)
+    except Exception as exc:
+        log.warning("shell condense: model call failed for conv %s: %s", conv_id, exc)
+        return JSONResponse({"error": f"condensation failed: {exc}"}, status_code=502)
+
+    raw_text = (response.get("content") or "").strip()
+    # Strip a ```json fence the model may wrap its output in (same as the judge).
+    if "```" in raw_text:
+        raw_text = re.sub(r"^```(?:json)?\n?", "", raw_text, flags=re.MULTILINE)
+        raw_text = re.sub(r"```$", "", raw_text, flags=re.MULTILINE).strip()
+
+    try:
+        data = json.loads(raw_text)
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse(
+            {"error": "condensation returned unparseable output; the draft is unchanged"},
+            status_code=400,
+        )
+
+    proposed = data.get("rules") if isinstance(data, dict) else None
+    if not isinstance(proposed, list):
+        return JSONResponse(
+            {"error": "condensation response missing a 'rules' list; the draft is unchanged"},
+            status_code=400,
+        )
+    proposed_rules = [r.strip() for r in proposed if isinstance(r, str) and r.strip()]
+
+    return JSONResponse({"ok": True, "conv_id": conv_id, "rules": proposed_rules})
+
+
 async def delete_conversation_shell_pattern(request: Request, id: str) -> JSONResponse:
     """DELETE /api/conversations/{id}/shell-approval/patterns — revoke one cached pattern.
 
@@ -3957,6 +4126,11 @@ class ModelCatalogResponse(BaseModel):
     # model).
     aux_approval_model: str = ""
     aux_approval_pointer: str = ""
+    # Shell rule-condensation pointer (#1267): raw sidecar pointer plus the
+    # effective model it resolves to (empty = ride on the active conversation
+    # model, then the effective default).
+    condense_model: str = ""
+    condense_pointer: str = ""
     # Reflection-judge / verifier pointers (#1212): raw sidecar pointers plus
     # the effective judge/verifier names they resolve to. Empty pointer = inherit.
     reflection_model: str = ""
@@ -4102,6 +4276,32 @@ async def models_catalog_set_aux_approval(request: Request, username: str) -> JS
     if name and name not in picker_models(config):
         return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
     await set_aux_approval_model(config, name, event_bus=request.app.state.event_bus)
+    return JSONResponse(catalog_payload(config))
+
+
+@_authenticated
+async def models_catalog_set_condense(request: Request, username: str) -> JSONResponse:
+    """POST /api/models/catalog/condense — set or clear the shell rule-condensation pointer (#1267).
+
+    An empty `model` clears the pointer (condensation then rides on the active
+    conversation model, then the effective default). A non-empty name must be
+    selectable: an enabled discovered model or a hand-authored config.
+    """
+    from .model_catalog import catalog_payload, picker_models, set_condense_model
+
+    config = request.app.state.config
+    try:
+        body = await request.json()
+    except Exception as exc:
+        log.debug("models_catalog_set_condense: invalid JSON body: %s", exc)
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
+        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
+
+    name = body["model"]
+    if name and name not in picker_models(config):
+        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
+    await set_condense_model(config, name, event_bus=request.app.state.event_bus)
     return JSONResponse(catalog_payload(config))
 
 
@@ -4792,6 +4992,22 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute(
+            "/api/models/catalog/condense",
+            models_catalog_set_condense,
+            methods=["POST"],
+            response_model=ModelCatalogResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": _request_schema(ModelCatalogUpdateRequest),
+                        },
+                    },
+                },
+            },
+        ),
+        APIRoute(
             "/api/models/catalog/reflection",
             models_catalog_set_reflection,
             methods=["POST"],
@@ -5157,6 +5373,26 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                     },
                 },
             },
+        ),
+        APIRoute(
+            "/api/conversations/{id}/shell-approval/rules/replace",
+            put_conversation_shell_rules_replace,
+            methods=["PUT"],
+            response_model=ConversationShellApprovalRulesReplaceResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": ConversationShellApprovalRulesReplaceRequest.model_json_schema()}
+                    },
+                },
+            },
+        ),
+        APIRoute(
+            "/api/conversations/{id}/shell-approval/condense",
+            post_conversation_shell_condense,
+            methods=["POST"],
+            response_model=ConversationShellApprovalCondenseResponse,
         ),
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
         APIRoute("/api/wiki", vault_list, methods=["GET"]),

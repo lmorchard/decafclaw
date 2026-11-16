@@ -20,7 +20,9 @@ import type { ConversationFolderResponse } from '../models/ConversationFolderRes
 import type { ConversationLifecycleResponse } from '../models/ConversationLifecycleResponse';
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
+import type { ConversationShellApprovalCondenseResponse } from '../models/ConversationShellApprovalCondenseResponse';
 import type { ConversationShellApprovalResponse } from '../models/ConversationShellApprovalResponse';
+import type { ConversationShellApprovalRulesReplaceResponse } from '../models/ConversationShellApprovalRulesReplaceResponse';
 import type { JsonValue } from '../models/JsonValue';
 import type { LoginResponse } from '../models/LoginResponse';
 import type { LogoutResponse } from '../models/LogoutResponse';
@@ -1108,6 +1110,26 @@ export class DefaultService {
      * @returns ModelCatalogResponse Successful Response
      * @throws ApiError
      */
+    public static wrapperApiModelsCatalogCondensePost(
+        requestBody: {
+            key?: (string | null);
+            enabled?: (boolean | null);
+            model?: (string | null);
+        },
+    ): CancelablePromise<ModelCatalogResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/models/catalog/condense',
+            body: requestBody,
+            mediaType: 'application/json',
+        });
+    }
+    /**
+     * Wrapper
+     * @param requestBody
+     * @returns ModelCatalogResponse Successful Response
+     * @throws ApiError
+     */
     public static wrapperApiModelsCatalogReflectionPost(
         requestBody: {
             key?: (string | null);
@@ -1779,6 +1801,70 @@ export class DefaultService {
             },
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Put Conversation Shell Rules Replace
+     * PUT /api/conversations/{id}/shell-approval/rules/replace — replace the full rule list (#1267).
+     *
+     * Body: ``{"rules": ["...", ...]}``. Atomically replaces the conversation's
+     * entire editable guidance with the given list (an empty result clears every
+     * rule). Clears the conversation's cached reviewer approval patterns so the
+     * next prompt re-derives, same as the single-rule endpoints. Returns 409 when
+     * the conversation is busy or waiting, same as they do. The single-rule PUT/
+     * DELETE forms stay unchanged for one-at-a-time edits.
+     * @param id
+     * @param requestBody
+     * @returns ConversationShellApprovalRulesReplaceResponse Successful Response
+     * @throws ApiError
+     */
+    public static putConversationShellRulesReplaceApiConversationsIdShellApprovalRulesReplacePut(
+        id: string,
+        requestBody: {
+            rules?: Array<string>;
+        },
+    ): CancelablePromise<ConversationShellApprovalRulesReplaceResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/conversations/{id}/shell-approval/rules/replace',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Post Conversation Shell Condense
+     * POST /api/conversations/{id}/shell-approval/condense — propose condensed rules (#1267).
+     *
+     * Builds a prompt from the conversation's current rules and asks the resolved
+     * condense model to rewrite them into fewer, more general summary rules as a
+     * one-shot completion (no tools). Returns the proposal; it never mutates state
+     * — rules on disk and cached patterns are unchanged. The proposal lands in the
+     * panel's bulk-edit draft, where the user reviews before/after and saves it
+     * through the replace endpoint. Returns 409 when the conversation is busy or
+     * waiting; a model error or unparseable response returns an error and the panel
+     * keeps its current draft.
+     * @param id
+     * @returns ConversationShellApprovalCondenseResponse Successful Response
+     * @throws ApiError
+     */
+    public static postConversationShellCondenseApiConversationsIdShellApprovalCondensePost(
+        id: string,
+    ): CancelablePromise<ConversationShellApprovalCondenseResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/shell-approval/condense',
+            path: {
+                'id': id,
+            },
             errors: {
                 422: `Validation Error`,
             },
