@@ -49,70 +49,169 @@ nothing else.
 
 ---
 
-### 3.3 — Extract a shared streaming retry loop
+### 3.3a — Extract a shared streaming retry helper; adopt in `openai_compat`
 
-**Size:** M
+**Size:** S
 **Triage:** ready
 
 **Problem.** The backoff/retry/attempt loop is near-identical across
-`openai_compat`, `vertex`, and `openai_responses`, differing only in logging prefix.
+`openai_compat`, `vertex`, and `openai_responses`. `openai_compat` owns a private
+copy.
 
-**Result.** One streaming retry helper parameterized by an attempt coroutine and a
-chunk normalizer; all three providers call it.
+**Result.** One streaming retry helper (in `llm/retry.py`) parameterized by an
+attempt coroutine and a chunk normalizer; `openai_compat` calls it.
 
-**Scope.** In: the retry loop only. Out: do not yet merge the `StreamState`
-classes (3.4) or `embed` (3.5).
+**Scope.** In: define the helper; adopt it in `openai_compat` only. Out: the other
+providers (3.3b/3.3c), the `StreamState` classes (3.4), and `embed` (3.5).
 
-**Verify.** `make test` — `tests/test_llm_streaming.py` +
-`tests/test_provider_registry.py`.
+**Verify.** `make test` — `tests/test_llm_streaming.py`.
 
-**Tests.** Existing streaming retry/cancellation tests pass across all providers.
+**Tests.** Existing `openai_compat` retry/cancellation tests pass unchanged.
 
 **Deps.** none (builds on 3.1)
 
 ---
 
-### 3.4 — Extract a shared `StreamState` base
+### 3.3b — Adopt the shared retry helper in `vertex`
 
-**Size:** M
+**Size:** S
+**Triage:** blocked-by #3.3a
+
+**Result.** `vertex` replaces its inline retry loop with the helper from 3.3a.
+
+**Scope.** In: `vertex` retry loop only. Out: chunk normalization stays in `vertex`.
+
+**Verify.** `make test` — `tests/test_llm_streaming.py`.
+
+**Tests.** Existing `vertex` retry/cancellation tests pass unchanged.
+
+**Deps.** blocked-by #3.3a
+
+---
+
+### 3.3c — Adopt the shared retry helper in `openai_responses`
+
+**Size:** S
+**Triage:** blocked-by #3.3a
+
+**Result.** `openai_responses` replaces its inline retry loop with the helper from
+3.3a.
+
+**Scope.** In: `openai_responses` retry loop only. Out: its error-type behavior
+(unchanged from 2.5).
+
+**Verify.** `make test` — `tests/test_llm_streaming.py`.
+
+**Tests.** Existing `openai_responses` retry tests pass unchanged.
+
+**Deps.** blocked-by #3.3a
+
+---
+
+### 3.4a — Extract a shared `StreamState` base; adopt in `openai_compat`
+
+**Size:** S
 **Triage:** ready
 
 **Problem.** `_StreamState` / `_VertexStreamState` / `_ResponsesState` duplicate
 `record_event`, diagnostic trimming, `finalize()` SSE-dump, and `emit`.
 
-**Result.** One generic `StreamState` base, with each provider subclassing only
+**Result.** A generic `StreamState` base; `openai_compat` subclasses it with only
 its chunk-normalization path.
 
-**Scope.** In: the three state classes. Out: retry loop (3.3) and embed (3.5).
+**Scope.** In: define the base; refactor `openai_compat`'s state class onto it.
+Out: the other providers (3.4b/3.4c), retry loop (3.3), embed (3.5).
 
 **Verify.** `make test` — `tests/test_llm_streaming.py`.
 
-**Tests.** Existing diagnostic/emit assertions pass unchanged.
+**Tests.** Existing `openai_compat` diagnostic/emit assertions pass unchanged.
 
 **Deps.** none
 
 ---
 
-### 3.5 — Deduplicate `embed()`
+### 3.4b — Adopt the shared `StreamState` base in `vertex`
 
-**Size:** M
+**Size:** S
+**Triage:** blocked-by #3.4a
+
+**Result.** `vertex` replaces `_VertexStreamState` with a subclass of the 3.4a
+base.
+
+**Verify.** `make test` — `tests/test_llm_streaming.py`.
+
+**Tests.** Existing `vertex` diagnostic/emit tests pass unchanged.
+
+**Deps.** blocked-by #3.4a
+
+---
+
+### 3.4c — Adopt the shared `StreamState` base in `openai_responses`
+
+**Size:** S
+**Triage:** blocked-by #3.4a
+
+**Result.** `openai_responses` replaces `_ResponsesState` with a subclass of the
+3.4a base.
+
+**Verify.** `make test` — `tests/test_llm_streaming.py`.
+
+**Tests.** Existing `openai_responses` diagnostic/emit tests pass unchanged.
+
+**Deps.** blocked-by #3.4a
+
+---
+
+### 3.5a — Extract a shared embedding transport; adopt in `vertex`
+
+**Size:** S
 **Triage:** ready
 
 **Problem.** Embedding transport is triplicated across `vertex._complete`,
 `openai_compat.embed`, and a legacy fallback in `embeddings.py`, with divergent
 retry/swallow behavior.
 
-**Result.** One shared embedding transport; the providers delegate to it, and
-`embeddings.py` routes through a provider's `embed` instead of raw httpx.
+**Result.** One shared embedding transport helper; `vertex` delegates to it.
 
-**Scope.** In: the three embed paths. Out: no change to embedding *inputs* or
-callers.
+**Scope.** In: define the helper; adopt in `vertex`. Out: the other providers
+(3.5b/3.5c). No change to embedding inputs or callers.
 
 **Verify.** `make test` — `tests/test_embeddings.py`.
 
-**Tests.** Existing embedding retry/error tests pass; update the provider tests.
+**Tests.** Existing `vertex` embedding retry/error tests pass unchanged.
 
 **Deps.** none
+
+---
+
+### 3.5b — Adopt the shared embedding transport in `openai_compat`
+
+**Size:** S
+**Triage:** blocked-by #3.5a
+
+**Result.** `openai_compat.embed` delegates to the 3.5a helper.
+
+**Verify.** `make test` — `tests/test_embeddings.py`.
+
+**Tests.** Existing `openai_compat` embedding tests pass unchanged.
+
+**Deps.** blocked-by #3.5a
+
+---
+
+### 3.5c — Route `embeddings.py` legacy path through the shared transport
+
+**Size:** S
+**Triage:** blocked-by #3.5a
+
+**Result.** The `embeddings.py` fallback routes through a provider's `embed`
+instead of raw httpx.
+
+**Verify.** `make test` — `tests/test_embeddings.py`.
+
+**Tests.** Existing legacy-embedding tests pass; update the fallback assertions.
+
+**Deps.** blocked-by #3.5a
 
 ---
 

@@ -51,22 +51,61 @@ case if none exists.
 
 ---
 
-### 5.3 — Stop returning bare error strings
+### 5.3a — Return `ToolResult` for `mcp_client` call errors
 
-**Size:** S
+**Size:** XS
 **Triage:** ready
 
-**Problem.** `mcp_client._make_tool_caller`, `tool_output_tools._page_text`, and
-`core.py` return bare `"[error: ...]"` strings instead of `ToolResult`, producing
-heterogeneous return types.
+**Problem.** `mcp_client._make_tool_caller` returns bare `"[error: ...]"` strings
+on failure, while the success path returns a `ToolResult`.
 
-**Result.** All error branches return `ToolResult(text="[error: ...]")`.
+**Result.** MCP call failures return `ToolResult(text="[error: ...]")`.
 
-**Scope.** In: the named return sites. Out: no success-path change.
+**Scope.** In: `mcp_client.py` error branches only. Out: success path unchanged.
 
-**Verify.** `make test` — `tests/test_mcp_client.py`, `tests/test_core_tools.py`.
+**Verify.** `make test` — `tests/test_mcp_client.py`.
 
-**Tests.** Add cases asserting error returns are `ToolResult` instances.
+**Tests.** Add a case asserting an MCP call failure returns a `ToolResult`.
+
+**Deps.** none
+
+---
+
+### 5.3b — Return `ToolResult` for `tool_output_tools` page errors
+
+**Size:** XS
+**Triage:** ready
+
+**Problem.** `tool_output_tools._page_text` returns a bare `"[error: ...]"` string.
+
+**Result.** It returns `ToolResult(text="[error: ...]")`.
+
+**Scope.** In: `tool_output_tools.py`. Out: nothing else.
+
+**Verify.** `make test` — tool-output tests.
+
+**Tests.** Update/add a case asserting the paged-read error is a `ToolResult`.
+
+**Deps.** none
+
+---
+
+### 5.3c — Return `ToolResult` for `core.py` error/no-context strings
+
+**Size:** XS
+**Triage:** ready
+
+**Problem.** `core.py` returns bare strings (`"[no context available]"`, wait
+messages) instead of `ToolResult`.
+
+**Result.** Error/no-context returns are `ToolResult`; plain wait text may stay a
+bare string.
+
+**Scope.** In: `core.py`. Out: nothing else.
+
+**Verify.** `make test` — `tests/test_core_tools.py`.
+
+**Tests.** Add a case asserting the no-context return is a `ToolResult`.
 
 **Deps.** none
 

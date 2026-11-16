@@ -31,21 +31,64 @@ asymmetry.
 
 ---
 
-### 8.2 — Migrate all call sites to the canonical source
+### 8.2a — Adopt the canonical classification in `context_composer`
 
 **Size:** S
 **Triage:** blocked-by #8.1
 
-**Problem.** `context_composer` (6×), `agent._TASK_MODE_TO_COMPOSER`,
-`context_cleanup._PRUNE_SKIP_MODES`, and `context.UNATTENDED_TASK_MODES` still use
-private copies.
+**Problem.** `context_composer` re-declares the skip frozenset six times inline.
 
-**Result.** All derive from the canonical source from 8.1.
+**Result.** All six sites use the canonical source from 8.1.
 
-**Verify.** `make test` — `tests/test_context_composer.py`,
-`tests/test_context_cleanup.py`, `tests/test_agent_turn.py`.
+**Verify.** `make test` — `tests/test_context_composer.py`.
 
 **Tests.** Existing mode-classification tests pass unchanged.
+
+**Deps.** blocked-by #8.1
+
+---
+
+### 8.2b — Adopt the canonical classification in `agent`
+
+**Size:** XS
+**Triage:** blocked-by #8.1
+
+**Result.** `agent._TASK_MODE_TO_COMPOSER` (and `_UNWATCHED_TASK_MODES`, if still
+separate) use the canonical source.
+
+**Verify.** `make test` — `tests/test_agent_turn.py`.
+
+**Tests.** Existing turn-kind tests pass unchanged.
+
+**Deps.** blocked-by #8.1
+
+---
+
+### 8.2c — Adopt the canonical classification in `context_cleanup`
+
+**Size:** XS
+**Triage:** blocked-by #8.1
+
+**Result.** `context_cleanup._PRUNE_SKIP_MODES` uses the canonical source.
+
+**Verify.** `make test` — `tests/test_context_cleanup.py`.
+
+**Tests.** Existing cleanup tests pass unchanged.
+
+**Deps.** blocked-by #8.1
+
+---
+
+### 8.2d — Adopt the canonical classification in `context`
+
+**Size:** XS
+**Triage:** blocked-by #8.1
+
+**Result.** `context.UNATTENDED_TASK_MODES` uses the canonical source.
+
+**Verify.** `make test` — `tests/test_context.py`.
+
+**Tests.** Existing unattended-mode tests pass unchanged.
 
 **Deps.** blocked-by #8.1
 
@@ -73,18 +116,48 @@ private copies.
 
 ---
 
-### 8.4 — Migrate reflection/agent/context to the centralized resolvers
+### 8.4a — Adopt the centralized resolvers in `reflection`
 
-**Size:** M
+**Size:** S
 **Triage:** blocked-by #8.3
 
-**Result.** `reflection`, `agent`, and `context` call the centralized resolvers,
-deleting their local ladders.
+**Result.** `reflection` calls the centralized judge/verifier resolver from 8.3,
+deleting its local judge ladder.
 
-**Verify.** `make test` — `tests/test_reflection.py`, `tests/test_agent_turn.py`,
-`tests/test_context.py`.
+**Verify.** `make test` — `tests/test_reflection.py`.
 
-**Tests.** Existing model-selection behavior tests pass unchanged.
+**Tests.** Existing reflection model-selection tests pass unchanged.
+
+**Deps.** blocked-by #8.3
+
+---
+
+### 8.4b — Adopt the centralized resolvers in `agent`
+
+**Size:** S
+**Triage:** blocked-by #8.3
+
+**Result.** `agent._resolve_model_override` calls the centralized resolver.
+
+**Verify.** `make test` — `tests/test_agent_turn.py`.
+
+**Tests.** Existing model-selection tests pass unchanged.
+
+**Deps.** blocked-by #8.3
+
+---
+
+### 8.4c — Adopt the centralized resolvers in `context`
+
+**Size:** S
+**Triage:** blocked-by #8.3
+
+**Result.** `context.aux_llm` and related read the centralized resolver instead of
+a local ladder.
+
+**Verify.** `make test` — `tests/test_context.py`, `tests/test_aux_llm.py`.
+
+**Tests.** Existing aux-model tests pass unchanged.
 
 **Deps.** blocked-by #8.3
 

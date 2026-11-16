@@ -7,9 +7,11 @@ list order, and read back every write.
 ## Inputs
 
 - `filing-manifest.json` — the issue list. Fields:
-  - `id` (`E.N`), `gh_title` (use verbatim as the issue title), `body` (verbatim
-    markdown body), `size` (XS/S/M/L/XL), `priority` (P0/P1/P2), `triage`
-    (`ready`/`blocked`), `blocked_by` (list of `E.N` ids), `area` (optional).
+  - `id` (`E.N` or `E.Na`), `gh_title` (use verbatim as the issue title), `body`
+    (verbatim markdown body), `size` (XS/S/M/L/XL), `priority` (P0/P1/P2),
+    `triage` (`ready`/`blocked`), `blocked_by` (list of ids), `area` (optional),
+    `parent` (the grouping when `id` is a subdivided slice), and `impl_model`
+    (`local`/`strong`, advisory only — not an issue label).
 - Repo `lmorchard/decafclaw`. Board owner `lmorchard`, project `6`.
 
 ## Labels (ensure they exist first)

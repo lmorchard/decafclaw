@@ -71,24 +71,41 @@ behavior change.
 
 ---
 
-### 6.4 — Consolidate file-tool helpers
+### 6.4a — Create a shared file-tool helpers module; adopt in `workspace_tools`
 
 **Size:** S
 **Triage:** ready
 
 **Problem.** `_is_cancelled`, `_file_error`, `_mini_diff`, and shared constants are
-duplicated across `workspace_tools.py`, `admin_tools.py`, and `agent.py`
-(`admin_tools` is already the de-facto home for some).
+duplicated across `workspace_tools.py`, `admin_tools.py`, and `agent.py`.
 
-**Result.** One shared module owns these helpers; all three import them.
+**Result.** A shared module (e.g. `tools/_file_common.py`) owns these helpers;
+`workspace_tools` imports them instead of keeping private copies.
 
-**Scope.** In: the named helpers + constants. Out: no behavioral change.
+**Scope.** In: define the shared module; migrate `workspace_tools`. Out:
+`admin_tools` and `agent` (6.4b).
 
-**Verify.** `make test` — `tests/test_workspace_tools.py`, `tests/test_admin_tools.py`.
+**Verify.** `make test` — `tests/test_workspace_tools.py`.
 
-**Tests.** Existing tests pass; add none.
+**Tests.** Existing workspace file-tool tests pass unchanged.
 
 **Deps.** none
+
+---
+
+### 6.4b — Adopt the shared file-tool helpers in `admin_tools` + `agent`
+
+**Size:** S
+**Triage:** blocked-by #6.4a
+
+**Result.** `admin_tools` and `agent` import the 6.4a helpers, deleting their
+copies.
+
+**Verify.** `make test` — `tests/test_admin_tools.py` + agent turn tests.
+
+**Tests.** Existing admin/agent tests pass unchanged.
+
+**Deps.** blocked-by #6.4a
 
 ---
 
