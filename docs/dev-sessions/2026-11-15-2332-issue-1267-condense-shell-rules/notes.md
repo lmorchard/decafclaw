@@ -4,11 +4,12 @@
 
 - Issue: https://github.com/lmorchard/decafclaw/issues/1267 (Condense auto-approval rules for a conversation)
 - Worktree: /Users/lmorchard/devel/mine/decafclaw/.claude/worktrees/issue-1267-condense-shell-rules
-- Branch: issue-1267-condense-shell-rules
-- Base: origin/main at e4b3f148fb3a (handoff said 75c8c7db; origin moved, delta is session-sidebar only — none of my target files changed)
-- Board: Ready → In progress (done via `worktree create --owner lmorchard --project 6`)
+- Branch: issue-1267-condense-shell-rules (head 13b17865, pushed)
+- Base: origin/main at e4b3f148fb3a (unchanged through the session)
+- Board: In progress. **Implementation complete** — all 7 phases done, gates green.
+- PR: https://github.com/lmorchard/decafclaw/pull/1289 (DRAFT, head 13b17865, CI green: lint-and-test + js-test passed). Body updated to the completed-feature text with `Closes #1267`.
+- **Remaining (coordinator-side, not implementation):** independent review of the published head, then `pr ready` + board In review. Do NOT mark ready from an implementation session (handoff).
 - Identity: MokaGnome; writes via `ghflow exec --` / ghflow commands
-- Deadline: 2026-11-16 09:28 PST. Handoff: publish first significant checkpoint as a DRAFT PR via submit-pr, keep working on the same branch; do NOT mark ready.
 
 ## Scope (from issue)
 
@@ -39,14 +40,15 @@
 4. [x] Panel JS edit mode + condense (shell-approval-panel.js) + extend shell-approval-panel.test.js. Includes the transport fix: `scripts/sticky_api_request.ts` must list rules/replace + condense in the shellApproval family, or they ride the stock transport (no same-origin credentials → 401 in production; header-gated body decode breaks the headers-less test mocks).
 5. [x] model-catalog.js condense picker + extend model-catalog.test.js.
 6. [x] Docs: config.md (shell table + condense section), model-selection.md (Rule-condensation model section), web-ui.md (panel bullets + API table rows + 409 note + component row), tools.md (web-panel paragraph).
-7. [ ] Gates: make fmt, make check (lint/typecheck/check-js/browser-assets), make test, make test-js.
+7. [x] Gates: make fmt (509 unchanged), make check exit 0 (npm policy, message-types drift, ruff fmt+lint, pyright 0 errors, tsc --noEmit, module graph), make test 5524 passed/2 skipped, make test-js 687 passed.
 
-## Draft PR published (checkpoint 1)
+## Draft PR published
 
-- **PR: https://github.com/lmorchard/decafclaw/pull/1289** (DRAFT, base main, head 40c04e16)
-- Author + commit authors: MokaGnome (no attribution finding). verify-commit --pr-head is_pr_head=True.
-- Body: docs/dev-sessions/.../pr-body-draft.md (draft, "Part of #1267", no Closes).
-- Continuing on the same branch; will push JS + docs commits to this draft. Do NOT mark ready (handoff: leave open).
+- **PR: https://github.com/lmorchard/decafclaw/pull/1289** (DRAFT, base main, head 13b17865)
+- Checkpoint 1 (backend, head 40c04e16) published by the first session; this session pushed the panel + picker + docs + lint-fix commits (877519dc..13b17865) to the same draft.
+- Author + commit authors: MokaGnome (no attribution finding). verify-commit --pr-head is_pr_head=True on 13b17865.
+- Body: rewritten to the completed-feature text with `Closes #1267` (the earlier "Part of" checkpoint body is superseded).
+- Left DRAFT per handoff — do NOT mark ready or request review from an implementation session.
 
 ## Success conditions → evidence map
 
@@ -61,3 +63,5 @@
 - Baseline `make test`: 5502 passed, 2 skipped in 42s (clean).
 - Port: HTTP_PORT=18961 set in worktree .env.
 - Resume 2026-11-16: found the panel condense flow dead on arrival — the two new endpoints were missing from `scripts/sticky_api_request.ts`'s shellApproval family, so they rode the stock transport. Added both; regenerated the client (`make gen-api-client`, idempotent 3-line diff). Panel suite 13/13, full JS suite 687 passed, `make check-js` (tsc) clean.
+- Gates: `make check` first failed on a real F841 (unused `st`) in the replace test from 40c04e16 — same failure hosted CI reported on that head. Fixed by asserting the persisted state instead (commit 13b17865). After: `make check` exit 0, `make test` 5524 passed/2 skipped.
+- Published: pushed 877519dc..13b17865 to the draft PR #1289; verify-commit author MokaGnome + is_pr_head true. Hosted CI on 13b17865 green (lint-and-test, js-test passed; check-tui passed). PR title de-suffixed ("(backend)" removed), body rewritten to the completed-feature text with `Closes #1267`. Left DRAFT per handoff — independent review + pr-ready are coordinator-side.
