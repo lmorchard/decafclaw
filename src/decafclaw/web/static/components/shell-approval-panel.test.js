@@ -28,6 +28,9 @@ async function mountPanel() {
   // so a test can tell a post-promote store reload from a stale cache.
   /** @type {Array<{name: string, source: string, rules: string[]}>} */
   const serverPresets = [{ name: 'custom_work', source: 'custom', rules: ['Auto-approve git status'] }];
+  // Server-side conversation rules; the replace endpoint rewrites them so a
+  // post-save refetch shows what was actually saved (#1267).
+  const serverRules = [...APPROVAL_RESPONSE.conversation_rules];
   const fetchMock = vi.fn(async (url, options) => {
     const u = new URL(url, 'http://test');
     const method = (options?.method || 'GET').toUpperCase();
@@ -35,7 +38,7 @@ async function mountPanel() {
       return jsonResponse(serverPresets);
     }
     if (u.pathname === '/api/conversations/c1/shell-approval') {
-      return jsonResponse(APPROVAL_RESPONSE);
+      return jsonResponse({ ...APPROVAL_RESPONSE, conversation_rules: [...serverRules] });
     }
     if (u.pathname === '/api/conversations/c1/shell-approval/rules') {
       if (method === 'PUT') {
@@ -44,6 +47,19 @@ async function mountPanel() {
       }
       if (method === 'DELETE') {
         return jsonResponse({ ok: true });
+      }
+    }
+    if (u.pathname === '/api/conversations/c1/shell-approval/rules/replace') {
+      if (method === 'PUT') {
+        const body = JSON.parse(options.body);
+        serverRules.length = 0;
+        serverRules.push(...body.rules);
+        return jsonResponse({ ok: true, conv_id: 'c1', conversation_rules: [...serverRules] });
+      }
+    }
+    if (u.pathname === '/api/conversations/c1/shell-approval/condense') {
+      if (method === 'POST') {
+        return jsonResponse({ ok: true, conv_id: 'c1', rules: ['Auto-approve any test command in this repo'] });
       }
     }
     if (u.pathname === '/api/conversations/c1/shell-approval/patterns') {
@@ -238,5 +254,141 @@ describe('shell-approval-panel component', () => {
     await el.updateComplete;
     const options = Array.from(el._panelMount.querySelectorAll('.sap-preset-select option')).map(o => o.value);
     expect(options).toContain('backend_tests');
+  });
+
+  it('enters bulk-edit mode with a draft of the current rules', async () => {
+    const { el } = await mountPanel();
+    const editBtn = el._panelMount.querySelector('.sap-edit-btn');
+    expect(editBtn).toBeTruthy();
+    editBtn.click();
+    await el.updateComplete;
+
+    expect(el._editMode).toBe(true);
+    const inputs = Array.from(el._panelMount.querySelectorAll('.sap-draft-input'));
+    expect(inputs.map(i => i.value)).toEqual(['Auto-approve make test in this repo']);
+    // The draft offers its own actions; the single-rule add row is gone.
+    expect(el._panelMount.querySelector('.sap-condense-btn')).toBeTruthy();
+    expect(el._panelMount.querySelector('.sap-save-btn')).toBeTruthy();
+    expect(el._panelMount.querySelectorAll('.sap-add-row input.sap-rule-input').length).toBe(0);
+  });
+
+  it('saves the draft as a full rule-list replacement', async () => {
+    const { el, fetchMock } = await mountPanel();
+    el._panelMount.querySelector('.sap-edit-btn').click();
+    await el.updateComplete;
+
+    // Edit the existing row and add a new one.
+    const input = el._panelMount.querySelector('.sap-draft-input');
+    input.value = 'Auto-approve make test';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    el._panelMount.querySelector('.sap-add-row .sap-add-btn').click();
+    await el.updateComplete;
+    const newInput = el._panelMount.querySelectorAll('.sap-draft-input')[1];
+    newInput.value = 'Auto-approve cargo test';
+    newInput.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    el._panelMount.querySelector('.sap-save-btn').click();
+    await vi.waitFor(() => expect(el._editMode).toBe(false));
+
+    const replaceCall = fetchMock.mock.calls.find(
+      ([url, opt]) => url === '/api/conversations/c1/shell-approval/rules/replace' && opt?.method === 'PUT',
+    );
+    expect(replaceCall).toBeTruthy();
+    expect(JSON.parse(replaceCall[1].body)).toEqual({ rules: ['Auto-approve make test', 'Auto-approve cargo test'] });
+    // The refetched view shows what was saved.
+    await el.updateComplete;
+    expect(el._panelMount.textContent).toContain('Auto-approve cargo test');
+  });
+
+  it('discards draft changes on cancel without saving', async () => {
+    const { el, fetchMock } = await mountPanel();
+    el._panelMount.querySelector('.sap-edit-btn').click();
+    await el.updateComplete;
+
+    const input = el._panelMount.querySelector('.sap-draft-input');
+    input.value = 'changed locally';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    el._panelMount.querySelector('.sap-edit-actions .sap-cancel-btn').click();
+    await el.updateComplete;
+
+    expect(el._editMode).toBe(false);
+    const replaceCall = fetchMock.mock.calls.find(
+      ([url, opt]) => url === '/api/conversations/c1/shell-approval/rules/replace' && opt?.method === 'PUT',
+    );
+    expect(replaceCall).toBeUndefined();
+    // The original rule is back, unmodified.
+    await el.updateComplete;
+    expect(el._panelMount.textContent).toContain('Auto-approve make test in this repo');
+  });
+
+  it('condenses the rules into a draft and shows before/after', async () => {
+    const { el, fetchMock } = await mountPanel();
+    el._panelMount.querySelector('.sap-edit-btn').click();
+    await el.updateComplete;
+
+    const condenseBtn = el._panelMount.querySelector('.sap-condense-btn');
+    expect(condenseBtn.disabled).toBe(false);
+    condenseBtn.click();
+    await vi.waitFor(() => expect(el._condensing).toBe(false));
+
+    const condenseCall = fetchMock.mock.calls.find(
+      ([url, opt]) => url === '/api/conversations/c1/shell-approval/condense' && opt?.method === 'POST',
+    );
+    expect(condenseCall).toBeTruthy();
+
+    // The proposal lands in the draft, highlighted as new.
+    await el.updateComplete;
+    const added = el._panelMount.querySelector('.sap-rule-added');
+    expect(added).toBeTruthy();
+    expect(added?.querySelector('input')?.value).toBe('Auto-approve any test command in this repo');
+    // The superseded rule renders struck-through above the draft.
+    const removed = el._panelMount.querySelector('.sap-rule-removed');
+    expect(removed?.textContent.trim()).toBe('Auto-approve make test in this repo');
+  });
+
+  it('keeps the draft and drops diff markers when condense fails', async () => {
+    const fetchMock = vi.fn(async (url, options) => {
+      const u = new URL(url, 'http://test');
+      const method = (options?.method || 'GET').toUpperCase();
+      if (u.pathname === '/api/shell-approval/presets') {
+        return jsonResponse([]);
+      }
+      if (u.pathname === '/api/conversations/c1/shell-approval') {
+        return jsonResponse(APPROVAL_RESPONSE);
+      }
+      if (u.pathname === '/api/conversations/c1/shell-approval/condense' && method === 'POST') {
+        return jsonResponse({ error: 'model unavailable' }, 502);
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const el = document.createElement('shell-approval-panel');
+    el.convId = 'c1';
+    el.open = true;
+    document.body.append(el);
+    await el.updateComplete;
+    await vi.waitFor(() => expect(el._loading).toBe(false));
+
+    el._panelMount.querySelector('.sap-edit-btn').click();
+    await el.updateComplete;
+    // Edit the draft so a failed condense must not lose it.
+    const input = el._panelMount.querySelector('.sap-draft-input');
+    input.value = 'Auto-approve make test (edited)';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    el._panelMount.querySelector('.sap-condense-btn').click();
+    await vi.waitFor(() => expect(el._condensing).toBe(false));
+    await el.updateComplete;
+
+    // The draft survives the failed condense...
+    expect(el._draftRules).toEqual(['Auto-approve make test (edited)']);
+    // ...and the diff markers are gone.
+    expect(el._panelMount.querySelector('.sap-rule-added')).toBeNull();
+    expect(el._panelMount.querySelector('.sap-rule-removed')).toBeNull();
   });
 });

@@ -1,8 +1,8 @@
-"""Per-conversation shell approval rules panel endpoints (#1159)."""
+"""Per-conversation shell approval rules panel endpoints (#1159, #1267)."""
 
 import pytest
 
-from decafclaw.config_types import ShellConfig
+from decafclaw.config_types import ModelConfig, ShellConfig
 from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
 from decafclaw.conversation_manager import ConversationManager
 from decafclaw.events import EventBus
@@ -240,3 +240,286 @@ async def test_conversation_shell_approval_promote_creates_and_appends_custom_pr
     assert created is not None
     assert created["source"] == "custom"
     assert created["rules"].count("Auto-approve cargo test") == 1
+
+
+# ---------------------------------------------------------------------------
+# Rules-replace endpoint (#1267) — bulk-edit draft save path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rules_replace_full_replacement_and_clears_cache(client, approval_config, manager, conv, app):
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Old rule A", "Old rule B"]
+    st.persisted.llm_approved_shell_patterns = ["pytest *"]
+
+    await _login(client, app)
+    resp = await client.put(
+        f"/api/conversations/{conv.conv_id}/shell-approval/rules/replace",
+        json={"rules": ["New rule 1", "New rule 2", "New rule 3"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    # The full list is replaced atomically — old rules are gone, order preserved.
+    assert data["conversation_rules"] == ["New rule 1", "New rule 2", "New rule 3"]
+    # The on-disk state holds exactly the saved list…
+    assert st.persisted.aux_approval_guidance == ["New rule 1", "New rule 2", "New rule 3"]
+    # …and the cached reviewer patterns are cleared, same as single-rule edits.
+    assert st.persisted.llm_approved_shell_patterns == []
+
+
+@pytest.mark.asyncio
+async def test_rules_replace_empty_list_clears_all(client, approval_config, manager, conv, app):
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Rule A", "Rule B"]
+
+    await _login(client, app)
+    resp = await client.put(f"/api/conversations/{conv.conv_id}/shell-approval/rules/replace", json={"rules": []})
+    assert resp.status_code == 200
+    assert resp.json()["conversation_rules"] == []
+    assert st.persisted.aux_approval_guidance == []
+
+
+@pytest.mark.asyncio
+async def test_rules_replace_strips_and_drops_blank_rows(client, approval_config, manager, conv, app):
+    st = manager.ensure_state(conv.conv_id)
+
+    await _login(client, app)
+    resp = await client.put(
+        f"/api/conversations/{conv.conv_id}/shell-approval/rules/replace",
+        json={"rules": ["  Keep me  ", "", "   "]},
+    )
+    assert resp.status_code == 200
+    # Whitespace is trimmed; blanked rows are dropped (a blank row removes a rule).
+    assert resp.json()["conversation_rules"] == ["Keep me"]
+    # The state holds the trimmed list, not the raw rows.
+    assert st.persisted.aux_approval_guidance == ["Keep me"]
+
+
+@pytest.mark.asyncio
+async def test_rules_replace_returns_409_when_busy(client, approval_config, manager, conv, app):
+    st = manager.ensure_state(conv.conv_id)
+    st.busy = True
+
+    await _login(client, app)
+    resp = await client.put(f"/api/conversations/{conv.conv_id}/shell-approval/rules/replace", json={"rules": ["x"]})
+    assert resp.status_code == 409
+    assert "busy" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_rules_replace_returns_409_when_waiting(client, approval_config, manager, conv, app):
+    st = manager.ensure_state(conv.conv_id)
+    st.pending_confirmation = ConfirmationRequest(action_type=ConfirmationAction.RUN_SHELL_COMMAND)
+
+    await _login(client, app)
+    resp = await client.put(f"/api/conversations/{conv.conv_id}/shell-approval/rules/replace", json={"rules": ["x"]})
+    assert resp.status_code == 409
+    assert "waiting" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_rules_replace_rejects_non_list_body(client, approval_config, manager, conv, app):
+    await _login(client, app)
+    resp = await client.put(
+        f"/api/conversations/{conv.conv_id}/shell-approval/rules/replace", json={"rules": "not-a-list"}
+    )
+    assert resp.status_code == 400
+    assert "list" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_rules_replace_rejects_non_string_item(client, approval_config, manager, conv, app):
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Existing"]
+
+    await _login(client, app)
+    resp = await client.put(
+        f"/api/conversations/{conv.conv_id}/shell-approval/rules/replace", json={"rules": ["ok", 42]}
+    )
+    assert resp.status_code == 400
+    # Rejected bodies must not mutate state.
+    assert st.persisted.aux_approval_guidance == ["Existing"]
+
+
+# ---------------------------------------------------------------------------
+# Condense endpoint (#1267) — LLM proposal, never mutates state
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_condense_returns_proposal_and_never_mutates(client, approval_config, manager, conv, app, stub_llm):
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Approve make test", "Approve make lint", "Approve ruff"]
+    st.persisted.llm_approved_shell_patterns = ["pytest *"]
+
+    stub_llm.response = {
+        "content": '{"rules": ["Approve make test and lint", "Approve ruff"]}',
+        "tool_calls": None,
+        "role": "assistant",
+        "usage": {},
+    }
+
+    await _login(client, app)
+    resp = await client.post(f"/api/conversations/{conv.conv_id}/shell-approval/condense")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["rules"] == ["Approve make test and lint", "Approve ruff"]
+
+    # Condensation is a proposal: rules on disk and cached patterns are untouched.
+    assert st.persisted.aux_approval_guidance == [
+        "Approve make test",
+        "Approve make lint",
+        "Approve ruff",
+    ]
+    assert st.persisted.llm_approved_shell_patterns == ["pytest *"]
+
+
+@pytest.mark.asyncio
+async def test_condense_strips_json_fence(client, approval_config, manager, conv, app, stub_llm):
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Approve make test", "Approve make lint"]
+
+    stub_llm.response = {
+        "content": '```json\n{"rules": ["Approve make test and lint"]}\n```',
+        "tool_calls": None,
+        "role": "assistant",
+        "usage": {},
+    }
+
+    await _login(client, app)
+    resp = await client.post(f"/api/conversations/{conv.conv_id}/shell-approval/condense")
+    assert resp.status_code == 200
+    assert resp.json()["rules"] == ["Approve make test and lint"]
+
+
+@pytest.mark.asyncio
+async def test_condense_parse_failure_returns_error_and_keeps_state(
+    client, approval_config, manager, conv, app, stub_llm
+):
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Approve make test"]
+    st.persisted.llm_approved_shell_patterns = ["pytest *"]
+
+    # Not valid JSON — the model rambled.
+    stub_llm.response = {
+        "content": "Sure, here are some condensed rules: approve make test.",
+        "tool_calls": None,
+        "role": "assistant",
+        "usage": {},
+    }
+
+    await _login(client, app)
+    resp = await client.post(f"/api/conversations/{conv.conv_id}/shell-approval/condense")
+    assert resp.status_code == 400
+    assert "unparseable" in resp.json()["error"]
+    # Rules and patterns are unchanged on a parse failure.
+    assert st.persisted.aux_approval_guidance == ["Approve make test"]
+    assert st.persisted.llm_approved_shell_patterns == ["pytest *"]
+
+
+@pytest.mark.asyncio
+async def test_condense_missing_rules_key_returns_error(client, approval_config, manager, conv, app, stub_llm):
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Approve make test"]
+
+    # Valid JSON but no "rules" list.
+    stub_llm.response = {
+        "content": '{"summary": "done"}',
+        "tool_calls": None,
+        "role": "assistant",
+        "usage": {},
+    }
+
+    await _login(client, app)
+    resp = await client.post(f"/api/conversations/{conv.conv_id}/shell-approval/condense")
+    assert resp.status_code == 400
+    assert "rules" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_condense_model_error_returns_502(client, approval_config, manager, conv, app, stub_llm, monkeypatch):
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Approve make test"]
+
+    async def _boom(config=None, messages=None, tools=None, *args, **kwargs):
+        raise RuntimeError("provider exploded")
+
+    # Override the stub so the one-shot call raises; monkeypatch undoes it at teardown.
+    import decafclaw.llm as llm_mod
+
+    monkeypatch.setattr(llm_mod, "call_llm", _boom)
+    await _login(client, app)
+    resp = await client.post(f"/api/conversations/{conv.conv_id}/shell-approval/condense")
+    assert resp.status_code == 502
+    assert "condensation failed" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_condense_409_when_busy(client, approval_config, manager, conv, app, stub_llm):
+    st = manager.ensure_state(conv.conv_id)
+    st.busy = True
+
+    await _login(client, app)
+    resp = await client.post(f"/api/conversations/{conv.conv_id}/shell-approval/condense")
+    assert resp.status_code == 409
+    assert "busy" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_condense_no_rules_returns_400(client, approval_config, manager, conv, app, stub_llm):
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = []
+
+    await _login(client, app)
+    resp = await client.post(f"/api/conversations/{conv.conv_id}/shell-approval/condense")
+    assert resp.status_code == 400
+    assert "no rules" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_condense_uses_configured_model(client, approval_config, manager, conv, app, stub_llm):
+    """Success condition 4: with shell.condense_model set to a model_configs key,
+    condensation resolves to that model."""
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Approve make test", "Approve make lint"]
+    approval_config.model_configs["condense-model"] = ModelConfig(provider="local", model="condense")
+    approval_config.shell.condense_model = "condense-model"
+
+    stub_llm.response = {
+        "content": '{"rules": ["Approve make test and lint"]}',
+        "tool_calls": None,
+        "role": "assistant",
+        "usage": {},
+    }
+
+    await _login(client, app)
+    resp = await client.post(f"/api/conversations/{conv.conv_id}/shell-approval/condense")
+    assert resp.status_code == 200
+    # The stubbed call recorded the resolved model name.
+    assert len(stub_llm) == 1
+    assert stub_llm[0]["model_name"] == "condense-model"
+
+
+@pytest.mark.asyncio
+async def test_condense_unset_uses_active_conversation_model(client, approval_config, manager, conv, app, stub_llm):
+    """Success condition 4: with shell.condense_model unset, condensation rides on
+    the active conversation model (then the effective default)."""
+    st = manager.ensure_state(conv.conv_id)
+    st.persisted.aux_approval_guidance = ["Approve make test"]
+    st.persisted.active_model = "active-model"
+    approval_config.model_configs["active-model"] = ModelConfig(provider="local", model="active")
+
+    stub_llm.response = {
+        "content": '{"rules": ["Approve make test"]}',
+        "tool_calls": None,
+        "role": "assistant",
+        "usage": {},
+    }
+
+    await _login(client, app)
+    resp = await client.post(f"/api/conversations/{conv.conv_id}/shell-approval/condense")
+    assert resp.status_code == 200
+    assert stub_llm[0]["model_name"] == "active-model"

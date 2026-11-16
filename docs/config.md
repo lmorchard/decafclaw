@@ -411,6 +411,7 @@ Settings for shell command execution and pre-approval logic (see #473).
 |-------|------|---------|---------|
 | `aux_approval_enabled` | bool | `false` | `SHELL_AUX_APPROVAL_ENABLED` |
 | `aux_approval_model` | str | `""` | `SHELL_AUX_APPROVAL_MODEL` |
+| `condense_model` | str | `""` | `SHELL_CONDENSE_MODEL` |
 | `aux_approval_guidance` | str | `""` | `SHELL_AUX_APPROVAL_GUIDANCE` |
 | `aux_approval_presets` | dict | `{}` | `SHELL_AUX_APPROVAL_PRESETS` |
 | `active_aux_approval_presets` | list[str] | `[]` | `SHELL_ACTIVE_AUX_APPROVAL_PRESETS` |
@@ -426,6 +427,10 @@ When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxi
 #### Dedicated auto-approval judge model
 
 `shell.aux_approval_model` (env `SHELL_AUX_APPROVAL_MODEL`) names a dedicated model for the auto-approval judge; empty (`""`) keeps the historical behavior of riding on the legacy aux chain (`auxiliary_model` → active conversation model → default). When set, it must name a `model_configs` key (enabled discovered models materialize as keys); a hand-written raw name is not routable — the shell group has no legacy endpoint of its own — and is treated as unset with a warning. Resolution: the `data/{agent_id}/model_catalog.json` sidecar's `aux_approval_model` pointer → `shell.aux_approval_model` → `auxiliary_model` → the active conversation model. The sidecar pointer is the UI-managed path (the **Auto-approval model** picker in **⚙ Agent Config → Models**); an empty pointer or empty seed means "ride on the aux chain". See [Model selection](model-selection.md#shell-auto-approval-model).
+
+#### Rule-condensation model (#1267)
+
+`shell.condense_model` (env `SHELL_CONDENSE_MODEL`) names the model that condenses shell auto-approval rules in the web approval panel's **Condense** action; empty (`""`) rides on the active conversation model (then the effective default). When set, it must name a `model_configs` key; a hand-written raw name is not routable and is treated as unset with a warning (same shape as `aux_approval_model`). Resolution: the sidecar's `condense_model` pointer → `shell.condense_model` → active conversation model → effective default. Unlike the judge there is **no** `auxiliary_model` step — condensation is new and has no legacy behavior to preserve. The sidecar pointer is the UI-managed path (the **Rule-condensation model** picker in **⚙ Agent Config → Models**). See [Model selection](model-selection.md#rule-condensation-model-1267).
 
 #### Guidance and Situational Presets
 

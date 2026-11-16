@@ -40,6 +40,13 @@ export class ShellApprovalPanel extends LitElement {
     _promotePreset: { type: String, state: true },
     _newPresetName: { type: String, state: true },
     _promoteNotice: { type: String, state: true },
+    // Bulk-edit draft (#1267): the editable rule set while in edit mode.
+    _editMode: { type: Boolean, state: true },
+    _draftRules: { type: Array, state: true },
+    // Snapshot of the draft taken when Condense runs; drives the before/after
+    // view (null = no condensation has happened, so no diff markers).
+    _baselineRules: { type: Array, state: true },
+    _condensing: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -60,6 +67,14 @@ export class ShellApprovalPanel extends LitElement {
     this._promotePreset = '';
     this._newPresetName = '';
     this._promoteNotice = '';
+    /** @type {boolean} */
+    this._editMode = false;
+    /** @type {string[]} */
+    this._draftRules = [];
+    /** @type {string[] | null} */
+    this._baselineRules = null;
+    /** @type {boolean} */
+    this._condensing = false;
     /** @type {HTMLElement | null} */
     this._panelMount = null;
   }
@@ -99,6 +114,10 @@ export class ShellApprovalPanel extends LitElement {
         void this.#fetchData();
         // A previous promote's confirmation does not carry into a new visit.
         this._promoteNotice = '';
+        // Neither does an in-progress bulk-edit draft (#1267).
+        this._editMode = false;
+        this._draftRules = [];
+        this._baselineRules = null;
       } else {
         this.#cleanupListeners();
       }
@@ -220,6 +239,84 @@ export class ShellApprovalPanel extends LitElement {
     }
   }
 
+  // ── Edit mode: bulk draft + LLM condensation (#1267) ────────────
+
+  #enterEditMode() {
+    this._draftRules = [...(this._data?.conversation_rules || [])];
+    this._baselineRules = null;
+    this._editMode = true;
+  }
+
+  #cancelEdit() {
+    this._draftRules = [];
+    this._baselineRules = null;
+    this._editMode = false;
+  }
+
+  async #saveDraft() {
+    if (!this.convId || !this._draftRules) return;
+    this._busy = true;
+    this._error = '';
+    try {
+      const rules = this._draftRules.map((r) => r.trim()).filter(Boolean);
+      await DefaultService.putConversationShellRulesReplaceApiConversationsIdShellApprovalRulesReplacePut(
+        this.convId, { rules },
+      );
+      await this.#fetchData();
+      this._draftRules = [];
+      this._baselineRules = null;
+      this._editMode = false;
+    } catch (e) {
+      this._error = e instanceof ApiError ? e.body?.error || `HTTP ${e.status}` : e.message || 'Failed to save rules';
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  #addDraftRow() {
+    if (!this._draftRules) return;
+    this._draftRules = [...this._draftRules, ''];
+  }
+
+  #removeDraftRow(index) {
+    if (!this._draftRules) return;
+    this._draftRules = [...this._draftRules.slice(0, index), ...this._draftRules.slice(index + 1)];
+  }
+
+  #updateDraftRule(index, value) {
+    if (!this._draftRules) return;
+    this._draftRules = [...this._draftRules.slice(0, index), value, ...this._draftRules.slice(index + 1)];
+  }
+
+  async #condense() {
+    if (!this.convId || this._condensing) return;
+    // Snapshot the current draft as the "before" for the before/after view.
+    this._baselineRules = [...(this._draftRules || [])];
+    this._condensing = true;
+    this._error = '';
+    try {
+      const res = await DefaultService.postConversationShellCondenseApiConversationsIdShellApprovalCondensePost(
+        this.convId,
+      );
+      if (res?.ok && Array.isArray(res.rules)) {
+        this._draftRules = [...res.rules];
+      } else {
+        // A 2xx without a usable proposal: keep the draft, drop the diff.
+        this._baselineRules = null;
+        this._error = 'Condensation returned no rules';
+        console.error('Condense returned no rules:', res);
+      }
+    } catch (e) {
+      // Keep the draft as-is; drop the diff markers so a failed condense
+      // does not paint an unchanged draft as "changed".
+      this._baselineRules = null;
+      this._error = e instanceof ApiError ? e.body?.error || `HTTP ${e.status}` : e.message || 'Condensation failed';
+      console.error('Condense failed:', e);
+    } finally {
+      this._condensing = false;
+    }
+  }
+
   _close() {
     this.dispatchEvent(new Event('close'));
   }
@@ -235,12 +332,18 @@ export class ShellApprovalPanel extends LitElement {
   }
 
   #renderConversationRules(data) {
+    if (this._editMode) return this.#renderEditDraft(data);
     const rules = data?.conversation_rules || [];
     const busy = this._busy || data?.status === 'busy' || data?.status === 'waiting';
     const editable = !busy;
     return html`
       <div class="sap-section">
-        <div class="sap-section-title">Conversation Rules (editable)</div>
+        <div class="sap-rules-header">
+          <span class="sap-section-title">Conversation Rules (editable)</span>
+          ${rules.length > 0 ? html`
+            <button class="sap-edit-btn" ?disabled=${!editable} @click=${() => this.#enterEditMode()}>Edit</button>
+          ` : nothing}
+        </div>
         ${this._error ? html`<div class="sap-error-banner">${this._error}</div>` : nothing}
         ${rules.length === 0 ? html`<div class="sap-empty">No conversation rules yet</div>` : html`
           <ul class="sap-rule-list">
@@ -279,6 +382,81 @@ export class ShellApprovalPanel extends LitElement {
           <button class="sap-add-btn" ?disabled=${!editable || !this._newRuleText?.trim()} @click=${() => { const t = this._newRuleText?.trim(); if (t) void this.#addRule(t); }}>Add Rule</button>
         </div>
       </div>
+    `;
+  }
+
+  // Bulk-edit draft (#1267). The whole rule set is editable at once; Save
+  // replaces it atomically through the replace endpoint. After a condense,
+  // _baselineRules holds the pre-condensation draft and drives the diff:
+  // new rows are highlighted, dropped rules render struck-through above.
+  #renderEditDraft(data) {
+    const busy = this._busy || data?.status === 'busy' || data?.status === 'waiting';
+    const frozen = busy || this._condensing;
+    const draft = this._draftRules || [];
+    return html`
+      <div class="sap-section">
+        <div class="sap-rules-header">
+          <span class="sap-section-title">Conversation Rules (editing)</span>
+        </div>
+        ${this._error ? html`<div class="sap-error-banner">${this._error}</div>` : nothing}
+        ${this.#renderRemovedRules()}
+        <ul class="sap-rule-list">
+          ${draft.map((r, i) => html`
+            <li class="sap-rule ${this.#isDraftAdded(r) ? 'sap-rule-added' : ''}">
+              <input
+                type="text"
+                class="sap-rule-input sap-draft-input"
+                placeholder="Shell auto-approval rule"
+                .value=${r}
+                ?disabled=${frozen}
+                @input=${(/** @type {any} */ e) => this.#updateDraftRule(i, e.target.value)}
+              />
+              <span class="sap-rule-actions">
+                <button
+                  class="dc-icon-btn sap-delete-btn"
+                  title="Remove this rule from the draft"
+                  aria-label="Remove rule from draft"
+                  ?disabled=${frozen}
+                  @click=${() => this.#removeDraftRow(i)}
+                >&#10005;</button>
+              </span>
+            </li>
+          `)}
+        </ul>
+        <div class="sap-add-row">
+          <button class="sap-add-btn" ?disabled=${frozen} @click=${() => this.#addDraftRow()}>Add Rule</button>
+        </div>
+        <div class="sap-edit-actions">
+          <button class="sap-condense-btn" ?disabled=${frozen} @click=${() => void this.#condense()}>
+            ${this._condensing ? 'Condensing…' : 'Condense with LLM'}
+          </button>
+          <span class="sap-edit-spacer"></span>
+          <button class="sap-cancel-btn" ?disabled=${this._condensing} @click=${() => this.#cancelEdit()}>Cancel</button>
+          <button class="sap-save-btn" ?disabled=${frozen} @click=${() => void this.#saveDraft()}>Save</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // True when the draft row is new relative to the condensation baseline.
+  #isDraftAdded(rule) {
+    return !!this._baselineRules && rule.trim() !== '' && !this._baselineRules.includes(rule);
+  }
+
+  #renderRemovedRules() {
+    if (!this._baselineRules) return nothing;
+    const draft = this._draftRules || [];
+    const removed = this._baselineRules.filter((r) => !draft.includes(r));
+    if (removed.length === 0) return nothing;
+    return html`
+      <div class="sap-removed-label">Removed by condensation:</div>
+      <ul class="sap-rule-list sap-removed-list">
+        ${removed.map((r) => html`
+          <li class="sap-rule sap-rule-removed">
+            <span class="sap-rule-text">${r}</span>
+          </li>
+        `)}
+      </ul>
     `;
   }
 

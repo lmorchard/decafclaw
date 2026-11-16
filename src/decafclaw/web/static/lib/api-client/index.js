@@ -492,9 +492,11 @@ var request2 = (config, options) => {
   const shellApprovalGet = options.method === "GET" && options.url === "/api/conversations/{id}/shell-approval";
   const shellApprovalPut = options.method === "PUT" && options.url === "/api/conversations/{id}/shell-approval/rules";
   const shellApprovalRulesDelete = options.method === "DELETE" && options.url === "/api/conversations/{id}/shell-approval/rules";
+  const shellApprovalRulesReplace = options.method === "PUT" && options.url === "/api/conversations/{id}/shell-approval/rules/replace";
   const shellApprovalPatternsDelete = options.method === "DELETE" && options.url === "/api/conversations/{id}/shell-approval/patterns";
   const shellApprovalPromote = options.method === "POST" && options.url === "/api/conversations/{id}/shell-approval/promote";
-  const shellApprovalConversation = shellApprovalGet || shellApprovalPut || shellApprovalRulesDelete || shellApprovalPatternsDelete || shellApprovalPromote;
+  const shellApprovalCondense = options.method === "POST" && options.url === "/api/conversations/{id}/shell-approval/condense";
+  const shellApprovalConversation = shellApprovalGet || shellApprovalPut || shellApprovalRulesDelete || shellApprovalRulesReplace || shellApprovalPatternsDelete || shellApprovalPromote || shellApprovalCondense;
   if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && !shellPresets && !shellApprovalConversation && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
@@ -1314,6 +1316,20 @@ var DefaultService = class {
    * @returns ModelCatalogResponse Successful Response
    * @throws ApiError
    */
+  static wrapperApiModelsCatalogCondensePost(requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/models/catalog/condense",
+      body: requestBody,
+      mediaType: "application/json"
+    });
+  }
+  /**
+   * Wrapper
+   * @param requestBody
+   * @returns ModelCatalogResponse Successful Response
+   * @throws ApiError
+   */
   static wrapperApiModelsCatalogReflectionPost(requestBody) {
     return request2(OpenAPI, {
       method: "POST",
@@ -1718,6 +1734,63 @@ var DefaultService = class {
       },
       body: requestBody,
       mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
+   * Put Conversation Shell Rules Replace
+   * PUT /api/conversations/{id}/shell-approval/rules/replace — replace the full rule list (#1267).
+   *
+   * Body: ``{"rules": ["...", ...]}``. Atomically replaces the conversation's
+   * entire editable guidance with the given list (an empty result clears every
+   * rule). Clears the conversation's cached reviewer approval patterns so the
+   * next prompt re-derives, same as the single-rule endpoints. Returns 409 when
+   * the conversation is busy or waiting, same as they do. The single-rule PUT/
+   * DELETE forms stay unchanged for one-at-a-time edits.
+   * @param id
+   * @param requestBody
+   * @returns ConversationShellApprovalRulesReplaceResponse Successful Response
+   * @throws ApiError
+   */
+  static putConversationShellRulesReplaceApiConversationsIdShellApprovalRulesReplacePut(id, requestBody) {
+    return request2(OpenAPI, {
+      method: "PUT",
+      url: "/api/conversations/{id}/shell-approval/rules/replace",
+      path: {
+        "id": id
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
+   * Post Conversation Shell Condense
+   * POST /api/conversations/{id}/shell-approval/condense — propose condensed rules (#1267).
+   *
+   * Builds a prompt from the conversation's current rules and asks the resolved
+   * condense model to rewrite them into fewer, more general summary rules as a
+   * one-shot completion (no tools). Returns the proposal; it never mutates state
+   * — rules on disk and cached patterns are unchanged. The proposal lands in the
+   * panel's bulk-edit draft, where the user reviews before/after and saves it
+   * through the replace endpoint. Returns 409 when the conversation is busy or
+   * waiting; a model error or unparseable response returns an error and the panel
+   * keeps its current draft.
+   * @param id
+   * @returns ConversationShellApprovalCondenseResponse Successful Response
+   * @throws ApiError
+   */
+  static postConversationShellCondenseApiConversationsIdShellApprovalCondensePost(id) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/conversations/{id}/shell-approval/condense",
+      path: {
+        "id": id
+      },
       errors: {
         422: `Validation Error`
       }
