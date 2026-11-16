@@ -37,7 +37,7 @@
 2. [x] HTTP endpoints: rules/replace + condense (+ set-condense-pointer) in http_server.py; pydantic models; route table. tests/web/test_shell_approval_panel_http.py replace+condense tests + test_models_catalog_http.py condense pointer. → commit 40c04e16
 3. [x] `make gen-api-client` (regenerate TS client for new endpoints) — in commit 40c04e16. Generated methods: `putConversationShellRulesReplaceApiConversationsIdShellApprovalRulesReplacePut(id,{rules})`, `postConversationShellCondenseApiConversationsIdShellApprovalCondensePost(id)`, `wrapperApiModelsCatalogCondensePost({model})`.
 4. [x] Panel JS edit mode + condense (shell-approval-panel.js) + extend shell-approval-panel.test.js. Includes the transport fix: `scripts/sticky_api_request.ts` must list rules/replace + condense in the shellApproval family, or they ride the stock transport (no same-origin credentials → 401 in production; header-gated body decode breaks the headers-less test mocks).
-5. [ ] model-catalog.js condense picker + extend model-catalog.test.js.
+5. [x] model-catalog.js condense picker + extend model-catalog.test.js.
 6. [ ] Docs: config.md, model-selection.md, web-ui.md (panel + API table), tools.md.
 7. [ ] Gates: make fmt, make check (lint/typecheck/check-js/browser-assets), make test, make test-js.
 
