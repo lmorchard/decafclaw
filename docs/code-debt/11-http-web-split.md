@@ -221,25 +221,28 @@ return 401 uniformly.
 ### 11.12 — Make `response_model=` actually validate (slice 1)
 
 **Size:** M
-**Triage:** needs-definition (compat surface)
+**Triage:** ready
 
 **Problem.** Routes declare `response_model=` but return raw `JSONResponse(dict)`,
 so validation never runs and the OpenAPI schema drifts.
 
-**Design note.** Full conversion could change wire shapes (e.g. an extra `"status"`
-key). Scope slice 1 to the conversation-listing endpoints; validate the output
-shape is stable before widening.
+**Result.** Slice 1: the conversation-listing endpoints return their Pydantic
+response models so FastAPI validates/serializes, with the wire shape unchanged.
 
-**Result.** Slice 1: conversation-listing handlers return the Pydantic response
-model, with validation running.
+**Scope.** In: convert `list_conversations` (and its archived/system/session
+siblings) to return the declared model instead of `JSONResponse(dict)`, keeping
+the exact serialized keys. Out: all other resources (follow-up slices), and no
+frontend change.
 
-**Verify.** `make test` — `tests/test_web_conversations.py`,
-`tests/test_api_client_contracts.py`.
+**Verify.** `make test` — `tests/test_web_conversations.py` +
+`tests/test_api_client_contracts.py`. The existing client-contract tests are the
+gate proving the wire shape is unchanged.
 
-**Tests.** Add a case asserting the serialized response matches the model; keep the
-existing client-contract tests green.
+**Tests.** Add a case asserting the serialized response equals the model; keep the
+existing `test_api_client_contracts.py` assertions green (this is where a shape
+drift would surface as a failure, not a visual check).
 
-**Deps.** none (spec boundaries before implementation)
+**Deps.** none (slice boundaries are the spec; widen only after this lands)
 
 ---
 

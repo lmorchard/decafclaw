@@ -4,32 +4,34 @@ Small, independently shippable fixes for defects and dead code.
 
 ---
 
-### 2.1 — Repair (or remove) the dead `friction` skill
+### 2.1 — Repair the dead `friction` skill
 
 **Size:** S
-**Triage:** needs-input (default: repair)
+**Triage:** ready (decision: repair)
 
 **Problem.** `skills/friction/tools.py` exports no `TOOLS`/`TOOL_DEFINITIONS`/
 `get_tools`. `SKILL.md` declares `allowed-tools: friction_analyze`, but the
-function is named `tool_friction_analyze`. `!friction` activates silently with
-zero tools. The underlying logic exists (`decafclaw.friction.analyze_friction`)
-and `tests/test_friction.py` passes.
+function is named `tool_friction_analyze`. `!friction` activates with an empty
+allowed-tool set, so the agent is told to call a tool that does not exist. The
+underlying logic (`decafclaw.friction.analyze_friction`) is complete and
+`tests/test_friction.py` passes.
 
 **Result.** `!friction` activates a skill whose `friction_analyze` tool actually
-runs and returns the friction summary. (Alternative: remove the skill entirely.)
+runs and returns the friction summary.
 
 **Scope.** In: register the tool (`TOOLS = {"friction_analyze": tool_friction_analyze}`
-plus `TOOL_DEFINITIONS`), aligning the name with `SKILL.md`. Out: no logic change
-to `analyze_friction`.
+plus a matching `TOOL_DEFINITIONS` entry), keeping the key `friction_analyze` so
+it matches `allowed-tools`. Out: no change to `analyze_friction`. Keep the skill.
 
 **Verify.** `make test` — `tests/test_friction.py` + `tests/test_skills.py` /
-`tests/test_discovered_skills_consumers.py`.
+`tests/test_discovered_skills_consumers.py`. Also lift `tests/test_friction.py`
+out of `ruff.extend-exclude` in `pyproject.toml` and fix any lint it picks up.
 
-**Tests.** Add an assertion that activating the friction skill yields a working
-`friction_analyze` tool.
+**Tests.** Add an assertion that activating the friction skill exposes a working
+`friction_analyze` tool, and that `!friction` dispatch yields a callable tool
+(not just a non-error mode).
 
 **Deps.** none
-**Decision.** Confirm repair vs remove before filing.
 
 ---
 

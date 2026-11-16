@@ -99,20 +99,26 @@ present.
 ### 4.5 — Split `Config` runtime-mutation state
 
 **Size:** M
-**Triage:** needs-definition
+**Triage:** ready
 
 **Problem.** `Config` mixes ~45 data fields with side-effecting
 `apply_env`/`apply_env_update` and catalog-materialized state; `config_watcher`
-mutates it in place via `setattr`. It is unclear which fields are immutable config
-vs runtime state.
+mutates it in place via `setattr`. Which fields are immutable config vs runtime
+state is unclear.
 
-**Design question.** Is the right split (a) a separate `ConfigRuntime` dataclass
-holding env-applied and catalog-materialized values, or (b) annotate the existing
-fields and document the mutable subset? Recommend (a) as a first pass but confirm.
+**Result.** A separate `ConfigRuntime` dataclass holds the env-applied and
+catalog-materialized values; `apply_env`/`apply_env_update` mutate `ConfigRuntime`,
+not `Config`, and callers read runtime state from it.
 
-**Result.** Mutating runtime state is cleanly separated from the immutable
-config data, with `apply_env` no longer mutating `Config` in place.
+**Scope.** In: introduce `ConfigRuntime`; move `apply_env*` and the
+catalog-materialized tracking onto it; update `config_watcher` and consumers to
+read the runtime holder. Out: do not change the resolution *order*
+(defaults → file → env).
 
-**Verify.** `make test` — `tests/test_config_watcher.py` + `tests/test_config.py`.
+**Verify.** `make check` + `make test` — `tests/test_config_watcher.py` +
+`tests/test_config.py` + `tests/test_model_catalog.py`.
 
-**Deps.** none (spec before implementation)
+**Tests.** Existing config/reload tests pass unchanged; add a case asserting a
+reload mutates `ConfigRuntime` while the base `Config` data stays unchanged.
+
+**Deps.** none

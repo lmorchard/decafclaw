@@ -4,14 +4,16 @@ A consolidated code-quality review of the DecafClaw codebase, decomposed into
 **14 epics**, each holding small, independently shippable issues (sized XS–M).
 Each epic's file in this directory holds filing-ready issue drafts.
 
-> Status: DRAFT — reviewed locally, not yet filed on GitHub. File from this list
-> once Les confirms the open decision below and priority.
+> Status: DRAFT — reviewed locally, not yet filed on GitHub. All open decisions
+> are resolved; priorities are the only thing left to set before filing.
 
-## Open decision to confirm before filing
+## Decisions (resolved)
 
-- **Issue 2.1 (friction skill): repair vs remove.** The draft repairs it (register
-  the missing tool; the logic already exists and `tests/test_friction.py` passes).
-  The alternative is to delete the skill. Confirm one before filing.
+- **2.1 (friction skill): repair.** The draft registers the missing tool and lifts
+  `tests/test_friction.py` out of `ruff.extend-exclude`.
+- **4.5 (Config split):** scoped to a `ConfigRuntime` dataclass (see Epic 4).
+- **11.12 (`response_model`):** scoped to slice 1, the conversation-listing
+  endpoints (see Epic 11).
 
 ## Size legend
 
@@ -34,28 +36,49 @@ Each epic file lists its issues as a `### E.N — Title` section with:
 test that already protects). `Deps` uses `E.N` ids until real issue numbers exist;
 at filing, replace `blocked-by #E.N` with the resolved issue number.
 
-## Triage summary (~115 issues)
+## Triage summary (117 issues)
 
-| Ep | Title | Issues | Ready | Blocked | Needs-input | Needs-definition |
-|---|---|---|---|---|---|---|
-| 1 | Security & path-containment | 6 | 5 | 1 (1.3) | — | — |
-| 2 | Dead code & latent bugs | 11 | 10 | 1 (2.8) | 1 (2.1) | — |
-| 3 | LLM provider consolidation | 9 | 8 | 1 (3.2) | — | — |
-| 4 | Config resolution | 5 | 4 | — | — | 1 (4.5) |
-| 5 | Tool failure contract | 4 | 4 | — | — | — |
-| 6 | Tools registry & dispatch | 8 | 6 | 2 (6.3, 6.6) | — | — |
-| 7 | ConversationManager | 9 | 8 | 1 (7.3) | — | — |
-| 8 | Context classification | 6 | 4 | 2 (8.2, 8.4) | — | — |
-| 9 | Skills cleanup | 14 | 13 | 1 (9.7) | — | — |
-| 10 | Enums sweep | 10 | 10 | — | — | — |
-| 11 | HTTP/web split | 16 | 15 | — | — | 1 (11.12) |
-| 12 | Frontend consolidation | 9 | 9 | — | — | — |
-| 13 | Frontend robustness | 4 | 4 | — | — | — |
-| 14 | Test hygiene | 6 | 6 | — | — | — |
+| Ep | Title | Issues | Ready | Blocked |
+|---|---|---|---|---|
+| 1 | Security & path-containment | 6 | 5 | 1 (1.3) |
+| 2 | Dead code & latent bugs | 11 | 10 | 1 (2.8) |
+| 3 | LLM provider consolidation | 9 | 8 | 1 (3.2) |
+| 4 | Config resolution | 5 | 5 | — |
+| 5 | Tool failure contract | 4 | 4 | — |
+| 6 | Tools registry & dispatch | 8 | 6 | 2 (6.3, 6.6) |
+| 7 | ConversationManager | 9 | 8 | 1 (7.3) |
+| 8 | Context classification | 6 | 4 | 2 (8.2, 8.4) |
+| 9 | Skills cleanup | 14 | 13 | 1 (9.7) |
+| 10 | Enums sweep | 10 | 10 | — |
+| 11 | HTTP/web split | 16 | 16 | — |
+| 12 | Frontend consolidation | 9 | 9 | — |
+| 13 | Frontend robustness | 4 | 4 | — |
+| 14 | Test hygiene | 6 | 6 | — |
 
-Blocked items are filed with a native `blocked-by` link and return to ready after
-the prerequisite lands (`sweep-blocked`). The two `needs-input`/`needs-definition`
-items carry their decision/design question inline.
+**108 ready, 9 blocked (sequenced), 0 needs-input, 0 needs-definition.** Blocked
+items are filed with a native `blocked-by` link and return to ready after the
+prerequisite lands (`sweep-blocked`).
+
+## Unattended-fit
+
+All **108 ready** items are unattended-fit: acceptance is checked by a gate command
+(`make test`, `make check`, `make test-js`), no new service/credential/account, no
+open decision, and no cross-issue dependency. The UI items (Epic 13) verify through
+the Playwright browser harness (`tests/test_web_browser_scenarios.py`), which runs
+in CI — no human or live service.
+
+The **9 blocked** items become unattended-fit only after their prerequisite lands;
+sequence them in a later batch (see ordering below).
+
+**Size flag (larger than the 50–200 line default):** these are mechanical *moves*
+whose diff is large but whose risk is low. Name them when curating, at most one per
+batch per the queue guidance:
+
+- 11.1–11.8 (per-resource route extraction) — moved lines dominate the diff
+  (~200–400 lines each).
+- 14.1–14.3 (test-file splits) — moved test lines (~1,000+ lines relocated).
+
+Everything else is ≤ M with an effective change well under 200 lines.
 
 ## Suggested sequencing
 
@@ -66,13 +89,9 @@ items carry their decision/design question inline.
    is already PR-order.
 5. **Epics 13–14** — wherever bandwidth allows.
 
-## Unattended-fit note
-
-`curate-ready-queue`'s unattended bar is stricter than `triage:ready`: acceptance
-must be checked by gate commands, not a person/Dev server/browser. Epics 1–10 and
-the helper consolidations clear it. A few frontend items (13.1, 13.2, 13.3) and
-11.12 need a unit test rather than manual UI verification to qualify — noted in
-their `Verify` lines.
+**For an unattended batch,** order within each epic dependency-first so blocked
+items only appear in the batch *after* their prerequisite: 1.2→1.3, 3.1→3.2,
+6.1→6.3 and 6.5→6.6, 7.1/7.2→7.3, 8.1→8.2 and 8.3→8.4, 9.6→9.7, plus 2.7→2.8.
 
 ## Epics
 
