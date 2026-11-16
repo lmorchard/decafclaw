@@ -97,7 +97,7 @@ ordering, returning a discriminated result (`claimed`/`timed_out`/`cancelled`/`p
 ### 7.5 — Adopt the helper in `respond_to_confirmation` + `cancel_pending_confirmation`
 
 **Size:** M
-**Triage:** ready
+**Triage:** blocked-by #7.4
 
 **Result.** Both call `_resolve_slot` from 7.4 instead of inlining the ordering.
 
@@ -112,7 +112,7 @@ ordering, returning a discriminated result (`claimed`/`timed_out`/`cancelled`/`p
 ### 7.6 — Adopt the helper in `request_confirmation` + `post_confirmation`
 
 **Size:** M
-**Triage:** ready
+**Triage:** blocked-by #7.4
 
 **Result.** Both call `_resolve_slot` (and the shared archive/clear) from 7.4.
 

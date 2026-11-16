@@ -36,6 +36,13 @@ Each epic file lists its issues as a `### E.N — Title` section with:
 test that already protects). `Deps` uses `E.N` ids until real issue numbers exist;
 at filing, replace `blocked-by #E.N` with the resolved issue number.
 
+### Machine-readable manifest
+
+`filing-manifest.json` is the machine-readable projection of these files
+(generated, single source = the markdown). `FILING.md` gives the filing worker a
+deterministic procedure. File from the manifest, in list order — it is already
+dependency-safe (a blocked item always has a lower number than its prerequisite).
+
 ## Triage summary (117 issues)
 
 | Ep | Title | Issues | Ready | Blocked |
@@ -44,9 +51,9 @@ at filing, replace `blocked-by #E.N` with the resolved issue number.
 | 2 | Dead code & latent bugs | 11 | 10 | 1 (2.8) |
 | 3 | LLM provider consolidation | 9 | 8 | 1 (3.2) |
 | 4 | Config resolution | 5 | 5 | — |
-| 5 | Tool failure contract | 4 | 4 | — |
+| 5 | Tool failure contract | 4 | 3 | 1 (5.2) |
 | 6 | Tools registry & dispatch | 8 | 6 | 2 (6.3, 6.6) |
-| 7 | ConversationManager | 9 | 8 | 1 (7.3) |
+| 7 | ConversationManager | 9 | 6 | 3 (7.3, 7.5, 7.6) |
 | 8 | Context classification | 6 | 4 | 2 (8.2, 8.4) |
 | 9 | Skills cleanup | 14 | 13 | 1 (9.7) |
 | 10 | Enums sweep | 10 | 10 | — |
@@ -55,19 +62,19 @@ at filing, replace `blocked-by #E.N` with the resolved issue number.
 | 13 | Frontend robustness | 4 | 4 | — |
 | 14 | Test hygiene | 6 | 6 | — |
 
-**108 ready, 9 blocked (sequenced), 0 needs-input, 0 needs-definition.** Blocked
+**105 ready, 12 blocked (sequenced), 0 needs-input, 0 needs-definition.** Blocked
 items are filed with a native `blocked-by` link and return to ready after the
 prerequisite lands (`sweep-blocked`).
 
 ## Unattended-fit
 
-All **108 ready** items are unattended-fit: acceptance is checked by a gate command
+All **105 ready** items are unattended-fit: acceptance is checked by a gate command
 (`make test`, `make check`, `make test-js`), no new service/credential/account, no
 open decision, and no cross-issue dependency. The UI items (Epic 13) verify through
 the Playwright browser harness (`tests/test_web_browser_scenarios.py`), which runs
 in CI — no human or live service.
 
-The **9 blocked** items become unattended-fit only after their prerequisite lands;
+The **12 blocked** items become unattended-fit only after their prerequisite lands;
 sequence them in a later batch (see ordering below).
 
 **Size flag (larger than the 50–200 line default):** these are mechanical *moves*
@@ -90,8 +97,9 @@ Everything else is ≤ M with an effective change well under 200 lines.
 5. **Epics 13–14** — wherever bandwidth allows.
 
 **For an unattended batch,** order within each epic dependency-first so blocked
-items only appear in the batch *after* their prerequisite: 1.2→1.3, 3.1→3.2,
-6.1→6.3 and 6.5→6.6, 7.1/7.2→7.3, 8.1→8.2 and 8.3→8.4, 9.6→9.7, plus 2.7→2.8.
+items only appear in the batch *after* their prerequisite: 1.2→1.3, 2.7→2.8,
+3.1→3.2, 5.1→5.2, 6.1→6.3 and 6.5→6.6, 7.1/7.2→7.3 and 7.4→7.5/7.6,
+8.1→8.2 and 8.3→8.4, 9.6→9.7.
 
 ## Epics
 
