@@ -82,3 +82,7 @@ These docs are as much for me as they are for agents working on this project. Th
 - [Data Layout](data-layout.md) — File structure, admin vs workspace trust boundary
 - [Context Composer](context-composer.md) — Context assembly, vault retrieval, relevance scoring, token budget
 - [Original Agent Spec](original-agent-spec.md) — The original design sketch
+
+## Maintenance
+
+- [Code Debt & Refactoring Backlog](code-debt.md) — Epic-grouped code-quality findings for a cleanup/refactoring sprint
