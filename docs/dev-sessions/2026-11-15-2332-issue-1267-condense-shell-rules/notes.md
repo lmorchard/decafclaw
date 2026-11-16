@@ -38,7 +38,7 @@
 3. [x] `make gen-api-client` (regenerate TS client for new endpoints) — in commit 40c04e16. Generated methods: `putConversationShellRulesReplaceApiConversationsIdShellApprovalRulesReplacePut(id,{rules})`, `postConversationShellCondenseApiConversationsIdShellApprovalCondensePost(id)`, `wrapperApiModelsCatalogCondensePost({model})`.
 4. [x] Panel JS edit mode + condense (shell-approval-panel.js) + extend shell-approval-panel.test.js. Includes the transport fix: `scripts/sticky_api_request.ts` must list rules/replace + condense in the shellApproval family, or they ride the stock transport (no same-origin credentials → 401 in production; header-gated body decode breaks the headers-less test mocks).
 5. [x] model-catalog.js condense picker + extend model-catalog.test.js.
-6. [ ] Docs: config.md, model-selection.md, web-ui.md (panel + API table), tools.md.
+6. [x] Docs: config.md (shell table + condense section), model-selection.md (Rule-condensation model section), web-ui.md (panel bullets + API table rows + 409 note + component row), tools.md (web-panel paragraph).
 7. [ ] Gates: make fmt, make check (lint/typecheck/check-js/browser-assets), make test, make test-js.
 
 ## Draft PR published (checkpoint 1)

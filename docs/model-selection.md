@@ -167,6 +167,39 @@ when the selected model's discovery metadata reports no tool support
 The agent cannot change its own auto-approval model — same user-only rule as
 the default model.
 
+### Rule-condensation model (#1267)
+
+The shell approval panel's **Condense** action asks a model to rewrite the
+conversation's auto-approval rules into fewer, more general summary rules. It
+rides on the active conversation model (then the effective default) by default;
+a dedicated condensation model is optional so a conversation model does not pay
+condensation prices it does not need.
+
+- **Config**: `shell.condense_model` (`""` = ride on the active conversation
+  model, then the effective default; when set, names a `model_configs` key —
+  discovered models materialize as keys).
+- **UI**: **⚙ Agent Config → Models → Rule-condensation model** lists every
+  enabled catalog model plus an explicit **"use conversation model"** option
+  that clears the pointer. Writes land in the `data/{agent_id}/model_catalog.json`
+  sidecar under `condense_model`.
+
+Resolution order for condensation:
+
+1. The sidecar's `condense_model` pointer, when it names a selectable model.
+2. `config.json`'s `shell.condense_model` (the seed; a hand-written raw name
+   has no endpoint to route through, so it is treated as unset with a warning).
+3. The active conversation model, then the effective default — today's behavior
+   when nothing is set.
+
+Unlike the auto-approval judge there is no `auxiliary_model` step: condensation
+is new and has no legacy behavior to preserve. An empty pointer or seed falls
+through to step 3; a pointer at a disabled or vanished model falls back cleanly
+to the seed, then down the chain.
+
+Condensation is a one-shot completion (no tools), so the picker needs no
+tool-support warning. The agent cannot change its own condensation model — same
+user-only rule as the default model.
+
 ### Reflection and verifier model pickers (#1212)
 
 The **⚙ Agent Config → Models** tab also renders two judge pickers on top of

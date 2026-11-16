@@ -275,6 +275,17 @@ and the controls to change it:
   the "Approve + remember why" confirmation path. Add or delete rules here; each
   add/remove clears the conversation's cached reviewer approval pattern so the next
   prompt re-derives.
+  - **Bulk edit** (#1267): the **Edit** button turns the list into a draft — every
+    rule becomes editable, with add and remove row controls. **Save** replaces the
+    full list atomically in one action; **Cancel** discards it. While editing, the
+    single-rule actions are hidden — the draft is the only writer.
+  - **Condense** (#1267): in edit mode, asks the resolved condensation model to
+    rewrite the current rules into fewer, more general summary rules. The proposal
+    lands in the draft with before/after markers (added rows highlighted, dropped
+    rules struck through). Saving a condensed draft is an ordinary bulk save.
+    Condensation never mutates state — rules on disk and cached patterns change only
+    when the user saves; a model or parse error keeps the draft as-is and shows the
+    server's error.
 - **Preset rules** (read-only): the active (not disabled) situational presets with source
   (`builtin` / `config` / `custom`) and activation path.
 - **Always-on config guidance** (read-only): the static `shell.aux_approval_guidance`
@@ -289,8 +300,10 @@ and the controls to change it:
 
 Edits that change the rules go through the conversation-scoped REST endpoints
 (`PUT /api/conversations/{id}/shell-approval/rules`, `DELETE .../rules`,
-`DELETE .../patterns`, `POST .../promote`); rule add/remove clears the cached pattern
-server-side. The panel portals to a body-level `shell-approval-panel-mount` div (the
+`PUT .../rules/replace`, `POST .../condense`, `DELETE .../patterns`,
+`POST .../promote`); rule add/remove and full-list replace clear the cached pattern
+server-side, while condense is read-only with respect to state. The panel portals to a
+body-level `shell-approval-panel-mount` div (the
 [portal pattern](web-ui-mobile.md#no-position-fixed-inside-transformed-ancestors)).
 Opened via the shell-approval gear in the chat controls' conversation-action cluster
 (compact 32px sizing, level with the terminal and side-question buttons) or from the
@@ -463,7 +476,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |
 | `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter strip/panel: view-mode summary + tags, edit-mode typed controls and raw YAML editor |
 | `context-inspector` | `components/context-inspector.js` | Context diagnostics popover |
-| `shell-approval-panel` | `components/shell-approval-panel.js` | Per-conversation shell auto-approval panel: editable conversation rules, active preset rules, config guidance, cached approval patterns (#1159) |
+| `shell-approval-panel` | `components/shell-approval-panel.js` | Per-conversation shell auto-approval panel: editable conversation rules (with bulk-edit draft + LLM condensation, #1267), active preset rules, config guidance, cached approval patterns (#1159) |
 | `notification-inbox` | `components/notification-inbox.js` | Bell icon + dropdown inbox panel |
 | `config-panel` | `components/config-panel.js` | Admin config file editor & shell presets tab |
 | `preset-manager` | `components/preset-manager.js` | Shell auto-approval preset manager (list, create, edit, delete) |
@@ -669,12 +682,15 @@ PUT and DELETE on built-in or config preset names return 400. Successful mutatio
 | `GET` | `/api/conversations/{id}/shell-approval` | Per-conversation approval view: `conversation_rules`, active `presets`, `config_guidance`, and `cached_patterns`. Always readable; never mutates state |
 | `PUT` | `/api/conversations/{id}/shell-approval/rules` | Add or replace a conversation rule. Body `{"rule": "..."}`. Clears the conversation's cached reviewer approval patterns |
 | `DELETE` | `/api/conversations/{id}/shell-approval/rules` | Remove one conversation rule. Body `{"rule": "..."}`. Clears the conversation's cached reviewer approval patterns |
+| `PUT` | `/api/conversations/{id}/shell-approval/rules/replace` | Atomically replace the conversation's full rule list (the bulk-edit save path). Body `{"rules": ["...", ...]}`. Clears the conversation's cached reviewer approval patterns |
+| `POST` | `/api/conversations/{id}/shell-approval/condense` | Propose condensed rules: a one-shot completion (no tools) on the resolved condensation model returns `{"rules": [...]}`. Never mutates state — rules and cached patterns are unchanged; the proposal lands in the panel's draft. 400 when there are no rules or the model output is unparseable |
 | `DELETE` | `/api/conversations/{id}/shell-approval/patterns` | Revoke one cached approval pattern. Body `{"pattern": "..."}` |
 | `POST` | `/api/conversations/{id}/shell-approval/promote` | Copy a conversation rule into a custom preset. Body `{"rule": "...", "preset": "..."}`. Appends without duplicate; creates a new custom preset; 400 for built-in or config preset names |
 
-PUT and DELETE rule mutations are rejected with 409 while the conversation is `busy` or
-`waiting` (an interactive turn owns the reviewer surface). The web UI panel disables its
-editable surfaces in those states.
+Rule mutations (single-rule PUT/DELETE and full-list replace) and condense are
+rejected with 409 while the conversation is `busy` or `waiting` (an interactive
+turn owns the reviewer surface). The web UI panel disables its editable surfaces in
+those states.
 
 ### Notifications
 
