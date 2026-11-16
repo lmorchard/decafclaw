@@ -424,7 +424,13 @@ async def run_child_turn(
         manager.set_subagent_task(child_conv_id, task if isinstance(task, str) else str(task))
 
         # Set active model: explicit override > parent's model
-        child_ctx.active_model = model if model else parent_ctx.active_model
+        effective_child_model = model if model else parent_ctx.active_model
+        child_ctx.active_model = effective_child_model
+        if effective_child_model:
+            manager.set_flag(child_conv_id, "active_model", effective_child_model)
+            from ..archive import append_message
+
+            append_message(config, child_conv_id, {"role": "model", "content": effective_child_model})
 
     manager = parent_ctx.manager
     if manager is None:

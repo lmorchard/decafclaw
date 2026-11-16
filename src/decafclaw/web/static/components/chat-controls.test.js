@@ -108,6 +108,49 @@ describe('chat-controls', () => {
     expect(el.querySelector('#cc-model-select')).toBeTruthy();
     expect(el.querySelector('#cc-mode-select')).toBeTruthy();
   });
+
+  it('selects activeModel and falls back to defaultModel when activeModel is empty', async () => {
+    const { el, store } = await mount({
+      activeModel: '',
+      defaultModel: 'vertex-gemini-flash-3.8',
+      availableModels: ['anthropic-claude-3.5-sonnet', 'vertex-gemini-flash-3.8'],
+    });
+    const select = /** @type {HTMLSelectElement} */ (el.querySelector('#cc-model-select'));
+    expect(select.value).toBe('vertex-gemini-flash-3.8');
+
+    // Setting an explicit activeModel selects it
+    store.activeModel = 'anthropic-claude-3.5-sonnet';
+    store.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    expect(select.value).toBe('anthropic-claude-3.5-sonnet');
+
+    // Switching to a session without an explicit model resets to defaultModel
+    store.activeModel = '';
+    store.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    expect(select.value).toBe('vertex-gemini-flash-3.8');
+  });
+
+  it('flags and selects an unconfigured model', async () => {
+    const { el } = await mount({
+      activeModel: 'legacy-model-v1',
+      availableModels: ['anthropic-claude-3.5-sonnet', 'vertex-gemini-flash-3.8'],
+    });
+    const select = /** @type {HTMLSelectElement} */ (el.querySelector('#cc-model-select'));
+    expect(select.value).toBe('legacy-model-v1');
+    expect(select.textContent).toContain('⚠ legacy-model-v1 (not configured)');
+  });
+
+  it('syncs mode selector value when store activeMode changes', async () => {
+    const { el, store } = await mount({ activeMode: 'default' });
+    const select = /** @type {HTMLSelectElement} */ (el.querySelector('#cc-mode-select'));
+    expect(select.value).toBe('default');
+
+    store.activeMode = 'dev';
+    store.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    expect(select.value).toBe('dev');
+  });
    it('dispatches toggle-context-inspector when the context meter is clicked', async () => {
      const { el } = await mount();
      const handler = vi.fn();

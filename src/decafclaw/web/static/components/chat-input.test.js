@@ -714,6 +714,31 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     expect(el.querySelector('.conversation-menu')).not.toBeNull();
   });
 
+  it('falls back to defaultModel and updates when store activeModel changes', async () => {
+    const el = await mount();
+    const store = /** @type {any} */ (new EventTarget());
+    store.activeModel = '';
+    store.defaultModel = 'm2';
+    store.availableModels = ['m1', 'm2'];
+    store.activeMode = 'default';
+    store.availableModes = [{ name: 'default' }];
+    store.isBusy = false;
+    el.store = store;
+    await el.updateComplete;
+
+    el.querySelector('.conversation-actions-btn').click();
+    await el.updateComplete;
+
+    const modelSelect = el.querySelector('#conversation-menu-model');
+    expect(modelSelect.value).toBe('m2');
+
+    // Switching conversation updates the select
+    store.activeModel = 'm1';
+    store.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    expect(modelSelect.value).toBe('m1');
+  });
+
   it('closes the menu on Escape', async () => {
     const el = await mount();
     const menu = await openMenu(el);

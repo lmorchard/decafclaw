@@ -84,11 +84,30 @@ export class ChatControls extends LitElement {
         this.#syncFromStore();
       }
     }
+
+    // Sync model selector value if present
+    const modelSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#cc-model-select'));
+    if (modelSelect) {
+      const target = this._activeModel || this._defaultModel;
+      if (target && modelSelect.value !== target) {
+        modelSelect.value = target;
+      }
+    }
+
+    // Sync mode selector value if present
+    const modeSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#cc-mode-select'));
+    if (modeSelect) {
+      const targetMode = this._activeMode;
+      if (targetMode && modeSelect.value !== targetMode) {
+        modeSelect.value = targetMode;
+      }
+    }
   }
 
   #handleModelChange(e) {
     const newModel = e.target.value;
-    if (newModel && newModel !== this._activeModel) {
+    const current = this._activeModel || this._defaultModel;
+    if (newModel && newModel !== current) {
       this.dispatchEvent(new CustomEvent('set-model', {
         detail: { model: newModel },
         bubbles: true,
@@ -154,7 +173,8 @@ export class ChatControls extends LitElement {
 
   render() {
     const { formatted: contextPct, cls: contextCls } = this.#getContextStatus();
-    const modelUnconfigured = this._activeModel && !this._availableModels.includes(this._activeModel);
+    const targetModel = this._activeModel || this._defaultModel;
+    const modelUnconfigured = targetModel && !this._availableModels.includes(targetModel);
     const convId = this.store?.currentConvId || '';
     const canvas = this._canvasSnapshot;
     const showResummon = Boolean(
@@ -166,12 +186,12 @@ export class ChatControls extends LitElement {
       ${this._availableModels.length > 0 ? html`
         <div class="control model-control">
           <label for="cc-model-select">Model</label>
-          <select id="cc-model-select" ?disabled=${this._isBusy} @change=${this.#handleModelChange}>
+          <select id="cc-model-select" .value=${targetModel} ?disabled=${this._isBusy} @change=${this.#handleModelChange}>
             ${modelUnconfigured ? html`
-              <option value="${this._activeModel}" selected>⚠ ${this._activeModel} (not configured)</option>
+              <option value="${targetModel}" selected>⚠ ${targetModel} (not configured)</option>
             ` : nothing}
             ${this._availableModels.map(m => html`
-              <option value="${m}" ?selected=${m === this._activeModel}>${m}</option>
+              <option value="${m}" ?selected=${m === targetModel} .selected=${m === targetModel}>${m}</option>
             `)}
           </select>
         </div>
@@ -181,9 +201,9 @@ export class ChatControls extends LitElement {
       ${this._availableModes.length > 0 ? html`
         <div class="control mode-control">
           <label for="cc-mode-select">Mode</label>
-          <select id="cc-mode-select" ?disabled=${this._isBusy} @change=${this.#handleModeChange}>
+          <select id="cc-mode-select" .value=${this._activeMode} ?disabled=${this._isBusy} @change=${this.#handleModeChange}>
             ${this._availableModes.map(m => html`
-              <option value="${m.name}" ?selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
+              <option value="${m.name}" ?selected=${m.name === this._activeMode} .selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
             `)}
           </select>
         </div>

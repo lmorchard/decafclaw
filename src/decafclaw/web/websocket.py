@@ -335,7 +335,7 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         for m in reversed(all_msgs):
             if m.get("role") == "model":
                 name = m.get("content", "")
-                if name and name in config.model_configs:
+                if name:
                     current_model = name
                     break
 
@@ -764,7 +764,7 @@ async def _handle_set_model(ws_send: WSSendCallable, index, username, msg, state
     if not model_name:
         await ws_send({"type": WSMessageType.ERROR, "message": "No model specified"})
         return
-    if model_name not in config.model_configs:
+    if model_name not in config.model_configs and model_name not in picker_models(config):
         await ws_send({"type": WSMessageType.ERROR, "message": f"Unknown model: {model_name}"})
         return
 

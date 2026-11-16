@@ -1163,7 +1163,9 @@ async def create_conversation(request: Request) -> JSONResponse:
     body = await request.json()
     folder = str(body.get("folder", "")).strip()
     model_name = str(body.get("model", body.get("effort", ""))).strip()
-    if model_name and model_name not in config.model_configs:
+    from .model_catalog import picker_models
+
+    if model_name and model_name not in config.model_configs and model_name not in picker_models(config):
         return JSONResponse({"error": f"Unknown model: {model_name}"}, status_code=400)
     if folder:
         from .web.conversation_folders import ConversationFolderIndex
