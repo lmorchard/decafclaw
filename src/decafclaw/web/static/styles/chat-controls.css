@@ -143,11 +143,6 @@ chat-controls .actions-control .canvas-resummon-pill {
   font-size: 0.85rem;
 }
 
-chat-controls .actions-control .copy-menu-trigger {
-  padding: 0 0.6rem;
-  font-size: 0.8rem;
-}
-
 chat-controls .actions-control button.terminal-open-btn {
   padding: 0 0.6rem;
   font-size: 0.85rem;

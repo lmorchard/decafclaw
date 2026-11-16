@@ -101,6 +101,32 @@ it.each(['network', 'clipboard', 'body'])('reports %s failures', async (failure)
   expect(showToast).toHaveBeenCalledWith(`Copy failed: ${failure} failed`);
 });
 
+// Issue #1273: the floating menu is replaced by two adjacent plain buttons.
+it.each(['markdown', 'jsonl'])('copies %s through the rendered button', async (format) => {
+  const body = format === 'jsonl' ? '{"role":"user"}\n{"role":"assistant"}\n' : '# Title\n\nHello\n';
+  fetchMock.mockResolvedValue(new Response(body, { headers: { 'Content-Type': format === 'jsonl' ? 'application/x-ndjson' : 'text/markdown' } }));
+  const el = document.createElement('copy-conversation-menu'); el.convId = 'id ?#%é';
+  document.body.append(el);
+  await el.updateComplete;
+
+  const label = format === 'markdown' ? 'Copy MD' : 'Copy JSONL';
+  const btn = Array.from(el.querySelectorAll('button.copy-conv-btn')).find(b => b.textContent === label);
+  expect(btn).toBeDefined();
+  btn.click();
+  await vi.waitFor(() => expect(copyToClipboard).toHaveBeenCalledWith(body));
+
+  expect(fetchMock).toHaveBeenCalledWith(`/api/conversations/id%20%3F%23%25%C3%A9/export?format=${format}`,
+    expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
+  expect(showToast).toHaveBeenCalledWith(`Copied as ${format}`);
+});
+
+it('renders nothing when no conversation is selected', async () => {
+  const el = document.createElement('copy-conversation-menu');
+  document.body.append(el);
+  await el.updateComplete;
+  expect(el.querySelector('button')).toBeNull();
+});
+
 // Issue #1099 / PR #1248 review follow-up — user-facing per-conversation
 // compaction threshold controls in the context inspector.
 it('renders the per-conversation compaction threshold controls from diagnostics', async () => {
@@ -213,9 +239,10 @@ it('renders raw view and copies request JSON', async () => {
   expect(showToast).toHaveBeenCalledWith('Copied raw context');
 });
 
-// Issue #1192: the conversation copy menu moves into the context inspector
-// raw pane (it owns the conversation export + clipboard copy flow).
-it('mounts the conversation copy menu in the raw pane', async () => {
+// Issue #1192: the conversation copy control moves into the context inspector
+// raw pane (it owns the conversation export + clipboard copy flow). #1273:
+// two adjacent plain buttons replace the floating menu.
+it('mounts the conversation copy buttons in the raw pane', async () => {
   fetchMock.mockResolvedValue(json({ model: 'test-model', messages: [{ role: 'user', content: 'hello' }], tools: [] }));
   const el = document.createElement('context-inspector');
   el.convId = 'id ?#%é';
@@ -229,6 +256,12 @@ it('mounts the conversation copy menu in the raw pane', async () => {
   const copyMenu = el._panelMount.querySelector('copy-conversation-menu');
   expect(copyMenu).not.toBeNull();
   expect(copyMenu.convId).toBe('id ?#%é');
+
+  const buttons = Array.from(copyMenu.querySelectorAll('button.copy-conv-btn'));
+  expect(buttons.map(b => b.textContent)).toEqual(['Copy MD', 'Copy JSONL']);
+  // #1273: the floating menu is gone — no trigger, caret, or dropdown list.
+  expect(copyMenu.querySelector('.copy-menu-list')).toBeNull();
+  expect(copyMenu.querySelector('[aria-haspopup]')).toBeNull();
 });
 
 it('shows empty message when raw context is 404', async () => {
