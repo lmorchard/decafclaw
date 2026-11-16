@@ -256,7 +256,7 @@ Click the context usage bar in the sidebar to see a popover with:
   - Model name, messages count, and tools count
   - Full formatted canonical messages and tools JSON
   - Copy button to copy the request JSON to the clipboard
-  - **Conversation copy** — the `📋 Copy ▾` menu (Copy as JSONL / Copy as markdown) mounted alongside the raw copy; it exports the full conversation transcript via the same export endpoint
+  - **Conversation copy** — two adjacent buttons (Copy MD / Copy JSONL) mounted alongside the raw copy; each exports the full conversation transcript via the same export endpoint
 
 The panel portals to a body-level `context-inspector-mount` div (the
 [portal pattern](web-ui-mobile.md#no-position-fixed-inside-transformed-ancestors),
@@ -299,15 +299,16 @@ sidebar trigger when the controls strip is absent. Both triggers share the
 
 ### Copy conversation
 
-The conversation copy menu (`📋 Copy ▾`) lives inside the context inspector
-raw pane, not as a floating button. It opens a small menu with two items:
-**Copy as JSONL** and **Copy as markdown**. JSONL
-is the raw archive bytes (lossless — paste into another LLM for diagnosis).
-Markdown is a rendered transcript suitable for Obsidian, sharing, or PR
-descriptions. Both are server-rendered via
-`GET /api/conversations/{id}/export?format=jsonl|markdown` and written to
-the clipboard via `navigator.clipboard`. A toast confirms success or
-surfaces the failure reason. The menu hides when no conversation is active.
+The conversation copy buttons live inside the context inspector raw pane, not
+as a floating button. Two adjacent plain buttons — **Copy MD** and
+**Copy JSONL** (issue #1273 replaced the floating menu they used to be) —
+each export the full conversation transcript. JSONL is the raw archive bytes
+(lossless — paste into another LLM for diagnosis). Markdown is a rendered
+transcript suitable for Obsidian, sharing, or PR descriptions. Both are
+server-rendered via `GET /api/conversations/{id}/export?format=jsonl|markdown`
+and written to the clipboard via `navigator.clipboard`. A toast confirms
+success or surfaces the failure reason. The buttons hide when no conversation
+is active.
 
 The markdown form includes `user`, `assistant`, and `tool` turns plus a
 short `> [background event]` blockquote for scheduled-task wakes;
@@ -860,7 +861,7 @@ and creation also logs JSON decoding failures.
 The backend preserves ownership checks, archive data, and folder assignments.
 Deletion stops the target conversation's terminals before it removes files and assignments.
 
-The context inspector and copy menu use generated methods for
+The context inspector and conversation copy buttons use generated methods for
 `GET /api/conversations/{id}/context`, `GET /api/conversations/{id}/context/raw`, and `GET /api/conversations/{id}/export`.
 The inspector keeps the generated diagnostics and raw response types in its state and rendering helpers.
 Its source records, detail records, memory candidates, and cache statistics retain their types.
