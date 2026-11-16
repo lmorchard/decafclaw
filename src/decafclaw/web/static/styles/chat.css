@@ -11,16 +11,6 @@ chat-view {
   position: relative;
 }
 
-/* Copy ▾ menu lives in the chat-controls action cluster (issue #1190) now;
-   the container handles positioning, the dropdown floats below with the
-   same border/shadow vocabulary as the compact control-bar buttons. */
-.copy-menu-wrap { position: relative; }
-
-.copy-menu-trigger {
-  padding: 0 0.85rem;
-  font-size: 0.85rem;
-}
-
 /* `>_` terminal-open button: monospace glyph treatment; inherits the
    .dc-floating-btn frame. Compact sizing lives in the control-bar context
    (chat-controls.css, issue #1190). */
@@ -36,50 +26,6 @@ button.side-question-action-btn {
   font-size: 0.95rem;
 }
 button.side-question-action-btn[hidden] { display: none; }
-/* The menu is position: fixed at open time (see CopyConversationMenu) so it
-   escapes the chat-control strip's horizontal scroll container (overflow-x:
-   auto clips / scrolls absolutely-positioned descendants) and pops over the
-   chat area outside the control strip. The inline style set when opened
-   carries the fixed bottom / right offsets. */
-.copy-menu-list {
-  position: fixed;
-  margin: 0;
-  padding: 0.25rem 0;
-  list-style: none;
-  background: var(--pico-card-background-color);
-  border: 1px solid var(--pico-muted-border-color);
-  border-radius: 0.4rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  min-width: 12rem;
-  z-index: 6;
-}
-/* Pico's `ul li { list-style: square }` outranks list-style on the
-   parent ul (specificity 0,0,2 vs inherited none), so clear it on the
-   li directly. */
-.copy-menu-list li { margin: 0; padding: 0; list-style: none; }
-.copy-menu-item {
-  display: block;
-  width: 100%;
-  padding: 0.4rem 0.85rem;
-  cursor: pointer;
-  white-space: nowrap;
-  font-size: 0.9rem;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  font: inherit;
-}
-.copy-menu-item:hover,
-.copy-menu-item:focus-visible {
-  background: var(--pico-secondary-background-color, rgba(127, 127, 127, 0.12));
-  outline: none;
-}
-
-@media (max-width: 639px) {
-  .copy-menu-trigger { padding: 0.25rem 0.85rem; }
-  .copy-menu-trigger .copy-label { display: none; }
-}
 
 /* Uses .dc-floating-btn for border/radius/shadow/tap-target.
    Local styles cover sticky positioning + sizing. */
