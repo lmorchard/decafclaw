@@ -476,11 +476,11 @@ export class ConversationStore extends EventTarget {
         this.#currentConvId = null;
         this.#messageStore.clear();
       }
-      // Re-fetch archived listing to update folder counts
+      // Re-fetch archived listing to update folder counts. This is the only
+      // refresh delete needs: a deleted conversation was already out of the
+      // active hierarchy (it left when archived), so no sessions refetch — and
+      // the listArchivedConversations emission above re-renders the section.
       await this.listArchivedConversations(this.#archivedCurrentFolder);
-      // #1274 — the deleted conversation must leave the sidebar hierarchy too.
-      // (Replaces a redundant explicit emit: both refetches above emit change.)
-      await this.listSessions(this.#currentFolder);
     } catch (err) {
       if (err instanceof ApiError) return;
       console.error('Failed to delete conversation:', err);

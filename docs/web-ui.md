@@ -123,10 +123,12 @@ entries — and are attributed to the owner of their root conversation, so a
 session's folder is its root's assignment and archiving a root hides its
 whole session. The frontend renders from `GET /api/sessions`
 (server-grouped; refreshes on socket connect, folder navigation, turn
-completion, and every conversation mutation — archive / rename / unarchive /
-delete / move — plus a debounced refresh on background `conv_renamed` events,
-#1274) and falls back to client-side grouping of the flat conversation list
-when the endpoint is unavailable.
+completion, and conversation mutations that affect the active hierarchy —
+archive / rename / unarchive / move; delete needs none, since a deleted
+conversation was already out of the hierarchy when archived — plus a debounced
+refresh on background `conv_renamed` events, #1274) and falls back to
+client-side grouping of the flat conversation list when the endpoint is
+unavailable.
 
 Child transcripts are **read-only**: only the parent conversation can be
 prompted. Selecting a subagent row opens the transcript with a disabled chat

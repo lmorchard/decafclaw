@@ -399,14 +399,15 @@ describe('conversation creation transport', () => {
 });
 
 describe.each([
-  // `events` counts emitted change events on success. #1274 added a session
-  // hierarchy refetch to each lifecycle op, so archive/unarchive emit twice
-  // (flat-list + sessions); delete's redundant explicit emit was replaced by the
-  // sessions refetch, keeping it at two.
-  ['archiveConversation', 'POST', '/archive', false, true, 2],
-  ['unarchiveConversation', 'POST', '/unarchive', true, false, 2],
-  ['deleteConversation', 'DELETE', '', true, true, 2],
-])('lifecycle %s transport', (method, verb, suffix, archived, clears, events) => {
+  // `events` counts emitted change events on success; `fetches` the total fetch
+  // calls. #1274 added a session-hierarchy refetch to archive/unarchive (flat-list
+  // + sessions → two fetches, two emissions). Delete only re-fetches the archived
+  // list: a deleted conversation was already out of the active hierarchy (it left
+  // when archived), so it needs no sessions refetch — one fetch, one emission.
+  ['archiveConversation', 'POST', '/archive', false, true, 2, 3],
+  ['unarchiveConversation', 'POST', '/unarchive', true, false, 2, 3],
+  ['deleteConversation', 'DELETE', '', true, true, 1, 2],
+])('lifecycle %s transport', (method, verb, suffix, archived, clears, events, fetches) => {
   const id = 'web-user-日本語 & + #%?';
   let store, fetchMock, log, change;
   beforeEach(async () => {
@@ -435,10 +436,12 @@ describe.each([
     expect(options.credentials).toBe('same-origin');
     expect(options.body).toBeUndefined();
     expect(fetchMock.mock.calls[1][0]).toBe(`/api/conversations${archived ? '/archived' : ''}?folder=Work%2FNested`);
-    // #1274 — the mutation also refreshes the session hierarchy (sidebar source).
-    expect(new URL(fetchMock.mock.calls[2][0], 'http://test').searchParams.get('folder')).toBe('Work/Nested');
-    expect(String(fetchMock.mock.calls[2][0])).toContain('/api/sessions');
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    if (fetches > 2) {
+      // #1274 — archive/unarchive also refresh the session hierarchy (sidebar source).
+      expect(new URL(fetchMock.mock.calls[2][0], 'http://test').searchParams.get('folder')).toBe('Work/Nested');
+      expect(String(fetchMock.mock.calls[2][0])).toContain('/api/sessions');
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(fetches);
     expect(store.currentConvId).toBe(clears ? null : id);
     expect(store.currentMessages).toHaveLength(clears ? 0 : 1);
     expect(archived ? store.archivedFolders : store.folders).toEqual(refreshed.folders);
@@ -981,8 +984,11 @@ describe('session hierarchy wiring (#1115)', () => {
 
 // #1274 — the sidebar's active section renders from the session hierarchy
 // (`GET /api/sessions`), but conversation mutations only refreshed the flat
-// listing, so archive/rename/unarchive/delete/move left the hierarchy stale
-// until a full page reload. Each mutation must refresh the hierarchy too.
+// listing, so archive/rename/unarchive/move left the hierarchy stale until a
+// full page reload. Each of those must refresh the hierarchy too. Delete is the
+// exception: it is reachable only from the archived section, where the
+// conversation was already out of the active hierarchy (it left when archived),
+// so it needs no refresh.
 describe('session hierarchy follows conversation mutations (#1274)', () => {
   let ws, store;
   /** @type {import('vitest').Mock} */
@@ -1053,11 +1059,13 @@ describe('session hierarchy follows conversation mutations (#1274)', () => {
     expect(sessionsCalls()).toBe(2);
   });
 
-  it('refreshes the session hierarchy after deleting a conversation', async () => {
+  it('does not refresh the session hierarchy after deleting a conversation', async () => {
     await store.listSessions();
     expect(sessionsCalls()).toBe(1);
+    // Delete is reachable only from the archived section; the conversation was
+    // already out of the active hierarchy when archived, so no refetch is needed.
     await store.deleteConversation('web-alice-r1');
-    expect(sessionsCalls()).toBe(2);
+    expect(sessionsCalls()).toBe(1);
   });
 
   it('refreshes the session hierarchy after moving a conversation to another folder', async () => {
