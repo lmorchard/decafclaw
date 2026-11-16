@@ -413,6 +413,9 @@ export class ConversationStore extends EventTarget {
         c.conv_id === convId ? { ...c, ...updated } : c
       );
       this.#emitChange();
+      // #1274 — the sidebar hierarchy renders from sessions, not the flat list;
+      // refresh it so a rename shows without a page reload.
+      await this.listSessions(this.#currentFolder);
     } catch (err) {
       if (err instanceof ApiError) return;
       console.error('Failed to rename conversation:', err);
@@ -435,6 +438,9 @@ export class ConversationStore extends EventTarget {
       await DefaultService.renameConversationApiConversationsIdPatch(convId, { folder }, true);
       // Re-fetch current folder listing
       await this.listConversations(this.#currentFolder);
+      // #1274 — a folder move changes which session group the conversation
+      // belongs to; refresh the hierarchy so it follows.
+      await this.listSessions(this.#currentFolder);
     } catch (err) {
       if (err instanceof ApiError) return;
       console.error('Failed to move conversation:', err);
@@ -452,6 +458,9 @@ export class ConversationStore extends EventTarget {
       }
       // Re-fetch current folder listing
       await this.listConversations(this.#currentFolder);
+      // #1274 — the archived conversation must leave the sidebar hierarchy too;
+      // it renders from sessions, which the flat-list refetch above does not touch.
+      await this.listSessions(this.#currentFolder);
     } catch (err) {
       if (err instanceof ApiError) return;
       console.error('Failed to archive conversation:', err);
@@ -467,9 +476,11 @@ export class ConversationStore extends EventTarget {
         this.#currentConvId = null;
         this.#messageStore.clear();
       }
-      // Re-fetch archived listing to update folder counts
+      // Re-fetch archived listing to update folder counts. This is the only
+      // refresh delete needs: a deleted conversation was already out of the
+      // active hierarchy (it left when archived), so no sessions refetch — and
+      // the listArchivedConversations emission above re-renders the section.
       await this.listArchivedConversations(this.#archivedCurrentFolder);
-      this.#emitChange();
     } catch (err) {
       if (err instanceof ApiError) return;
       console.error('Failed to delete conversation:', err);
@@ -482,6 +493,8 @@ export class ConversationStore extends EventTarget {
       await DefaultService.unarchiveConversationApiConversationsIdUnarchivePost(convId, true);
       // Re-fetch archived listing
       await this.listArchivedConversations(this.#archivedCurrentFolder);
+      // #1274 — the restored conversation must reappear in the sidebar hierarchy.
+      await this.listSessions(this.#currentFolder);
     } catch (err) {
       if (err instanceof ApiError) return;
       console.error('Failed to unarchive conversation:', err);
@@ -803,6 +816,15 @@ export class ConversationStore extends EventTarget {
             conv.updated_at = msg.updated_at;
             this.#conversations.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
           }
+        }
+        // #1274 — the sidebar hierarchy renders from sessions, which this patch
+        // does not touch. Refresh it (debounced) when the renamed conversation is
+        // present, so a background title change shows without a page reload. Gated
+        // on the hierarchy containing it: an unlisted id needs no refetch.
+        if (convId && msg.title && this.#sessions.some(
+          (s) => (s?.conversations || []).some((c) => c?.conv_id === convId),
+        )) {
+          this.#scheduleSessionsRefresh();
         }
         break;
       }

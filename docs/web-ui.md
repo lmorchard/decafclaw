@@ -95,13 +95,14 @@ background whether that conversation's user-turn count has just hit a
 cadence point (turns 2, 5, 10, 15, 20 — each attempted at most once per
 server process). When it has, a short LLM call refines the title and the
 result is pushed to open clients as a `conv_renamed` WebSocket event, so
-the sidebar entry updates in place (re-sorted by `updated_at`) without a
-refetch. Only web conversations known to the index are eligible — system
-and child conversations are never retitled. A user rename (sidebar or
-`PATCH /api/conversations/{id}`) is a **permanent opt-out**: it is recorded
-as `custom_title`, the index refuses non-manual renames for such
-conversations, and the titler checks it before any LLM call, so a title
-the user set is never overwritten.
+the flat-list sidebar entry updates in place (re-sorted by `updated_at`)
+without a refetch; the session hierarchy (#1274) gets a debounced refresh
+when the renamed conversation is present in it. Only web conversations known
+to the index are eligible — system and child conversations are never retitled.
+A user rename (sidebar or `PATCH /api/conversations/{id}`) is a **permanent
+opt-out**: it is recorded as `custom_title`, the index refuses non-manual
+renames for such conversations, and the titler checks it before any LLM call,
+so a title the user set is never overwritten.
 
 **On-demand retitling (#1156).** Users can trigger title regeneration on demand
 via the `/retitle` chat command or the "Regenerate title" (✨) action button on
@@ -121,9 +122,13 @@ layer (`iter_conversation_archives`) — they never receive ConversationIndex
 entries — and are attributed to the owner of their root conversation, so a
 session's folder is its root's assignment and archiving a root hides its
 whole session. The frontend renders from `GET /api/sessions`
-(server-grouped; refreshes on socket connect, folder navigation, and turn
-completion) and falls back to client-side grouping of the flat conversation
-list when the endpoint is unavailable.
+(server-grouped; refreshes on socket connect, folder navigation, turn
+completion, and conversation mutations that affect the active hierarchy —
+archive / rename / unarchive / move; delete needs none, since a deleted
+conversation was already out of the hierarchy when archived — plus a debounced
+refresh on background `conv_renamed` events, #1274) and falls back to
+client-side grouping of the flat conversation list when the endpoint is
+unavailable.
 
 Child transcripts are **read-only**: only the parent conversation can be
 prompted. Selecting a subagent row opens the transcript with a disabled chat

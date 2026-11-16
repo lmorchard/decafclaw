@@ -31,18 +31,21 @@ function expectPatch(fetchMock, body) {
 }
 
 describe('conversation PATCH generated transport', () => {
-  it('merges rename metadata into the matching typed listing and emits once', async () => {
+  it('merges rename metadata into the matching typed listing and refreshes the hierarchy', async () => {
     const { store, fetchMock, changed } = await seeded();
     const unrelated = store.conversations[1];
     const updated = { ...original, title, updated_at: 'after' };
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(updated)));
+    // #1274 — rename also refreshes the session hierarchy (the sidebar source).
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ folder, sessions: [] })));
     const generated = vi.spyOn(DefaultService, 'renameConversationApiConversationsIdPatch');
     await store.renameConversation(id, title);
     expect(generated).toHaveBeenCalledWith(id, { title });
     expectPatch(fetchMock, { title });
     expect(store.conversations).toEqual([updated, other]);
     expect(store.conversations[1]).toBe(unrelated);
-    expect(changed).toHaveBeenCalledTimes(1);
+    // Two emissions: the in-memory flat-list patch, then the sessions refetch.
+    expect(changed).toHaveBeenCalledTimes(2);
   });
 
   it.each(['', 'malformed', '{"title":"unused"}'])('move ignores body %s and refreshes current folder', async (body) => {
@@ -50,21 +53,24 @@ describe('conversation PATCH generated transport', () => {
     const response = new Response(body);
     const json = vi.spyOn(response, 'json');
     const text = vi.spyOn(response, 'text');
-    fetchMock.mockResolvedValueOnce(response).mockResolvedValueOnce(new Response(JSON.stringify({
-      folder, folders: [], conversations: [other],
-    })));
+    fetchMock.mockResolvedValueOnce(response)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ folder, folders: [], conversations: [other] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ folder, sessions: [] })));
     const generated = vi.spyOn(DefaultService, 'renameConversationApiConversationsIdPatch');
     await store.moveConversation(id, folder);
     expect(generated).toHaveBeenCalledWith(id, { folder }, true);
     expectPatch(fetchMock, { folder });
     expect(json).not.toHaveBeenCalled();
     expect(text).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // #1274 — move also refreshes the session hierarchy (3rd fetch).
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     const [url, options] = fetchMock.mock.calls[1];
     expect(new URL(url, 'http://test').searchParams.get('folder')).toBe(folder);
     expect(options.method).toBe('GET');
+    expect(String(fetchMock.mock.calls[2][0])).toContain('/api/sessions');
     expect(store.conversations).toEqual([other]);
-    expect(changed).toHaveBeenCalledTimes(1);
+    // Two emissions: the flat-list refetch, then the sessions refetch.
+    expect(changed).toHaveBeenCalledTimes(2);
   });
 
   for (const method of ['renameConversation', 'moveConversation']) {
