@@ -293,6 +293,8 @@ async def test_rules_replace_strips_and_drops_blank_rows(client, approval_config
     assert resp.status_code == 200
     # Whitespace is trimmed; blanked rows are dropped (a blank row removes a rule).
     assert resp.json()["conversation_rules"] == ["Keep me"]
+    # The state holds the trimmed list, not the raw rows.
+    assert st.persisted.aux_approval_guidance == ["Keep me"]
 
 
 @pytest.mark.asyncio
