@@ -202,6 +202,20 @@
   width: auto;
 }
 
+/* #1273: the two conversation export buttons (Copy MD / Copy JSONL) sit
+   adjacent with the same compact sizing as the raw JSON copy. */
+.context-inspector-mount .raw-actions .copy-conv-actions {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.context-inspector-mount .raw-actions button.copy-conv-btn {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  margin: 0;
+  width: auto;
+}
+
 .context-inspector-mount .raw-section h4 {
   margin: 0.5rem 0 0.25rem 0;
   font-size: 0.8rem;
