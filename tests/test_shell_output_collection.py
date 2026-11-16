@@ -183,8 +183,16 @@ async def test_timeout_kills_process_group(ctx):
     result = await _execute_command(ctx, f"sh -c 'echo $$ > {pidfile}; sleep 5'", timeout=1)
 
     assert result.text.startswith("[error: command timed out after 1 seconds]")
-    # The shell's child (a separate process in the group) is dead.
+    # The shell's child (a separate process in the group) is dead. Bounded
+    # polling allows the kernel/init to reap the terminated process group.
     pid = int(pidfile.read_text().strip())
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+            await asyncio.sleep(0.02)
+        except ProcessLookupError:
+            break
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
     # No output was produced — no artifact.
