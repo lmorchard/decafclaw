@@ -214,8 +214,12 @@ def _resolve_embedding_provider(config):
 
     An empty ``embedding.provider`` falls back to the effective default
     model's provider, matching the pre-fastembed behavior.
+
+    The built-in fastembed provider needs no config entry, so it is registered
+    lazily here when app startup (``init_providers``) has not run. The reindex
+    and search CLIs never start the app, and they must still embed locally.
     """
-    from .llm import get_provider
+    from .llm import get_provider, register_provider
     from .model_catalog import effective_default_model
 
     provider_name = config.embedding.provider
@@ -228,6 +232,15 @@ def _resolve_embedding_provider(config):
     try:
         return provider_name, get_provider(provider_name)
     except KeyError:
+        if provider_name != PROVIDER_FASTEMBED:
+            return provider_name, None
+
+    from .llm.providers.fastembed import FastembedProvider
+
+    register_provider(PROVIDER_FASTEMBED, FastembedProvider())
+    try:
+        return provider_name, get_provider(provider_name)
+    except KeyError:  # pragma: no cover - registration cannot fail
         return provider_name, None
 
 
@@ -324,7 +337,11 @@ async def embed_texts(config, texts: list[str], concurrency: int = 4) -> list[li
 
 
 def _check_model(config, conn):
-    """Verify the DB was built with the same embedding model/dimensions. Warns on mismatch."""
+    """Warn when the DB was built with a different embedding model.
+
+    Dimension mismatches are reported once by ``_index_mismatch`` at the point
+    of use, so they are not duplicated here.
+    """
     row = conn.execute("SELECT value FROM metadata WHERE key='embedding_model'").fetchone()
     if row and row[0] != config.embedding.model:
         log.warning(
@@ -332,10 +349,6 @@ def _check_model(config, conn):
             f"config uses '{config.embedding.model}'. "
             f"Run 'decafclaw-reindex' to rebuild."
         )
-    stored = _stored_dimensions(conn)
-    effective = _effective_dimensions(config)
-    if stored is not None and stored != effective:
-        log.warning(_dimension_mismatch_message(stored, effective))
 
 
 def _set_model(config, conn):

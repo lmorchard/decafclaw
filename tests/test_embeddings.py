@@ -449,6 +449,40 @@ async def test_fastembed_vault_reindex(config, fake_fastembed):
         assert embeddings_module._stored_dimensions(conn) == 384
 
 
+async def test_fastembed_resolves_without_init_providers(config, fake_fastembed):
+    """CLI entry points never call init_providers(); fastembed still embeds.
+
+    Regression for the empty-registry ``KeyError`` that made ``make reindex``
+    rebuild an empty index while reporting success.
+    """
+    from decafclaw.llm import clear_providers
+
+    clear_providers()
+    _configure_fastembed(config)
+
+    assert await _REAL_EMBED_TEXT(config, "hello local") == _fake_vector("hello local", 384)
+
+
+async def test_fastembed_reindex_without_init_providers(config, fake_fastembed):
+    """A reindex with no prior provider init writes rows, not an empty index."""
+    from decafclaw.llm import clear_providers
+
+    clear_providers()
+    _configure_fastembed(config)
+
+    pages_dir = config.vault_agent_pages_dir
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(2):
+        (pages_dir / f"cli-page-{i}.md").write_text(f"# CLI Page {i}\n\nlocal body {i}\n")
+
+    assert await embeddings_module.reindex_vault(config) == 2
+
+    with embeddings_module._open_db(config) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0] == 2
+        assert embeddings_module._vec_table_dimensions(conn) == 384
+        assert embeddings_module._stored_dimensions(conn) == 384
+
+
 async def test_fastembed_unavailable_does_not_fall_back_to_cloud(config, monkeypatch, caplog):
     """A missing library logs an actionable error and never calls the remote endpoint."""
     import httpx
@@ -469,9 +503,19 @@ async def test_fastembed_unavailable_does_not_fall_back_to_cloud(config, monkeyp
     assert "not installed" in caplog.text
     assert "pip install fastembed" in caplog.text
 
-    # Even without a registered provider, fastembed refuses the legacy fallback.
+    # After the registry is cleared, the provider is resolved lazily again and
+    # still refuses to touch the remote endpoint.
     clear_providers()
     caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        assert await _REAL_EMBED_TEXT(config, "private note") is None
+    assert "not installed" in caplog.text
+
+
+async def test_fastembed_refuses_remote_fallback_when_unresolved(config, monkeypatch, caplog):
+    """Defense in depth: an unresolved fastembed provider must not reach the cloud."""
+    monkeypatch.setattr(embeddings_module, "_resolve_embedding_provider", lambda _config: ("fastembed", None))
+
     with caplog.at_level(logging.ERROR):
         assert await _REAL_EMBED_TEXT(config, "private note") is None
     assert "Refusing to fall back" in caplog.text
@@ -495,8 +539,28 @@ async def test_embed_texts_gathers_for_providers_without_batch(config, monkeypat
     assert await _REAL_EMBED_TEXTS(config, []) == []
 
 
-def test_embedding_dimension_mismatch_warning(config, caplog):
-    """Searching with a different dimension warns and returns no results."""
+def test_embedding_dimension_mismatch_warning(config, fake_fastembed, caplog):
+    """A 768-dim index searched with fastembed's 384-dim vectors warns once."""
+    dim = config.embedding.dimensions
+    assert dim == 768
+    index_entry_sync(config, "note.md", "hello", [1.0] + [0.0] * (dim - 1), source_type="page")
+
+    _configure_fastembed(config)  # BAAI/bge-small-en-v1.5 -> 384 dims
+    query = [1.0] + [0.0] * 383
+
+    with caplog.at_level(logging.WARNING):
+        results = search_similar_sync(config, query)
+
+    assert results == []  # no sqlite error from the vec0 MATCH
+    assert caplog.text.count("Embedding dimensions mismatch") == 1
+    assert "768" in caplog.text
+    assert "384" in caplog.text
+    assert "make reindex" in caplog.text
+    assert "decafclaw-reindex" in caplog.text
+
+
+def test_embedding_dimension_mismatch_warning_generic_provider(config, caplog):
+    """The default-provider path also warns once and returns no results."""
     dim = config.embedding.dimensions
     index_entry_sync(config, "note.md", "hello", [1.0] + [0.0] * (dim - 1), source_type="page")
 
@@ -505,6 +569,7 @@ def test_embedding_dimension_mismatch_warning(config, caplog):
         results = search_similar_sync(config, [1.0, 0.0, 0.0, 0.0])
 
     assert results == []
+    assert caplog.text.count("Embedding dimensions mismatch") == 1
     assert "make reindex" in caplog.text
     assert "decafclaw-reindex" in caplog.text
 
