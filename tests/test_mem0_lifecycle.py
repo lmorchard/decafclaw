@@ -64,7 +64,7 @@ async def test_mem0_hooks_execution_and_skip(ctx, config):
     ctx.skip_memory_extension = False
     result = await ext.pre_compose_hook(ctx, "Where do I live?")
     assert result == "User lives in Portland."
-    mock_client.search.assert_called_with("Where do I live?", user_id="user123", limit=5)
+    mock_client.search.assert_called_with("Where do I live?", filters={"user_id": "user123"}, limit=5)
 
     # 2. Skip memory extension flag honored
     ctx.skip_memory_extension = True
