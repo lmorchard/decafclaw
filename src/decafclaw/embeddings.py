@@ -4,6 +4,7 @@ import hashlib
 import logging
 import re
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from functools import lru_cache
@@ -552,6 +553,35 @@ async def search_similar(config, query: str, top_k: int = 5, source_type: str | 
     return search_similar_sync(config, query_embedding, top_k, source_type=source_type)
 
 
+def _format_duration(seconds: float) -> str:
+    """Format seconds into human-readable duration (e.g. '12s', '2m 15s', '1h 05m')."""
+    sec = max(0, int(round(seconds)))
+    if sec < 60:
+        return f"{sec}s"
+    minutes = sec // 60
+    rem_sec = sec % 60
+    if minutes < 60:
+        return f"{minutes}m {rem_sec:02d}s"
+    hours = minutes // 60
+    rem_min = minutes % 60
+    return f"{hours}h {rem_min:02d}m"
+
+
+def _format_progress(done: int, total: int, elapsed: float, label: str) -> str:
+    """Format reindex progress line with throughput and ETA."""
+    pct = (done / total) * 100 if total else 100.0
+    rate = (done / elapsed) if elapsed > 0.05 else 0.0
+    per_min = rate * 60.0
+    elapsed_str = _format_duration(elapsed)
+
+    if done >= total:
+        return f"  {label}: {done}/{total} ({pct:.1f}%) | {per_min:.1f} items/min | Total: {elapsed_str}"
+
+    remaining = total - done
+    eta_str = _format_duration(remaining / rate) if rate > 0 else "--"
+    return f"  {label}: {done}/{total} ({pct:.1f}%) | {per_min:.1f} items/min | Elapsed: {elapsed_str} | ETA: {eta_str}"
+
+
 async def _reindex_entries(entries, label, config, concurrency: int = 4):
     """Reindex a sequence of (source_id, text, source_type, metadata) tuples.
 
@@ -567,6 +597,7 @@ async def _reindex_entries(entries, label, config, concurrency: int = 4):
         print(f"  {label}: 0 entries")
         return 0
 
+    t0 = time.monotonic()
     _, provider = _resolve_embedding_provider(config)
     if getattr(provider, "embed_batch", None) is not None:
         chunk_size = 32
@@ -578,7 +609,8 @@ async def _reindex_entries(entries, label, config, concurrency: int = 4):
                 if vector:
                     index_entry_sync(config, source_id, text, vector, source_type=source_type)
             done = min(start + chunk_size, total)
-            print(f"  {label}: {done}/{total}")
+            elapsed = time.monotonic() - t0
+            print(_format_progress(done, total, elapsed, label))
         return total
 
     sem = asyncio.Semaphore(concurrency)
@@ -590,12 +622,11 @@ async def _reindex_entries(entries, label, config, concurrency: int = 4):
             await index_entry(config, source_id, text, source_type)
         done += 1
         if done % 10 == 0 or done == total:
-            print(f"  {label}: {done}/{total}")
+            elapsed = time.monotonic() - t0
+            print(_format_progress(done, total, elapsed, label))
 
     tasks = [asyncio.create_task(_embed_one(src_id, text, st)) for src_id, text, st, _meta in all_entries]
     await asyncio.gather(*tasks)
-    if total % 10 != 0:
-        print(f"  {label}: {done}/{total}")
     return total
 
 

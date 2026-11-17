@@ -590,3 +590,23 @@ async def test_partial_reindex_skips_on_dimension_mismatch(config, caplog):
     assert "make reindex" in caplog.text
     with embeddings_module._open_db(config) as conn:
         assert conn.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0] == 1
+
+
+def test_format_duration():
+    """Verify human duration formatting."""
+    assert embeddings_module._format_duration(5) == "5s"
+    assert embeddings_module._format_duration(65) == "1m 05s"
+    assert embeddings_module._format_duration(3665) == "1h 01m"
+
+
+def test_format_progress():
+    """Verify progress line format with throughput and ETA."""
+    line = embeddings_module._format_progress(50, 100, 10.0, "vault pages")
+    assert "vault pages: 50/100 (50.0%)" in line
+    assert "300.0 items/min" in line
+    assert "Elapsed: 10s" in line
+    assert "ETA: 10s" in line
+
+    completed_line = embeddings_module._format_progress(100, 100, 20.0, "vault pages")
+    assert "vault pages: 100/100 (100.0%)" in completed_line
+    assert "Total: 20s" in completed_line
