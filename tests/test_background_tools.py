@@ -15,7 +15,30 @@ from decafclaw.skills.background.parsers import (
     get_progress_parser,
     strip_ansi,
 )
-from decafclaw.skills.background.tools import BackgroundJobManager
+from decafclaw.skills.background.tools import BackgroundJobManager, JobStatus
+
+# ---------------------------------------------------------------------------
+# JobStatus enum (#1383) — the five lifecycle states, one source.
+# ---------------------------------------------------------------------------
+
+
+def test_job_status_enum_values_match_wire_strings():
+    """The enum values are the wire strings archive records and tool data use —
+    changing them would silently break existing conversations (#1383)."""
+    assert JobStatus.RUNNING == "running"
+    assert JobStatus.COMPLETED == "completed"
+    assert JobStatus.ERROR == "error"
+    assert JobStatus.EXPIRED == "expired"
+    assert JobStatus.STOPPED == "stopped"
+
+
+def test_tool_schema_status_list_sources_from_enum():
+    """The shell_background_status description enumerates the JobStatus values —
+    that list must stay in sync with the enum (#1383)."""
+    status_def = next(d for d in tools.TOOL_DEFINITIONS if d["function"]["name"] == "shell_background_status")
+    expected = "/".join(s.value for s in JobStatus)
+    assert f"Returns {expected} status" in status_def["function"]["description"]
+
 
 # ---------------------------------------------------------------------------
 # Transport cleanup (#605) — close the subprocess transport deterministically
@@ -97,7 +120,7 @@ async def test_start_job(tmp_path):
     assert job.job_id
     assert len(job.job_id) == 12
     assert job.pid > 0
-    assert job.status == "running"
+    assert job.status == JobStatus.RUNNING
     assert job.command == "sleep 10"
     assert job.exit_code is None
 
@@ -114,7 +137,7 @@ async def test_status_after_exit(tmp_path):
     assert job.reader_task is not None
     await job.reader_task
 
-    assert job.status == "completed"
+    assert job.status == JobStatus.COMPLETED
     assert job.exit_code == 0
     stdout = list(job.stdout_buffer)
     assert any("hello" in line for line in stdout)
@@ -131,7 +154,7 @@ async def test_status_error_exit(tmp_path):
     assert job.reader_task is not None
     await job.reader_task
 
-    assert job.status == "error"
+    assert job.status == JobStatus.ERROR
     assert job.exit_code == 1
 
     await manager.cleanup_all()
@@ -143,11 +166,11 @@ async def test_stop_running_job(tmp_path):
     manager = BackgroundJobManager()
     job = await manager.start("sleep 60", cwd=str(tmp_path))
 
-    assert job.status == "running"
+    assert job.status == JobStatus.RUNNING
 
     stopped = await manager.stop(job.job_id)
     assert stopped is not None
-    assert stopped.status != "running"
+    assert stopped.status != JobStatus.RUNNING
 
     await manager.cleanup_all()
 
@@ -173,7 +196,7 @@ async def test_output_buffering(tmp_path):
     assert job.reader_task is not None
     await job.reader_task
 
-    assert job.status == "completed"
+    assert job.status == JobStatus.COMPLETED
     stdout = list(job.stdout_buffer)
     assert len(stdout) == 500
     # Should have the last 500 lines (line101 through line600)
@@ -200,7 +223,7 @@ async def test_cleanup_expired(tmp_path):
 
     assert len(expired) == 1
     assert expired[0].job_id == job.job_id
-    assert expired[0].status == "expired"
+    assert expired[0].status == JobStatus.EXPIRED
 
     await manager.cleanup_all()
 
@@ -213,7 +236,7 @@ async def test_cleanup_expired_ignores_finished(tmp_path):
 
     assert job.reader_task is not None
     await job.reader_task
-    assert job.status == "completed"
+    assert job.status == JobStatus.COMPLETED
 
     expired = await manager.cleanup_expired()
     assert len(expired) == 0  # already completed, not expired
@@ -275,7 +298,7 @@ async def test_cleanup_all(tmp_path):
     assert len(stopped) == 2
 
     for job in stopped:
-        assert job.status != "running"
+        assert job.status != JobStatus.RUNNING
 
 
 @pytest.mark.asyncio
@@ -286,7 +309,7 @@ async def test_shutdown_stops_all_jobs_and_clears_managers(tmp_path):
     ctx = SimpleNamespace(conv_id="shutdown-conv", context_id="shutdown-conv")
     manager = tools._get_job_manager(ctx)
     job = await manager.start("sleep 10", cwd=str(tmp_path))
-    assert job.status == "running"
+    assert job.status == JobStatus.RUNNING
     assert job.reader_task is not None and not job.reader_task.done()
 
     try:
@@ -298,7 +321,7 @@ async def test_shutdown_stops_all_jobs_and_clears_managers(tmp_path):
 
     assert job.process.returncode is not None  # process exited
     assert job.reader_task.done()  # no reader task remains
-    assert job.status != "running"
+    assert job.status != JobStatus.RUNNING
     assert tools._managers == {}
 
     await tools.shutdown()  # second call: no managers left, must be a no-op
@@ -315,7 +338,7 @@ def test_build_background_event_record_truncates_tails():
     rec = build_background_event_record(
         job_id="j1",
         command="echo",
-        status="completed",
+        status=JobStatus.COMPLETED,
         exit_code=0,
         stdout_buffer=stdout_buf,
         stderr_buffer=stderr_buf,
@@ -345,7 +368,7 @@ def test_build_background_event_record_clamps_4kb():
     rec = build_background_event_record(
         job_id="j1",
         command="echo",
-        status="completed",
+        status=JobStatus.COMPLETED,
         exit_code=0,
         stdout_buffer=big,
         stderr_buffer=deque(),
@@ -364,7 +387,7 @@ def test_build_background_event_record_zero_tail_lines():
     rec = build_background_event_record(
         job_id="j1",
         command="echo",
-        status="completed",
+        status=JobStatus.COMPLETED,
         exit_code=0,
         stdout_buffer=buf,
         stderr_buffer=deque(),
@@ -388,7 +411,7 @@ def test_build_background_event_record_clamps_completion_tail_lines_max():
     rec = build_background_event_record(
         job_id="j1",
         command="echo",
-        status="completed",
+        status=JobStatus.COMPLETED,
         exit_code=0,
         stdout_buffer=buf,
         stderr_buffer=deque(),
@@ -644,7 +667,7 @@ async def test_run_reader_error_path_still_finalizes(ctx, monkeypatch):
     # Reader task should complete despite the exception.
     await job.reader_task
 
-    assert job.status == "error"
+    assert job.status == JobStatus.ERROR
 
     # _finalize_job ran → archive has event.
     history = restore_history(ctx.config, "c-err-1") or []
@@ -860,7 +883,7 @@ async def test_pin_sticky_failure_is_fail_open(tmp_path, config, sticky_registry
         pin_sticky=True,
     )
     await job.reader_task
-    assert job.status == "completed"
+    assert job.status == JobStatus.COMPLETED
     assert job.exit_code == 0
     await manager.cleanup_all()
 
@@ -958,7 +981,7 @@ async def test_pin_sticky_emit_timeout_does_not_block_reader(tmp_path, config, s
     await manager.stop(job.job_id)
     assert job.reader_task is not None
     assert job.reader_task.done()
-    assert job.status in ("completed", "stopped")
+    assert job.status in (JobStatus.COMPLETED, JobStatus.STOPPED)
     await manager.cleanup_all()
 
 

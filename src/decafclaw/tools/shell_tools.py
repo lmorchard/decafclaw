@@ -1172,7 +1172,7 @@ async def _execute_command_with_handoff(ctx: "Context", command: str, cwd: str |
     # Function-level import: decafclaw.skills.background.tools imports
     # check_shell_approval from this module, so a module-level import would cycle.
     try:
-        from decafclaw.skills.background.tools import _get_job_manager
+        from decafclaw.skills.background.tools import JobStatus, _get_job_manager
     except Exception as exc:  # noqa: BLE001 - fail open to the legacy path
         log.warning(f"[tool:shell] background runner unavailable ({exc}); using blocking execution")
         return await _execute_command(ctx, command, cwd=cwd)
@@ -1223,7 +1223,7 @@ async def _execute_command_with_handoff(ctx: "Context", command: str, cwd: str |
                 "Check progress with `shell_background_status` and stop it with "
                 "`shell_background_stop`. You will be woken when it completes."
             ),
-            data={"job_id": job.job_id, "status": "running", "command": command, "pid": job.pid},
+            data={"job_id": job.job_id, "status": JobStatus.RUNNING, "command": command, "pid": job.pid},
         )
     except asyncio.CancelledError:
         # Turn cancelled before the handoff: kill the process so nothing is left

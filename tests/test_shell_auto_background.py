@@ -23,7 +23,11 @@ import pytest
 from decafclaw.conversation_manager import TurnKind
 from decafclaw.media import ToolResult
 from decafclaw.skills.background import tools as bg_tools
-from decafclaw.skills.background.tools import tool_shell_background_status, tool_shell_background_stop
+from decafclaw.skills.background.tools import (
+    JobStatus,
+    tool_shell_background_status,
+    tool_shell_background_stop,
+)
 from decafclaw.tools.shell_tools import _save_allow_pattern, tool_shell
 
 
@@ -144,7 +148,7 @@ async def test_above_budget_returns_job_handle_same_process(ctx):
         os.kill(pid, 0)
 
     job = bg_tools._managers[ctx.conv_id].get(job_id)
-    assert job.status == "stopped"
+    assert job.status == JobStatus.STOPPED
 
 
 @pytest.mark.asyncio
@@ -180,7 +184,7 @@ async def test_handoff_completion_fires_exactly_once(ctx):
     assert manager_stub.enqueue_turn.await_count == 1
     wake_kwargs = manager_stub.enqueue_turn.await_args.kwargs
     assert wake_kwargs["kind"] is TurnKind.WAKE
-    assert job.status == "completed"
+    assert job.status == JobStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -206,7 +210,7 @@ async def test_handed_off_job_uses_max_runtime(ctx):
         job.started_at = time.monotonic() - 3.0  # age it past max_lifetime
         await manager.cleanup_expired()
 
-    assert job.status == "expired"
+    assert job.status == JobStatus.EXPIRED
     assert mock_append.call_count == 1
     assert mock_notify.await_count == 1
 

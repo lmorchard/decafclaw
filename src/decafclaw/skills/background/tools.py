@@ -8,6 +8,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import uuid4
 
@@ -28,6 +29,23 @@ _STICKY_NOTE_MAX = 200  # max chars of a single output line shown in the sticky 
 _MAX_PENDING_CHARS = 65536  # 64 KB cap to bound pending stream buffer
 
 
+class JobStatus(StrEnum):
+    """Lifecycle state of a background job (``BackgroundJob.status``, #1383).
+
+    String-valued so archive records, tool-result data, and any JSON
+    round-trip keep the existing wire values; the enum makes a typo'd
+    status impossible to construct. Transitions: ``RUNNING`` →
+    ``COMPLETED``/``ERROR`` (process exit), ``STOPPED`` (user stop), or
+    ``EXPIRED`` (max lifetime, via ``cleanup_expired``).
+    """
+
+    RUNNING = "running"  # process alive and being monitored
+    COMPLETED = "completed"  # exited with code 0
+    ERROR = "error"  # non-zero exit, or the reader failed before exit
+    EXPIRED = "expired"  # killed after max_lifetime elapsed
+    STOPPED = "stopped"  # user-stopped via shell_background_stop
+
+
 @dataclass
 class BackgroundJob:
     """A background process tracked by the job manager."""
@@ -42,7 +60,7 @@ class BackgroundJob:
     stderr_buffer: deque = field(default_factory=lambda: deque(maxlen=_OUTPUT_BUFFER_SIZE))
     reader_task: asyncio.Task | None = None
     exit_code: int | None = None
-    status: str = "running"  # running, completed, error, expired, stopped
+    status: JobStatus = JobStatus.RUNNING
     # Correlation for the exit-notification (populated by BackgroundJobManager.start).
     config: Any = None
     conv_id: str = ""
@@ -123,13 +141,13 @@ async def _run_reader(job: BackgroundJob) -> None:
         )
         await job.process.wait()
         job.exit_code = job.process.returncode
-        job.status = "completed" if job.exit_code == 0 else "error"
+        job.status = JobStatus.COMPLETED if job.exit_code == 0 else JobStatus.ERROR
     except asyncio.CancelledError:
         cancelled = True
         raise
     except Exception as e:
         log.warning(f"Background job {job.job_id} reader error: {e}")
-        job.status = "error"
+        job.status = JobStatus.ERROR
         if job.process.returncode is not None:
             job.exit_code = job.process.returncode
     finally:
@@ -256,7 +274,7 @@ def _final_sticky_data(job: BackgroundJob) -> dict:
         except Exception:
             log.warning("Parser format_final_sticky failed for job %s", job.job_id, exc_info=True)
     last_line = _last_output_line(job)
-    if job.status == "completed":
+    if job.status == JobStatus.COMPLETED:
         step_status = "done"
         summary = f"Completed: {_cmd_preview(job.command)} (exit {job.exit_code})"
         note = f"exit {job.exit_code}"
@@ -324,7 +342,7 @@ async def _finish_job_sticky(job: BackgroundJob) -> None:
         from decafclaw import sticky as sticky_mod
 
         emit = job.manager.emit if job.manager is not None else None
-        if job.status in ("completed", "error"):
+        if job.status in (JobStatus.COMPLETED, JobStatus.ERROR):
             await sticky_mod.set_sticky(job.config, job.conv_id, "progress_tracker", _final_sticky_data(job), emit=emit)
         else:
             await sticky_mod.clear_sticky(job.config, job.conv_id, emit=emit)
@@ -458,7 +476,7 @@ def build_background_event_record(
     *,
     job_id: str,
     command: str,
-    status: str,
+    status: JobStatus,
     exit_code: int | None,
     stdout_buffer: deque,
     stderr_buffer: deque,
@@ -615,7 +633,7 @@ class BackgroundJobManager:
         if job is None:
             return None
 
-        if job.status == "running":
+        if job.status == JobStatus.RUNNING:
             # If process already exited, let the reader finish updating status
             if job.process.returncode is not None:
                 if job.reader_task and not job.reader_task.done():
@@ -633,9 +651,9 @@ class BackgroundJobManager:
                     except asyncio.CancelledError:
                         pass
                 # Only set "stopped" if reader didn't set a final status
-                if job.status == "running":
+                if job.status == JobStatus.RUNNING:
                     job.exit_code = job.process.returncode
-                    job.status = "stopped"
+                    job.status = JobStatus.STOPPED
 
         log.info(f"Stopped background job {job.job_id}")
         await _finalize_job(job)
@@ -675,7 +693,7 @@ class BackgroundJobManager:
         expired = []
         to_remove = []
         for job in list(self.jobs.values()):
-            if job.status == "running" and (now - job.started_at) > job.max_lifetime:
+            if job.status == JobStatus.RUNNING and (now - job.started_at) > job.max_lifetime:
                 log.info(f"Background job {job.job_id} expired after {job.max_lifetime}s")
                 await _kill_process(job.process)
                 if job.reader_task and not job.reader_task.done():
@@ -685,10 +703,10 @@ class BackgroundJobManager:
                     except asyncio.CancelledError:
                         pass
                 job.exit_code = job.process.returncode
-                job.status = "expired"
+                job.status = JobStatus.EXPIRED
                 await _finalize_job(job)
                 expired.append(job)
-            elif job.status != "running" and (now - job.started_at) > job.max_lifetime:
+            elif job.status != JobStatus.RUNNING and (now - job.started_at) > job.max_lifetime:
                 # Remove stale finished jobs to prevent unbounded growth
                 to_remove.append(job.job_id)
         for job_id in to_remove:
@@ -790,7 +808,7 @@ async def tool_shell_background_start(
         ),
         data={
             "job_id": job.job_id,
-            "status": "running",
+            "status": JobStatus.RUNNING,
             "command": command,
             "pid": job.pid,
             **({"pin_sticky": True, "progress_parser": progress_parser} if pin_sticky else {}),
@@ -815,7 +833,7 @@ async def tool_shell_background_status(ctx: "Context", job_id: str) -> ToolResul
     now = time.monotonic()
     elapsed_ms = int((now - job.started_at) * 1000)
     remaining_ms = None
-    if job.status == "running":
+    if job.status == JobStatus.RUNNING:
         remaining = job.max_lifetime - (now - job.started_at)
         remaining_ms = max(0, int(remaining * 1000))
 
@@ -1017,7 +1035,8 @@ TOOL_DEFINITIONS = [
             "name": "shell_background_status",
             "description": (
                 "Check the status and monitor progress of a background job or running build. "
-                "Returns running/completed/error/expired/stopped status, exit code, and the last 500 lines of "
+                # Status list derived from JobStatus so the schema stays in sync (#1383).
+                f"Returns {'/'.join(s.value for s in JobStatus)} status, exit code, and the last 500 lines of "
                 "stdout and stderr. Use to watch progress and check back on output."
             ),
             "parameters": {

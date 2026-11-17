@@ -63,7 +63,8 @@ before enqueueing the wake turn:
 }
 ```
 
-`status` mirrors `BackgroundJob.status`: `completed`, `error`, `expired`, or
+`status` mirrors `BackgroundJob.status` (a `JobStatus` enum in
+`skills/background/tools.py`): `completed`, `error`, `expired`, or
 `stopped`. Both the archive record and the inbox notification fire regardless
 of whether the wake turn is rate-limited.
 
