@@ -213,6 +213,45 @@ async def test_repeated_identical_errors_are_deduplicated_with_ttl(config, ctx, 
     assert len(stub_llm) == 2
 
 
+@pytest.mark.asyncio
+async def test_skip_verdict_suppresses_identical_trigger(config, ctx, stub_llm):
+    """A completed evaluation that declines still answers for this trigger."""
+    _llm_reply(stub_llm, {"skip": True})
+    ext = _extension(config, dedup_ttl_seconds=3600)
+
+    await ext.on_turn_settle_hook(ctx, _tool_error_transcript())
+    await ext.on_turn_settle_hook(ctx, _tool_error_transcript())
+
+    assert len(stub_llm) == 1
+    assert read_items(config) == []
+
+
+@pytest.mark.asyncio
+async def test_unparseable_evaluation_does_not_suppress_identical_trigger(config, ctx, stub_llm):
+    stub_llm.response = {"content": "not json at all", "role": "assistant", "tool_calls": None, "usage": {}}
+    ext = _extension(config, dedup_ttl_seconds=3600)
+    transcript = [{"role": "tool", "content": "[error: parse broke]"}]
+
+    await ext.on_turn_settle_hook(ctx, transcript)
+    await ext.on_turn_settle_hook(ctx, transcript)
+
+    assert len(stub_llm) == 2
+    assert read_items(config) == []
+
+
+@pytest.mark.asyncio
+async def test_no_model_evaluation_does_not_record_signature(config, ctx, stub_llm):
+    config.default_model = ""
+    ext = _extension(config, model=None, dedup_ttl_seconds=3600)
+    transcript = _tool_error_transcript()
+    signature = scout._signature(scout._detect_trigger(transcript))
+
+    await ext.on_turn_settle_hook(ctx, transcript)
+
+    assert stub_llm == []
+    assert not ext._dedup.is_suppressed(signature)
+
+
 # ---------------------------------------------------------------------------
 # Fail-open and isolation
 # ---------------------------------------------------------------------------

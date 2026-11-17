@@ -13,6 +13,7 @@ swallowed so a broken evaluator cannot disturb a settled turn.
 
 from __future__ import annotations
 
+import enum
 import hashlib
 import json
 import logging
@@ -57,6 +58,26 @@ Return ONLY one JSON object, with no prose and no markdown fence:
 }
 
 If the turn shows no genuine harness friction, return {"skip": true} instead."""
+
+
+class _EvaluationOutcome(enum.Enum):
+    """An evaluation that completed without producing an item.
+
+    ``SKIPPED`` means the model answered and declined, so the trigger is real
+    but already handled. ``FAILED`` means no evaluation happened (no model, an
+    empty transcript) or its output was unusable, so a later turn should be
+    allowed to retry.
+    """
+
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+class _Unparseable:
+    """Marker type for unusable model output, distinct from a model decline."""
+
+
+_UNPARSEABLE = _Unparseable()
 
 
 @dataclass
@@ -186,22 +207,29 @@ def _strip_fences(text: str) -> str:
     return stripped.strip()
 
 
-def _parse_suggestion(content: str) -> dict[str, Any] | None:
+def _parse_suggestion(content: str) -> dict[str, Any] | None | _Unparseable:
+    """Parse model output into a suggestion.
+
+    ``None`` means a well-formed response declining with ``{"skip": true}``;
+    ``_UNPARSEABLE`` means unusable output, which callers treat as a failure.
+    """
     text = _strip_fences(content)
     if not text:
-        return None
+        return _UNPARSEABLE
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
         start = text.find("{")
         end = text.rfind("}")
         if start < 0 or end <= start:
-            return None
+            return _UNPARSEABLE
         try:
             payload = json.loads(text[start : end + 1])
         except json.JSONDecodeError:
-            return None
-    if not isinstance(payload, dict) or payload.get("skip"):
+            return _UNPARSEABLE
+    if not isinstance(payload, dict):
+        return _UNPARSEABLE
+    if payload.get("skip"):
         return None
 
     def _field(name: str, default: str) -> str:
@@ -227,19 +255,21 @@ async def evaluate_transcript(
     trigger: str,
     model: str | None = None,
     max_transcript_chars: int = _DEFAULT_MAX_TRANSCRIPT_CHARS,
-) -> dict[str, Any] | None:
-    """Ask the evaluator model for one suggestion, or ``None`` when there is none.
+) -> dict[str, Any] | _EvaluationOutcome:
+    """Ask the evaluator model for one suggestion.
 
-    A missing model or unusable model response returns ``None`` rather than
-    raising; callers own the fail-open boundary.
+    Returns a suggestion dict, ``_EvaluationOutcome.SKIPPED`` when the model
+    completed and declined, or ``_EvaluationOutcome.FAILED`` when no evaluation
+    could be made (no model, empty transcript) or its output was unusable.
+    Failures never raise; callers own the fail-open boundary.
     """
     model_name = _resolve_model(config, model)
     if not model_name:
         log.debug("Improvement scout skipped: no model configured")
-        return None
+        return _EvaluationOutcome.FAILED
     transcript_text = _transcript_text(transcript, max_transcript_chars)
     if not transcript_text:
-        return None
+        return _EvaluationOutcome.FAILED
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
         {
@@ -249,8 +279,13 @@ async def evaluate_transcript(
     ]
     response = await llm.call_llm(config, messages, model_name=model_name)
     if not isinstance(response, dict):
-        return None
-    return _parse_suggestion(_text_of(response.get("content")))
+        return _EvaluationOutcome.FAILED
+    parsed = _parse_suggestion(_text_of(response.get("content")))
+    if isinstance(parsed, _Unparseable):
+        return _EvaluationOutcome.FAILED
+    if parsed is None:
+        return _EvaluationOutcome.SKIPPED
+    return parsed
 
 
 class ImprovementScoutExtension(BaseExtension):
@@ -292,28 +327,32 @@ class ImprovementScoutExtension(BaseExtension):
             log.debug("Improvement scout suppressed repeated %s", trigger.kind)
             return
 
-        # Record the signature only once an item is actually buffered: a
-        # transient evaluator failure must not suppress the same friction for
-        # the rest of the TTL. Exceptions propagate to the hook, which logs and
-        # swallows them without marking the signature.
-        suggestion = await evaluate_transcript(
+        # Suppress this exact trigger once the evaluator has answered: either an
+        # item was buffered, or the model completed and declined. A failed
+        # evaluation (raised, no model, unusable output) records nothing, so a
+        # transient problem does not suppress real friction for the TTL.
+        # Exceptions propagate to the hook, which logs and swallows them.
+        outcome = await evaluate_transcript(
             self.config,
             transcript,
             trigger=trigger.kind,
             model=self.model,
             max_transcript_chars=self.max_transcript_chars,
         )
-        if not suggestion:
+        if isinstance(outcome, _EvaluationOutcome):
+            if outcome is _EvaluationOutcome.SKIPPED:
+                self._dedup.remember(signature)
+                log.debug("Improvement scout recorded skip for repeated %s", trigger.kind)
             return
 
         item = new_item(
             conversation_id=str(getattr(ctx, "conv_id", "") or ""),
             trigger=trigger.kind,
-            title=suggestion["title"],
-            observed_friction=suggestion["observed_friction"],
-            suggested_improvement=suggestion["suggested_improvement"],
-            subsystem=suggestion["subsystem"],
-            severity=suggestion["severity"],
+            title=outcome["title"],
+            observed_friction=outcome["observed_friction"],
+            suggested_improvement=outcome["suggested_improvement"],
+            subsystem=outcome["subsystem"],
+            severity=outcome["severity"],
         )
         append_item(self.config, item)
         self._dedup.remember(signature)

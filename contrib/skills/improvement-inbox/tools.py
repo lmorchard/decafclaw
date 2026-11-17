@@ -309,21 +309,21 @@ async def improvement_retro(ctx: "Context", conversation_id: str = "") -> ToolRe
     if not history:
         return ToolResult(text="[error: no conversation history available for a retrospective]")
 
-    suggestion = await evaluate_transcript(
+    outcome = await evaluate_transcript(
         ctx.config,
         history,
         trigger="retro",
     )
-    if not suggestion:
+    if not isinstance(outcome, dict):
         return ToolResult(text="No additional harness friction detected in this session.")
     item = new_item(
         conversation_id=conv_id,
         trigger="retro",
-        title=suggestion["title"],
-        observed_friction=suggestion["observed_friction"],
-        suggested_improvement=suggestion["suggested_improvement"],
-        subsystem=suggestion["subsystem"],
-        severity=suggestion["severity"],
+        title=outcome["title"],
+        observed_friction=outcome["observed_friction"],
+        suggested_improvement=outcome["suggested_improvement"],
+        subsystem=outcome["subsystem"],
+        severity=outcome["severity"],
     )
     append_item(ctx.config, item)
     return ToolResult(
