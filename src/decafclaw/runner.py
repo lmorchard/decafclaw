@@ -75,6 +75,11 @@ async def run_all(app_ctx):
         app_ctx.event_bus.subscribe(make_metrics_subscriber())
         log.info("Metrics: Prometheus subscriber active (in-memory, scrape /metrics)")
 
+    # Init runtime extensions (lifecycle hooks)
+    from .extensions import init_extensions
+
+    app_ctx.extension_manager = init_extensions(config, app_ctx.event_bus)
+
     # Init MCP servers (shared across all subsystems)
     await init_mcp(config, event_bus=app_ctx.event_bus)
 

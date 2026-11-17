@@ -1,8 +1,9 @@
-"""Event bus — simple in-process pub/sub."""
+"""Event bus — simple in-process pub/sub and lifecycle hooks."""
 
 import asyncio
 import logging
 from collections.abc import Callable
+from enum import Enum, auto
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -12,21 +13,65 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+class TurnLifecycle(Enum):
+    """Lifecycle phases for context interception and extension hooks."""
+
+    PRE_COMPOSE = auto()       # async collector
+    BEFORE_LLM_CALL = auto()   # sync interceptor
+    ON_TURN_SETTLE = auto()    # async observer
+    PRE_COMPACTION = auto()    # async collector / observer
+
+
 class EventBus:
-    """Simple pub/sub event bus. Supports sync and async subscribers."""
+    """Simple pub/sub event bus. Supports sync and async subscribers and lifecycle hooks."""
 
     def __init__(self):
         self._subscribers: dict[str, Callable] = {}
+        self._lifecycle_subscribers: dict[TurnLifecycle, dict[str, Callable]] = {}
+        self._sub_id_to_phase: dict[str, TurnLifecycle] = {}
 
-    def subscribe(self, callback) -> str:
-        """Register a callback. Returns a subscription ID."""
+    def subscribe(self, callback_or_phase, callback=None, *, phase: TurnLifecycle | None = None) -> str:
+        """Register a callback. Returns a subscription ID.
+
+        Can be called as:
+          - bus.subscribe(callback) -> global event subscriber
+          - bus.subscribe(TurnLifecycle.PRE_COMPOSE, callback)
+          - bus.subscribe(callback, phase=TurnLifecycle.PRE_COMPOSE)
+        """
         sub_id = uuid4().hex
-        self._subscribers[sub_id] = callback
+        if isinstance(callback_or_phase, TurnLifecycle):
+            target_phase = callback_or_phase
+            target_callback = callback
+        elif phase is not None:
+            target_phase = phase
+            target_callback = callback_or_phase
+        else:
+            target_phase = None
+            target_callback = callback_or_phase
+
+        if target_phase is not None:
+            if target_phase not in self._lifecycle_subscribers:
+                self._lifecycle_subscribers[target_phase] = {}
+            self._lifecycle_subscribers[target_phase][sub_id] = target_callback
+            self._sub_id_to_phase[sub_id] = target_phase
+        else:
+            self._subscribers[sub_id] = target_callback
         return sub_id
+
+    def subscribe_lifecycle(self, phase: TurnLifecycle, callback: Callable) -> str:
+        """Register a callback for a specific lifecycle phase."""
+        return self.subscribe(phase, callback)
 
     def unsubscribe(self, subscription_id: str) -> None:
         """Remove a subscriber by ID."""
         self._subscribers.pop(subscription_id, None)
+        phase = self._sub_id_to_phase.pop(subscription_id, None)
+        if phase and phase in self._lifecycle_subscribers:
+            self._lifecycle_subscribers[phase].pop(subscription_id, None)
+
+    def get_lifecycle_hooks(self, phase: TurnLifecycle) -> list[Callable]:
+        """Return list of active hooks registered for a lifecycle phase."""
+        return list(self._lifecycle_subscribers.get(phase, {}).values())
 
     async def publish(self, event: dict) -> None:
         """Publish an event to all subscribers. Never propagates exceptions."""

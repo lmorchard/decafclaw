@@ -10,13 +10,8 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from .context_composer import ComposerState
+from .events import TurnLifecycle
 from .llm import call_llm, call_llm_streaming
-
-
-class TurnLifecycle(Enum):
-    """Lifecycle phases for synchronous context interception."""
-
-    BEFORE_LLM_CALL = auto()
 
 
 @dataclass
@@ -214,6 +209,7 @@ class Context:
         self.parent_is_unattended: bool = False
         self.skip_reflection: bool = False
         self.skip_vault_retrieval: bool = False
+        self.skip_memory_extension: bool = False
         self.skip_archive: bool = False
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.active_model: str = ""  # named model config from config.model_configs
@@ -232,14 +228,17 @@ class Context:
         self._interceptors: dict[TurnLifecycle, list[Callable]] = {}
 
     def add_interceptor(self, phase: TurnLifecycle, hook: Callable) -> None:
-        """Register a synchronous hook for a lifecycle phase."""
+        """Register a hook for a lifecycle phase."""
         if phase not in self._interceptors:
             self._interceptors[phase] = []
         self._interceptors[phase].append(hook)
 
     def get_interceptors(self, phase: TurnLifecycle) -> list[Callable]:
         """Get all registered hooks for a lifecycle phase in registration order."""
-        return list(self._interceptors.get(phase, []))
+        hooks = list(self._interceptors.get(phase, []))
+        if self.event_bus and hasattr(self.event_bus, "get_lifecycle_hooks"):
+            hooks.extend(self.event_bus.get_lifecycle_hooks(phase))
+        return hooks
 
     def llm(self) -> BoundLlmClient:
         """Return an LLM client configured with the primary model ID."""

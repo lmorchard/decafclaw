@@ -1,6 +1,7 @@
 """Conversation compaction — summarize old history to stay within context budget."""
 
 import asyncio
+import inspect
 import json
 import logging
 from pathlib import Path
@@ -15,6 +16,7 @@ from .compaction_decisions import (
     save_slice,
     strip_json_block,
 )
+from .events import TurnLifecycle
 from .llm import call_llm
 from .model_catalog import effective_default_model
 from .prompts import wrap_xml
@@ -631,6 +633,15 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     mode = _determine_compaction_mode(archive, old_turns, config, conv_id)
     if mode is None:
         return False
+
+    # Dispatch PRE_COMPACTION hooks
+    for hook in ctx.get_interceptors(TurnLifecycle.PRE_COMPACTION):
+        try:
+            res = hook(ctx, history)
+            if inspect.iscoroutine(res):
+                await res
+        except Exception:
+            log.exception("PRE_COMPACTION hook failed")
 
     log.info(
         f"Compacting {len(mode.old_messages)} messages ({len(mode.old_turns)} turns) "
