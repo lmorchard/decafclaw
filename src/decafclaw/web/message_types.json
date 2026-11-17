@@ -45,7 +45,7 @@
     "conv_history": {
       "direction": "server_to_client",
       "description": "Page of historical messages for a conversation.",
-      "fields": {"conv_id": "string", "messages": "array of object", "has_more": "boolean", "context_limit": "number", "read_only": "boolean?", "estimated_tokens": "number?", "active_model": "string?", "available_models": "array of string?", "default_model": "string?", "active_mode": "string?", "available_modes": "array of object?", "turn_active": "boolean?", "pending_confirmation": "object?"}
+      "fields": {"conv_id": "string", "messages": "array of object", "has_more": "boolean", "context_limit": "number", "read_only": "boolean?", "estimated_tokens": "number?", "active_model": "string?", "available_models": "array of string?", "model_groups": "array of object?", "default_model": "string?", "active_mode": "string?", "available_modes": "array of object?", "turn_active": "boolean?", "pending_confirmation": "object?"}
     },
     "conv_renamed": {
       "direction": "server_to_client",
@@ -84,8 +84,8 @@
     },
     "models_available": {
       "direction": "server_to_client",
-      "description": "List of model identifiers the user can select in the UI.",
-      "fields": {"available_models": "array of string", "default_model": "string"}
+      "description": "List of model identifiers the user can select in the UI, optionally grouped by provider for the conversation model picker.",
+      "fields": {"available_models": "array of string", "model_groups": "array of object?", "default_model": "string"}
     },
     "notification_created": {
       "direction": "server_to_client",
@@ -186,7 +186,7 @@
     "send": {
       "direction": "client_to_server",
       "description": "Send a user message (and/or attachments) to the conversation.",
-      "fields": {"conv_id": "string", "text": "string", "attachments": "array of object"}
+      "fields": {"conv_id": "string", "text": "string", "attachments": "array of object", "steering": "boolean?"}
     },
     "set_effort": {
       "direction": "client_to_server",

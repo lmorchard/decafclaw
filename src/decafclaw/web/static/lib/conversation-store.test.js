@@ -542,6 +542,59 @@ describe('conversation activity status tracking', () => {
     expect(store.getConversationStatus('c1')).toBe('busy');
   });
 
+  it('omits steering from an idle send', () => {
+    store.selectConversation('c1');
+
+    store.sendMessage('hello');
+    const send = ws.sent.find((m) => m.type === MESSAGE_TYPES.SEND);
+    expect(send).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'c1', text: 'hello' });
+    expect(send).not.toHaveProperty('steering');
+  });
+
+  it('steers a second send after turn_start', () => {
+    store.selectConversation('c1');
+    store.sendMessage('first');
+    ws.fireMessage({ type: MESSAGE_TYPES.TURN_START, conv_id: 'c1' });
+
+    store.sendMessage('second');
+    const sends = ws.sent.filter((m) => m.type === MESSAGE_TYPES.SEND);
+    expect(sends).toHaveLength(2);
+    expect(sends[1]).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'c1', text: 'second', steering: true });
+  });
+
+  it('omits steering after the turn settles', () => {
+    store.selectConversation('c1');
+    store.sendMessage('first');
+    ws.fireMessage({ type: MESSAGE_TYPES.TURN_START, conv_id: 'c1' });
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MESSAGE_COMPLETE,
+      conv_id: 'c1',
+      text: 'done',
+      final: true,
+    });
+
+    store.sendMessage('after');
+    const send = ws.sent.filter((m) => m.type === MESSAGE_TYPES.SEND).at(-1);
+    expect(send).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'c1', text: 'after' });
+    expect(send).not.toHaveProperty('steering');
+  });
+
+  it('forwards steering on an attachment send while busy', () => {
+    store.selectConversation('c1');
+    ws.fireMessage({ type: MESSAGE_TYPES.TURN_START, conv_id: 'c1' });
+    const attachment = { filename: 'note.txt', path: 'uploads/note.txt', mime_type: 'text/plain' };
+
+    store.sendMessage('with file', [attachment]);
+    const send = ws.sent.find((m) => m.type === MESSAGE_TYPES.SEND);
+    expect(send).toEqual({
+      type: MESSAGE_TYPES.SEND,
+      conv_id: 'c1',
+      text: 'with file',
+      attachments: [attachment],
+      steering: true,
+    });
+  });
+
   it('sends /retitle without engaging busy state or adding user message', () => {
     store.selectConversation('c1');
     expect(store.getConversationStatus('c1')).toBe('idle');
@@ -554,6 +607,17 @@ describe('conversation activity status tracking', () => {
       conv_id: 'c1',
       text: '/retitle',
     });
+    const send = ws.sent.find((m) => m.type === MESSAGE_TYPES.SEND);
+    expect(send).not.toHaveProperty('steering');
+  });
+
+  it('never adds steering to /retitle while busy', () => {
+    store.selectConversation('c1');
+    ws.fireMessage({ type: MESSAGE_TYPES.TURN_START, conv_id: 'c1' });
+
+    store.sendMessage('/retitle');
+    const send = ws.sent.find((m) => m.type === MESSAGE_TYPES.SEND);
+    expect(send).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'c1', text: '/retitle' });
   });
 
   it('retitleConversation sends /retitle for specified conversation', () => {
@@ -1117,5 +1181,73 @@ describe('session hierarchy follows conversation mutations (#1274)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('conversation model groups (#1441)', () => {
+  let ws;
+  let store;
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = new ConversationStore(ws);
+    store.selectConversation('c1');
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('stores model_groups from CONV_HISTORY', () => {
+    const groups = [
+      { name: 'Anthropic', models: ['anthropic/claude'] },
+      { name: 'Custom', models: ['legacy'] },
+    ];
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_HISTORY,
+      conv_id: 'c1',
+      messages: [],
+      has_more: false,
+      context_limit: 1000,
+      available_models: ['anthropic/claude', 'legacy'],
+      model_groups: groups,
+    });
+
+    expect(store.modelGroups).toEqual(groups);
+  });
+
+  it('falls back to one group from available_models when model_groups is absent', () => {
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_HISTORY,
+      conv_id: 'c1',
+      messages: [],
+      has_more: false,
+      context_limit: 1000,
+      available_models: ['m1', 'm2'],
+    });
+
+    expect(store.modelGroups).toEqual([{ name: 'Models', models: ['m1', 'm2'] }]);
+  });
+
+  it('stores model_groups from MODELS_AVAILABLE', () => {
+    const groups = [{ name: 'Local', models: ['local/llama'] }];
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MODELS_AVAILABLE,
+      available_models: ['local/llama'],
+      model_groups: groups,
+      default_model: 'local/llama',
+    });
+
+    expect(store.modelGroups).toEqual(groups);
+  });
+
+  it('falls back when MODELS_AVAILABLE has no model_groups', () => {
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MODELS_AVAILABLE,
+      available_models: ['m1'],
+      default_model: 'm1',
+    });
+
+    expect(store.modelGroups).toEqual([{ name: 'Models', models: ['m1'] }]);
   });
 });

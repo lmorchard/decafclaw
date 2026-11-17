@@ -25,6 +25,7 @@
 @import './styles/chat.css';
 @import './styles/chat-controls.css';
 @import './styles/chat-input.css';
+@import './styles/model-picker.css';
 @import './styles/side-question-drawer.css';
 @import './styles/widgets.css';
 @import './styles/wiki.css';

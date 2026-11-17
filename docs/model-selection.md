@@ -244,7 +244,14 @@ Model selection is **user-only** — the agent cannot change its own model (cost
 
 ### Web UI
 
-The sidebar shows a dropdown picker when model configs are available. Selecting a model applies it for the rest of the conversation. The picker lists hand-authored configs plus enabled models discovered from providers — manage discovery and the global default in **⚙ Agent Config → Models** (see [Model discovery](#model-discovery-1211)).
+The conversation controls use a searchable `<model-picker>` popup (the same
+element on the desktop control strip, the mobile conversation menu, and the
+sidebar fallback when the strip is hidden). Selecting a model applies it for
+the rest of the conversation. The picker lists hand-authored configs plus
+enabled models discovered from providers, grouped by provider with a final
+`Custom` group for hand-authored aliases; search matches model keys and
+provider names — manage discovery and the global default in **⚙ Agent Config →
+Models** (see [Model discovery](#model-discovery-1211)).
 
 ### WebSocket
 

@@ -85,6 +85,7 @@ export interface SrvConvHistory {
   estimated_tokens?: number;
   active_model?: string;
   available_models?: string[];
+  model_groups?: Array<Record<string, unknown>>;
   default_model?: string;
   active_mode?: string;
   available_modes?: Array<Record<string, unknown>>;
@@ -147,6 +148,7 @@ export interface SrvModelChanged {
 export interface SrvModelsAvailable {
   type: "models_available";
   available_models: string[];
+  model_groups?: Array<Record<string, unknown>>;
   default_model: string;
 }
 
@@ -289,6 +291,7 @@ export interface CliSend {
   conv_id: string;
   text: string;
   attachments: Array<Record<string, unknown>>;
+  steering?: boolean;
 }
 
 export interface CliSetEffort {

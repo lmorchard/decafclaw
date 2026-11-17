@@ -83,7 +83,22 @@ During an active or long-running turn, users can ask out-of-band explanation que
 The sidebar lists conversations organized into folders:
 
 - **Create** new conversations
-- **Rename** and **move** conversations between folders
+- **Rename** a conversation by double-clicking its row title (title only)
+- **Move** a session into a folder, or back to the top level, in either way:
+  - **Drag and drop** — drag a session's root row onto a folder row in the
+    current listing, or onto an ancestor segment in the breadcrumbs ("Chats"
+    means the top level). The target highlights while hovered. Dropping on
+    the folder the session already occupies does nothing.
+  - **Move to…** — the arrow action on a root row opens a picker listing
+    "Top level" plus every user folder by full path, so nested folders are
+    reachable without navigating there. The current folder is disabled. The
+    picker is keyboard operable (Tab, Enter or Space, Escape to close) and
+    works at mobile width.
+  A session is its root conversation plus delegated subagents; children move
+  with their root. Subagent rows have no move action, and Archived/System
+  rows are neither move sources nor drop targets. A successful move refreshes
+  both the folder listing and the session hierarchy; a failed move shows an
+  error toast and leaves the listing unchanged.
 - **Archive** / **unarchive** conversations
 - **Virtual folders**: Archived (preserving folder structure) and System (heartbeat, scheduled, delegated)
 - Folder structure is per-user metadata — archive files stay in place
@@ -240,7 +255,28 @@ The sidebar list rows in the Chats, Vault, Files, Tags, and Schedules tabs work 
 
 ### Model picker
 
-When multiple model configs are defined, a dropdown in the sidebar lets you switch models per-conversation. See [Model Selection](model-selection.md).
+When model configs are available, one shared `<model-picker>` element
+(`components/model-picker.js`) serves every conversation model selector:
+
+- The desktop control strip above the composer.
+- The mobile conversation menu (rendered inline, without a popup).
+- The sidebar fallback shown when the control strip is hidden.
+
+The trigger shows the conversation's active model, falling back to the global
+default (marked `default`) when the conversation has no override. It warns when
+the active model is not in the configured list and keeps that value selectable.
+Opening the picker reveals a search field and provider groups supplied by the
+server (`model_groups`, with ungrouped hand-authored configs in a final
+`Custom` group). Search matches both the model key and the provider name.
+
+Keyboard: Arrow Up/Down move the highlighted row, Enter selects it, and Escape
+closes the panel and returns focus to the trigger. A click outside also closes
+it. The panel is anchored below the trigger on wide screens and becomes a
+viewport-bounded sheet on narrow screens. Picking a different model dispatches
+one bubbling `set-model` event; picking the current model only closes the
+panel. All visible state re-renders from properties, so session switches and
+mid-session model changes stay in sync (#1440). See
+[Model Selection](model-selection.md).
 
 ### Context inspector
 

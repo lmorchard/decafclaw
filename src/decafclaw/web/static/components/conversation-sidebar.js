@@ -1,9 +1,11 @@
 import { LitElement, html, nothing } from 'lit';
 import { parentConvIdOf } from '../lib/conversation-store.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
+import { showToast } from '../lib/toast.js';
 import './context-inspector.js';
 import './shell-approval-panel.js';
 import './notification-inbox.js';
+import './model-picker.js';
 import './vault-sidebar.js';
 import './files-sidebar.js';
 import './schedules-sidebar.js';
@@ -23,6 +25,7 @@ export class ConversationSidebar extends LitElement {
     _contextLimit: { type: Number, state: true },
     _activeModel: { type: String, state: true },
     _availableModels: { type: Array, state: true },
+    _modelGroups: { type: Array, state: true },
     _defaultModel: { type: String, state: true },
     _activeMode: { type: String, state: true },
     _availableModes: { type: Array, state: true },
@@ -36,6 +39,10 @@ export class ConversationSidebar extends LitElement {
     _shellApprovalOpen: { type: Boolean, state: true },
     _openSchedule: { type: String, state: true },
     _hasControlsStrip: { type: Boolean, state: true },
+    _movePickerConvId: { type: String, state: true },
+    _movePickerFolders: { type: Array, state: true },
+    _movePickerLoading: { type: Boolean, state: true },
+    _dropTarget: { type: String, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -60,6 +67,7 @@ export class ConversationSidebar extends LitElement {
     this._contextLimit = 0;
     this._activeModel = '';
     this._availableModels = [];
+    this._modelGroups = [];
     this._defaultModel = '';
     this._activeMode = 'default';
     this._availableModes = [];
@@ -77,6 +85,17 @@ export class ConversationSidebar extends LitElement {
     this._shellApprovalOpen = false;
     this._openSchedule = '';
     this._hasControlsStrip = document.querySelector('chat-controls') !== null;
+    /** @type {string} conv id of the open "Move to…" picker, or '' (#1277) */
+    this._movePickerConvId = '';
+    /** @type {string[]} full folder paths listed by the picker (#1277) */
+    this._movePickerFolders = [];
+    this._movePickerLoading = false;
+    /** @type {string|null} folder path highlighted as a drop target (#1277) */
+    this._dropTarget = null;
+    /** @type {HTMLElement|null} row action that opened the picker (focus return) */
+    this._movePickerTrigger = null;
+    /** @type {string} root conv id being dragged, '' when no drag is active */
+    this._draggingConvId = '';
   }
 
   openMobile() {
@@ -125,6 +144,7 @@ export class ConversationSidebar extends LitElement {
       this._contextLimit = this.store?.contextLimit || 0;
       this._activeModel = this.store?.activeModel || '';
       this._availableModels = this.store?.availableModels || [];
+      this._modelGroups = this.store?.modelGroups || [];
       this._defaultModel = this.store?.defaultModel || '';
       this._activeMode = this.store?.activeMode || 'default';
       this._availableModes = this.store?.availableModes || [];
@@ -170,15 +190,6 @@ export class ConversationSidebar extends LitElement {
     // the desktop session left _collapsed=true.
     this.toggleAttribute('collapsed', this._collapsed && !this._mobileOpen);
     this.toggleAttribute('mobile-open', this._mobileOpen);
-
-    // Sync model selector value if present
-    const modelSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#model-select'));
-    if (modelSelect) {
-      const target = this._activeModel || this._defaultModel;
-      if (target && modelSelect.value !== target) {
-        modelSelect.value = target;
-      }
-    }
 
     // Sync mode selector value if present
     const modeSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#mode-select'));
@@ -365,10 +376,14 @@ export class ConversationSidebar extends LitElement {
 
     const crumbs = [];
 
-    // Root "Chats" segment — always navigates to top level
+    // Root "Chats" segment — always navigates to top level. While dragging a
+    // session it is a drop target for the top level (#1277).
     crumbs.push(html`
-      <button type="button" class="vault-breadcrumb-segment"
-        @click=${() => this.#navigateChatFolder('', '')}>Chats</button>
+      <button type="button" class="vault-breadcrumb-segment${this._dropTarget === '' ? ' drop-target' : ''}"
+        @click=${() => this.#navigateChatFolder('', '')}
+        @dragover=${(/** @type {DragEvent} */ e) => this.#handleDragOver(e, '')}
+        @dragleave=${(/** @type {DragEvent} */ e) => this.#handleDragLeave(e)}
+        @drop=${(/** @type {DragEvent} */ e) => this.#handleDrop(e, '')}>Chats</button>
     `);
 
     // Section segment (Archived or System)
@@ -410,8 +425,11 @@ export class ConversationSidebar extends LitElement {
           <span class="vault-breadcrumb-sep">/</span>
           ${isLast
             ? html`<span class="vault-breadcrumb-segment active">${seg}</span>`
-            : html`<button type="button" class="vault-breadcrumb-segment"
-                @click=${() => this.#navigateChatFolder(section, path)}>${seg}</button>`
+            : html`<button type="button" class="vault-breadcrumb-segment${this._dropTarget === path ? ' drop-target' : ''}"
+                @click=${() => this.#navigateChatFolder(section, path)}
+                @dragover=${(/** @type {DragEvent} */ e) => this.#handleDragOver(e, path)}
+                @dragleave=${(/** @type {DragEvent} */ e) => this.#handleDragLeave(e)}
+                @drop=${(/** @type {DragEvent} */ e) => this.#handleDrop(e, path)}>${seg}</button>`
           }
         `);
       });
@@ -445,6 +463,133 @@ export class ConversationSidebar extends LitElement {
   /** @param {string} convId */
   #handleRetitle(convId) {
     this.store?.retitleConversation(convId);
+  }
+
+  /**
+   * Root conversation ids currently listed for the active section. Only those
+   * rows are move sources; subagent children always move with their root.
+   * @param {string} convId
+   * @returns {boolean}
+   */
+  #isRootConvId(convId) {
+    const groups = this._sessions.length > 0 ? this._sessions : this.#groupSessions(this._conversations);
+    return groups.some((g) => {
+      const root = (g.conversations || [])[0];
+      return (root?.conv_id || g.session_id) === convId;
+    });
+  }
+
+  /** @param {DragEvent} e @param {string} convId */
+  #handleDragStart(e, convId) {
+    if (!e.dataTransfer) return;
+    e.dataTransfer.setData('text/plain', convId);
+    e.dataTransfer.effectAllowed = 'move';
+    this._draggingConvId = convId;
+  }
+
+  #resetDragState() {
+    this._draggingConvId = '';
+    this._dropTarget = null;
+  }
+
+  /** @param {DragEvent} e @param {string} folderPath */
+  #handleDragOver(e, folderPath) {
+    // Only the active section offers move targets; Archived/System rows are
+    // not move sources and their breadcrumbs are not destinations.
+    if (this._chatSection !== '' || !this._draggingConvId) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    this._dropTarget = folderPath;
+  }
+
+  /** @param {DragEvent} e */
+  #handleDragLeave(e) {
+    if (this._chatSection !== '') return;
+    const to = /** @type {Node|null} */ (e.relatedTarget);
+    const from = /** @type {Node} */ (e.currentTarget);
+    if (to && from.contains(to)) return;
+    this._dropTarget = null;
+  }
+
+  /** @param {DragEvent} e @param {string} targetFolder */
+  #handleDrop(e, targetFolder) {
+    if (this._chatSection !== '') return;
+    e.preventDefault();
+    const transferred = e.dataTransfer?.getData('text/plain') || '';
+    const convId = transferred || this._draggingConvId;
+    this.#resetDragState();
+    if (!convId || !this.#isRootConvId(convId)) return;
+    void this.#moveConversationTo(convId, targetFolder);
+  }
+
+  /**
+   * Open the "Move to…" picker for a session root row (#1277). Lists the top
+   * level plus every user folder path so nested folders are reachable without
+   * navigating to them.
+   * @param {string} convId
+   * @param {HTMLElement|null} [trigger]
+   */
+  async #openMovePicker(convId, trigger = null) {
+    this._movePickerTrigger = trigger;
+    this._movePickerConvId = convId;
+    this._movePickerFolders = [];
+    this._movePickerLoading = true;
+    // The folder walk is one round trip per level, so the loading dialog can be
+    // visible for a while. Move focus inside it right away: keydown (and so
+    // Escape) only reaches the dialog when focus is within it.
+    await this.updateComplete;
+    /** @type {HTMLElement|null} */ (this.querySelector('.conv-move-picker-close'))?.focus();
+    const folders = (await this.store?.listAllFolders?.()) || [];
+    if (this._movePickerConvId !== convId) return;
+    this._movePickerFolders = folders;
+    this._movePickerLoading = false;
+    await this.updateComplete;
+    // With no enabled destination (top level is current and no folders were
+    // listed) the dialog still needs an initial focus target inside itself,
+    // or Escape never reaches #handleMovePickerKeydown.
+    const first = /** @type {HTMLElement|null} */ (
+      this.querySelector('.conv-move-option:not([disabled])')
+        || this.querySelector('.conv-move-picker-close')
+    );
+    first?.focus();
+  }
+
+  #closeMovePicker() {
+    const trigger = this._movePickerTrigger;
+    const active = /** @type {HTMLElement|null} */ (document.activeElement);
+    const focusWasInPicker = Boolean(active && this.contains(active) && active.closest('.conv-move-picker'));
+    this._movePickerTrigger = null;
+    this._movePickerConvId = '';
+    this._movePickerFolders = [];
+    this._movePickerLoading = false;
+    if (focusWasInPicker && trigger?.isConnected) trigger.focus();
+  }
+
+  /** @param {KeyboardEvent} e */
+  #handleMovePickerKeydown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.#closeMovePicker();
+    }
+  }
+
+  /**
+   * Move a session root into a folder ('' = top level). Store refreshes both
+   * the flat listing and the session hierarchy on success; a failure shows a
+   * toast and leaves the listing untouched.
+   * @param {string} convId
+   * @param {string} folder
+   */
+  async #moveConversationTo(convId, folder) {
+    const currentFolder = this.store?.currentFolder ?? this._chatFolder ?? '';
+    if (folder === currentFolder) return;
+    const moved = await this.store?.moveConversation?.(convId, folder);
+    if (moved) {
+      this.#closeMovePicker();
+    } else {
+      showToast('Failed to move conversation');
+    }
   }
 
   /** @param {string} convId */
@@ -486,12 +631,6 @@ export class ConversationSidebar extends LitElement {
   }
 
   /** @param {Event} e */
-  #handleModelChange(e) {
-    const model = /** @type {HTMLSelectElement} */ (e.target).value;
-    this.store?.setModel(model);
-  }
-
-  /** @param {Event} e */
   #handleModeChange(e) {
     const mode = /** @type {HTMLSelectElement} */ (e.target).value;
     this.store?.setMode(mode);
@@ -527,6 +666,11 @@ export class ConversationSidebar extends LitElement {
    * @param {string}   [opts.action2Title] - Second action button title
    * @param {function} [opts.onAction2]   - Click handler for the second action button
    * @param {function} [opts.onDblClick]  - Double-click handler on the title span
+   * @param {function} [opts.onMove]      - Move-to-folder handler (root rows, #1277)
+   * @param {string}   [opts.moveTitle]   - Move button title text
+   * @param {boolean}  [opts.draggable]   - Root row can be dragged onto a folder (#1277)
+   * @param {function} [opts.onDragStart] - Drag start handler (root rows)
+   * @param {function} [opts.onDragEnd]   - Drag end handler (root rows)
    * @param {string}   [opts.badge]       - Optional badge text shown after title
    * @param {string}   [opts.titleSuffix] - Extra text appended to the title attr
    */
@@ -551,9 +695,12 @@ export class ConversationSidebar extends LitElement {
       <div
         class=${classes.join(' ')}
         tabindex="0"
+        draggable=${opts.draggable ? 'true' : nothing}
         aria-label=${`Open conversation ${conv.title}`}
         @click=${() => this.#handleSelect(conv.conv_id)}
         @keydown=${activateOnEnterOrSpace(() => this.#handleSelect(conv.conv_id))}
+        @dragstart=${opts.onDragStart || nothing}
+        @dragend=${opts.onDragEnd || nothing}
         title=${titleAttr}
       >
         <span
@@ -562,6 +709,18 @@ export class ConversationSidebar extends LitElement {
         >${conv.title}</span>
         ${opts.badge ? html`<span class="conv-type-badge">${opts.badge}</span>` : nothing}
         ${this.#renderStatusIndicator(status)}
+        ${opts.onMove ? html`
+          <button
+            class="conv-archive conv-move-btn"
+            @click=${(/** @type {MouseEvent} */ e) => {
+              e.stopPropagation();
+              opts.onMove(conv.conv_id, /** @type {HTMLElement} */ (e.currentTarget));
+            }}
+            title=${opts.moveTitle || 'Move to folder'}
+            aria-label=${opts.moveTitle || 'Move to folder'}
+            aria-haspopup="dialog"
+          >\u21AA</button>
+        ` : nothing}
         ${opts.onAction2 ? html`
           <button
             class="conv-archive"
@@ -688,6 +847,14 @@ export class ConversationSidebar extends LitElement {
       action2Title: 'Regenerate title',
       onAction2: (id) => this.#handleRetitle(id),
       onDblClick: (/** @type {Event} */ e) => { e.stopPropagation(); this.#handleRename(parent.conv_id, parent.title); },
+      // #1277 — root rows are the only move sources; children follow them.
+      onMove: (/** @type {string} */ id, /** @type {HTMLElement} */ trigger) => {
+        void this.#openMovePicker(id, trigger);
+      },
+      moveTitle: 'Move to folder\u2026',
+      draggable: true,
+      onDragStart: (/** @type {DragEvent} */ e) => this.#handleDragStart(e, parent.conv_id),
+      onDragEnd: () => this.#resetDragState(),
     };
     const parentRow = this.#renderConversationItem(parent, parentOpts);
     if (children.length === 0) return parentRow;
@@ -789,6 +956,8 @@ export class ConversationSidebar extends LitElement {
       `;
     }
 
+    const currentFolder = this.store?.currentFolder ?? this._chatFolder ?? '';
+
     return html`
       <div class="sidebar-header dc-overlay-header">
         <div class="sidebar-tabs">
@@ -846,11 +1015,14 @@ export class ConversationSidebar extends LitElement {
             }
           };
           return html`
-            <div class="conv-item wiki-item wiki-folder-item"
+            <div class="conv-item wiki-item wiki-folder-item${!isVirtual && this._dropTarget === f.path ? ' drop-target' : ''}"
               tabindex="0"
               aria-label=${`Open folder ${f.name}`}
               @click=${openFolder}
               @keydown=${activateOnEnterOrSpace(openFolder)}
+              @dragover=${!isVirtual ? (/** @type {DragEvent} */ e) => this.#handleDragOver(e, f.path) : nothing}
+              @dragleave=${!isVirtual ? (/** @type {DragEvent} */ e) => this.#handleDragLeave(e) : nothing}
+              @drop=${!isVirtual ? (/** @type {DragEvent} */ e) => this.#handleDrop(e, f.path) : nothing}
               @dblclick=${!isVirtual ? (/** @type {Event} */ e) => { e.stopPropagation(); this.#renameChatFolder(f.path, f.name); } : nothing}
               title=${f.path}>
               <span class="conv-title">\u{1F4C1} ${f.name}</span>
@@ -912,25 +1084,14 @@ export class ConversationSidebar extends LitElement {
       ` : nothing}
       ${!this._hasControlsStrip && this._availableModels.length > 0 ? html`
       <div class="model-picker">
-        <label class="model-picker-label" for="model-select">Model</label>
-        <select id="model-select" class="model-select"
-                ?disabled=${this._isBusy || this._isReadOnly}
-                @change=${(e) => this.#handleModelChange(e)}>
-          ${(() => {
-            const target = this._activeModel || this._defaultModel;
-            const unconfigured = target && !this._availableModels.includes(target);
-            return html`
-              ${unconfigured ? html`
-                <option value="${target}" selected>⚠ ${target} (not configured)</option>
-              ` : nothing}
-              ${this._availableModels.map(m => html`
-                <option value="${m}" ?selected=${m === target} .selected=${m === target}>
-                  ${m}${m === this._defaultModel ? ' (default)' : ''}
-                </option>
-              `)}
-            `;
-          })()}
-        </select>
+        <label class="model-picker-label">Model</label>
+        <model-picker
+          .groups=${this._modelGroups}
+          .activeModel=${this._activeModel}
+          .defaultModel=${this._defaultModel}
+          ?disabled=${this._isBusy || this._isReadOnly}
+          .convId=${this._activeId || ''}
+        ></model-picker>
       </div>
       ` : nothing}
       ${!this._hasControlsStrip && this._contextLimit > 0 ? html`
@@ -978,6 +1139,38 @@ export class ConversationSidebar extends LitElement {
         </div>
         <button class="logout-btn" @click=${() => this.authClient?.logout()} title="Sign out">Sign out</button>
       </div>
+      ${this._movePickerConvId ? html`
+        <div class="conv-move-picker-backdrop"
+          @click=${(/** @type {MouseEvent} */ e) => { if (e.target === e.currentTarget) this.#closeMovePicker(); }}>
+          <div class="conv-move-picker" role="dialog" aria-modal="true" aria-label="Move conversation"
+            @keydown=${(/** @type {KeyboardEvent} */ e) => this.#handleMovePickerKeydown(e)}>
+            <div class="conv-move-picker-header">
+              <span>Move to\u2026</span>
+              <button type="button" class="conv-move-picker-close dc-overlay-close-x"
+                @click=${() => this.#closeMovePicker()} title="Close" aria-label="Close move dialog">\u00d7</button>
+            </div>
+            ${this._movePickerLoading
+              ? html`<p class="conv-move-picker-empty">Loading folders\u2026</p>`
+              : html`
+                <button type="button" class="conv-move-option"
+                  ?disabled=${currentFolder === ''}
+                  @click=${() => this.#moveConversationTo(this._movePickerConvId, '')}>
+                  Top level${currentFolder === '' ? ' (current)' : ''}
+                </button>
+                ${this._movePickerFolders.map((path) => html`
+                  <button type="button" class="conv-move-option" title=${path}
+                    ?disabled=${path === currentFolder}
+                    @click=${() => this.#moveConversationTo(this._movePickerConvId, path)}>
+                    ${path}${path === currentFolder ? ' (current)' : ''}
+                  </button>
+                `)}
+                ${this._movePickerFolders.length === 0
+                  ? html`<p class="conv-move-picker-empty">No folders yet. Create one with + Folder.</p>`
+                  : nothing}
+              `}
+          </div>
+        </div>
+      ` : nothing}
     `;
   }
 }

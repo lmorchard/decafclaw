@@ -405,6 +405,33 @@ def picker_models(config: "Config") -> list[str]:
     return sorted(hand | enabled_catalog_keys(catalog))
 
 
+def picker_model_groups(config: "Config") -> list[dict[str, object]]:
+    """Grouped model names for the conversation picker (#1441).
+
+    Returns ordered ``[{"name": provider, "models": [...]}]`` groups:
+    catalog provider order, sorted keys within each group, and a final
+    ``Custom`` group for hand-authored keys that are not enabled
+    discovered models. Every :func:`picker_models` key appears exactly
+    once; disabled discovered models are excluded. A hand-authored key
+    that collides with an enabled discovered key stays in its provider
+    group only.
+    """
+    catalog = load_catalog(config)
+    discovered = enabled_catalog_keys(catalog)
+    hand = set(config.model_configs) - config.catalog_materialized
+
+    groups: list[dict[str, object]] = []
+    for provider_name, pentry in catalog.providers.items():
+        models = sorted(catalog_model_key(provider_name, entry.id) for entry in pentry.models if entry.enabled)
+        if models:
+            groups.append({"name": provider_name, "models": models})
+
+    custom = sorted(hand - discovered)
+    if custom:
+        groups.append({"name": "Custom", "models": custom})
+    return groups
+
+
 def effective_default_model(config: "Config") -> str:
     """Global default model, resolution order (#1211):
 

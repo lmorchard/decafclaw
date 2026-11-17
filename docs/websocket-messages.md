@@ -121,6 +121,7 @@ Page of historical messages for a conversation.
 - `estimated_tokens` — number?
 - `active_model` — string?
 - `available_models` — array of string?
+- `model_groups` — array of object?
 - `default_model` — string?
 - `active_mode` — string?
 - `available_modes` — array of object?
@@ -202,11 +203,12 @@ The active model for a conversation changed (echoed back to all subscribers of t
 
 ### `models_available`
 
-List of model identifiers the user can select in the UI.
+List of model identifiers the user can select in the UI, optionally grouped by provider for the conversation model picker.
 
 **Fields:**
 
 - `available_models` — array of string
+- `model_groups` — array of object?
 - `default_model` — string
 
 ### `notification_created`
@@ -410,6 +412,7 @@ Send a user message (and/or attachments) to the conversation.
 - `conv_id` — string
 - `text` — string
 - `attachments` — array of object
+- `steering` — boolean?
 
 ### `set_effort`
 

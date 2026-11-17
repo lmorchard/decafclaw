@@ -199,6 +199,7 @@ class SrvConvHistory(TypedDict):
     estimated_tokens: NotRequired[int]
     active_model: NotRequired[str]
     available_models: NotRequired[list[str]]
+    model_groups: NotRequired[list[dict[str, object]]]
     default_model: NotRequired[str]
     active_mode: NotRequired[str]
     available_modes: NotRequired[list[dict[str, object]]]
@@ -261,6 +262,7 @@ class SrvModelChanged(TypedDict):
 class SrvModelsAvailable(TypedDict):
     type: Literal[WSMessageType.MODELS_AVAILABLE]
     available_models: list[str]
+    model_groups: NotRequired[list[dict[str, object]]]
     default_model: str
 
 
@@ -403,6 +405,7 @@ class CliSend(TypedDict):
     conv_id: str
     text: str
     attachments: list[dict[str, object]]
+    steering: NotRequired[bool]
 
 
 class CliSetEffort(TypedDict):

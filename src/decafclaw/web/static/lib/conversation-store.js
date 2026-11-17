@@ -133,6 +133,8 @@ export class ConversationStore extends EventTarget {
   #activeModel = '';
   /** @type {string[]} available model config names from server */
   #availableModels = [];
+  /** @type {{name: string, models: string[]}[]} provider-grouped picker models (#1441) */
+  #modelGroups = [];
   /** @type {string} default model from server config */
   #defaultModel = '';
   /** @type {string} active session mode for the conversation */
@@ -209,6 +211,17 @@ export class ConversationStore extends EventTarget {
   get activeModel() { return this.#activeModel; }
   /** @returns {string[]} */
   get availableModels() { return this.#availableModels; }
+  /**
+   * Provider groups for the conversation model picker (#1441). A payload
+   * that predates `model_groups` still yields one usable group from the
+   * flat `availableModels` list.
+   * @returns {{name: string, models: string[]}[]}
+   */
+  get modelGroups() {
+    if (this.#modelGroups.length > 0) return this.#modelGroups;
+    if (this.#availableModels.length === 0) return [];
+    return [{ name: 'Models', models: this.#availableModels }];
+  }
   /** @returns {string} */
   get defaultModel() { return this.#defaultModel; }
   /** @returns {string} */
@@ -339,6 +352,41 @@ export class ConversationStore extends EventTarget {
   }
 
   /**
+   * Every user folder path, at any depth (#1277). Walks the existing
+   * one-level `GET /api/conversations?folder=` listings breadth-first
+   * instead of adding a route. Virtual folders (`_archived`, `_system`) and
+   * any `_`-prefixed path are excluded, since they are not move targets.
+   * Reads the endpoint directly so the current listing is left untouched.
+   * @returns {Promise<string[]>}
+   */
+  async listAllFolders() {
+    /** @type {string[]} */
+    const found = [];
+    const seen = new Set();
+    const queue = [''];
+    while (queue.length > 0) {
+      const parent = /** @type {string} */ (queue.shift());
+      let data;
+      try {
+        data = await DefaultService.listConversationsApiConversationsGet(parent || undefined);
+      } catch (err) {
+        if (!(err instanceof ApiError)) console.error('Failed to list folders:', err);
+        break;
+      }
+      for (const f of data.folders || []) {
+        if (/** @type {any} */ (f).virtual) continue;
+        const path = f.path || f.name;
+        if (!path || path.split('/').some((seg) => seg.startsWith('_'))) continue;
+        if (seen.has(path)) continue;
+        seen.add(path);
+        found.push(path);
+        queue.push(path);
+      }
+    }
+    return found.sort();
+  }
+
+  /**
    * True when convId is already present in the store's listings — flat,
    * session hierarchy, archived, or system. A pushed status event for an
    * id the store has never seen is a freshly spawned subagent whose row
@@ -432,18 +480,26 @@ export class ConversationStore extends EventTarget {
     this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: convId, text: '/retitle' });
   }
 
-  /** @param {string} convId @param {string} folder */
+  /**
+   * Move a conversation (a session's root) into a folder; '' is the top level.
+   * Returns false when the move failed so callers can tell the user (#1277).
+   * @param {string} convId @param {string} folder
+   * @returns {Promise<boolean>}
+   */
   async moveConversation(convId, folder) {
     try {
       await DefaultService.renameConversationApiConversationsIdPatch(convId, { folder }, true);
       // Re-fetch current folder listing
       await this.listConversations(this.#currentFolder);
       // #1274 — a folder move changes which session group the conversation
-      // belongs to; refresh the hierarchy so it follows.
+      // belongs to; refresh the hierarchy so it follows. #1277 — the write
+      // must update both sources or the Chats listing keeps the stale folder.
       await this.listSessions(this.#currentFolder);
+      return true;
     } catch (err) {
-      if (err instanceof ApiError) return;
+      if (err instanceof ApiError) return false;
       console.error('Failed to move conversation:', err);
+      return false;
     }
   }
 
@@ -624,6 +680,11 @@ export class ConversationStore extends EventTarget {
       this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text });
       return;
     }
+    // Capture the turn's busy state BEFORE the optimistic update below sets
+    // `#busy = true` (#1442). A Send while a turn runs steers it; an idle
+    // Send omits the flag so the server starts a normal turn. The flag is
+    // omitted (not `false`) for idle sends so the frame matches older clients.
+    const wasBusy = this.#busy;
     // Optimistically add user message
     const userMsg = { role: 'user', content: text, timestamp: new Date().toISOString() };
     if (attachments.length) userMsg.attachments = attachments;
@@ -634,6 +695,7 @@ export class ConversationStore extends EventTarget {
     this.#toolStatusStore.clearToolStatus();
     const wsMsg = { type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text };
     if (attachments.length) wsMsg.attachments = attachments;
+    if (wasBusy) wsMsg.steering = true;
     const wikiPage = /** @type {any} */ (window).getOpenWikiPage?.();
     if (wikiPage) wsMsg.wiki_page = wikiPage;
     this.#ws.send(wsMsg);
@@ -724,6 +786,10 @@ export class ConversationStore extends EventTarget {
         if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
         if (msg.active_model) this.#activeModel = msg.active_model;
         if (msg.available_models) this.#availableModels = msg.available_models;
+        // Grouped payload (#1441). Older servers omit it: keep whatever flat
+        // list arrived and let the getter synthesize a single group.
+        if (Array.isArray(msg.model_groups)) this.#modelGroups = msg.model_groups;
+        else if ('available_models' in msg) this.#modelGroups = [];
         // `in` (not truthiness): an explicitly cleared default arrives as ''
         // and must clear the stale marker (#1211).
         if ('default_model' in msg) this.#defaultModel = msg.default_model || '';
@@ -859,6 +925,7 @@ export class ConversationStore extends EventTarget {
 
       case MESSAGE_TYPES.MODELS_AVAILABLE:
         if (msg.available_models) this.#availableModels = msg.available_models;
+        this.#modelGroups = Array.isArray(msg.model_groups) ? msg.model_groups : [];
         // `in` (not truthiness): an explicitly cleared default arrives as ''
         // and must clear the stale marker (#1211).
         if ('default_model' in msg) this.#defaultModel = msg.default_model || '';

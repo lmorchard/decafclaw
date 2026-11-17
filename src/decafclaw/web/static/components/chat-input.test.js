@@ -661,11 +661,12 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     expect(el.querySelector('.conversation-menu')).toBeNull();
   });
 
-  it('renders the model and mode controls inside the menu when the store provides options', async () => {
+  it('renders the model picker and mode control inside the menu when the store provides options', async () => {
     const el = await mount();
     const store = /** @type {any} */ (new EventTarget());
     store.activeModel = 'm1';
     store.availableModels = ['m1', 'm2'];
+    store.modelGroups = [{ name: 'Models', models: ['m1', 'm2'] }];
     store.activeMode = 'default';
     store.availableModes = [
       { name: 'default', description: 'Standard' },
@@ -680,14 +681,18 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
 
     const menu = el.querySelector('.conversation-menu');
     expect(menu).not.toBeNull();
-    const selects = [...menu.querySelectorAll('select')];
-    expect(selects).toHaveLength(2);
 
-    const [modelSelect, modeSelect] = selects;
-    expect(modelSelect.labels[0].textContent.trim()).toBe('Model');
+    const picker = /** @type {any} */ (menu.querySelector('model-picker'));
+    expect(picker).toBeTruthy();
+    expect(picker.inline).toBe(true);
+    expect([...picker.querySelectorAll('.model-picker-option')].map((row) => row.dataset.model))
+      .toEqual(['m1', 'm2']);
+    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('m1');
+
+    const selects = [...menu.querySelectorAll('select')];
+    expect(selects).toHaveLength(1);
+    const [modeSelect] = selects;
     expect(modeSelect.labels[0].textContent.trim()).toBe('Mode');
-    expect(modelSelect.value).toBe('m1');
-    expect([...modelSelect.options].map((o) => o.value)).toEqual(['m1', 'm2']);
     expect(modeSelect.value).toBe('default');
     expect([...modeSelect.options].map((o) => o.value)).toEqual(['default', 'dev']);
 
@@ -696,8 +701,9 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     document.addEventListener('set-model', modelHandler);
     document.addEventListener('set-mode', modeHandler);
 
-    modelSelect.value = 'm2';
-    modelSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    const modelRow = [...picker.querySelectorAll('.model-picker-option')]
+      .find((row) => row.dataset.model === 'm2');
+    modelRow.click();
     modeSelect.value = 'dev';
     modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
     await el.updateComplete;
@@ -720,6 +726,7 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     store.activeModel = '';
     store.defaultModel = 'm2';
     store.availableModels = ['m1', 'm2'];
+    store.modelGroups = [{ name: 'Models', models: ['m1', 'm2'] }];
     store.activeMode = 'default';
     store.availableModes = [{ name: 'default' }];
     store.isBusy = false;
@@ -729,14 +736,14 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     el.querySelector('.conversation-actions-btn').click();
     await el.updateComplete;
 
-    const modelSelect = el.querySelector('#conversation-menu-model');
-    expect(modelSelect.value).toBe('m2');
+    const picker = /** @type {any} */ (el.querySelector('model-picker'));
+    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('m2');
 
-    // Switching conversation updates the select
+    // Switching conversation updates the picker
     store.activeModel = 'm1';
     store.dispatchEvent(new Event('change'));
     await el.updateComplete;
-    expect(modelSelect.value).toBe('m1');
+    expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('m1');
   });
 
   it('closes the menu on Escape', async () => {

@@ -20,7 +20,12 @@ from decafclaw.commands import list_invokable_commands
 from decafclaw.conversation_manager import TurnKind
 from decafclaw.conversation_paths import approval_state_path
 from decafclaw.llm.history import without_provider_data
-from decafclaw.model_catalog import MODELS_CHANGED_EVENT_TYPE, effective_default_model, picker_models
+from decafclaw.model_catalog import (
+    MODELS_CHANGED_EVENT_TYPE,
+    effective_default_model,
+    picker_model_groups,
+    picker_models,
+)
 from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
 from decafclaw.web.auto_titling import maybe_auto_title
 from decafclaw.web.message_types import (
@@ -365,6 +370,7 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     if picker:
         response["available_models"] = picker
         response["default_model"] = effective_default_model(config)
+        response["model_groups"] = picker_model_groups(config)
 
     # Send available session modes and active mode
     from ..modes import get_all_modes
@@ -1410,6 +1416,7 @@ def _make_models_available_forwarder(ws_send: WSSendCallable, config):
                 "type": WSMessageType.MODELS_AVAILABLE,
                 "available_models": picker_models(config),
                 "default_model": effective_default_model(config),
+                "model_groups": picker_model_groups(config),
             }
         )
 
@@ -1524,6 +1531,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx, manag
                 "type": WSMessageType.MODELS_AVAILABLE,
                 "available_models": picker,
                 "default_model": effective_default_model(config),
+                "model_groups": picker_model_groups(config),
             }
         )
 
