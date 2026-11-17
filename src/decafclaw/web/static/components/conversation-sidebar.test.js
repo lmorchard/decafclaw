@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { showToast } from '../lib/toast.js';
 import './conversation-sidebar.js';
+
+vi.mock('../lib/toast.js', () => ({ showToast: vi.fn() }));
 
 describe('conversation-sidebar model selector', () => {
   let sidebar;
@@ -592,5 +595,212 @@ describe('conversation-sidebar session hierarchy (#1115)', () => {
     store.dispatchEvent(new Event('change'));
     await sidebar.updateComplete;
     expect(sidebar.querySelector('.conv-subagent')).toBeTruthy();
+  });
+});
+
+// #1277 — moving a session root into a folder by drag and drop, or through
+// the keyboard/mobile "Move to…" picker.
+describe('conversation-sidebar session move (#1277)', () => {
+  const root = { conv_id: 'web-alice-r1', title: 'Root chat', updated_at: '2026-01-02T00:00:00+00:00' };
+  const child = { conv_id: 'web-alice-r1--child-abcdef12', title: 'Subtask abcdef12', kind: 'subagent' };
+  let sidebar;
+
+  afterEach(() => {
+    sidebar?.remove();
+    vi.clearAllMocks();
+  });
+
+  async function flush() {
+    await new Promise((r) => setTimeout(r, 0));
+    await /** @type {any} */ (sidebar).updateComplete;
+  }
+
+  async function mountMove(storeOverrides = {}) {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'web-alice-r1',
+      currentFolder: '',
+      conversations: [root],
+      sessions: [{
+        session_id: 'web-alice-r1',
+        title: 'Root chat',
+        conversations: [{ ...root, kind: 'parent' }, { ...child }],
+      }],
+      folders: [
+        { name: 'Work', path: 'Work' },
+        { name: 'Archived', path: '_archived', virtual: true },
+      ],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 0,
+      contextLimit: 0,
+      activeModel: '',
+      availableModels: [],
+      defaultModel: '',
+      activeMode: 'default',
+      availableModes: [],
+      getConversationStatus: vi.fn(() => 'idle'),
+      selectConversation: vi.fn(),
+      cancelSubagent: vi.fn(),
+      listConversations: vi.fn(),
+      listSessions: vi.fn(),
+      listAllFolders: vi.fn(async () => ['Work', 'Work/Plans']),
+      moveConversation: vi.fn(async () => true),
+      ...storeOverrides,
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    await sidebar.updateComplete;
+    return { sidebar, store };
+  }
+
+  /** @param {string} convId */
+  function dragStartEvent(convId) {
+    const ev = new Event('dragstart', { bubbles: true, cancelable: true });
+    // @ts-ignore test shim — jsdom has no DataTransfer
+    ev.dataTransfer = { setData: vi.fn(), effectAllowed: '' };
+    ev.__convId = convId;
+    return ev;
+  }
+
+  /** @param {string} [convId] */
+  function dropEvent(convId) {
+    const ev = new Event('drop', { bubbles: true, cancelable: true });
+    // @ts-ignore test shim — jsdom has no DataTransfer
+    ev.dataTransfer = { getData: () => convId || '', dropEffect: '' };
+    return ev;
+  }
+
+  function folderRow(path) {
+    return [...sidebar.querySelectorAll('.wiki-folder-item')].find((el) => el.title === path);
+  }
+
+  it('drags a root row onto a folder row and moves the session there', async () => {
+    const { sidebar: el, store } = await mountMove();
+    const rootRow = el.querySelector('.conv-session .conv-item');
+    expect(rootRow.getAttribute('draggable')).toBe('true');
+
+    rootRow.dispatchEvent(dragStartEvent('web-alice-r1'));
+    const target = folderRow('Work');
+    expect(target).toBeTruthy();
+    target.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
+    await el.updateComplete;
+    // Visible drop highlight while hovered.
+    expect(target.classList.contains('drop-target')).toBe(true);
+
+    target.dispatchEvent(dropEvent('web-alice-r1'));
+    await flush();
+    expect(store.moveConversation).toHaveBeenCalledWith('web-alice-r1', 'Work');
+  });
+
+  it('drops on the Chats breadcrumb to move back to the top level', async () => {
+    const { sidebar: el, store } = await mountMove({ currentFolder: 'Work' });
+    folderRow('Work').click();
+    await flush();
+    const rootRow = el.querySelector('.conv-session .conv-item');
+    rootRow.dispatchEvent(dragStartEvent('web-alice-r1'));
+    const chats = [...el.querySelectorAll('.vault-breadcrumb-segment')].find((b) => b.textContent.trim() === 'Chats');
+    expect(chats).toBeTruthy();
+    chats.dispatchEvent(dropEvent('web-alice-r1'));
+    await flush();
+    expect(store.moveConversation).toHaveBeenCalledWith('web-alice-r1', '');
+  });
+
+  it('highlighting an ancestor breadcrumb segment tracks the drag', async () => {
+    const { sidebar: el } = await mountMove({
+      currentFolder: 'Work/Plans',
+      folders: [{ name: 'Plans', path: 'Work/Plans' }],
+    });
+    folderRow('Work/Plans').click();
+    await flush();
+    el.querySelector('.conv-session .conv-item').dispatchEvent(dragStartEvent('web-alice-r1'));
+    const work = [...el.querySelectorAll('.vault-breadcrumb-segment')].find((b) => b.textContent.trim() === 'Work');
+    work.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
+    await el.updateComplete;
+    expect(work.classList.contains('drop-target')).toBe(true);
+  });
+
+  it('ignores drops on virtual folders', async () => {
+    const { sidebar: el, store } = await mountMove();
+    folderRow('_archived').dispatchEvent(dropEvent('web-alice-r1'));
+    await flush();
+    expect(store.moveConversation).not.toHaveBeenCalled();
+  });
+
+  it('does not drag from a subagent child row', async () => {
+    const { sidebar: el, store } = await mountMove();
+    const childRow = el.querySelector('.conv-subagent');
+    expect(childRow.getAttribute('draggable')).toBeNull();
+    childRow.dispatchEvent(new Event('dragstart', { bubbles: true, cancelable: true }));
+    folderRow('Work').dispatchEvent(dropEvent('web-alice-r1--child-abcdef12'));
+    await flush();
+    expect(store.moveConversation).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when dropping into the folder the session already occupies', async () => {
+    const { sidebar: el, store } = await mountMove({
+      currentFolder: 'Work',
+      folders: [{ name: 'Work', path: 'Work' }],
+    });
+    el.querySelector('.conv-session .conv-item').dispatchEvent(dragStartEvent('web-alice-r1'));
+    folderRow('Work').dispatchEvent(dropEvent('web-alice-r1'));
+    await flush();
+    expect(store.moveConversation).not.toHaveBeenCalled();
+  });
+
+  it('opens the picker with Top level and every full folder path, excluding virtual folders', async () => {
+    const { sidebar: el, store } = await mountMove({
+      listAllFolders: vi.fn(async () => ['Work', 'Work/Plans', 'a/b']),
+    });
+    el.querySelector('.conv-move-btn').click();
+    await flush();
+    const options = [...el.querySelectorAll('.conv-move-option')].map((o) => o.textContent.trim());
+    expect(options[0]).toBe('Top level (current)');
+    expect(options).toContain('Work');
+    expect(options).toContain('Work/Plans');
+    expect(options).toContain('a/b');
+    expect(options.some((t) => t.includes('_archived') || t.includes('_system'))).toBe(false);
+
+    const nested = [...el.querySelectorAll('.conv-move-option')].find((o) => o.textContent.trim() === 'a/b');
+    nested.click();
+    await flush();
+    expect(store.moveConversation).toHaveBeenCalledWith('web-alice-r1', 'a/b');
+    expect(el.querySelector('.conv-move-picker')).toBeFalsy();
+  });
+
+  it('marks the current folder disabled and focuses the first option', async () => {
+    const { sidebar: el } = await mountMove({ currentFolder: 'Work' });
+    el.querySelector('.conv-move-btn').click();
+    await flush();
+    const work = [...el.querySelectorAll('.conv-move-option')].find((o) => o.textContent.includes('Work'));
+    expect(work.disabled).toBe(true);
+    expect(work.textContent).toContain('(current)');
+    expect(document.activeElement).toBe(el.querySelector('.conv-move-option:not([disabled])'));
+  });
+
+  it('closes with Escape and returns focus to the move action', async () => {
+    const { sidebar: el } = await mountMove();
+    const trigger = el.querySelector('.conv-move-btn');
+    trigger.click();
+    await flush();
+    expect(el.querySelector('.conv-move-picker')).toBeTruthy();
+
+    el.querySelector('.conv-move-picker').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    await flush();
+    expect(el.querySelector('.conv-move-picker')).toBeFalsy();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('shows a toast when the move fails', async () => {
+    const { sidebar: el, store } = await mountMove({ moveConversation: vi.fn(async () => false) });
+    el.querySelector('.conv-session .conv-item').dispatchEvent(dragStartEvent('web-alice-r1'));
+    folderRow('Work').dispatchEvent(dropEvent('web-alice-r1'));
+    await flush();
+    expect(store.moveConversation).toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith('Failed to move conversation');
   });
 });
