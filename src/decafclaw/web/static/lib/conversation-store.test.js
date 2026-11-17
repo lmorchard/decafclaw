@@ -338,6 +338,10 @@ describe('conversation creation transport', () => {
     const change = vi.fn();
     store.addEventListener('change', change);
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(metadata), { status: 201 }));
+    fetchMock.mockResolvedValueOnce(new Response(
+      JSON.stringify({ folder: '', sessions: [] }),
+      { headers: { 'Content-Type': 'application/json' } },
+    ));
     await store.createConversation(metadata.title, optional ? 'chosen' : '', optional ? 'Work/日本語 & + #' : '');
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe('/api/conversations');
@@ -352,8 +356,21 @@ describe('conversation creation transport', () => {
     // Selection retains the established reset; conv_selected later supplies the model.
     expect(store.activeModel).toBe('');
     expect(ws.sent.map(m => m.type)).toEqual([MESSAGE_TYPES.SELECT_CONV, MESSAGE_TYPES.LOAD_HISTORY, MESSAGE_TYPES.LIST_COMMANDS]);
-    expect(change).toHaveBeenCalledTimes(1);
+    // selectConversation + the #1443 hierarchy refresh.
+    expect(change).toHaveBeenCalledTimes(2);
     expect(log).not.toHaveBeenCalled();
+  });
+
+  it('defaults to the current folder and active model (⌘K parity with + Chat)', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ folder: 'Work', folders: [], conversations: [] })));
+    await store.listConversations('Work');
+    store.setModel('chosen');
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(metadata), { status: 201 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ folder: 'Work', sessions: [] }), { headers: { 'Content-Type': 'application/json' } }));
+    await store.createConversation();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ title: '', model: 'chosen', folder: 'Work' });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/sessions?folder=Work');
   });
 
   it('flushes queued text and uploads attachments after selection, exactly once', async () => {
@@ -364,8 +381,17 @@ describe('conversation creation transport', () => {
       const original = ws.send.bind(ws);
       ws.send = message => { original(message); if (message.type === MESSAGE_TYPES.SEND) resolve(message); };
     });
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(metadata), { status: 201 }));
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(uploaded), { status: 201 }));
+    fetchMock.mockImplementation(async (url) => {
+      const u = String(url);
+      if (u === '/api/upload/created') return new Response(JSON.stringify(uploaded), { status: 201 });
+      if (u.startsWith('/api/sessions')) {
+        return new Response(
+          JSON.stringify({ folder: '', sessions: [] }),
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify(metadata), { status: 201 });
+    });
     store.sendMessage('queued text', [{ file }]);
     expect(await sent).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'created', text: 'queued text', attachments: [uploaded] });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ title: '', model: 'chosen' });
@@ -374,10 +400,10 @@ describe('conversation creation transport', () => {
     expect(fetchMock.mock.calls[1][1].credentials).toBe('same-origin');
     expect(fetchMock.mock.calls[1][1].body.get('file').name).toBe('note.txt');
     expect(store.currentMessages[0]).toMatchObject({ content: 'queued text', attachments: [uploaded] });
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ...metadata, conv_id: 'second' }), { status: 201 }));
     await store.createConversation();
     expect(ws.sent.filter(m => m.type === MESSAGE_TYPES.SEND)).toHaveLength(1);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // POST, upload, hierarchy refresh, second POST, second hierarchy refresh.
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it.each(['http', 'network', 'json'])('preserves state on %s failure', async failure => {
@@ -1111,6 +1137,9 @@ describe('session hierarchy follows conversation mutations (#1274)', () => {
       let body;
       if (u.startsWith('/api/sessions')) {
         body = sessionBody;
+      } else if (u === '/api/conversations') {
+        // create — a fresh conversation; creation must also refresh sessions.
+        body = { conv_id: 'web-alice-new', title: 'New conversation', created_at: 't3', updated_at: 't3' };
       } else if (u.startsWith('/api/conversations/')) {
         // rename/move/delete/archive/unarchive — a conv-shaped ack.
         body = { conv_id: 'web-alice-r1', title: 'Renamed', created_at: 't0', updated_at: 't2' };
@@ -1161,6 +1190,14 @@ describe('session hierarchy follows conversation mutations (#1274)', () => {
     await store.listSessions();
     expect(sessionsCalls()).toBe(1);
     await store.moveConversation('web-alice-r1', 'Work');
+    expect(sessionsCalls()).toBe(2);
+  });
+
+  it('refreshes the session hierarchy after creating a conversation', async () => {
+    await store.listSessions();
+    expect(sessionsCalls()).toBe(1);
+    await store.createConversation();
+    expect(store.conversations.some((c) => c.conv_id === 'web-alice-new')).toBe(true);
     expect(sessionsCalls()).toBe(2);
   });
 
@@ -1359,5 +1396,67 @@ describe('stream state on return (#1439)', () => {
     ws.fireMessage({ type: MESSAGE_TYPES.TURN_COMPLETE, conv_id: 'c1', reason: 'completed' });
     expect(store.streamingText).toBe('');
     expect(store.streamingThinking).toBe('');
+  });
+});
+
+// A listing response can arrive after a newer one: folder clicks, a mutation
+// refresh, and a reconnect each start their own request. Only the last
+// requested listing may change state or `#currentFolder`. Otherwise the
+// sidebar renders the wrong folder and later mutations refresh that folder.
+describe('listing response ordering', () => {
+  let store;
+  /** @type {import('vitest').Mock} */
+  let fetchMock;
+
+  beforeEach(() => {
+    store = makeStore(new FakeWS());
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const defer = () => {
+    /** @type {(response: Response) => void} */
+    let resolve = () => {};
+    const promise = new Promise((r) => { resolve = /** @type {any} */ (r); });
+    return { promise, resolve };
+  };
+  const json = (body) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+
+  it('keeps the newer conversation listing and folder when an older response resolves last', async () => {
+    const older = defer();
+    const newer = defer();
+    fetchMock.mockImplementationOnce(() => older.promise).mockImplementationOnce(() => newer.promise);
+    const first = store.listConversations('First');
+    const second = store.listConversations('Second');
+    newer.resolve(json({
+      folder: 'Second', folders: [], conversations: [{ conv_id: 'b', title: 'B' }],
+    }));
+    await second;
+    older.resolve(json({
+      folder: 'First', folders: [], conversations: [{ conv_id: 'a', title: 'A' }],
+    }));
+    await first;
+    expect(store.currentFolder).toBe('Second');
+    expect(store.conversations.map((c) => c.conv_id)).toEqual(['b']);
+  });
+
+  it('keeps the newer session listing when an older response resolves last', async () => {
+    const older = defer();
+    const newer = defer();
+    fetchMock.mockImplementationOnce(() => older.promise).mockImplementationOnce(() => newer.promise);
+    const first = store.listSessions('First');
+    const second = store.listSessions('Second');
+    newer.resolve(json({
+      folder: 'Second',
+      sessions: [{ session_id: 'b', conversations: [{ conv_id: 'b' }] }],
+    }));
+    await second;
+    older.resolve(json({
+      folder: 'First',
+      sessions: [{ session_id: 'a', conversations: [{ conv_id: 'a' }] }],
+    }));
+    await first;
+    expect(store.sessions.map((s) => s.session_id)).toEqual(['b']);
   });
 });

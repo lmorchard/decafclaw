@@ -148,12 +148,17 @@ entries — and are attributed to the owner of their root conversation, so a
 session's folder is its root's assignment and archiving a root hides its
 whole session. The frontend renders from `GET /api/sessions`
 (server-grouped; refreshes on socket connect, folder navigation, turn
-completion, and conversation mutations that affect the active hierarchy —
-archive / rename / unarchive / move; delete needs none, since a deleted
-conversation was already out of the hierarchy when archived — plus a debounced
-refresh on background `conv_renamed` events, #1274) and falls back to
-client-side grouping of the flat conversation list when the endpoint is
-unavailable.
+completion, conversation creation, and conversation mutations that affect
+the active hierarchy — archive / rename / unarchive / move; delete needs
+none, since a deleted conversation was already out of the hierarchy when
+archived — plus a debounced refresh on background `conv_renamed` events,
+#1274, #1443) and falls back to client-side grouping of the flat
+conversation list when the endpoint is unavailable. The sidebar's "+ Chat"
+button and ⌘K both create in the current folder with the active model; a
+successful create refreshes the hierarchy so the selected row appears
+without a reload (#1443). Listing responses apply in request order: a
+superseded `GET /api/conversations` or `GET /api/sessions` response cannot
+overwrite a newer one or move the store to its folder (#1443).
 
 Child transcripts are **read-only**: only the parent conversation can be
 prompted. Selecting a subagent row opens the transcript with a disabled chat
