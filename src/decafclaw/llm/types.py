@@ -11,6 +11,9 @@ PROVIDER_OPENAI_COMPAT = "openai-compat"
 PROVIDER_OPENAI = "openai"
 PROVIDER_OPENAI_RESPONSES = "openai-responses"
 PROVIDER_VERTEX = "vertex"
+# Built-in in-process provider: local ONNX embeddings, registered without a
+# config.providers entry (see registry.init_providers).
+PROVIDER_FASTEMBED = "fastembed"
 # Legacy alias
 PROVIDER_LITELLM = "litellm"
 # Test-only: replayed in-memory provider (decafclaw.testing.ScriptedProvider).

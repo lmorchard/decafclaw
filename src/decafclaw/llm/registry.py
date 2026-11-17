@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from .types import (
+    PROVIDER_FASTEMBED,
     PROVIDER_LITELLM,
     PROVIDER_OPENAI,
     PROVIDER_OPENAI_COMPAT,
@@ -54,12 +55,17 @@ def init_providers(config: Any) -> None:
     Each entry maps a name to a ProviderConfig with a 'type' field
     that determines which provider class to instantiate.
     """
+    from .providers.fastembed import FastembedProvider
     from .providers.openai import OpenAIProvider
     from .providers.openai_compat import OpenAICompatProvider
     from .providers.openai_responses import OpenAIResponsesProvider
     from .providers.vertex import VertexProvider
 
     clear_providers()
+
+    # Built-in local embedding provider. Always available, no config entry
+    # needed; the fastembed package is imported lazily on first use.
+    register_provider(PROVIDER_FASTEMBED, FastembedProvider())
 
     for name, pc in config.providers.items():
         provider_type = pc.type

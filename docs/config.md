@@ -223,7 +223,7 @@ Controls auto-retrieval injection at turn start. See [context-composer.md#memory
 
 ### `embedding`
 
-Semantic search embedding settings. Empty `url`/`api_key` fall back to `llm` group via `config.embedding.resolved(config)`.
+Semantic search embedding settings. Empty `url`/`api_key` fall back to `llm` group via `config.embedding.resolved(config)`. `provider = "fastembed"` selects the built-in in-process ONNX provider (local, zero-egress); its vector dimension is derived from fastembed's model metadata, and any other provider uses `dimensions`.
 
 | Field | Type | Default | Env Var | Secret |
 |-------|------|---------|---------|--------|
@@ -233,6 +233,8 @@ Semantic search embedding settings. Empty `url`/`api_key` fall back to `llm` gro
 | `api_key` | str | (from llm) | `EMBEDDING_API_KEY` | yes |
 | `search_strategy` | str | `substring` | `MEMORY_SEARCH_STRATEGY` | |
 | `dimensions` | int | `768` | `EMBEDDING_DIMENSIONS` | |
+
+With `provider = "fastembed"` the effective dimension comes from fastembed's model metadata (for example 384 for `BAAI/bge-small-en-v1.5`); `dimensions` is only a fallback when the model is unknown.
 
 ### `reflection`
 

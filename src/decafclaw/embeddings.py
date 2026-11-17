@@ -2,13 +2,17 @@
 
 import hashlib
 import logging
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 import httpx
 import sqlite_vec
+
+from .llm.types import PROVIDER_FASTEMBED
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +25,88 @@ _SOURCE_BOOSTS = {
     "journal": 1.0,
     "memory": 1.0,  # legacy compat
 }
+
+
+@lru_cache(maxsize=None)
+def _fastembed_model_dimensions(model: str) -> int | None:
+    """Vector size declared by fastembed's model metadata, or ``None``.
+
+    Uses fastembed's static model list, so no weights are downloaded. Results
+    are cached: the catalogue does not change at runtime.
+    """
+    try:
+        from fastembed import TextEmbedding
+    except ImportError:
+        return None
+    try:
+        for entry in TextEmbedding.list_supported_models():
+            if entry.get("model") == model:
+                dim = entry.get("dim")
+                return int(dim) if dim else None
+    except Exception as exc:  # pragma: no cover - defensive against library churn
+        log.warning("Could not read fastembed model metadata: %s", exc)
+    return None
+
+
+def _effective_dimensions(config) -> int:
+    """Vector size the configured embedding model produces.
+
+    fastembed models carry their own ``dim`` and ignore the generic
+    ``embedding.dimensions`` setting. Other providers keep using it.
+    """
+    ec = config.embedding
+    if ec.provider == PROVIDER_FASTEMBED:
+        dim = _fastembed_model_dimensions(ec.model)
+        if dim:
+            return dim
+        log.warning(
+            "fastembed model '%s' has no declared dimension; falling back to "
+            "embedding.dimensions=%d. Set EMBEDDING_DIMENSIONS to match the model.",
+            ec.model,
+            ec.dimensions,
+        )
+    return ec.dimensions
+
+
+def _vec_table_dimensions(conn) -> int | None:
+    """Dimension of the existing ``embeddings_vec`` table, parsed from its DDL."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'embeddings_vec'").fetchone()
+    if not row or not row[0]:
+        return None
+    match = re.search(r"float\[(\d+)\]", row[0])
+    return int(match.group(1)) if match else None
+
+
+def _stored_dimensions(conn) -> int | None:
+    """Dimension recorded in the metadata table, if present."""
+    row = conn.execute("SELECT value FROM metadata WHERE key='embedding_dimensions'").fetchone()
+    try:
+        return int(row[0]) if row else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _dimension_mismatch_message(index_dim, model_dim) -> str:
+    return (
+        f"Embedding dimensions mismatch: the index holds {index_dim}-dimensional vectors "
+        f"but the configured model produces {model_dim}. Run `make reindex` "
+        f"(or `decafclaw-reindex` on a bare install) to rebuild the index."
+    )
+
+
+def _index_mismatch(conn, vector_dim: int) -> bool:
+    """True when ``vector_dim`` cannot be stored/searched in this index."""
+    index_dim = _vec_table_dimensions(conn) or _stored_dimensions(conn)
+    if index_dim is not None and index_dim != vector_dim:
+        log.warning(_dimension_mismatch_message(index_dim, vector_dim))
+        return True
+    return False
+
+
+def _index_incompatible(config) -> bool:
+    """True when the current model's vectors cannot go into the existing index."""
+    with _open_db(config) as conn:
+        return _index_mismatch(conn, _effective_dimensions(config))
 
 
 def _db_path(config) -> Path:
@@ -63,7 +149,7 @@ def _init_schema(conn, config):
         # parity with other except-paths so a genuine schema problem is
         # observable instead of swallowed.
         log.debug("embeddings: source_type migration skipped (already applied?): %s", exc)
-    dim = config.embedding.dimensions
+    dim = _effective_dimensions(config)
     conn.execute(f"""
         CREATE VIRTUAL TABLE IF NOT EXISTS embeddings_vec USING vec0(
             embedding float[{dim}] distance_metric=cosine
@@ -123,6 +209,41 @@ def _entry_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+def _resolve_embedding_provider(config):
+    """Return ``(provider_name, provider_or_None)`` for the embedding config.
+
+    An empty ``embedding.provider`` falls back to the effective default
+    model's provider, matching the pre-fastembed behavior.
+
+    The built-in fastembed provider needs no config entry, so it is registered
+    lazily here when app startup (``init_providers``) has not run. The reindex
+    and search CLIs never start the app, and they must still embed locally.
+    """
+    from .llm import get_provider, register_provider
+    from .model_catalog import effective_default_model
+
+    provider_name = config.embedding.provider
+    if not provider_name:
+        default_name = effective_default_model(config)
+        if default_name and default_name in config.model_configs:
+            provider_name = config.model_configs[default_name].provider
+    if not provider_name:
+        return "", None
+    try:
+        return provider_name, get_provider(provider_name)
+    except KeyError:
+        if provider_name != PROVIDER_FASTEMBED:
+            return provider_name, None
+
+    from .llm.providers.fastembed import FastembedProvider
+
+    register_provider(PROVIDER_FASTEMBED, FastembedProvider())
+    try:
+        return provider_name, get_provider(provider_name)
+    except KeyError:  # pragma: no cover - registration cannot fail
+        return provider_name, None
+
+
 async def embed_text(config, text: str, max_retries: int = 3) -> list[float] | None:
     """Call the embedding API and return the vector.
 
@@ -131,23 +252,22 @@ async def embed_text(config, text: str, max_retries: int = 3) -> list[float] | N
     """
     ec = config.embedding
 
-    # Provider path: explicit provider > effective default model's provider > legacy
-    from .model_catalog import effective_default_model
+    provider_name, provider = _resolve_embedding_provider(config)
+    if provider is not None:
+        return await provider.embed(ec.model, text)
 
-    provider_name = ec.provider
-    if not provider_name:
-        default_name = effective_default_model(config)
-        if default_name and default_name in config.model_configs:
-            provider_name = config.model_configs[default_name].provider
-
-    if provider_name and provider_name in config.providers:
-        from .llm import get_provider
-
-        try:
-            provider = get_provider(provider_name)
-            return await provider.embed(ec.model, text)
-        except KeyError:
-            log.warning("Embedding provider '%s' not in registry, falling back to legacy", provider_name)
+    if provider_name == PROVIDER_FASTEMBED:
+        # Local-only configuration: silently rerouting to the remote endpoint
+        # would restore the cloud egress this provider exists to remove.
+        log.error(
+            "Embedding provider 'fastembed' is unavailable for model '%s'. Check that the "
+            "fastembed package is installed and the model can load. Refusing to fall back "
+            "to the remote embedding endpoint; returning no embedding.",
+            ec.model,
+        )
+        return None
+    if provider_name:
+        log.warning("Embedding provider '%s' not in registry, falling back to legacy", provider_name)
 
     # Legacy path: direct httpx to resolved URL
     import asyncio as _asyncio
@@ -184,20 +304,49 @@ async def embed_text(config, text: str, max_retries: int = 3) -> list[float] | N
     return None
 
 
+async def embed_texts(config, texts: list[str], concurrency: int = 4) -> list[list[float] | None]:
+    """Embed several texts, preferring a provider batch method.
+
+    fastembed embeds a whole chunk in one ONNX pass. Other providers keep the
+    per-text path, gathered with the same concurrency as reindex. A failed
+    batch yields ``None`` entries so callers skip those rows instead of
+    aborting the whole run.
+    """
+    texts = list(texts)
+    if not texts:
+        return []
+
+    _, provider = _resolve_embedding_provider(config)
+    embed_batch = getattr(provider, "embed_batch", None) if provider is not None else None
+    if embed_batch is not None:
+        vectors = await embed_batch(config.embedding.model, texts)
+        if vectors is None or len(vectors) != len(texts):
+            log.warning("Batch embedding returned no usable vectors for %d text(s); skipping them", len(texts))
+            return [None] * len(texts)
+        return vectors
+
+    import asyncio as _asyncio
+
+    sem = _asyncio.Semaphore(concurrency)
+
+    async def _one(text: str):
+        async with sem:
+            return await embed_text(config, text)
+
+    return await _asyncio.gather(*(_one(text) for text in texts))
+
+
 def _check_model(config, conn):
-    """Verify the DB was built with the same embedding model/dimensions. Warns on mismatch."""
+    """Warn when the DB was built with a different embedding model.
+
+    Dimension mismatches are reported once by ``_index_mismatch`` at the point
+    of use, so they are not duplicated here.
+    """
     row = conn.execute("SELECT value FROM metadata WHERE key='embedding_model'").fetchone()
     if row and row[0] != config.embedding.model:
         log.warning(
             f"Embedding model mismatch: DB was built with '{row[0]}', "
             f"config uses '{config.embedding.model}'. "
-            f"Run 'decafclaw-reindex' to rebuild."
-        )
-    row = conn.execute("SELECT value FROM metadata WHERE key='embedding_dimensions'").fetchone()
-    if row and int(row[0]) != config.embedding.dimensions:
-        log.warning(
-            f"Embedding dimensions mismatch: DB was built with {row[0]}, "
-            f"config uses {config.embedding.dimensions}. "
             f"Run 'decafclaw-reindex' to rebuild."
         )
 
@@ -210,13 +359,22 @@ def _set_model(config, conn):
     )
     conn.execute(
         "INSERT OR REPLACE INTO metadata (key, value) VALUES ('embedding_dimensions', ?)",
-        (str(config.embedding.dimensions),),
+        (str(_effective_dimensions(config)),),
     )
 
 
-def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[float], source_type: str = "memory"):
-    """Store an entry and its embedding in the index (sync)."""
+def index_entry_sync(
+    config, file_path: str, entry_text: str, embedding: list[float], source_type: str = "memory"
+) -> bool:
+    """Store an entry and its embedding in the index (sync).
+
+    Returns ``False`` without inserting when the vector cannot live in this
+    index (dimension changed without a rebuild), so a partial reindex cannot
+    mix incompatible rows.
+    """
     with _open_db(config) as conn:
+        if _index_mismatch(conn, len(embedding)):
+            return False
         _set_model(config, conn)
         entry_hash = _entry_hash(entry_text)
         now = datetime.now().isoformat()
@@ -242,6 +400,7 @@ def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[fl
                 (cursor.lastrowid, sqlite_vec.serialize_float32(embedding)),
             )
         conn.commit()
+        return True
 
 
 def delete_entries(config, file_path: str, source_type: str | None = None) -> int:
@@ -311,6 +470,10 @@ def search_similar_sync(
     """
     with _open_db(config) as conn:
         _check_model(config, conn)
+        if _index_mismatch(conn, len(query_embedding)):
+            # vec0 would raise on the MATCH; return no results instead of
+            # fabricating an empty-but-successful search or crashing.
+            return []
 
         query_vec = sqlite_vec.serialize_float32(query_embedding)
 
@@ -392,7 +555,8 @@ async def search_similar(config, query: str, top_k: int = 5, source_type: str | 
 async def _reindex_entries(entries, label, config, concurrency: int = 4):
     """Reindex a sequence of (source_id, text, source_type, metadata) tuples.
 
-    Embeds up to `concurrency` entries in parallel for throughput.
+    Providers with a batch method (fastembed) embed 32 entries per ONNX pass;
+    all others embed one entry per task with `concurrency` in flight.
     """
     import asyncio
 
@@ -402,6 +566,20 @@ async def _reindex_entries(entries, label, config, concurrency: int = 4):
     if total == 0:
         print(f"  {label}: 0 entries")
         return 0
+
+    _, provider = _resolve_embedding_provider(config)
+    if getattr(provider, "embed_batch", None) is not None:
+        chunk_size = 32
+        for start in range(0, total, chunk_size):
+            chunk = all_entries[start : start + chunk_size]
+            texts = [text for _src_id, text, _st, _meta in chunk]
+            vectors = await embed_texts(config, texts, concurrency=concurrency)
+            for (source_id, text, source_type, _meta), vector in zip(chunk, vectors):
+                if vector:
+                    index_entry_sync(config, source_id, text, vector, source_type=source_type)
+            done = min(start + chunk_size, total)
+            print(f"  {label}: {done}/{total}")
+        return total
 
     sem = asyncio.Semaphore(concurrency)
     done = 0
@@ -495,6 +673,10 @@ async def reindex_journal(config, concurrency: int = 4):
         log.info("No journal directory found, nothing to index")
         return 0
 
+    if _index_incompatible(config):
+        log.error("Skipping journal reindex: the existing index has incompatible dimensions (see warning above).")
+        return 0
+
     # Clear existing journal entries
     deleted = delete_by_source_type(config, "journal")
     if deleted:
@@ -510,6 +692,10 @@ async def reindex_vault(config, concurrency: int = 4):
     vault = config.vault_root
     if not vault.is_dir():
         log.info("No vault directory found, nothing to index")
+        return 0
+
+    if _index_incompatible(config):
+        log.error("Skipping vault reindex: the existing index has incompatible dimensions (see warning above).")
         return 0
 
     # Clear existing page and user entries

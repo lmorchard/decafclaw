@@ -32,6 +32,7 @@ dependencies = [
     "opentelemetry-api>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-exporter-otlp>=1.44.0",
+    "fastembed>=0.9.1",
 ]
 
 [project.optional-dependencies]
