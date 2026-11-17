@@ -131,6 +131,7 @@ async def test_dynamic_extension_disable(ctx, config, monkeypatch):
     all registered hooks SHALL be unsubscribed from EventBus,
     and subsequent turns SHALL run without invoking the detached hooks.
     """
+
     async def mock_call_llm(ctx, config, messages, tools, **kwargs):
         return {"content": "Response", "usage": {}}
 

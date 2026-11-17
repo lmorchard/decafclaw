@@ -16,10 +16,10 @@ log = logging.getLogger(__name__)
 class TurnLifecycle(Enum):
     """Lifecycle phases for context interception and extension hooks."""
 
-    PRE_COMPOSE = auto()       # async collector
-    BEFORE_LLM_CALL = auto()   # sync interceptor
-    ON_TURN_SETTLE = auto()    # async observer
-    PRE_COMPACTION = auto()    # async collector / observer
+    PRE_COMPOSE = auto()  # async collector
+    BEFORE_LLM_CALL = auto()  # sync interceptor
+    ON_TURN_SETTLE = auto()  # async observer
+    PRE_COMPACTION = auto()  # async collector / observer
 
 
 class EventBus:

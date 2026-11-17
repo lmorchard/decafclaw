@@ -40,7 +40,11 @@ def parse_timestamp(ts_raw: Any) -> datetime:
 def extract_session_records(session_dir: Path) -> list[dict[str, Any]]:
     """Scan session directory for *.jsonl files and extract timestamped records."""
     records: list[dict[str, Any]] = []
-    jsonl_files = list(session_dir.rglob("*.jsonl")) if session_dir.is_dir() else ([session_dir] if session_dir.suffix == ".jsonl" else [])
+    jsonl_files = (
+        list(session_dir.rglob("*.jsonl"))
+        if session_dir.is_dir()
+        else ([session_dir] if session_dir.suffix == ".jsonl" else [])
+    )
 
     for file_path in jsonl_files:
         try:
@@ -61,13 +65,15 @@ def extract_session_records(session_dir: Path) -> list[dict[str, Any]]:
                     else:
                         dt = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
 
-                    records.append({
-                        "source": str(file_path),
-                        "line": line_num,
-                        "timestamp": dt,
-                        "type": "session_message",
-                        "data": data,
-                    })
+                    records.append(
+                        {
+                            "source": str(file_path),
+                            "line": line_num,
+                            "timestamp": dt,
+                            "type": "session_message",
+                            "data": data,
+                        }
+                    )
         except Exception as e:
             log.warning("Failed to read %s: %s", file_path, e)
 
@@ -91,12 +97,14 @@ def extract_journal_records(journal_dir: Path) -> list[dict[str, Any]]:
                 name_match = re.search(r"(\d{4}-\d{2}-\d{2})", md_file.stem)
                 if name_match:
                     dt = parse_timestamp(name_match.group(1))
-                    records.append({
-                        "source": str(md_file),
-                        "timestamp": dt,
-                        "type": "journal_entry",
-                        "data": {"content": content.strip()},
-                    })
+                    records.append(
+                        {
+                            "source": str(md_file),
+                            "timestamp": dt,
+                            "type": "journal_entry",
+                            "data": {"content": content.strip()},
+                        }
+                    )
                 continue
 
             for i, match in enumerate(matches):
@@ -105,12 +113,14 @@ def extract_journal_records(journal_dir: Path) -> list[dict[str, Any]]:
                 start_pos = match.end()
                 end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(content)
                 entry_text = content[start_pos:end_pos].strip()
-                records.append({
-                    "source": str(md_file),
-                    "timestamp": dt,
-                    "type": "journal_entry",
-                    "data": {"content": entry_text},
-                })
+                records.append(
+                    {
+                        "source": str(md_file),
+                        "timestamp": dt,
+                        "type": "journal_entry",
+                        "data": {"content": entry_text},
+                    }
+                )
         except Exception as e:
             log.warning("Failed to read journal %s: %s", md_file, e)
 
@@ -188,8 +198,12 @@ def backfill(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Chronologically backfill session and journal memory.")
     parser.add_argument("--dir", dest="session_dir", type=Path, help="Directory containing session archives (.jsonl)")
-    parser.add_argument("--journals-dir", dest="journal_dir", type=Path, help="Directory containing journal notes (.md)")
-    parser.add_argument("--dry-run", action="store_true", help="Parse and verify chronological ordering without ingesting")
+    parser.add_argument(
+        "--journals-dir", dest="journal_dir", type=Path, help="Directory containing journal notes (.md)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Parse and verify chronological ordering without ingesting"
+    )
     parser.add_argument("--config", dest="config_path", type=Path, help="Optional path to config.json")
 
     args = parser.parse_args()

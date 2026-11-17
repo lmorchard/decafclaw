@@ -101,4 +101,3 @@ def init_extensions(config: Any, bus: EventBus) -> ExtensionManager:
         manager.register("mem0", ext)
         manager.enable("mem0")
     return manager
-

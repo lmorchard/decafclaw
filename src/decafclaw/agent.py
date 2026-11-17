@@ -795,7 +795,7 @@ class TurnRunner:
 
     def _dispatch_turn_settle(self) -> None:
         """Dispatch ON_TURN_SETTLE event with the turn's transcript slice to registered async listeners as unawaited background tasks."""
-        transcript_slice = list(self.history[self.turn_initial_history_len:])
+        transcript_slice = list(self.history[self.turn_initial_history_len :])
         hooks = self.ctx.get_interceptors(TurnLifecycle.ON_TURN_SETTLE)
         if not hooks:
             return
