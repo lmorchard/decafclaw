@@ -27,6 +27,7 @@ from decafclaw.skills.vault.tools import (
 
 from .archive import LLM_ROLES
 from .attachments import resolve_attachments
+from .config_types import RetrievalMode
 from .conversation_paths import sidecar_path
 from .image_budget import apply_image_budget
 from .memory_context import (
@@ -990,8 +991,8 @@ class ContextComposer:
         by score order within the token budget.
         Fail-open: exceptions log a warning and return empty results.
 
-        Mode-aware (#301): ``config.vault_retrieval.mode`` controls
-        what gets injected:
+        Mode-aware (#301): ``config.vault_retrieval.mode`` (a
+        ``RetrievalMode`` enum) controls what gets injected:
           - ``always``    full-body candidates (default, back-compat).
           - ``headlines`` compact title/summary/score lines only;
                           agent calls ``vault_read`` for full bodies.
@@ -1009,13 +1010,13 @@ class ContextComposer:
         # short-circuit before any retrieval work runs.
         retrieval_mode = self._resolve_retrieval_mode(config)
 
-        if retrieval_mode == "on_demand":
+        if retrieval_mode == RetrievalMode.ON_DEMAND:
             entry = SourceEntry(
                 source="memory",
                 tokens_estimated=0,
                 items_included=0,
                 items_truncated=0,
-                details={"mode": "on_demand", "injection_skipped": True},
+                details={"mode": retrieval_mode, "injection_skipped": True},
             )
             return [], "", [], entry
 
@@ -1125,7 +1126,7 @@ class ContextComposer:
             # Format per mode. In headlines mode the message is much
             # smaller — the model gets a directory of available pages
             # and pulls full bodies via vault_read on demand.
-            if retrieval_mode == "headlines":
+            if retrieval_mode == RetrievalMode.HEADLINES:
                 formatted = format_memory_headlines(
                     results,
                     max_summary_chars=config.vault_retrieval.headline_summary_max_chars,
@@ -1275,17 +1276,18 @@ class ContextComposer:
         return [msg], entry
 
     @staticmethod
-    def _resolve_retrieval_mode(config) -> str:
+    def _resolve_retrieval_mode(config) -> RetrievalMode:
         """Validate ``vault_retrieval.mode``; unknown values fall back
-        to ``always`` with a single warning per process. See #301."""
-        raw = getattr(config.vault_retrieval, "mode", "always") or "always"
-        if raw in ("always", "headlines", "on_demand"):
-            return raw
-        log.warning(
-            "Unknown vault_retrieval.mode %r; falling back to 'always'",
-            raw,
-        )
-        return "always"
+        to ``always`` with a warning. See #301."""
+        raw = getattr(config.vault_retrieval, "mode", None) or RetrievalMode.ALWAYS
+        try:
+            return RetrievalMode(raw)
+        except ValueError:
+            log.warning(
+                "Unknown vault_retrieval.mode %r; falling back to 'always'",
+                raw,
+            )
+            return RetrievalMode.ALWAYS
 
     @staticmethod
     async def _publish_retrieval_telemetry(

@@ -400,7 +400,7 @@ When composing the tool loadout (`_compose_tools`), `ContextComposer` resolves t
 
 ## Memory retrieval modes (#301)
 
-By default, every interactive turn auto-injects scored full-body candidates from the vault into a `vault_retrieval` message. That's costly for short turns where the user message doesn't need memory. The `vault_retrieval.mode` config controls the trade-off:
+By default, every interactive turn auto-injects scored full-body candidates from the vault into a `vault_retrieval` message. That's costly for short turns where the user message doesn't need memory. The `vault_retrieval.mode` config (a `RetrievalMode` enum in `config_types.py`) controls the trade-off:
 
 | Mode | What's injected | When to use |
 |---|---|---|
@@ -414,7 +414,7 @@ By default, every interactive turn auto-injects scored full-body candidates from
 
 **Headlines format** uses each result's `summary` frontmatter field when present, falls back to a truncated body excerpt. Configurable cap via `vault_retrieval.headline_summary_max_chars` (default 120).
 
-**Unknown mode values** in config log a warning and fall back to `always`.
+**Unknown mode values** in config log a warning and fall back to `RetrievalMode.ALWAYS` (`_resolve_retrieval_mode` coerces the configured value to the enum, so JSON-loaded strings and members behave identically).
 
 ## Vault guide
 

@@ -12,6 +12,7 @@ import ast
 import logging
 from dataclasses import dataclass, field, replace
 from dataclasses import fields as dc_fields
+from enum import StrEnum
 
 # Provider type constants (llm.types imports only stdlib, so this is cycle-free:
 # config -> config_types -> llm.types never loops back to config). Used as keys
@@ -373,6 +374,20 @@ class VaultConfig:
     user_writable_paths: list[str] = field(default_factory=list)
 
 
+class RetrievalMode(StrEnum):
+    """How auto-retrieved vault memory is injected (``vault_retrieval.mode``, #301).
+
+    String-valued so config JSON round-trips and existing string
+    comparisons keep working; the enum makes a typo'd mode impossible to
+    construct. Unknown values fall back to ``ALWAYS`` at compose time
+    (context_composer's ``_resolve_retrieval_mode``).
+    """
+
+    ALWAYS = "always"  # inject scored full-body candidates (default, back-compat)
+    HEADLINES = "headlines"  # title + summary + score only; agent pulls bodies via vault_read
+    ON_DEMAND = "on_demand"  # no auto-injection; agent drives via vault_search / vault_read
+
+
 @dataclass
 class MemoryConfig:
     """Opt-in semantic memory configuration (e.g. mem0 local extension)."""
@@ -409,7 +424,7 @@ class VaultRetrievalConfig:
     #                 vault_search / vault_read. @[[Page]] mentions
     #                 still inject (those are user-driven).
     # An unknown value logs a warning at compose time and falls back to "always".
-    mode: str = "always"
+    mode: RetrievalMode = RetrievalMode.ALWAYS
     headline_summary_max_chars: int = 120
 
 

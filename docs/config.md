@@ -216,10 +216,10 @@ Controls auto-retrieval injection at turn start. See [context-composer.md#memory
 | `max_results` | int | `5` | `VAULT_RETRIEVAL_MAX_RESULTS` |
 | `max_tokens` | int | `4000` | `VAULT_RETRIEVAL_MAX_TOKENS` |
 | `show_in_ui` | bool | `true` | `VAULT_RETRIEVAL_SHOW_IN_UI` |
-| `mode` | str | `always` | `VAULT_RETRIEVAL_MODE` |
+| `mode` | RetrievalMode | `always` | `VAULT_RETRIEVAL_MODE` |
 | `headline_summary_max_chars` | int | `120` | `VAULT_RETRIEVAL_HEADLINE_SUMMARY_MAX_CHARS` |
 
-`mode` selects retrieval strategy: `always` (full bodies, current default), `headlines` (compact `file_path · summary · score` lines for the agent to scan; pulls bodies via `vault_read` on demand), or `on_demand` (skip auto-retrieval entirely; agent drives via `vault_search` / `vault_read`). `@[[Page]]` mentions inject regardless of mode. Unknown values fall back to `always` with a warning.
+`mode` (a `RetrievalMode` enum) selects retrieval strategy: `always` (full bodies, current default), `headlines` (compact `file_path · summary · score` lines for the agent to scan; pulls bodies via `vault_read` on demand), or `on_demand` (skip auto-retrieval entirely; agent drives via `vault_search` / `vault_read`). `@[[Page]]` mentions inject regardless of mode. Unknown values fall back to `always` with a warning.
 
 ### `embedding`
 
