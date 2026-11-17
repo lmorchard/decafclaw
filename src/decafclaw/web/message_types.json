@@ -186,7 +186,7 @@
     "send": {
       "direction": "client_to_server",
       "description": "Send a user message (and/or attachments) to the conversation.",
-      "fields": {"conv_id": "string", "text": "string", "attachments": "array of object"}
+      "fields": {"conv_id": "string", "text": "string", "attachments": "array of object", "steering": "boolean?"}
     },
     "set_effort": {
       "direction": "client_to_server",

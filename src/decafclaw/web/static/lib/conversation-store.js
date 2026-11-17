@@ -667,6 +667,11 @@ export class ConversationStore extends EventTarget {
       this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text });
       return;
     }
+    // Capture the turn's busy state BEFORE the optimistic update below sets
+    // `#busy = true` (#1442). A Send while a turn runs steers it; an idle
+    // Send omits the flag so the server starts a normal turn. The flag is
+    // omitted (not `false`) for idle sends so the frame matches older clients.
+    const wasBusy = this.#busy;
     // Optimistically add user message
     const userMsg = { role: 'user', content: text, timestamp: new Date().toISOString() };
     if (attachments.length) userMsg.attachments = attachments;
@@ -677,6 +682,7 @@ export class ConversationStore extends EventTarget {
     this.#toolStatusStore.clearToolStatus();
     const wsMsg = { type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text };
     if (attachments.length) wsMsg.attachments = attachments;
+    if (wasBusy) wsMsg.steering = true;
     const wikiPage = /** @type {any} */ (window).getOpenWikiPage?.();
     if (wikiPage) wsMsg.wiki_page = wikiPage;
     this.#ws.send(wsMsg);

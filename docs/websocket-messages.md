@@ -410,6 +410,7 @@ Send a user message (and/or attachments) to the conversation.
 - `conv_id` — string
 - `text` — string
 - `attachments` — array of object
+- `steering` — boolean?
 
 ### `set_effort`
 

@@ -289,6 +289,7 @@ export interface CliSend {
   conv_id: string;
   text: string;
   attachments: Array<Record<string, unknown>>;
+  steering?: boolean;
 }
 
 export interface CliSetEffort {
