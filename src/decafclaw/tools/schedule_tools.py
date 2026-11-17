@@ -9,15 +9,20 @@ from ..media import ToolResult, WidgetRequest
 from ..scheduled_wakes import ScheduledWakeManager
 
 if TYPE_CHECKING:
-    from decafclaw.context import Context
+    from decafclaw.context import Context, TaskMode
 
 log = logging.getLogger(__name__)
 
 
-# Task modes that represent cron or maintenance runs and are forbidden from
-# using schedule_turn. Deliberately excludes "background_wake", which runs in an
-# interactive user conversation and must be permitted to re-arm or chain wakes (#1103).
-_DISALLOWED_TASK_MODES = frozenset({"heartbeat", "scheduled"})
+def _is_disallowed_task_mode(ctx: "Context") -> bool:
+    """Task modes that represent cron or maintenance runs, forbidden from
+    schedule_turn. Deliberately excludes BACKGROUND_WAKE, which runs in an
+    interactive user conversation and must be permitted to re-arm or chain
+    wakes (#1103). Imported here because the tools package is imported through
+    ``context_composer`` before ``context`` defines the enum."""
+    from ..context import TaskMode
+
+    return ctx.task_mode in (TaskMode.HEARTBEAT, TaskMode.SCHEDULED)
 
 
 def _get_wake_manager(ctx: "Context") -> ScheduledWakeManager:
@@ -34,12 +39,7 @@ async def tool_schedule_turn(
     metadata: dict[str, Any] | None = None,
 ) -> ToolResult:
     """Schedule an autonomous future wake turn in this conversation after a delay."""
-    task_mode = getattr(ctx, "task_mode", "")
-    if (
-        getattr(ctx, "is_child", False)
-        or task_mode in _DISALLOWED_TASK_MODES
-        or getattr(ctx, "parent_is_unattended", False)
-    ):
+    if getattr(ctx, "is_child", False) or _is_disallowed_task_mode(ctx) or getattr(ctx, "parent_is_unattended", False):
         return ToolResult(
             text="[error: schedule_turn is only available in interactive user conversations]",
             data={"error": "unattended_or_child_not_permitted"},

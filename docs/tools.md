@@ -252,8 +252,9 @@ Active conversation rules can also be snapshotted or appended to a custom situat
 Custom presets can also be viewed, created, edited, and deleted in the Web UI preset manager (reachable via the Agent Config panel's "Shell Presets" tab). Edits made through the Web UI write through the same serialized store and invalidate in-memory conversation pattern caches for conversations where the affected preset is active.
 
 The Web UI also exposes a per-conversation shell approval panel (`<shell-approval-panel>`, #1159) so the human can manage that conversation's own "remember why" rules without leaving the chat surface. It reads and writes through the conversation-scoped endpoints (`GET/PUT/DELETE /api/conversations/{id}/shell-approval`, `PUT .../rules/replace`, `POST .../condense`, `DELETE /api/conversations/{id}/shell-approval/patterns`, `POST /api/conversations/{id}/shell-approval/promote`). Rule add/remove and full-list replace clear the cached reviewer approval pattern server-side; edits are rejected with 409 while the conversation is `busy` or `waiting`. Promote copies the rule into a custom preset (append-without-duplicate or create-new; built-in or config preset names are rejected with 400). The panel's edit mode bulk-edits the rule list (save replaces it atomically) and offers a **Condense** action that proposes fewer, more general rules via the resolved condensation model — a proposal only; state changes when the user saves. See [Web UI](web-ui.md#shell-approval-panel) for the panel layout.
-**Unattended turns get the same allowlist and no prompt (#649).** Heartbeat and scheduled turns
-(`ctx.is_unattended`, i.e. `task_mode` in `{"heartbeat", "scheduled"}`) traverse exactly the branches
+**Unattended turns get the same allowlist and no prompt (#649).** Heartbeat, scheduled, and
+background-wake turns (`ctx.is_unattended`, i.e. `ctx.task_mode` in
+`{TaskMode.HEARTBEAT, TaskMode.SCHEDULED, TaskMode.BACKGROUND_WAKE}`) traverse exactly the branches
 above — there is no bypass for them. On a miss they are **denied outright** instead of falling through
 to a confirmation: the prompt would only reach subscribers of an ephemeral `conv_id`, so it would
 block for the 60s timeout and be synthesized into that same denial. Unattended automation is granted

@@ -9,6 +9,7 @@ from decafclaw.confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
+from decafclaw.context import TaskMode
 from decafclaw.conversation_manager import _RecoveryContext
 from decafclaw.media import WidgetInputPause
 from decafclaw.widget_input import (
@@ -182,7 +183,7 @@ async def test_unattended_widget_input_pause_drops_callback_and_returns_none(ctx
     """
     from decafclaw.agent import _handle_widget_input_pause
 
-    ctx.task_mode = "background_wake"
+    ctx.task_mode = TaskMode.BACKGROUND_WAKE
     assert ctx.is_unattended is True
 
     called = []

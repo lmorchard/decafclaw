@@ -263,7 +263,7 @@ per-kind policy inside `_start_turn`:
 |--------|------|--------------------------------------------------|------|
 | Circuit breaker | yes | no | no (wake-specific rate limiter) |
 | Emit `user_message` event | yes | no | no |
-| Build `Context.for_task` | no | yes | yes (`task_mode="background_wake"`) |
+| Build `Context.for_task` | no | yes | yes (`task_mode=TaskMode.BACKGROUND_WAKE`) |
 | Save per-conv state on completion | yes | no | yes |
 | Suppress outgoing message if sentinel matches | no | no | yes |
 

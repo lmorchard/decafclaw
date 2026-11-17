@@ -11,6 +11,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
 
+from decafclaw.context import TaskMode
 from decafclaw.frontmatter import parse_frontmatter, serialize_frontmatter
 from decafclaw.media import ToolResult
 from decafclaw.skills.vault.tools import (
@@ -564,8 +565,8 @@ async def kindle_sync_all(ctx) -> ToolResult:
         return ToolResult(text="[error: kindle skill not initialized]")
 
     # Gate: scheduled invocations skip silently when enabled=False.
-    # User-invocable invocations (ctx.task_mode != "scheduled") proceed regardless.
-    if ctx.task_mode == "scheduled" and not _skill_config.enabled:
+    # User-invocable invocations (ctx.task_mode is not TaskMode.SCHEDULED) proceed regardless.
+    if ctx.task_mode is TaskMode.SCHEDULED and not _skill_config.enabled:
         return ToolResult(text="kindle skill disabled; skipping (set skills.kindle.enabled=true to opt in)")
 
     list_result = await kindle_list_books(ctx)

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.agent import _extract_call_signatures, run_agent_turn
+from decafclaw.context import TaskMode
 
 
 def _mock_llm_response(content="Hello!", tool_calls=None, usage=None):
@@ -373,7 +374,7 @@ async def test_loop_break_delivers_and_archives_only_the_note(ctx):
     )
 
 
-@pytest.mark.parametrize("task_mode", ["heartbeat", "scheduled"])
+@pytest.mark.parametrize("task_mode", [TaskMode.HEARTBEAT, TaskMode.SCHEDULED])
 @pytest.mark.asyncio
 async def test_loop_break_delivers_preambles_for_unwatched_task_turns(ctx, task_mode):
     """#707 review: the delivery gate is "did anyone watch this live", not
@@ -432,7 +433,7 @@ async def test_loop_break_note_comes_first_for_unwatched_turns(ctx):
     for this (long) loop-breaker note; see task-5-report.md for the
     max-iterations note's narrower case.
     """
-    ctx.task_mode = "heartbeat"
+    ctx.task_mode = TaskMode.HEARTBEAT
     ctx.config.llm.streaming = False
     ctx.config.agent.max_tool_iterations = 50
     ctx.config.loop_breaker.repeat_threshold = 3
@@ -483,7 +484,7 @@ async def test_loop_break_delivers_only_the_note_for_a_background_wake(ctx):
     """A wake turn fires on the user's real conversation, which DOES have a
     live subscriber — so it stays on the note-only branch. This is the
     boundary of `_UNWATCHED_TASK_MODES`."""
-    ctx.task_mode = "background_wake"
+    ctx.task_mode = TaskMode.BACKGROUND_WAKE
     ctx.config.llm.streaming = False
     ctx.config.agent.max_tool_iterations = 50
     ctx.config.loop_breaker.repeat_threshold = 3

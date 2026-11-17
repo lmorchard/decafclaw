@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from decafclaw.context import Context
+from decafclaw.context import Context, TaskMode
 from decafclaw.conversation_paths import scheduled_wakes_path
 from decafclaw.media import WidgetRequest
 from decafclaw.scheduled_wakes import (
@@ -93,12 +93,12 @@ async def test_schedule_turn_rejects_child_agents_and_unattended(ctx):
     assert result.data["error"] == "unattended_or_child_not_permitted"
 
     ctx.is_child = False
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
     result2 = await tool_schedule_turn(ctx, delay_seconds=60, reason="Check something")
     assert "[error: schedule_turn is only available in interactive user conversations]" in result2.text
     assert result2.data["error"] == "unattended_or_child_not_permitted"
 
-    ctx.task_mode = "heartbeat"
+    ctx.task_mode = TaskMode.HEARTBEAT
     result3 = await tool_schedule_turn(ctx, delay_seconds=60, reason="Check something")
     assert "[error: schedule_turn is only available in interactive user conversations]" in result3.text
     assert result3.data["error"] == "unattended_or_child_not_permitted"
@@ -110,7 +110,7 @@ async def test_schedule_turn_permits_background_wake_chaining(ctx, mock_manager)
     ctx.manager = mock_manager
     ctx.conv_id = "conv-interactive-wake"
     ctx.is_child = False
-    ctx.task_mode = "background_wake"
+    ctx.task_mode = TaskMode.BACKGROUND_WAKE
 
     # In background_wake mode, is_unattended is True (for confirmation gating),
     # but schedule_turn must succeed so long operations can re-arm follow-up wakes.

@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from decafclaw.context import TaskMode
+
 # ---------------------------------------------------------------------------
 # Load tools.py via importlib — mirroring the production skill loader.
 # ---------------------------------------------------------------------------
@@ -1487,7 +1489,7 @@ async def test_kindle_sync_all_rate_limit(ctx, tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_kindle_sync_all_scheduled_gate_disabled(ctx, tmp_path):
-    """When ctx.task_mode == 'scheduled' AND enabled=False, kindle_sync_all returns
+    """When ctx.task_mode is TaskMode.SCHEDULED AND enabled=False, kindle_sync_all returns
     a no-op without doing any fetches. The gate short-circuits before any network call.
     """
     cookies_file = tmp_path / "kindle.cookies.txt"
@@ -1500,8 +1502,8 @@ async def test_kindle_sync_all_scheduled_gate_disabled(ctx, tmp_path):
     )
     init(ctx.config, skill_config)
 
-    # Set task_mode to 'scheduled' on the ctx
-    ctx.task_mode = "scheduled"
+    # Set task_mode to TaskMode.SCHEDULED on the ctx
+    ctx.task_mode = TaskMode.SCHEDULED
 
     result = await kindle_tools.kindle_sync_all(ctx)
 
@@ -1513,7 +1515,7 @@ async def test_kindle_sync_all_scheduled_gate_disabled(ctx, tmp_path):
 
 @pytest.mark.asyncio
 async def test_kindle_sync_all_scheduled_gate_enabled_proceeds(ctx, tmp_path, monkeypatch):
-    """When ctx.task_mode == 'scheduled' AND enabled=True, kindle_sync_all proceeds
+    """When ctx.task_mode is TaskMode.SCHEDULED AND enabled=True, kindle_sync_all proceeds
     and attempts the fetch (mocked here).
     """
     import asyncio
@@ -1529,7 +1531,7 @@ async def test_kindle_sync_all_scheduled_gate_enabled_proceeds(ctx, tmp_path, mo
     )
     init(ctx.config, skill_config)
 
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     # Mock the session to return empty book list (no network call)
     empty_list_html = '<div class="kp-notebook-library-each-book"></div>'
@@ -1551,7 +1553,7 @@ async def test_kindle_sync_all_scheduled_gate_enabled_proceeds(ctx, tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_kindle_sync_all_user_invocable_gate_bypassed(ctx, tmp_path, monkeypatch):
-    """When ctx.task_mode != 'scheduled' (e.g., empty or 'interactive'), the gate
+    """When ctx.task_mode is not TaskMode.SCHEDULED, the gate
     does NOT trigger even if enabled=False. User-invocable paths bypass the gate.
     """
     import asyncio
@@ -1567,8 +1569,8 @@ async def test_kindle_sync_all_user_invocable_gate_bypassed(ctx, tmp_path, monke
     )
     init(ctx.config, skill_config)
 
-    # Default ctx.task_mode is "" (empty string, interactive mode)
-    assert ctx.task_mode != "scheduled", f"Expected non-scheduled mode, got {ctx.task_mode!r}"
+    # Default ctx.task_mode is TaskMode.INTERACTIVE
+    assert ctx.task_mode is not TaskMode.SCHEDULED, f"Expected non-scheduled mode, got {ctx.task_mode!r}"
 
     # Mock the session to return empty book list
     empty_list_html = '<div class="kp-notebook-library-each-book"></div>'
@@ -1581,7 +1583,7 @@ async def test_kindle_sync_all_user_invocable_gate_bypassed(ctx, tmp_path, monke
 
     result = await kindle_tools.kindle_sync_all(ctx)
 
-    # Gate should NOT trigger because task_mode != "scheduled"
+    # Gate should NOT trigger because task_mode is not TaskMode.SCHEDULED
     # Should proceed as normal
     assert not result.text.startswith("[error:"), f"Unexpected error: {result.text}"
     assert "disabled" not in result.text.lower(), f"Gate should not trigger in user-invocable mode: {result.text}"

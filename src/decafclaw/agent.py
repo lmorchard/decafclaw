@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 from . import compaction
 from .archive import append_message
 from .config_types import LoopBreakerConfig
-from .context import TurnLifecycle
+from .context import TaskMode, TurnLifecycle
 from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer, effective_compaction_threshold
 from .conversation_paths import approval_state_path
@@ -57,9 +57,9 @@ from .tool_execution import execute_tool_calls
 
 _tracer = get_tracer(__name__)
 
-_TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
-    "heartbeat": ComposerMode.HEARTBEAT,
-    "scheduled": ComposerMode.SCHEDULED,
+_TASK_MODE_TO_COMPOSER: dict[TaskMode, ComposerMode] = {
+    TaskMode.HEARTBEAT: ComposerMode.HEARTBEAT,
+    TaskMode.SCHEDULED: ComposerMode.SCHEDULED,
 }
 
 # Task modes (KIND_TASK_MODE in conversation_manager.py) that run on a
@@ -67,9 +67,9 @@ _TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
 # `text_before_tools` events live — the turn's `ToolResult.text` is the only
 # channel by which its work reaches anyone. Read by `_finalize_with_note`.
 # `background_wake` is deliberately EXCLUDED: a wake turn runs on the user's
-# real conversation, which does have a live subscriber. `""` (interactive) is
+# real conversation, which does have a live subscriber. `INTERACTIVE` is
 # likewise excluded. See docs/loop-breaker.md.
-_UNWATCHED_TASK_MODES = frozenset({"heartbeat", "scheduled", "child_agent"})
+_UNWATCHED_TASK_MODES = frozenset({TaskMode.HEARTBEAT, TaskMode.SCHEDULED, TaskMode.CHILD_AGENT})
 
 # Max bounded partial-text continuations allowed in one agent turn before the
 # recovery policy settles the turn as failed (#1144). Each continuation persists
@@ -334,7 +334,7 @@ async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause) -
     if getattr(ctx, "is_unattended", False):
         log.warning(
             "WidgetInputPause received on unattended turn (%s) — cannot pause, dropping callback and ending turn",
-            getattr(ctx, "task_mode", ""),
+            ctx.task_mode.value,
         )
         pending_callbacks.pop(signal.tool_call_id, None)
         return None
@@ -862,7 +862,7 @@ class TurnRunner:
         self.retrieved_context_text = self.composed.retrieved_context_text
 
         for msg in self.composed.messages_to_archive:
-            if self.ctx.task_mode == "background_wake" and msg.get("role") == "user":
+            if self.ctx.task_mode is TaskMode.BACKGROUND_WAKE and msg.get("role") == "user":
                 archive_msg: dict = {
                     "role": "wake_trigger",
                     "content": msg.get("content", ""),

@@ -810,6 +810,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv
     If conv_id is provided, use it; otherwise generate from task.name + now.
     Returns {"task_name", "channel", "response", "is_ok", "context_id"}.
     """
+    from .context import TaskMode
     from .conversation_manager import TurnKind
 
     if conv_id is None:
@@ -920,7 +921,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv
             kind=TurnKind.SCHEDULED_TASK,
             prompt=prompt,
             history=[],
-            task_mode="scheduled",
+            task_mode=TaskMode.SCHEDULED,
             user_id=f"schedule-{task.source}",
             context_setup=setup_schedule_ctx,
             metadata={"task_name": task.name, "channel": channel},
