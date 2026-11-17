@@ -35,6 +35,7 @@ class Mem0Extension(BaseExtension):
         opts = self.options
         qdrant_path = opts.get("qdrant_path", "data/mem0_qdrant")
         embedder_model = opts.get("embedder_model", "BAAI/bge-small-en-v1.5")
+        embedding_model_dims = int(opts.get("embedding_model_dims", 384))
         llm_base_url = opts.get("llm_base_url", "http://synobian:4100/v1")
         llm_model = opts.get("llm_model", "mandelbrot3-flint")
         api_key = opts.get("api_key", "") or "local"
@@ -44,6 +45,7 @@ class Mem0Extension(BaseExtension):
                 "provider": "qdrant",
                 "config": {
                     "path": qdrant_path,
+                    "embedding_model_dims": embedding_model_dims,
                 },
             },
             "embedder": {
@@ -103,7 +105,10 @@ class Mem0Extension(BaseExtension):
             search_fn = getattr(self.client, "search", None)
             if not callable(search_fn):
                 return None
-            res = search_fn(user_message, user_id=user_id, limit=top_k)
+            try:
+                res = search_fn(user_message, filters={"user_id": user_id}, limit=top_k)
+            except (TypeError, ValueError):
+                res = search_fn(user_message, user_id=user_id, limit=top_k)
             if inspect.iscoroutine(res):
                 res = await res
             if not res:
