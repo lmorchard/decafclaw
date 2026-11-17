@@ -52,9 +52,10 @@ class EventBus:
         if target_phase is not None:
             if target_phase not in self._lifecycle_subscribers:
                 self._lifecycle_subscribers[target_phase] = {}
-            self._lifecycle_subscribers[target_phase][sub_id] = target_callback
+            if target_callback is not None:
+                self._lifecycle_subscribers[target_phase][sub_id] = target_callback
             self._sub_id_to_phase[sub_id] = target_phase
-        else:
+        elif target_callback is not None:
             self._subscribers[sub_id] = target_callback
         return sub_id
 

@@ -69,7 +69,7 @@ class Mem0Extension(BaseExtension):
         if self.client is not None:
             return self.client
         try:
-            from mem0 import Memory
+            from mem0 import Memory  # pyright: ignore[reportMissingImports]
 
             mem0_config = self._build_mem0_config()
             self.client = Memory.from_config(mem0_config)

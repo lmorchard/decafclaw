@@ -169,7 +169,7 @@ def backfill(
         from decafclaw.config import load_config
         from decafclaw.extensions.mem0 import Mem0Extension
 
-        config = load_config(config_path) if config_path else None
+        config = load_config()
         ext = Mem0Extension(config)
         client = ext._init_client()
         if not client:
