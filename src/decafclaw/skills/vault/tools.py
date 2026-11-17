@@ -8,7 +8,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -365,17 +365,30 @@ def _safe_folder(config, folder: str) -> Path | None:
     return resolved
 
 
-def _source_type_for_path(config, path: Path) -> str:
+class VaultSourceType(StrEnum):
+    """Embedding source type for a vault file (#1386).
+
+    String-valued so the embeddings index, search results, and any JSON
+    round-trip keep the existing wire values; the enum makes a typo'd
+    source type impossible to construct.
+    """
+
+    JOURNAL = "journal"  # under agent/journal/ (daily journal entries)
+    PAGE = "page"  # elsewhere under agent/ (curated pages)
+    USER = "user"  # outside agent/ (user content)
+
+
+def _source_type_for_path(config, path: Path) -> VaultSourceType:
     """Determine the embedding source type based on file location."""
     resolved = path.resolve()
     try:
         if resolved.is_relative_to(config.vault_agent_journal_dir.resolve()):
-            return "journal"
+            return VaultSourceType.JOURNAL
         if resolved.is_relative_to(config.vault_agent_dir.resolve()):
-            return "page"
+            return VaultSourceType.PAGE
     except (ValueError, OSError):
         pass
-    return "user"
+    return VaultSourceType.USER
 
 
 # ---------------------------------------------------------------------------
@@ -751,7 +764,7 @@ async def tool_vault_journal_append(ctx: "Context", tags: list[str], content: st
         if inline_tag_line:
             entry_text += f"{inline_tag_line}\n"
         entry_text += f"\n{content}"
-        await index_entry(ctx.config, rel_path, entry_text, source_type="journal")
+        await index_entry(ctx.config, rel_path, entry_text, source_type=VaultSourceType.JOURNAL)
     except Exception as e:
         log.warning(f"Failed to index journal entry: {e}")
 
