@@ -114,6 +114,14 @@ export class ConversationStore extends EventTarget {
   /** Debounce handle for the pushed-event hierarchy refresh (#1115 follow-up). */
   #sessionsRefreshTimer = 0;
 
+  // -- Listing request ordering (#1443) --
+  // Each listing can have several requests in flight (folder clicks, mutation
+  // refreshes, reconnect). Only the newest request may apply its response.
+  #conversationsSeq = 0;
+  #archivedSeq = 0;
+  #systemSeq = 0;
+  #sessionsSeq = 0;
+
   // -- Activity status state --
   /** @type {Map<string, 'idle' | 'busy' | 'waiting' | 'finished'>} */
   #conversationStatuses = new Map();
@@ -284,9 +292,11 @@ export class ConversationStore extends EventTarget {
 
   /** @param {string} [folder] */
   async listConversations(folder = '') {
+    const seq = ++this.#conversationsSeq;
     const reqSeq = this.#statusSequence;
     try {
       const data = await DefaultService.listConversationsApiConversationsGet(folder || undefined);
+      if (seq !== this.#conversationsSeq) return;
       this.#conversations = data.conversations || [];
       this.#folders = data.folders || [];
       this.#currentFolder = data.folder || '';
@@ -300,9 +310,11 @@ export class ConversationStore extends EventTarget {
 
   /** @param {string} [folder] */
   async listArchivedConversations(folder = '') {
+    const seq = ++this.#archivedSeq;
     const reqSeq = this.#statusSequence;
     try {
       const data = await DefaultService.listArchivedConversationsApiConversationsArchivedGet(folder || undefined);
+      if (seq !== this.#archivedSeq) return;
       this.#archivedConversations = data.conversations || [];
       this.#archivedFolders = data.folders || [];
       this.#archivedCurrentFolder = data.folder || '';
@@ -316,9 +328,11 @@ export class ConversationStore extends EventTarget {
 
   /** @param {string} [folder] */
   async listSystemConversations(folder = '') {
+    const seq = ++this.#systemSeq;
     const reqSeq = this.#statusSequence;
     try {
       const data = await DefaultService.listSystemConversationsApiConversationsSystemGet(folder || undefined);
+      if (seq !== this.#systemSeq) return;
       this.#systemConversations = data.conversations || [];
       this.#systemFolders = data.folders || [];
       this.#systemCurrentFolder = data.folder || '';
@@ -336,9 +350,11 @@ export class ConversationStore extends EventTarget {
    * @param {string} [folder]
    */
   async listSessions(folder = '') {
+    const seq = ++this.#sessionsSeq;
     const reqSeq = this.#statusSequence;
     try {
       const data = await DefaultService.listSessionsApiSessionsGet(folder || undefined);
+      if (seq !== this.#sessionsSeq) return;
       this.#sessions = data.sessions || [];
       this.#syncConversationStatuses(
         (this.#sessions || []).flatMap((s) => s.conversations || []),
@@ -426,11 +442,13 @@ export class ConversationStore extends EventTarget {
   }
 
   /**
+   * Create a conversation and select it. The model and folder default to the
+   * current ones, so ⌘K matches the + Chat button (#1443).
    * @param {string} [title]
    * @param {string} [model]
    * @param {string} [folder]
    */
-  async createConversation(title = '', model = '', folder = '') {
+  async createConversation(title = '', model = this.#activeModel || this.#defaultModel, folder = this.#currentFolder) {
     try {
       const conv = await DefaultService.createConversationApiConversationsPost({
         title, ...(model ? { model } : {}), ...(folder ? { folder } : {}),
@@ -447,6 +465,12 @@ export class ConversationStore extends EventTarget {
         this.#pendingAttachments = [];
         this.#uploadAndSend(conv.conv_id, text, atts);
       }
+      // #1443 — the active sidebar renders the session hierarchy when it is
+      // non-empty, so a new conversation is invisible until that list is
+      // refetched. #1274 covered rename/archive/unarchive/move, not create.
+      // Refresh after the queued message starts so the extra GET never delays
+      // the first turn.
+      await this.listSessions(this.#currentFolder);
     } catch (err) {
       if (err instanceof ApiError) return;
       console.error('Failed to create conversation:', err);
@@ -658,7 +682,7 @@ export class ConversationStore extends EventTarget {
       // No conversation selected — create one and queue the message
       this.#pendingMessage = text;
       this.#pendingAttachments = attachments;
-      this.createConversation('', this.#activeModel, this.#currentFolder);
+      this.createConversation();
       return;
     }
     // Delegated children are read-only (#1115): the transcript is inspectable
