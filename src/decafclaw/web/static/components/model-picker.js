@@ -146,6 +146,7 @@ export class ModelPicker extends LitElement {
     const rows = this.#flatModels();
     const target = this.#target();
     this._highlight = Math.max(0, rows.indexOf(target));
+    this.#positionPanel();
     this._open = true;
   }
 
@@ -167,9 +168,22 @@ export class ModelPicker extends LitElement {
     const viewportHeight = window.innerHeight || 768;
     const width = Math.min(352, viewportWidth - 16);
     const left = Math.min(Math.max(8, rect.left), Math.max(8, viewportWidth - width - 8));
-    const top = rect.bottom + 4;
-    const maxHeight = Math.max(120, viewportHeight - top - 8);
-    this._panelStyle = `--mp-left:${left}px;--mp-top:${top}px;--mp-width:${width}px;--mp-max:${maxHeight}px;`;
+    // The control strip sits above the composer near the bottom of the
+    // viewport, so "below the trigger" often has no room. Flip the panel
+    // above the trigger when that side has more space, and bound it so the
+    // list scrolls inside the viewport.
+    const spaceBelow = viewportHeight - rect.bottom - 8;
+    const spaceAbove = rect.top - 8;
+    const desired = Math.min(320, viewportHeight - 16);
+    if (spaceBelow < 200 && spaceAbove > spaceBelow) {
+      const maxHeight = Math.min(desired, spaceAbove);
+      const bottom = viewportHeight - rect.top + 4;
+      this._panelStyle = `--mp-left:${left}px;--mp-top:auto;--mp-bottom:${bottom}px;--mp-width:${width}px;--mp-max:${maxHeight}px;`;
+    } else {
+      const top = rect.bottom + 4;
+      const maxHeight = Math.min(desired, Math.max(120, spaceBelow));
+      this._panelStyle = `--mp-left:${left}px;--mp-top:${top}px;--mp-bottom:auto;--mp-width:${width}px;--mp-max:${maxHeight}px;`;
+    }
   }
 
   /** @param {string} model */

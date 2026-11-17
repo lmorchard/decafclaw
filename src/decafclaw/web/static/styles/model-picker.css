@@ -71,6 +71,7 @@ button.model-picker-trigger:focus-visible {
   z-index: 40;
   left: var(--mp-left, 8px);
   top: var(--mp-top, 8px);
+  bottom: var(--mp-bottom, auto);
   width: var(--mp-width, 22rem);
   max-height: var(--mp-max, 60vh);
   display: flex;
