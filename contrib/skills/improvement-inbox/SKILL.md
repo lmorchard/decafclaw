@@ -29,9 +29,10 @@ Inbox records use the statuses `pending`, `exported`, `dismissed`, and
 - **`improvement_inbox_export`** — append new pending items to
   `agent/pages/decafclaw/improvement-inbox.md` and mark them `exported`.
   Re-running it never duplicates an item already on the page.
-- **`improvement_retro`** — ask the evaluator model to scan the current (or a
-  named) conversation's full history for subtler multi-turn friction and buffer
-  any finding as a new pending item.
+- **`improvement_retro`** — ask the evaluator model (the configured default
+  model; the tool has no model parameter) to scan the current (or a named)
+  conversation's full history for subtler multi-turn friction and buffer any
+  finding as a new pending item.
 
 ## Working notes
 

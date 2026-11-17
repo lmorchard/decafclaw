@@ -123,7 +123,12 @@ def _detect_trigger(transcript: list[dict[str, Any]]) -> _Trigger | None:
 
 
 class _DedupCache:
-    """Small in-memory TTL cache that suppresses repeated signatures."""
+    """In-memory TTL cache of signatures already acted on.
+
+    Every remembered signature keeps its own expiry. When the cache is full the
+    entry with the smallest expiry is evicted, so expiry runs in insertion order
+    (FIFO). It is not an LRU cache: reads never refresh an entry.
+    """
 
     def __init__(self, ttl_seconds: float, *, max_entries: int = _DEDUP_MAX_ENTRIES, clock=time.monotonic):
         self.ttl_seconds = max(0.0, float(ttl_seconds))
@@ -136,17 +141,19 @@ class _DedupCache:
         for key in expired:
             self._entries.pop(key, None)
 
-    def should_suppress(self, signature: str) -> bool:
-        """True when ``signature`` was seen within the TTL; otherwise remember it."""
+    def is_suppressed(self, signature: str) -> bool:
+        """True when ``signature`` is remembered and has not expired."""
+        self._prune(self._clock())
+        return signature in self._entries
+
+    def remember(self, signature: str) -> None:
+        """Remember ``signature`` for one TTL, evicting the earliest expiry when full."""
         now = self._clock()
         self._prune(now)
-        if signature in self._entries:
-            return True
         if len(self._entries) >= self.max_entries:
-            oldest = min(self._entries, key=self._entries.__getitem__)
-            self._entries.pop(oldest, None)
+            earliest = min(self._entries, key=self._entries.__getitem__)
+            self._entries.pop(earliest, None)
         self._entries[signature] = now + self.ttl_seconds
-        return False
 
 
 def _transcript_text(transcript: list[dict[str, Any]], max_chars: int) -> str:
@@ -281,10 +288,14 @@ class ImprovementScoutExtension(BaseExtension):
         if trigger is None:
             return
         signature = _signature(trigger)
-        if self._dedup.should_suppress(signature):
+        if self._dedup.is_suppressed(signature):
             log.debug("Improvement scout suppressed repeated %s", trigger.kind)
             return
 
+        # Record the signature only once an item is actually buffered: a
+        # transient evaluator failure must not suppress the same friction for
+        # the rest of the TTL. Exceptions propagate to the hook, which logs and
+        # swallows them without marking the signature.
         suggestion = await evaluate_transcript(
             self.config,
             transcript,
@@ -305,6 +316,7 @@ class ImprovementScoutExtension(BaseExtension):
             severity=suggestion["severity"],
         )
         append_item(self.config, item)
+        self._dedup.remember(signature)
         log.debug("Improvement scout buffered %s (%s)", item["id"], trigger.kind)
 
 

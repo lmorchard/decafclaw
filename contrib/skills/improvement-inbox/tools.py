@@ -290,8 +290,12 @@ def improvement_inbox_export(ctx: "Context") -> ToolResult:
     )
 
 
-async def improvement_retro(ctx: "Context", conversation_id: str = "", model: str = "") -> ToolResult:
-    """Run an on-demand retrospective over the full session history."""
+async def improvement_retro(ctx: "Context", conversation_id: str = "") -> ToolResult:
+    """Run an on-demand retrospective over the full session history.
+
+    The evaluator model is the configured effective default; the tool exposes
+    no model choice, so the agent cannot change its own model.
+    """
     conv_id = conversation_id or str(getattr(ctx, "conv_id", "") or "")
     history: list[dict[str, Any]] = []
     manager = getattr(ctx, "manager", None)
@@ -309,7 +313,6 @@ async def improvement_retro(ctx: "Context", conversation_id: str = "", model: st
         ctx.config,
         history,
         trigger="retro",
-        model=model or None,
     )
     if not suggestion:
         return ToolResult(text="No additional harness friction detected in this session.")
@@ -449,10 +452,6 @@ TOOL_DEFINITIONS = [
                     "conversation_id": {
                         "type": "string",
                         "description": "Conversation id; defaults to the current conversation.",
-                    },
-                    "model": {
-                        "type": "string",
-                        "description": "Optional model override for the evaluator.",
                     },
                 },
             },

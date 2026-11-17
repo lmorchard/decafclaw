@@ -1,6 +1,7 @@
 """Tests for the improvement inbox JSONL helpers (#1482)."""
 
 import importlib.util
+import inspect
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -141,6 +142,29 @@ def test_remove_items(config):
     assert remove_items(config, ["imp_a"]) == []
 
 
+@pytest.mark.parametrize("operation", ["update_status", "remove_items"])
+def test_rewrite_operations_read_under_the_append_lock(config, monkeypatch, operation):
+    import decafclaw.improvement_inbox as inbox
+
+    append_item(config, _item(item_id="imp_a"))
+    seen: list[bool] = []
+    real_read = inbox._read_raw_lines
+
+    def _wrapped_read(target):
+        seen.append(inbox._APPEND_LOCK.locked())
+        return real_read(target)
+
+    monkeypatch.setattr(inbox, "_read_raw_lines", _wrapped_read)
+    if operation == "update_status":
+        assert update_status(config, ["imp_a"], "dismissed") == ["imp_a"]
+    else:
+        assert remove_items(config, ["imp_a"]) == ["imp_a"]
+
+    # The read happens while the lock is held, so an in-process append cannot
+    # land between the read and the atomic replace.
+    assert seen == [True]
+
+
 def test_concurrent_appends_keep_whole_lines(config):
     paths = [config.workspace_path]
 
@@ -279,3 +303,11 @@ async def test_skill_retro_uses_manager_history_and_buffers_item(config, ctx, st
     assert items[0]["subsystem"] == "workflow"
     assert len(stub_llm) == 1
     assert stub_llm[0]["model_name"] == "test-model"
+
+
+def test_retro_tool_has_no_model_override():
+    params = inspect.signature(skill_tools.improvement_retro).parameters
+    assert "model" not in params
+    definitions = {entry["function"]["name"]: entry for entry in skill_tools.TOOL_DEFINITIONS}
+    schema = definitions["improvement_retro"]["function"]["parameters"]
+    assert set(schema["properties"]) == {"conversation_id"}

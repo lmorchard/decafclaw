@@ -4,9 +4,16 @@ The improvement scout extension appends one JSON object per line to
 ``workspace/improvement_inbox.jsonl``; the companion ``improvement-inbox``
 contrib skill reads and updates the same file. Appends are a single locked
 ``os.write`` on an ``O_APPEND`` descriptor, so concurrent producers cannot
-interleave partial lines. Status changes and deletions rewrite the whole file
-through a temporary sibling plus ``os.replace``, preserving every unrelated
-line (including lines another writer appended just before the rewrite).
+interleave partial lines. Status changes and deletions read, transform, and
+rewrite the whole file while holding ``_APPEND_LOCK``, then replace it through
+a temporary sibling plus ``os.replace``, preserving every unrelated line
+verbatim.
+
+The lock's guarantee is in-process: it serializes this module's appends and
+rewrites so a concurrent local append cannot land between a read and its
+replacement. It does not coordinate with another process that opens its own
+``O_APPEND`` descriptor: an append made by such a process after the rewrite
+read the file is still lost by the ``os.replace``.
 
 Malformed lines are tolerated on read: they are logged and skipped, never
 deleted, so a hand edit cannot silently destroy the audit log.
@@ -210,32 +217,33 @@ def update_status(
         raise ValueError(f"unknown improvement item status: {status}")
     wanted = {item_id for item_id in item_ids if item_id}
     target = Path(path) if path is not None else inbox_path(config)
-    raw_lines = _read_raw_lines(target)
-    if not raw_lines:
-        return []
-
-    updated: list[str] = []
-    out_lines: list[str] = []
     stamp = utc_timestamp(now)
-    for line in raw_lines:
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            out_lines.append(line)
-            continue
-        if not isinstance(record, dict) or record.get("id") not in wanted:
-            out_lines.append(line)
-            continue
-        record["status"] = status
-        record["status_updated_at"] = stamp
-        if status == "dismissed":
-            record["dismissal_reason"] = reason
-        updated.append(str(record["id"]))
-        out_lines.append(json.dumps(record, ensure_ascii=False))
 
-    if not updated:
-        return []
     with _APPEND_LOCK:
+        raw_lines = _read_raw_lines(target)
+        if not raw_lines:
+            return []
+
+        updated: list[str] = []
+        out_lines: list[str] = []
+        for line in raw_lines:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                out_lines.append(line)
+                continue
+            if not isinstance(record, dict) or record.get("id") not in wanted:
+                out_lines.append(line)
+                continue
+            record["status"] = status
+            record["status_updated_at"] = stamp
+            if status == "dismissed":
+                record["dismissal_reason"] = reason
+            updated.append(str(record["id"]))
+            out_lines.append(json.dumps(record, ensure_ascii=False))
+
+        if not updated:
+            return []
         _rewrite_atomic(target, out_lines)
     return updated
 
@@ -249,25 +257,26 @@ def remove_items(
     """Delete the named records from the inbox; return the ids removed."""
     wanted = {item_id for item_id in item_ids if item_id}
     target = Path(path) if path is not None else inbox_path(config)
-    raw_lines = _read_raw_lines(target)
-    if not raw_lines:
-        return []
 
-    removed: list[str] = []
-    out_lines: list[str] = []
-    for line in raw_lines:
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            out_lines.append(line)
-            continue
-        if isinstance(record, dict) and record.get("id") in wanted:
-            removed.append(str(record["id"]))
-            continue
-        out_lines.append(line)
-
-    if not removed:
-        return []
     with _APPEND_LOCK:
+        raw_lines = _read_raw_lines(target)
+        if not raw_lines:
+            return []
+
+        removed: list[str] = []
+        out_lines: list[str] = []
+        for line in raw_lines:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                out_lines.append(line)
+                continue
+            if isinstance(record, dict) and record.get("id") in wanted:
+                removed.append(str(record["id"]))
+                continue
+            out_lines.append(line)
+
+        if not removed:
+            return []
         _rewrite_atomic(target, out_lines)
     return removed

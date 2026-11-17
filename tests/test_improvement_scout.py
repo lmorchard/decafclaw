@@ -234,6 +234,34 @@ async def test_evaluation_failure_fails_open(config, ctx, stub_llm, monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_failed_evaluation_does_not_suppress_identical_trigger(config, ctx, stub_llm, monkeypatch):
+    calls: list[str] = []
+
+    async def _flaky(*args, **kwargs):
+        calls.append(kwargs.get("model_name", ""))
+        if len(calls) == 1:
+            raise RuntimeError("transient provider error")
+        return {
+            "content": json.dumps(_SUGGESTION),
+            "role": "assistant",
+            "tool_calls": None,
+            "usage": {},
+        }
+
+    monkeypatch.setattr(scout.llm, "call_llm", _flaky)
+    ext = _extension(config, model="test-model", dedup_ttl_seconds=3600)
+
+    await ext.on_turn_settle_hook(ctx, _tool_error_transcript())
+    assert read_items(config) == []
+
+    # The failed evaluation must not have recorded the signature, so the same
+    # friction reaches the evaluator again.
+    await ext.on_turn_settle_hook(ctx, _tool_error_transcript())
+    assert len(calls) == 2
+    assert len(read_items(config)) == 1
+
+
+@pytest.mark.asyncio
 async def test_hook_never_mutates_transcript_or_publishes(config, ctx, stub_llm, monkeypatch):
     _llm_reply(stub_llm)
     transcript = _tool_error_transcript()

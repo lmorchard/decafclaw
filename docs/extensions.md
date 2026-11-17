@@ -81,6 +81,14 @@ publish chat events, or call `ctx.publish`. Every failure — option parsing, th
 model call, JSON parsing, or the inbox write — is logged and swallowed, so a
 broken evaluator cannot disturb a settled turn.
 
+**Privacy.** A candidate turn is sent to the evaluator as raw transcript text:
+the rendered transcript slice includes tool output and is not filtered through
+[`secret_policy`](config.md#secrets-and-secret-references-1032) redaction.
+Whatever the evaluator model returns is stored as plain text in
+`workspace/improvement_inbox.jsonl` and can later be exported into the vault.
+Point this extension at a local or otherwise trusted evaluator model, and treat
+the inbox as sensitive as the conversations it observed.
+
 | Option | Default | Meaning |
 |--------|---------|---------|
 | `model` | `effective_default_model(config)` | Evaluator model; the effective default is the sidecar pointer, then `config.default_model`. With neither, evaluation is skipped. |
