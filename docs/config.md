@@ -576,7 +576,7 @@ Runtime middleware extensions (see [extensions.md](extensions.md) for the protoc
 
 Options get **no automatic environment-variable overrides** — the extension interprets its own keys. A missing `enabled` means enabled; unknown keys inside an entry are ignored with a warning; a non-object entry or `options` value is warned about and skipped rather than crashing startup.
 
-**Legacy `memory` block.** An old top-level `memory` block with `provider: "mem0"` is migrated in memory to `extensions.mem0` (same options; `MEMORY_*` env precedence still applies while parsing) with a deprecation warning. The file is not rewritten. If `extensions.mem0` also exists, `extensions` wins and the legacy block is ignored. Other providers do not create an extension.
+**Legacy `memory` block.** An old top-level `memory` block with `provider: "mem0"` is migrated in memory to `extensions.mem0` (same options; `MEMORY_*` env precedence still applies while parsing) with a deprecation warning. Because the legacy block is parsed through the normal env-precedence loader even when the file has no `memory` key, a setup enabled only by `MEMORY_PROVIDER=mem0` (plus any `MEMORY_*` option overrides) still produces `extensions.mem0`. The file is not rewritten. If `extensions.mem0` also exists, `extensions` wins and the legacy block is ignored. Other or unset providers do not create an extension.
 
 **Secrets.** `extensions.*.options.api_key` is redacted from admin reads of `config.json` and masked by `config show` unless `--reveal`. Other extensions with differently named secret options must declare them through [`secret_policy.redact_paths`](#secrets-and-secret-references-1032) (see [extensions.md](extensions.md#secret-options)).
 

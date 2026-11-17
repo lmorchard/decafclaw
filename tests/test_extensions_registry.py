@@ -258,3 +258,25 @@ def test_legacy_memory_without_mem0_provider_creates_no_extension(tmp_path, monk
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
 
     assert load_config().extensions == {}
+
+
+def test_legacy_memory_env_only_backward_compatibility(tmp_path, monkeypatch, caplog):
+    """WHEN only MEMORY_* env vars enable mem0 (no memory block in config.json),
+    load_config SHALL still create extensions["mem0"] from the resolved env values.
+    """
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({}))
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("MEMORY_PROVIDER", "mem0")
+    monkeypatch.setenv("MEMORY_QDRANT_PATH", "/tmp/env-only-qdrant")
+
+    with caplog.at_level(logging.WARNING, logger="decafclaw.config"):
+        config = load_config()
+
+    mem0 = config.extensions["mem0"]
+    assert mem0.enabled is True
+    assert mem0.type == "mem0"
+    assert mem0.options["qdrant_path"] == "/tmp/env-only-qdrant"
+    assert mem0.options["top_k"] == 5
+    assert any("extensions.mem0" in rec.message for rec in caplog.records)

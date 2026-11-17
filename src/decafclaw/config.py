@@ -305,30 +305,32 @@ def _load_extensions(file_data: dict[str, Any]) -> dict[str, ExtensionConfig]:
             type(legacy_raw).__name__,
         )
         legacy_raw = {}
+    # The block is always parsed (even when absent) so MEMORY_* env vars still
+    # enable mem0 the way they did before extensions existed.
     memory = load_sub_config(MemoryConfig, legacy_raw or {}, "MEMORY")
-    if legacy_present:
-        if "mem0" in extensions:
+    if "mem0" in extensions:
+        if legacy_present:
             log.warning(
                 "config.json 'memory' block is ignored because extensions.mem0 is configured; "
                 "remove the legacy 'memory' block."
             )
-        elif memory.provider == "mem0":
-            extensions["mem0"] = ExtensionConfig(
-                enabled=True,
-                type="mem0",
-                options={
-                    "qdrant_path": memory.qdrant_path,
-                    "embedder_model": memory.embedder_model,
-                    "llm_base_url": memory.llm_base_url,
-                    "llm_model": memory.llm_model,
-                    "api_key": memory.api_key,
-                    "top_k": memory.top_k,
-                },
-            )
-            log.warning(
-                "Migrating legacy 'memory' configuration to extensions.mem0; "
-                "move these settings under config.json 'extensions'."
-            )
+    elif memory.provider == "mem0":
+        extensions["mem0"] = ExtensionConfig(
+            enabled=True,
+            type="mem0",
+            options={
+                "qdrant_path": memory.qdrant_path,
+                "embedder_model": memory.embedder_model,
+                "llm_base_url": memory.llm_base_url,
+                "llm_model": memory.llm_model,
+                "api_key": memory.api_key,
+                "top_k": memory.top_k,
+            },
+        )
+        log.warning(
+            "Migrating legacy 'memory' configuration to extensions.mem0; "
+            "move these settings under config.json 'extensions'."
+        )
     return extensions
 
 
