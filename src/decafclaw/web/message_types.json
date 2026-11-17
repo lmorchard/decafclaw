@@ -152,6 +152,11 @@
       "description": "The conversation's sticky slot was cleared.",
       "fields": {"conv_id": "string"}
     },
+    "stream_state": {
+      "direction": "server_to_client",
+      "description": "Accumulated text and thinking for the current unarchived assistant segment, sent after a full history load so a client that switched away mid-turn can rebuild its streaming buffer (#1439). Empty when no turn is active.",
+      "fields": {"conv_id": "string", "text": "string", "thinking": "string"}
+    },
     "shell_approval": {
       "direction": "server_to_client",
       "description": "Narrative about an LLM auto-approval of a shell command.",

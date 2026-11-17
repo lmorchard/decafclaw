@@ -202,6 +202,10 @@ export function dispatch(s: State, m: ServerMessage): State {
     case "command_list":
     case "sticky_clear":
     case "sticky_set":
+    case "stream_state":
+      // #1439 — web-only snapshot of the live streaming segment; the TUI
+      // renders completed messages rather than a streaming buffer.
+      return s;
     case "vault_changed":
       return s;
 

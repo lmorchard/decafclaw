@@ -144,16 +144,18 @@ def _archive(ctx: "Context", msg) -> None:
     except (OSError, TypeError, ValueError) as e:
         log.error(f"Archive write failed: {e}", exc_info=True)
     # Mark the conversation so a subsequent CancelledError handler
-    # doesn't double-archive the partial body (issue #491). Only fires
-    # for assistant messages with actual body content that actually
-    # landed in the archive — tool_call-only assistant rows don't count
-    # as "delivered text" for cancel bookkeeping, and we don't want a
-    # failed write to make the manager think the partial is durable.
-    if wrote and msg.get("role") == "assistant" and msg.get("content") and ctx.manager is not None:
+    # doesn't double-archive the partial body (issue #491), and end the
+    # live streaming segment so a returning WebSocket replays only text
+    # and thinking that is not already in history (#1439). Every archived
+    # assistant row ends the segment, including a thinking-only tool-call
+    # row; only rows with body content count as "delivered text" for
+    # cancel bookkeeping, and a failed write must not make the manager
+    # think the partial is durable.
+    if wrote and msg.get("role") == "assistant" and ctx.manager is not None:
         try:
-            ctx.manager.note_partial_assistant_archived(_conv_id(ctx))
+            ctx.manager.note_assistant_archived(_conv_id(ctx), has_content=bool(msg.get("content")))
         except Exception as exc:
-            log.debug("note_partial_assistant_archived failed: %s", exc)
+            log.debug("note_assistant_archived failed: %s", exc)
 
 
 def _composer_mode_for(ctx: "Context") -> ComposerMode:

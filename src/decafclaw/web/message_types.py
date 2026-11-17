@@ -37,6 +37,7 @@ class WSMessageType(StrEnum):
     SHELL_APPROVAL = "shell_approval"
     STICKY_CLEAR = "sticky_clear"
     STICKY_SET = "sticky_set"
+    STREAM_STATE = "stream_state"
     TOOL_END = "tool_end"
     TOOL_START = "tool_start"
     TOOL_STATUS = "tool_status"
@@ -84,6 +85,7 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.SHELL_APPROVAL,
         WSMessageType.STICKY_CLEAR,
         WSMessageType.STICKY_SET,
+        WSMessageType.STREAM_STATE,
         WSMessageType.TOOL_END,
         WSMessageType.TOOL_START,
         WSMessageType.TOOL_STATUS,
@@ -318,6 +320,13 @@ class SrvStickySet(TypedDict):
     data: dict[str, object]
 
 
+class SrvStreamState(TypedDict):
+    type: Literal[WSMessageType.STREAM_STATE]
+    conv_id: str
+    text: str
+    thinking: str
+
+
 class SrvToolEnd(TypedDict):
     type: Literal[WSMessageType.TOOL_END]
     conv_id: str
@@ -460,6 +469,7 @@ ServerMessage = (
     | SrvShellApproval
     | SrvStickyClear
     | SrvStickySet
+    | SrvStreamState
     | SrvToolEnd
     | SrvToolStart
     | SrvToolStatus

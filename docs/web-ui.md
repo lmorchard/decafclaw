@@ -38,6 +38,16 @@ Real-time streaming chat over WebSocket. Messages stream token-by-token as the L
 - Cancel in-progress turns
 - Confirmation prompts for shell commands and skill activation
 
+**Switching mid-turn.** The server keeps the current unarchived assistant
+segment (text and thinking) per conversation, resetting it whenever the agent
+loop archives an assistant message. A full history load subscribes the socket
+first, sends `conv_history`, then sends a `stream_state` frame with the
+accumulated segment. The client replaces its streaming buffers with that
+snapshot and appends later chunks, so returning to a conversation after
+switching away shows everything streamed before the switch. `turn_complete`
+and the final `message_complete` clear the buffers, so a finished turn leaves
+no stale streaming block (#1439).
+
 **Command autocomplete.** Typing `/` or `!` at the start of a line in the
 composer opens a suggestion menu listing every user-invokable skill command
 plus every MCP prompt (`mcp__<server>__<prompt>`), each with its

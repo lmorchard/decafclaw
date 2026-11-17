@@ -722,7 +722,7 @@ async def test_cancel_skips_partial_when_already_archived(
                 "content": "Hello world",
             },
         )
-        ctx.manager.note_partial_assistant_archived(ctx.conv_id)
+        ctx.manager.note_assistant_archived(ctx.conv_id, has_content=True)
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(
@@ -905,7 +905,7 @@ async def test_exception_partial_already_archived_no_duplicate(
                 "content": "Hello world",
             },
         )
-        ctx.manager.note_partial_assistant_archived(ctx.conv_id)
+        ctx.manager.note_assistant_archived(ctx.conv_id, has_content=True)
         raise RuntimeError("boom after partial archive")
 
     monkeypatch.setattr(

@@ -381,7 +381,12 @@ class ConversationState:
     # exception-path marker (issue #517).
     partial_assistant_chunks: list[str] = field(default_factory=list)
     partial_assistant_thinking_chunks: list[str] = field(default_factory=list)
+    # The current unarchived assistant segment: every text/thinking chunk
+    # since the last archived assistant message. A returning WebSocket
+    # replays it as `stream_state` so switching conversations mid-turn
+    # doesn't lose the prefix (#1439).
     current_iteration_assistant_chunks: list[str] = field(default_factory=list)
+    current_iteration_thinking_chunks: list[str] = field(default_factory=list)
     partial_assistant_archived: bool = False
     cancel_observed_by_agent: bool = False
     cancel_marker_written: bool = False
@@ -1061,15 +1066,22 @@ class ConversationManager:
             await self._publish_status(conv_id, self.get_activity_status(conv_id))
         return True
 
-    def note_partial_assistant_archived(self, conv_id: str) -> None:
-        """Mark that the agent loop has archived an assistant message for
-        the current turn. The cancel handler reads this flag to avoid
-        double-writing the partial content (issue #491).
+    def note_assistant_archived(self, conv_id: str, *, has_content: bool) -> None:
+        """Record that the agent loop archived an assistant message.
+
+        Every archived message ends the live segment, including a
+        thinking-only tool-call row whose text streamed earlier — replaying
+        it as `stream_state` would duplicate the archived thinking (#1439).
+        The cancel handler's `partial_assistant_archived` flag still tracks
+        only messages with text content, avoiding a double-write of the
+        partial body (issue #491).
         """
         state = self._conversations.get(conv_id)
         if state is not None:
             state.current_iteration_assistant_chunks = []
-            state.partial_assistant_archived = True
+            state.current_iteration_thinking_chunks = []
+            if has_content:
+                state.partial_assistant_archived = True
 
     def note_cancel_observed_by_agent(self, conv_id: str) -> None:
         """Mark that the agent loop observed the cancel signal cleanly
@@ -1968,6 +1980,7 @@ class ConversationManager:
         state.cancel_marker_written = False
         state.turn_aborted_marker_written = False
         state.current_iteration_assistant_chunks = []
+        state.current_iteration_thinking_chunks = []
 
         # Set up streaming callback that emits to subscribers.
         # WAKE turns don't stream: the agent may emit BACKGROUND_WAKE_OK to
@@ -1992,6 +2005,7 @@ class ConversationManager:
                 elif chunk_type == "thinking":
                     if isinstance(data, str):
                         state.partial_assistant_thinking_chunks.append(data)
+                        state.current_iteration_thinking_chunks.append(data)
                     await self.emit(
                         conv_id,
                         {
@@ -2247,6 +2261,7 @@ class ConversationManager:
                     state.partial_assistant_chunks = []
                     state.partial_assistant_thinking_chunks = []
                     state.current_iteration_assistant_chunks = []
+                    state.current_iteration_thinking_chunks = []
                 await self.emit(conv_id, {"type": "turn_complete", "reason": turn_reason})
 
                 # Resolve the caller's future (if any) before draining pending

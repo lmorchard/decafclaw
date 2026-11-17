@@ -26,6 +26,7 @@ export const MESSAGE_TYPES = Object.freeze({
   SHELL_APPROVAL: 'shell_approval',
   STICKY_CLEAR: 'sticky_clear',
   STICKY_SET: 'sticky_set',
+  STREAM_STATE: 'stream_state',
   TOOL_END: 'tool_end',
   TOOL_START: 'tool_start',
   TOOL_STATUS: 'tool_status',

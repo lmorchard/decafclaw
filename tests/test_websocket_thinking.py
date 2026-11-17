@@ -195,6 +195,134 @@ class TestThinkingIntermediateToolCallsAndHistory:
         assert history_msgs[0]["thinking"] == "Need to search docs before deciding."
 
 
+class TestStreamStateOnReturn:
+    """#1439: returning to a streaming conversation shows the whole segment."""
+
+    @pytest.mark.asyncio
+    async def test_stream_state_restores_segment_after_switch_and_stops_when_turn_ends(self, ws_context, monkeypatch):
+        state, index, sent, manager, config = ws_context
+        conv_id = "conv-thinking"
+
+        ws_mock = AsyncMock(side_effect=lambda m: sent.append(m))
+        state["ws_send"] = ws_mock
+
+        _subscribe_to_conv(state, conv_id)
+
+        started = asyncio.Event()
+        resume = asyncio.Event()
+
+        async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+            append_message(ctx.config, ctx.conv_id, {"role": "user", "content": user_message})
+            assert ctx.on_stream_chunk is not None
+            await ctx.on_stream_chunk("thinking", "First thought. ")
+            await ctx.on_stream_chunk("text", "Partial answer ")
+            started.set()
+            await resume.wait()
+            await ctx.on_stream_chunk("thinking", "Second thought.")
+            await ctx.on_stream_chunk("text", "continues.")
+            append_message(
+                ctx.config,
+                ctx.conv_id,
+                {"role": "assistant", "content": "Partial answer continues."},
+            )
+            return ToolResult(
+                text="Partial answer continues.",
+                thinking="First thought. Second thought.",
+            )
+
+        monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+        future = await manager.enqueue_turn(
+            conv_id=conv_id,
+            kind=TurnKind.USER,
+            prompt="Long question",
+            user_id="alice",
+        )
+        await asyncio.wait_for(started.wait(), timeout=2.0)
+
+        # Switch away: the client selects another conversation, which
+        # unsubscribes this socket from conv-thinking and drops its buffer.
+        _subscribe_to_conv(state, "conv-elsewhere")
+        sent.clear()
+
+        # Return: select the conversation again, then load history. The
+        # server subscribes before snapshotting the unarchived segment.
+        _subscribe_to_conv(state, conv_id)
+        await _handle_load_history(ws_mock, index, "alice", {"conv_id": conv_id}, state)
+
+        stream_states = [m for m in sent if m.get("type") == WSMessageType.STREAM_STATE]
+        assert len(stream_states) == 1
+        assert stream_states[0]["conv_id"] == conv_id
+        assert stream_states[0]["text"] == "Partial answer "
+        assert stream_states[0]["thinking"] == "First thought. "
+
+        resume.set()
+        await asyncio.wait_for(future, timeout=2.0)
+
+        # A finished turn leaves no stale segment to replay.
+        sent.clear()
+        await _handle_load_history(ws_mock, index, "alice", {"conv_id": conv_id}, state)
+        assert [m for m in sent if m.get("type") == WSMessageType.STREAM_STATE] == []
+
+    @pytest.mark.asyncio
+    async def test_archived_intermediate_message_resets_segment_including_thinking_only(self, ws_context, monkeypatch):
+        from decafclaw.agent import _archive
+
+        state, index, sent, manager, config = ws_context
+        conv_id = "conv-thinking"
+
+        ws_mock = AsyncMock(side_effect=lambda m: sent.append(m))
+        state["ws_send"] = ws_mock
+
+        _subscribe_to_conv(state, conv_id)
+
+        streamed = asyncio.Event()
+        resume = asyncio.Event()
+
+        async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+            append_message(ctx.config, ctx.conv_id, {"role": "user", "content": user_message})
+            assert ctx.on_stream_chunk is not None
+            await ctx.on_stream_chunk("thinking", "Iteration one thought. ")
+            await ctx.on_stream_chunk("text", "Calling tool. ")
+            # Real agent loop archives the intermediate assistant message
+            # through _archive(), including thinking-only tool-call rows.
+            _archive(ctx, {"role": "assistant", "content": None, "thinking": "Iteration one thought."})
+            conv_state = ctx.manager.get_state(ctx.conv_id)
+            assert conv_state is not None
+            assert conv_state.current_iteration_assistant_chunks == []
+            assert conv_state.current_iteration_thinking_chunks == []
+            assert conv_state.partial_assistant_archived is False
+            await ctx.on_stream_chunk("thinking", "Iteration two thought.")
+            await ctx.on_stream_chunk("text", "Final answer.")
+            streamed.set()
+            await resume.wait()
+            _archive(ctx, {"role": "assistant", "content": "Final answer."})
+            assert ctx.manager.get_state(ctx.conv_id).partial_assistant_archived is True
+            return ToolResult(text="Final answer.", thinking="Iteration one thought. Iteration two thought.")
+
+        monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+        future = await manager.enqueue_turn(
+            conv_id=conv_id,
+            kind=TurnKind.USER,
+            prompt="Use a tool",
+            user_id="alice",
+        )
+        await asyncio.wait_for(streamed.wait(), timeout=2.0)
+
+        sent.clear()
+        await _handle_load_history(ws_mock, index, "alice", {"conv_id": conv_id}, state)
+
+        stream_states = [m for m in sent if m.get("type") == WSMessageType.STREAM_STATE]
+        assert len(stream_states) == 1
+        # The archived iteration is history, not part of the live segment.
+        assert stream_states[0]["text"] == "Final answer."
+        assert stream_states[0]["thinking"] == "Iteration two thought."
+
+        resume.set()
+        await asyncio.wait_for(future, timeout=2.0)
+
+
 class TestOpenAICompatProviderReasoning:
     @pytest.mark.asyncio
     async def test_openai_compat_cleans_thinking_from_api_messages(self):

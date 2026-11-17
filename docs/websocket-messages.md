@@ -284,6 +284,16 @@ A widget was pinned into the conversation's sticky slot.
 - `widget_type` — string
 - `data` — object
 
+### `stream_state`
+
+Accumulated text and thinking for the current unarchived assistant segment, sent after a full history load so a client that switched away mid-turn can rebuild its streaming buffer (#1439). Empty when no turn is active.
+
+**Fields:**
+
+- `conv_id` — string
+- `text` — string
+- `thinking` — string
+
 ### `tool_end`
 
 Final result of a tool call. Replaces the in-flight tool_status with terminal state.
