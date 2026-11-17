@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { subscribe as subscribeCanvas, resummon } from '../lib/canvas-state.js';
+import './model-picker.js';
 
 /** @typedef {{ name: string, description?: string }} ModeConfig */
 /** @typedef {{ provider: string, model: string }} ModelConfig */
@@ -8,13 +9,14 @@ export class ChatControls extends LitElement {
   static properties = {
     store: { type: Object, attribute: false },
     _activeModel: { type: String, state: true },
-    _availableModels: { type: Array, state: true },
+    _modelGroups: { type: Array, state: true },
     _defaultModel: { type: String, state: true },
     _activeMode: { type: String, state: true },
     _availableModes: { type: Array, state: true },
     _contextUsage: { type: Number, state: true },
     _contextLimit: { type: Number, state: true },
     _isBusy: { type: Boolean, state: true },
+    _isReadOnly: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -23,13 +25,14 @@ export class ChatControls extends LitElement {
     super();
     this.store = null;
     this._activeModel = '';
-    this._availableModels = [];
+    this._modelGroups = [];
     this._defaultModel = '';
     this._activeMode = 'default';
     this._availableModes = [];
     this._contextUsage = 0;
     this._contextLimit = 100000;
     this._isBusy = false;
+    this._isReadOnly = false;
   }
 
   disconnectedCallback() {
@@ -60,7 +63,7 @@ export class ChatControls extends LitElement {
   #syncFromStore() {
     if (!this.store) return;
     this._activeModel = this.store.activeModel || '';
-    this._availableModels = this.store.availableModels || [];
+    this._modelGroups = this.store.modelGroups || [];
     this._defaultModel = this.store.defaultModel || '';
     this._activeMode = this.store.activeMode || 'default';
     this._availableModes = this.store.availableModes || [];
@@ -69,6 +72,7 @@ export class ChatControls extends LitElement {
     // (a bare `||` would coerce 0 to the 100000 default and mis-render usage).
     this._contextLimit = this.store.contextLimit ?? 100000;
     this._isBusy = Boolean(this.store.isBusy);
+    this._isReadOnly = Boolean(this.store.isReadOnly);
   }
 
   updated(changedProps) {
@@ -85,15 +89,6 @@ export class ChatControls extends LitElement {
       }
     }
 
-    // Sync model selector value if present
-    const modelSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#cc-model-select'));
-    if (modelSelect) {
-      const target = this._activeModel || this._defaultModel;
-      if (target && modelSelect.value !== target) {
-        modelSelect.value = target;
-      }
-    }
-
     // Sync mode selector value if present
     const modeSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#cc-mode-select'));
     if (modeSelect) {
@@ -101,18 +96,6 @@ export class ChatControls extends LitElement {
       if (targetMode && modeSelect.value !== targetMode) {
         modeSelect.value = targetMode;
       }
-    }
-  }
-
-  #handleModelChange(e) {
-    const newModel = e.target.value;
-    const current = this._activeModel || this._defaultModel;
-    if (newModel && newModel !== current) {
-      this.dispatchEvent(new CustomEvent('set-model', {
-        detail: { model: newModel },
-        bubbles: true,
-        composed: true,
-      }));
     }
   }
 
@@ -173,8 +156,6 @@ export class ChatControls extends LitElement {
 
   render() {
     const { formatted: contextPct, cls: contextCls } = this.#getContextStatus();
-    const targetModel = this._activeModel || this._defaultModel;
-    const modelUnconfigured = targetModel && !this._availableModels.includes(targetModel);
     const convId = this.store?.currentConvId || '';
     const canvas = this._canvasSnapshot;
     const showResummon = Boolean(
@@ -183,17 +164,16 @@ export class ChatControls extends LitElement {
 
     return html`
       <!-- Model control -->
-      ${this._availableModels.length > 0 ? html`
+      ${this._modelGroups.length > 0 ? html`
         <div class="control model-control">
-          <label for="cc-model-select">Model</label>
-          <select id="cc-model-select" .value=${targetModel} ?disabled=${this._isBusy} @change=${this.#handleModelChange}>
-            ${modelUnconfigured ? html`
-              <option value="${targetModel}" selected>⚠ ${targetModel} (not configured)</option>
-            ` : nothing}
-            ${this._availableModels.map(m => html`
-              <option value="${m}" ?selected=${m === targetModel} .selected=${m === targetModel}>${m}</option>
-            `)}
-          </select>
+          <label>Model</label>
+          <model-picker
+            .groups=${this._modelGroups}
+            .activeModel=${this._activeModel}
+            .defaultModel=${this._defaultModel}
+            ?disabled=${this._isBusy || this._isReadOnly}
+            .convId=${convId}
+          ></model-picker>
         </div>
       ` : nothing}
 

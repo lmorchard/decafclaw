@@ -24,6 +24,11 @@ describe('conversation-sidebar model selector', () => {
       contextLimit: 0,
       activeModel: 'vertex-gemini-flash-3.8',
       availableModels: ['anthropic-claude-3.5-sonnet', 'openai-gpt-4o', 'vertex-gemini-flash-3.8'],
+      modelGroups: [
+        { name: 'Anthropic', models: ['anthropic-claude-3.5-sonnet'] },
+        { name: 'OpenAI', models: ['openai-gpt-4o'] },
+        { name: 'Vertex', models: ['vertex-gemini-flash-3.8'] },
+      ],
       defaultModel: 'vertex-gemini-flash-3.8',
       activeMode: 'default',
       availableModes: [
@@ -48,11 +53,20 @@ describe('conversation-sidebar model selector', () => {
     return { sidebar, store };
   }
 
-  it('renders model selector and selects the active model', async () => {
+  /** Wait for the nested picker to render its children, then return it. */
+  async function pickerOf(el) {
+    const picker = /** @type {any} */ (el.querySelector('model-picker'));
+    await picker.updateComplete;
+    return picker;
+  }
+
+  it('renders the model picker and selects the active model', async () => {
     const { sidebar } = await mount({ activeModel: 'vertex-gemini-flash-3.8' });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#model-select'));
-    expect(select).toBeTruthy();
-    expect(select.value).toBe('vertex-gemini-flash-3.8');
+    const picker = await pickerOf(sidebar);
+    const trigger = picker.querySelector('.model-picker-trigger');
+    expect(trigger).toBeTruthy();
+    expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
+    expect(sidebar.querySelector('#model-select')).toBeNull();
   });
 
   it('falls back to defaultModel when activeModel is empty', async () => {
@@ -60,61 +74,75 @@ describe('conversation-sidebar model selector', () => {
       activeModel: '',
       defaultModel: 'openai-gpt-4o',
     });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#model-select'));
-    expect(select).toBeTruthy();
-    expect(select.value).toBe('openai-gpt-4o');
+    const picker = await pickerOf(sidebar);
+    const trigger = picker.querySelector('.model-picker-trigger');
+    expect(trigger).toBeTruthy();
+    expect(trigger.textContent).toContain('openai-gpt-4o');
   });
 
-  it('updates model selector when switching conversations to a different model', async () => {
+  it('updates the picker when switching conversations to a different model', async () => {
     const { sidebar, store } = await mount({ activeModel: 'vertex-gemini-flash-3.8' });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#model-select'));
-    expect(select.value).toBe('vertex-gemini-flash-3.8');
+    const picker = await pickerOf(sidebar);
+    const trigger = picker.querySelector('.model-picker-trigger');
+    expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
 
     // Simulate switching conversation: activeModel changes to another model
     store.activeModel = 'openai-gpt-4o';
     store.dispatchEvent(new Event('change'));
     await sidebar.updateComplete;
+    await picker.updateComplete;
 
-    expect(select.value).toBe('openai-gpt-4o');
+    expect(trigger.textContent).toContain('openai-gpt-4o');
   });
 
   it('retains correct model even when temporary reset to empty string happens during switch', async () => {
     const { sidebar, store } = await mount({ activeModel: 'vertex-gemini-flash-3.8' });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#model-select'));
-    expect(select.value).toBe('vertex-gemini-flash-3.8');
+    const picker = await pickerOf(sidebar);
+    const trigger = picker.querySelector('.model-picker-trigger');
+    expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
 
     // Simulating selectConversation: activeModel is cleared
     store.activeModel = '';
     store.defaultModel = 'anthropic-claude-3.5-sonnet';
     store.dispatchEvent(new Event('change'));
     await sidebar.updateComplete;
-    expect(select.value).toBe('anthropic-claude-3.5-sonnet');
+    await picker.updateComplete;
+    expect(trigger.textContent).toContain('anthropic-claude-3.5-sonnet');
 
     // Now CONV_HISTORY arrives with the conversation's active model
     store.activeModel = 'vertex-gemini-flash-3.8';
     store.dispatchEvent(new Event('change'));
     await sidebar.updateComplete;
+    await picker.updateComplete;
 
-    expect(select.value).toBe('vertex-gemini-flash-3.8');
+    expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
   });
 
-  it('flags and selects an unconfigured model', async () => {
+  it('flags an unconfigured model', async () => {
     const { sidebar } = await mount({
       activeModel: 'legacy-model-v1',
       availableModels: ['anthropic-claude-3.5-sonnet', 'openai-gpt-4o'],
     });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#model-select'));
-    expect(select.value).toBe('legacy-model-v1');
-    expect(select.textContent).toContain('⚠ legacy-model-v1 (not configured)');
+    const picker = await pickerOf(sidebar);
+    const trigger = picker.querySelector('.model-picker-trigger');
+    expect(trigger.textContent).toContain('legacy-model-v1');
+    expect(trigger.textContent).toContain('not configured');
   });
 
-  it('calls store.setModel when the user changes selection', async () => {
-    const { sidebar, store } = await mount({ activeModel: 'vertex-gemini-flash-3.8' });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#model-select'));
-    select.value = 'openai-gpt-4o';
-    select.dispatchEvent(new Event('change'));
+  it('emits set-model when the user changes selection', async () => {
+    const { sidebar } = await mount({ activeModel: 'vertex-gemini-flash-3.8' });
+    const picker = await pickerOf(sidebar);
+    const handler = vi.fn();
+    document.addEventListener('set-model', handler);
+    picker.querySelector('.model-picker-trigger').click();
+    await picker.updateComplete;
+    const option = [...picker.querySelectorAll('.model-picker-option')]
+      .find((row) => row.dataset.model === 'openai-gpt-4o');
+    option.click();
 
-    expect(store.setModel).toHaveBeenCalledWith('openai-gpt-4o');
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].detail).toEqual({ model: 'openai-gpt-4o' });
+    document.removeEventListener('set-model', handler);
   });
 });
 
@@ -196,6 +224,11 @@ describe('conversation-sidebar mode selector', () => {
       contextLimit: 0,
       activeModel: 'vertex-gemini-flash-3.8',
       availableModels: ['anthropic-claude-3.5-sonnet', 'openai-gpt-4o', 'vertex-gemini-flash-3.8'],
+      modelGroups: [
+        { name: 'Anthropic', models: ['anthropic-claude-3.5-sonnet'] },
+        { name: 'OpenAI', models: ['openai-gpt-4o'] },
+        { name: 'Vertex', models: ['vertex-gemini-flash-3.8'] },
+      ],
       defaultModel: 'vertex-gemini-flash-3.8',
       activeMode: 'default',
       availableModes: [

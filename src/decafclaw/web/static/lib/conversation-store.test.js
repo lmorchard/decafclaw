@@ -1183,3 +1183,71 @@ describe('session hierarchy follows conversation mutations (#1274)', () => {
     }
   });
 });
+
+describe('conversation model groups (#1441)', () => {
+  let ws;
+  let store;
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = new ConversationStore(ws);
+    store.selectConversation('c1');
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('stores model_groups from CONV_HISTORY', () => {
+    const groups = [
+      { name: 'Anthropic', models: ['anthropic/claude'] },
+      { name: 'Custom', models: ['legacy'] },
+    ];
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_HISTORY,
+      conv_id: 'c1',
+      messages: [],
+      has_more: false,
+      context_limit: 1000,
+      available_models: ['anthropic/claude', 'legacy'],
+      model_groups: groups,
+    });
+
+    expect(store.modelGroups).toEqual(groups);
+  });
+
+  it('falls back to one group from available_models when model_groups is absent', () => {
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_HISTORY,
+      conv_id: 'c1',
+      messages: [],
+      has_more: false,
+      context_limit: 1000,
+      available_models: ['m1', 'm2'],
+    });
+
+    expect(store.modelGroups).toEqual([{ name: 'Models', models: ['m1', 'm2'] }]);
+  });
+
+  it('stores model_groups from MODELS_AVAILABLE', () => {
+    const groups = [{ name: 'Local', models: ['local/llama'] }];
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MODELS_AVAILABLE,
+      available_models: ['local/llama'],
+      model_groups: groups,
+      default_model: 'local/llama',
+    });
+
+    expect(store.modelGroups).toEqual(groups);
+  });
+
+  it('falls back when MODELS_AVAILABLE has no model_groups', () => {
+    ws.fireMessage({
+      type: MESSAGE_TYPES.MODELS_AVAILABLE,
+      available_models: ['m1'],
+      default_model: 'm1',
+    });
+
+    expect(store.modelGroups).toEqual([{ name: 'Models', models: ['m1'] }]);
+  });
+});

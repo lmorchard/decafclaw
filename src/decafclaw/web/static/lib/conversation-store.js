@@ -133,6 +133,8 @@ export class ConversationStore extends EventTarget {
   #activeModel = '';
   /** @type {string[]} available model config names from server */
   #availableModels = [];
+  /** @type {{name: string, models: string[]}[]} provider-grouped picker models (#1441) */
+  #modelGroups = [];
   /** @type {string} default model from server config */
   #defaultModel = '';
   /** @type {string} active session mode for the conversation */
@@ -209,6 +211,17 @@ export class ConversationStore extends EventTarget {
   get activeModel() { return this.#activeModel; }
   /** @returns {string[]} */
   get availableModels() { return this.#availableModels; }
+  /**
+   * Provider groups for the conversation model picker (#1441). A payload
+   * that predates `model_groups` still yields one usable group from the
+   * flat `availableModels` list.
+   * @returns {{name: string, models: string[]}[]}
+   */
+  get modelGroups() {
+    if (this.#modelGroups.length > 0) return this.#modelGroups;
+    if (this.#availableModels.length === 0) return [];
+    return [{ name: 'Models', models: this.#availableModels }];
+  }
   /** @returns {string} */
   get defaultModel() { return this.#defaultModel; }
   /** @returns {string} */
@@ -773,6 +786,10 @@ export class ConversationStore extends EventTarget {
         if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
         if (msg.active_model) this.#activeModel = msg.active_model;
         if (msg.available_models) this.#availableModels = msg.available_models;
+        // Grouped payload (#1441). Older servers omit it: keep whatever flat
+        // list arrived and let the getter synthesize a single group.
+        if (Array.isArray(msg.model_groups)) this.#modelGroups = msg.model_groups;
+        else if ('available_models' in msg) this.#modelGroups = [];
         // `in` (not truthiness): an explicitly cleared default arrives as ''
         // and must clear the stale marker (#1211).
         if ('default_model' in msg) this.#defaultModel = msg.default_model || '';
@@ -908,6 +925,7 @@ export class ConversationStore extends EventTarget {
 
       case MESSAGE_TYPES.MODELS_AVAILABLE:
         if (msg.available_models) this.#availableModels = msg.available_models;
+        this.#modelGroups = Array.isArray(msg.model_groups) ? msg.model_groups : [];
         // `in` (not truthiness): an explicitly cleared default arrives as ''
         // and must clear the stale marker (#1211).
         if ('default_model' in msg) this.#defaultModel = msg.default_model || '';
