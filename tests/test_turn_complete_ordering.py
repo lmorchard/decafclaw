@@ -22,7 +22,8 @@ import asyncio
 import pytest
 
 from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
-from decafclaw.media import ToolResult
+from decafclaw.conversation_manager import _turn_settle_outcome
+from decafclaw.media import TerminationReason, ToolResult
 from decafclaw.testing import ScriptedResponse
 from tests.harness import AgentHarness
 
@@ -212,6 +213,31 @@ async def test_error_settle_order(tmp_path):
 
         (turn_complete,) = _turn_completes(h.events)
         assert turn_complete["reason"] == "failed"
+
+
+@pytest.mark.parametrize(
+    ("is_cancelled", "reason", "expected"),
+    [
+        (False, None, "completed"),
+        (False, TerminationReason.ERROR, "failed"),
+        # Abnormal-but-concluded reasons settle as completed: the turn ran to
+        # its own conclusion and emitted message_complete.
+        (False, TerminationReason.MAX_ITERATIONS, "completed"),
+        (False, TerminationReason.LOOP_BREAKER, "completed"),
+        (False, TerminationReason.SKILL_ACTIVATION_FAILED, "completed"),
+        # A cancel may be observed after the turn already unwound, so it wins
+        # over whatever reason the result carries.
+        (True, None, "cancelled"),
+        (True, TerminationReason.ERROR, "cancelled"),
+        (True, TerminationReason.MAX_ITERATIONS, "cancelled"),
+    ],
+)
+def test_settle_precedence(is_cancelled: bool, reason: TerminationReason | None, expected: str):
+    """cancelled > failed > completed (#1000) is expressed once in
+    _turn_settle_outcome: the comparison is an identity check against the
+    TerminationReason enum, so a typo'd reason can no longer silently settle
+    as completed."""
+    assert _turn_settle_outcome(is_cancelled, reason) == expected
 
 
 @pytest.mark.scripted_provider
