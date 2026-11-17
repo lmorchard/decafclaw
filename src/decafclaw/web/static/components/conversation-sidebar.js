@@ -539,6 +539,11 @@ export class ConversationSidebar extends LitElement {
     this._movePickerConvId = convId;
     this._movePickerFolders = [];
     this._movePickerLoading = true;
+    // The folder walk is one round trip per level, so the loading dialog can be
+    // visible for a while. Move focus inside it right away: keydown (and so
+    // Escape) only reaches the dialog when focus is within it.
+    await this.updateComplete;
+    /** @type {HTMLElement|null} */ (this.querySelector('.conv-move-picker-close'))?.focus();
     const folders = (await this.store?.listAllFolders?.()) || [];
     if (this._movePickerConvId !== convId) return;
     this._movePickerFolders = folders;

@@ -817,6 +817,40 @@ describe('conversation-sidebar session move (#1277)', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it('focuses inside the picker while folders are still loading, so Escape closes it', async () => {
+    /** @type {(paths: string[]) => void} */
+    let resolveFolders = () => {};
+    const pending = new Promise((resolve) => { resolveFolders = /** @type {any} */ (resolve); });
+    const { sidebar: el } = await mountMove({
+      listAllFolders: vi.fn(() => pending),
+    });
+    const trigger = el.querySelector('.conv-move-btn');
+    trigger.click();
+    await flush();
+
+    const picker = el.querySelector('.conv-move-picker');
+    expect(picker).toBeTruthy();
+    expect(picker.textContent).toContain('Loading folders');
+    const close = el.querySelector('.conv-move-picker-close');
+    expect(document.activeElement).toBe(close);
+    expect(picker.contains(document.activeElement)).toBe(true);
+
+    // Keydown only reaches the dialog's Escape handler through the focused
+    // element, so this also proves the dialog is keyboard-reachable mid-walk.
+    document.activeElement.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    await flush();
+    expect(el.querySelector('.conv-move-picker')).toBeFalsy();
+    expect(document.activeElement).toBe(trigger);
+
+    // The late folder list must not reopen the picker or steal focus back.
+    resolveFolders(['Work']);
+    await flush();
+    expect(el.querySelector('.conv-move-picker')).toBeFalsy();
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it('offers no move action and no drag source on archived rows', async () => {
     const { sidebar: el, store } = await mountMove({
       archivedConversations: [{ conv_id: 'web-alice-a1', title: 'Old chat' }],
