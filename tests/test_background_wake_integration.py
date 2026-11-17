@@ -15,6 +15,7 @@ import asyncio
 
 import pytest
 
+from decafclaw.context import TaskMode
 from decafclaw.conversation_manager import ConversationManager, TurnKind
 from decafclaw.media import ToolResult
 from decafclaw.skills.background.tools import (
@@ -54,7 +55,7 @@ async def test_user_conv_wake_fires_after_background_job_completes(ctx, config, 
     async def fake_run_agent_turn(ctx_arg, user_message, history, **kwargs):
         captured.append(
             {
-                "task_mode": getattr(ctx_arg, "task_mode", ""),
+                "task_mode": getattr(ctx_arg, "task_mode", TaskMode.INTERACTIVE),
                 "conv_id": ctx_arg.conv_id,
                 "user_message": user_message,
                 "history": list(history),
@@ -93,7 +94,7 @@ async def test_user_conv_wake_fires_after_background_job_completes(ctx, config, 
     assert len(bg_notifs) >= 1
 
     # 3. run_agent_turn was called for the wake turn.
-    wake_calls = [c for c in captured if c["task_mode"] == "background_wake"]
+    wake_calls = [c for c in captured if c["task_mode"] is TaskMode.BACKGROUND_WAKE]
     assert len(wake_calls) == 1
 
     # 4. Wake turn's raw history includes the background_event record.
@@ -122,7 +123,7 @@ async def test_heartbeat_conv_gets_its_own_wake(ctx, config, monkeypatch):
         captured.append(
             {
                 "conv_id": ctx_arg.conv_id,
-                "task_mode": getattr(ctx_arg, "task_mode", ""),
+                "task_mode": getattr(ctx_arg, "task_mode", TaskMode.INTERACTIVE),
             }
         )
         return ToolResult(text="ok")
@@ -138,7 +139,7 @@ async def test_heartbeat_conv_gets_its_own_wake(ctx, config, monkeypatch):
     await asyncio.sleep(0)
     await _wait_for_wake_task(manager, "heartbeat-T-0")
 
-    wake_calls = [c for c in captured if c["task_mode"] == "background_wake"]
+    wake_calls = [c for c in captured if c["task_mode"] is TaskMode.BACKGROUND_WAKE]
     assert len(wake_calls) == 1
     assert wake_calls[0]["conv_id"] == "heartbeat-T-0"
 

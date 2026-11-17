@@ -13,6 +13,7 @@ from decafclaw.confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
+from decafclaw.context import TaskMode
 from decafclaw.context_composer import InjectionCursors
 from decafclaw.conversation_manager import (
     _CTX_DRIVEN_FIELDS,
@@ -24,6 +25,7 @@ from decafclaw.conversation_manager import (
     PersistedTurnState,
     TurnKind,
     _write_cancel_archive,
+    parse_task_mode,
 )
 from decafclaw.events import EventBus
 
@@ -235,7 +237,7 @@ async def test_request_confirmation_fails_fast_on_unattended_turn(ctx):
     """Tools requesting confirmation during unattended turns fail fast with denial (#1119)."""
     from decafclaw.tools.confirmation import request_confirmation
 
-    ctx.task_mode = "background_wake"
+    ctx.task_mode = TaskMode.BACKGROUND_WAKE
     assert ctx.is_unattended is True
 
     result = await request_confirmation(ctx, "shell", "rm -rf /", "Allow delete?")
@@ -1435,6 +1437,32 @@ async def test_respond_to_recovered_admin_mutation(manager):
     assert target.read_text() == "after recovery"
 
 
+# -- TaskMode boundary parsing -------------------------------------------------
+
+
+def test_parse_task_mode_none_stays_none():
+    """None means "derive from the kind", not INTERACTIVE."""
+    assert parse_task_mode(None) is None
+
+
+@pytest.mark.parametrize(
+    ("wire", "expected"),
+    [
+        ("heartbeat", TaskMode.HEARTBEAT),
+        ("scheduled", TaskMode.SCHEDULED),
+        ("child_agent", TaskMode.CHILD_AGENT),
+        ("background_wake", TaskMode.BACKGROUND_WAKE),
+        ("", TaskMode.INTERACTIVE),
+    ],
+)
+def test_parse_task_mode_maps_wire_strings(wire, expected):
+    assert parse_task_mode(wire) is expected
+
+
+def test_parse_task_mode_unknown_falls_back_to_interactive():
+    assert parse_task_mode("bogus") is TaskMode.INTERACTIVE
+
+
 # -- Per-kind policy matrix ----------------------------------------------------
 
 
@@ -1457,10 +1485,10 @@ async def test_enqueue_turn_heartbeat_kind_uses_for_task(manager, config, monkey
         kind=TurnKind.HEARTBEAT_SECTION,
         prompt="do section",
         history=[],
-        task_mode="heartbeat",
+        task_mode=TaskMode.HEARTBEAT,
     )
     await future
-    assert seen_ctx["task_mode"] == "heartbeat"
+    assert seen_ctx["task_mode"] is TaskMode.HEARTBEAT
     assert seen_ctx["skip_reflection"] is True
     assert seen_ctx["skip_vault_retrieval"] is True
 
@@ -1483,7 +1511,7 @@ async def test_enqueue_turn_user_kind_has_empty_task_mode(manager, config, monke
         prompt="hello",
     )
     await future
-    assert seen_ctx["task_mode"] == ""
+    assert seen_ctx["task_mode"] is TaskMode.INTERACTIVE
 
 
 @pytest.mark.asyncio
@@ -1506,7 +1534,43 @@ async def test_enqueue_turn_wake_kind_defaults_to_background_wake_mode(manager, 
         # no explicit task_mode
     )
     await future
-    assert seen_ctx["task_mode"] == "background_wake"
+    assert seen_ctx["task_mode"] is TaskMode.BACKGROUND_WAKE
+
+
+@pytest.mark.asyncio
+async def test_inbox_stores_task_mode_wire_string_and_drain_restores_member(manager, config, monkeypatch):
+    """The inbox JSONL stores the wire string; the drained turn sees the member (#1381)."""
+    seen_ctx = {}
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen_ctx["task_mode"] = ctx.task_mode
+        from decafclaw.media import ToolResult
+
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    state = manager._get_or_create("c1")
+    state.busy = True
+
+    future = await manager.enqueue_turn(
+        conv_id="c1",
+        kind=TurnKind.HEARTBEAT_SECTION,
+        prompt="do section",
+        history=[],
+        task_mode=TaskMode.HEARTBEAT,
+    )
+
+    from decafclaw.inbox import _read_inbox
+
+    stored = _read_inbox(manager.config, "c1")
+    assert [record["task_mode"] for record in stored] == ["heartbeat"]
+
+    state.busy = False
+    await manager._drain_pending(state)
+    await asyncio.wait_for(future, timeout=2.0)
+
+    assert seen_ctx["task_mode"] is TaskMode.HEARTBEAT
 
 
 @pytest.mark.asyncio
@@ -1766,7 +1830,7 @@ async def test_drain_pending_fires_mixed_kinds_one_at_a_time(manager, config, mo
     # Expected: combined USER turn first, then WAKE turn.
     assert len(fires) == 2
     assert fires[0]["text"] == "hello1\nhello2"
-    assert fires[0]["task_mode"] == ""
+    assert fires[0]["task_mode"] is TaskMode.INTERACTIVE
     assert fires[1]["text"] == "wake"
 
 
@@ -2156,7 +2220,7 @@ async def test_wake_inherits_last_user_turn_context(manager, config, monkeypatch
     # WAKE turn inherits user_id and context_setup
     assert seen[1]["user_id"] == "alice"
     assert seen[1]["channel_name"] == "custom-channel"
-    assert seen[1]["task_mode"] == "background_wake"
+    assert seen[1]["task_mode"] is TaskMode.BACKGROUND_WAKE
 
 
 @pytest.mark.asyncio

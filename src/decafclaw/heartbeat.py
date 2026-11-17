@@ -229,6 +229,7 @@ async def run_section_turn(
     Returns {"title": str, "response": str, "is_ok": bool, "context_id": str | None}.
     Shared by run_heartbeat_cycle and heartbeat_tools._run_heartbeat_to_channel.
     """
+    from .context import TaskMode
     from .conversation_manager import TurnKind
 
     title = section["title"]
@@ -250,7 +251,7 @@ async def run_section_turn(
             context_setup=context_setup,
             prompt=prompt,
             history=[],
-            task_mode="heartbeat",
+            task_mode=TaskMode.HEARTBEAT,
             user_id=f"heartbeat-{section.get('source', 'workspace')}",
             metadata={"source": section.get("source", "workspace")},
         )
