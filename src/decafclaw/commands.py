@@ -224,14 +224,14 @@ async def _execute_mcp_prompt_command(
     """Execute an MCP prompt as a user-invokable command."""
     import asyncio
 
-    from .mcp_client import _convert_prompt_response, get_registry
+    from .mcp_client import ConnState, _convert_prompt_response, get_registry
 
     registry = get_registry()
     if not registry:
         return CommandResult(mode="error", text="No MCP servers configured.")
 
     state = registry.servers.get(server_name)
-    if not state or state.status != "connected" or not state.session:
+    if not state or state.status != ConnState.CONNECTED or not state.session:
         return CommandResult(mode="error", text=f"MCP server '{server_name}' is not connected.")
 
     # Find the prompt in the cached list

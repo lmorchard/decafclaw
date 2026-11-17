@@ -10,6 +10,7 @@ from decafclaw.context import Context
 from decafclaw.conversation_manager import ConversationManager
 from decafclaw.events import EventBus
 from decafclaw.mcp_client import (
+    ConnState,
     MCPRegistry,
     MCPServerConfig,
     shutdown_mcp,
@@ -83,7 +84,7 @@ async def test_runner_starts_http_while_mcp_handshake_delayed(config):
         registry = mcp_client.get_registry()
         assert registry is not None
         assert "slow-mcp" in registry.servers
-        assert registry.servers["slow-mcp"].status == "connecting"
+        assert registry.servers["slow-mcp"].status == ConnState.CONNECTING
         assert "mcp__slow_mcp__delayed_tool" not in registry.get_tools()
 
         # Now shut down while MCP is still connecting
@@ -142,7 +143,7 @@ async def test_runner_late_mcp_registration(config):
         from decafclaw.tool_definitions import collect_all_tool_defs, refresh_dynamic_tools
 
         registry = mcp_client.get_registry()
-        assert registry.servers["late-mcp"].status == "connecting"
+        assert registry.servers["late-mcp"].status == ConnState.CONNECTING
 
         # Turn 1: tool not yet available
         refresh_dynamic_tools(ctx)
@@ -152,7 +153,7 @@ async def test_runner_late_mcp_registration(config):
         # MCP connection settles
         mcp_gate.set()
         await asyncio.wait_for(registry.wait_for_server("late-mcp"), timeout=2.0)
-        assert registry.servers["late-mcp"].status == "connected"
+        assert registry.servers["late-mcp"].status == ConnState.CONNECTED
 
         # Turn 2: tool is now registered and available
         refresh_dynamic_tools(ctx)

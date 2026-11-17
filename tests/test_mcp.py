@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from decafclaw.mcp_client import (
+    ConnState,
     MCPRegistry,
     MCPServerConfig,
     MCPServerState,
@@ -399,7 +400,7 @@ async def test_connect_server_success():
     await registry.connect_server(cfg)
 
     state = registry.servers["test-server"]
-    assert state.status == "connected"
+    assert state.status == ConnState.CONNECTED
     # Server name hyphens are normalized in the advertised tool name.
     assert "mcp__test_server__get_strategy" in state.tools
     assert len(state.tool_definitions) == 1
@@ -419,7 +420,7 @@ async def test_connect_server_failure():
     await registry.connect_server(cfg)
 
     state = registry.servers["bad-server"]
-    assert state.status == "failed"
+    assert state.status == ConnState.FAILED
     assert len(state.tools) == 0
 
 
@@ -434,11 +435,11 @@ async def test_disconnect_server():
 
     cfg = MCPServerConfig(name="test-server", type="stdio", command="echo")
     await registry.connect_server(cfg)
-    assert registry.servers["test-server"].status == "connected"
+    assert registry.servers["test-server"].status == ConnState.CONNECTED
 
     await registry.disconnect_server("test-server")
     state = registry.servers["test-server"]
-    assert state.status == "disconnected"
+    assert state.status == ConnState.DISCONNECTED
     assert len(state.tools) == 0
     assert state.session is None
 
@@ -449,12 +450,12 @@ async def test_get_tools_only_connected():
     registry = MCPRegistry()
     registry.servers["good"] = MCPServerState(
         config=MCPServerConfig(name="good", type="stdio"),
-        status="connected",
+        status=ConnState.CONNECTED,
         tools={"mcp__good__tool1": AsyncMock()},
     )
     registry.servers["bad"] = MCPServerState(
         config=MCPServerConfig(name="bad", type="stdio"),
-        status="failed",
+        status=ConnState.FAILED,
         tools={"mcp__bad__tool2": AsyncMock()},
     )
 
@@ -482,7 +483,7 @@ async def test_tool_caller_timeout():
     # Set up server state so the caller can find the session
     registry.servers["slow"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         session=slow_session,
     )
     caller = registry._make_tool_caller("slow", "slow_tool", cfg.timeout)
@@ -499,7 +500,7 @@ async def test_maybe_reconnect_connected():
     """Connected server returns True without reconnecting."""
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="ok", type="stdio")
-    registry.servers["ok"] = MCPServerState(config=cfg, status="connected")
+    registry.servers["ok"] = MCPServerState(config=cfg, status=ConnState.CONNECTED)
 
     assert await registry._maybe_reconnect("ok") is True
 
@@ -511,7 +512,7 @@ async def test_maybe_reconnect_max_retries():
     cfg = MCPServerConfig(name="dead", type="stdio")
     registry.servers["dead"] = MCPServerState(
         config=cfg,
-        status="failed",
+        status=ConnState.FAILED,
         retry_count=3,
     )
 
@@ -530,13 +531,13 @@ async def test_maybe_reconnect_success():
     cfg = MCPServerConfig(name="flaky", type="stdio", command="echo")
     registry.servers["flaky"] = MCPServerState(
         config=cfg,
-        status="failed",
+        status=ConnState.FAILED,
         retry_count=0,
         last_retry_time=0.0,
     )
 
     assert await registry._maybe_reconnect("flaky") is True
-    assert registry.servers["flaky"].status == "connected"
+    assert registry.servers["flaky"].status == ConnState.CONNECTED
 
 
 @pytest.mark.asyncio
@@ -552,7 +553,7 @@ async def test_maybe_reconnect_increments_retry():
     cfg = MCPServerConfig(name="broken", type="stdio", command="nope")
     registry.servers["broken"] = MCPServerState(
         config=cfg,
-        status="failed",
+        status=ConnState.FAILED,
         retry_count=0,
         last_retry_time=0.0,
     )
@@ -585,7 +586,7 @@ async def test_mcp_status_shows_servers(ctx, monkeypatch):
     cfg = MCPServerConfig(name="test-server", type="stdio")
     registry.servers["test-server"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         tools={"mcp__test-server__tool1": AsyncMock(), "mcp__test-server__tool2": AsyncMock()},
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -622,7 +623,7 @@ async def test_connect_discovers_resources_when_capable():
     await registry.connect_server(cfg)
 
     state = registry.servers["res-server"]
-    assert state.status == "connected"
+    assert state.status == ConnState.CONNECTED
     assert len(state.resources) == 1
     assert len(state.resource_templates) == 1
     assert state.resources[0].uri == "file:///a.txt"
@@ -644,7 +645,7 @@ async def test_connect_skips_resources_when_not_capable():
     await registry.connect_server(cfg)
 
     state = registry.servers["no-res"]
-    assert state.status == "connected"
+    assert state.status == ConnState.CONNECTED
     assert state.resources == []
     assert state.resource_templates == []
     # list_resources should not have been called
@@ -672,7 +673,7 @@ async def test_connect_discovers_prompts_when_capable():
     await registry.connect_server(cfg)
 
     state = registry.servers["prompt-server"]
-    assert state.status == "connected"
+    assert state.status == ConnState.CONNECTED
     assert len(state.prompts) == 1
     assert state.prompts[0].name == "summarize"
 
@@ -709,12 +710,12 @@ async def test_get_resources_only_connected():
 
     registry.servers["good"] = MCPServerState(
         config=MCPServerConfig(name="good", type="stdio"),
-        status="connected",
+        status=ConnState.CONNECTED,
         resources=[res1],
     )
     registry.servers["bad"] = MCPServerState(
         config=MCPServerConfig(name="bad", type="stdio"),
-        status="failed",
+        status=ConnState.FAILED,
         resources=[res2],
     )
 
@@ -732,12 +733,12 @@ async def test_get_prompts_only_connected():
 
     registry.servers["good"] = MCPServerState(
         config=MCPServerConfig(name="good", type="stdio"),
-        status="connected",
+        status=ConnState.CONNECTED,
         prompts=[p1],
     )
     registry.servers["bad"] = MCPServerState(
         config=MCPServerConfig(name="bad", type="stdio"),
-        status="failed",
+        status=ConnState.FAILED,
         prompts=[p2],
     )
 
@@ -1011,7 +1012,7 @@ async def test_mcp_list_resources_shows_resources(ctx, monkeypatch):
     cfg = MCPServerConfig(name="data-srv", type="stdio")
     registry.servers["data-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         resources=[res],
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1032,7 +1033,7 @@ async def test_mcp_list_resources_empty(ctx, monkeypatch):
     cfg = MCPServerConfig(name="empty-srv", type="stdio")
     registry.servers["empty-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
 
@@ -1060,7 +1061,7 @@ async def test_mcp_read_resource_success(ctx, monkeypatch):
     cfg = MCPServerConfig(name="test-srv", type="stdio")
     registry.servers["test-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         session=mock_session,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1097,7 +1098,7 @@ async def test_mcp_list_prompts_shows_prompts(ctx, monkeypatch):
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         prompts=[prompt],
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1128,7 +1129,7 @@ async def test_mcp_get_prompt_success(ctx, monkeypatch):
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         session=mock_session,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1165,7 +1166,7 @@ async def test_mcp_get_prompt_dict_arguments(ctx, monkeypatch):
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         session=mock_session,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1195,7 +1196,7 @@ async def test_mcp_get_prompt_json_string_arguments(ctx, monkeypatch):
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         session=mock_session,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1224,7 +1225,7 @@ async def test_mcp_get_prompt_non_object_arguments(ctx, monkeypatch):
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         session=mock_session,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
@@ -1265,7 +1266,7 @@ async def test_dispatch_mcp_prompt_command_success(ctx, monkeypatch):
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         session=mock_session,
         prompts=[prompt],
     )
@@ -1293,7 +1294,7 @@ async def test_dispatch_mcp_prompt_command_missing_required_arg(ctx, monkeypatch
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         session=AsyncMock(),
         prompts=[prompt],
     )
@@ -1329,7 +1330,7 @@ async def test_dispatch_mcp_prompt_command_unknown_prompt(ctx, monkeypatch):
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         session=AsyncMock(),
         prompts=[],
     )
@@ -1355,7 +1356,7 @@ def test_format_help_includes_mcp_prompts(monkeypatch):
     cfg = MCPServerConfig(name="ai-srv", type="stdio")
     registry.servers["ai-srv"] = MCPServerState(
         config=cfg,
-        status="connected",
+        status=ConnState.CONNECTED,
         prompts=[prompt],
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)

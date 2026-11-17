@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from decafclaw.mcp_client import ConnState
 from decafclaw.tools.health import tool_health_status
 
 
@@ -33,7 +34,7 @@ async def test_health_mcp_section_with_servers(ctx):
     """MCP section shows server status table."""
     mock_registry = MagicMock()
     mock_state = MagicMock()
-    mock_state.status = "connected"
+    mock_state.status = ConnState.CONNECTED
     mock_state.tools = {"mcp__test__a": None, "mcp__test__b": None}
     mock_state.retry_count = 0
     mock_registry.servers = {"test-server": mock_state}
