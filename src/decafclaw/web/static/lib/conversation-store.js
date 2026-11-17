@@ -909,6 +909,25 @@ export class ConversationStore extends EventTarget {
         }
         break;
 
+      case MESSAGE_TYPES.STREAM_STATE:
+        // #1439 — a full history load carries the unarchived segment, so a
+        // client that switched away mid-turn rebuilds what it missed. Apply
+        // only for the visible conversation with a live turn; a late frame
+        // for a conversation we left must not resurrect streaming text.
+        if (msg.conv_id === this.#currentConvId && this.#busy) {
+          this.#messageStore.setStreamingState(msg.text || '', msg.thinking || '');
+          this.#emitChange();
+        }
+        break;
+
+      case MESSAGE_TYPES.TURN_COMPLETE:
+        // A finished turn leaves no stale streaming block (#1439).
+        if (!msg.conv_id || msg.conv_id === this.#currentConvId) {
+          this.#messageStore.clearStreamingText();
+          this.#emitChange();
+        }
+        break;
+
       case MESSAGE_TYPES.MODEL_CHANGED:
         if (msg.conv_id === this.#currentConvId) {
           this.#activeModel = msg.model || '';

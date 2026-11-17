@@ -41,6 +41,7 @@ from decafclaw.web.message_types import (
     SrvModeChanged,
     SrvStickyClear,
     SrvStickySet,
+    SrvStreamState,
     SrvToolEnd,
     SrvTurnComplete,
     WSMessageType,
@@ -453,6 +454,25 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     _subscribe_to_conv(state, conv_id)
 
     await ws_send(response)
+
+    # A client that switched away mid-turn discarded its streaming buffer.
+    # The subscription above was established before this snapshot, so a
+    # chunk emitted before the read is included here and one emitted after
+    # it appends to the client's restored buffer (#1439). Only a full load
+    # needs the segment; pagination leaves streaming state alone.
+    if not before and manager:
+        conv_state = manager.get_state(conv_id)
+        if conv_state and conv_state.busy:
+            text = "".join(conv_state.current_iteration_assistant_chunks)
+            thinking = "".join(conv_state.current_iteration_thinking_chunks)
+            if text or thinking:
+                stream_state: SrvStreamState = {
+                    "type": WSMessageType.STREAM_STATE,
+                    "conv_id": conv_id,
+                    "text": text,
+                    "thinking": thinking,
+                }
+                await ws_send(stream_state)
 
 
 async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> None:

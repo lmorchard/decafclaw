@@ -236,7 +236,7 @@ async def test_side_question_retains_streaming_text_during_tool_calls_prior_to_a
 
     # Now simulate committing the assistant message to history and archiving
     state.history.append({"role": "assistant", "content": "Searching for matching files now."})
-    manager.note_partial_assistant_archived(conv_id)
+    manager.note_assistant_archived(conv_id, has_content=True)
 
     # current_iteration_assistant_chunks should now be cleared
     assert state.current_iteration_assistant_chunks == []

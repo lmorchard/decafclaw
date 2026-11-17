@@ -1251,3 +1251,88 @@ describe('conversation model groups (#1441)', () => {
     expect(store.modelGroups).toEqual([{ name: 'Models', models: ['m1'] }]);
   });
 });
+
+describe('stream state on return (#1439)', () => {
+  let ws;
+  let store;
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = new ConversationStore(ws);
+    store.selectConversation('c1');
+  });
+
+  it('leaves streaming cleared after CONV_HISTORY and seeds it from STREAM_STATE', () => {
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_HISTORY,
+      conv_id: 'c1',
+      messages: [],
+      has_more: false,
+      turn_active: true,
+    });
+    expect(store.streamingText).toBe('');
+    expect(store.streamingThinking).toBe('');
+
+    ws.fireMessage({
+      type: MESSAGE_TYPES.STREAM_STATE,
+      conv_id: 'c1',
+      text: 'Partial answer ',
+      thinking: 'First thought. ',
+    });
+    expect(store.streamingText).toBe('Partial answer ');
+    expect(store.streamingThinking).toBe('First thought. ');
+
+    // New chunks append to the restored segment.
+    ws.fireMessage({ type: MESSAGE_TYPES.CHUNK, conv_id: 'c1', text: 'continues.', thinking: 'Second thought.' });
+    expect(store.streamingText).toBe('Partial answer continues.');
+    expect(store.streamingThinking).toBe('First thought. Second thought.');
+  });
+
+  it('ignores STREAM_STATE for another conversation or before a turn is active', () => {
+    ws.fireMessage({
+      type: MESSAGE_TYPES.STREAM_STATE,
+      conv_id: 'c1',
+      text: 'stale',
+      thinking: 'stale',
+    });
+    expect(store.streamingText).toBe('');
+    expect(store.streamingThinking).toBe('');
+
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_HISTORY,
+      conv_id: 'c1',
+      messages: [],
+      has_more: false,
+      turn_active: true,
+    });
+    ws.fireMessage({
+      type: MESSAGE_TYPES.STREAM_STATE,
+      conv_id: 'c2',
+      text: 'other conversation',
+      thinking: 'other conversation',
+    });
+    expect(store.streamingText).toBe('');
+    expect(store.streamingThinking).toBe('');
+  });
+
+  it('clears streaming buffers on TURN_COMPLETE', () => {
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_HISTORY,
+      conv_id: 'c1',
+      messages: [],
+      has_more: false,
+      turn_active: true,
+    });
+    ws.fireMessage({
+      type: MESSAGE_TYPES.STREAM_STATE,
+      conv_id: 'c1',
+      text: 'Partial answer ',
+      thinking: 'First thought. ',
+    });
+    expect(store.streamingText).toBe('Partial answer ');
+
+    ws.fireMessage({ type: MESSAGE_TYPES.TURN_COMPLETE, conv_id: 'c1', reason: 'completed' });
+    expect(store.streamingText).toBe('');
+    expect(store.streamingThinking).toBe('');
+  });
+});

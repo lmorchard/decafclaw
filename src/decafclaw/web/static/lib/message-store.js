@@ -135,6 +135,15 @@ export class MessageStore {
     this.#streamingThinking = '';
   }
 
+  /** Replace the live buffers with the server's accumulated segment,
+   * e.g. after returning to a conversation that streamed while away (#1439).
+   * @param {string} text @param {string} thinking
+   */
+  setStreamingState(text, thinking) {
+    this.#streamingText = text;
+    this.#streamingThinking = thinking;
+  }
+
   /**
    * Handle a WebSocket message if it's message-related.
    * @param {object} msg

@@ -204,6 +204,13 @@ export interface SrvStickySet {
   data: Record<string, unknown>;
 }
 
+export interface SrvStreamState {
+  type: "stream_state";
+  conv_id: string;
+  text: string;
+  thinking: string;
+}
+
 export interface SrvToolEnd {
   type: "tool_end";
   conv_id: string;
@@ -344,6 +351,7 @@ export type ServerMessage =
   | SrvShellApproval
   | SrvStickyClear
   | SrvStickySet
+  | SrvStreamState
   | SrvToolEnd
   | SrvToolStart
   | SrvToolStatus
