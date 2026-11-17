@@ -665,7 +665,7 @@ export class ConversationStore extends EventTarget {
     // but not promptable. The server refuses sends to child conversations
     // too; this keeps the optimistic local echo from lying about it.
     if (parentConvIdOf(this.#currentConvId)) return;
-    // `/terminal` and `/retitle` are human-only side-effect commands (#442, #1156):
+    // `/terminal`, `/retitle`, and `/update` are human-only side-effect commands (#442, #1156, #981):
     // they run NO agent turn, so they must not engage the conversation's busy/turn
     // machinery. Sending them like a normal message would set `#busy` with nothing
     // to clear it (the server sends no MESSAGE_COMPLETE for them) — a perpetual
@@ -675,7 +675,9 @@ export class ConversationStore extends EventTarget {
     if (
       trimmed === '/terminal' || trimmed.startsWith('/terminal ') ||
       trimmed === '/retitle' || trimmed.startsWith('/retitle ') ||
-      trimmed === '!retitle' || trimmed.startsWith('!retitle ')
+      trimmed === '!retitle' || trimmed.startsWith('!retitle ') ||
+      trimmed === '/update' || trimmed.startsWith('/update ') ||
+      trimmed === '!update' || trimmed.startsWith('!update ')
     ) {
       this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text });
       return;

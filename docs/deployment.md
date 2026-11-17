@@ -56,6 +56,21 @@ journalctl --user -u decafclaw -f   # live logs
 
 ## Deploying Updates
 
+### Via Chat Command (/update)
+
+You can check for and apply updates directly from the web chat interface (or Mattermost via `!update`):
+
+1. **Check for updates:** Type `/update` in the chat input. DecafClaw fetches latest commits from upstream (`@{u}`) and displays incoming commits (`git log HEAD..@{u} --oneline`). If already up to date, it lets you know and stops.
+2. **Safety guards:**
+   - **Active turns:** If any conversation is currently running an active turn, `/update` refuses and names the busy conversations. Nothing is pulled or restarted.
+   - **Dirty working tree:** If the working tree has uncommitted modifications or staged changes, `/update` aborts before pulling.
+   - **Fast-forward only:** The update requires that the branch can be fast-forwarded (`git pull --ff-only`).
+3. **Apply and restart:** Type `/update confirm` (or `/update --yes`). DecafClaw pulls the commits, runs `uv sync`, and restarts the service (`systemctl --user restart decafclaw`). If `uv sync` fails, it reports the error and does not restart.
+
+*Note:* `/update` is a human-only side-effect command — it initiates no LLM turn, writes no archive entry, and is strictly inaccessible to agent tools and skills.
+
+### Via SSH
+
 After pushing changes to the repo:
 
 ```bash
