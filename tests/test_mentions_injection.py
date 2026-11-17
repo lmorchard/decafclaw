@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from decafclaw.context_composer import ComposerMode, ContextComposer
+from decafclaw.mcp_client import ConnState
 from decafclaw.memory_context import parse_bare_mentions
 
 
@@ -84,7 +85,7 @@ async def test_compose_mentions_references_mcp(ctx, config, monkeypatch):
     # Mock MCP Registry
     mock_registry = MagicMock()
     mock_state = MagicMock()
-    mock_state.status = "connected"
+    mock_state.status = ConnState.CONNECTED
     mock_state.config.timeout = 5000
 
     class MockResource:

@@ -8,6 +8,7 @@ import pytest
 from decafclaw.context import Context
 from decafclaw.events import EventBus
 from decafclaw.mcp_client import (
+    ConnState,
     MCPConnectionError,
     MCPReadinessError,
     MCPRegistry,
@@ -67,7 +68,7 @@ async def test_connecting_and_ready_states_and_events():
     await asyncio.sleep(0)
 
     state = registry.servers["slow-srv"]
-    assert state.status == "connecting"
+    assert state.status == ConnState.CONNECTING
     assert not state.is_ready
     # Tools should remain hidden while connecting
     assert "mcp__slow_srv__echo_tool" not in registry.get_tools()
@@ -80,7 +81,7 @@ async def test_connecting_and_ready_states_and_events():
     proceed_event.set()
     await task
 
-    assert state.status == "connected"
+    assert state.status == ConnState.CONNECTED
     assert state.is_ready
     assert "mcp__slow_srv__echo_tool" in registry.get_tools()
     assert len(registry.get_tool_definitions()) == 1
@@ -113,8 +114,8 @@ async def test_failed_connection_state_and_events():
 
     await registry.connect_all([good_cfg, bad_cfg], wait=True)
 
-    assert registry.servers["good-srv"].status == "connected"
-    assert registry.servers["bad-srv"].status == "failed"
+    assert registry.servers["good-srv"].status == ConnState.CONNECTED
+    assert registry.servers["bad-srv"].status == ConnState.FAILED
     assert "handshake rejected" in (registry.servers["bad-srv"].error or "")
 
     # Healthy server tools are accessible; failed are not
@@ -160,7 +161,7 @@ async def test_canceled_connection_clean_drain():
 
     assert task.cancelled() or task.done()
     assert cleanup_called
-    assert state.status == "disconnected"
+    assert state.status == ConnState.DISCONNECTED
 
 
 @pytest.mark.asyncio
@@ -169,7 +170,7 @@ async def test_wait_for_server_immediate_when_connected():
     registry = MCPRegistry()
     registry.servers["srv"] = MCPServerState(
         config=MCPServerConfig(name="srv", type="stdio"),
-        status="connected",
+        status=ConnState.CONNECTED,
     )
     registry.servers["srv"].settled_event.set()
 
@@ -276,7 +277,7 @@ async def test_wait_for_servers_multiple_and_unrelated_slow_server():
     # Waiting for only dep-srv finishes immediately without waiting for slow-unrelated
     res = await registry.wait_for_servers(["dep-srv"], timeout=2.0)
     assert res == {"dep-srv": True}
-    assert registry.servers["slow-unrelated"].status == "connecting"
+    assert registry.servers["slow-unrelated"].status == ConnState.CONNECTING
 
     await registry.disconnect_all()
 
@@ -352,12 +353,12 @@ async def test_safe_turn_boundary_freezes_and_reconciles(ctx, monkeypatch):
 
     registry.servers["srv_a"] = MCPServerState(
         config=MCPServerConfig(name="srv_a", type="stdio"),
-        status="connected",
+        status=ConnState.CONNECTED,
         tool_definitions=[{"function": {"name": "mcp__srv_a__tool_a"}}],
     )
     registry.servers["srv_b"] = MCPServerState(
         config=MCPServerConfig(name="srv_b", type="stdio"),
-        status="connecting",
+        status=ConnState.CONNECTING,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
 
@@ -372,7 +373,7 @@ async def test_safe_turn_boundary_freezes_and_reconciles(ctx, monkeypatch):
     ctx.tools.mcp_frozen = True
 
     # Mid-turn: srv_b finishes connecting in background
-    registry.servers["srv_b"].status = "connected"
+    registry.servers["srv_b"].status = ConnState.CONNECTED
     registry.servers["srv_b"].tool_definitions = [{"function": {"name": "mcp__srv_b__tool_b"}}]
 
     # Mid-turn dynamic refresh during iteration
@@ -493,12 +494,12 @@ async def test_reconcile_before_freeze_keeps_mcp_tools_frozen(ctx, monkeypatch):
     registry = MCPRegistry()
     registry.servers["srv_early"] = MCPServerState(
         config=MCPServerConfig(name="srv_early", type="stdio"),
-        status="connected",
+        status=ConnState.CONNECTED,
         tool_definitions=[{"function": {"name": "mcp__srv_early__tool1"}}],
     )
     registry.servers["srv_late"] = MCPServerState(
         config=MCPServerConfig(name="srv_late", type="stdio"),
-        status="connecting",
+        status=ConnState.CONNECTING,
     )
     monkeypatch.setattr(mcp_client, "_registry", registry)
 
@@ -512,7 +513,7 @@ async def test_reconcile_before_freeze_keeps_mcp_tools_frozen(ctx, monkeypatch):
     assert ctx.tools.mcp_definitions[0]["function"]["name"] == "mcp__srv_early__tool1"
 
     # Mid-turn: late server completes
-    registry.servers["srv_late"].status = "connected"
+    registry.servers["srv_late"].status = ConnState.CONNECTED
     registry.servers["srv_late"].tool_definitions = [{"function": {"name": "mcp__srv_late__tool2"}}]
 
     # Calling reconcile mid-turn does not alter the frozen definitions
@@ -541,12 +542,12 @@ async def test_unknown_server_type_cleanly_exits_exit_stack():
             cleanup_called = True
 
     cfg = MCPServerConfig(name="odd", type="custom_proto")
-    state = MCPServerState(config=cfg, status="connecting", _exit_stack=MockExitStack())
+    state = MCPServerState(config=cfg, status=ConnState.CONNECTING, _exit_stack=MockExitStack())
     registry.servers["odd"] = state
 
     await registry.connect_server(cfg)
 
-    assert state.status == "failed"
+    assert state.status == ConnState.FAILED
     assert "unknown server type" in (state.error or "")
     assert state.settled_event.is_set()
     assert state._exit_stack is None
@@ -559,12 +560,12 @@ async def test_closed_registry_early_exit():
     registry._closed = True
 
     cfg = MCPServerConfig(name="closed_srv", type="stdio")
-    state = MCPServerState(config=cfg, status="connecting")
+    state = MCPServerState(config=cfg, status=ConnState.CONNECTING)
     registry.servers["closed_srv"] = state
 
     await registry.connect_server(cfg)
 
-    assert state.status == "disconnected"
+    assert state.status == ConnState.DISCONNECTED
     assert state.settled_event.is_set()
 
 
@@ -624,7 +625,7 @@ async def test_replacing_in_flight_connection_drains_without_clearing_replacemen
     assert cleanup1 is True
     assert cleanup2 is False  # Replacement exit stack should NOT be torn down on success
     assert state._exit_stack is stack2_ref
-    assert state.status == "connected"
+    assert state.status == ConnState.CONNECTED
 
 
 @pytest.mark.asyncio
@@ -656,7 +657,7 @@ async def test_single_server_restart_cancels_previous_and_reconnects(ctx, monkey
 
     gate.set()
     await t_new
-    assert registry.servers["restart_me"].status == "connected"
+    assert registry.servers["restart_me"].status == ConnState.CONNECTED
 
 
 @pytest.mark.asyncio
@@ -676,7 +677,7 @@ async def test_cross_task_disconnect_anyio_cancel_scope_safety():
 
     t = registry.start_connect_server(cfg)
     await registry.wait_for_server("anyio_srv")
-    assert registry.servers["anyio_srv"].status == "connected"
+    assert registry.servers["anyio_srv"].status == ConnState.CONNECTED
 
     # Disconnect from a separate task
     async def external_disconnect():
@@ -685,5 +686,5 @@ async def test_cross_task_disconnect_anyio_cancel_scope_safety():
     disconnect_task = asyncio.create_task(external_disconnect())
     await disconnect_task
 
-    assert registry.servers["anyio_srv"].status == "disconnected"
+    assert registry.servers["anyio_srv"].status == ConnState.DISCONNECTED
     assert t.done()

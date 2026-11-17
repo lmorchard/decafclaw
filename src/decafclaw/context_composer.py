@@ -1411,7 +1411,7 @@ class ContextComposer:
         if mode in skip_modes:
             return [], None
 
-        from .mcp_client import _convert_resource_response, get_registry
+        from .mcp_client import ConnState, _convert_resource_response, get_registry
         from .web.workspace_paths import detect_kind, is_secret, resolve_safe
 
         mentions = parse_bare_mentions(user_message)
@@ -1476,7 +1476,7 @@ class ContextComposer:
 
                 registry = get_registry()
                 state = registry.servers.get(server_name) if registry else None
-                if not state or state.status != "connected" or not state.session:
+                if not state or state.status != ConnState.CONNECTED or not state.session:
                     text = f"[MCP server '{server_name}' is not connected to retrieve '{resource_name}']"
                 else:
                     # Find matching resource by name, uri, or ending
