@@ -16,6 +16,7 @@ from decafclaw.agent import (
     run_agent_turn,
 )
 from decafclaw.config_types import ReflectionConfig
+from decafclaw.context import TaskMode
 from decafclaw.media import EndTurnConfirm, ToolResult, WidgetInputPause
 from decafclaw.reflection import ReflectionResult
 from decafclaw.tool_definitions import build_tool_list, refresh_dynamic_tools
@@ -1665,14 +1666,14 @@ async def test_reflection_turn_not_emitted_for_child_agent(ctx):
 
 @pytest.mark.asyncio
 async def test_wake_turn_archives_nudge_as_wake_trigger_not_user(ctx, config):
-    """A wake turn (task_mode='background_wake') archives the trigger prompt under
+    """A wake turn (TaskMode.BACKGROUND_WAKE) archives the trigger prompt under
     'wake_trigger' role, not 'user', so the web UI doesn't render it as a real
     user message on conversation reload."""
     from decafclaw.archive import read_archive
 
     ctx.config.llm.streaming = False
     ctx.config.system_prompt = "test"
-    ctx.task_mode = "background_wake"
+    ctx.task_mode = TaskMode.BACKGROUND_WAKE
     ctx.conv_id = "test-wake-trigger-archive"
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:

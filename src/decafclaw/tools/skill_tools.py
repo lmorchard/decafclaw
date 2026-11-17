@@ -785,7 +785,7 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
             # workspace skill only via a standing "always" grant, handled above.
             log.warning(
                 f"[tool:activate_skill] denied on unattended turn "
-                f"(task_mode={ctx.task_mode!r}): workspace-tier skill "
+                f"(task_mode={ctx.task_mode.value}): workspace-tier skill "
                 f"'{name}' has no standing grant or its code was modified"
             )
             ctx.skills.activation_denials.append(name)

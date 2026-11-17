@@ -713,7 +713,7 @@ async def check_shell_approval(
         # Nobody can answer a prompt on this turn: it would block for the 60s
         # timeout and then be synthesized into this same denial. Deny now, and
         # say why rather than letting it look like a user decision.
-        log.warning(f"[{tool_name}] denied on unattended turn (task_mode={ctx.task_mode!r}): {command}")
+        log.warning(f"[{tool_name}] denied on unattended turn (task_mode={ctx.task_mode.value}): {command}")
         return {"approved": False, "reason": "unattended turn: command matches no allow pattern"}
 
     prompt_message = f"Shell command: `{command}`{cwd_note}"
@@ -1378,8 +1378,7 @@ async def tool_shell_guidance(
         return "\n".join(mode_lines + ["\n"] + lines)
 
     if ctx.is_unattended:
-        task_mode = getattr(ctx, "task_mode", "")
-        log.warning(f"[tool:shell_guidance] denied on unattended turn (task_mode={task_mode!r})")
+        log.warning(f"[tool:shell_guidance] denied on unattended turn (task_mode={ctx.task_mode.value})")
         return ToolResult(
             text="[error: denied on unattended turn: modifying approval rules requires user confirmation]"
         )

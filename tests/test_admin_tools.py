@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from decafclaw.confirmations import ConfirmationResponse
-from decafclaw.context import Context
+from decafclaw.context import Context, TaskMode
 from decafclaw.media import ToolResult
 from decafclaw.tools.admin_tools import (
     MAX_DIFF_WIDGET_CHARS,
@@ -491,7 +491,7 @@ async def test_admin_write_denied(ctx):
 
 @pytest.mark.asyncio
 async def test_admin_write_blocked_on_unattended_turn(ctx):
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
     ctx.request_confirmation = _mock_confirm(approved=True)
 
     result = await tool_admin_write(ctx, "skills/hack/SKILL.md", "content")

@@ -12,6 +12,7 @@ import pytest
 
 from decafclaw.config_types import SecretPolicyConfig
 from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest, ConfirmationResponse
+from decafclaw.context import TaskMode
 from decafclaw.media import ToolResult
 from decafclaw.prompts import load_system_prompt, wrap_xml
 from decafclaw.skills import _BUNDLED_SKILLS_DIR, SkillInfo
@@ -472,7 +473,7 @@ class TestUpdateSystemPrompt:
 
     @pytest.mark.asyncio
     async def test_update_blocked_on_unattended_turns(self, ctx):
-        ctx.task_mode = "heartbeat"
+        ctx.task_mode = TaskMode.HEARTBEAT
         ctx.request_confirmation = _mock_confirm(approved=True)
 
         result = await tool_update_system_prompt(ctx, "USER.md", "scheduled content\n")

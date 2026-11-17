@@ -58,7 +58,7 @@ Transports delegate turn lifecycle to the **ConversationManager** (`conversation
 
 - **Mattermost transport** (`mattermost.py`) — websocket input, renders events back to Mattermost
 - **Web UI WebSocket** (`web/websocket.py`) — renders events to the browser
-- **Heartbeat / scheduled tasks** — bypass the ConversationManager (fire-and-forget, no persistent state); call `run_agent_turn` directly with `task_mode="heartbeat"` or `"scheduled"`, skipping memory retrieval and reflection
+- **Heartbeat / scheduled tasks** — enqueue `TurnKind.HEARTBEAT_SECTION` / `TurnKind.SCHEDULED_TASK` turns on the ConversationManager with `TaskMode.HEARTBEAT` / `TaskMode.SCHEDULED`, skipping memory retrieval and reflection
 
 ## The forkable Context
 
@@ -80,7 +80,7 @@ The `Context` (`context.py`) is inspired by Go's context pattern. It carries req
 
 **Per-turn flags:**
 - `history`, `messages`, `cancelled` (Event for interruption)
-- `is_child` (delegation), `task_mode` (heartbeat/scheduled), `skip_reflection`, `skip_vault_retrieval`
+- `is_child` (delegation), `task_mode` (a `TaskMode` member), `skip_reflection`, `skip_vault_retrieval`
 
 **Forking**
 
@@ -94,7 +94,7 @@ req_ctx = app_ctx.fork(conv_id="...", user_id="...", ...)
 call_ctx = parent.fork_for_tool_call(tool_call_id)
 
 # Construct for a background task (heartbeat/scheduled — sensible defaults)
-task_ctx = Context.for_task(config, event_bus, conv_id=..., task_mode="heartbeat")
+task_ctx = Context.for_task(config, event_bus, conv_id=..., task_mode=TaskMode.HEARTBEAT)
 ```
 
 Forking is explicit and cheap. Each fork gets a new `context_id` but keeps the parent's event bus, so events published by any descendant fan out to the same subscribers.

@@ -158,12 +158,10 @@ async def request_confirmation(
         return {"approved": True}
 
     if getattr(ctx, "is_unattended", False):
-        log.warning(
-            f"Confirmation requested for {tool_name} on unattended turn ({getattr(ctx, 'task_mode', '')}); denying"
-        )
+        log.warning(f"Confirmation requested for {tool_name} on unattended turn ({ctx.task_mode.value}); denying")
         return {
             "approved": False,
-            "reason": f"interactive confirmations are not available on unattended turns ({getattr(ctx, 'task_mode', '')})",
+            "reason": f"interactive confirmations are not available on unattended turns ({ctx.task_mode.value})",
         }
 
     event = getattr(ctx, "confirmation_active", None)

@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from decafclaw.config import load_config
+from decafclaw.context import TaskMode
 
 # Load tools.py from the colocated path via importlib (same as production loader).
 _THIS_DIR = Path(__file__).parent
@@ -123,10 +124,10 @@ async def step_enabled_gate(config) -> None:
     disabled_config = SkillConfig(enabled=False)
     init(config, disabled_config)
 
-    # Build a minimal stand-in ctx with task_mode="scheduled".
+    # Build a minimal stand-in ctx with task_mode=TaskMode.SCHEDULED.
     class FakeCtx:
         config = None
-        task_mode = "scheduled"
+        task_mode = TaskMode.SCHEDULED
 
     fake = FakeCtx()
     fake.config = config
@@ -144,7 +145,7 @@ class _SmokeCtx:
 
     def __init__(self, config) -> None:
         self.config = config
-        self.task_mode = "interactive"
+        self.task_mode = TaskMode.INTERACTIVE
         # vault_write needs an event_bus to publish on; stub it.
         self.event_bus = _NullEventBus()
         self.channel_name = ""

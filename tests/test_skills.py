@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from decafclaw.context import TaskMode
 from decafclaw.media import ToolResult
 from decafclaw.skills import (
     CheckResult,
@@ -3047,7 +3048,7 @@ async def test_unattended_turn_records_activation_denial(ctx, tmp_path):
     """When a skill activation is denied on an unattended turn, activation_denials is recorded."""
     skill = _make_skill_info(tmp_path, trust_tier="workspace", name="ws-denied-skill")
     ctx.config.discovered_skills = [skill]
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     result = await tool_activate_skill(ctx, name="ws-denied-skill")
     assert "denied by user" in (result.text if hasattr(result, "text") else str(result))
