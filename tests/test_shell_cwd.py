@@ -232,3 +232,98 @@ def test_shell_definition_exposes_optional_cwd():
 
     assert params["properties"]["cwd"]["type"] == "string"
     assert params["required"] == ["command"]
+    # cwd is ordered first in properties to bias models to set working dir before command (#1467)
+    assert list(params["properties"].keys()) == ["cwd", "command"]
+
+
+# -- rejection of cd chaining (#1467) -------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cmd", "expected_err"),
+    [
+        (
+            "cd sub && pytest tests",
+            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub' and command='pytest tests' instead.]",
+        ),
+        (
+            'cd "sub dir" && pytest tests',
+            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub dir' and command='pytest tests' instead.]",
+        ),
+        (
+            "cd 'sub dir' ; pytest tests",
+            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub dir' and command='pytest tests' instead.]",
+        ),
+        (
+            "cd sub\npytest tests",
+            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub' and command='pytest tests' instead.]",
+        ),
+        (
+            "cd .. && git status",
+            "[error: Shell commands must not use 'cd ... &&'. Set cwd='..' and command='git status' instead.]",
+        ),
+        (
+            "   cd sub && ls",
+            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub' and command='ls' instead.]",
+        ),
+        (
+            "cd -P sub && ls",
+            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub' and command='ls' instead.]",
+        ),
+        (
+            "cd && ls",
+            "[error: Shell commands must not use 'cd ... &&'. Use the 'cwd' parameter instead.]",
+        ),
+        (
+            "cd sub",
+            "[error: Shell commands cannot change directory with 'cd' because each invocation runs in a new subshell. Set cwd='sub' on the command you want to run instead.]",
+        ),
+        (
+            "cd",
+            "[error: Shell commands cannot change directory with 'cd' because each invocation runs in a new subshell. Use the 'cwd' parameter to set a working directory.]",
+        ),
+    ],
+)
+async def test_tool_shell_rejects_cd_chaining(ctx, cmd, expected_err):
+    _workspace(ctx)
+
+    with (
+        patch("decafclaw.tools.shell_tools.check_shell_approval", new_callable=AsyncMock) as mock_approval,
+        patch("decafclaw.tools.shell_tools._execute_command", new_callable=AsyncMock) as mock_exec,
+    ):
+        result = await tool_shell(ctx, cmd)
+
+    assert result.text == expected_err
+    mock_approval.assert_not_awaited()
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "cd-hit -i input",
+        "echo 'cd sub && ls'",
+        "pytest tests",
+        "git status",
+    ],
+)
+async def test_tool_shell_allows_valid_commands(ctx, cmd):
+    _workspace(ctx)
+
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.check_shell_approval",
+            new_callable=AsyncMock,
+            return_value={"approved": True},
+        ),
+        patch(
+            "decafclaw.tools.shell_tools._execute_command",
+            new_callable=AsyncMock,
+            return_value=ToolResult(text="ok"),
+        ),
+    ):
+        result = await tool_shell(ctx, cmd)
+
+    assert result.text == "ok"

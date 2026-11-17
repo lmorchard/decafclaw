@@ -767,8 +767,57 @@ def _resolve_shell_cwd(ctx: "Context", cwd: str | None) -> Path:
     return target
 
 
+_CD_CHAIN_PATTERN = re.compile(
+    r"""^\s*cd(?:\s+(?:-[A-Za-z]+|--))*\s*(?P<dir>'[^']*'|"[^"]*"|[^\s;&|\n]+)?\s*(?:&&|;|\|\||\n)\s*(?P<cmd>.*)$""",
+    re.DOTALL,
+)
+_CD_SOLO_PATTERN = re.compile(
+    r"""^\s*cd(?:\s+(?:-[A-Za-z]+|--))*\s*(?P<dir>'[^']*'|"[^"]*"|[^\s;&|\n]+)?\s*$""",
+    re.DOTALL,
+)
+
+
+def _check_cd_rejection(command: str) -> str | None:
+    """Reject commands starting with 'cd' and advise using 'cwd' instead (#1467).
+
+    LLMs have a strong pre-training bias toward ``cd <dir> && <command>`` chaining.
+    In decafclaw, shell commands execute in subshells and the ``cwd`` parameter
+    should be used instead.
+    """
+    if m := _CD_CHAIN_PATTERN.match(command):
+        target_dir = (m.group("dir") or "").strip("'\"")
+        rest_cmd = (m.group("cmd") or "").strip()
+        if target_dir and rest_cmd:
+            return f"Shell commands must not use 'cd ... &&'. Set cwd='{target_dir}' and command='{rest_cmd}' instead."
+        if target_dir:
+            return (
+                f"Shell commands cannot change directory with 'cd' because each "
+                f"invocation runs in a new subshell. Set cwd='{target_dir}' on the "
+                f"command you want to run instead."
+            )
+        return "Shell commands must not use 'cd ... &&'. Use the 'cwd' parameter instead."
+    if m := _CD_SOLO_PATTERN.match(command):
+        target_dir = (m.group("dir") or "").strip("'\"")
+        if target_dir:
+            return (
+                f"Shell commands cannot change directory with 'cd' because each "
+                f"invocation runs in a new subshell. Set cwd='{target_dir}' on the "
+                f"command you want to run instead."
+            )
+        return (
+            "Shell commands cannot change directory with 'cd' because each "
+            "invocation runs in a new subshell. Use the 'cwd' parameter to set a "
+            "working directory."
+        )
+    return None
+
+
 async def tool_shell(ctx: "Context", command: str, cwd: str | None = None) -> ToolResult:
     """Run a shell command after user confirmation, optionally inside a workspace subdirectory."""
+    if cd_err := _check_cd_rejection(command):
+        log.info(f"[tool:shell] rejected command {command}: {cd_err}")
+        return ToolResult(text=f"[error: {cd_err}]")
+
     try:
         workdir = _resolve_shell_cwd(ctx, cwd)
     except ValueError as exc:
@@ -1664,10 +1713,6 @@ SHELL_TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The shell command to execute",
-                    },
                     "cwd": {
                         "type": "string",
                         "description": (
@@ -1676,6 +1721,10 @@ SHELL_TOOL_DEFINITIONS = [
                             "an existing directory inside the workspace. Defaults to the "
                             "workspace root."
                         ),
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute",
                     },
                 },
                 "required": ["command"],
