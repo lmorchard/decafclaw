@@ -83,7 +83,22 @@ During an active or long-running turn, users can ask out-of-band explanation que
 The sidebar lists conversations organized into folders:
 
 - **Create** new conversations
-- **Rename** and **move** conversations between folders
+- **Rename** a conversation by double-clicking its row title (title only)
+- **Move** a session into a folder, or back to the top level, in either way:
+  - **Drag and drop** — drag a session's root row onto a folder row in the
+    current listing, or onto an ancestor segment in the breadcrumbs ("Chats"
+    means the top level). The target highlights while hovered. Dropping on
+    the folder the session already occupies does nothing.
+  - **Move to…** — the arrow action on a root row opens a picker listing
+    "Top level" plus every user folder by full path, so nested folders are
+    reachable without navigating there. The current folder is disabled. The
+    picker is keyboard operable (Tab, Enter or Space, Escape to close) and
+    works at mobile width.
+  A session is its root conversation plus delegated subagents; children move
+  with their root. Subagent rows have no move action, and Archived/System
+  rows are neither move sources nor drop targets. A successful move refreshes
+  both the folder listing and the session hierarchy; a failed move shows an
+  error toast and leaves the listing unchanged.
 - **Archive** / **unarchive** conversations
 - **Virtual folders**: Archived (preserving folder structure) and System (heartbeat, scheduled, delegated)
 - Folder structure is per-user metadata — archive files stay in place

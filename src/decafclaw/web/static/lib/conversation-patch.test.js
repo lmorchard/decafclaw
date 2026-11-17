@@ -57,7 +57,8 @@ describe('conversation PATCH generated transport', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ folder, folders: [], conversations: [other] })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ folder, sessions: [] })));
     const generated = vi.spyOn(DefaultService, 'renameConversationApiConversationsIdPatch');
-    await store.moveConversation(id, folder);
+    const moved = await store.moveConversation(id, folder);
+    expect(moved).toBe(true);
     expect(generated).toHaveBeenCalledWith(id, { folder }, true);
     expectPatch(fetchMock, { folder });
     expect(json).not.toHaveBeenCalled();
@@ -81,14 +82,50 @@ describe('conversation PATCH generated transport', () => {
         const log = vi.spyOn(console, 'error').mockImplementation(() => {});
         if (failure === 'network') fetchMock.mockRejectedValueOnce(new TypeError('offline'));
         else fetchMock.mockResolvedValueOnce(new Response('malformed', { status: failure === 'http' ? 400 : 200 }));
-        await store[method](id, method === 'renameConversation' ? title : folder);
+        const result = await store[method](id, method === 'renameConversation' ? title : folder);
         expect(store.conversations).toBe(state);
         expect(store.currentFolder).toBe(folder);
         expect(changed).not.toHaveBeenCalled();
         expect(fetchMock).toHaveBeenCalledTimes(1);
+        if (method === 'moveConversation') expect(result).toBe(false);
         expect(log).toHaveBeenCalledTimes(failure === 'http' ? 0 : 1);
         if (failure !== 'http') expect(log.mock.calls[0][0]).toBe(
           `Failed to ${method === 'renameConversation' ? 'rename' : 'move'} conversation:`);
       });
   }
+});
+
+describe('conversation folder discovery (#1277)', () => {
+  it('walks every level and excludes virtual and reserved folders', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        folder: '',
+        folders: [
+          { name: 'Work', path: 'Work' },
+          { name: 'Archived', path: '_archived', virtual: true },
+          { name: 'System', path: '_system', virtual: true },
+        ],
+        conversations: [],
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        folder: 'Work', folders: [{ name: 'Plans', path: 'Work/Plans' }], conversations: [],
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        folder: 'Work/Plans', folders: [], conversations: [],
+      })));
+    vi.stubGlobal('fetch', fetchMock);
+    const store = new ConversationStore(new EventTarget());
+
+    const folders = await store.listAllFolders();
+
+    expect(folders).toEqual(['Work', 'Work/Plans']);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const foldersQueried = fetchMock.mock.calls.map(
+      ([url]) => new URL(url, 'http://test').searchParams.get('folder'),
+    );
+    expect(foldersQueried).toEqual([null, 'Work', 'Work/Plans']);
+    // Reading the tree must not disturb the active listing.
+    expect(store.conversations).toEqual([]);
+    expect(store.currentFolder).toBe('');
+  });
 });
