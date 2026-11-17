@@ -37,6 +37,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["watchfiles>=1.0.0"]
+memory = [
+    "mem0ai>=2.2.1",
+]
 
 [project.scripts]
 decafclaw = "decafclaw:main"
