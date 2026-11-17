@@ -1,10 +1,14 @@
 """Tests for embedding index operations."""
 
+import logging
 import struct
+import sys
+import types
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import decafclaw.embeddings as embeddings_module
 from decafclaw.embeddings import (
     _entry_hash,
     _get_db,
@@ -15,6 +19,65 @@ from decafclaw.embeddings import (
     prune_stale_embeddings,
     search_similar_sync,
 )
+
+# Captured before the autouse ``mock_embed_text`` fixture can patch them, so
+# the fastembed routing tests exercise the real implementation rather than
+# the suite-wide stub.
+_REAL_EMBED_TEXT = embeddings_module.embed_text
+_REAL_EMBED_TEXTS = embeddings_module.embed_texts
+
+_FAKE_MODEL_DIMS = {
+    "BAAI/bge-small-en-v1.5": 384,
+    "fake/tiny": 4,
+}
+
+
+def _fake_vector(text: str, dim: int) -> list[float]:
+    seed = sum(ord(char) for char in text) % 89 + 1
+    return [float((seed * (i + 1)) % 97) / 97.0 for i in range(dim)]
+
+
+class _FakeTextEmbedding:
+    """Drop-in stand-in for ``fastembed.TextEmbedding`` — no weights, no network."""
+
+    embed_calls: list[list[str]] = []
+
+    def __init__(self, model_name: str, **_kwargs):
+        if model_name not in _FAKE_MODEL_DIMS:
+            raise ValueError(f"unsupported fake model {model_name!r}")
+        self.model_name = model_name
+        self.dim = _FAKE_MODEL_DIMS[model_name]
+
+    def embed(self, texts, **_kwargs):
+        texts = list(texts)
+        type(self).embed_calls.append(texts)
+        for text in texts:
+            yield _fake_vector(text, self.dim)
+
+    @staticmethod
+    def list_supported_models():
+        return [{"model": name, "dim": dim} for name, dim in _FAKE_MODEL_DIMS.items()]
+
+
+@pytest.fixture
+def fake_fastembed(monkeypatch):
+    """Inject a fake ``fastembed`` module and reset its derived-dimension cache."""
+    from decafclaw.llm import clear_providers
+
+    _FakeTextEmbedding.embed_calls = []
+    module = types.ModuleType("fastembed")
+    module.TextEmbedding = _FakeTextEmbedding
+    monkeypatch.setitem(sys.modules, "fastembed", module)
+    embeddings_module._fastembed_model_dimensions.cache_clear()
+    yield _FakeTextEmbedding
+    embeddings_module._fastembed_model_dimensions.cache_clear()
+    clear_providers()
+
+
+def _configure_fastembed(config, model: str = "BAAI/bge-small-en-v1.5"):
+    config.embedding.provider = "fastembed"
+    config.embedding.model = model
+    config.embedding.search_strategy = "semantic"
 
 
 def test_entry_hash_deterministic():
@@ -343,3 +406,122 @@ class TestPruneStaleEmbeddings:
         paths = [r["file_path"] for r in results]
         assert "live.md" in paths
         assert "gone.md" not in paths
+
+
+# -- Local fastembed provider (#1459) -----------------------------------------
+
+
+async def test_fastembed_embed_text(config, fake_fastembed):
+    """A configured fastembed provider embeds locally with the model's dimension."""
+    from decafclaw.llm import init_providers
+
+    _configure_fastembed(config)
+    init_providers(config)
+
+    vector = await _REAL_EMBED_TEXT(config, "hello world")
+
+    assert vector == _fake_vector("hello world", 384)
+    assert len(vector) == 384  # BAAI/bge-small-en-v1.5
+
+
+async def test_fastembed_vault_reindex(config, fake_fastembed):
+    """Vault reindex uses the provider's batch path and records derived dimensions."""
+    from decafclaw.llm import init_providers
+
+    _configure_fastembed(config)
+    init_providers(config)
+
+    pages_dir = config.vault_agent_pages_dir
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(3):
+        (pages_dir / f"page-{i}.md").write_text(f"# Page {i}\n\nbody number {i}\n")
+
+    count = await embeddings_module.reindex_vault(config)
+
+    assert count == 3
+    # One batch call for the whole vault, not one embed_text per entry.
+    assert fake_fastembed.embed_calls
+    assert sum(len(call) for call in fake_fastembed.embed_calls) == 3
+
+    with embeddings_module._open_db(config) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0] == 3
+        assert embeddings_module._vec_table_dimensions(conn) == 384
+        assert embeddings_module._stored_dimensions(conn) == 384
+
+
+async def test_fastembed_unavailable_does_not_fall_back_to_cloud(config, monkeypatch, caplog):
+    """A missing library logs an actionable error and never calls the remote endpoint."""
+    import httpx
+
+    from decafclaw.llm import clear_providers, init_providers
+
+    class _BoomClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("legacy remote embedding endpoint must not be called")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _BoomClient)
+    monkeypatch.setitem(sys.modules, "fastembed", None)
+    _configure_fastembed(config)
+    init_providers(config)
+
+    with caplog.at_level(logging.ERROR):
+        assert await _REAL_EMBED_TEXT(config, "private note") is None
+    assert "not installed" in caplog.text
+    assert "pip install fastembed" in caplog.text
+
+    # Even without a registered provider, fastembed refuses the legacy fallback.
+    clear_providers()
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        assert await _REAL_EMBED_TEXT(config, "private note") is None
+    assert "Refusing to fall back" in caplog.text
+
+
+async def test_embed_texts_gathers_for_providers_without_batch(config, monkeypatch):
+    """Non-fastembed providers keep the per-text concurrency path."""
+    from decafclaw.llm.registry import register_provider
+
+    class _Provider:
+        async def embed(self, model, text, **_kwargs):
+            return [float(len(text))]
+
+    # Undo the suite-wide embed_text stub for this test: embed_texts calls the
+    # module-global embed_text, which must be the real one here.
+    monkeypatch.setattr(embeddings_module, "embed_text", _REAL_EMBED_TEXT)
+    register_provider("unit-provider", _Provider())
+    config.embedding.provider = "unit-provider"
+
+    assert await _REAL_EMBED_TEXTS(config, ["a", "bb"]) == [[1.0], [2.0]]
+    assert await _REAL_EMBED_TEXTS(config, []) == []
+
+
+def test_embedding_dimension_mismatch_warning(config, caplog):
+    """Searching with a different dimension warns and returns no results."""
+    dim = config.embedding.dimensions
+    index_entry_sync(config, "note.md", "hello", [1.0] + [0.0] * (dim - 1), source_type="page")
+
+    config.embedding.dimensions = 4
+    with caplog.at_level(logging.WARNING):
+        results = search_similar_sync(config, [1.0, 0.0, 0.0, 0.0])
+
+    assert results == []
+    assert "make reindex" in caplog.text
+    assert "decafclaw-reindex" in caplog.text
+
+
+async def test_partial_reindex_skips_on_dimension_mismatch(config, caplog):
+    """Partial reindex keeps the old index instead of mixing dimensions."""
+    dim = config.embedding.dimensions
+    index_entry_sync(config, "note.md", "hello", [1.0] + [0.0] * (dim - 1), source_type="page")
+
+    pages_dir = config.vault_agent_pages_dir
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    (pages_dir / "new.md").write_text("# New\n\nfresh page\n")
+
+    config.embedding.dimensions = 4
+    with caplog.at_level(logging.WARNING):
+        assert await embeddings_module.reindex_vault(config) == 0
+
+    assert "make reindex" in caplog.text
+    with embeddings_module._open_db(config) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0] == 1

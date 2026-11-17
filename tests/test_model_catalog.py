@@ -500,6 +500,27 @@ def test_resolve_model_uses_catalog_pointer(config):
 
 
 # ---------------------------------------------------------------------------
+# Embedding-only providers are not chat model sources
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_catalog_skips_embedding_only_provider(config):
+    """fastembed is built into init_providers but must not enter the model picker."""
+    import asyncio
+
+    from decafclaw.llm.providers.fastembed import FastembedProvider
+    from decafclaw.llm.registry import clear_providers, register_provider
+
+    clear_providers()
+    register_provider("fastembed", FastembedProvider())
+    try:
+        catalog = asyncio.run(refresh_catalog(config))
+        assert "fastembed" not in catalog.providers
+    finally:
+        clear_providers()
+
+
+# ---------------------------------------------------------------------------
 # Enable/disable persistence across restart + default disable fallback
 # ---------------------------------------------------------------------------
 

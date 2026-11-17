@@ -65,7 +65,13 @@ def test_init_providers_multiple(config):
         },
     )
     init_providers(config)
-    assert sorted(list_providers()) == ["local", "oai", "vertex"]
+    assert sorted(list_providers()) == ["fastembed", "local", "oai", "vertex"]
+
+
+def test_init_providers_registers_builtin_fastembed(config):
+    """The local fastembed provider is always registered, with no config entry."""
+    init_providers(config)
+    assert "fastembed" in list_providers()
 
 
 def test_get_provider_unknown_raises():
@@ -83,7 +89,7 @@ def test_empty_registry_after_clear(config):
         },
     )
     init_providers(config)
-    assert len(list_providers()) == 1
+    assert sorted(list_providers()) == ["fastembed", "local"]
     clear_providers()
     assert len(list_providers()) == 0
 

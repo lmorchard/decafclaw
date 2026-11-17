@@ -4,7 +4,7 @@ DecafClaw uses embedding-based semantic search for finding relevant memories and
 
 ## How it works
 
-1. Text is sent to an embedding API. Default model: `text-embedding-004`. The endpoint is resolved either through a named provider (`embedding.provider`, routing through `config.providers`) or, when that's empty, via legacy fallback to the `llm` group's URL/key (with `/chat/completions` rewritten to `/embeddings`).
+1. Text is embedded either by a local ONNX model (`embedding.provider = "fastembed"`, no network after the first model download) or by an embedding API. Default API model: `text-embedding-004`. The endpoint is resolved either through a named provider (`embedding.provider`, routing through `config.providers`) or, when that's empty, via legacy fallback to the `llm` group's URL/key (with `/chat/completions` rewritten to `/embeddings`).
 2. The resulting vector is stored in a SQLite database using [sqlite-vec](https://github.com/asg017/sqlite-vec)
 3. On search, the query is embedded and compared using SIMD-accelerated cosine distance via sqlite-vec's `vec0` virtual table
 4. Top-K most similar results are returned
@@ -36,13 +36,36 @@ Set in `.env` or environment:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EMBEDDING_MODEL` | `text-embedding-004` | Model name for the embedding API |
+| `EMBEDDING_PROVIDER` | `""` | `fastembed` for local ONNX embeddings, or a named entry from `providers`; empty = legacy remote endpoint |
+| `EMBEDDING_MODEL` | `text-embedding-004` | Model name for the embedding API (or fastembed model, e.g. `BAAI/bge-small-en-v1.5`) |
 | `EMBEDDING_URL` | Falls back to `LLM_URL` | Embedding API endpoint |
 | `EMBEDDING_API_KEY` | Falls back to `LLM_API_KEY` | API key for embeddings |
-| `EMBEDDING_DIMENSIONS` | `768` | Vector dimensions (must match your embedding model) |
+| `EMBEDDING_DIMENSIONS` | `768` | Vector dimensions for API models; ignored (derived) for fastembed |
 | `MEMORY_SEARCH_STRATEGY` | `substring` | `substring` or `semantic` for memory search |
 
 When `MEMORY_SEARCH_STRATEGY=semantic`, `vault_search` uses embeddings. Otherwise it falls back to case-insensitive substring matching. Conversation search always uses embeddings when an embedding model is configured.
+
+## Local embeddings (FastEmbed)
+
+`fastembed` is a built-in provider that runs an ONNX model on the CPU in-process. Vault text never leaves the machine: no HTTP request, no cloud credentials, no egress during indexing or search.
+
+```json
+{
+  "embedding": {
+    "provider": "fastembed",
+    "model": "BAAI/bge-small-en-v1.5",
+    "search_strategy": "semantic"
+  }
+}
+```
+
+- **Dimensions are derived** from fastembed's model metadata (`BAAI/bge-small-en-v1.5` → 384), so `EMBEDDING_DIMENSIONS` is ignored while `EMBEDDING_PROVIDER=fastembed`. An unrecognized model falls back to `EMBEDDING_DIMENSIONS` with a warning.
+- **First use downloads weights** (~67 MB for `BAAI/bge-small-en-v1.5`) from Hugging Face into the local cache. After that the provider works offline.
+- **Reindex when the dimension changes.** Moving between an API model and a local model (768 ↔ 384) requires `make reindex`; searches refuse to run and partial reindexes are skipped until then, with a warning naming both commands.
+- **No silent fallback.** If the `fastembed` package or the model cannot load, embedding returns nothing and an actionable error is logged. The remote endpoint is never used for a `fastembed` configuration.
+- Vault reindexing embeds in batches of 32 entries per ONNX pass.
+
+The `vertex`, `openai`, and `openai-compat` providers are unchanged and remain supported for cloud endpoints.
 
 ## Tools
 
@@ -70,6 +93,8 @@ make reindex
 ```
 
 This deletes the existing database and re-embeds all vault pages, journal entries, and conversation archives. Useful after changing the embedding model/dimensions or if the index gets corrupted. Supports `--vault`, `--journal` flags for subset reindexing and `--concurrency N` for parallel API calls.
+
+Changing the embedding model usually changes the vector dimension (for example `text-embedding-004` → 768, `BAAI/bge-small-en-v1.5` → 384). `make reindex` detects the mismatch, logs a warning naming `make reindex` and `decafclaw-reindex`, and refuses to mix dimensions: search returns no results and `--vault`/`--journal` partial runs skip the rebuild until the full index is recreated. On a non-`make` install, run `decafclaw-reindex` instead.
 
 ## Pruning stale entries
 

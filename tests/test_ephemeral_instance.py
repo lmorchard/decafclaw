@@ -62,10 +62,14 @@ def _temp_dir_gone(proc: subprocess.CompletedProcess) -> None:
 
 
 def _assert_scripted_only(proc: subprocess.CompletedProcess) -> None:
-    """The child's provider registry contained only the scripted provider."""
+    """The child's registry held only the scripted provider plus built-ins.
+
+    ``fastembed`` is always registered by ``init_providers``; anything else
+    would mean the child picked up real providers from the host config.
+    """
     lines = [line for line in _child_log_lines(proc.stderr) if "registered LLM providers" in line]
     assert lines, f"child did not log its provider registry:\n{proc.stderr}"
-    assert "['scripted']" in lines[0], lines
+    assert "['fastembed', 'scripted']" in lines[0], lines
 
 
 def test_ephemeral_tool_roundtrip():

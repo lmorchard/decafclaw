@@ -290,6 +290,11 @@ async def refresh_catalog(
             provider = get_provider(name)
         except KeyError:
             return name, None, ""
+        if getattr(provider, "embedding_only", False):
+            # Built-in embedding-only providers (fastembed) are not chat model
+            # sources; leave the catalog untouched rather than recording a
+            # discovery error against them.
+            return name, None, ""
         found, error = await _discover_provider(name, provider)
         return name, found, error
 
