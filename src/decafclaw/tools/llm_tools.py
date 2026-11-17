@@ -353,8 +353,107 @@ async def tool_llm_query(
     )
 
 
+async def tool_llm_models(
+    ctx: "Context",
+    provider: str = "",
+    query: str = "",
+) -> ToolResult:
+    """List the models configured in ``config.model_configs``.
+
+    Discovery companion to ``llm_query``/``delegate_task(model=...)``:
+    agents otherwise have to guess a model name or read the error an
+    unknown name produces. Read-only and local — no network probe, no
+    remote provider check.
+
+    ``provider`` matches the provider key (exact or case-insensitive
+    substring); ``query`` matches the config name or the underlying
+    model id. The default is the effective default model (#1211: the catalog pointer
+    when it names a configured model, else ``config.default_model``) —
+    what an empty ``model`` argument falls back to when the conversation
+    has no active model. The active model is the conversation's valid
+    selection; a stale name that is no longer configured is not reported
+    as active, mirroring ``_resolve_target``.
+    """
+    from ..model_catalog import effective_default_model  # deferred: llm pkg import cycle
+
+    config = ctx.config
+    default_name = effective_default_model(config)
+    active_name = ctx.active_model if ctx.active_model in config.model_configs else ""
+
+    provider_needle = provider.strip().lower()
+    query_needle = query.strip().lower()
+
+    models: list[dict[str, Any]] = []
+    for name in sorted(config.model_configs):
+        mc = config.model_configs[name]
+        if provider_needle and provider_needle not in mc.provider.lower():
+            continue
+        if query_needle and query_needle not in name.lower() and query_needle not in mc.model.lower():
+            continue
+        models.append(
+            {
+                "name": name,
+                "provider": mc.provider,
+                "model": mc.model,
+                "is_default": name == default_name,
+                "is_active": name == active_name,
+            }
+        )
+
+    configured_total = len(config.model_configs)
+    total = len(models)
+
+    if not configured_total:
+        text = "No models configured in config.model_configs."
+    elif not models:
+        filters = ", ".join(
+            part
+            for part in (
+                f"provider='{provider}'" if provider.strip() else "",
+                f"query='{query}'" if query.strip() else "",
+            )
+            if part
+        )
+        text = (
+            f"No configured models match {filters} "
+            f"({configured_total} configured: {', '.join(sorted(config.model_configs))})."
+        )
+    else:
+        scope = (
+            f"{total} of {configured_total} configured models"
+            if total != configured_total
+            else f"{total} configured model{'s' if total != 1 else ''}"
+        )
+        status = []
+        if default_name:
+            status.append(f"default: {default_name}")
+        if active_name:
+            status.append(f"active: {active_name}")
+        lines = [f"{scope} ({'; '.join(status)})" if status else scope]
+        for entry in models:
+            flags = [
+                label for label, flag in (("default", entry["is_default"]), ("active", entry["is_active"])) if flag
+            ]
+            line = f"- {entry['name']} [provider={entry['provider']}, model={entry['model']}]"
+            if flags:
+                line += f" ({', '.join(flags)})"
+            lines.append(line)
+        text = "\n".join(lines)
+
+    return ToolResult(
+        text=text,
+        data={
+            "default_model": default_name,
+            "active_model": active_name,
+            "total": total,
+            "models": models,
+        },
+    )
+
+
 LLM_TOOLS = {
     "llm_query": tool_llm_query,
+    "llm_models": tool_llm_models,
 }
 
 LLM_TOOL_DEFINITIONS = [
@@ -373,7 +472,7 @@ LLM_TOOL_DEFINITIONS = [
                 "(a config.model_configs entry pointing at an Ollama or Otari endpoint). The model sees only your system and prompt text; it cannot call tools. "
                 "For a subtask that needs tools, multi-turn reasoning, or its own context, use delegate_task instead.\n\n"
                 "prompt accepts a single string or a list of strings (batched concurrently, max 25 per call). "
-                "model names an entry in config.model_configs; empty inherits the conversation's active model. An unknown name is an error, never a silent fallback. "
+                "model names an entry in config.model_configs (call llm_models to list them); empty inherits the conversation's active model. An unknown name is an error, never a silent fallback. "
                 "With return_schema (a flat field-to-type map), a compliant fenced JSON block in the response parses to ToolResult.data; "
                 "strict=true turns non-compliant output into an error with field-level feedback, while strict=false falls back to the raw text. "
                 "Batch results arrive on ToolResult.data as {'summary': {'total', 'ok', 'failed'}, 'results': [{'index', 'ok', ...}]}, ordered by input index."
@@ -428,5 +527,41 @@ LLM_TOOL_DEFINITIONS = [
                 "required": ["prompt"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        # Read-only: concurrent with other shared calls in a batch.
+        "execution": "shared",
+        "writes": False,
+        "function": {
+            "name": "llm_models",
+            "description": (
+                "List the models configured in config.model_configs — the names llm_query(model=...) and delegate_task(model=...) accept. "
+                "Each entry shows the config name, the underlying model identifier, the provider that backs it, and whether it is the conversation's active model or the default. "
+                "Call this before llm_query or delegate_task when you are unsure which model name to use, instead of guessing or waiting for an unknown-model error. "
+                "Optional filters: provider (provider key, exact or substring) and query (case-insensitive substring of the name or underlying model). "
+                "Read-only and local: no network probe and no remote provider ping. Results arrive as readable text plus ToolResult.data "
+                "{'default_model', 'active_model', 'total', 'models': [{'name', 'provider', 'model', 'is_default', 'is_active'}]}."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "provider": {
+                        "type": "string",
+                        "description": (
+                            "Only models backed by this provider key, matched exactly or as a case-insensitive substring. Empty lists every provider."
+                        ),
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Only models whose config name or underlying model id contains this substring, case-insensitive. Empty lists every model."
+                        ),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]

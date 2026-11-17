@@ -61,6 +61,19 @@
     with no tool access; it cannot do this work at all, whatever model is
     named.
 
+# -- llm_models vs llm_query vs delegate_task (#1444) ------------------------
+
+- name: models-vs-llm-query-discovery
+  scenario: "I want to use llm_query for a quick summary, but I don't know which model names are available. Show me what I can pick from and which one is active right now."
+  expected: llm_models
+  near_miss: [llm_query, delegate_task]
+  notes: |
+    The request is discovery, not a completion: the user needs the
+    configured model names before choosing one, and asks which is
+    active. llm_models is the read-only listing; llm_query would need a
+    model name and delegate_task is the wrong primitive for inspecting
+    configuration.
+
 # -- Negative-control: no tool needed at all ---------------------------------
 
 - name: no-tool-greeting
