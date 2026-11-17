@@ -45,7 +45,7 @@ from .loop_breaker import (
     summarize_args,
     summarize_error,
 )
-from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
+from .media import EndTurnConfirm, TerminationReason, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .recovery import RECOVERY_CONTINUE, RECOVERY_STOP, RecoveryState, decide_recovery_retry
 from .reflection_metrics import classify_outcome, response_delta
@@ -261,7 +261,7 @@ def _check_cancelled(ctx: "Context", history, response: dict | None = None):
         final_msg = {"role": "assistant", "content": msg}
         history.append(final_msg)
         _note_cancel_observed(ctx)
-        return ToolResult(text=msg, termination_reason="cancelled")
+        return ToolResult(text=msg, termination_reason=TerminationReason.CANCELLED)
     return None
 
 
@@ -1541,7 +1541,7 @@ class TurnRunner:
             f"\n\n[Agent reached max tool iterations "
             f"({self.config.agent.max_tool_iterations}) without a final response]"
         )
-        return await self._finalize_with_note(limit_note, termination_reason="max_iterations")
+        return await self._finalize_with_note(limit_note, termination_reason=TerminationReason.MAX_ITERATIONS)
 
     async def _finalize_loop_break(self) -> "ToolResult":
         """Loop-breaker hard-stop: end the turn with what was tried, what
@@ -1557,9 +1557,9 @@ class TurnRunner:
             "that call) or a different approach — tell me which and I'll "
             "pick it up."
         )
-        return await self._finalize_with_note("".join(parts), termination_reason="loop_breaker")
+        return await self._finalize_with_note("".join(parts), termination_reason=TerminationReason.LOOP_BREAKER)
 
-    async def _finalize_with_note(self, note: str, termination_reason: str | None = None) -> "ToolResult":
+    async def _finalize_with_note(self, note: str, termination_reason: TerminationReason | None = None) -> "ToolResult":
         """End an abnormally-terminated turn (iteration limit / loop-breaker)
         by archiving only `note`, but choosing what to *deliver* based on
         whether anyone is watching this turn live.
@@ -1651,7 +1651,9 @@ class TurnRunner:
         otherwise just text.
         """
         termination_reason = (
-            "skill_activation_failed" if self.ctx.skills.activation_denials and self.ctx.is_unattended else None
+            TerminationReason.SKILL_ACTIVATION_FAILED
+            if self.ctx.skills.activation_denials and self.ctx.is_unattended
+            else None
         )
         handler = self.ctx.media_handler
         should_extract = handler is None or handler.strips_workspace_refs

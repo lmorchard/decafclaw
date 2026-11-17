@@ -5,6 +5,7 @@ import mimetypes
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,24 @@ class WidgetInputPause:
     widget_payload: dict  # {widget_type, target, data}
 
 
+class TerminationReason(StrEnum):
+    """Why an agent turn ended before a normal final response.
+
+    ``ToolResult.termination_reason`` carries one of these, or ``None``
+    for a normal completion. String-valued so existing string comparisons
+    and any JSON round-trip keep working; the enum makes a typo'd reason
+    impossible to construct. The turn-settle precedence (``cancelled`` >
+    ``failed`` > ``completed``, issue #1000) is expressed once in
+    conversation_manager's ``_turn_settle_outcome``.
+    """
+
+    CANCELLED = "cancelled"  # user cancel: the loop observed it, or the task was cancelled
+    ERROR = "error"  # turn raised an unexpected exception (manager's except branch)
+    MAX_ITERATIONS = "max_iterations"  # hit the tool-iteration limit without a final response
+    LOOP_BREAKER = "loop_breaker"  # loop-breaker hard stop after repeated failures
+    SKILL_ACTIVATION_FAILED = "skill_activation_failed"  # unattended turn with a denied skill activation
+
+
 @dataclass
 class ToolResult:
     """Result from a tool execution — text plus optional media attachments."""
@@ -84,7 +103,7 @@ class ToolResult:
     # inside _resolve_widget.
     end_turn: bool | EndTurnConfirm | WidgetInputPause = False
     widget: WidgetRequest | None = None
-    termination_reason: str | None = None
+    termination_reason: TerminationReason | None = None
     thinking: str | None = None
 
     @classmethod

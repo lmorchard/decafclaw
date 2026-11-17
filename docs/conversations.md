@@ -70,7 +70,7 @@ Side questions execute via `ConversationManager.run_side_question()`. They run w
 | `cancelled` | The turn was cancelled before it finished: either the loop raised `CancelledError` (the manager emits `message_complete` with the `[cancelled]` text first) or the agent observed a cancel in-flight and returned cleanly. |
 | `failed` | The turn raised an exception (provider error, tool failure that escapes the loop, ...). The manager emits an `error` event first; no `message_complete`. |
 
-A turn that ends with a skill-activation failure (`termination_reason: skill_activation_failed`) also settles with `completed` — the agent loop finished normally and the final response was still emitted as `message_complete`; the denial is carried in-band, not as a distinct settle.
+The `termination_reason` on the turn result is a `TerminationReason` enum (`media.py`) — `cancelled`, `error`, `max_iterations`, `loop_breaker`, or `skill_activation_failed` — and the settle precedence above is expressed once in `_turn_settle_outcome` (`conversation_manager.py`). A turn that ends with a skill-activation failure (`termination_reason: skill_activation_failed`) also settles with `completed` — the agent loop finished normally and the final response was still emitted as `message_complete`; the denial is carried in-band, not as a distinct settle.
 
 There is no `paused` reason: a pause is **not** a settle. While the turn is paused (a `confirmation_request` prompt awaiting the user — widget-input pauses ride the same infrastructure), the turn keeps running with the busy flag held — no `turn_complete` fires, the activity status stays `waiting`/`busy` — and the turn settles later with `completed`, `cancelled`, or `failed` depending on how it ends after the user responds.
 

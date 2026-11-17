@@ -35,7 +35,7 @@ from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
 from .llm import call_llm_streaming
 from .llm.history import without_provider_data
-from .media import ToolResult
+from .media import TerminationReason, ToolResult
 from .model_catalog import effective_default_model
 from .workflow.journal import load_journal, save_journal
 from .workflow.paths import workflow_path
@@ -106,6 +106,26 @@ def _write_cancel_archive(
             "content": CANCEL_MARKER_TEXT,
         },
     )
+
+
+def _turn_settle_outcome(is_cancelled: bool, reason: TerminationReason | None) -> str:
+    """Settle outcome for the ``turn_complete`` reason (issue #1000).
+
+    The precedence is expressed here once: ``cancelled`` > ``failed`` >
+    ``completed``. A cancel may be observed after the turn already
+    unwound, so it wins over whatever reason the result carries. Only
+    ``ERROR`` settles as "failed"; abnormal-but-concluded reasons
+    (max_iterations, loop_breaker, skill_activation_failed) settle as
+    "completed" — the turn ran to its own conclusion and emitted
+    ``message_complete``. A pause (pending confirmation) is not an
+    outcome: the turn is still in flight and ``turn_complete`` has not
+    fired yet.
+    """
+    if is_cancelled:
+        return "cancelled"
+    if reason is TerminationReason.ERROR:
+        return "failed"
+    return "completed"
 
 
 class TurnKind(Enum):
@@ -2096,7 +2116,7 @@ class ConversationManager:
                     and hasattr(result, "termination_reason")
                     and result.termination_reason is None
                 ):
-                    result.termination_reason = "skill_activation_failed"
+                    result.termination_reason = TerminationReason.SKILL_ACTIVATION_FAILED
                 result_holder.append(result)
                 response_media = result.media if hasattr(result, "media") else []
                 # If cancel was observed cleanly inside the agent loop
@@ -2157,7 +2177,7 @@ class ConversationManager:
                         )
             except asyncio.CancelledError:
                 log.info("Agent turn cancelled for conv %s", conv_id[:8])
-                result_holder.append(ToolResult(text="[cancelled]", termination_reason="cancelled"))
+                result_holder.append(ToolResult(text="[cancelled]", termination_reason=TerminationReason.CANCELLED))
                 # Persist a strong cancel signal so the next turn's LLM
                 # doesn't re-fulfill the cancelled request (issue #491).
                 self._write_cancel_marker_once(conv_id, state)
@@ -2173,7 +2193,7 @@ class ConversationManager:
                 )
             except Exception as e:
                 log.error("Agent turn failed for conv %s: %s", conv_id[:8], e, exc_info=True)
-                result_holder.append(ToolResult(text=f"[error: {e}]", termination_reason="error"))
+                result_holder.append(ToolResult(text=f"[error: {e}]", termination_reason=TerminationReason.ERROR))
                 # Persist a turn-closure marker so the next turn's LLM
                 # doesn't see an open prior request and re-fulfill it
                 # (issue #517, parallel to #491's cancel marker).
@@ -2204,17 +2224,15 @@ class ConversationManager:
                 is_cancelled = (
                     state.cancel_event is not None and state.cancel_event.is_set()
                 ) or state.cancel_observed_by_agent
-                # turn_complete outcome (#1000): "cancelled" wins (a cancel
-                # may be observed after the turn already unwound), then
-                # "failed" (the except-Exception branch tagged the result),
+                # turn_complete outcome (#1000): the precedence lives in
+                # _turn_settle_outcome — "cancelled" wins (a cancel may be
+                # observed after the turn already unwound), then "failed",
                 # else "completed". A pause (pending confirmation) is not an
                 # outcome — the turn is still in flight and turn_complete
                 # has not fired yet.
-                turn_reason = "completed"
-                if is_cancelled:
-                    turn_reason = "cancelled"
-                elif result_holder and result_holder[0].termination_reason == "error":
-                    turn_reason = "failed"
+                turn_reason = _turn_settle_outcome(
+                    is_cancelled, result_holder[0].termination_reason if result_holder else None
+                )
                 async with state.lock:
                     # Circuit breaker tracking is USER-only (task turns are
                     # externally rate-limited by the scheduler / heartbeat
