@@ -284,6 +284,7 @@ class ConversationDisplay:
         deny_label="",
         decline_reason="",
         suggested_rule="",
+        cwd="",
     ) -> str:
         """Tool needs confirmation — show prompt with buttons and/or emoji.
 
@@ -301,6 +302,8 @@ class ConversationDisplay:
 
         # Build the confirmation message text
         msg = f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```"
+        if cwd:
+            msg += f"\n> **Working directory:** `{cwd}`"
         if decline_reason:
             msg += f"\n> **Reviewer:** {decline_reason}"
         if suggested_rule:

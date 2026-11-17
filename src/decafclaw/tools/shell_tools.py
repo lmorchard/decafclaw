@@ -493,14 +493,15 @@ def resolve_aux_approval_guidance(ctx: "Context") -> list[str]:
     return guidelines
 
 
-def build_aux_approval_prompt(ctx: "Context", command: str) -> str:
+def build_aux_approval_prompt(ctx: "Context", command: str, cwd: str | None = None) -> str:
     """Build the aux-LLM evaluation prompt for shell command auto-approval."""
     guidelines = resolve_aux_approval_guidance(ctx)
+    working_dir = cwd or str(ctx.config.workspace_path)
 
     base = (
         "You are evaluating a shell command for execution.\n"
         f"Command: {command}\n"
-        f"Working Directory: {ctx.config.workspace_path}\n"
+        f"Working Directory: {working_dir}\n"
         "Determine if this is a low-risk command that should be auto-approved, or if it requires user confirmation.\n"
         'Return a JSON object: {"auto_approve": bool, "reason": "<string>", "risk": "low" | "medium" | "high", "suggested_rule": "<string or null>"}\n'
         "If auto_approve is false, formulate a concise, natural-language exception rule in suggested_rule phrased as a "
@@ -529,11 +530,33 @@ def build_aux_approval_prompt(ctx: "Context", command: str) -> str:
     return f"{base}{policy}"
 
 
-async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "shell", message: str = "") -> dict:
+async def check_shell_approval(
+    ctx: "Context", command: str, tool_name: str = "shell", message: str = "", cwd: str | None = None
+) -> dict:
     """Check whether a shell command is approved (shared by shell + background tools).
+
+    ``cwd`` is the directory the command will run in, when known. It does not
+    change the workspace boundary the security monitor enforces; it is shown to
+    the auto-approval judge and the human so the same command text in a
+    different directory is evaluated in context.
 
     Returns {"approved": True} if auto-approved, or the user's confirmation result.
     """
+    # Show the working directory only when it differs from the workspace root:
+    # the same command text means something different in a subproject. It rides
+    # in the message for transports that show it, and in action_data so the web
+    # and Mattermost confirm cards can render it next to the command.
+    cwd_note = ""
+    cwd_action: dict = {}
+    if cwd:
+        try:
+            differs = Path(cwd).resolve() != ctx.config.workspace_path.resolve()
+        except OSError:
+            differs = True
+        if differs:
+            cwd_note = f"\nWorking directory: `{cwd}`"
+            cwd_action = {"action_data": {"cwd": cwd}}
+
     # 1. Tier 1 fast path: Immediately block catastrophically dangerous commands
     tier1 = evaluate_command(
         command,
@@ -582,7 +605,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 "reason": f"Security monitor requires explicit confirmation: {decision.reason}",
             }
         suggested_pattern = _suggest_pattern(command)
-        ask_message = f"Shell command (security review requested): `{command}`"
+        ask_message = f"Shell command (security review requested): `{command}`{cwd_note}"
         if decision.reason:
             ask_message += f"\nReason: {decision.reason}"
         result = await request_confirmation(
@@ -591,6 +614,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
             command=command,
             message=message or ask_message,
             suggested_pattern=suggested_pattern,
+            **cwd_action,
         )
         if result.get("add_pattern"):
             _save_allow_pattern(ctx.config, suggested_pattern)
@@ -610,7 +634,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
 
         try:
             had_guidance = bool(resolve_aux_approval_guidance(ctx))
-            prompt = build_aux_approval_prompt(ctx, command)
+            prompt = build_aux_approval_prompt(ctx, command, cwd=cwd)
             messages = [{"role": "user", "content": prompt}]
             response = await ctx.aux_approval_llm()(messages)
             raw_text = response.get("content", "").strip()
@@ -692,7 +716,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
         log.warning(f"[{tool_name}] denied on unattended turn (task_mode={ctx.task_mode!r}): {command}")
         return {"approved": False, "reason": "unattended turn: command matches no allow pattern"}
 
-    prompt_message = f"Shell command: `{command}`"
+    prompt_message = f"Shell command: `{command}`{cwd_note}"
     if decline_risk:
         prompt_message += f"\nRisk: {decline_risk}"
     if decline_reason:
@@ -705,6 +729,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
         suggested_pattern=suggested_pattern,
         decline_reason=decline_reason,
         suggested_rule=suggested_rule,
+        **cwd_action,
     )
     if result.get("approved") and result.get("add_pattern"):
         _save_allow_pattern(ctx.config, suggested_pattern)
@@ -720,11 +745,39 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
     return result
 
 
-async def tool_shell(ctx: "Context", command: str) -> ToolResult:
-    """Run a shell command after user confirmation."""
-    log.info(f"[tool:shell] requesting confirmation for: {command}")
+def _resolve_shell_cwd(ctx: "Context", cwd: str | None) -> Path:
+    """Resolve an optional shell working directory inside the workspace.
 
-    result = await check_shell_approval(ctx, command, tool_name="shell")
+    ``cwd`` is interpreted relative to the workspace root; an absolute path is
+    accepted only when it stays inside the workspace. The workspace itself is
+    the default. Raises ``ValueError`` with a user-facing message when the path
+    is unusable, before any approval or execution happens.
+    """
+    workspace = ctx.config.workspace_path.resolve()
+    if not cwd:
+        return workspace
+    candidate = Path(cwd)
+    target = (candidate if candidate.is_absolute() else workspace / candidate).resolve()
+    if not target.is_relative_to(workspace):
+        raise ValueError(f"cwd is outside the workspace: {cwd}")
+    if not target.exists():
+        raise ValueError(f"cwd does not exist: {cwd}")
+    if not target.is_dir():
+        raise ValueError(f"cwd is not a directory: {cwd}")
+    return target
+
+
+async def tool_shell(ctx: "Context", command: str, cwd: str | None = None) -> ToolResult:
+    """Run a shell command after user confirmation, optionally inside a workspace subdirectory."""
+    try:
+        workdir = _resolve_shell_cwd(ctx, cwd)
+    except ValueError as exc:
+        log.info(f"[tool:shell] rejected command {command}: {exc}")
+        return ToolResult(text=f"[error: {exc}]")
+
+    log.info(f"[tool:shell] requesting confirmation for: {command} (cwd: {workdir})")
+
+    result = await check_shell_approval(ctx, command, tool_name="shell", cwd=str(workdir))
     if not result.get("approved"):
         reason = result.get("reason") or "denied by user"
         log.info(f"[tool:shell] command denied: {command} (reason: {reason})")
@@ -732,8 +785,8 @@ async def tool_shell(ctx: "Context", command: str) -> ToolResult:
 
     budget = ctx.config.shell.foreground_wait_budget_sec
     if budget is not None and budget > 0:
-        return await _execute_command_with_handoff(ctx, command)
-    return await _execute_command(ctx, command)
+        return await _execute_command_with_handoff(ctx, command, cwd=str(workdir))
+    return await _execute_command(ctx, command, cwd=str(workdir))
 
 
 # Foreground shell total runtime limit (seconds). #1136 makes this
@@ -904,7 +957,9 @@ def _close_transport(process: asyncio.subprocess.Process) -> None:
             log.debug(f"[tool:shell] closing subprocess transport failed: {exc}")
 
 
-async def _execute_command(ctx: "Context", command: str, timeout: float = _DEFAULT_TIMEOUT_SEC) -> ToolResult:
+async def _execute_command(
+    ctx: "Context", command: str, timeout: float = _DEFAULT_TIMEOUT_SEC, cwd: str | None = None
+) -> ToolResult:
     """Execute a shell command and return the output.
 
     Streams stdout/stderr with bounded in-memory previews (#922): each stream
@@ -935,7 +990,7 @@ async def _execute_command(ctx: "Context", command: str, timeout: float = _DEFAU
 
     process = await asyncio.create_subprocess_shell(
         command,
-        cwd=str(ctx.config.workspace_path),
+        cwd=cwd or str(ctx.config.workspace_path),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,  # own process group — timeout/cancel kills the whole tree
@@ -1051,7 +1106,7 @@ async def _execute_command(ctx: "Context", command: str, timeout: float = _DEFAU
 _FOREGROUND_DRAIN_TIMEOUT_SEC = 5.0
 
 
-async def _execute_command_with_handoff(ctx: "Context", command: str) -> ToolResult:
+async def _execute_command_with_handoff(ctx: "Context", command: str, cwd: str | None = None) -> ToolResult:
     """Run a command through the shared background-job runner, waiting up to
     the configured foreground budget (#1136).
 
@@ -1071,7 +1126,7 @@ async def _execute_command_with_handoff(ctx: "Context", command: str) -> ToolRes
         from decafclaw.skills.background.tools import _get_job_manager
     except Exception as exc:  # noqa: BLE001 - fail open to the legacy path
         log.warning(f"[tool:shell] background runner unavailable ({exc}); using blocking execution")
-        return await _execute_command(ctx, command)
+        return await _execute_command(ctx, command, cwd=cwd)
 
     budget = ctx.config.shell.foreground_wait_budget_sec
     max_runtime = ctx.config.shell.max_runtime_sec
@@ -1081,7 +1136,7 @@ async def _execute_command_with_handoff(ctx: "Context", command: str) -> ToolRes
     try:
         job = await manager.start(
             command,
-            str(ctx.config.workspace_path),
+            cwd or str(ctx.config.workspace_path),
             max_lifetime=max_runtime,
             config=ctx.config,
             conv_id=ctx.conv_id,
@@ -1595,7 +1650,9 @@ SHELL_TOOL_DEFINITIONS = [
             "description": (
                 "Run a shell command. REQUIRES USER CONFIRMATION before execution "
                 "unless the command matches an admin-configured allow pattern. "
-                "The command runs in the workspace directory. Use for tasks that "
+                "The command runs in the workspace directory, or in the `cwd` "
+                "subdirectory when given. Use `cwd` instead of `cd <path> && ...` "
+                "so the command stays a single atomic invocation. Use for tasks that "
                 "need system interaction: checking disk space, running scripts, "
                 "installing packages, etc. The user will see the command and must "
                 "approve it before it runs. If a foreground time budget is configured, "
@@ -1610,6 +1667,15 @@ SHELL_TOOL_DEFINITIONS = [
                     "command": {
                         "type": "string",
                         "description": "The shell command to execute",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": (
+                            "Optional working directory, relative to the workspace root "
+                            "(an absolute path inside the workspace also works). Must be "
+                            "an existing directory inside the workspace. Defaults to the "
+                            "workspace root."
+                        ),
                     },
                 },
                 "required": ["command"],

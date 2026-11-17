@@ -190,6 +190,12 @@ Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.
 | `shell_patterns` | | Manage the approved shell command allow list |
 | `shell_guidance` | | Manage aux-LLM auto-approval prompt guidance and presets |
 
+### Working directory (`cwd`, #1455)
+
+`shell` takes an optional `cwd`: a directory **inside the workspace**, relative to the workspace root (an absolute path inside the workspace also works). It defaults to the workspace root. The path is resolved (symlinks included) and must exist and be a directory; escapes outside the workspace are refused **before** approval, so nothing is confirmed or executed for an invalid directory.
+
+Use `cwd` instead of `cd <path> && <command>`: chained commands bypass atomic allow-pattern matching and force manual confirmation, while a single invocation in a subdirectory (worktree, nested repo, subproject) matches patterns normally. The security monitor still enforces the **workspace root** as the boundary — `cwd` moves the starting point, not the authorized area. The effective directory is passed to the aux-LLM judge and shown in the web and Mattermost confirmation cards when it differs from the workspace root. The auto-background handoff path (`#1136`) runs the job in the same `cwd`.
+
 ### Auto-backgrounding on a foreground time budget (#1136)
 
 By default `shell` runs the command with a blocking call and a hard timeout (`shell.max_runtime_sec`, default 30s — the command's **total runtime limit**). An opt-in **foreground waiting budget** (`shell.foreground_wait_budget_sec`, default `None` = disabled) changes that: the command is started through the same managed runner as background jobs and awaited up to the budget.

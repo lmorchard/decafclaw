@@ -588,6 +588,7 @@ class MattermostClient:
                     deny_label=deny_label,
                     decline_reason=decline_reason,
                     suggested_rule=suggested_rule,
+                    cwd=action_data.get("cwd", ""),
                 )
 
                 # Start emoji polling routed through the manager
@@ -802,6 +803,7 @@ class MattermostClient:
                     deny_label=event.get("deny_label", ""),
                     decline_reason=action_data.get("decline_reason", ""),
                     suggested_rule=action_data.get("suggested_rule", ""),
+                    cwd=action_data.get("cwd", ""),
                 )
                 if confirm_post_id and manager:
                     asyncio.create_task(

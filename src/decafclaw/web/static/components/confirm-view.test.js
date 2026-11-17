@@ -38,6 +38,24 @@ describe('confirm-view dialog semantics', () => {
     expect(card.getAttribute('aria-label')).toBe('Confirm shell');
   });
 
+  it('shows the working directory when a shell command targets a subdirectory', async () => {
+    const el = await mount([{
+      context_id: 'ctx', tool: 'shell', tool_call_id: 'tc-cwd', command: 'pytest tests',
+      action_data: { cwd: '/ws/worktrees/issue-1' },
+    }]);
+
+    const cwd = el.querySelector('.confirm-cwd');
+    expect(cwd?.textContent).toContain('/ws/worktrees/issue-1');
+  });
+
+  it('omits the working directory line when no cwd is set', async () => {
+    const el = await mount([{
+      context_id: 'ctx', tool: 'shell', tool_call_id: 'tc-root', command: 'ls',
+    }]);
+
+    expect(el.querySelector('.confirm-cwd')).toBeNull();
+  });
+
   it('marks a workflow free-text input card as a labelled non-modal dialog', async () => {
     const el = await mount([{
       context_id: 'ctx', tool: 'workflow', tool_call_id: 'tc2',
