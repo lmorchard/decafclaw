@@ -47,6 +47,11 @@ Steps use a markdown checklist with status markers:
 
 Sub-steps are indented under parents. Steps can be inserted mid-execution.
 
+Step statuses are the `StepStatus` enum in `skills/project/plan_parser.py`:
+`pending`, `in_progress`, `done`, or `skipped`. The checkbox marker maps to a
+member on parse, and the `project_update_step` schema's status list is derived
+from it. Wire values are unchanged (string-valued enum).
+
 While a project is in the `executing` phase, `project_next_task`, `project_update_step`, and `project_add_steps` also mirror the plan's steps into the sticky slot above the conversation controls as a `progress_tracker` widget (fail-open). The slot clears when `project_task_done` finalizes the project (all steps checked off) or when `project_advance` moves the project out of `executing` (e.g. back to planning). See [widgets.md](widgets.md#progress_tracker-widget).
 
 ## Tools

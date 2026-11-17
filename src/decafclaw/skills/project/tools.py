@@ -20,6 +20,7 @@ from decafclaw.events import emit_for_ctx
 from decafclaw.media import EndTurnConfirm, ToolResult, WidgetRequest
 from decafclaw.skills.project.plan_parser import (
     Step,
+    StepStatus,
     insert_steps,
     next_actionable,
     parse_plan,
@@ -348,7 +349,7 @@ def _next_execution_step(info: ProjectInfo) -> str:
     if nxt is None:
         return _load_prompt("executing_complete", total=total)
 
-    if nxt.status == "in_progress":
+    if nxt.status == StepStatus.IN_PROGRESS:
         return _load_prompt(
             "executing_continue",
             done=done,
@@ -555,12 +556,15 @@ async def tool_project_update_step(ctx, step: str, status: str, note: str = "") 
     if info.status != ProjectState.EXECUTING:
         return ToolResult(text="[error: can only update steps during executing]")
 
-    if status not in ("pending", "in_progress", "done", "skipped"):
-        return ToolResult(text="[error: status must be pending, in_progress, done, or skipped]")
+    try:
+        step_status = StepStatus(status)
+    except ValueError:
+        valid = ", ".join(s.value for s in StepStatus)
+        return ToolResult(text=f"[error: status must be one of {valid}]")
 
     content = await asyncio.to_thread(info.plan_path.read_text)
     overview, steps, tail = parse_plan(content)
-    if not update_step_status(steps, step, status, note):
+    if not update_step_status(steps, step, step_status, note):
         return ToolResult(text=f"[error: step '{step}' not found]")
 
     rendered = render_plan(overview, steps, tail)
@@ -569,7 +573,7 @@ async def tool_project_update_step(ctx, step: str, status: str, note: str = "") 
     await _emit_project_progress(ctx, info)
 
     done, total = plan_progress(steps)
-    msg = f"Step {step} → **{status}** ({done}/{total})"
+    msg = f"Step {step} → **{step_status}** ({done}/{total})"
     if note:
         msg += f"\n{note}"
     return msg
@@ -780,7 +784,8 @@ TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {
                     "step": {"type": "string", "description": "Step number (e.g. '1', '1.2')"},
-                    "status": {"type": "string", "enum": ["pending", "in_progress", "done", "skipped"]},
+                    # Status list derived from StepStatus so the schema stays in sync (#1385).
+                    "status": {"type": "string", "enum": [s.value for s in StepStatus]},
                     "note": {"type": "string", "description": "What was done or why skipped"},
                 },
                 "required": ["step", "status"],
