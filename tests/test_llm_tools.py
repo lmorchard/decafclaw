@@ -25,7 +25,7 @@ from decafclaw.testing import (
     register_scripted_provider,
     unregister_scripted_provider,
 )
-from decafclaw.tools.llm_tools import tool_llm_query
+from decafclaw.tools.llm_tools import tool_llm_models, tool_llm_query
 
 MODEL_NAME = "test-model"
 
@@ -287,3 +287,120 @@ class TestValidation:
 
         assert "timeout" in result.text
         assert provider.requests == []
+
+
+@pytest.fixture
+def models_config(tmp_data):
+    """Three models across two providers, with an explicit default."""
+    return Config(
+        agent=AgentConfig(data_home=str(tmp_data), id="test-agent", user_id="testuser"),
+        reflection=ReflectionConfig(enabled=False),
+        vault_retrieval=VaultRetrievalConfig(enabled=False),
+        providers={
+            PROVIDER_SCRIPTED: ProviderConfig(type=PROVIDER_SCRIPTED),
+            "otari-local": ProviderConfig(type=PROVIDER_SCRIPTED),
+        },
+        model_configs={
+            "alpha": ModelConfig(provider=PROVIDER_SCRIPTED, model="gemini-3.8-flash"),
+            "flint": ModelConfig(provider="otari-local", model="mandelbrot3-flint"),
+            "qwen-small": ModelConfig(provider="otari-local", model="qwen3-8b"),
+        },
+        default_model="alpha",
+    )
+
+
+@pytest.fixture
+def models_ctx(models_config):
+    context = Context(config=models_config, event_bus=EventBus())
+    context.conv_id = "test-conv"
+    return context
+
+
+class TestModelsDiscovery:
+    @pytest.mark.asyncio
+    async def test_llm_models_lists_all_configured(self, models_ctx):
+        models_ctx.active_model = "flint"
+
+        result = await tool_llm_models(models_ctx)
+
+        data = result.data
+        assert data["default_model"] == "alpha"
+        assert data["active_model"] == "flint"
+        assert data["total"] == 3
+        assert [m["name"] for m in data["models"]] == ["alpha", "flint", "qwen-small"]
+        by_name = {m["name"]: m for m in data["models"]}
+        assert by_name["alpha"] == {
+            "name": "alpha",
+            "provider": PROVIDER_SCRIPTED,
+            "model": "gemini-3.8-flash",
+            "is_default": True,
+            "is_active": False,
+        }
+        assert by_name["flint"]["is_active"] is True
+        assert by_name["flint"]["is_default"] is False
+        assert by_name["qwen-small"] == {
+            "name": "qwen-small",
+            "provider": "otari-local",
+            "model": "qwen3-8b",
+            "is_default": False,
+            "is_active": False,
+        }
+        assert result.text.startswith("3 configured models (default: alpha; active: flint)")
+        assert "- alpha [provider=" in result.text and "(default)" in result.text
+        assert "- flint [provider=otari-local, model=mandelbrot3-flint] (active)" in result.text
+
+    @pytest.mark.asyncio
+    async def test_llm_models_filter_by_provider(self, models_ctx):
+        """Provider matches exactly or as a case-insensitive substring."""
+        result = await tool_llm_models(models_ctx, provider="OTARI")
+
+        assert [m["name"] for m in result.data["models"]] == ["flint", "qwen-small"]
+        assert result.data["total"] == 2
+        assert result.text.startswith("2 of 3 configured models")
+        assert "- alpha [" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_llm_models_filter_by_query(self, models_ctx):
+        """Query matches the config name or the underlying model id."""
+        by_name = await tool_llm_models(models_ctx, query="FLINT")
+        assert [m["name"] for m in by_name.data["models"]] == ["flint"]
+
+        by_model = await tool_llm_models(models_ctx, query="qwen3")
+        assert [m["name"] for m in by_model.data["models"]] == ["qwen-small"]
+
+    @pytest.mark.asyncio
+    async def test_llm_models_empty_filter_match(self, models_ctx):
+        result = await tool_llm_models(models_ctx, query="nope")
+
+        assert result.data["models"] == []
+        assert result.data["total"] == 0
+        assert "No configured models match query='nope'" in result.text
+        assert "3 configured: alpha, flint, qwen-small" in result.text
+
+    @pytest.mark.asyncio
+    async def test_llm_models_stale_active_model_not_reported(self, models_ctx):
+        """An active name removed from config is not reported active, matching
+        llm_query's fallback behavior."""
+        models_ctx.active_model = "removed-model"
+
+        result = await tool_llm_models(models_ctx)
+
+        assert result.data["active_model"] == ""
+        assert all(m["is_active"] is False for m in result.data["models"])
+        assert "active:" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_llm_models_without_configs(self, tmp_data):
+        config = Config(
+            agent=AgentConfig(data_home=str(tmp_data), id="test-agent", user_id="testuser"),
+            reflection=ReflectionConfig(enabled=False),
+            vault_retrieval=VaultRetrievalConfig(enabled=False),
+            model_configs={},
+        )
+        context = Context(config=config, event_bus=EventBus())
+        context.conv_id = "test-conv"
+
+        result = await tool_llm_models(context)
+
+        assert result.data["models"] == []
+        assert result.text == "No models configured in config.model_configs."

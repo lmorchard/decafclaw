@@ -319,15 +319,17 @@ See [Sub-Agent Delegation](delegation.md).
 |------|:------:|--------------|
 | `delegate_task` | ✓ | Fork a child agent for a subtask (call multiple times for parallel work) |
 
-## LLM Query (`tools/llm_tools.py`)
+## LLM Models & Query (`tools/llm_tools.py`)
 
-One-shot completions against a named model — no tool schemas, no conversation history (#1258).
+Model discovery and one-shot completions against a named model — no tool schemas, no conversation history (#1258, #1444).
 
 | Tool | What it does |
 |------|--------------|
+| `llm_models` | List `config.model_configs` entries — the names `llm_query(model=...)` and `delegate_task(model=...)` accept — with provider, underlying model id, and active/default flags. Optional `provider` and `query` filters |
 | `llm_query` | Single-shot completion (or a batch of up to 25, concurrency 5) against a `config.model_configs` entry. For narrow text transformation — extraction, summarization, classification — especially against small local models |
 
-- `model=""` inherits the conversation's active model; an unknown name is a hard error that lists configured models (no silent fallback).
+- `llm_models` is read-only and local: no network probe or remote provider ping. It reports the effective default model (#1211: catalog pointer when set, else `config.default_model`) and the conversation's active model; a stale active name that is no longer configured is not reported as active. `provider` matches the provider key (exact or case-insensitive substring); `query` matches the config name or underlying model id. Structured output lives on `ToolResult.data` as `{default_model, active_model, total, models: [{name, provider, model, is_default, is_active}]}`.
+- `llm_query` `model=""` inherits the conversation's active model; an unknown name is a hard error that lists configured models (no silent fallback).
 - `return_schema` requests a fenced JSON block via prompt-level instruction; a compliant block parses to `ToolResult.data`. `strict=true` turns non-compliant output into an error with field-level feedback.
 - Each item runs under its own per-item timeout (default 60s); the tool opts out of the global watchdog. Usage accumulates into the turn's token counters, same as agent LLM calls.
 
