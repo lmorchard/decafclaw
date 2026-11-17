@@ -58,6 +58,60 @@ Startup is fail-open: an unknown type, a factory exception, or an enable excepti
 
 Example config: [`extensions`](config.md#extensions).
 
+## Improvement scout
+
+`src/decafclaw/extensions/improvement_scout.py` is an opt-in, out-of-band
+observer for harness friction (#1482). It subscribes `ON_TURN_SETTLE` and, on
+each settled turn, runs a cheap synchronous heuristic first:
+
+- a `tool` message containing `[error:` or a non-zero `[exit code: N]`;
+- an explicit user correction such as `stop`, `wait`, `didn't work`,
+  `that's wrong`, or `try again`.
+
+A clean turn returns immediately without a model call. A candidate turn is
+evaluated by the configured model, which returns a structured suggestion
+(title, observed friction, suggested improvement, subsystem, severity). The
+extension appends one JSONL record to
+`workspace/improvement_inbox.jsonl` (see [data layout](data-layout.md)).
+Identical trigger signatures are suppressed in memory for `dedup_ttl_seconds`,
+so a multi-turn retry loop does not flood the inbox.
+
+The observer never writes to the conversation: it does not append messages,
+publish chat events, or call `ctx.publish`. Every failure — option parsing, the
+model call, JSON parsing, or the inbox write — is logged and swallowed, so a
+broken evaluator cannot disturb a settled turn.
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `model` | `effective_default_model(config)` | Evaluator model; the effective default is the sidecar pointer, then `config.default_model`. With neither, evaluation is skipped. |
+| `dedup_ttl_seconds` | `3600` | In-memory suppression window for an identical trigger signature. |
+| `max_transcript_chars` | `12000` | Tail budget of the rendered transcript sent to the evaluator. |
+
+There is no default configuration: the extension runs only when an
+`extensions.improvement_scout` entry is present and enabled, for example:
+
+```json
+{
+  "extensions": {
+    "improvement_scout": {
+      "enabled": true,
+      "type": "improvement_scout",
+      "options": { "model": "gemini-2.5-flash", "dedup_ttl_seconds": 3600 }
+    }
+  }
+}
+```
+
+Triage is deliberately separate from the runtime. The opt-in
+`contrib/skills/improvement-inbox` skill provides `improvement_inbox_list`,
+`improvement_inbox_show`, `improvement_inbox_summary`,
+`improvement_inbox_dismiss`, `improvement_inbox_clear`,
+`improvement_inbox_export`, and `improvement_retro`. Export appends pending
+records to `agent/pages/decafclaw/improvement-inbox.md` in the vault. The
+skill's `SCHEDULE.md` describes a nightly export sweep; like every contrib
+schedule, it stays disabled until the operator copies it into the admin
+schedules directory.
+
 ## Scope
 
 Extensions cannot change `TurnLifecycle` or `EventBus` subscription/dispatch, and they do not alter the composer's `<recalled_facts>` envelope or tail placement — hooks return facts, core composes them.

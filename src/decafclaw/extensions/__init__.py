@@ -133,11 +133,14 @@ def init_extensions(config: Any, bus: EventBus) -> ExtensionManager:
     # Import built-ins lazily so their module-level registrations run without
     # an import cycle (mem0 imports BaseExtension from this module). If a
     # caller cleared the registry explicitly (test isolation, embedders), the
-    # module is cached and won't re-register, so re-register the built-in.
+    # modules are cached and won't re-register, so re-register the built-ins.
+    from . import improvement_scout as _improvement_scout  # noqa: F401
     from . import mem0 as _mem0  # noqa: F401
 
     if get_extension_type("mem0") is None:
         register_extension_type("mem0", _mem0.Mem0Extension)
+    if get_extension_type("improvement_scout") is None:
+        register_extension_type("improvement_scout", _improvement_scout.ImprovementScoutExtension)
 
     for name, ext_cfg in getattr(config, "extensions", {}).items():
         if ext_cfg.enabled is False:

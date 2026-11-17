@@ -65,6 +65,7 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
     media/                          # Media files saved from tool results
     HEARTBEAT.md                    # Agent-managed heartbeat tasks
     embeddings.db                   # Semantic search index (SQLite + sqlite-vec)
+    improvement_inbox.jsonl         # Improvement scout inbox (pending/exported/dismissed/archived, #1482)
     telemetry/                      # Instrumentation sidecars (rotated past retention_days)
       retrieval.jsonl               # Vault retrieval telemetry
       loop_breaker.jsonl            # Loop-breaker trip telemetry
