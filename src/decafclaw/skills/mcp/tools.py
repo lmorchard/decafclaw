@@ -43,7 +43,7 @@ async def tool_mcp_status(ctx: "Context", action: str = "status", server: str = 
             parts.append(f"{prompt_count} prompt(s)")
         counts_str = ", ".join(parts)
 
-        lines.append(f"- **{name}** ({state.config.type}, {state.status}): {counts_str}")
+        lines.append(f"- **{name}** ({state.config.type}, {state.status.value}): {counts_str}")
 
     return "\n".join(lines)
 
@@ -60,7 +60,7 @@ async def _restart(ctx: "Context", registry, server_name) -> str | ToolResult:
     disconnecting old ones first, then swap the registry.
     """
     import decafclaw.mcp_client as _mcp
-    from decafclaw.mcp_client import MCPRegistry, load_mcp_config
+    from decafclaw.mcp_client import ConnState, MCPRegistry, load_mcp_config
 
     try:
         if server_name:
@@ -105,7 +105,7 @@ async def _restart(ctx: "Context", registry, server_name) -> str | ToolResult:
 
             await new_registry.connect_all(configs)
 
-            connected = sum(1 for s in new_registry.servers.values() if s.status == "connected")
+            connected = sum(1 for s in new_registry.servers.values() if s.status == ConnState.CONNECTED)
             total_tools = sum(len(s.tools) for s in new_registry.servers.values())
             return f"MCP servers reloaded: {connected} connected, {total_tools} tool(s)"
     except BaseException as e:
@@ -164,7 +164,7 @@ async def tool_mcp_read_resource(ctx: "Context", server: str = "", uri: str = ""
     """Read a resource from an MCP server by URI."""
     import asyncio
 
-    from decafclaw.mcp_client import _convert_resource_response, get_registry
+    from decafclaw.mcp_client import ConnState, _convert_resource_response, get_registry
 
     if not server or not uri:
         return ToolResult(text="[error: both 'server' and 'uri' parameters are required]")
@@ -176,7 +176,7 @@ async def tool_mcp_read_resource(ctx: "Context", server: str = "", uri: str = ""
     state = registry.servers.get(server)
     if not state:
         return ToolResult(text=f"[error: MCP server '{server}' not found]")
-    if state.status != "connected" or not state.session:
+    if state.status != ConnState.CONNECTED or not state.session:
         return ToolResult(text=f"[error: MCP server '{server}' is not connected]")
 
     try:
@@ -237,7 +237,7 @@ async def tool_mcp_get_prompt(
     import asyncio
     import json as _json
 
-    from decafclaw.mcp_client import _convert_prompt_response, get_registry
+    from decafclaw.mcp_client import ConnState, _convert_prompt_response, get_registry
 
     if not server or not name:
         return ToolResult(text="[error: both 'server' and 'name' parameters are required]")
@@ -249,7 +249,7 @@ async def tool_mcp_get_prompt(
     state = registry.servers.get(server)
     if not state:
         return ToolResult(text=f"[error: MCP server '{server}' not found]")
-    if state.status != "connected" or not state.session:
+    if state.status != ConnState.CONNECTED or not state.session:
         return ToolResult(text=f"[error: MCP server '{server}' is not connected]")
 
     if arguments is None:

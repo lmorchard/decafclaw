@@ -71,7 +71,7 @@ def get_process_data() -> dict:
 
 def get_mcp_data() -> dict:
     """Return MCP server status as a dict."""
-    from ..mcp_client import get_registry
+    from ..mcp_client import ConnState, get_registry
 
     registry = get_registry()
     if not registry or not registry.servers:
@@ -83,14 +83,14 @@ def get_mcp_data() -> dict:
     servers = {}
     for name, state in registry.servers.items():
         status = state.status
-        if status in ("connected", "ready"):
+        if status == ConnState.CONNECTED:
             connected += 1
-        elif status == "connecting":
+        elif status == ConnState.CONNECTING:
             connecting += 1
-        elif status in ("failed", "error"):
+        elif status == ConnState.FAILED:
             failed += 1
         servers[name] = {
-            "status": status,
+            "status": status.value,
             "tools": len(state.tools),
             "retries": state.retry_count,
         }
@@ -289,7 +289,7 @@ def _mcp_section() -> list[str]:
     ]
     for name, state in registry.servers.items():
         tool_count = len(state.tools)
-        lines.append(f"| {name} | {state.status} | {tool_count} | {state.retry_count} |")
+        lines.append(f"| {name} | {state.status.value} | {tool_count} | {state.retry_count} |")
     return lines
 
 

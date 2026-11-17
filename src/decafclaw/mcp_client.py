@@ -10,6 +10,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -371,12 +372,21 @@ class MCPConnectionError(MCPReadinessError):
 # -- MCP Registry --------------------------------------------------------------
 
 
+class ConnState(Enum):
+    """Connection lifecycle state for an MCP server."""
+
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    FAILED = "failed"
+
+
 @dataclass
 class MCPServerState:
     """Runtime state for a single MCP server connection."""
 
     config: MCPServerConfig
-    status: str = "disconnected"  # connecting, connected, disconnected, failed
+    status: ConnState = ConnState.DISCONNECTED
     session: Any = None  # ClientSession when connected
     capabilities: Any = None  # ServerCapabilities from initialize()
     tools: dict = field(default_factory=dict)  # namespaced_name -> callable
@@ -394,7 +404,7 @@ class MCPServerState:
     @property
     def is_ready(self) -> bool:
         """Check if server is ready/connected."""
-        return self.status in ("connected", "ready")
+        return self.status == ConnState.CONNECTED
 
 
 class MCPRegistry:
@@ -410,7 +420,7 @@ class MCPRegistry:
         """Return all MCP tools as {namespaced_name: async_callable}."""
         tools = {}
         for state in self.servers.values():
-            if state.status == "connected":
+            if state.status == ConnState.CONNECTED:
                 tools.update(state.tools)
         return tools
 
@@ -418,7 +428,7 @@ class MCPRegistry:
         """Return all MCP tool definitions in OpenAI format."""
         defs = []
         for state in self.servers.values():
-            if state.status == "connected":
+            if state.status == ConnState.CONNECTED:
                 defs.extend(state.tool_definitions)
         return defs
 
@@ -426,7 +436,7 @@ class MCPRegistry:
         """Return all MCP resources as (server_name, resource) tuples."""
         results = []
         for name, state in self.servers.items():
-            if state.status == "connected":
+            if state.status == ConnState.CONNECTED:
                 for res in state.resources:
                     results.append((name, res))
         return results
@@ -435,7 +445,7 @@ class MCPRegistry:
         """Return all MCP resource templates as (server_name, template) tuples."""
         results = []
         for name, state in self.servers.items():
-            if state.status == "connected":
+            if state.status == ConnState.CONNECTED:
                 for tmpl in state.resource_templates:
                     results.append((name, tmpl))
         return results
@@ -444,7 +454,7 @@ class MCPRegistry:
         """Return all MCP prompts as (server_name, prompt) tuples."""
         results = []
         for name, state in self.servers.items():
-            if state.status == "connected":
+            if state.status == ConnState.CONNECTED:
                 for prompt in state.prompts:
                     results.append((name, prompt))
         return results
@@ -452,7 +462,7 @@ class MCPRegistry:
     async def refresh_tools(self, server_name: str):
         """Re-discover tools for a connected server."""
         state = self.servers.get(server_name)
-        if not state or state.status != "connected" or not state.session:
+        if not state or state.status != ConnState.CONNECTED or not state.session:
             return
 
         try:
@@ -478,7 +488,7 @@ class MCPRegistry:
     async def refresh_resources(self, server_name: str):
         """Re-discover resources for a connected server."""
         state = self.servers.get(server_name)
-        if not state or state.status != "connected" or not state.session:
+        if not state or state.status != ConnState.CONNECTED or not state.session:
             return
         if not state.capabilities or not getattr(state.capabilities, "resources", None):
             return
@@ -498,7 +508,7 @@ class MCPRegistry:
     async def refresh_prompts(self, server_name: str):
         """Re-discover prompts for a connected server."""
         state = self.servers.get(server_name)
-        if not state or state.status != "connected" or not state.session:
+        if not state or state.status != ConnState.CONNECTED or not state.session:
             return
         if not state.capabilities or not getattr(state.capabilities, "prompts", None):
             return
@@ -544,11 +554,11 @@ class MCPRegistry:
         name = server_config.name
         state = self.servers.get(name)
         if state is None:
-            state = MCPServerState(config=server_config, status="connecting")
+            state = MCPServerState(config=server_config, status=ConnState.CONNECTING)
             self.servers[name] = state
         else:
             state.config = server_config
-            state.status = "connecting"
+            state.status = ConnState.CONNECTING
             state.error = None
             state.settled_event.clear()
 
@@ -595,16 +605,16 @@ class MCPRegistry:
         if self._closed:
             log.debug("MCPRegistry is closed; skipping connection to %r", name)
             if state:
-                state.status = "disconnected"
+                state.status = ConnState.DISCONNECTED
                 state.settled_event.set()
             return
 
         if state is None:
-            state = MCPServerState(config=server_config, status="connecting")
+            state = MCPServerState(config=server_config, status=ConnState.CONNECTING)
             self.servers[name] = state
         else:
             state.config = server_config
-            state.status = "connecting"
+            state.status = ConnState.CONNECTING
             state.error = None
             state.settled_event.clear()
 
@@ -629,7 +639,7 @@ class MCPRegistry:
                 await exit_stack.__aexit__(None, None, None)
                 if state._generation == gen:
                     state._exit_stack = None
-                    state.status = "disconnected"
+                    state.status = ConnState.DISCONNECTED
                     state.settled_event.set()
                 return
 
@@ -643,7 +653,7 @@ class MCPRegistry:
                 log.warning(f"MCP server {name!r}: unknown type {server_config.type!r}")
                 await exit_stack.__aexit__(None, None, None)
                 if state._generation == gen:
-                    state.status = "failed"
+                    state.status = ConnState.FAILED
                     state.error = f"unknown server type {server_config.type!r}"
                     state._exit_stack = None
                     state.settled_event.set()
@@ -660,7 +670,7 @@ class MCPRegistry:
                 await exit_stack.__aexit__(None, None, None)
                 if state._generation == gen:
                     state._exit_stack = None
-                    state.status = "disconnected"
+                    state.status = ConnState.DISCONNECTED
                     state.settled_event.set()
                 return
 
@@ -714,11 +724,11 @@ class MCPRegistry:
                     state.resources.clear()
                     state.resource_templates.clear()
                     state.prompts.clear()
-                    state.status = "disconnected"
+                    state.status = ConnState.DISCONNECTED
                     state.settled_event.set()
                 return
 
-            state.status = "connected"
+            state.status = ConnState.CONNECTED
             state.retry_count = 0
             state.error = None
             state.settled_event.set()
@@ -743,7 +753,7 @@ class MCPRegistry:
             if state._generation == gen:
                 if state._exit_stack is exit_stack:
                     state._exit_stack = None
-                state.status = "disconnected"
+                state.status = ConnState.DISCONNECTED
                 state.settled_event.set()
             raise
         except BaseException as e:
@@ -753,7 +763,7 @@ class MCPRegistry:
             except Exception as exc:
                 log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
             if state._generation == gen:
-                state.status = "failed"
+                state.status = ConnState.FAILED
                 state.error = str(e)
                 state.settled_event.set()
                 if state._exit_stack is exit_stack:
@@ -828,7 +838,7 @@ class MCPRegistry:
             except Exception as e:
                 # Mark server as failed for auto-restart on next call
                 if state:
-                    state.status = "failed"
+                    state.status = ConnState.FAILED
                 return f"[error: MCP tool {tool_name} on {server_name} failed: {e}]"
 
         return call_tool
@@ -842,7 +852,7 @@ class MCPRegistry:
         if not state:
             return False
 
-        if state.status == "connected":
+        if state.status == ConnState.CONNECTED:
             return True
 
         # Give up after max retries
@@ -869,7 +879,7 @@ class MCPRegistry:
         await self.connect_server(state.config)
 
         new_state = self.servers.get(server_name)
-        if new_state and new_state.status == "connected":
+        if new_state and new_state.status == ConnState.CONNECTED:
             log.info(f"MCP server {server_name!r} reconnected successfully")
             return True
 
@@ -885,9 +895,9 @@ class MCPRegistry:
         if wait and tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        connected = sum(1 for s in self.servers.values() if s.status == "connected")
-        failed = sum(1 for s in self.servers.values() if s.status == "failed")
-        connecting = sum(1 for s in self.servers.values() if s.status == "connecting")
+        connected = sum(1 for s in self.servers.values() if s.status == ConnState.CONNECTED)
+        failed = sum(1 for s in self.servers.values() if s.status == ConnState.FAILED)
+        connecting = sum(1 for s in self.servers.values() if s.status == ConnState.CONNECTING)
         total_tools = sum(len(s.tools) for s in self.servers.values())
         log.info(f"MCP: {connected} connected, {connecting} connecting, {failed} failed, {total_tools} tool(s)")
 
@@ -903,9 +913,9 @@ class MCPRegistry:
         if not state:
             raise MCPReadinessError(f"Required MCP server {name!r} is not configured")
 
-        if state.status == "connected":
+        if state.status == ConnState.CONNECTED:
             return True
-        if state.status == "failed":
+        if state.status == ConnState.FAILED:
             raise MCPConnectionError(
                 f"Required MCP server {name!r} failed to connect: {state.error or 'connection failed'}"
             )
@@ -918,7 +928,7 @@ class MCPRegistry:
         except asyncio.TimeoutError:
             raise MCPTimeoutError(f"Required MCP server {name!r} timed out waiting for connection after {timeout}s")
 
-        if state.status == "connected":
+        if state.status == ConnState.CONNECTED:
             return True
         raise MCPConnectionError(
             f"Required MCP server {name!r} failed to connect: {state.error or 'connection failed'}"
@@ -969,7 +979,7 @@ class MCPRegistry:
         state.resources.clear()
         state.resource_templates.clear()
         state.prompts.clear()
-        state.status = "disconnected"
+        state.status = ConnState.DISCONNECTED
         state.settled_event.set()
         log.info(f"MCP server {name!r} disconnected")
         if self.event_bus:
