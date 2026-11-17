@@ -172,8 +172,9 @@ conversational turns, no LLM tokens, and no archive writes during streaming:
 ### `progress_parser` presets
 
 When `pin_sticky=True`, the reader task applies a deterministic log output
-parser (`src/decafclaw/skills/background/parsers.py`) to convert streaming
-output lines into structured `progress_tracker` snapshots:
+parser (`src/decafclaw/skills/background/parsers.py`; preset names are the
+`ProgressParserPreset` enum in that module) to convert streaming output lines
+into structured `progress_tracker` snapshots:
 
 - **`auto`** (default): detects output format in order (`pytest` → `step` → `percent`),
   falling back cleanly to line count and raw output on unrecognized output.

@@ -6,23 +6,38 @@ and provides functions to query and modify the step tree.
 
 import re
 from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+class StepStatus(StrEnum):
+    """Status of a plan step (``Step.status``, #1385).
+
+    String-valued so rendered plans, progress_tracker widget data, and any
+    JSON round-trip keep the existing wire values; the enum makes a typo'd
+    status impossible to construct.
+    """
+
+    PENDING = "pending"  # not started (marker: space)
+    IN_PROGRESS = "in_progress"  # work underway (marker: >)
+    DONE = "done"  # completed (marker: x)
+    SKIPPED = "skipped"  # deliberately not done (marker: -)
 
 
 @dataclass
 class Step:
     number: str  # e.g. "1", "1.2", "2.3.1"
     description: str
-    status: str = "pending"  # pending, in_progress, done, skipped
+    status: StepStatus = StepStatus.PENDING
     note: str = ""
     children: list["Step"] = field(default_factory=list)
 
 
 # Checkbox markers → status
 _MARKER_TO_STATUS = {
-    " ": "pending",
-    ">": "in_progress",
-    "x": "done",
-    "-": "skipped",
+    " ": StepStatus.PENDING,
+    ">": StepStatus.IN_PROGRESS,
+    "x": StepStatus.DONE,
+    "-": StepStatus.SKIPPED,
 }
 
 _STATUS_TO_MARKER = {v: k for k, v in _MARKER_TO_STATUS.items()}
@@ -76,7 +91,7 @@ def parse_plan(content: str) -> tuple[str, list[Step], str]:
             else:
                 number = m.group(3)
                 desc = m.group(4)
-            status = _MARKER_TO_STATUS.get(marker, "pending")
+            status = _MARKER_TO_STATUS.get(marker, StepStatus.PENDING)
 
             # Check for note on next line(s)
             note_parts: list[str] = []
@@ -180,7 +195,7 @@ def next_actionable(steps: list[Step]) -> Step | None:
     returns the first pending child within it. Skips done/skipped steps.
     """
     for step in steps:
-        if step.status in ("done", "skipped"):
+        if step.status in (StepStatus.DONE, StepStatus.SKIPPED):
             continue
         if step.children:
             # If parent is in_progress, look for pending children
@@ -189,16 +204,18 @@ def next_actionable(steps: list[Step]) -> Step | None:
                 return child
             # If all children are done/skipped but parent isn't marked done,
             # the parent itself is actionable (needs to be marked done)
-            if step.status == "in_progress" and all(c.status in ("done", "skipped") for c in step.children):
+            if step.status == StepStatus.IN_PROGRESS and all(
+                c.status in (StepStatus.DONE, StepStatus.SKIPPED) for c in step.children
+            ):
                 return step
-        if step.status == "pending":
+        if step.status == StepStatus.PENDING:
             return step
-        if step.status == "in_progress" and not step.children:
+        if step.status == StepStatus.IN_PROGRESS and not step.children:
             return step
     return None
 
 
-def update_step_status(steps: list[Step], number: str, status: str, note: str = "") -> bool:
+def update_step_status(steps: list[Step], number: str, status: StepStatus, note: str = "") -> bool:
     """Update a step's status and optional note. Returns True if found."""
     step = find_step(steps, number)
     if not step:
@@ -296,6 +313,6 @@ def plan_progress(steps: list[Step]) -> tuple[int, int]:
             total += t
         else:
             total += 1
-            if step.status in ("done", "skipped"):
+            if step.status in (StepStatus.DONE, StepStatus.SKIPPED):
                 completed += 1
     return completed, total

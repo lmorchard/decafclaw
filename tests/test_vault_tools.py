@@ -13,8 +13,11 @@ from decafclaw.frontmatter import parse_frontmatter
 from decafclaw.media import ToolResult
 from decafclaw.skills.vault._grants import add_grant
 from decafclaw.skills.vault.tools import (
+    TOOL_DEFINITIONS,
     GateOutcome,
+    VaultSourceType,
     _check_user_write_allowed,
+    _source_type_for_path,
     format_recent_journal_for_context,
     read_recent_journal_entries,
     resolve_page,
@@ -64,6 +67,49 @@ def _dummy_request_confirmation(*args, **kwargs):
     sentinel should never actually be invoked.
     """
     raise AssertionError("ctx.request_confirmation should not be invoked directly")
+
+
+class TestVaultSourceType:
+    def test_enum_values_match_wire_strings(self):
+        """The enum values are the wire strings stored in the embeddings index and
+        rendered in search results — changing them would silently break existing
+        indexes (#1386)."""
+        assert VaultSourceType.JOURNAL == "journal"
+        assert VaultSourceType.PAGE == "page"
+        assert VaultSourceType.USER == "user"
+
+    def test_source_type_for_path_returns_members(self, config, vault_dir, agent_pages, agent_journal):
+        """_source_type_for_path yields enum members, not raw strings (#1386).
+
+        The identity check matters: StrEnum values compare equal to their
+        wire strings, so a value comparison alone would not catch a regression
+        back to raw strings.
+        """
+        journal = agent_journal / "2026" / "2026-07-24.md"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text("## 2026-07-24 10:00\n\nentry")
+        page = agent_pages / "Page.md"
+        page.write_text("# Page")
+        user = vault_dir / "UserNote.md"
+        user.write_text("note")
+
+        assert _source_type_for_path(config, journal) is VaultSourceType.JOURNAL
+        assert _source_type_for_path(config, page) is VaultSourceType.PAGE
+        assert _source_type_for_path(config, user) is VaultSourceType.USER
+
+    def test_tool_schemas_name_every_source_type(self):
+        """The vault_search and vault_recent source_type descriptions must keep
+        naming every enum value — the LLM picks its filter from that prose, so a
+        renamed or added member would silently stop being offerable (#1386)."""
+        descs = {}
+        for d in TOOL_DEFINITIONS:
+            name = d["function"]["name"]
+            if name in ("vault_search", "vault_recent"):
+                descs[name] = d["function"]["parameters"]["properties"]["source_type"]["description"]
+        assert set(descs) == {"vault_search", "vault_recent"}
+        for desc in descs.values():
+            for member in VaultSourceType:
+                assert f"'{member.value}'" in desc
 
 
 class TestResolvePage:

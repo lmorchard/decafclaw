@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from decafclaw.media import EndTurnConfirm, ToolResult
+from decafclaw.skills.project.plan_parser import StepStatus, find_step, parse_plan
 from decafclaw.skills.project.state import (
     TRANSITIONS,
     ProjectInfo,
@@ -15,6 +16,7 @@ from decafclaw.skills.project.state import (
 )
 from decafclaw.skills.project.tools import (
     _PHASE_TOOLS,
+    TOOL_DEFINITIONS,
     TOOLS,
     _load_prompt,
     _next_execution_step,
@@ -271,6 +273,37 @@ class TestStateValidation:
         await tool_project_create(ctx, "Test", slug="plan-early")
         result = await tool_project_update_plan(ctx, plan_text=SAMPLE_PLAN)
         assert "error" in result.text
+
+
+class TestUpdateStepStatus:
+    """project_update_step status handling (#1385)."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_status_rejected(self, ctx):
+        await _advance_to_executing(ctx, slug="validate-step")
+        result = await tool_project_update_step(ctx, step="1", status="bogus")
+        assert isinstance(result, ToolResult)
+        assert "error" in result.text
+        # The valid list is derived from the enum, so it names every member (#1385).
+        assert ", ".join(s.value for s in StepStatus) in result.text
+
+    @pytest.mark.asyncio
+    async def test_llm_string_round_trips_through_plan(self, ctx):
+        """The LLM passes a plain string; the plan renders the matching marker."""
+        await _advance_to_executing(ctx, slug="wire-step")
+        result = await tool_project_update_step(ctx, step="1", status="done")
+        assert not isinstance(result, ToolResult) or "error" not in result.text
+        info = load_project(ctx.config, "wire-step")
+        _, steps, _ = parse_plan(info.plan_path.read_text())
+        step = find_step(steps, "1")
+        assert isinstance(step.status, StepStatus)  # marker map yields the member (#1385)
+        assert step.status == StepStatus.DONE
+
+    def test_tool_schema_status_list_sources_from_enum(self):
+        """The project_update_step schema enumerates the StepStatus values —
+        that list must stay in sync with the enum (#1385)."""
+        status_def = next(d for d in TOOL_DEFINITIONS if d["function"]["name"] == "project_update_step")
+        assert status_def["function"]["parameters"]["properties"]["status"]["enum"] == [s.value for s in StepStatus]
 
 
 class TestProjectManagement:

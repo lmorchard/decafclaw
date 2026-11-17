@@ -388,6 +388,12 @@ Vault content is indexed in the embeddings database with per-type source types a
 | `user` | User's Obsidian pages | 1.2x |
 | `journal` | Agent journal entries | 1.0x |
 
+Source types are the `VaultSourceType` enum in `skills/vault/tools.py`:
+`journal`, `page`, or `user`. `_source_type_for_path` derives a member from
+the file's location (under agent/journal/ → `journal`, elsewhere under
+agent/ → `page`, outside agent/ → `user`). Wire values are unchanged
+(string-valued enum).
+
 - Pages are indexed incrementally when written via `vault_write` or `vault_journal_append`
 - `make reindex` rebuilds the full index (`--vault`, `--journal` flags for subsets)
 - `--concurrency N` controls parallel embedding API calls (default 4)

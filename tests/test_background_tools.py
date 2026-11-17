@@ -10,9 +10,11 @@ from decafclaw.skills.background.parsers import (
     AutoParser,
     NoneParser,
     PercentParser,
+    ProgressParserPreset,
     PytestParser,
     StepParser,
     get_progress_parser,
+    parse_progress_preset,
     strip_ansi,
 )
 from decafclaw.skills.background.tools import BackgroundJobManager, JobStatus
@@ -38,6 +40,39 @@ def test_tool_schema_status_list_sources_from_enum():
     status_def = next(d for d in tools.TOOL_DEFINITIONS if d["function"]["name"] == "shell_background_status")
     expected = "/".join(s.value for s in JobStatus)
     assert f"Returns {expected} status" in status_def["function"]["description"]
+
+
+# ---------------------------------------------------------------------------
+# ProgressParserPreset enum (#1384) — the five parser presets, one source.
+# ---------------------------------------------------------------------------
+
+
+def test_progress_parser_preset_values_match_wire_strings():
+    """The enum values are the wire strings tool data and the tool schema use —
+    changing them would silently break existing conversations (#1384)."""
+    assert ProgressParserPreset.AUTO == "auto"
+    assert ProgressParserPreset.STEP == "step"
+    assert ProgressParserPreset.PERCENT == "percent"
+    assert ProgressParserPreset.PYTEST == "pytest"
+    assert ProgressParserPreset.NONE == "none"
+
+
+def test_tool_schema_parser_enum_sources_from_preset():
+    """The shell_background_start progress_parser enum list must stay in sync
+    with ProgressParserPreset (#1384)."""
+    start_def = next(d for d in tools.TOOL_DEFINITIONS if d["function"]["name"] == "shell_background_start")
+    assert start_def["function"]["parameters"]["properties"]["progress_parser"]["enum"] == [
+        p.value for p in ProgressParserPreset
+    ]
+
+
+def test_parse_progress_preset_tolerant():
+    """Raw names are case/whitespace tolerant; None and unknown values fall back
+    to AUTO (the factory's historical behavior, #1384)."""
+    assert parse_progress_preset(ProgressParserPreset.STEP) is ProgressParserPreset.STEP
+    assert parse_progress_preset("  Step ") == ProgressParserPreset.STEP
+    assert parse_progress_preset(None) == ProgressParserPreset.AUTO
+    assert parse_progress_preset("unknown") == ProgressParserPreset.AUTO
 
 
 # ---------------------------------------------------------------------------
@@ -1246,7 +1281,9 @@ async def test_progress_parser_tool_plumbing(ctx, monkeypatch):
     job = mgr.get(result.data["job_id"])
     assert job is not None
     assert job.pin_sticky is True
-    assert job.progress_parser == "pytest"
+    # The raw LLM string normalizes to the enum member on the job (#1384).
+    assert isinstance(job.progress_parser, ProgressParserPreset)
+    assert job.progress_parser == ProgressParserPreset.PYTEST
     assert result.data["progress_parser"] == "pytest"
 
     await mgr.cleanup_all()
@@ -1265,12 +1302,12 @@ def test_pytest_parser_xdist_format():
 
 
 def test_get_progress_parser_factory():
-    assert isinstance(get_progress_parser("auto"), AutoParser)
-    assert isinstance(get_progress_parser("step"), StepParser)
-    assert isinstance(get_progress_parser("percent"), PercentParser)
-    assert isinstance(get_progress_parser("pytest"), PytestParser)
-    assert isinstance(get_progress_parser("none"), NoneParser)
-    # Unknown falls back to AutoParser
+    assert isinstance(get_progress_parser(ProgressParserPreset.AUTO), AutoParser)
+    assert isinstance(get_progress_parser(ProgressParserPreset.STEP), StepParser)
+    assert isinstance(get_progress_parser(ProgressParserPreset.PERCENT), PercentParser)
+    assert isinstance(get_progress_parser(ProgressParserPreset.PYTEST), PytestParser)
+    assert isinstance(get_progress_parser(ProgressParserPreset.NONE), NoneParser)
+    # Unknown raw string falls back to AutoParser (LLM JSON carries plain strings).
     assert isinstance(get_progress_parser("unknown"), AutoParser)
 
 
@@ -1332,7 +1369,7 @@ def test_auto_parser_detects_pytest_from_skipped_line():
     p = AutoParser()
     p.feed_line("tests/test_mod.py::test_skipped SKIPPED [ 10%]")
     up = p.get_progress()
-    assert p._active_preset == "pytest"
+    assert p._active_preset == ProgressParserPreset.PYTEST
     assert up.unit == "tests"
 
 
@@ -1379,10 +1416,10 @@ def test_pytest_xdist_verbose_outcome_first():
 def test_auto_parser_switches_presets_on_format_change():
     p = AutoParser()
     p.feed_line("[1/2] Step one")
-    assert p._active_preset == "step"
+    assert p._active_preset == ProgressParserPreset.STEP
     # New format lines take over
     p.feed_line("downloading 50%")
-    assert p._active_preset == "percent"
+    assert p._active_preset == ProgressParserPreset.PERCENT
     up = p.get_progress()
     assert up.current == 50
     assert up.unit == "%"
@@ -1427,7 +1464,7 @@ def test_pytest_summary_with_errors():
 def test_auto_parser_fallback_resets_probes():
     p = AutoParser()
     p.feed_line("[1/5] Step one")
-    assert p._active_preset == "step"
+    assert p._active_preset == ProgressParserPreset.STEP
     for i in range(25):
         p.feed_line(f"plain log line {i}")
     assert p._active_preset is None

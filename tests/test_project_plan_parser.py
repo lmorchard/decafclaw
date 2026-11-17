@@ -3,7 +3,10 @@
 import pytest
 
 from decafclaw.skills.project.plan_parser import (
+    _MARKER_TO_STATUS,
+    _STATUS_TO_MARKER,
     Step,
+    StepStatus,
     find_step,
     insert_steps,
     next_actionable,
@@ -12,6 +15,28 @@ from decafclaw.skills.project.plan_parser import (
     render_plan,
     update_step_status,
 )
+
+
+class TestStepStatus:
+    def test_enum_values_match_wire_strings(self):
+        """The enum values are the wire strings rendered plans and widget data use —
+        changing them would silently break existing projects (#1385)."""
+        assert StepStatus.PENDING == "pending"
+        assert StepStatus.IN_PROGRESS == "in_progress"
+        assert StepStatus.DONE == "done"
+        assert StepStatus.SKIPPED == "skipped"
+
+    def test_marker_map_covers_every_status(self):
+        """The checkbox-marker mapping must hold exactly the enum members (#1385).
+
+        The isinstance check matters: StrEnum values compare equal to their
+        wire strings, so a set comparison alone would not catch a regression
+        back to raw strings.
+        """
+        assert set(_MARKER_TO_STATUS.values()) == set(StepStatus)
+        assert all(isinstance(v, StepStatus) for v in _MARKER_TO_STATUS.values())
+        assert _STATUS_TO_MARKER == {status: marker for marker, status in _MARKER_TO_STATUS.items()}
+
 
 SAMPLE_PLAN = """\
 # Plan: Test Project
@@ -41,10 +66,10 @@ class TestParsePlan:
 
     def test_parse_statuses(self):
         _, steps, _ = parse_plan(SAMPLE_PLAN)
-        assert steps[0].status == "pending"
-        assert steps[2].status == "done"
-        assert steps[3].status == "skipped"
-        assert steps[4].status == "in_progress"
+        assert steps[0].status == StepStatus.PENDING
+        assert steps[2].status == StepStatus.DONE
+        assert steps[3].status == StepStatus.SKIPPED
+        assert steps[4].status == StepStatus.IN_PROGRESS
 
     def test_parse_notes(self):
         _, steps, _ = parse_plan(SAMPLE_PLAN)
@@ -109,9 +134,9 @@ class TestNextActionable:
 
     def test_in_progress_step(self):
         steps = [
-            Step("1", "Done step", status="done"),
-            Step("2", "In progress", status="in_progress"),
-            Step("3", "Pending", status="pending"),
+            Step("1", "Done step", status=StepStatus.DONE),
+            Step("2", "In progress", status=StepStatus.IN_PROGRESS),
+            Step("3", "Pending", status=StepStatus.PENDING),
         ]
         step = next_actionable(steps)
         assert step is not None
@@ -119,8 +144,8 @@ class TestNextActionable:
 
     def test_all_done(self):
         steps = [
-            Step("1", "Done", status="done"),
-            Step("2", "Skipped", status="skipped"),
+            Step("1", "Done", status=StepStatus.DONE),
+            Step("2", "Skipped", status=StepStatus.SKIPPED),
         ]
         assert next_actionable(steps) is None
 
@@ -128,10 +153,10 @@ class TestNextActionable:
         parent = Step(
             "1",
             "Parent",
-            status="in_progress",
+            status=StepStatus.IN_PROGRESS,
             children=[
-                Step("1.1", "Done child", status="done"),
-                Step("1.2", "Pending child", status="pending"),
+                Step("1.1", "Done child", status=StepStatus.DONE),
+                Step("1.2", "Pending child", status=StepStatus.PENDING),
             ],
         )
         step = next_actionable([parent])
@@ -143,10 +168,10 @@ class TestNextActionable:
         parent = Step(
             "1",
             "Parent",
-            status="in_progress",
+            status=StepStatus.IN_PROGRESS,
             children=[
-                Step("1.1", "Done", status="done"),
-                Step("1.2", "Done", status="done"),
+                Step("1.1", "Done", status=StepStatus.DONE),
+                Step("1.2", "Done", status=StepStatus.DONE),
             ],
         )
         step = next_actionable([parent])
@@ -157,20 +182,21 @@ class TestNextActionable:
 class TestUpdateStepStatus:
     def test_update_existing(self):
         _, steps, _ = parse_plan(SAMPLE_PLAN)
-        assert update_step_status(steps, "2", "done", "Finished!")
+        assert update_step_status(steps, "2", StepStatus.DONE, "Finished!")
         step = find_step(steps, "2")
-        assert step.status == "done"
+        assert isinstance(step.status, StepStatus)  # stores the member, not a plain string (#1385)
+        assert step.status == StepStatus.DONE
         assert step.note == "Finished!"
 
     def test_update_sub_step(self):
         _, steps, _ = parse_plan(SAMPLE_PLAN)
-        assert update_step_status(steps, "1.1", "in_progress")
+        assert update_step_status(steps, "1.1", StepStatus.IN_PROGRESS)
         step = find_step(steps, "1.1")
-        assert step.status == "in_progress"
+        assert step.status == StepStatus.IN_PROGRESS
 
     def test_update_nonexistent(self):
         _, steps, _ = parse_plan(SAMPLE_PLAN)
-        assert not update_step_status(steps, "99", "done")
+        assert not update_step_status(steps, "99", StepStatus.DONE)
 
 
 class TestInsertSteps:
@@ -229,8 +255,8 @@ class TestUnnumberedParsing:
 
     def test_unnumbered_preserves_status(self):
         _, steps, _ = parse_plan(UNNUMBERED_PLAN)
-        assert steps[0].status == "pending"
-        assert steps[2].status == "done"
+        assert steps[0].status == StepStatus.PENDING
+        assert steps[2].status == StepStatus.DONE
         assert steps[2].note == "Done already."
 
     def test_unnumbered_round_trip(self):
@@ -280,8 +306,8 @@ class TestPlanProgress:
 
     def test_all_done(self):
         steps = [
-            Step("1", "Done", status="done"),
-            Step("2", "Skipped", status="skipped"),
+            Step("1", "Done", status=StepStatus.DONE),
+            Step("2", "Skipped", status=StepStatus.SKIPPED),
         ]
         assert plan_progress(steps) == (2, 2)
 
