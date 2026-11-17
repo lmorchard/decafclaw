@@ -13,17 +13,11 @@ import { LitElement, html, nothing } from 'lit';
  */
 export class ModelPicker extends LitElement {
   static properties = {
-    /** @type {ModelGroup[]} */
     groups: { type: Array },
-    /** @type {string} */
     activeModel: { type: String, attribute: 'active-model' },
-    /** @type {string} */
     defaultModel: { type: String, attribute: 'default-model' },
-    /** @type {boolean} */
     disabled: { type: Boolean, reflect: true },
-    /** @type {string} */
     convId: { type: String, attribute: 'conv-id' },
-    /** @type {boolean} */
     inline: { type: Boolean, reflect: true },
     _open: { type: Boolean, state: true },
     _query: { type: String, state: true },
