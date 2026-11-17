@@ -645,6 +645,8 @@ describe('conversation-sidebar session move (#1277)', () => {
       cancelSubagent: vi.fn(),
       listConversations: vi.fn(),
       listSessions: vi.fn(),
+      listArchivedConversations: vi.fn(),
+      listSystemConversations: vi.fn(),
       listAllFolders: vi.fn(async () => ['Work', 'Work/Plans']),
       moveConversation: vi.fn(async () => true),
       ...storeOverrides,
@@ -793,6 +795,86 @@ describe('conversation-sidebar session move (#1277)', () => {
     await flush();
     expect(el.querySelector('.conv-move-picker')).toBeFalsy();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('focuses the close button when no destination is enabled, so Escape still closes', async () => {
+    const { sidebar: el } = await mountMove({
+      currentFolder: '',
+      listAllFolders: vi.fn(async () => []),
+    });
+    const trigger = el.querySelector('.conv-move-btn');
+    trigger.click();
+    await flush();
+    const close = el.querySelector('.conv-move-picker-close');
+    expect(close).toBeTruthy();
+    expect(document.activeElement).toBe(close);
+
+    el.querySelector('.conv-move-picker').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    await flush();
+    expect(el.querySelector('.conv-move-picker')).toBeFalsy();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('offers no move action and no drag source on archived rows', async () => {
+    const { sidebar: el, store } = await mountMove({
+      archivedConversations: [{ conv_id: 'web-alice-a1', title: 'Old chat' }],
+    });
+    folderRow('_archived').click();
+    store.dispatchEvent(new Event('change'));
+    await flush();
+    const row = el.querySelector('.conv-item.archived');
+    expect(row).toBeTruthy();
+    expect(row.getAttribute('draggable')).toBeNull();
+    expect(row.querySelector('.conv-move-btn')).toBeNull();
+  });
+
+  it('offers no move action and no drag source on system rows', async () => {
+    const { sidebar: el, store } = await mountMove({
+      folders: [{ name: 'System', path: '_system', virtual: true }],
+      systemConversations: [{ conv_id: 'web-system-1', title: 'System chat', conv_type: 'scheduler' }],
+    });
+    folderRow('_system').click();
+    store.dispatchEvent(new Event('change'));
+    await flush();
+    const row = el.querySelector('.conv-item.system');
+    expect(row).toBeTruthy();
+    expect(row.getAttribute('draggable')).toBeNull();
+    expect(row.querySelector('.conv-move-btn')).toBeNull();
+  });
+
+  it('clears the drop-target highlight on dragend, dragleave, and drop', async () => {
+    const { sidebar: el } = await mountMove();
+    const rootRow = el.querySelector('.conv-session .conv-item');
+    const target = folderRow('Work');
+
+    rootRow.dispatchEvent(dragStartEvent('web-alice-r1'));
+    target.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
+    await el.updateComplete;
+    expect(target.classList.contains('drop-target')).toBe(true);
+    rootRow.dispatchEvent(new Event('dragend', { bubbles: true }));
+    await el.updateComplete;
+    expect(target.classList.contains('drop-target')).toBe(false);
+
+    rootRow.dispatchEvent(dragStartEvent('web-alice-r1'));
+    target.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
+    await el.updateComplete;
+    expect(target.classList.contains('drop-target')).toBe(true);
+    const leave = new Event('dragleave', { bubbles: true, cancelable: true });
+    // @ts-ignore test shim — jsdom Event has no relatedTarget
+    leave.relatedTarget = document.body;
+    target.dispatchEvent(leave);
+    await el.updateComplete;
+    expect(target.classList.contains('drop-target')).toBe(false);
+
+    rootRow.dispatchEvent(dragStartEvent('web-alice-r1'));
+    target.dispatchEvent(new Event('dragover', { bubbles: true, cancelable: true }));
+    await el.updateComplete;
+    expect(target.classList.contains('drop-target')).toBe(true);
+    target.dispatchEvent(dropEvent('web-alice-r1'));
+    await flush();
+    expect(target.classList.contains('drop-target')).toBe(false);
   });
 
   it('shows a toast when the move fails', async () => {

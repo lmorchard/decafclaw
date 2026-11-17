@@ -544,8 +544,12 @@ export class ConversationSidebar extends LitElement {
     this._movePickerFolders = folders;
     this._movePickerLoading = false;
     await this.updateComplete;
+    // With no enabled destination (top level is current and no folders were
+    // listed) the dialog still needs an initial focus target inside itself,
+    // or Escape never reaches #handleMovePickerKeydown.
     const first = /** @type {HTMLElement|null} */ (
       this.querySelector('.conv-move-option:not([disabled])')
+        || this.querySelector('.conv-move-picker-close')
     );
     first?.focus();
   }
