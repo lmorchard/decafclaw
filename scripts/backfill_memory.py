@@ -159,9 +159,9 @@ def extract_page_records(pages_dir: Path) -> list[dict[str, Any]]:
 
 
 def backfill(
-    session_dir: Path | None,
-    journal_dir: Path | None,
-    pages_dir: Path | None = None,
+    session_dirs: list[Path] | Path | None = None,
+    journal_dirs: list[Path] | Path | None = None,
+    pages_dirs: list[Path] | Path | None = None,
     dry_run: bool = False,
     config_path: Path | None = None,
     qdrant_path: Path | None = None,
@@ -171,12 +171,20 @@ def backfill(
     """Collect records, sort chronologically in ascending order, and ingest or verify."""
     records: list[dict[str, Any]] = []
 
-    if session_dir and session_dir.exists():
-        records.extend(extract_session_records(session_dir))
-    if journal_dir and journal_dir.exists():
-        records.extend(extract_journal_records(journal_dir))
-    if pages_dir and pages_dir.exists():
-        records.extend(extract_page_records(pages_dir))
+    # Normalize single paths to lists
+    s_dirs = [session_dirs] if isinstance(session_dirs, Path) else (session_dirs or [])
+    j_dirs = [journal_dirs] if isinstance(journal_dirs, Path) else (journal_dirs or [])
+    p_dirs = [pages_dirs] if isinstance(pages_dirs, Path) else (pages_dirs or [])
+
+    for sd in s_dirs:
+        if sd and sd.exists():
+            records.extend(extract_session_records(sd))
+    for jd in j_dirs:
+        if jd and jd.exists():
+            records.extend(extract_journal_records(jd))
+    for pd in p_dirs:
+        if pd and pd.exists():
+            records.extend(extract_page_records(pd))
 
     if since:
         since_dt = parse_timestamp(since)
@@ -199,9 +207,10 @@ def backfill(
             assert r["timestamp"] >= prev_ts, f"Assertion failed: Record out of order ({r['timestamp']} < {prev_ts})"
         prev_ts = r["timestamp"]
 
+    source_names = ", ".join(d.name for d in (s_dirs + j_dirs + p_dirs) if d)
     print(
         f"Chronological backfill verified {len(records)} records across "
-        f"{(session_dir.name if session_dir else '')} in strictly ascending chronological order."
+        f"{source_names} in strictly ascending chronological order."
     )
 
     if dry_run:
@@ -276,32 +285,48 @@ def backfill(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Chronologically backfill session and journal memory.")
-    parser.add_argument("--dir", dest="session_dir", type=Path, help="Directory containing session archives (.jsonl)")
     parser.add_argument(
-        "--journals-dir", dest="journal_dir", type=Path, help="Directory containing journal notes (.md)"
+        "--dir",
+        "--session-dirs",
+        dest="session_dirs",
+        type=Path,
+        nargs="+",
+        help="One or more directories containing session archives (.jsonl)",
     )
     parser.add_argument(
-        "--pages-dir", dest="pages_dir", type=Path, help="Optional directory containing evergreen/wiki pages (.md)"
+        "--journals-dir",
+        "--journal-dirs",
+        dest="journal_dirs",
+        type=Path,
+        nargs="+",
+        help="One or more directories containing chronological journal/stream notes (.md)",
+    )
+    parser.add_argument(
+        "--pages-dir",
+        "--pages-dirs",
+        dest="pages_dirs",
+        type=Path,
+        nargs="+",
+        help="Optional directories containing evergreen/wiki pages (.md)",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Parse and verify chronological ordering without ingesting"
     )
     parser.add_argument("--config", dest="config_path", type=Path, help="Optional path to config.json")
     parser.add_argument(
-        "--qdrant-path", dest="qdrant_path", type=Path, help="Staging path for Qdrant store (e.g. data/mem0_qdrant_staging)"
+        "--qdrant-path",
+        dest="qdrant_path",
+        type=Path,
+        help="Staging path for Qdrant store (e.g. data/mem0_qdrant_staging)",
     )
-    parser.add_argument(
-        "--since", dest="since", type=str, help="Only backfill records with timestamp >= YYYY-MM-DD"
-    )
-    parser.add_argument(
-        "--limit", dest="limit", type=int, help="Limit to first N chronological records"
-    )
+    parser.add_argument("--since", dest="since", type=str, help="Only backfill records with timestamp >= YYYY-MM-DD")
+    parser.add_argument("--limit", dest="limit", type=int, help="Limit to first N chronological records")
 
     args = parser.parse_args()
     return backfill(
-        session_dir=args.session_dir,
-        journal_dir=args.journal_dir,
-        pages_dir=args.pages_dir,
+        session_dirs=args.session_dirs,
+        journal_dirs=args.journal_dirs,
+        pages_dirs=args.pages_dirs,
         dry_run=args.dry_run,
         config_path=args.config_path,
         qdrant_path=args.qdrant_path,
