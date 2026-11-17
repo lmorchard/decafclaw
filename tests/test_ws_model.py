@@ -12,6 +12,7 @@ from decafclaw.web.conversations import ConversationIndex
 from decafclaw.web.websocket import (
     _handle_load_history,
     _handle_set_model,
+    _make_models_available_forwarder,
 )
 
 
@@ -188,3 +189,32 @@ class TestLoadHistoryModel:
 
         msg = ws_send.call_args[0][0]
         assert msg["active_model"] == "legacy-old-model"
+
+    @pytest.mark.asyncio
+    async def test_initial_load_includes_model_groups(self, ws_state, index, conv_id):
+        """conv_history carries provider groups next to the flat list (#1441)."""
+        ws_send = AsyncMock()
+        await _handle_load_history(ws_send, index, "testuser", {"conv_id": conv_id}, ws_state)
+
+        msg = ws_send.call_args[0][0]
+        assert msg["available_models"] == ["gemini-flash", "gemini-pro"]
+        assert msg["model_groups"] == [
+            {"name": "Custom", "models": ["gemini-flash", "gemini-pro"]},
+        ]
+
+
+class TestModelsAvailableGroups:
+    @pytest.mark.asyncio
+    async def test_forwarder_includes_model_groups(self, ws_state):
+        """models_available carries the same grouped payload (#1441)."""
+        ws_send = AsyncMock()
+        forward = _make_models_available_forwarder(ws_send, ws_state["config"])
+
+        await forward({"type": "models_changed"})
+
+        msg = ws_send.call_args[0][0]
+        assert msg["type"] == "models_available"
+        assert msg["available_models"] == ["gemini-flash", "gemini-pro"]
+        assert msg["model_groups"] == [
+            {"name": "Custom", "models": ["gemini-flash", "gemini-pro"]},
+        ]

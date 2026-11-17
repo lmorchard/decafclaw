@@ -8,6 +8,10 @@ function makeStore(overrides = {}) {
     contextLimit: 100000,
     activeModel: 'vertex-gemini-flash-3.8',
     availableModels: ['anthropic-claude-3.5-sonnet', 'vertex-gemini-flash-3.8'],
+    modelGroups: [
+      { name: 'Anthropic', models: ['anthropic-claude-3.5-sonnet'] },
+      { name: 'Vertex', models: ['vertex-gemini-flash-3.8'] },
+    ],
     defaultModel: 'vertex-gemini-flash-3.8',
     activeMode: 'default',
     availableModes: [
@@ -51,20 +55,31 @@ describe('chat-controls', () => {
      expect(contextControl.classList.contains('full')).toBe(true);
    });
 
-   it('renders model, mode, and context controls inline across viewports', async () => {
+   it('renders model picker, mode, and context controls inline across viewports', async () => {
      const { el } = await mount({}, { innerWidth: 375 });
-     expect(el.querySelector('#cc-model-select')).toBeTruthy();
+     expect(el.querySelector('model-picker')).toBeTruthy();
+     expect(el.querySelector('#cc-model-select')).toBeNull();
      expect(el.querySelector('#cc-mode-select')).toBeTruthy();
      expect(el.querySelector('#cc-context-progress')).toBeTruthy();
    });
 
-  it('dispatches set-model with the chosen model', async () => {
+  /** Wait for the nested picker to render, then return it. */
+  async function pickerOf(el) {
+    const picker = /** @type {any} */ (el.querySelector('model-picker'));
+    await picker.updateComplete;
+    return picker;
+  }
+
+  it('dispatches set-model with the chosen model through the picker', async () => {
     const { el } = await mount();
+    const picker = await pickerOf(el);
     const handler = vi.fn();
     document.addEventListener('set-model', handler);
-    const select = /** @type {HTMLSelectElement} */ (el.querySelector('#cc-model-select'));
-    select.value = 'anthropic-claude-3.5-sonnet';
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    picker.querySelector('.model-picker-trigger').click();
+    await picker.updateComplete;
+    const option = [...picker.querySelectorAll('.model-picker-option')]
+      .find((row) => row.dataset.model === 'anthropic-claude-3.5-sonnet');
+    option.click();
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][0].detail).toEqual({ model: 'anthropic-claude-3.5-sonnet' });
     document.removeEventListener('set-model', handler);
@@ -88,24 +103,29 @@ describe('chat-controls', () => {
   // controls (gated on .length > 0) stay hidden.
   it('re-syncs model/mode controls when the store populates after connect', async () => {
     const { el, store } = await mount({
+      modelGroups: [],
       availableModels: [],
       availableModes: [],
       activeModel: '',
       activeMode: 'default',
     });
     // Before the WS message: no model/mode controls rendered.
-    expect(el.querySelector('#cc-model-select')).toBeNull();
+    expect(el.querySelector('model-picker')).toBeNull();
     expect(el.querySelector('#cc-mode-select')).toBeNull();
 
     // Simulate the store receiving available_models/available_modes and
     // emitting change (as #handleMessage does for CONV_HISTORY).
     store.availableModels = ['anthropic-claude-3.5-sonnet', 'vertex-gemini-flash-3.8'];
+    store.modelGroups = [
+      { name: 'Anthropic', models: ['anthropic-claude-3.5-sonnet'] },
+      { name: 'Vertex', models: ['vertex-gemini-flash-3.8'] },
+    ];
     store.activeModel = 'vertex-gemini-flash-3.8';
     store.availableModes = [{ name: 'default', description: 'Standard' }];
     store.dispatchEvent(new Event('change'));
     await el.updateComplete;
 
-    expect(el.querySelector('#cc-model-select')).toBeTruthy();
+    expect(el.querySelector('model-picker')).toBeTruthy();
     expect(el.querySelector('#cc-mode-select')).toBeTruthy();
   });
 
@@ -115,30 +135,32 @@ describe('chat-controls', () => {
       defaultModel: 'vertex-gemini-flash-3.8',
       availableModels: ['anthropic-claude-3.5-sonnet', 'vertex-gemini-flash-3.8'],
     });
-    const select = /** @type {HTMLSelectElement} */ (el.querySelector('#cc-model-select'));
-    expect(select.value).toBe('vertex-gemini-flash-3.8');
+    const trigger = (await pickerOf(el)).querySelector('.model-picker-trigger');
+    expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
 
     // Setting an explicit activeModel selects it
     store.activeModel = 'anthropic-claude-3.5-sonnet';
     store.dispatchEvent(new Event('change'));
     await el.updateComplete;
-    expect(select.value).toBe('anthropic-claude-3.5-sonnet');
+    await el.querySelector('model-picker').updateComplete;
+    expect(trigger.textContent).toContain('anthropic-claude-3.5-sonnet');
 
     // Switching to a session without an explicit model resets to defaultModel
     store.activeModel = '';
     store.dispatchEvent(new Event('change'));
     await el.updateComplete;
-    expect(select.value).toBe('vertex-gemini-flash-3.8');
+    await el.querySelector('model-picker').updateComplete;
+    expect(trigger.textContent).toContain('vertex-gemini-flash-3.8');
   });
 
-  it('flags and selects an unconfigured model', async () => {
+  it('flags an unconfigured active model', async () => {
     const { el } = await mount({
       activeModel: 'legacy-model-v1',
       availableModels: ['anthropic-claude-3.5-sonnet', 'vertex-gemini-flash-3.8'],
     });
-    const select = /** @type {HTMLSelectElement} */ (el.querySelector('#cc-model-select'));
-    expect(select.value).toBe('legacy-model-v1');
-    expect(select.textContent).toContain('⚠ legacy-model-v1 (not configured)');
+    const trigger = (await pickerOf(el)).querySelector('.model-picker-trigger');
+    expect(trigger.textContent).toContain('legacy-model-v1');
+    expect(trigger.textContent).toContain('not configured');
   });
 
   it('syncs mode selector value when store activeMode changes', async () => {

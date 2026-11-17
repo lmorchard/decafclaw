@@ -5,6 +5,7 @@ import { showToast } from '../lib/toast.js';
 import './context-inspector.js';
 import './shell-approval-panel.js';
 import './notification-inbox.js';
+import './model-picker.js';
 import './vault-sidebar.js';
 import './files-sidebar.js';
 import './schedules-sidebar.js';
@@ -24,6 +25,7 @@ export class ConversationSidebar extends LitElement {
     _contextLimit: { type: Number, state: true },
     _activeModel: { type: String, state: true },
     _availableModels: { type: Array, state: true },
+    _modelGroups: { type: Array, state: true },
     _defaultModel: { type: String, state: true },
     _activeMode: { type: String, state: true },
     _availableModes: { type: Array, state: true },
@@ -65,6 +67,7 @@ export class ConversationSidebar extends LitElement {
     this._contextLimit = 0;
     this._activeModel = '';
     this._availableModels = [];
+    this._modelGroups = [];
     this._defaultModel = '';
     this._activeMode = 'default';
     this._availableModes = [];
@@ -141,6 +144,7 @@ export class ConversationSidebar extends LitElement {
       this._contextLimit = this.store?.contextLimit || 0;
       this._activeModel = this.store?.activeModel || '';
       this._availableModels = this.store?.availableModels || [];
+      this._modelGroups = this.store?.modelGroups || [];
       this._defaultModel = this.store?.defaultModel || '';
       this._activeMode = this.store?.activeMode || 'default';
       this._availableModes = this.store?.availableModes || [];
@@ -186,15 +190,6 @@ export class ConversationSidebar extends LitElement {
     // the desktop session left _collapsed=true.
     this.toggleAttribute('collapsed', this._collapsed && !this._mobileOpen);
     this.toggleAttribute('mobile-open', this._mobileOpen);
-
-    // Sync model selector value if present
-    const modelSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#model-select'));
-    if (modelSelect) {
-      const target = this._activeModel || this._defaultModel;
-      if (target && modelSelect.value !== target) {
-        modelSelect.value = target;
-      }
-    }
 
     // Sync mode selector value if present
     const modeSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#mode-select'));
@@ -633,12 +628,6 @@ export class ConversationSidebar extends LitElement {
       composed: true,
     }));
     this.closeMobile();
-  }
-
-  /** @param {Event} e */
-  #handleModelChange(e) {
-    const model = /** @type {HTMLSelectElement} */ (e.target).value;
-    this.store?.setModel(model);
   }
 
   /** @param {Event} e */
@@ -1095,25 +1084,14 @@ export class ConversationSidebar extends LitElement {
       ` : nothing}
       ${!this._hasControlsStrip && this._availableModels.length > 0 ? html`
       <div class="model-picker">
-        <label class="model-picker-label" for="model-select">Model</label>
-        <select id="model-select" class="model-select"
-                ?disabled=${this._isBusy || this._isReadOnly}
-                @change=${(e) => this.#handleModelChange(e)}>
-          ${(() => {
-            const target = this._activeModel || this._defaultModel;
-            const unconfigured = target && !this._availableModels.includes(target);
-            return html`
-              ${unconfigured ? html`
-                <option value="${target}" selected>⚠ ${target} (not configured)</option>
-              ` : nothing}
-              ${this._availableModels.map(m => html`
-                <option value="${m}" ?selected=${m === target} .selected=${m === target}>
-                  ${m}${m === this._defaultModel ? ' (default)' : ''}
-                </option>
-              `)}
-            `;
-          })()}
-        </select>
+        <label class="model-picker-label">Model</label>
+        <model-picker
+          .groups=${this._modelGroups}
+          .activeModel=${this._activeModel}
+          .defaultModel=${this._defaultModel}
+          ?disabled=${this._isBusy || this._isReadOnly}
+          .convId=${this._activeId || ''}
+        ></model-picker>
       </div>
       ` : nothing}
       ${!this._hasControlsStrip && this._contextLimit > 0 ? html`

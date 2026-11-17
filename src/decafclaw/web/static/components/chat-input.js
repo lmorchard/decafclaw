@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { uploadFile } from '../lib/upload-client.js';
+import './model-picker.js';
 
 /** @typedef {import('../lib/api-client/index.js').AutocompleteResponse['results'][number]} Completion */
 /** @typedef {import('../lib/api-client/index.js').AttachmentResponse} AttachmentResponse */
@@ -62,6 +63,7 @@ export class ChatInput extends LitElement {
     store: { type: Object, attribute: false },
     _activeModel: { type: String, state: true },
     _availableModels: { type: Array, state: true },
+    _modelGroups: { type: Array, state: true },
     _defaultModel: { type: String, state: true },
     _activeMode: { type: String, state: true },
     _availableModes: { type: Array, state: true },
@@ -91,15 +93,6 @@ export class ChatInput extends LitElement {
       if (this.store) {
         this.store.addEventListener('change', this.#onStoreChange);
         this.#syncFromStore();
-      }
-    }
-
-    // Sync menu model selector value if present
-    const modelSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#conversation-menu-model'));
-    if (modelSelect) {
-      const target = this._activeModel || this._defaultModel;
-      if (target && modelSelect.value !== target) {
-        modelSelect.value = target;
       }
     }
 
@@ -141,6 +134,7 @@ export class ChatInput extends LitElement {
     if (!this.store) return;
     this._activeModel = this.store.activeModel || '';
     this._availableModels = this.store.availableModels || [];
+    this._modelGroups = this.store.modelGroups || [];
     this._defaultModel = this.store.defaultModel || '';
     this._activeMode = this.store.activeMode || 'default';
     this._availableModes = this.store.availableModes || [];
@@ -161,6 +155,7 @@ export class ChatInput extends LitElement {
     this.store = null;
     this._activeModel = '';
     this._availableModels = [];
+    this._modelGroups = [];
     this._defaultModel = '';
     this._activeMode = 'default';
     this._availableModes = [];
@@ -399,19 +394,6 @@ export class ChatInput extends LitElement {
   #handleMenuSideQuestion() {
     this._conversationMenuOpen = false;
     this.dispatchEvent(new CustomEvent('open-side-question', { bubbles: true, composed: true }));
-  }
-
-  /** Model menu item: switch the conversation's model via the set-model event. */
-  #handleMenuModelChange(e) {
-    const newModel = e.target.value;
-    const current = this._activeModel || this._defaultModel;
-    if (newModel && newModel !== current) {
-      this.dispatchEvent(new CustomEvent('set-model', {
-        detail: { model: newModel },
-        bubbles: true,
-        composed: true,
-      }));
-    }
   }
 
   /** Mode menu item: switch the conversation's mode via the set-mode event. */
@@ -710,8 +692,6 @@ export class ChatInput extends LitElement {
   }
 
   render() {
-    const targetModel = this._activeModel || this._defaultModel;
-    const modelUnconfigured = targetModel && !this._availableModels.includes(targetModel);
     const hasAttachments = this._pendingAttachments.length > 0;
     const isMention = this._trigger?.prefix === '@';
     const matchCount = isMention ? this._mentionMatches.length : this.#matchingCommands().length;
@@ -764,15 +744,15 @@ export class ChatInput extends LitElement {
             <div class="conversation-menu-settings">
               ${this._availableModels.length > 0 ? html`
                 <div class="conversation-menu-section">
-                  <label class="conversation-menu-field-label" for="conversation-menu-model">Model</label>
-                  <select id="conversation-menu-model" class="conversation-menu-select" .value=${targetModel} ?disabled=${this._isBusy} @change=${this.#handleMenuModelChange}>
-                    ${modelUnconfigured ? html`
-                      <option value="${targetModel}" selected>⚠ ${targetModel} (not configured)</option>
-                    ` : nothing}
-                    ${this._availableModels.map(m => html`
-                      <option value="${m}" ?selected=${m === targetModel} .selected=${m === targetModel}>${m}</option>
-                    `)}
-                  </select>
+                  <span class="conversation-menu-field-label">Model</span>
+                  <model-picker
+                    inline
+                    .groups=${this._modelGroups}
+                    .activeModel=${this._activeModel}
+                    .defaultModel=${this._defaultModel}
+                    ?disabled=${this._isBusy || this.disabled}
+                    .convId=${this.convId}
+                  ></model-picker>
                 </div>
               ` : nothing}
               ${this._availableModes.length > 0 ? html`

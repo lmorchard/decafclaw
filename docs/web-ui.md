@@ -255,7 +255,28 @@ The sidebar list rows in the Chats, Vault, Files, Tags, and Schedules tabs work 
 
 ### Model picker
 
-When multiple model configs are defined, a dropdown in the sidebar lets you switch models per-conversation. See [Model Selection](model-selection.md).
+When model configs are available, one shared `<model-picker>` element
+(`components/model-picker.js`) serves every conversation model selector:
+
+- The desktop control strip above the composer.
+- The mobile conversation menu (rendered inline, without a popup).
+- The sidebar fallback shown when the control strip is hidden.
+
+The trigger shows the conversation's active model, falling back to the global
+default (marked `default`) when the conversation has no override. It warns when
+the active model is not in the configured list and keeps that value selectable.
+Opening the picker reveals a search field and provider groups supplied by the
+server (`model_groups`, with ungrouped hand-authored configs in a final
+`Custom` group). Search matches both the model key and the provider name.
+
+Keyboard: Arrow Up/Down move the highlighted row, Enter selects it, and Escape
+closes the panel and returns focus to the trigger. A click outside also closes
+it. The panel is anchored below the trigger on wide screens and becomes a
+viewport-bounded sheet on narrow screens. Picking a different model dispatches
+one bubbling `set-model` event; picking the current model only closes the
+panel. All visible state re-renders from properties, so session switches and
+mid-session model changes stay in sync (#1440). See
+[Model Selection](model-selection.md).
 
 ### Context inspector
 

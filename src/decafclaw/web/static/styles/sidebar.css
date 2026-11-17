@@ -301,8 +301,7 @@ conversation-sidebar .model-picker-label {
   display: block;
 }
 
-conversation-sidebar .mode-select,
-conversation-sidebar .model-select {
+conversation-sidebar .mode-select {
   width: 100%;
   font-size: 0.75rem;
   padding: 0.25rem 0.4rem;
