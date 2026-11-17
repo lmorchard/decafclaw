@@ -403,6 +403,7 @@ class CliSend(TypedDict):
     conv_id: str
     text: str
     attachments: list[dict[str, object]]
+    steering: NotRequired[bool]
 
 
 class CliSetEffort(TypedDict):

@@ -83,6 +83,48 @@ class TestQueueMode:
         assert not cancel_event.is_set()
 
 
+class TestSteering:
+    @pytest.mark.asyncio
+    async def test_steering_flag_sets_steer_event_when_busy(self, ws_state, conv_id, index, manager):
+        """A `steering: true` send flags the running turn's steer_event."""
+        ws_send = AsyncMock()
+
+        steer_event = asyncio.Event()
+        state = manager._get_or_create(conv_id)
+        state.busy = True
+        state.steer_event = steer_event
+
+        await _handle_send(
+            ws_send,
+            index,
+            "testuser",
+            {"conv_id": conv_id, "text": "steer msg", "steering": True},
+            ws_state,
+        )
+
+        assert steer_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_omitted_flag_leaves_steer_event_clear(self, ws_state, conv_id, index, manager):
+        """A send without `steering` queues a follow-up and does not steer."""
+        ws_send = AsyncMock()
+
+        steer_event = asyncio.Event()
+        state = manager._get_or_create(conv_id)
+        state.busy = True
+        state.steer_event = steer_event
+
+        await _handle_send(
+            ws_send,
+            index,
+            "testuser",
+            {"conv_id": conv_id, "text": "follow-up msg"},
+            ws_state,
+        )
+
+        assert not steer_event.is_set()
+
+
 class TestCancelMode:
     @pytest.mark.asyncio
     async def test_cancels_when_requested(self, ws_state, conv_id, index, manager):

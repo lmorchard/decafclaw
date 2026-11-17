@@ -432,6 +432,13 @@ class MattermostClient:
             ctx.user_id = app_ctx.config.agent.user_id
             ctx.transport = "mattermost"
 
+        # Read the conversation's state at send time: a busy turn is steered;
+        # an idle one starts a normal turn. The manager owns the final decision
+        # (enqueue_turn only sets steer_event while still busy), so a turn that
+        # settled between this read and the call is harmless (#1442).
+        conv_state = manager.get_state(conv_id)
+        steering = bool(conv_state and conv_state.busy)
+
         # Start the turn via the manager
         await manager.send_message(
             conv_id,
@@ -441,6 +448,7 @@ class MattermostClient:
             archive_text=archive_text,
             attachments=attachments or None,
             command_ctx=command_ctx,
+            steering=steering,
         )
 
     def _ensure_subscribed(self, mm_state, conv_id, channel_id, root_id, app_ctx, manager):
