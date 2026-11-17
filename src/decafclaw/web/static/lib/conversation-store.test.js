@@ -628,6 +628,31 @@ describe('conversation activity status tracking', () => {
       text: '/retitle',
     });
   });
+
+  it('sends /update without engaging busy state or adding user message (#981)', () => {
+    store.selectConversation('c1');
+    expect(store.getConversationStatus('c1')).toBe('idle');
+
+    store.sendMessage('/update');
+    expect(store.getConversationStatus('c1')).toBe('idle');
+    expect(store.currentMessages).toHaveLength(0);
+    expect(ws.sent).toContainEqual({
+      type: MESSAGE_TYPES.SEND,
+      conv_id: 'c1',
+      text: '/update',
+    });
+    const send = ws.sent.find((m) => m.type === MESSAGE_TYPES.SEND);
+    expect(send).not.toHaveProperty('steering');
+  });
+
+  it('never adds steering to /update while busy (#981)', () => {
+    store.selectConversation('c1');
+    ws.fireMessage({ type: MESSAGE_TYPES.TURN_START, conv_id: 'c1' });
+
+    store.sendMessage('/update confirm');
+    const send = ws.sent.find((m) => m.type === MESSAGE_TYPES.SEND);
+    expect(send).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'c1', text: '/update confirm' });
+  });
   it('does not overwrite newer websocket transition with delayed REST response', async () => {
     let resolveRest;
     const restPromise = new Promise(resolve => { resolveRest = resolve; });

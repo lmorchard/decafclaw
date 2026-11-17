@@ -12,7 +12,7 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -552,6 +552,14 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         await _handle_retitle_command(ws_send, index, conv_id, username, state)
         return
 
+    # -- /update side-effect command (#981): self-update with NO agent turn
+    # and NO archive write. Human-only; the agent has no path here.
+    if (text.startswith("/update") and (text == "/update" or text[7:8].isspace())) or (
+        text.startswith("!update") and (text == "!update" or text[7:8].isspace())
+    ):
+        await _handle_update_command(ws_send, conv_id, text, username, state, index=index)
+        return
+
     # -- Command dispatch (centralized in commands.py) --
     from ..commands import dispatch_command
     from ..context import Context
@@ -755,6 +763,47 @@ async def _handle_retitle_command(ws_send: WSSendCallable, index, conv_id: str, 
                 "conv_id": conv_id,
             }
         )
+
+
+async def _handle_update_command(
+    ws_send: WSSendCallable,
+    conv_id: str,
+    text: str,
+    username: str,
+    state: dict,
+    index: Any | None = None,
+) -> None:
+    """`/update`: human-only side-effect command to update DecafClaw (#981).
+
+    Runs with NO agent turn and NO archive write.
+    """
+    from ..self_update import perform_self_update
+
+    arg = ""
+    trimmed = text.strip()
+    if trimmed.startswith("/update"):
+        arg = trimmed[len("/update") :].strip().lower()
+    elif trimmed.startswith("!update"):
+        arg = trimmed[len("!update") :].strip().lower()
+
+    confirmed = arg in ("confirm", "yes", "-y", "--yes")
+    manager = state.get("manager")
+
+    result = await perform_self_update(
+        confirmed=confirmed,
+        manager=manager,
+        index=index,
+    )
+
+    await ws_send(
+        {
+            "type": WSMessageType.MESSAGE_COMPLETE,
+            "conv_id": conv_id,
+            "role": "assistant",
+            "text": result.message,
+            "final": True,
+        }
+    )
 
 
 async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:

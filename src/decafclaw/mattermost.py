@@ -339,6 +339,23 @@ class MattermostClient:
         senders = set(m["sender_name"] for m in msgs)
         log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
 
+        # -- /update / !update side-effect command (#981): human-only, no agent turn
+        trimmed_cmd = combined_text.strip()
+        if (trimmed_cmd.startswith("!update") and (trimmed_cmd == "!update" or trimmed_cmd[7:8].isspace())) or (
+            trimmed_cmd.startswith("/update") and (trimmed_cmd == "/update" or trimmed_cmd[7:8].isspace())
+        ):
+            from .self_update import perform_self_update
+
+            arg = ""
+            if trimmed_cmd.startswith("!update"):
+                arg = trimmed_cmd[7:].strip().lower()
+            elif trimmed_cmd.startswith("/update"):
+                arg = trimmed_cmd[7:].strip().lower()
+            confirmed = arg in ("confirm", "yes", "-y", "--yes")
+            result = await perform_self_update(confirmed=confirmed, manager=manager)
+            await self.send(channel_id, result.message, root_id=root_id)
+            return
+
         cmd_ctx = Context(config=app_ctx.config, event_bus=app_ctx.event_bus)
         cmd_ctx.user_id = app_ctx.config.agent.user_id
         cmd_ctx.manager = manager
