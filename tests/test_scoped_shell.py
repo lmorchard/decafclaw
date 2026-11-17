@@ -109,7 +109,9 @@ async def test_scoped_pattern_approves_matching_command(ctx):
         return_value="output",
     ) as mock_exec:
         result = await tool_shell(ctx, "/skills/ingest/fetch.sh")
-        mock_exec.assert_called_once_with(ctx, "/skills/ingest/fetch.sh")
+        mock_exec.assert_called_once_with(
+            ctx, "/skills/ingest/fetch.sh", cwd=str(Path(ctx.config.workspace_path).resolve())
+        )
         assert result == "output"
 
 
