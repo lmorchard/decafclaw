@@ -163,6 +163,25 @@ describe('chat-controls', () => {
     expect(trigger.textContent).toContain('not configured');
   });
 
+  it('disables the picker while busy or read-only', async () => {
+    const { el, store } = await mount();
+    const picker = await pickerOf(el);
+    expect(picker.querySelector('.model-picker-trigger').disabled).toBe(false);
+
+    store.isBusy = true;
+    store.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    await picker.updateComplete;
+    expect(picker.querySelector('.model-picker-trigger').disabled).toBe(true);
+
+    store.isBusy = false;
+    store.isReadOnly = true;
+    store.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    await picker.updateComplete;
+    expect(picker.querySelector('.model-picker-trigger').disabled).toBe(true);
+  });
+
   it('syncs mode selector value when store activeMode changes', async () => {
     const { el, store } = await mount({ activeMode: 'default' });
     const select = /** @type {HTMLSelectElement} */ (el.querySelector('#cc-mode-select'));

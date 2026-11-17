@@ -16,6 +16,7 @@ export class ChatControls extends LitElement {
     _contextUsage: { type: Number, state: true },
     _contextLimit: { type: Number, state: true },
     _isBusy: { type: Boolean, state: true },
+    _isReadOnly: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -31,6 +32,7 @@ export class ChatControls extends LitElement {
     this._contextUsage = 0;
     this._contextLimit = 100000;
     this._isBusy = false;
+    this._isReadOnly = false;
   }
 
   disconnectedCallback() {
@@ -70,6 +72,7 @@ export class ChatControls extends LitElement {
     // (a bare `||` would coerce 0 to the 100000 default and mis-render usage).
     this._contextLimit = this.store.contextLimit ?? 100000;
     this._isBusy = Boolean(this.store.isBusy);
+    this._isReadOnly = Boolean(this.store.isReadOnly);
   }
 
   updated(changedProps) {
@@ -168,7 +171,7 @@ export class ChatControls extends LitElement {
             .groups=${this._modelGroups}
             .activeModel=${this._activeModel}
             .defaultModel=${this._defaultModel}
-            ?disabled=${this._isBusy}
+            ?disabled=${this._isBusy || this._isReadOnly}
             .convId=${convId}
           ></model-picker>
         </div>
