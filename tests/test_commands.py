@@ -148,9 +148,9 @@ class TestExecuteCommand:
             # subject is inline-mode substitution, not tier policy.
             trust_tier="bundled",
         )
-        mode, result = await execute_command(ctx, skill, "the thing")
-        assert mode == "inline"
-        assert "Do the thing" in result
+        result = await execute_command(ctx, skill, "the thing")
+        assert result.mode == "inline"
+        assert "Do the thing" in result.text
         assert ctx.tools.preapproved == {"vault_read"}
 
     @pytest.mark.asyncio
@@ -168,10 +168,10 @@ class TestExecuteCommand:
         )
         with patch("decafclaw.tools.delegate.run_child_turn", new_callable=AsyncMock) as mock:
             mock.return_value = ("child result", None)
-            mode, result = await execute_command(ctx, skill, "the thing")
+            result = await execute_command(ctx, skill, "the thing")
 
-        assert mode == "fork"
-        assert result == "child result"
+        assert result.mode == "fork"
+        assert result.text == "child result"
         assert ctx.tools.preapproved == {"shell"}
 
     @pytest.mark.asyncio
@@ -217,8 +217,8 @@ class TestExecuteCommand:
         )
         ctx.skills.activated["test-cmd"] = ""
         # Should not error even though activation logic isn't called
-        mode, result = await execute_command(ctx, skill, "")
-        assert mode == "inline"
+        result = await execute_command(ctx, skill, "")
+        assert result.mode == "inline"
 
     @pytest.mark.asyncio
     async def test_fork_required_skills_activated(self, ctx):
@@ -252,9 +252,9 @@ class TestExecuteCommand:
                 "decafclaw.tools.delegate.run_child_turn", new_callable=AsyncMock, return_value=("child result", None)
             ),
         ):
-            mode, result = await execute_command(ctx, skill, "")
+            result = await execute_command(ctx, skill, "")
 
-        assert mode == "fork"
+        assert result.mode == "fork"
         mock_activate.assert_called_once_with(ctx, dep_skill)
 
     @pytest.mark.asyncio
@@ -303,9 +303,9 @@ class TestExecuteCommand:
             new_callable=AsyncMock,
         ) as mock:
             mock.return_value = ("child result", None)
-            mode, result = await execute_command(ctx, skill, "go")
+            result = await execute_command(ctx, skill, "go")
 
-        assert mode == "fork"
+        assert result.mode == "fork"
         # First positional arg to run_child_turn is parent_ctx
         called_ctx = mock.call_args.args[0]
         assert called_ctx.manager is sentinel_manager
@@ -326,7 +326,7 @@ class TestExecuteCommand:
         )
         # Do NOT mock run_child_turn — let the real function hit its own
         # bail-out so the error text is the one real users would see.
-        mode, result = await execute_command(ctx, skill, "go")
+        result = await execute_command(ctx, skill, "go")
 
-        assert mode == "fork"
-        assert "ConversationManager" in result
+        assert result.mode == "fork"
+        assert "ConversationManager" in result.text

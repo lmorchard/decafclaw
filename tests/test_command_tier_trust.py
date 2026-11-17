@@ -102,9 +102,9 @@ async def test_workspace_command_does_not_preapprove(config):
     assert skill.trust_tier == "workspace"
     ctx = _ctx(config)
 
-    mode, _result = await execute_command(ctx, skill, "")
+    result = await execute_command(ctx, skill, "")
 
-    assert mode == "inline"
+    assert result.mode == "inline"
     assert not ctx.tools.preapproved, f"workspace command pre-approved tools: {ctx.tools.preapproved}"
     assert not ctx.tools.preapproved_shell_patterns, (
         f"workspace command pre-approved shell: {ctx.tools.preapproved_shell_patterns}"
@@ -119,10 +119,10 @@ async def test_workspace_command_still_runs(config):
     _write_command(skill_dir, "doit")
     ctx = _ctx(config)
 
-    mode, result = await execute_command(ctx, _skill(config, "doit"), "")
+    result = await execute_command(ctx, _skill(config, "doit"), "")
 
-    assert mode == "inline"
-    assert str(skill_dir.resolve()) in result
+    assert result.mode == "inline"
+    assert str(skill_dir.resolve()) in result.text
 
 
 @pytest.mark.asyncio
