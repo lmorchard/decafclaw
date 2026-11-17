@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from decafclaw.context import TaskMode
 from decafclaw.conversation_paths import iter_conversation_archives
 from decafclaw.mail import send_mail
 from decafclaw.media import ToolResult
@@ -394,7 +395,7 @@ async def newsletter_publish(
 ) -> ToolResult:
     """Publish the composed newsletter.
 
-    If invoked interactively (``ctx.task_mode != "scheduled"``) and
+    If invoked interactively (``ctx.task_mode is not TaskMode.SCHEDULED``) and
     ``force_delivery`` is False, returns the markdown verbatim — no
     archive, no delivery, no state change.
 
@@ -403,7 +404,7 @@ async def newsletter_publish(
     ``last_run.json``. ``force_delivery`` exists for smoke-testing the
     delivery path from ``!newsletter send`` without waiting for cron.
     """
-    if ctx.task_mode != "scheduled" and not force_delivery:
+    if ctx.task_mode is not TaskMode.SCHEDULED and not force_delivery:
         return ToolResult(text=markdown)
 
     # Scheduled branch

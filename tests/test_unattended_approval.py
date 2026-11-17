@@ -18,6 +18,7 @@ from datetime import datetime
 import pytest
 
 from decafclaw.confirmations import ConfirmationResponse
+from decafclaw.context import TaskMode
 from decafclaw.skills import discover_skills
 from decafclaw.tools.shell_tools import _save_allow_pattern, check_shell_approval
 from decafclaw.tools.skill_tools import tool_activate_skill
@@ -30,8 +31,8 @@ DENIAL_MARKER = "was denied by user"
 
 # (task_mode, user_id) pairs that represent an unattended turn.
 UNATTENDED_TURNS = (
-    ("scheduled", "schedule-nightly"),
-    ("heartbeat", "heartbeat-admin"),
+    (TaskMode.SCHEDULED, "schedule-nightly"),
+    (TaskMode.HEARTBEAT, "heartbeat-admin"),
 )
 
 
@@ -79,7 +80,7 @@ def _discover(config, name: str):
     return found[0]
 
 
-def _unattended(ctx, task_mode: str, user_id: str, approved: bool = False) -> ConfirmSpy:
+def _unattended(ctx, task_mode: TaskMode, user_id: str, approved: bool = False) -> ConfirmSpy:
     """Put ctx into an unattended turn with a recording confirmation spy."""
     ctx.task_mode = task_mode
     ctx.user_id = user_id
@@ -96,13 +97,13 @@ async def test_unattended_shell_not_auto_approved(ctx):
     """A shell command matching no scoped or persisted allow pattern is never
     approved on an unattended turn."""
     for task_mode, user_id in (
-        ("heartbeat", "heartbeat-admin"),
-        ("scheduled", "schedule-nightly"),
+        (TaskMode.HEARTBEAT, "heartbeat-admin"),
+        (TaskMode.SCHEDULED, "schedule-nightly"),
     ):
         _unattended(ctx, task_mode, user_id)
         result = await check_shell_approval(ctx, UNSAFE_COMMAND)
         assert not result.get("approved"), (
-            f"unattended turn (task_mode={task_mode!r}, user_id={user_id!r}) "
+            f"unattended turn (task_mode={task_mode.value!r}, user_id={user_id!r}) "
             f"granted approval for a non-allowlisted command "
             f"{UNSAFE_COMMAND!r}: {result!r}"
         )
@@ -115,12 +116,12 @@ async def test_unattended_shell_denies_without_prompting(ctx):
         spy = _unattended(ctx, task_mode, user_id)
         result = await check_shell_approval(ctx, UNSAFE_COMMAND)
         assert len(spy.calls) == 0, (
-            f"unattended turn (task_mode={task_mode!r}, user_id={user_id!r}) "
+            f"unattended turn (task_mode={task_mode.value!r}, user_id={user_id!r}) "
             f"issued {len(spy.calls)} confirmation prompt(s) for "
             f"{UNSAFE_COMMAND!r}; an unattended turn must decide without prompting"
         )
         assert not result.get("approved"), (
-            f"unattended turn (task_mode={task_mode!r}, user_id={user_id!r}) "
+            f"unattended turn (task_mode={task_mode.value!r}, user_id={user_id!r}) "
             f"did not deny {UNSAFE_COMMAND!r}: {result!r}"
         )
 
@@ -138,9 +139,9 @@ async def test_unattended_workspace_skill_denied_without_prompting(ctx, config):
     assert not (config.agent_path / "skill_permissions.json").exists()
 
     turns = (
-        ("heartbeat", "heartbeat-admin"),
-        ("heartbeat", "heartbeat-workspace"),
-        ("scheduled", "schedule-nightly"),
+        (TaskMode.HEARTBEAT, "heartbeat-admin"),
+        (TaskMode.HEARTBEAT, "heartbeat-workspace"),
+        (TaskMode.SCHEDULED, "schedule-nightly"),
     )
     for task_mode, user_id in turns:
         ctx.skills.activated = set()
@@ -148,15 +149,15 @@ async def test_unattended_workspace_skill_denied_without_prompting(ctx, config):
         result = await tool_activate_skill(ctx, name=name)
         text = _text(result)
         assert DENIAL_MARKER in text, (
-            f"unattended turn (task_mode={task_mode!r}, user_id={user_id!r}) "
+            f"unattended turn (task_mode={task_mode.value!r}, user_id={user_id!r}) "
             f"activated ungranted workspace skill {name!r} instead of denying "
             f"it (activated={sorted(ctx.skills.activated)}): {text[:200]!r}"
         )
         assert name not in ctx.skills.activated, (
-            f"unattended turn (task_mode={task_mode!r}, user_id={user_id!r}) marked workspace skill {name!r} active"
+            f"unattended turn (task_mode={task_mode.value!r}, user_id={user_id!r}) marked workspace skill {name!r} active"
         )
         assert len(spy.calls) == 0, (
-            f"unattended turn (task_mode={task_mode!r}, user_id={user_id!r}) "
+            f"unattended turn (task_mode={task_mode.value!r}, user_id={user_id!r}) "
             f"issued {len(spy.calls)} confirmation prompt(s) activating {name!r}"
         )
 
@@ -169,7 +170,7 @@ async def test_unattended_shell_allows_matching_pattern(ctx, config):
     """Pre-granted authority still works: a persisted allow pattern approves
     a matching command on an unattended turn, with no prompt."""
     _save_allow_pattern(config, "ls -al")
-    spy = _unattended(ctx, "scheduled", "schedule-nightly")
+    spy = _unattended(ctx, TaskMode.SCHEDULED, "schedule-nightly")
 
     result = await check_shell_approval(ctx, "ls -al")
 
@@ -189,7 +190,7 @@ async def test_unattended_bundled_skill_still_activates(ctx, config):
     skill = candidates[0]
     assert skill.trust_tier == "bundled"
 
-    spy = _unattended(ctx, "heartbeat", "heartbeat-workspace")
+    spy = _unattended(ctx, TaskMode.HEARTBEAT, "heartbeat-workspace")
     result = await tool_activate_skill(ctx, name=skill.name)
     text = _text(result)
 
@@ -215,7 +216,7 @@ async def test_always_grant_authorizes_unattended(ctx, config):
     perms_path.parent.mkdir(parents=True, exist_ok=True)
     perms_path.write_text(json.dumps({name: "always"}, indent=2) + "\n")
 
-    spy = _unattended(ctx, "scheduled", "schedule-nightly")
+    spy = _unattended(ctx, TaskMode.SCHEDULED, "schedule-nightly")
     result = await tool_activate_skill(ctx, name=name)
     text = _text(result)
 
@@ -234,7 +235,7 @@ async def test_always_grant_authorizes_unattended(ctx, config):
 async def test_interactive_still_prompts(ctx):
     """An interactive turn has a human available, so a non-matching command
     still routes to a confirmation prompt and can be approved."""
-    ctx.task_mode = ""
+    ctx.task_mode = TaskMode.INTERACTIVE
     ctx.user_id = "testuser"
     spy = ConfirmSpy(approved=True)
     ctx.request_confirmation = spy
@@ -255,7 +256,7 @@ async def test_child_agent_of_unattended_turn_denies_without_prompting(ctx):
         _unattended(ctx, task_mode, user_id)
         # Simulate child context construction as delegate.py does
         child_ctx = ctx.fork(
-            task_mode="child_agent",
+            task_mode=TaskMode.CHILD_AGENT,
             is_child=True,
             parent_is_unattended=ctx.is_unattended,
             request_confirmation=ctx.request_confirmation,
@@ -265,7 +266,7 @@ async def test_child_agent_of_unattended_turn_denies_without_prompting(ctx):
 
         result = await check_shell_approval(child_ctx, UNSAFE_COMMAND)
         assert len(spy.calls) == 0, (
-            f"child of unattended turn (task_mode={task_mode!r}) issued {len(spy.calls)} confirmation prompt(s)"
+            f"child of unattended turn (task_mode={task_mode.value!r}) issued {len(spy.calls)} confirmation prompt(s)"
         )
         assert not result.get("approved"), f"child of unattended turn did not deny {UNSAFE_COMMAND!r}: {result!r}"
 
@@ -274,13 +275,13 @@ async def test_child_agent_of_unattended_turn_denies_without_prompting(ctx):
 async def test_child_agent_of_interactive_turn_still_prompts(ctx):
     """A child agent spawned from an interactive parent turn is not unattended
     and still prompts for confirmation on unapproved commands."""
-    ctx.task_mode = ""
+    ctx.task_mode = TaskMode.INTERACTIVE
     ctx.user_id = "testuser"
     spy = ConfirmSpy(approved=True)
     ctx.request_confirmation = spy
 
     child_ctx = ctx.fork(
-        task_mode="child_agent",
+        task_mode=TaskMode.CHILD_AGENT,
         is_child=True,
         parent_is_unattended=ctx.is_unattended,
         request_confirmation=ctx.request_confirmation,

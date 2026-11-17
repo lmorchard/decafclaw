@@ -51,7 +51,7 @@ async def _run_memory_sweep(ctx: "Context", old_messages: list[dict]) -> None:
     errors are logged and discarded.
     """
     from .agent import run_agent_turn  # deferred: circular dep
-    from .context import Context
+    from .context import Context, TaskMode
     from .skills.vault.tools import TOOL_DEFINITIONS as VAULT_TOOL_DEFS
     from .skills.vault.tools import TOOLS as VAULT_TOOLS
 
@@ -78,7 +78,7 @@ async def _run_memory_sweep(ctx: "Context", old_messages: list[dict]) -> None:
             user_id="memory-sweep",
             conv_id=conv_id,
             active_model=config.auxiliary_model or ctx.active_model or effective_default_model(config),
-            task_mode="scheduled",
+            task_mode=TaskMode.SCHEDULED,
             skip_reflection=True,
             skip_vault_retrieval=True,
             skip_archive=True,

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from decafclaw.config import Config
-from decafclaw.context import Context
+from decafclaw.context import Context, TaskMode
 from decafclaw.events import EventBus
 from decafclaw.tools.shell_tools import tool_shell_guidance
 
@@ -43,7 +43,7 @@ async def test_shell_guidance_set_mode_validation(ctx):
 
 @pytest.mark.asyncio
 async def test_shell_guidance_set_mode_unattended_denied(ctx):
-    ctx.task_mode = "heartbeat"
+    ctx.task_mode = TaskMode.HEARTBEAT
     assert ctx.is_unattended is True
 
     err = await tool_shell_guidance(ctx, action="set_mode", mode="dev")
