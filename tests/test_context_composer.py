@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from decafclaw.config_types import RetrievalMode
 from decafclaw.context_composer import (
     ComposedContext,
     ComposerMode,
@@ -708,11 +709,18 @@ class TestComposeMemoryContext:
 
 
 class TestRetrievalModes:
-    """`vault_retrieval.mode`: always (default) | headlines | on_demand."""
+    """`vault_retrieval.mode` (a `RetrievalMode` enum): always | headlines | on_demand."""
+
+    def test_enum_values_match_wire_strings(self):
+        """The enum values are the wire strings config files use — changing
+        them would silently break existing configs (#1382)."""
+        assert RetrievalMode.ALWAYS == "always"
+        assert RetrievalMode.HEADLINES == "headlines"
+        assert RetrievalMode.ON_DEMAND == "on_demand"
 
     @pytest.mark.asyncio
     async def test_always_mode_emits_full_body_message(self, ctx, config):
-        config.vault_retrieval.mode = "always"
+        config.vault_retrieval.mode = RetrievalMode.ALWAYS
         config.vault_retrieval.max_results = 10
         config.relevance.min_composite_score = 0.0  # accept anything for the test
         mock = [
@@ -736,11 +744,13 @@ class TestRetrievalModes:
         assert len(msgs) == 1
         assert "FULL BODY HERE" in msgs[0]["content"]
         assert entry.details.get("mode") == "always"
+        # The diagnostics carry the typed enum, not a raw string (#1382).
+        assert isinstance(entry.details["mode"], RetrievalMode)
         assert entry.details.get("injection_skipped") is False
 
     @pytest.mark.asyncio
     async def test_headlines_mode_emits_compact_lines(self, ctx, config):
-        config.vault_retrieval.mode = "headlines"
+        config.vault_retrieval.mode = RetrievalMode.HEADLINES
         config.vault_retrieval.max_results = 10
         config.relevance.min_composite_score = 0.0
         mock = [
@@ -774,7 +784,7 @@ class TestRetrievalModes:
     async def test_on_demand_mode_skips_retrieval_entirely(self, ctx, config, monkeypatch):
         """on_demand short-circuits before `retrieve_memory_context`
         is even called — no LLM/embedding work happens."""
-        config.vault_retrieval.mode = "on_demand"
+        config.vault_retrieval.mode = RetrievalMode.ON_DEMAND
         called = []
 
         async def should_not_be_called(*a, **kw):
@@ -801,7 +811,10 @@ class TestRetrievalModes:
 
     @pytest.mark.asyncio
     async def test_unknown_mode_falls_back_to_always(self, ctx, config, caplog):
-        config.vault_retrieval.mode = "bogus"
+        # Raw string on purpose: JSON-loaded configs carry plain strings
+        # (load_sub_config does not coerce to the enum), so the resolver
+        # must accept and fall back on non-member values.
+        config.vault_retrieval.mode = "bogus"  # type: ignore[assignment]
         config.vault_retrieval.max_results = 10
         config.relevance.min_composite_score = 0.0
         mock = [

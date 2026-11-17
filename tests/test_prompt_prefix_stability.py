@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from decafclaw.agent import _maybe_compact
-from decafclaw.config_types import ModelConfig
+from decafclaw.config_types import ModelConfig, RetrievalMode
 from decafclaw.context_composer import ContextComposer
 from decafclaw.llm.providers.openai_compat import OpenAICompatProvider, _clean_messages
 from decafclaw.skills import discover_skills
@@ -22,7 +22,7 @@ from tests.harness import AgentHarness
 def composer(ctx, config):
     config.agent.auto_refresh_skills = False
     config.system_prompt = "Stable test system prompt"
-    config.vault_retrieval.mode = "on_demand"
+    config.vault_retrieval.mode = RetrievalMode.ON_DEMAND
     config.agent.show_context_status = True
     config.agent.max_active_tools = 25
     return ContextComposer(ctx.composer)
