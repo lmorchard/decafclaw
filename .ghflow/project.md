@@ -12,6 +12,11 @@ sources:
   - scripts/gen_message_types.py 06a0ab1456ab2e0655d70eab5e68f24a2eda9be9
   - docs/config.md 02e25d2ce219a502b2047b0767340c3181943f94
   - docs/testing.md e30d35456d9757a42f84f13abeca170998145fd2
+worktree:
+  copy:
+    - .env
+  setup:
+    - uv sync
 ---
 # decafclaw project facts
 
