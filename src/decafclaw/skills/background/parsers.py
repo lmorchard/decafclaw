@@ -8,6 +8,7 @@ conversational turns or per-update LLM calls (#1137).
 import logging
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +20,22 @@ _MAX_LINE_LENGTH = 2000
 
 # Max length of notes in the sticky slot.
 _STICKY_NOTE_MAX = 200
+
+
+class ProgressParserPreset(StrEnum):
+    """Progress parser preset for background job output (``progress_parser``, #1137/#1384).
+
+    String-valued so tool-result data and any JSON round-trip keep the
+    existing wire values; the enum makes a typo'd preset impossible to
+    construct. Unknown names fall back to ``AUTO`` at parse time (the
+    factory's historical behavior for unrecognized names).
+    """
+
+    AUTO = "auto"  # detect format (pytest -> step -> percent), fall back to line counts
+    STEP = "step"  # [N/M], (N/M), or Step N of M
+    PERCENT = "percent"  # N%
+    PYTEST = "pytest"  # collected count, passed/failed counts
+    NONE = "none"  # raw line counting only
 
 
 def strip_ansi(text: str) -> str:
@@ -534,7 +551,7 @@ class AutoParser(BaseProgressParser):
         self.step_parser = StepParser()
         self.percent_parser = PercentParser()
         self.none_parser = NoneParser()
-        self._active_preset: str | None = None
+        self._active_preset: ProgressParserPreset | None = None
         self._consecutive_unmatched: int = 0
 
     def _feed_single_line(self, raw_line: str, stream: str = "stdout") -> ProgressUpdate | None:
@@ -554,7 +571,7 @@ class AutoParser(BaseProgressParser):
             self._consecutive_unmatched = 0
 
         # 1. If a preset has locked in, verify whether it matches or if another preset took over
-        if self._active_preset == "pytest":
+        if self._active_preset == ProgressParserPreset.PYTEST:
             matched = bool(
                 self.pytest_parser._COLLECTED_RE.search(truncated)
                 or self.pytest_parser._TEST_OUTCOME_RE.search(truncated)
@@ -571,19 +588,19 @@ class AutoParser(BaseProgressParser):
                 self.pytest_parser._feed_single_line(raw_line, stream=stream)
                 if self.step_parser._STEP_RE.search(truncated):
                     self.step_parser._feed_single_line(raw_line, stream=stream)
-                    self._active_preset = "step"
+                    self._active_preset = ProgressParserPreset.STEP
                     self._consecutive_unmatched = 0
                     return self.get_progress()
                 if self.percent_parser._PERCENT_RE.search(truncated):
                     self.percent_parser._feed_single_line(raw_line, stream=stream)
-                    self._active_preset = "percent"
+                    self._active_preset = ProgressParserPreset.PERCENT
                     self._consecutive_unmatched = 0
                     return self.get_progress()
                 if self._consecutive_unmatched >= 25:
                     _reset_probes()
                 return self.get_progress()
 
-        if self._active_preset == "step":
+        if self._active_preset == ProgressParserPreset.STEP:
             matched = bool(self.step_parser._STEP_RE.search(truncated))
             if matched:
                 self._consecutive_unmatched = 0
@@ -599,19 +616,19 @@ class AutoParser(BaseProgressParser):
                     or self.pytest_parser._SUMMARY_RE.search(truncated)
                 ):
                     self.pytest_parser._feed_single_line(raw_line, stream=stream)
-                    self._active_preset = "pytest"
+                    self._active_preset = ProgressParserPreset.PYTEST
                     self._consecutive_unmatched = 0
                     return self.get_progress()
                 if self.percent_parser._PERCENT_RE.search(truncated):
                     self.percent_parser._feed_single_line(raw_line, stream=stream)
-                    self._active_preset = "percent"
+                    self._active_preset = ProgressParserPreset.PERCENT
                     self._consecutive_unmatched = 0
                     return self.get_progress()
                 if self._consecutive_unmatched >= 25:
                     _reset_probes()
                 return self.get_progress()
 
-        if self._active_preset == "percent":
+        if self._active_preset == ProgressParserPreset.PERCENT:
             matched = bool(self.percent_parser._PERCENT_RE.search(truncated))
             if matched:
                 self._consecutive_unmatched = 0
@@ -627,12 +644,12 @@ class AutoParser(BaseProgressParser):
                     or self.pytest_parser._SUMMARY_RE.search(truncated)
                 ):
                     self.pytest_parser._feed_single_line(raw_line, stream=stream)
-                    self._active_preset = "pytest"
+                    self._active_preset = ProgressParserPreset.PYTEST
                     self._consecutive_unmatched = 0
                     return self.get_progress()
                 if self.step_parser._STEP_RE.search(truncated):
                     self.step_parser._feed_single_line(raw_line, stream=stream)
-                    self._active_preset = "step"
+                    self._active_preset = ProgressParserPreset.STEP
                     self._consecutive_unmatched = 0
                     return self.get_progress()
                 if self._consecutive_unmatched >= 25:
@@ -652,7 +669,7 @@ class AutoParser(BaseProgressParser):
                 self.pytest_parser.total_tests is not None
                 or (self.pytest_parser.passed + self.pytest_parser.failed + self.pytest_parser.skipped) > 0
             ):
-                self._active_preset = "pytest"
+                self._active_preset = ProgressParserPreset.PYTEST
                 self._consecutive_unmatched = 0
                 return self.get_progress()
         except Exception:
@@ -662,7 +679,7 @@ class AutoParser(BaseProgressParser):
             step_matched = bool(self.step_parser._STEP_RE.search(truncated))
             self.step_parser._feed_single_line(raw_line, stream=stream)
             if step_matched and self.step_parser.current_step is not None and self.step_parser.total_steps is not None:
-                self._active_preset = "step"
+                self._active_preset = ProgressParserPreset.STEP
                 self._consecutive_unmatched = 0
                 return self.get_progress()
         except Exception:
@@ -672,7 +689,7 @@ class AutoParser(BaseProgressParser):
             pct_matched = bool(self.percent_parser._PERCENT_RE.search(truncated))
             self.percent_parser._feed_single_line(raw_line, stream=stream)
             if pct_matched and self.percent_parser.percent is not None:
-                self._active_preset = "percent"
+                self._active_preset = ProgressParserPreset.PERCENT
                 self._consecutive_unmatched = 0
                 return self.get_progress()
         except Exception:
@@ -681,42 +698,58 @@ class AutoParser(BaseProgressParser):
         return self.get_progress()
 
     def get_progress(self) -> ProgressUpdate:
-        if self._active_preset == "pytest":
+        if self._active_preset == ProgressParserPreset.PYTEST:
             return self.pytest_parser.get_progress()
-        if self._active_preset == "step":
+        if self._active_preset == ProgressParserPreset.STEP:
             return self.step_parser.get_progress()
-        if self._active_preset == "percent":
+        if self._active_preset == ProgressParserPreset.PERCENT:
             return self.percent_parser.get_progress()
         return self.none_parser.get_progress()
 
     def format_running_sticky(self, command: str) -> dict:
-        if self._active_preset == "pytest":
+        if self._active_preset == ProgressParserPreset.PYTEST:
             return self.pytest_parser.format_running_sticky(command)
-        if self._active_preset == "step":
+        if self._active_preset == ProgressParserPreset.STEP:
             return self.step_parser.format_running_sticky(command)
-        if self._active_preset == "percent":
+        if self._active_preset == ProgressParserPreset.PERCENT:
             return self.percent_parser.format_running_sticky(command)
         return self.none_parser.format_running_sticky(command)
 
     def format_final_sticky(self, command: str, exit_code: int | None, status: str) -> dict:
-        if self._active_preset == "pytest":
+        if self._active_preset == ProgressParserPreset.PYTEST:
             return self.pytest_parser.format_final_sticky(command, exit_code, status)
-        if self._active_preset == "step":
+        if self._active_preset == ProgressParserPreset.STEP:
             return self.step_parser.format_final_sticky(command, exit_code, status)
-        if self._active_preset == "percent":
+        if self._active_preset == ProgressParserPreset.PERCENT:
             return self.percent_parser.format_final_sticky(command, exit_code, status)
         return self.none_parser.format_final_sticky(command, exit_code, status)
 
 
-def get_progress_parser(name: str = "auto") -> BaseProgressParser:
-    """Return an instantiated progress parser matching name."""
+def parse_progress_preset(name: str | ProgressParserPreset | None) -> ProgressParserPreset:
+    """Coerce a raw preset name to ``ProgressParserPreset``.
+
+    Tolerant of case and surrounding whitespace; ``None`` and unknown
+    values fall back to ``AUTO`` (the factory's historical behavior for
+    unrecognized names).
+    """
+    if isinstance(name, ProgressParserPreset):
+        return name
     lowered = (name or "auto").strip().lower()
-    if lowered == "step":
+    try:
+        return ProgressParserPreset(lowered)
+    except ValueError:
+        return ProgressParserPreset.AUTO
+
+
+def get_progress_parser(name: str | ProgressParserPreset | None = ProgressParserPreset.AUTO) -> BaseProgressParser:
+    """Return an instantiated progress parser matching name."""
+    preset = parse_progress_preset(name)
+    if preset == ProgressParserPreset.STEP:
         return StepParser()
-    if lowered == "percent":
+    if preset == ProgressParserPreset.PERCENT:
         return PercentParser()
-    if lowered == "pytest":
+    if preset == ProgressParserPreset.PYTEST:
         return PytestParser()
-    if lowered == "none":
+    if preset == ProgressParserPreset.NONE:
         return NoneParser()
     return AutoParser()

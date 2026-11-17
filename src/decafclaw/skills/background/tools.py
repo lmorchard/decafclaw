@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import uuid4
 
 from decafclaw.media import ToolResult, WidgetRequest
-from decafclaw.skills.background.parsers import BaseProgressParser, get_progress_parser
+from decafclaw.skills.background.parsers import (
+    BaseProgressParser,
+    ProgressParserPreset,
+    get_progress_parser,
+    parse_progress_preset,
+)
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -67,7 +72,7 @@ class BackgroundJob:
     event_bus: Any = None
     completion_tail_lines: int = 50
     pin_sticky: bool = False  # stream live output to the sticky slot (#1104)
-    progress_parser: str = "auto"  # parser preset: auto, step, percent, pytest, none (#1137)
+    progress_parser: ProgressParserPreset = ProgressParserPreset.AUTO  # parser preset (#1137, #1384)
     parser: BaseProgressParser | None = None
     last_output_line: str = ""  # latest stdout/stderr line observed (#1104)
     finalized: bool = False
@@ -575,7 +580,7 @@ class BackgroundJobManager:
         completion_tail_lines: int = 50,
         manager: Any = None,
         pin_sticky: bool = False,
-        progress_parser: str = "auto",
+        progress_parser: str | ProgressParserPreset = ProgressParserPreset.AUTO,
         env: dict | None = None,
     ) -> BackgroundJob:
         """Start a background process. Returns immediately.
@@ -597,7 +602,8 @@ class BackgroundJobManager:
             env=env,
         )
 
-        parser = get_progress_parser(progress_parser) if pin_sticky else None
+        preset = parse_progress_preset(progress_parser)
+        parser = get_progress_parser(preset) if pin_sticky else None
         job = BackgroundJob(
             job_id=uuid4().hex[:12],
             command=command,
@@ -611,7 +617,7 @@ class BackgroundJobManager:
             completion_tail_lines=completion_tail_lines,
             manager=manager,
             pin_sticky=pin_sticky,
-            progress_parser=progress_parser,
+            progress_parser=preset,
             parser=parser,
         )
         job.reader_task = asyncio.create_task(_run_reader(job))
@@ -751,10 +757,11 @@ async def tool_shell_background_start(
     command: str,
     completion_tail_lines: int | None = None,
     pin_sticky: bool = False,
-    progress_parser: str = "auto",
+    progress_parser: str | ProgressParserPreset = ProgressParserPreset.AUTO,
 ) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
+    preset = parse_progress_preset(progress_parser)
 
     from decafclaw.tools.shell_tools import check_shell_approval
 
@@ -790,7 +797,7 @@ async def tool_shell_background_start(
             completion_tail_lines=clamped_tail_lines,
             manager=conv_manager,
             pin_sticky=pin_sticky,
-            progress_parser=progress_parser,
+            progress_parser=preset,
         )
     except Exception as e:
         return ToolResult(
@@ -811,7 +818,7 @@ async def tool_shell_background_start(
             "status": JobStatus.RUNNING,
             "command": command,
             "pid": job.pid,
-            **({"pin_sticky": True, "progress_parser": progress_parser} if pin_sticky else {}),
+            **({"pin_sticky": True, "progress_parser": preset} if pin_sticky else {}),
         },
     )
 
@@ -1012,7 +1019,8 @@ TOOL_DEFINITIONS = [
                     },
                     "progress_parser": {
                         "type": "string",
-                        "enum": ["auto", "step", "percent", "pytest", "none"],
+                        # Preset list derived from ProgressParserPreset so the schema stays in sync (#1384).
+                        "enum": [p.value for p in ProgressParserPreset],
                         "description": (
                             "Progress parser preset to derive live progress_tracker "
                             "updates from ordinary command output when pin_sticky is true. "
