@@ -26,6 +26,7 @@ from .config_types import (
     CompactionConfig,
     EmailConfig,
     EmbeddingConfig,
+    ExtensionConfig,
     HeartbeatConfig,
     HttpConfig,
     ImageBudgetConfig,
@@ -238,6 +239,102 @@ def load_sub_config(
 
 
 # ---------------------------------------------------------------------------
+# Generic extension configuration (#1458)
+# ---------------------------------------------------------------------------
+
+_EXTENSION_ENTRY_KEYS = frozenset({"enabled", "type", "options"})
+
+
+def _load_extensions(file_data: dict[str, Any]) -> dict[str, ExtensionConfig]:
+    """Build ``Config.extensions`` from the raw ``extensions`` object.
+
+    Malformed entries are skipped with a warning rather than crashing startup.
+    The legacy top-level ``memory`` block is migrated in memory (never written
+    back) when it selects the built-in mem0 provider.
+    """
+    raw = file_data.get("extensions", {})
+    if not isinstance(raw, dict):
+        log.warning(
+            "Invalid 'extensions' section in config.json: expected an object, got %s; defaulting to empty dict.",
+            type(raw).__name__,
+        )
+        raw = {}
+
+    extensions: dict[str, ExtensionConfig] = {}
+    for name, entry in raw.items():
+        key = str(name)
+        if not isinstance(entry, dict):
+            log.warning(
+                "Invalid extension %r in config.json: expected an object, got %s; skipping.",
+                key,
+                type(entry).__name__,
+            )
+            continue
+        unknown = sorted(set(entry) - _EXTENSION_ENTRY_KEYS)
+        if unknown:
+            log.warning(
+                "Extension %r has unknown key(s) %s; ignoring them.",
+                key,
+                ", ".join(repr(k) for k in unknown),
+            )
+        options = entry.get("options", {})
+        if not isinstance(options, dict):
+            log.warning(
+                "Extension %r options must be an object, got %s; using empty options.",
+                key,
+                type(options).__name__,
+            )
+            options = {}
+        enabled = entry.get("enabled", True)
+        if isinstance(enabled, str):
+            enabled = _coerce(enabled, bool)
+        ext_type = entry.get("type", "")
+        if ext_type is None:
+            ext_type = ""
+        elif not isinstance(ext_type, str):
+            ext_type = str(ext_type)
+        extensions[key] = ExtensionConfig(enabled=bool(enabled), type=ext_type, options=dict(options))
+
+    # Legacy migration: parse the old block through load_sub_config so
+    # MEMORY_* env vars keep their precedence. Nothing is written back.
+    legacy_present = "memory" in file_data
+    legacy_raw = file_data.get("memory")
+    if legacy_raw is not None and not isinstance(legacy_raw, dict):
+        log.warning(
+            "Invalid 'memory' section in config.json: expected an object, got %s; ignoring.",
+            type(legacy_raw).__name__,
+        )
+        legacy_raw = {}
+    # The block is always parsed (even when absent) so MEMORY_* env vars still
+    # enable mem0 the way they did before extensions existed.
+    memory = load_sub_config(MemoryConfig, legacy_raw or {}, "MEMORY")
+    if "mem0" in extensions:
+        if legacy_present:
+            log.warning(
+                "config.json 'memory' block is ignored because extensions.mem0 is configured; "
+                "remove the legacy 'memory' block."
+            )
+    elif memory.provider == "mem0":
+        extensions["mem0"] = ExtensionConfig(
+            enabled=True,
+            type="mem0",
+            options={
+                "qdrant_path": memory.qdrant_path,
+                "embedder_model": memory.embedder_model,
+                "llm_base_url": memory.llm_base_url,
+                "llm_model": memory.llm_model,
+                "api_key": memory.api_key,
+                "top_k": memory.top_k,
+            },
+        )
+        log.warning(
+            "Migrating legacy 'memory' configuration to extensions.mem0; "
+            "move these settings under config.json 'extensions'."
+        )
+    return extensions
+
+
+# ---------------------------------------------------------------------------
 # Top-level Config
 # ---------------------------------------------------------------------------
 
@@ -290,7 +387,7 @@ class Config:
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     loop_breaker: LoopBreakerConfig = field(default_factory=LoopBreakerConfig)
     lifecycle: LifecycleConfig = field(default_factory=LifecycleConfig)
-    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    extensions: dict[str, ExtensionConfig] = field(default_factory=dict)
     pre_script: PreScriptConfig = field(default_factory=PreScriptConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     widgets: WidgetsConfig = field(default_factory=WidgetsConfig)
@@ -680,7 +777,7 @@ def load_config() -> Config:
 
     lifecycle = load_sub_config(LifecycleConfig, file_data.get("lifecycle", {}), "LIFECYCLE")
 
-    memory = load_sub_config(MemoryConfig, file_data.get("memory", {}), "MEMORY")
+    extensions = _load_extensions(file_data)
 
     pre_script = load_sub_config(PreScriptConfig, file_data.get("pre_script", {}), "PRE_SCRIPT")
 
@@ -809,7 +906,7 @@ def load_config() -> Config:
         workflow=workflow,
         loop_breaker=loop_breaker,
         lifecycle=lifecycle,
-        memory=memory,
+        extensions=extensions,
         pre_script=pre_script,
         telemetry=telemetry,
         widgets=widgets,

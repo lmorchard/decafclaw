@@ -545,6 +545,41 @@ Skill config fields support env var overrides via the skill's `SkillConfig` meta
 
 Config CLI shows skill values as raw JSON (`config show skills`). Use `--reveal` to unmask values.
 
+### `extensions`
+
+Runtime middleware extensions (see [extensions.md](extensions.md) for the protocol and loader). Each key is an instance name; `type` selects the registered factory (empty means "use the key as the type"). `options` is extension-owned data passed verbatim to the factory.
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `true` | — |
+| `type` | str | `""` (use the entry key) | — |
+| `options` | object | `{}` | — |
+
+```json
+{
+  "extensions": {
+    "mem0": {
+      "enabled": true,
+      "type": "mem0",
+      "options": {
+        "qdrant_path": "data/mem0_qdrant",
+        "embedder_model": "BAAI/bge-small-en-v1.5",
+        "llm_base_url": "http://synobian:4100/v1",
+        "llm_model": "mandelbrot3-flint",
+        "api_key": "local",
+        "top_k": 5
+      }
+    }
+  }
+}
+```
+
+Options get **no automatic environment-variable overrides** — the extension interprets its own keys. A missing `enabled` means enabled; unknown keys inside an entry are ignored with a warning; a non-object entry or `options` value is warned about and skipped rather than crashing startup.
+
+**Legacy `memory` block.** An old top-level `memory` block with `provider: "mem0"` is migrated in memory to `extensions.mem0` (same options; `MEMORY_*` env precedence still applies while parsing) with a deprecation warning. Because the legacy block is parsed through the normal env-precedence loader even when the file has no `memory` key, a setup enabled only by `MEMORY_PROVIDER=mem0` (plus any `MEMORY_*` option overrides) still produces `extensions.mem0`. The file is not rewritten. If `extensions.mem0` also exists, `extensions` wins and the legacy block is ignored. Other or unset providers do not create an extension.
+
+**Secrets.** `extensions.*.options.api_key` is redacted from admin reads of `config.json` and masked by `config show` unless `--reveal`. Other extensions with differently named secret options must declare them through [`secret_policy.redact_paths`](#secrets-and-secret-references-1032) (see [extensions.md](extensions.md#secret-options)).
+
 ### `telemetry`
 
 Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only (never tool args/returns, reflection bodies, or prompt contents). Producers are fail-open EventBus subscribers. See [tools.md#tool-usage-telemetry-310](tools.md#tool-usage-telemetry-310) (#310), [reflection.md#metrics-409](reflection.md#metrics-409) (#409), and [context-composer.md#retrieval-telemetry-197](context-composer.md#retrieval-telemetry-197) (#197). `metrics_enabled` gates the Prometheus subscriber, which writes no sidecar — see [metrics.md](metrics.md) (#10).

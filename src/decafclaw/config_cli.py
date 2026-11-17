@@ -58,6 +58,18 @@ def _print_dict_of_dataclasses(prefix: str, mapping: dict, reveal: bool) -> None
             print(f"{prefix}.{key} = {entry}")
 
 
+def _print_extensions(mapping: dict, reveal: bool) -> None:
+    """Print extension entries, masking the known secret option by default."""
+    for name in sorted(mapping):
+        entry = mapping[name]
+        print(f"extensions.{name}.enabled = {str(entry.enabled).lower()}")
+        print(f"extensions.{name}.type = {entry.type}")
+        options = dict(entry.options)
+        if not reveal and options.get("api_key"):
+            options["api_key"] = "****"
+        print(f"extensions.{name}.options = {json.dumps(options, sort_keys=True)}")
+
+
 def _resolve_field(config: Config, path: str):
     """Walk dotted path and return (parent_obj, field_info, value)."""
     parts = path.split(".")
@@ -111,6 +123,8 @@ def cmd_show(args) -> None:
             continue
         if hasattr(value, "__dataclass_fields__"):
             _print_group(name, value, args.reveal)
+        elif name == "extensions":
+            _print_extensions(value, args.reveal)
         elif name in ("providers", "model_configs"):
             _print_dict_of_dataclasses(name, value, args.reveal)
         else:

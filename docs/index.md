@@ -38,6 +38,7 @@ These docs are as much for me as they are for agents working on this project. Th
 
 - [Tools Reference](tools.md) — All built-in tools, grouped by module, with one-line descriptions
 - [Skills System](skills.md) — Agent Skills standard, portable skill packages, native Python + shell-based tools
+- [Extensions](extensions.md) — Runtime middleware: lifecycle-hook extensions, generic `extensions` config, type registry, mem0 reference
 - [MCP Server Support](mcp-servers.md) — Connect external MCP servers as tool providers (stdio + HTTP)
 - [Tool Priority System](tool-priority.md) — Declarative critical/normal/low tiers for tool visibility
 - [Tool Search / Deferred Loading](tool-search.md) — Defer tool definitions behind search when context budget exceeded

@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass, field, replace
 from dataclasses import fields as dc_fields
 from enum import StrEnum
+from typing import Any
 
 # Provider type constants (llm.types imports only stdlib, so this is cycle-free:
 # config -> config_types -> llm.types never loops back to config). Used as keys
@@ -389,8 +390,27 @@ class RetrievalMode(StrEnum):
 
 
 @dataclass
+class ExtensionConfig:
+    """Generic runtime-extension configuration entry (``extensions.<name>``).
+
+    ``options`` is extension-owned data: each extension type validates and
+    interprets its own keys. Core does not apply env-var overrides to options.
+    """
+
+    enabled: bool = True
+    # Extension type registered via ``extensions.register_extension_type``.
+    # Empty means "use the config key as the type name".
+    type: str = ""
+    options: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class MemoryConfig:
-    """Opt-in semantic memory configuration (e.g. mem0 local extension)."""
+    """Deprecated: legacy ``memory`` block, migrated to ``extensions.mem0``.
+
+    Kept only so ``load_config`` can parse the old block (including its
+    ``MEMORY_*`` env precedence) and normalize it. Not a ``Config`` field.
+    """
 
     provider: str | None = None  # None | "mem0"
     qdrant_path: str = "data/mem0_qdrant"

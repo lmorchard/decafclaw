@@ -168,7 +168,7 @@ Python modules below are under `src/decafclaw/`. Use [docs/index.md](docs/index.
 | Persistence | `archive.py`, `conversation_paths.py`, `persistence.py`, `approval_state.py`, `attachments.py`, `embeddings.py`, `frontmatter.py` |
 | UI/transports | `mattermost*.py`, `http_server.py`, `web/`, `terminals.py`, `canvas.py`, `sticky.py`, `widgets.py` |
 | Skills | `skills/` (vault/background/mcp always-loaded); opt-in skills under `contrib/skills/` |
-| Other subsystems | `notifications.py`, `notification_channels/`, `mail.py`, `schedules.py`, `scheduled_wakes.py`, `polling.py`, `heartbeat.py` |
+| Other subsystems | `notifications.py`, `notification_channels/`, `mail.py`, `schedules.py`, `scheduled_wakes.py`, `polling.py`, `heartbeat.py`, `extensions/` (see [docs/extensions.md](docs/extensions.md)) |
 | Telemetry | `metrics.py`, `tool_telemetry.py`, `reflection_metrics.py`, `eval/` |
 
 [Workflows](docs/workflows.md) use the durable replay engine in `workflow/` (`engine.py`, `journal.py`, `handle.py`, `resume.py`). The project skill emits a sticky progress tracker while EXECUTING and clears it on DONE or leaving EXECUTING.
