@@ -2,8 +2,8 @@
 
 import logging
 import re
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Literal
 
 from .skills import SkillInfo, find_command, grants_capability, list_commands
 
@@ -199,9 +199,12 @@ def _parse_positional_args(arguments: str) -> list[str]:
 # -- Centralized command dispatch ----------------------------------------------
 
 
+CommandMode = Literal["not_command", "help", "unknown", "fork", "inline", "error"]
+
+
 @dataclass
 class CommandResult:
-    """Result of dispatching a command.
+    """Result of dispatching or executing a command.
 
     mode values:
     - "not_command": text is not a command, pass through as normal message
@@ -212,7 +215,7 @@ class CommandResult:
     - "error": command failed, display error directly
     """
 
-    mode: str
+    mode: CommandMode
     text: str = ""
     display_text: str = ""  # short version for archive/display (inline commands)
     skill: SkillInfo | None = None
@@ -367,31 +370,27 @@ async def dispatch_command(
 
     # Execute the command
     result = await execute_command(ctx, skill, cmd_args)
-    mode, result_text = result
-
-    if mode == "error":
-        return CommandResult(mode="error", text=result_text)
-    if mode == "fork":
-        return CommandResult(mode="fork", text=result_text, skill=skill)
+    if result.mode != "inline":
+        return result
 
     # Inline mode: ctx is already set up (preapproved_tools, activated skills)
     # display_text is the short version for archive (not the full prompt body)
     display = f"{matched_prefix}{cmd_name}"
     if cmd_args:
         display += f" {cmd_args}"
-    return CommandResult(mode="inline", text=result_text, display_text=display, skill=skill)
+    return replace(result, display_text=display)
 
 
-async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> tuple[str, str]:
+async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> CommandResult:
     """Execute a user-invoked command.
 
     Sets up the context (preapproved tools, required skills) and either
     runs a fork or returns the substituted body for inline execution.
 
-    Returns (mode, result) where:
-    - mode="fork": result is the child agent's response text
-    - mode="inline": result is the substituted body to use as the user message
-    - mode="error": result is the error message
+    Returns a CommandResult where:
+    - mode="fork": text is the child agent's response text
+    - mode="inline": text is the substituted body to use as the user message
+    - mode="error": text is the error message
     """
     from .media import ToolResult as _ToolResult
     from .tools.skill_tools import activate_skill_internal
@@ -435,7 +434,7 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> t
     if skill.has_native_tools and skill.name not in ctx.skills.activated:
         result = await activate_skill_internal(ctx, skill)
         if isinstance(result, _ToolResult):
-            return "error", result.text
+            return CommandResult(mode="error", text=result.text, skill=skill)
 
     # Pre-activate required skills (user invoked the command = implicit approval)
     if skill.requires_skills:
@@ -466,7 +465,7 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> t
                         log.error(
                             f"Failed to activate required skill '{req_name}' for command '{skill.name}': {result.text}"
                         )
-                        return "error", result.text
+                        return CommandResult(mode="error", text=result.text, skill=skill)
                 except Exception as e:
                     log.error(f"Failed to activate required skill '{req_name}' for command '{skill.name}': {e}")
 
@@ -483,7 +482,7 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> t
         text, _data = await run_child_turn(
             ctx, body, model=skill.model or "", max_iterations=ctx.config.agent.max_tool_iterations
         )
-        return "fork", text
+        return CommandResult(mode="fork", text=text, skill=skill)
 
     # Inline mode: return the substituted body as the user message
-    return "inline", body
+    return CommandResult(mode="inline", text=body, skill=skill)

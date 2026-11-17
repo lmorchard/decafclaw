@@ -258,9 +258,11 @@ async def test_command_skill_dir_and_body_stay_in_sync(ctx, tmp_path):
     )
 
     # Actually call execute_command to see what it does to ctx and what it returns
-    mode, body = await execute_command(ctx, skill, "")
+    result = await execute_command(ctx, skill, "")
 
-    assert mode == "inline"
+    assert result.mode == "inline"
+
+    body = result.text
 
     # Pre-approved pattern should use the resolved path
     expected_resolved = str(real_dir.resolve())
