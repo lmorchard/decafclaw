@@ -374,6 +374,27 @@ class VaultConfig:
 
 
 @dataclass
+class MemoryConfig:
+    """Opt-in semantic memory configuration (e.g. mem0 local extension)."""
+
+    provider: str | None = None  # None | "mem0"
+    qdrant_path: str = "data/mem0_qdrant"
+    embedder_model: str = "BAAI/bge-small-en-v1.5"
+    llm_base_url: str = "http://synobian:4100/v1"
+    llm_model: str = "mandelbrot3-flint"
+    api_key: str = field(default="", metadata={"secret": True})
+    top_k: int = 5
+
+
+@dataclass
+class LifecycleConfig:
+    """Turn lifecycle hooks configuration."""
+
+    pre_compose_timeout: float = 0.3
+    pre_compose_token_ceiling: int = 300
+
+
+@dataclass
 class VaultRetrievalConfig:
     enabled: bool = True
     similarity_threshold: float = 0.3

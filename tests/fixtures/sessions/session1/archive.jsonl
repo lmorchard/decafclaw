@@ -1,0 +1,3 @@
+{"role": "user", "content": "I like dark roast coffee.", "timestamp": "2026-03-01T10:00:00.000000Z"}
+{"role": "assistant", "content": "Noted, dark roast is great.", "timestamp": "2026-03-01T10:00:05.000000Z"}
+{"role": "user", "content": "I am working on DecafClaw.", "timestamp": "2026-03-01T10:05:00.000000Z"}

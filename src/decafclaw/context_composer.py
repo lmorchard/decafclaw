@@ -11,6 +11,7 @@ import asyncio
 import enum
 import hashlib
 import html
+import inspect
 import json
 import logging
 from dataclasses import asdict, dataclass, field, replace
@@ -58,6 +59,8 @@ from .util import estimate_tokens
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
+from .events import TurnLifecycle
+
 log = logging.getLogger(__name__)
 
 # Roles that are remapped to "user" before sending to the LLM.
@@ -74,6 +77,7 @@ ROLE_REMAP: dict[str, str] = {
     "turn_aborted": "user",
     "skill_hint": "user",
     "context_status": "user",
+    "recalled_facts": "user",
 }
 
 
@@ -753,6 +757,18 @@ class ContextComposer:
         if memory_entry:
             sources.append(memory_entry)
 
+        # -- PRE_COMPOSE lifecycle collector hooks (#1454) --
+        recalled_msgs, recalled_entry = await self._compose_pre_compose_hooks(
+            ctx,
+            config,
+            user_message,
+            history,
+        )
+        for rm in recalled_msgs:
+            to_archive.append(rm)
+        if recalled_entry:
+            sources.append(recalled_entry)
+
         # -- User message (archived; appended to history at the end) --
         if system_update_msg:
             to_archive.append(system_update_msg)
@@ -761,7 +777,7 @@ class ContextComposer:
         # -- Build LLM messages (filter + remap roles) --
         # Combine archived history with this turn's injections in the same
         # order they'll be archived: prior history → wiki → notes →
-        # recent journal → memory → system update → user message. The combined list is
+        # recent journal → memory → recalled facts → system update → user message. The combined list is
         # what the LLM sees.
         combined = [
             *history,
@@ -770,6 +786,7 @@ class ContextComposer:
             *notes_msgs,
             *recent_journal_msgs,
             *memory_msgs,
+            *recalled_msgs,
         ]
         if system_update_msg:
             combined.append(system_update_msg)
@@ -1152,6 +1169,110 @@ class ContextComposer:
         except Exception:
             log.warning("Memory context composition failed", exc_info=True)
             return [], "", [], None
+
+    async def _compose_pre_compose_hooks(
+        self,
+        ctx: "Context",
+        config: Any,
+        user_message: str,
+        history: list,
+    ) -> tuple[list[dict], SourceEntry | None]:
+        """Run PRE_COMPOSE lifecycle collector hooks concurrently.
+
+        Gathers candidate facts/context under a strict timeout and token ceiling,
+        mounted into a bounded <recalled_facts> tail envelope.
+        Fails open on error or timeout.
+        """
+        hooks = ctx.get_interceptors(TurnLifecycle.PRE_COMPOSE)
+        if not hooks:
+            return [], None
+
+        lifecycle_cfg = getattr(config, "lifecycle", None)
+        timeout = getattr(lifecycle_cfg, "pre_compose_timeout", 0.3)
+        token_ceiling = getattr(lifecycle_cfg, "pre_compose_token_ceiling", 300)
+
+        async def _call_hook(hook):
+            sig = inspect.signature(hook)
+            params = list(sig.parameters.values())
+            has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
+            if has_varargs or len(params) >= 3:
+                res = hook(ctx, user_message, history)
+            elif len(params) == 2:
+                res = hook(ctx, user_message)
+            elif len(params) == 1:
+                p_name = params[0].name
+                if p_name in ("user_message", "message", "msg"):
+                    res = hook(user_message)
+                else:
+                    res = hook(ctx)
+            else:
+                res = hook()
+            if inspect.iscoroutine(res):
+                res = await res
+            return res
+
+        async def _safe_call_hook(hook):
+            try:
+                return await _call_hook(hook)
+            except Exception as e:
+                log.warning("PRE_COMPOSE hook %s failed: %s", hook, e)
+                return None
+
+        tasks = [_safe_call_hook(h) for h in hooks]
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            log.warning("PRE_COMPOSE hooks timed out after %.3fs", timeout)
+            return [], None
+        except Exception as e:
+            log.warning("PRE_COMPOSE gathering failed: %s", e)
+            return [], None
+
+        fact_texts = []
+        for r in results:
+            if isinstance(r, str) and r.strip():
+                fact_texts.append(r.strip())
+            elif isinstance(r, (list, tuple)):
+                for item in r:
+                    if isinstance(item, str) and item.strip():
+                        fact_texts.append(item.strip())
+
+        if not fact_texts:
+            return [], None
+
+        combined_text = "\n".join(fact_texts)
+        if "<recalled_facts>" in combined_text:
+            envelope_text = combined_text
+        else:
+            envelope_text = f"<recalled_facts>\n{combined_text}\n</recalled_facts>"
+
+        tokens = estimate_tokens(envelope_text)
+        if tokens > token_ceiling:
+            lines = combined_text.splitlines()
+            trimmed_lines = []
+            current_tokens = estimate_tokens("<recalled_facts>\n\n</recalled_facts>")
+            for line in lines:
+                line_tokens = estimate_tokens(line + "\n")
+                if current_tokens + line_tokens > token_ceiling:
+                    break
+                trimmed_lines.append(line)
+                current_tokens += line_tokens
+            trimmed_body = "\n".join(trimmed_lines)
+            if not trimmed_body:
+                trimmed_body = combined_text[: token_ceiling * 4]
+            envelope_text = f"<recalled_facts>\n{trimmed_body}\n</recalled_facts>"
+            tokens = estimate_tokens(envelope_text)
+
+        msg = {"role": "recalled_facts", "content": envelope_text}
+        entry = SourceEntry(
+            source="recalled_facts",
+            tokens_estimated=tokens,
+            items_included=len(fact_texts),
+        )
+        return [msg], entry
 
     @staticmethod
     def _resolve_retrieval_mode(config) -> str:

@@ -721,6 +721,7 @@ class TurnRunner:
     reflection_exhausted: bool = False
     reflection_last_critique: str = ""
     turn_start_index: int = 0
+    turn_initial_history_len: int = 0
     accumulated_text_parts: list[str] = field(default_factory=list)
     recovery_continuations: int = 0
     model_override: dict[str, str] = field(default_factory=dict)
@@ -744,6 +745,7 @@ class TurnRunner:
     async def run(self) -> "ToolResult":
         """Process a single user message through the agent loop."""
         self.ctx.history = self.history
+        self.turn_initial_history_len = len(self.history)
 
         self.model_override = await _setup_turn_state(self.ctx, self.config, self.history)
 
@@ -773,6 +775,7 @@ class TurnRunner:
             while self.budget.consume():
                 outcome = await self._run_iteration(iteration)
                 if isinstance(outcome, _Final):
+                    self._dispatch_turn_settle()
                     return outcome.result
                 iteration += 1
 
@@ -780,12 +783,61 @@ class TurnRunner:
             if self.budget.grace_turn():
                 grace_result = await self._run_grace_turn()
                 if grace_result is not None:
+                    self._dispatch_turn_settle()
                     return grace_result
-            return await self._finalize_max_iterations()
+            final_res = await self._finalize_max_iterations()
+            self._dispatch_turn_settle()
+            return final_res
 
         finally:
             self.ctx.tools.mcp_frozen = False
             await self._write_diagnostics()
+
+    def _dispatch_turn_settle(self) -> None:
+        """Dispatch ON_TURN_SETTLE event with the turn's transcript slice to registered async listeners as unawaited background tasks."""
+        transcript_slice = list(self.history[self.turn_initial_history_len :])
+        hooks = self.ctx.get_interceptors(TurnLifecycle.ON_TURN_SETTLE)
+        if not hooks:
+            return
+
+        event = {
+            "type": "on_turn_settle",
+            "lifecycle": TurnLifecycle.ON_TURN_SETTLE,
+            "ctx": self.ctx,
+            "transcript": transcript_slice,
+        }
+
+        async def _run_listener(listener):
+            try:
+                sig = inspect.signature(listener)
+                params = list(sig.parameters.values())
+                if len(params) == 1:
+                    p_name = params[0].name
+                    if p_name in ("transcript", "transcript_slice", "slice", "messages"):
+                        res = listener(transcript_slice)
+                    elif p_name in ("event", "evt", "data"):
+                        res = listener(event)
+                    elif p_name in ("ctx", "context"):
+                        res = listener(self.ctx)
+                    else:
+                        try:
+                            res = listener(transcript_slice)
+                        except TypeError:
+                            res = listener(event)
+                elif len(params) == 2:
+                    if params[0].name in ("transcript", "transcript_slice"):
+                        res = listener(transcript_slice, self.ctx)
+                    else:
+                        res = listener(self.ctx, transcript_slice)
+                else:
+                    res = listener(self.ctx, transcript_slice, event)
+                if inspect.iscoroutine(res):
+                    await res
+            except Exception as e:
+                log.warning("ON_TURN_SETTLE listener %s failed: %s", listener, e)
+
+        for hook in hooks:
+            asyncio.create_task(_run_listener(hook))
 
     async def _compose(self) -> None:
         """Build the composed context, archive composer-added messages,
