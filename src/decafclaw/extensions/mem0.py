@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 from typing import Any
+
+# Disable mem0 telemetry to prevent remote egress and migration store locking conflicts
+os.environ.setdefault("MEM0_TELEMETRY", "false")
 
 from decafclaw.events import EventBus, TurnLifecycle
 from decafclaw.extensions import BaseExtension, register_extension_type
