@@ -382,7 +382,7 @@ class MemoryConfig:
     embedder_model: str = "BAAI/bge-small-en-v1.5"
     llm_base_url: str = "http://synobian:4100/v1"
     llm_model: str = "mandelbrot3-flint"
-    api_key: str = ""
+    api_key: str = field(default="", metadata={"secret": True})
     top_k: int = 5
 
 
