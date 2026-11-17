@@ -2,21 +2,27 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from decafclaw.config_types import ExtensionConfig
 from decafclaw.events import EventBus, TurnLifecycle
 from decafclaw.extensions import init_extensions
 from decafclaw.extensions.mem0 import Mem0Extension
 
 
 def test_mem0_local_hook_registration(config):
-    """WHEN an opt-in memory.provider = 'mem0' block is configured,
+    """WHEN an enabled extensions.mem0 block is configured,
     DecafClaw SHALL initialize the local embedded store and register its
     PRE_COMPOSE and ON_TURN_SETTLE hooks without network egress.
     """
-    config.memory.provider = "mem0"
-    config.memory.qdrant_path = "data/mem0_qdrant"
-    config.memory.embedder_model = "BAAI/bge-small-en-v1.5"
-    config.memory.llm_base_url = "http://synobian:4100/v1"
-    config.memory.llm_model = "mandelbrot3-flint"
+    config.extensions["mem0"] = ExtensionConfig(
+        enabled=True,
+        type="mem0",
+        options={
+            "qdrant_path": "data/mem0_qdrant",
+            "embedder_model": "BAAI/bge-small-en-v1.5",
+            "llm_base_url": "http://synobian:4100/v1",
+            "llm_model": "mandelbrot3-flint",
+        },
+    )
 
     bus = EventBus()
     ext_mgr = init_extensions(config, bus)
@@ -49,7 +55,7 @@ async def test_mem0_hooks_execution_and_skip(ctx, config):
     mock_client.search.return_value = [{"memory": "User lives in Portland."}]
     mock_client.add.return_value = {"status": "ok"}
 
-    ext = Mem0Extension(config, client=mock_client)
+    ext = Mem0Extension({}, config, client=mock_client)
     bus = EventBus()
     ext.enable(bus)
 

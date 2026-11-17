@@ -72,6 +72,11 @@ STRUCTURAL_REDACT_PATTERNS: tuple[str, ...] = (
     "skills.*.*",  # every skill-config value (credentials often live here)
     "mcpServers.*.env.*",  # MCP stdio-server env tokens
     "mcpServers.*.headers.*",  # MCP http-server auth headers
+    # Extension options are free-form dicts, so dataclass ``secret`` metadata
+    # cannot reach them. The built-in mem0 extension names its credential
+    # ``options.api_key``; other extensions with differently named secret keys
+    # should declare them via ``secret_policy.redact_paths``.
+    "extensions.*.options.api_key",
 )
 
 

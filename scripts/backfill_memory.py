@@ -170,7 +170,8 @@ def backfill(
         from decafclaw.extensions.mem0 import Mem0Extension
 
         config = load_config()
-        ext = Mem0Extension(config)
+        mem0_cfg = config.extensions.get("mem0")
+        ext = Mem0Extension(mem0_cfg.options if mem0_cfg else {}, config)
         client = ext._init_client()
         if not client:
             print("Mem0 client could not be initialized; aborting live backfill.")

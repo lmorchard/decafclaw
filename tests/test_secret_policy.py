@@ -297,6 +297,36 @@ def test_admin_read_redacts_config_json(ctx):
     assert r.data["lines"] == len(redacted_body.splitlines())
 
 
+def test_admin_read_redacts_extension_options_api_key(ctx):
+    """Free-form extension options can't carry secret annotations; the fixed
+    ``extensions.*.options.api_key`` structural pattern covers the mem0 option.
+    """
+    cfg_file = ctx.config.agent_path / "config.json"
+    cfg_file.write_text(
+        json.dumps(
+            {
+                "extensions": {
+                    "mem0": {
+                        "enabled": True,
+                        "type": "mem0",
+                        "options": {
+                            "api_key": "SECRET_EXTENSION_KEY",
+                            "qdrant_path": "data/mem0_qdrant",
+                            "top_k": 5,
+                        },
+                    }
+                }
+            }
+        )
+    )
+    r = tool_admin_read(ctx, "config.json")
+    text = _text(r)
+    assert "SECRET_EXTENSION_KEY" not in text
+    assert REDACTED in text
+    assert "data/mem0_qdrant" in text
+    assert "extensions.mem0.options.api_key" in r.data["redacted_fields"]
+
+
 def test_admin_read_redacts_mcp_servers_json(ctx):
     mcp_file = ctx.config.agent_path / "mcp_servers.json"
     mcp_file.write_text(

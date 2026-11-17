@@ -120,6 +120,42 @@ def test_show_secret_policy_values(capsys, monkeypatch, tmp_path):
     assert '"some_group.legacy_key"' in out
 
 
+def test_show_extensions_masks_api_key(capsys, monkeypatch, tmp_path):
+    """`config show` masks extensions.*.options.api_key unless --reveal."""
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "extensions": {
+                    "mem0": {
+                        "enabled": True,
+                        "type": "mem0",
+                        "options": {
+                            "api_key": "SECRET_EXT_KEY",
+                            "qdrant_path": "data/mem0_qdrant",
+                            "top_k": 5,
+                        },
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    cmd_show(_Args(group="extensions", reveal=False))
+    out = capsys.readouterr().out
+    assert "SECRET_EXT_KEY" not in out
+    assert "extensions.mem0.enabled = true" in out
+    assert "extensions.mem0.type = mem0" in out
+    assert '"api_key": "****"' in out
+    assert "data/mem0_qdrant" in out
+    assert '"top_k": 5' in out
+
+    cmd_show(_Args(group="extensions", reveal=True))
+    out = capsys.readouterr().out
+    assert "SECRET_EXT_KEY" in out
+
+
 def test_show_providers_masks_api_key(capsys, monkeypatch, tmp_path):
     """providers dict prints per-entry fields, masking api_key by default."""
     agent_dir = tmp_path / "decafclaw"

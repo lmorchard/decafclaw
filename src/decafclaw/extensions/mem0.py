@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from decafclaw.events import EventBus, TurnLifecycle
-from decafclaw.extensions import BaseExtension
+from decafclaw.extensions import BaseExtension, register_extension_type
 
 log = logging.getLogger(__name__)
 
@@ -22,24 +22,22 @@ log = logging.getLogger(__name__)
 class Mem0Extension(BaseExtension):
     """Mem0 semantic memory extension providing local-first fact extraction and recall."""
 
-    def __init__(self, config: Any, client: Any = None):
+    def __init__(self, options: dict[str, Any], config: Any, client: Any = None):
         super().__init__(name="mem0")
+        self.options = options or {}
+        # Retained for extensions that want core config (non-memory) access.
         self.config = config
         self.client = client
         self._initialized = False
 
     def _build_mem0_config(self) -> dict[str, Any]:
         """Construct embedded, local-first Mem0 configuration dictionary."""
-        memory_cfg = getattr(self.config, "memory", None)
-        qdrant_path = getattr(memory_cfg, "qdrant_path", "data/mem0_qdrant") if memory_cfg else "data/mem0_qdrant"
-        embedder_model = (
-            getattr(memory_cfg, "embedder_model", "BAAI/bge-small-en-v1.5") if memory_cfg else "BAAI/bge-small-en-v1.5"
-        )
-        llm_base_url = (
-            getattr(memory_cfg, "llm_base_url", "http://synobian:4100/v1") if memory_cfg else "http://synobian:4100/v1"
-        )
-        llm_model = getattr(memory_cfg, "llm_model", "mandelbrot3-flint") if memory_cfg else "mandelbrot3-flint"
-        api_key = (getattr(memory_cfg, "api_key", "") if memory_cfg else "") or "local"
+        opts = self.options
+        qdrant_path = opts.get("qdrant_path", "data/mem0_qdrant")
+        embedder_model = opts.get("embedder_model", "BAAI/bge-small-en-v1.5")
+        llm_base_url = opts.get("llm_base_url", "http://synobian:4100/v1")
+        llm_model = opts.get("llm_model", "mandelbrot3-flint")
+        api_key = opts.get("api_key", "") or "local"
 
         return {
             "vector_store": {
@@ -100,7 +98,7 @@ class Mem0Extension(BaseExtension):
             return None
         try:
             user_id = getattr(ctx, "user_id", "") or "default"
-            top_k = getattr(getattr(self.config, "memory", None), "top_k", 5)
+            top_k = int(self.options.get("top_k", 5))
             # Call search on mem0 client (handles sync or async)
             search_fn = getattr(self.client, "search", None)
             if not callable(search_fn):
@@ -160,3 +158,6 @@ class Mem0Extension(BaseExtension):
                 await res
         except Exception as e:
             log.warning("Mem0 on_turn_settle_hook add failed: %s", e)
+
+
+register_extension_type("mem0", Mem0Extension)

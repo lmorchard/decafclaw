@@ -3,11 +3,42 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from decafclaw.events import EventBus
 
 log = logging.getLogger(__name__)
+
+# Extension type registry (#1458): type name -> factory(options, config).
+# Built-in extension modules register themselves at import time; third-party
+# types may register too. Factories receive extension-owned options verbatim.
+_EXTENSION_TYPES: dict[str, Callable[[dict[str, Any], Any], "Extension"]] = {}
+
+
+def register_extension_type(name: str, factory: Callable[[dict[str, Any], Any], "Extension"]) -> None:
+    """Register a factory for an extension type name.
+
+    Re-registering a name replaces it with a warning (built-in modules import
+    once, but tests and embedders can legitimately swap a type).
+    """
+    if name in _EXTENSION_TYPES:
+        log.warning("Replacing already-registered extension type %r", name)
+    _EXTENSION_TYPES[name] = factory
+
+
+def get_extension_type(name: str) -> Callable[[dict[str, Any], Any], "Extension"] | None:
+    """Return the factory registered for an extension type, if any."""
+    return _EXTENSION_TYPES.get(name)
+
+
+def list_extension_types() -> list[str]:
+    """List registered extension type names."""
+    return sorted(_EXTENSION_TYPES)
+
+
+def clear_extension_types() -> None:
+    """Drop all registered extension types (test isolation)."""
+    _EXTENSION_TYPES.clear()
 
 
 @runtime_checkable
@@ -91,13 +122,39 @@ class ExtensionManager:
 
 
 def init_extensions(config: Any, bus: EventBus) -> ExtensionManager:
-    """Initialize runtime extensions based on configuration."""
-    manager = ExtensionManager(bus, config)
-    memory_cfg = getattr(config, "memory", None)
-    if memory_cfg and getattr(memory_cfg, "provider", None) == "mem0":
-        from .mem0 import Mem0Extension
+    """Initialize runtime extensions from ``config.extensions``.
 
-        ext = Mem0Extension(config)
-        manager.register("mem0", ext)
-        manager.enable("mem0")
+    Enabled entries are instantiated through their registered type factory and
+    enabled on the manager, in config insertion order. Unknown types, factory
+    errors, and enable errors are logged and skipped: startup stays fail-open.
+    """
+    manager = ExtensionManager(bus, config)
+
+    # Import built-ins lazily so their module-level registrations run without
+    # an import cycle (mem0 imports BaseExtension from this module). If a
+    # caller cleared the registry explicitly (test isolation, embedders), the
+    # module is cached and won't re-register, so re-register the built-in.
+    from . import mem0 as _mem0  # noqa: F401
+
+    if get_extension_type("mem0") is None:
+        register_extension_type("mem0", _mem0.Mem0Extension)
+
+    for name, ext_cfg in getattr(config, "extensions", {}).items():
+        if ext_cfg.enabled is False:
+            continue
+        type_name = ext_cfg.type or name
+        factory = get_extension_type(type_name)
+        if factory is None:
+            log.warning("Unknown extension type %r for extension %r; skipping", type_name, name)
+            continue
+        try:
+            ext = factory(ext_cfg.options, config)
+        except Exception as e:
+            log.warning("Extension %r failed to initialize: %s", name, e)
+            continue
+        manager.register(name, ext)
+        try:
+            manager.enable(name)
+        except Exception as e:
+            log.warning("Extension %r failed to enable: %s", name, e)
     return manager
