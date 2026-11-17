@@ -339,6 +339,41 @@ export class ConversationStore extends EventTarget {
   }
 
   /**
+   * Every user folder path, at any depth (#1277). Walks the existing
+   * one-level `GET /api/conversations?folder=` listings breadth-first
+   * instead of adding a route. Virtual folders (`_archived`, `_system`) and
+   * any `_`-prefixed path are excluded, since they are not move targets.
+   * Reads the endpoint directly so the current listing is left untouched.
+   * @returns {Promise<string[]>}
+   */
+  async listAllFolders() {
+    /** @type {string[]} */
+    const found = [];
+    const seen = new Set();
+    const queue = [''];
+    while (queue.length > 0) {
+      const parent = /** @type {string} */ (queue.shift());
+      let data;
+      try {
+        data = await DefaultService.listConversationsApiConversationsGet(parent || undefined);
+      } catch (err) {
+        if (!(err instanceof ApiError)) console.error('Failed to list folders:', err);
+        break;
+      }
+      for (const f of data.folders || []) {
+        if (/** @type {any} */ (f).virtual) continue;
+        const path = f.path || f.name;
+        if (!path || path.split('/').some((seg) => seg.startsWith('_'))) continue;
+        if (seen.has(path)) continue;
+        seen.add(path);
+        found.push(path);
+        queue.push(path);
+      }
+    }
+    return found.sort();
+  }
+
+  /**
    * True when convId is already present in the store's listings — flat,
    * session hierarchy, archived, or system. A pushed status event for an
    * id the store has never seen is a freshly spawned subagent whose row
@@ -432,18 +467,26 @@ export class ConversationStore extends EventTarget {
     this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: convId, text: '/retitle' });
   }
 
-  /** @param {string} convId @param {string} folder */
+  /**
+   * Move a conversation (a session's root) into a folder; '' is the top level.
+   * Returns false when the move failed so callers can tell the user (#1277).
+   * @param {string} convId @param {string} folder
+   * @returns {Promise<boolean>}
+   */
   async moveConversation(convId, folder) {
     try {
       await DefaultService.renameConversationApiConversationsIdPatch(convId, { folder }, true);
       // Re-fetch current folder listing
       await this.listConversations(this.#currentFolder);
       // #1274 — a folder move changes which session group the conversation
-      // belongs to; refresh the hierarchy so it follows.
+      // belongs to; refresh the hierarchy so it follows. #1277 — the write
+      // must update both sources or the Chats listing keeps the stale folder.
       await this.listSessions(this.#currentFolder);
+      return true;
     } catch (err) {
-      if (err instanceof ApiError) return;
+      if (err instanceof ApiError) return false;
       console.error('Failed to move conversation:', err);
+      return false;
     }
   }
 

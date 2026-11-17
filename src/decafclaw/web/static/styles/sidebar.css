@@ -873,3 +873,88 @@ input.schedule-enabled-toggle {
   line-height: 1.3;
   color: var(--pico-muted-color);
 }
+
+/* -- Moving sessions between folders (#1277) ------------------------------ */
+
+/* Session root rows are drag sources. */
+conversation-sidebar .conv-item[draggable="true"] {
+  cursor: grab;
+}
+
+conversation-sidebar .conv-item[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+/* Drop target highlight while a session row is dragged over a folder row or an
+   ancestor breadcrumb segment. */
+conversation-sidebar .conv-item.drop-target,
+conversation-sidebar .vault-breadcrumb-segment.drop-target {
+  background: var(--pico-primary-focus);
+  outline: 2px dashed var(--pico-primary);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+/* "Move to…" destination picker — an inline modal so it works with the
+   keyboard and at mobile width. Sits above the sidebar but below toasts. */
+conversation-sidebar .conv-move-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 40%);
+}
+
+conversation-sidebar .conv-move-picker {
+  width: 100%;
+  max-width: 24rem;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 8px;
+  background: var(--pico-card-background-color);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+}
+
+conversation-sidebar .conv-move-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+conversation-sidebar button.conv-move-option {
+  display: block;
+  width: 100%;
+  margin: 0 0 2px;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  word-break: break-word;
+}
+
+conversation-sidebar button.conv-move-option:hover:not(:disabled),
+conversation-sidebar button.conv-move-option:focus-visible {
+  background: var(--pico-primary-focus);
+}
+
+conversation-sidebar button.conv-move-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+conversation-sidebar .conv-move-picker-empty {
+  margin: 0.5rem 0.25rem;
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+}
