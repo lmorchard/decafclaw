@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from decafclaw.config import Config
-from decafclaw.context import Context
+from decafclaw.context import Context, TaskMode
 from decafclaw.events import EventBus
 
 
@@ -129,7 +129,7 @@ def test_fork_for_tool_call_propagates_all_fields(ctx):
     ctx.skip_archive = True
     ctx.wiki_page = "[[Test]]"
     ctx.active_model = "test-model"
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
     ctx.request_confirmation = lambda req: None
     ctx.manager = object()  # stand-in for ConversationManager instance
     ctx.tools.extra = {"vault_read": lambda: None}
@@ -183,9 +183,9 @@ def test_fork_for_tool_call_propagates_task_mode(ctx):
     """Regression: task_mode must reach tool calls so newsletter_publish (and
     any other tool reading ``ctx.task_mode``) takes the scheduled-delivery
     path during scheduled runs instead of the interactive short-circuit."""
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
     forked = ctx.fork_for_tool_call("call_x")
-    assert forked.task_mode == "scheduled"
+    assert forked.task_mode is TaskMode.SCHEDULED
 
 
 def test_fork_for_tool_call_fresh_token_counters(ctx):

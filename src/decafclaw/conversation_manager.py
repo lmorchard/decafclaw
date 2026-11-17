@@ -30,6 +30,7 @@ from .confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
+from .context import TaskMode
 from .context_composer import InjectionCursors
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
@@ -147,13 +148,31 @@ TASK_KINDS = {
     TurnKind.WAKE,
 }
 
-# Default task_mode string for each task kind (can be overridden by caller).
+# Default TaskMode for each task kind (can be overridden by caller).
 KIND_TASK_MODE = {
-    TurnKind.HEARTBEAT_SECTION: "heartbeat",
-    TurnKind.SCHEDULED_TASK: "scheduled",
-    TurnKind.CHILD_AGENT: "child_agent",
-    TurnKind.WAKE: "background_wake",
+    TurnKind.HEARTBEAT_SECTION: TaskMode.HEARTBEAT,
+    TurnKind.SCHEDULED_TASK: TaskMode.SCHEDULED,
+    TurnKind.CHILD_AGENT: TaskMode.CHILD_AGENT,
+    TurnKind.WAKE: TaskMode.BACKGROUND_WAKE,
 }
+
+
+def parse_task_mode(value: str | None) -> TaskMode | None:
+    """Parse a free-form task_mode string from the inbox boundary.
+
+    The inbox JSONL is the only place a raw task_mode string exists;
+    everything inside the manager is a ``TaskMode`` member (#1381).
+    ``None`` stays ``None`` (the caller falls back to ``KIND_TASK_MODE``);
+    unknown values fall back to ``INTERACTIVE``, which every check treats as
+    attended — mirroring ``get_kind``'s fallback to USER.
+    """
+    if value is None:
+        return None
+    for mode in TaskMode:
+        if mode.value == value:
+            return mode
+    return TaskMode.INTERACTIVE
+
 
 # Task kinds whose conversations are one-shot — no prior archive history,
 # no per-conv state persistence. Distinct from WAKE, which fires on a
@@ -613,7 +632,7 @@ class ConversationManager:
         kind: TurnKind,
         prompt: str,
         history: list | None = None,
-        task_mode: str | None = None,
+        task_mode: TaskMode | None = None,
         context_setup: Callable | None = None,
         user_id: str = "",
         archive_text: str = "",
@@ -685,7 +704,9 @@ class ConversationManager:
                     "user_id": user_id,
                     "archive_text": archive_text,
                     "wiki_page": wiki_page,
-                    "task_mode": task_mode,
+                    # Wire boundary: the inbox JSONL stores the raw string;
+                    # parse_task_mode turns it back into a member on drain.
+                    "task_mode": task_mode.value if task_mode is not None else None,
                     "metadata": metadata,
                     "attachments": attachments,
                     "timestamp": now_iso,
@@ -1869,7 +1890,7 @@ class ConversationManager:
         attachments: list[dict] | None = None,
         command_ctx: Any = None,
         wiki_page: str | None = None,
-        task_mode: str | None = None,
+        task_mode: TaskMode | None = None,
         history: list | None = None,
         metadata: dict | None = None,
         future: asyncio.Future | None = None,
@@ -2036,15 +2057,13 @@ class ConversationManager:
                 )
                 log.warning(
                     "Confirmation requested on unattended turn (%s, action: %s); denying immediately",
-                    getattr(ctx, "task_mode", ""),
+                    ctx.task_mode.value,
                     action_name,
                 )
                 return ConfirmationResponse(
                     confirmation_id=request.confirmation_id,
                     approved=False,
-                    data={
-                        "reason": f"Interactive confirmation unavailable on unattended turn ({getattr(ctx, 'task_mode', '')})"
-                    },
+                    data={"reason": f"Interactive confirmation unavailable on unattended turn ({ctx.task_mode.value})"},
                 )
             return await self.request_confirmation(conv_id, request)
 
@@ -2489,7 +2508,7 @@ class ConversationManager:
                     attachments=inmem.get("attachments"),
                     command_ctx=inmem.get("command_ctx"),
                     wiki_page=q.get("wiki_page"),
-                    task_mode=q.get("task_mode"),
+                    task_mode=parse_task_mode(q.get("task_mode")),
                     history=inmem.get("history"),
                     metadata=q.get("metadata"),
                     future=inmem.get("future"),

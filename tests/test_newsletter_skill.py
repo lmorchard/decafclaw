@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from decafclaw.context import TaskMode
 from decafclaw.media import ToolResult
 from decafclaw.skills.newsletter.tools import (
     SkillConfig,
@@ -353,8 +354,8 @@ async def test_list_vault_changes_returns_tool_result(ctx, tmp_path):
 
 @pytest.mark.asyncio
 async def test_publish_interactive_returns_markdown(ctx, tmp_path):
-    # task_mode empty string = interactive / !newsletter
-    ctx.task_mode = ""
+    # TaskMode.INTERACTIVE = interactive / !newsletter
+    ctx.task_mode = TaskMode.INTERACTIVE
 
     result = await newsletter_publish(ctx, markdown="# hello\n\nbody")
     assert isinstance(result, ToolResult)
@@ -370,7 +371,7 @@ async def test_publish_interactive_force_delivery_runs_full_path(ctx, tmp_path):
     """`!newsletter send` smoke-test: interactive ctx + force_delivery=True
     bypasses the short-circuit and runs the same archive + delivery path
     as a scheduled run."""
-    ctx.task_mode = ""  # interactive
+    ctx.task_mode = TaskMode.INTERACTIVE  # interactive
 
     from decafclaw.skills.newsletter import tools as m
 
@@ -400,7 +401,7 @@ async def test_publish_interactive_force_delivery_runs_full_path(ctx, tmp_path):
 
 @pytest.mark.asyncio
 async def test_publish_scheduled_writes_archive_and_advances_state(ctx, tmp_path):
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     # No email, no vault target — just verify archive + last_run
     from decafclaw.skills.newsletter import tools as m
@@ -425,7 +426,7 @@ async def test_publish_scheduled_writes_archive_and_advances_state(ctx, tmp_path
 
 @pytest.mark.asyncio
 async def test_publish_scheduled_empty_stub(ctx, tmp_path):
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     from decafclaw.skills.newsletter import tools as m
 
@@ -446,7 +447,7 @@ async def test_publish_scheduled_empty_stub(ctx, tmp_path):
 
 @pytest.mark.asyncio
 async def test_publish_scheduled_archive_suffix_on_conflict(ctx, tmp_path):
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
     from decafclaw.skills.newsletter import tools as m
 
     m._skill_config = SkillConfig(email_enabled=False, vault_page_enabled=False)
@@ -469,7 +470,7 @@ async def test_publish_scheduled_archive_suffix_on_conflict(ctx, tmp_path):
 
 @pytest.mark.asyncio
 async def test_publish_scheduled_email_delivery(ctx, tmp_path, monkeypatch):
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     from decafclaw.skills.newsletter import tools as m
 
@@ -500,7 +501,7 @@ async def test_publish_scheduled_email_delivery(ctx, tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_publish_scheduled_email_skipped_when_empty(ctx, tmp_path, monkeypatch):
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     from decafclaw.skills.newsletter import tools as m
 
@@ -531,7 +532,7 @@ async def test_publish_scheduled_vault_page_delivery(ctx, tmp_path):
     vault.mkdir()
     ctx.config.vault.vault_path = str(vault)
 
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     from decafclaw.skills.newsletter import tools as m
 
@@ -555,7 +556,7 @@ async def test_publish_scheduled_vault_page_conflict_suffix(ctx, tmp_path):
     vault = tmp_path / "vault"
     vault.mkdir()
     ctx.config.vault.vault_path = str(vault)
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
     from decafclaw.skills.newsletter import tools as m
 
     m._skill_config = SkillConfig(
@@ -582,7 +583,7 @@ async def test_publish_target_failure_isolation(ctx, tmp_path, monkeypatch):
     vault = tmp_path / "vault"
     vault.mkdir()
     ctx.config.vault.vault_path = str(vault)
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     from decafclaw.skills.newsletter import tools as m
 
@@ -625,7 +626,7 @@ async def test_end_to_end_scheduled_publish(ctx, tmp_path, monkeypatch):
     vault = tmp_path / "e2e_vault"
     vault.mkdir()
     ctx.config.vault.vault_path = str(vault)
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     # Seed: one scheduled-task conversation and one recent vault page
     now = datetime.now(timezone.utc)
@@ -921,7 +922,7 @@ async def test_publish_vault_folder_traversal_blocked(ctx, tmp_path):
     vault.mkdir()
     escape_target = tmp_path / "escape"
     ctx.config.vault.vault_path = str(vault)
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     from decafclaw.skills.newsletter import tools as m
 
@@ -946,7 +947,7 @@ async def test_publish_vault_folder_absolute_blocked(ctx, tmp_path):
     vault = tmp_path / "vault"
     vault.mkdir()
     ctx.config.vault.vault_path = str(vault)
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     from decafclaw.skills.newsletter import tools as m
 
@@ -1037,7 +1038,7 @@ async def test_publish_scheduled_sends_html_body(ctx, tmp_path, monkeypatch):
     page_file.parent.mkdir(parents=True)
     page_file.write_text("---\nurl: https://example.com/note\n---\nNote content", encoding="utf-8")
 
-    ctx.task_mode = "scheduled"
+    ctx.task_mode = TaskMode.SCHEDULED
 
     from decafclaw.skills.newsletter import tools as m
 

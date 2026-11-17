@@ -179,9 +179,13 @@ The composer is mode-aware via `ComposerMode`:
 | Mode | Memory | Wiki | Vault guide | Tools | Use case |
 |------|--------|------|-------------|-------|----------|
 | `INTERACTIVE` | Yes | Yes | Yes | Full | Mattermost, web UI |
-| `HEARTBEAT` | No | No | No | Full | Periodic heartbeat (set via `ctx.task_mode="heartbeat"`) |
-| `SCHEDULED` | No | No | No | Full | Scheduled tasks (set via `ctx.task_mode="scheduled"`) |
+| `HEARTBEAT` | No | No | No | Full | Periodic heartbeat (set via `TaskMode.HEARTBEAT`) |
+| `SCHEDULED` | No | No | No | Full | Scheduled tasks (set via `TaskMode.SCHEDULED`) |
 | `CHILD_AGENT` | No | No | No | Full | `delegate_task` sub-agents (set via `ctx.is_child`) |
+
+`TaskMode` (`context.py`) is the internal enum for `ctx.task_mode`; the inbox
+JSONL is the only boundary that stores its wire string, parsed back by
+`conversation_manager.parse_task_mode()`.
 
 `skip_vault_retrieval` on the context is an independent flag — it skips vault retrieval without affecting vault references or the composer mode.
 

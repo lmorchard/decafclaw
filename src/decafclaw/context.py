@@ -5,13 +5,31 @@ from __future__ import annotations
 import asyncio
 import copy
 from dataclasses import dataclass, field, replace
-from enum import Enum, auto
+from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
 
 from .context_composer import ComposerState
 from .events import TurnLifecycle
 from .llm import call_llm, call_llm_streaming
+
+
+class TaskMode(Enum):
+    """Runtime classification of a turn for unattended/interactive behavior.
+
+    Distinct from ``TurnKind`` (the *origin* of a turn): USER and WORKFLOW
+    turns are ``INTERACTIVE``; each task kind maps to its mode via
+    ``KIND_TASK_MODE`` (conversation_manager.py). The values are the wire
+    strings used at transport boundaries (inbox JSONL) — internally, always
+    use members. Free-form strings are only parsed at the boundary (see
+    ``conversation_manager.parse_task_mode``). See #1381.
+    """
+
+    INTERACTIVE = ""  # attended user / workflow turns
+    HEARTBEAT = "heartbeat"
+    SCHEDULED = "scheduled"
+    CHILD_AGENT = "child_agent"
+    BACKGROUND_WAKE = "background_wake"
 
 
 @dataclass
@@ -214,12 +232,13 @@ class Context:
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.active_model: str = ""  # named model config from config.model_configs
         self.active_mode: str = "default"  # active session mode (e.g. default, dev, research, admin)
-        # From KIND_TASK_MODE (conversation_manager.py): "heartbeat" |
-        # "scheduled" | "child_agent" | "background_wake", or "" for an
-        # interactive user turn. Keep this list complete — `is_unattended` below
-        # reads it as an authorization input, so a stale enumeration invites the
-        # misclassification bug that `task_mode != ""` would be (see #685).
-        self.task_mode: str = ""
+        # From KIND_TASK_MODE (conversation_manager.py): one of the TaskMode
+        # members, or INTERACTIVE for an attended user/workflow turn. Keep
+        # UNATTENDED_TASK_MODES below complete — `is_unattended` reads it as an
+        # authorization input, so a stale enumeration invites the
+        # misclassification bug that `task_mode is not INTERACTIVE` would be
+        # (see #685).
+        self.task_mode: TaskMode = TaskMode.INTERACTIVE
         self.request_confirmation: Any = None  # set by ConversationManager
         self.confirmation_active: asyncio.Event = asyncio.Event()
         self.manager: Any = None  # set by ConversationManager
@@ -271,9 +290,9 @@ class Context:
     # Turn kinds where no human can answer a confirmation prompt: it is emitted
     # only to subscribers of an ephemeral conv_id, so it would block for confirmation
     # timeout (or indefinitely) and is then synthesized into a denial. Deliberately NOT
-    # `task_mode != ""` — child_agent inherits the parent's request_confirmation,
-    # so a child of an interactive turn does have someone who can answer.
-    UNATTENDED_TASK_MODES = frozenset({"heartbeat", "scheduled", "background_wake"})
+    # `task_mode is not TaskMode.INTERACTIVE` — child_agent inherits the parent's
+    # request_confirmation, so a child of an interactive turn does have someone who can answer.
+    UNATTENDED_TASK_MODES = frozenset({TaskMode.HEARTBEAT, TaskMode.SCHEDULED, TaskMode.BACKGROUND_WAKE})
 
     @property
     def is_unattended(self) -> bool:
@@ -292,7 +311,7 @@ class Context:
         channel_name: str = "",
         active_model: str = "",
         active_mode: str = "default",
-        task_mode: str = "",
+        task_mode: TaskMode = TaskMode.INTERACTIVE,
         skip_reflection: bool = True,
         skip_vault_retrieval: bool = True,
         skip_archive: bool = False,
@@ -306,8 +325,8 @@ class Context:
         Provides sensible defaults for non-interactive work: reflection and
         memory context are skipped by default.
 
-        ``task_mode`` should be ``"heartbeat"`` or ``"scheduled"`` so that
-        ``run_agent_turn`` can select the matching ``ComposerMode``.
+        ``task_mode`` should be ``TaskMode.HEARTBEAT`` or ``TaskMode.SCHEDULED``
+        so that ``run_agent_turn`` can select the matching ``ComposerMode``.
         """
         ctx = cls(config=config, event_bus=event_bus)
         ctx.user_id = user_id
