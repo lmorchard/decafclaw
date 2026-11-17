@@ -1,4 +1,9 @@
 import { MESSAGE_TYPES } from './message-types.js';
+import {
+  CHILD_ID_SEPARATOR,
+  isSideEffectCommand,
+  SIDE_EFFECT_COMMANDS,
+} from './constants.js';
 
 import { ApiError, DefaultService } from './api-client/index.js';
 
@@ -65,7 +70,7 @@ import { WebSocketClient } from './websocket-client.js';
  */
 export function parentConvIdOf(convId) {
   const id = String(convId || '');
-  const idx = id.indexOf('--child-');
+  const idx = id.indexOf(CHILD_ID_SEPARATOR);
   return idx > 0 ? id.slice(0, idx) : '';
 }
 
@@ -501,7 +506,7 @@ export class ConversationStore extends EventTarget {
    */
   retitleConversation(convId) {
     if (!convId) return;
-    this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: convId, text: '/retitle' });
+    this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: convId, text: SIDE_EFFECT_COMMANDS.RETITLE });
   }
 
   /**
@@ -689,20 +694,14 @@ export class ConversationStore extends EventTarget {
     // but not promptable. The server refuses sends to child conversations
     // too; this keeps the optimistic local echo from lying about it.
     if (parentConvIdOf(this.#currentConvId)) return;
-    // `/terminal`, `/retitle`, and `/update` are human-only side-effect commands (#442, #1156, #981):
-    // they run NO agent turn, so they must not engage the conversation's busy/turn
-    // machinery. Sending them like a normal message would set `#busy` with nothing
-    // to clear it (the server sends no MESSAGE_COMPLETE for them) — a perpetual
-    // spinner. Fire them off without the busy flag or an optimistic user echo.
-    // Mirrors the server-side guards in _handle_send.
-    const trimmed = text.trim();
-    if (
-      trimmed === '/terminal' || trimmed.startsWith('/terminal ') ||
-      trimmed === '/retitle' || trimmed.startsWith('/retitle ') ||
-      trimmed === '!retitle' || trimmed.startsWith('!retitle ') ||
-      trimmed === '/update' || trimmed.startsWith('/update ') ||
-      trimmed === '!update' || trimmed.startsWith('!update ')
-    ) {
+    // Side-effect commands (terminal, retitle, update — #442, #1156, #981) are
+    // human-only: they run NO agent turn, so they must not engage the
+    // conversation's busy/turn machinery. Sending them like a normal message
+    // would set `#busy` with nothing to clear it (the server sends no
+    // MESSAGE_COMPLETE for them) — a perpetual spinner. Fire them off without
+    // the busy flag or an optimistic user echo. Mirrors the server-side guards
+    // in _handle_send.
+    if (isSideEffectCommand(text)) {
       this.#ws.send({ type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text });
       return;
     }

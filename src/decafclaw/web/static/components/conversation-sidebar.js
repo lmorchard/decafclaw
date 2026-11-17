@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { parentConvIdOf } from '../lib/conversation-store.js';
+import { STATUS_LABELS, STATUS_TITLE_LABELS } from '../lib/constants.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 import { showToast } from '../lib/toast.js';
 import './context-inspector.js';
@@ -686,7 +687,7 @@ export class ConversationSidebar extends LitElement {
 
     let titleSuffix = opts.titleSuffix || '';
     if (status && status !== 'idle') {
-      const statusLabel = status === 'busy' ? 'busy' : status === 'waiting' ? 'waiting for answer' : status === 'finished' ? 'finished' : status;
+      const statusLabel = STATUS_TITLE_LABELS[status] || status;
       titleSuffix = titleSuffix ? `${titleSuffix}, ${statusLabel}` : statusLabel;
     }
     const titleAttr = titleSuffix ? `${conv.title} (${titleSuffix})` : conv.title;
@@ -918,11 +919,7 @@ export class ConversationSidebar extends LitElement {
    */
   #subagentBadgeText(convId) {
     const status = this.store?.getConversationStatus?.(convId) || 'idle';
-    if (status === 'busy') return 'Running';
-    if (status === 'waiting') return 'Waiting';
-    if (status === 'finished') return 'Done';
-    if (status === 'idle') return 'Idle';
-    return status || 'Idle';
+    return STATUS_LABELS[status] || status || STATUS_LABELS.idle;
   }
 
   /**

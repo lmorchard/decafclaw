@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { subscribe as subscribeCanvas, resummon } from '../lib/canvas-state.js';
+import { SIDE_EFFECT_COMMANDS } from '../lib/constants.js';
 import './model-picker.js';
 
 /** @typedef {{ name: string, description?: string }} ModeConfig */
@@ -117,7 +118,7 @@ export class ChatControls extends LitElement {
     const store = this.store;
     const convId = store?.currentConvId || '';
     if (!convId) return;
-    store?.sendMessage?.('/terminal');
+    store?.sendMessage?.(SIDE_EFFECT_COMMANDS.TERMINAL);
   }
 
   #handleSideQuestion() {

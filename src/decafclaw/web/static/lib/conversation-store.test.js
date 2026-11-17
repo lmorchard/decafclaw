@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ConversationStore } from './conversation-store.js';
+import { ConversationStore, parentConvIdOf } from './conversation-store.js';
+import { CHILD_ID_SEPARATOR, SIDE_EFFECT_COMMANDS } from './constants.js';
 import { MESSAGE_TYPES } from './message-types.js';
 // The wire-type manifest, not the generated JS constants: the manifest is the
 // only place `direction` is recorded, and reading it directly means a renamed
@@ -678,6 +679,30 @@ describe('conversation activity status tracking', () => {
     store.sendMessage('/update confirm');
     const send = ws.sent.find((m) => m.type === MESSAGE_TYPES.SEND);
     expect(send).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'c1', text: '/update confirm' });
+  });
+
+  // The guard is built from SIDE_EFFECT_COMMANDS, so every entry — including
+  // any added later — must take the side-effect path, with or without
+  // arguments. A hardcoded branch would silently start spinning.
+  it('treats every SIDE_EFFECT_COMMANDS entry as a side effect', () => {
+    store.selectConversation('c1');
+    for (const [name, command] of Object.entries(SIDE_EFFECT_COMMANDS)) {
+      for (const text of [command, `${command} some argument`]) {
+        ws.sent.length = 0;
+        store.sendMessage(text);
+        expect(store.getConversationStatus('c1'), `${name}: ${text}`).toBe('idle');
+        expect(store.currentMessages, `${name}: ${text}`).toHaveLength(0);
+        expect(ws.sent, `${name}: ${text}`).toEqual([
+          { type: MESSAGE_TYPES.SEND, conv_id: 'c1', text },
+        ]);
+      }
+    }
+  });
+
+  it('derives parent ids with CHILD_ID_SEPARATOR', () => {
+    const root = 'web-alice-1a2b3c4d';
+    expect(parentConvIdOf(`${root}${CHILD_ID_SEPARATOR}abcdef12`)).toBe(root);
+    expect(parentConvIdOf(root)).toBe('');
   });
   it('does not overwrite newer websocket transition with delayed REST response', async () => {
     let resolveRest;
