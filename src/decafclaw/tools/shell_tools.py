@@ -543,14 +543,19 @@ async def check_shell_approval(
     Returns {"approved": True} if auto-approved, or the user's confirmation result.
     """
     # Show the working directory only when it differs from the workspace root:
-    # the same command text means something different in a subproject.
+    # the same command text means something different in a subproject. It rides
+    # in the message for transports that show it, and in action_data so the web
+    # and Mattermost confirm cards can render it next to the command.
     cwd_note = ""
+    cwd_action: dict = {}
     if cwd:
         try:
-            if Path(cwd).resolve() != ctx.config.workspace_path.resolve():
-                cwd_note = f"\nWorking directory: `{cwd}`"
+            differs = Path(cwd).resolve() != ctx.config.workspace_path.resolve()
         except OSError:
+            differs = True
+        if differs:
             cwd_note = f"\nWorking directory: `{cwd}`"
+            cwd_action = {"action_data": {"cwd": cwd}}
 
     # 1. Tier 1 fast path: Immediately block catastrophically dangerous commands
     tier1 = evaluate_command(
@@ -609,6 +614,7 @@ async def check_shell_approval(
             command=command,
             message=message or ask_message,
             suggested_pattern=suggested_pattern,
+            **cwd_action,
         )
         if result.get("add_pattern"):
             _save_allow_pattern(ctx.config, suggested_pattern)
@@ -723,6 +729,7 @@ async def check_shell_approval(
         suggested_pattern=suggested_pattern,
         decline_reason=decline_reason,
         suggested_rule=suggested_rule,
+        **cwd_action,
     )
     if result.get("approved") and result.get("add_pattern"):
         _save_allow_pattern(ctx.config, suggested_pattern)

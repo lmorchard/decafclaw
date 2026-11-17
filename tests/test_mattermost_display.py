@@ -31,6 +31,25 @@ def make_display(client, initial_post_id=None):
 
 
 @pytest.mark.asyncio
+async def test_confirm_request_shows_working_directory():
+    """A shell confirmation carries the effective cwd so the approver sees where it runs."""
+    client = make_mock_client()
+    display = make_display(client)
+
+    await display.on_confirm_request(
+        "shell",
+        "pytest tests",
+        "",
+        AsyncMock(),
+        "",
+        cwd="/ws/worktrees/issue-1",
+    )
+
+    msg = client.send.call_args.args[1]
+    assert "**Working directory:** `/ws/worktrees/issue-1`" in msg
+
+
+@pytest.mark.asyncio
 async def test_on_llm_start_edits_placeholder():
     """When initial_post_id is set, first on_llm_start keeps it as thinking placeholder."""
     client = make_mock_client()

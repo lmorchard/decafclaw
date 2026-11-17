@@ -202,6 +202,11 @@ export class ConfirmView extends LitElement {
               })()}
             </div>
             <pre class="confirm-command">${c.command}</pre>
+            ${c.action_data?.cwd ? html`
+              <div class="confirm-cwd">
+                Working directory: <code>${c.action_data.cwd}</code>
+              </div>
+            ` : ''}
             ${c.decline_reason ? html`
               <div class="confirm-decline-reason">
                 <span class="confirm-decline-label">Declined:</span> ${c.decline_reason}

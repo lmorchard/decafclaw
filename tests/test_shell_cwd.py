@@ -167,6 +167,42 @@ async def test_handoff_path_uses_cwd(ctx):
 # -- approval context -----------------------------------------------------------
 
 
+@pytest.mark.asyncio
+async def test_subdirectory_cwd_reaches_confirmation_card(ctx):
+    ws = _workspace(ctx)
+    sub = ws / "sub"
+    sub.mkdir()
+    ctx.config.shell.aux_approval_enabled = False
+
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+        return_value={"approved": False},
+    ) as mock_confirm:
+        await tool_shell(ctx, "pytest tests", cwd="sub")
+
+    kwargs = mock_confirm.await_args.kwargs
+    assert kwargs["action_data"] == {"cwd": str(sub.resolve())}
+    assert "Working directory" in kwargs["message"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_cwd_adds_no_confirmation_noise(ctx):
+    _workspace(ctx)
+    ctx.config.shell.aux_approval_enabled = False
+
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+        return_value={"approved": False},
+    ) as mock_confirm:
+        await tool_shell(ctx, "pytest tests")
+
+    kwargs = mock_confirm.await_args.kwargs
+    assert "action_data" not in kwargs
+    assert "Working directory" not in kwargs["message"]
+
+
 def test_aux_prompt_shows_effective_cwd(ctx):
     ws = _workspace(ctx)
     sub = ws / "sub"

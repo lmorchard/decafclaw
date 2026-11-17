@@ -65,6 +65,13 @@
   max-width: 100%;
 }
 
+.confirm-cwd {
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  word-break: break-all;
+}
+
 .confirm-decline-reason {
   margin-top: 0.5rem;
   padding: 0.35rem 0.5rem;
