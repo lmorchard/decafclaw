@@ -8,6 +8,7 @@ import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
 import { MESSAGE_TYPES, KNOWN_MESSAGE_TYPES } from './lib/message-types.js';
+import { SIDE_EFFECT_COMMANDS } from './lib/constants.js';
 import { load as loadBookmarks } from './lib/bookmarks-store.js';
 import { setupResizeHandle } from './lib/utils.js';
 import { shouldFocusChatInput } from './lib/chat-focus.js';
@@ -138,7 +139,7 @@ document.addEventListener('conversation-action', (e) => {
   if (action === 'canvas') {
     resummon();
   } else if (action === 'terminal') {
-    store.sendMessage?.('/terminal');
+    store.sendMessage?.(SIDE_EFFECT_COMMANDS.TERMINAL);
   }
 });
 
