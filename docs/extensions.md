@@ -24,9 +24,11 @@ register_extension_type("mem0", Mem0Extension)
 
 A factory has the shape `Callable[[dict[str, Any], Config], Extension]` — it receives the entry's `options` dict and the whole `Config`, and returns an extension instance. Registering an existing type name replaces it and logs a warning.
 
-Registry helpers: `register_extension_type(name, factory)`, `get_extension_type(name)`, `list_extension_types()`, and `clear_extension_types()` (test isolation).
+Registry helpers: `register_extension_type(name, factory, *, default_enabled=False)`, `get_extension_type(name)`, `get_extension_type_meta(name)`, `get_default_enabled_extension_types()`, `list_extension_types()`, and `clear_extension_types()` (test isolation).
 
-Built-in modules register themselves at import time. `init_extensions` imports the built-in modules (`diagnostics_and_telemetry`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), and re-registers them if a caller cleared the registry.
+`default_enabled=True` marks a core type that `load_config` seeds when `config.json` defines no entry for it. The flag lives in the `ExtensionTypeMeta` record (`get_extension_type_meta`) and is replaced along with the factory on re-registration, so a test or embedder that swaps a type also chooses its default.
+
+Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`diagnostics_and_telemetry`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
 
 ## Loading
 
@@ -38,6 +40,18 @@ Built-in modules register themselves at import time. `init_extensions` imports t
 4. Calls `factory(ext_cfg.options, config)`, then `manager.register(name, ext)` and `manager.enable(name)`.
 
 Startup is fail-open: an unknown type, a factory exception, or an enable exception is logged with the extension name and skipped; the manager stays usable. Integration and malformed-config behavior: `tests/test_extensions_registry.py`.
+
+## Default-enabled extensions and options precedence
+
+A type registered with `default_enabled=True` needs no `config.json` entry: `load_config` seeds `{"type": <name>, "enabled": true, "options": {}}` after user-configured entries. An explicit entry naming the same type — under its own key or as an alias via `type:` — suppresses the seed, so `"enabled": false` yanks a default-on extension and the entry stays visible in `config show extensions`.
+
+When a core extension is extracted from a top-level config section, it reads its settings in this order:
+
+1. `extensions.<name>.options.<param>`;
+2. the legacy top-level `config.<section>.<param>` field (kept for compatibility);
+3. the extension's own default.
+
+Extensions implement step 2 themselves, because options are passed to the factory verbatim and core applies no env-var or legacy-field overrides to them.
 
 ## Secret options
 
@@ -59,10 +73,7 @@ subscribes two hooks and keeps no configuration options:
 
 Every failure — model resolution, snapshot copy, file write, metric record —
 logs a warning and is swallowed, so diagnostics cannot fail or delay a turn.
-`load_config` adds an enabled `extensions.diagnostics_and_telemetry` entry when
-`config.json` does not define one; an explicit entry wins, so
-`"enabled": false` cleanly suppresses the sidecar writes and token counters.
-The REST readers in `context_composer.py` stay available for existing files.
+`diagnostics_and_telemetry` is registered with `default_enabled=True`, so `load_config` seeds an enabled `extensions.diagnostics_and_telemetry` entry when `config.json` does not define one; an explicit entry wins, so `"enabled": false` cleanly suppresses the sidecar writes and token counters. The REST readers in `context_composer.py` stay available for existing files.
 
 ## Reference extension: mem0
 
