@@ -23,14 +23,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
-    from .context_composer import ComposedContext
+    from .context_types import ComposedContext
     from .reflection import ReflectionResult
 
 from .archive import append_message
 from .config_types import LoopBreakerConfig
 from .context import TaskMode, TurnLifecycle
 from .context_cleanup import clear_old_tool_results
-from .context_composer import ComposerMode, ContextComposer
+from .context_composer import ContextComposer
+from .context_types import ComposerMode
 from .conversation_paths import approval_state_path
 from .iteration_budget import IterationBudget
 from .llm import call_llm
@@ -1736,7 +1737,7 @@ class TurnRunner:
 
         if self.composed is not None and self.composer is not None and conv_id:
             try:
-                from .context_composer import write_context_sidecar
+                from .context_sidecars import write_context_sidecar
 
                 diagnostics = self.composer.build_diagnostics(self.config, self.composed, ctx=self.ctx)
                 write_context_sidecar(self.config, conv_id, diagnostics)

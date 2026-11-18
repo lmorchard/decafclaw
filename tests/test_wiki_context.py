@@ -138,7 +138,8 @@ def test_already_retrieved_paths_ignores_other_roles():
 
 def test_compose_wiki_context_injects(ctx):
     """Wiki context messages are produced for @[[PageName]] references."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
@@ -161,7 +162,8 @@ def test_compose_wiki_context_injects(ctx):
 
 def test_compose_wiki_context_skips_already_injected(ctx):
     """Pages already in history are not re-injected."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
@@ -187,7 +189,8 @@ def test_compose_wiki_context_skips_already_injected(ctx):
 
 def test_compose_wiki_context_injects_open_page(ctx):
     """Open wiki page from ctx.wiki_page is injected."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
@@ -208,7 +211,8 @@ def test_compose_wiki_context_injects_open_page(ctx):
 
 def test_compose_wiki_context_missing_page(ctx):
     """Missing @[[PageName]] produces error note."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
@@ -228,7 +232,8 @@ def test_compose_wiki_context_missing_page(ctx):
 def test_compose_wiki_context_allows_explicit_reference_after_headline_retrieval(ctx):
     """#1157: an explicit @[[Page]] reference must not be suppressed by an earlier
     proactive vault_retrieval (e.g. headlines mode), even if the path matches."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     pages_dir = vault_dir / "pages"

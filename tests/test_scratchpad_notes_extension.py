@@ -8,7 +8,8 @@ from unittest.mock import patch
 import pytest
 
 from decafclaw.config_types import ExtensionConfig
-from decafclaw.context_composer import ComposerMode, ContextComposer
+from decafclaw.context_composer import ContextComposer
+from decafclaw.context_types import ComposerMode
 from decafclaw.events import EventBus, TurnLifecycle
 from decafclaw.extensions import init_extensions
 from decafclaw.extensions.scratchpad_notes import ScratchpadNotesExtension

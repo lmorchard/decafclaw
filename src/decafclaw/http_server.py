@@ -1473,7 +1473,7 @@ class ContextRawResponse(BaseModel):
 
 async def get_context_diagnostics(request: Request, id: str) -> JSONResponse:
     """Return context composer diagnostics for a conversation."""
-    from .context_composer import read_context_sidecar
+    from .context_sidecars import read_context_sidecar
     from .web.conversations import ConversationIndex, can_read_conversation
 
     username = _get_username_or_401(request)
@@ -1492,7 +1492,7 @@ async def get_context_diagnostics(request: Request, id: str) -> JSONResponse:
 
 async def get_context_raw(request: Request, id: str) -> JSONResponse:
     """Return raw last request payload for a conversation."""
-    from .context_composer import read_last_request_sidecar
+    from .context_sidecars import read_last_request_sidecar
     from .web.conversations import ConversationIndex, can_read_conversation
 
     username = _get_username_or_401(request)

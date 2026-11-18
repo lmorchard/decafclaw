@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 from decafclaw.events import EventBus
 
 if TYPE_CHECKING:
-    from decafclaw.context_composer import SourceEntry
+    from decafclaw.context_types import SourceEntry
 
 log = logging.getLogger(__name__)
 

@@ -4,11 +4,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from decafclaw.context_composer import (
-    ComposerMode,
-    ContextComposer,
-    _reorder_tool_results,
-)
+from decafclaw.context_composer import ContextComposer
+from decafclaw.context_messages import _reorder_tool_results
+from decafclaw.context_types import ComposerMode
 
 # -- Unit tests for _reorder_tool_results ------------------------------------
 

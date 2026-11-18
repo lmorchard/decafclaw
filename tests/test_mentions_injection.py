@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from decafclaw.context_composer import ComposerMode, ContextComposer
+from decafclaw.context_composer import ContextComposer
+from decafclaw.context_types import ComposerMode
 from decafclaw.mcp_client import ConnState
 from decafclaw.memory_context import parse_bare_mentions
 

@@ -20,7 +20,7 @@ import json
 import logging
 from dataclasses import dataclass
 
-from .context_composer import ComposerMode
+from .context_types import ComposerMode
 
 log = logging.getLogger(__name__)
 

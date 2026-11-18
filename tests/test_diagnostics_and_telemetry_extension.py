@@ -8,7 +8,8 @@ import pytest
 
 from decafclaw.config import load_config
 from decafclaw.config_types import ExtensionConfig
-from decafclaw.context_composer import SourceEntry, read_last_request_sidecar
+from decafclaw.context_sidecars import read_last_request_sidecar
+from decafclaw.context_types import SourceEntry
 from decafclaw.events import EventBus, TurnLifecycle
 from decafclaw.extensions import clear_extension_types, init_extensions
 from decafclaw.extensions.diagnostics_and_telemetry import DiagnosticsAndTelemetryExtension

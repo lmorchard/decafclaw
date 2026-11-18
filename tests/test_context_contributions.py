@@ -8,7 +8,8 @@ import asyncio
 
 import pytest
 
-from decafclaw.context_composer import ContextComposer, SourceEntry
+from decafclaw.context_composer import ContextComposer
+from decafclaw.context_types import SourceEntry
 from decafclaw.events import TurnLifecycle
 from decafclaw.extensions import ContextContribution, ContextSlot
 

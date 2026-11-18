@@ -145,7 +145,7 @@ class VaultRetrievalExtension(BaseExtension):
         config = getattr(ctx, "config", None) or self.config
         self._clear_turn_state(ctx)
 
-        from decafclaw.context_composer import ComposerMode
+        from decafclaw.context_types import ComposerMode
 
         mode = getattr(getattr(ctx, "composer", None), "mode", ComposerMode.INTERACTIVE)
         if getattr(ctx, "skip_vault_retrieval", False) or mode is not ComposerMode.INTERACTIVE:
@@ -322,7 +322,7 @@ class VaultRetrievalExtension(BaseExtension):
 
     @staticmethod
     def _source_entry(*, tokens: int, included: int, truncated: int, details: dict) -> Any:
-        from decafclaw.context_composer import SourceEntry
+        from decafclaw.context_types import SourceEntry
 
         return SourceEntry(
             source="memory",

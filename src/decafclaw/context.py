@@ -9,7 +9,7 @@ from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
 
-from .context_composer import ComposerState
+from .context_types import ComposerState
 from .events import TurnLifecycle
 from .llm import call_llm, call_llm_streaming
 

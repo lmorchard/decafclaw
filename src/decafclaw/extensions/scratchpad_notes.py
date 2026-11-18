@@ -37,7 +37,7 @@ def _notes_enabled(config: Any) -> bool:
 
 def _is_interactive(ctx: Any) -> bool:
     """Only interactive turns surface scratchpad notes (#299)."""
-    from decafclaw.context_composer import ComposerMode
+    from decafclaw.context_types import ComposerMode
 
     mode = getattr(getattr(ctx, "composer", None), "mode", None)
     if mode is None:
@@ -87,7 +87,7 @@ class ScratchpadNotesExtension(BaseExtension):
         if not items:
             return None
 
-        from decafclaw.context_composer import SourceEntry, select_unseen_items
+        from decafclaw.context_types import SourceEntry, select_unseen_items
 
         cursors = ctx.composer.injection_cursors
         new_items, notes_ts, notes_boundary = select_unseen_items(items, cursors.notes_ts, cursors.notes_boundary)

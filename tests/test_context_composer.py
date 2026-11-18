@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.config_types import RetrievalMode
-from decafclaw.context_composer import (
+from decafclaw.context_composer import ContextComposer
+from decafclaw.context_messages import _expand_background_event
+from decafclaw.context_types import (
     ComposedContext,
     ComposerMode,
     ComposerState,
-    ContextComposer,
     InjectionCursors,
     SourceEntry,
-    _expand_background_event,
 )
 from decafclaw.util import estimate_tokens
 
@@ -1760,7 +1760,7 @@ class TestBuildDiagnostics:
 
 class TestContextSidecar:
     def test_write_and_read(self, config):
-        from decafclaw.context_composer import read_context_sidecar, write_context_sidecar
+        from decafclaw.context_sidecars import read_context_sidecar, write_context_sidecar
 
         data = {"timestamp": "2026-04-02T12:00:00", "sources": [], "total_tokens_estimated": 100}
         write_context_sidecar(config, "test-conv", data)
@@ -1769,13 +1769,13 @@ class TestContextSidecar:
         assert result["total_tokens_estimated"] == 100
 
     def test_read_missing_returns_none(self, config):
-        from decafclaw.context_composer import read_context_sidecar
+        from decafclaw.context_sidecars import read_context_sidecar
 
         result = read_context_sidecar(config, "nonexistent-conv")
         assert result is None
 
     def test_write_fail_open(self, config):
-        from decafclaw.context_composer import write_context_sidecar
+        from decafclaw.context_sidecars import write_context_sidecar
 
         # Should not raise even with bad data
         with patch("decafclaw.context_composer.Path.write_text", side_effect=OSError("fail")):
@@ -2436,7 +2436,7 @@ class TestComposeRecentJournalIntegration:
 
 class TestLastRequestSidecar:
     def test_read_missing_returns_none(self, config):
-        from decafclaw.context_composer import read_last_request_sidecar
+        from decafclaw.context_sidecars import read_last_request_sidecar
 
         assert read_last_request_sidecar(config, "nonexistent-conv") is None
         assert read_last_request_sidecar(config, "") is None

@@ -31,7 +31,7 @@ from .confirmations import (
     ConfirmationResponse,
 )
 from .context import TaskMode
-from .context_composer import InjectionCursors
+from .context_types import InjectionCursors
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
 from .llm import call_llm_streaming
