@@ -1637,16 +1637,22 @@ class ConversationManager:
     ) -> None:
         payload = _confirmation_request_payload(request)
         await self.emit(conv_id, payload)
+        # Also publish on the global bus so out-of-band channels (e.g. the
+        # ntfy push adapter, #1494) can reach the user even when a
+        # per-conversation subscriber (web UI) is attached. Mattermost's
+        # wake-delivery subscriber only acts on ``transport ==
+        # "mattermost"``, so the extras below stay limited to the no-
+        # subscriber fallback it already handled.
+        bus_payload: dict[str, Any] = {**payload, "conv_id": conv_id}
         if not state.subscribers and getattr(state, "last_transport", "") == "mattermost":
-            await self.event_bus.publish(
+            bus_payload.update(
                 {
-                    **payload,
-                    "conv_id": conv_id,
                     "channel_id": getattr(state, "last_channel_id", ""),
                     "thread_id": getattr(state, "last_thread_id", ""),
                     "transport": "mattermost",
                 }
             )
+        await self.event_bus.publish(bus_payload)
 
     async def request_confirmation(
         self,

@@ -77,6 +77,10 @@ class TestDefaults:
         assert c.notifications.channels.email.enabled is False
         assert c.notifications.channels.email.recipient_addresses == []
         assert c.notifications.channels.email.min_priority == "high"
+        # Ntfy push channel — opt-in, no topic means the adapter is not wired.
+        assert c.notifications.channels.ntfy.enabled is False
+        assert c.notifications.channels.ntfy.topic == ""
+        assert c.notifications.channels.ntfy.notify_on_confirmation is True
         # Vault page channel — local audit trail, on by default (no
         # external delivery, no cost, useful out of the box).
         assert c.notifications.channels.vault_page.enabled is True
@@ -435,6 +439,39 @@ class TestJsonFileLoading:
         assert vp.enabled is True
         assert vp.min_priority == "normal"
         assert vp.folder == "agent/logs/notifications"
+
+    def test_loads_ntfy_channel_from_json(self, tmp_path, monkeypatch):
+        """NtfyChannelConfig loads via nested channels recursion."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        config_file = agent_dir / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "notifications": {
+                        "channels": {
+                            "ntfy": {
+                                "enabled": True,
+                                "server_url": "https://ntfy.example",
+                                "topic": "agent-alerts",
+                                "access_token": "tk_secret",
+                                "min_priority": "normal",
+                                "notify_on_confirmation": False,
+                            },
+                        },
+                    },
+                }
+            )
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        ntfy = c.notifications.channels.ntfy
+        assert ntfy.enabled is True
+        assert ntfy.server_url == "https://ntfy.example"
+        assert ntfy.topic == "agent-alerts"
+        assert ntfy.access_token == "tk_secret"
+        assert ntfy.min_priority == "normal"
+        assert ntfy.notify_on_confirmation is False
 
     def test_missing_file_uses_defaults(self, tmp_path, monkeypatch):
         """Missing config file gracefully falls back to defaults."""

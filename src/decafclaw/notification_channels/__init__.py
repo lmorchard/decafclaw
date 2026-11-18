@@ -85,6 +85,23 @@ def init_notification_channels(
             email_ch_cfg.min_priority,
         )
 
+    # NTFY push — guard on `enabled` + a usable publish endpoint
+    # (`server_url` http(s) and a non-empty topic). The adapter also
+    # pushes confirmation requests with Approve/Deny action buttons
+    # when the HTTP callback server is enabled.
+    ntfy_cfg = config.notifications.channels.ntfy
+    if ntfy_cfg.enabled and ntfy_cfg.topic.strip() and ntfy_cfg.server_url.strip().startswith(("http://", "https://")):
+        from .ntfy import make_ntfy_adapter
+
+        event_bus.subscribe(make_ntfy_adapter(config))
+        log.info(
+            "Notifications: ntfy adapter subscribed (server=%s, topic=%s, min_priority=%s, confirmations=%s)",
+            ntfy_cfg.server_url,
+            ntfy_cfg.topic,
+            ntfy_cfg.min_priority,
+            ntfy_cfg.notify_on_confirmation,
+        )
+
     # Vault page — pure local file writes; no transport dep to check.
     # `enabled` is the single user-visible switch; folder validation
     # happens at use time in `_daily_page_path`, which warns once per

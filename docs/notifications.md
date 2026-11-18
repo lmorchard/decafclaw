@@ -192,8 +192,9 @@ if the emission is best-effort — see any of the producers for the pattern.
 ## Channel adapters
 
 Beyond the inbox, notifications can fan out to delivery channels
-external to the web UI. Three ship today: **Mattermost DM**,
-**email**, and **vault page** (a daily rollup file in the agent's
+external to the web UI. Four ship today: **Mattermost DM**,
+**email**, **ntfy** (push notifications with interactive confirmation
+buttons), and **vault page** (a daily rollup file in the agent's
 vault). The extension point is a single `init_notification_channels`
 dispatch in the package's `__init__.py` — adding a new adapter is a
 self-contained module + one `if` block there.
@@ -303,6 +304,61 @@ clients render literal text). Subject is `[<agent_id>] [<category>] <title>` —
 
 **Dispatch:** fire-and-forget via `asyncio.create_task(_deliver(...))`.
 Errors in `_deliver` log at warning level and are swallowed.
+
+### NTFY adapter
+
+`src/decafclaw/notification_channels/ntfy.py` (#1494). Publishes to a
+self-hosted (or public) [ntfy](https://ntfy.sh) topic over its HTTP
+publish API.
+
+Configured under `config.notifications.channels.ntfy`:
+
+- `enabled: bool` (default `false`) — master switch.
+- `server_url: str` (default `https://ntfy.sh`) — must be an absolute
+  `http(s)://` URL.
+- `topic: str` (default `""`) — topic name; empty keeps the adapter
+  unsubscribed.
+- `access_token: str` (default `""`, secret) — sent as
+  `Authorization: Bearer` when set.
+- `min_priority: "low" | "normal" | "high"` (default `high`) — inbox
+  records below the threshold are dropped.
+- `notify_on_confirmation: bool` (default `true`) — push pending tool
+  confirmations.
+
+**Startup guard:** `enabled`, a non-empty `topic`, and an `http(s)`
+`server_url`. Missing any piece → adapter not wired.
+
+**Notification pushes.** `notification_created` records at or above
+`min_priority` become an ntfy JSON publish: `title` is the record
+title, `message` is the body (falling back to the title), `priority`
+maps low/normal/high to 2/3/4, and `tags` carries the record category.
+When the HTTP server is enabled, the record's `http(s)` link (or its
+`conv_id` mapped to `<web base>/#conv=<id>`) becomes the notification
+`click` target.
+
+**Confirmation pushes.** `confirmation_request` events become urgent
+(`priority: 5`) notifications with actions:
+
+- **Approve** / **Deny** (`action=http`, `method=POST`, `clear=true`)
+  → `POST {http callback base}/actions/confirm?token=<single-use token>`.
+  Tokens come from the shared `ConfirmTokenRegistry` and carry
+  `conv_id` + `confirmation_id`, so the HTTP handler resolves the
+  pending confirmation through `ConversationManager`.
+- **Open Session** (`action=view`) → `<web base>/#conv=<conv_id>`.
+
+The Approve/Deny actions are only included when `config.http.enabled`
+(the callback must be reachable) and the event carries both routing
+ids. Confirmation pushes ignore `min_priority` — a pending approval is
+always worth a ping. The push itself is only as private as the ntfy
+topic; treat the approve links as credentials (they are single-use).
+
+**Transport callbacks.** `handle_confirm` reads the query token and
+tolerates an empty or non-JSON POST body, which is what ntfy's
+`action=http` sends. The Mattermost JSON payload still supplies
+context for tokenless/static-secret callbacks.
+
+**Dispatch:** fire-and-forget `asyncio.create_task`; failures log at
+warning level and are swallowed.
 
 ### Vault page adapter
 

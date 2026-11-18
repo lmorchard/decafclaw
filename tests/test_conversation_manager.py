@@ -1674,6 +1674,34 @@ async def test_fallback_confirmation_request_includes_conv_id(manager, config):
 
 
 @pytest.mark.asyncio
+async def test_confirmation_request_published_to_bus_with_subscriber(manager, config):
+    """Out-of-band channels (ntfy, #1494) need confirmation events on the
+    global bus even when the web UI holds a per-conversation subscription.
+
+    The Mattermost-only extras stay on the no-subscriber fallback path."""
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+
+    conv_id = "conv-conf-global"
+    state = manager._get_or_create(conv_id)
+    state.subscribers["web"] = lambda event: None
+
+    received_events = []
+    manager.event_bus.subscribe(lambda e: received_events.append(e))
+
+    req = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+    )
+    await manager._emit_confirmation_request(state, conv_id, req)
+
+    confs = [e for e in received_events if e.get("type") == "confirmation_request"]
+    assert len(confs) == 1
+    assert confs[0]["conv_id"] == conv_id
+    assert confs[0]["confirmation_id"] == req.confirmation_id
+    assert "transport" not in confs[0]
+
+
+@pytest.mark.asyncio
 async def test_start_turn_rollback_on_cancelled_status_publication(manager, config, monkeypatch):
     """If turn start is cancelled during status publication, state.busy is rolled back (#1119 review)."""
     state = manager._get_or_create("c-cancel-start")
