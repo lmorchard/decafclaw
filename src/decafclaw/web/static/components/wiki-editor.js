@@ -221,10 +221,10 @@ export class WikiEditor extends LitElement {
     this.#lastSavedContent = this.content || '';
     this.#currentMarkdown = this.content || '';
 
-    this.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
+    this.addEventListener('keydown', async (/** @type {KeyboardEvent} */ e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        this.#flushSave();
+        await this.flushSave();
       }
     });
 
@@ -255,14 +255,14 @@ export class WikiEditor extends LitElement {
       }));
     });
 
-    this.querySelector('.milkdown-root')?.addEventListener('focusout', (/** @type {FocusEvent} */ e) => {
+    this.querySelector('.milkdown-root')?.addEventListener('focusout', async (/** @type {FocusEvent} */ e) => {
       if (!this.contains(/** @type {Node|null} */(e.relatedTarget))) {
-        this.#flushSave();
+        await this.flushSave();
       }
     });
   }
 
-  disconnectedCallback() {
+  async disconnectedCallback() {
     super.disconnectedCallback();
     this.#closeLinkEdit();
     if (this._popoverMount) {
@@ -270,7 +270,9 @@ export class WikiEditor extends LitElement {
       this._popoverMount.remove();
       this._popoverMount = null;
     }
-    this.#flushSave();
+    // Await the flush so an in-flight PUT settles before destroy(); destroying
+    // mid-save would race the request against a torn-down editor.
+    await this.flushSave();
     if (this.#editor) {
       this.#editor.destroy();
       this.#editor = null;
@@ -418,17 +420,6 @@ export class WikiEditor extends LitElement {
     }
     if (this.#currentMarkdown !== this.#lastSavedContent) {
       await this.#save();
-    }
-  }
-
-  /** @deprecated Use flushSave() — kept for internal use */
-  #flushSave() {
-    if (this.#saveTimer != null) {
-      clearTimeout(this.#saveTimer);
-      this.#saveTimer = null;
-    }
-    if (this.#currentMarkdown !== this.#lastSavedContent) {
-      this.#save();
     }
   }
 
