@@ -845,13 +845,15 @@ async def _handle_restart_command(
     restart_coord = getattr(manager, "restart_coordinator", None) if manager else None
 
     if not restart_coord:
-        await ws_send({
-            "type": WSMessageType.MESSAGE_COMPLETE,
-            "conv_id": conv_id,
-            "role": "assistant",
-            "text": "Restart coordinator is not available.",
-            "final": True,
-        })
+        await ws_send(
+            {
+                "type": WSMessageType.MESSAGE_COMPLETE,
+                "conv_id": conv_id,
+                "role": "assistant",
+                "text": "Restart coordinator is not available.",
+                "final": True,
+            }
+        )
         return
 
     if arg in ("cancel", "abort"):
@@ -869,13 +871,15 @@ async def _handle_restart_command(
         else:
             msg = "Restarting DecafClaw service..."
 
-    await ws_send({
-        "type": WSMessageType.MESSAGE_COMPLETE,
-        "conv_id": conv_id,
-        "role": "assistant",
-        "text": msg,
-        "final": True,
-    })
+    await ws_send(
+        {
+            "type": WSMessageType.MESSAGE_COMPLETE,
+            "conv_id": conv_id,
+            "role": "assistant",
+            "text": msg,
+            "final": True,
+        }
+    )
 
 
 async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:

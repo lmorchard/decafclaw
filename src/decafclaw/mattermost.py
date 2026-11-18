@@ -353,9 +353,7 @@ class MattermostClient:
                 arg = trimmed_cmd[7:].strip().lower()
             confirmed = arg in ("confirm", "yes", "-y", "--yes")
             restart_coord = getattr(manager, "restart_coordinator", None) if manager else None
-            result = await perform_self_update(
-                confirmed=confirmed, manager=manager, restart_coordinator=restart_coord
-            )
+            result = await perform_self_update(confirmed=confirmed, manager=manager, restart_coordinator=restart_coord)
             await self.send(channel_id, result.message, root_id=root_id)
             return
 

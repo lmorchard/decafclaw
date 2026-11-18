@@ -85,11 +85,13 @@ class RestartCoordinator:
                 self.restart_pending = True
                 self.restart_reason = reason
                 if self.event_bus:
-                    await self.event_bus.publish({
-                        "type": "restart_scheduled",
-                        "reason": reason,
-                        "immediate": True,
-                    })
+                    await self.event_bus.publish(
+                        {
+                            "type": "restart_scheduled",
+                            "reason": reason,
+                            "immediate": True,
+                        }
+                    )
                 self.shutdown_event.set()
                 return True
 
@@ -104,16 +106,16 @@ class RestartCoordinator:
 
             if self.event_bus:
                 busy = self.get_busy_conversations()
-                await self.event_bus.publish({
-                    "type": "restart_scheduled",
-                    "reason": reason,
-                    "immediate": False,
-                    "busy_conversations": busy,
-                })
+                await self.event_bus.publish(
+                    {
+                        "type": "restart_scheduled",
+                        "reason": reason,
+                        "immediate": False,
+                        "busy_conversations": busy,
+                    }
+                )
 
-            self._drain_task = asyncio.create_task(
-                self._drain_and_restart(max_wait_seconds, poll_interval)
-            )
+            self._drain_task = asyncio.create_task(self._drain_and_restart(max_wait_seconds, poll_interval))
             return True
 
     async def _drain_and_restart(self, max_wait_seconds: float, poll_interval: float) -> None:
@@ -154,7 +156,9 @@ class RestartCoordinator:
                 self._drain_task.cancel()
                 self._drain_task = None
             if self.event_bus:
-                await self.event_bus.publish({
-                    "type": "restart_cancelled",
-                })
+                await self.event_bus.publish(
+                    {
+                        "type": "restart_cancelled",
+                    }
+                )
             return True
