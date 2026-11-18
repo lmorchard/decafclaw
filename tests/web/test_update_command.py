@@ -6,7 +6,7 @@ with NO agent turn and NO archive write.
 """
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -162,3 +162,46 @@ async def test_updatefoo_does_not_match(update_send_env):
     await env.handle_send({"conv_id": "c1", "text": "/updatefoo"})
     # It falls through to command dispatch / normal message handling
     assert not any("already up to date" in (m.get("text") or "").lower() for m in env.sent)
+
+
+@pytest.mark.asyncio
+async def test_restart_command_on_idle(update_send_env):
+    env = update_send_env()
+    coord = MagicMock()
+    coord.get_busy_conversations.return_value = ["c1"]
+    coord.request_restart = AsyncMock(return_value=True)
+    env.manager.restart_coordinator = coord
+
+    await env.handle_send({"conv_id": "c1", "text": "/restart"})
+
+    coord.request_restart.assert_called_once()
+    assert coord.request_restart.call_args.kwargs["on_idle"] is True
+    assert any("restart scheduled on idle" in (m.get("text") or "").lower() for m in env.sent)
+
+
+@pytest.mark.asyncio
+async def test_restart_command_immediate(update_send_env):
+    env = update_send_env()
+    coord = MagicMock()
+    coord.get_busy_conversations.return_value = []
+    coord.request_restart = AsyncMock(return_value=True)
+    env.manager.restart_coordinator = coord
+
+    await env.handle_send({"conv_id": "c1", "text": "/restart now"})
+
+    coord.request_restart.assert_called_once()
+    assert coord.request_restart.call_args.kwargs["on_idle"] is False
+    assert any("restarting decafclaw service" in (m.get("text") or "").lower() for m in env.sent)
+
+
+@pytest.mark.asyncio
+async def test_restart_command_cancel(update_send_env):
+    env = update_send_env()
+    coord = MagicMock()
+    coord.cancel_restart = AsyncMock(return_value=True)
+    env.manager.restart_coordinator = coord
+
+    await env.handle_send({"conv_id": "c1", "text": "/restart cancel"})
+
+    coord.cancel_restart.assert_called_once()
+    assert any("pending restart cancelled" in (m.get("text") or "").lower() for m in env.sent)

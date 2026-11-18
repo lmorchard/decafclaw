@@ -876,6 +876,44 @@ async def tool_admin_delete(ctx: "Context", path: str, recursive: bool = False) 
             return _file_error(e, path)
 
 
+async def tool_admin_restart(
+    ctx: "Context", reason: str = "Admin requested restart", on_idle: bool = True
+) -> str | ToolResult:
+    """Request a restart of the DecafClaw service, optionally waiting for active turns to finish.
+
+    REQUIRES USER CONFIRMATION before execution.
+    """
+    log.info(f"[tool:admin_restart] reason={reason!r} on_idle={on_idle}")
+    restart_coord = getattr(ctx, "restart_coordinator", None)
+    if not restart_coord and ctx.manager:
+        restart_coord = getattr(ctx.manager, "restart_coordinator", None)
+    if not restart_coord:
+        return ToolResult(text="[error: restart coordinator is not available]")
+
+    preview = f"Restart DecafClaw service (reason: {reason!r}, on_idle={on_idle})"
+    payload = {"reason": reason, "on_idle": on_idle}
+
+    gate = await _confirm_admin_mutation(
+        ctx,
+        "admin_restart",
+        "system",
+        preview,
+        payload=payload,
+    )
+    if gate is not None:
+        return gate
+
+    if _is_cancelled(ctx):
+        return ToolResult(text="[tool interrupted: agent turn cancelled]")
+
+    await restart_coord.request_restart(reason=reason, on_idle=on_idle)
+    if on_idle:
+        busy = restart_coord.get_busy_conversations()
+        if busy:
+            return f"Restart scheduled on idle. Waiting for {len(busy)} active conversation(s) to finish ({', '.join(busy)})..."
+    return "Restarting DecafClaw service..."
+
+
 class AdminMutationHandler:
     """Confirmation handler for ``ADMIN_MUTATION`` actions.
 
@@ -1023,6 +1061,21 @@ class AdminMutationHandler:
                     await asyncio.to_thread(re_resolved.unlink)
                     return f"Deleted admin file '{path}'"
 
+            elif tool_name == "admin_restart":
+                reason = payload.get("reason", "Admin requested restart")
+                on_idle = payload.get("on_idle", True)
+                restart_coord = getattr(ctx, "restart_coordinator", None)
+                if not restart_coord and ctx.manager:
+                    restart_coord = getattr(ctx.manager, "restart_coordinator", None)
+                if not restart_coord:
+                    return ToolResult(text="[error: restart coordinator is not available]")
+                await restart_coord.request_restart(reason=reason, on_idle=on_idle)
+                if on_idle:
+                    busy = restart_coord.get_busy_conversations()
+                    if busy:
+                        return f"Restart scheduled on idle. Waiting for {len(busy)} active conversation(s) to finish ({', '.join(busy)})..."
+                return "Restarting DecafClaw service..."
+
             return ToolResult(text=f"[error: unknown admin mutation tool '{tool_name}']")
 
 
@@ -1033,6 +1086,7 @@ ADMIN_TOOLS = {
     "admin_replace_lines": tool_admin_replace_lines,
     "admin_edit": tool_admin_edit,
     "admin_delete": tool_admin_delete,
+    "admin_restart": tool_admin_restart,
 }
 
 ADMIN_TOOL_DEFINITIONS = [
@@ -1217,6 +1271,33 @@ ADMIN_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "low",
+        "writes": True,
+        "function": {
+            "name": "admin_restart",
+            "description": (
+                "Request a restart of the DecafClaw daemon/service. "
+                "REQUIRES USER CONFIRMATION before execution. "
+                "By default (on_idle=true), waits for active conversation turns to finish "
+                "before triggering the restart so running work is not interrupted."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Brief explanation for why the restart is requested (e.g. 'Reload MCP servers', 'Apply config changes')",
+                    },
+                    "on_idle": {
+                        "type": "boolean",
+                        "description": "Wait for active conversation turns to finish before restarting (default: true). Set false for immediate restart.",
+                    },
+                },
             },
         },
     },

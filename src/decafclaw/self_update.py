@@ -78,6 +78,7 @@ async def perform_self_update(
     confirmed: bool = False,
     manager: Any | None = None,
     index: Any | None = None,
+    restart_coordinator: Any | None = None,
     repo_dir: Path | None = None,
     cmd_runner: Callable[[list[str], Path | None, dict[str, str] | None], Awaitable[tuple[int, str, str]]]
     | None = None,
@@ -198,6 +199,14 @@ async def perform_self_update(
         )
 
     # 10. Restart service
+    if restart_coordinator is not None:
+        await restart_coordinator.request_restart(reason="Self-update completed successfully", on_idle=False)
+        return UpdateResult(
+            ok=True,
+            message="Update applied successfully. Restarting DecafClaw service...",
+            restarted=True,
+        )
+
     ret, stdout, stderr = await runner(["systemctl", "--user", "restart", "--no-block", "decafclaw"], target_repo, None)
     if ret != 0:
         return UpdateResult(

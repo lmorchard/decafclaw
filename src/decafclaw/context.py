@@ -245,6 +245,7 @@ class Context:
         # ExtensionManager from runner startup; core extensions that expose a
         # direct service (compaction, #1490) are looked up through it.
         self.extension_manager: Any = None
+        self.restart_coordinator: Any = None  # RestartCoordinator from runner startup (#1533)
         self.terminal_registry: Any = None  # AgentTerminalHandle, set by ConversationManager
         self._parent_ctx: Any = None
         self._interceptors: dict[TurnLifecycle, list[Callable]] = {}
@@ -366,6 +367,9 @@ class Context:
             config=config,
             event_bus=self.event_bus,
         )
+        child.restart_coordinator = self.restart_coordinator
+        child.extension_manager = self.extension_manager
+        child.manager = self.manager
         child._interceptors = {k: list(v) for k, v in self._interceptors.items()}
         for key, value in overrides.items():
             setattr(child, key, value)

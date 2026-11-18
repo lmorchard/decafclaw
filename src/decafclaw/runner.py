@@ -34,6 +34,11 @@ async def run_all(app_ctx):
     # Graceful shutdown support
     shutdown_event = asyncio.Event()
 
+    from .restart import RestartCoordinator
+
+    restart_coordinator = RestartCoordinator(shutdown_event, event_bus=app_ctx.event_bus)
+    app_ctx.restart_coordinator = restart_coordinator
+
     def _signal_handler():
         log.info("Shutdown signal received, finishing in-flight turns...")
         shutdown_event.set()
@@ -95,7 +100,14 @@ async def run_all(app_ctx):
         from .conversation_manager import ConversationManager
         from .widget_input import register_widget_handler
 
-        manager = ConversationManager(config, app_ctx.event_bus, extension_manager=app_ctx.extension_manager)
+        manager = ConversationManager(
+            config,
+            app_ctx.event_bus,
+            extension_manager=app_ctx.extension_manager,
+            restart_coordinator=restart_coordinator,
+        )
+        restart_coordinator.set_manager(manager)
+        app_ctx.manager = manager
         register_widget_handler(manager.confirmation_registry)
         await manager.startup_scan()
         await manager.startup_scan_workflows()
