@@ -571,6 +571,15 @@ Runtime middleware extensions (see [extensions.md](extensions.md) for the protoc
         "api_key": "local",
         "top_k": 5
       }
+    },
+    "improvement_scout": {
+      "enabled": true,
+      "type": "improvement_scout",
+      "options": {
+        "model": "gemini-2.5-flash",
+        "dedup_ttl_seconds": 3600,
+        "max_transcript_chars": 12000
+      }
     }
   }
 }
