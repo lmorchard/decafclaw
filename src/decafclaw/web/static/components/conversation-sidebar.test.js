@@ -953,3 +953,100 @@ describe('conversation-sidebar session move (#1277)', () => {
     expect(showToast).toHaveBeenCalledWith('Failed to move conversation');
   });
 });
+
+// #1515 — open a session in a new browser tab from the sidebar.
+// #1524 — the create actions sit at the bottom of the list.
+describe('conversation-sidebar row actions', () => {
+  let sidebar;
+  let store;
+
+  afterEach(() => {
+    sidebar?.remove();
+    vi.restoreAllMocks();
+  });
+
+  async function mount() {
+    store = Object.assign(new EventTarget(), {
+      currentConvId: 'c1',
+      conversations: [
+        { conv_id: 'c1', title: 'Trip planning' },
+        { conv_id: 'c2', title: 'Coding task' },
+      ],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 0,
+      contextLimit: 0,
+      activeModel: '',
+      availableModels: [],
+      defaultModel: '',
+      activeMode: 'default',
+      availableModes: [],
+      selectConversation: vi.fn(),
+      listConversations: vi.fn(),
+      listSessions: vi.fn(),
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    // Assigning the store triggers a second (store-driven) update.
+    await sidebar.updateComplete;
+    await sidebar.updateComplete;
+    return sidebar.querySelector('.conv-item[title="Coding task"]');
+  }
+
+  it('selects the conversation on a plain click', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const row = await mount();
+    row.click();
+    expect(store.selectConversation).toHaveBeenCalledWith('c2');
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  for (const modifier of ['metaKey', 'ctrlKey']) {
+    it(`opens a ${modifier} click in a new tab without changing the selection`, async () => {
+      const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const row = await mount();
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true, [modifier]: true });
+      row.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(store.selectConversation).not.toHaveBeenCalled();
+      expect(open).toHaveBeenCalledTimes(1);
+      const [url, target, features] = open.mock.calls[0];
+      expect(new URL(url, location.href).searchParams.get('conv')).toBe('c2');
+      expect(target).toBe('_blank');
+      expect(features).toBe('noopener');
+    });
+  }
+
+  it('opens a middle click in a new tab without changing the selection', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const row = await mount();
+    const event = new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 });
+    row.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(store.selectConversation).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores non-middle aux clicks', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const row = await mount();
+    row.dispatchEvent(new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 2 }));
+    expect(open).not.toHaveBeenCalled();
+    expect(store.selectConversation).not.toHaveBeenCalled();
+  });
+
+  it('renders the create actions below the scrollable list', async () => {
+    await mount();
+    const actions = [...sidebar.querySelectorAll('.vault-action-btns')]
+      .find((el) => el.parentElement === sidebar);
+    expect(actions).toBeTruthy();
+    expect(actions.previousElementSibling.classList.contains('conv-list')).toBe(true);
+    expect(actions.querySelector('.new-conv-btn')).toBeTruthy();
+    expect(actions.querySelector('.wiki-new-folder-btn')).toBeTruthy();
+    expect(actions.previousElementSibling.querySelector('.vault-action-btns')).toBeNull();
+  });
+});

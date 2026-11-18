@@ -525,6 +525,7 @@ conversation-sidebar[collapsed] {
 }
 
 conversation-sidebar[collapsed] .conv-list,
+conversation-sidebar[collapsed] .vault-action-btns,
 conversation-sidebar[collapsed] .mode-picker,
 conversation-sidebar[collapsed] .model-picker,
 conversation-sidebar[collapsed] .context-usage,
@@ -660,6 +661,14 @@ conversation-sidebar .mobile-close-btn {
   display: flex;
   gap: 0.35rem;
   margin-bottom: 0.5rem;
+}
+
+/* Bottom action rows (#1524) sit after the scrollable list, outside its
+   0.5rem padding. Match the list inset so the buttons line up with rows.
+   Rows still inside a .conv-list (files, schedules) keep that list's
+   padding and do not match this adjacent-sibling selector. */
+conversation-sidebar .conv-list + .vault-action-btns {
+  padding: 0 0.5rem;
 }
 
 .vault-action-btns button {
