@@ -221,624 +221,6 @@ class TestAutoRefreshSkills:
         assert "disabled-skill" not in config.system_prompt
 
 
-# -- Memory context ------------------------------------------------------------
-
-
-class TestComposeMemoryContext:
-    @pytest.mark.asyncio
-    async def test_skips_when_skip_vault_retrieval(self, ctx, config):
-        ctx.skip_vault_retrieval = True
-        composer = ContextComposer()
-        msgs, text, raw, entry = await composer._compose_vault_retrieval(
-            ctx,
-            config,
-            "hello",
-            ComposerMode.INTERACTIVE,
-        )
-        assert msgs == []
-        assert text == ""
-        assert raw == []
-        assert entry is None
-
-    @pytest.mark.asyncio
-    async def test_skips_for_heartbeat_mode(self, ctx, config):
-        composer = ContextComposer()
-        msgs, text, raw, entry = await composer._compose_vault_retrieval(
-            ctx,
-            config,
-            "hello",
-            ComposerMode.HEARTBEAT,
-        )
-        assert msgs == []
-        assert entry is None
-
-    @pytest.mark.asyncio
-    async def test_skips_for_child_agent_mode(self, ctx, config):
-        composer = ContextComposer()
-        msgs, text, raw, entry = await composer._compose_vault_retrieval(
-            ctx,
-            config,
-            "hello",
-            ComposerMode.CHILD_AGENT,
-        )
-        assert msgs == []
-        assert entry is None
-
-    @pytest.mark.asyncio
-    async def test_returns_results_when_available(self, ctx, config):
-        mock_results = [
-            {
-                "entry_text": "some memory",
-                "source_type": "page",
-                "similarity": 0.8,
-                "file_path": "pages/first.md",
-                "modified_at": "",
-                "importance": 0.5,
-            },
-        ]
-        with (
-            patch(
-                "decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock_results
-            ),
-            patch("decafclaw.context_composer.format_memory_context", return_value="formatted memory"),
-        ):
-            composer = ContextComposer()
-            msgs, text, raw, entry = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hello",
-                ComposerMode.INTERACTIVE,
-            )
-            assert len(msgs) == 1
-            assert msgs[0]["role"] == "vault_retrieval"
-            assert text == "formatted memory"
-            assert len(raw) == 1
-            assert [r["file_path"] for r in raw] == ["pages/first.md"]
-            assert msgs[0]["file_paths"] == ["pages/first.md"]
-            assert entry is not None
-            assert entry.source == "memory"
-            assert entry.items_included == 1
-
-    @pytest.mark.asyncio
-    async def test_fail_open_on_error(self, ctx, config):
-        with patch(
-            "decafclaw.context_composer.retrieve_memory_context",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("boom"),
-        ):
-            composer = ContextComposer()
-            msgs, text, raw, entry = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hello",
-                ComposerMode.INTERACTIVE,
-            )
-            assert msgs == []
-            assert text == ""
-            assert raw == []
-            assert entry is None
-
-    @pytest.mark.asyncio
-    async def test_tracks_injected_paths(self, ctx, config):
-        mock_results = [
-            {
-                "entry_text": "first",
-                "source_type": "page",
-                "similarity": 0.9,
-                "file_path": "pages/first.md",
-                "modified_at": "",
-                "importance": 0.5,
-            },
-            {
-                "entry_text": "second",
-                "source_type": "journal",
-                "similarity": 0.85,
-                "file_path": "journal/second.md",
-                "modified_at": "",
-                "importance": 0.5,
-            },
-        ]
-        with (
-            patch(
-                "decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock_results
-            ),
-            patch("decafclaw.context_composer.format_memory_context", return_value="formatted"),
-        ):
-            composer = ContextComposer()
-            msgs, _, _, _ = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hello",
-                ComposerMode.INTERACTIVE,
-            )
-            assert msgs[0]["file_paths"] == ["pages/first.md", "journal/second.md"]
-            assert "pages/first.md" in composer.state.injected_paths
-            assert "journal/second.md" in composer.state.injected_paths
-
-    @pytest.mark.asyncio
-    async def test_suppresses_already_injected(self, ctx, config):
-        mock_results = [
-            {
-                "entry_text": "first",
-                "source_type": "page",
-                "similarity": 0.8,
-                "file_path": "pages/first.md",
-                "modified_at": "",
-                "importance": 0.5,
-            },
-        ]
-        with (
-            patch(
-                "decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock_results
-            ),
-            patch("decafclaw.context_composer.format_memory_context", return_value="formatted"),
-        ):
-            composer = ContextComposer()
-            # First turn: injected
-            _, _, _, entry1 = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hello",
-                ComposerMode.INTERACTIVE,
-            )
-            assert entry1 is not None
-            # Second turn: suppressed (already in context). The entry
-            # is emitted with `injection_skipped: True` so the sidecar
-            # records that retrieval ran but didn't inject anything —
-            # diagnostically valuable. The message list is what callers
-            # actually consume; assert that's empty.
-            msgs2, _, _, entry2 = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hello again",
-                ComposerMode.INTERACTIVE,
-            )
-            assert msgs2 == []
-            assert entry2 is not None
-            assert entry2.tokens_estimated == 0
-            assert entry2.items_included == 0
-            assert entry2.details.get("injection_skipped") is True
-            assert entry2.details.get("drop_reason") == "already_injected"
-            assert entry2.details.get("suppressed") == 1
-            assert entry2.details.get("candidates_considered") == 1
-            assert entry2.details.get("token_budget") == config.vault_retrieval.max_tokens
-            assert entry2.details.get("budget_source") == "fixed"
-
-    @pytest.mark.asyncio
-    async def test_retrieval_suppressed_across_turns_from_history(self, ctx, config):
-        """#1157: automatic proactive retrieval must not re-inject pages an
-        earlier turn already surfaced. The composer rebuilds the
-        already-injected set from archived ``vault_retrieval`` history instead
-        of relying on per-turn composer state (fresh every turn)."""
-        config.system_prompt = "System."
-        config.agent.tool_context_budget_pct = 1.0
-        config.compaction.max_tokens = 1000000
-        mock_results = [
-            {
-                "entry_text": "memory entry",
-                "source_type": "page",
-                "similarity": 0.8,
-                "file_path": "pages/first.md",
-                "modified_at": "",
-                "importance": 0.5,
-            },
-        ]
-        with (
-            patch(
-                "decafclaw.context_composer.collect_all_tool_defs",
-                return_value=[],
-            ),
-            patch(
-                "decafclaw.context_composer.retrieve_memory_context",
-                new_callable=AsyncMock,
-                return_value=mock_results,
-            ),
-            patch("decafclaw.context_composer.format_memory_context", return_value="formatted memory"),
-        ):
-            composer = ContextComposer()
-            result1 = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
-            assert result1.retrieved_context_text == "formatted memory"
-
-            composer2 = ContextComposer()
-            history = [
-                {
-                    "role": "vault_retrieval",
-                    "content": "formatted memory",
-                    "file_paths": ["pages/first.md"],
-                },
-                {"role": "user", "content": "hello again"},
-            ]
-            result2 = await composer2.compose(ctx, "hello again", history, mode=ComposerMode.INTERACTIVE)
-            assert result2.retrieved_context_text == ""
-            assert not any("memory entry" in (m.get("content") or "") for m in result2.messages)
-
-    @pytest.mark.asyncio
-    async def test_retrieval_event_observes_already_injected_candidates(self, ctx, config):
-        """#1157: retrieval events must observe already-injected candidates so
-        dedupe-based drops are accounted for in telemetry. The second call uses
-        a fresh composer plus archived ``vault_retrieval`` history, so the
-        ``already_injected`` drop comes from the cross-turn rebuild rather than
-        the in-memory state."""
-        events = []
-
-        async def cap(e):
-            if e.get("type") == "retrieval_event":
-                events.append(e)
-
-        ctx.event_bus.subscribe(cap)
-        composer = ContextComposer()
-        injected_candidate = {
-            "file_path": "pages/first.md",
-            "source_type": "page",
-            "entry_text": "x",
-            "similarity": 0.9,
-            "modified_at": "",
-            "importance": 0.9,
-        }
-        fresh_candidate = {
-            "file_path": "pages/other.md",
-            "source_type": "page",
-            "entry_text": "y",
-            "similarity": 0.8,
-            "modified_at": "",
-            "importance": 0.8,
-        }
-        config.relevance.min_composite_score = 0.0
-        config.vault_retrieval.max_results = 10
-        with patch(
-            "decafclaw.context_composer.retrieve_memory_context",
-            new_callable=AsyncMock,
-            return_value=[injected_candidate],
-        ):
-            await composer._compose_vault_retrieval(ctx, config, "hello", ComposerMode.INTERACTIVE)
-        with patch(
-            "decafclaw.context_composer.retrieve_memory_context",
-            new_callable=AsyncMock,
-            return_value=[injected_candidate, fresh_candidate],
-        ):
-            history = [
-                {
-                    "role": "vault_retrieval",
-                    "content": "earlier injection",
-                    "file_paths": ["pages/first.md"],
-                },
-                {"role": "user", "content": "hello again"},
-            ]
-            composer2 = ContextComposer()
-            await composer2._compose_vault_retrieval(
-                ctx, config, "hello again", ComposerMode.INTERACTIVE, history=history
-            )
-        assert len(events) == 2
-        second = events[1]
-        paths = {c["file_path"]: c for c in second["candidates"]}
-        assert paths["pages/first.md"]["included"] is False
-        assert paths["pages/first.md"]["drop_reason"] == "already_injected"
-        assert paths["pages/other.md"]["included"] is True
-
-    @pytest.mark.asyncio
-    async def test_retrieval_event_published_when_all_candidates_suppressed(self, ctx, config):
-        """#1157: when every candidate is suppressed by already-injected dedupe,
-        a retrieval_event must still be published so telemetry accounts for
-        the appearance (retrieval_count) and drop (drop_already_injected)."""
-        events = []
-
-        async def cap(e):
-            if e.get("type") == "retrieval_event":
-                events.append(e)
-
-        ctx.event_bus.subscribe(cap)
-        composer = ContextComposer()
-        candidate = {
-            "file_path": "pages/first.md",
-            "source_type": "page",
-            "entry_text": "x",
-            "similarity": 0.9,
-            "modified_at": "",
-            "importance": 0.9,
-        }
-        config.relevance.min_composite_score = 0.0
-        config.vault_retrieval.max_results = 10
-        history = [
-            {
-                "role": "vault_retrieval",
-                "content": "earlier injection",
-                "file_paths": ["pages/first.md"],
-            },
-            {"role": "user", "content": "hello again"},
-        ]
-        with patch(
-            "decafclaw.context_composer.retrieve_memory_context",
-            new_callable=AsyncMock,
-            return_value=[candidate],
-        ):
-            msgs, text, results, entry = await composer._compose_vault_retrieval(
-                ctx, config, "hello again", ComposerMode.INTERACTIVE, history=history
-            )
-
-        assert msgs == []
-        assert text == ""
-        assert results == []
-        assert entry.details.get("injection_skipped") is True
-        assert entry.details.get("drop_reason") == "already_injected"
-        assert len(events) == 1
-        ev = events[0]
-        assert len(ev["candidates"]) == 1
-        c = ev["candidates"][0]
-        assert c["file_path"] == "pages/first.md"
-        assert c["included"] is False
-        assert c["drop_reason"] == "already_injected"
-
-    @pytest.mark.asyncio
-    async def test_retrieval_event_published_with_drop_verdicts(self, ctx, config):
-        """A ``retrieval_event`` carries the *full* scored candidate list
-        (not just what got injected), tagged with include/drop verdicts —
-        the measurement foundation for #197."""
-        events = []
-
-        async def cap(e):
-            if e.get("type") == "retrieval_event":
-                events.append(e)
-
-        ctx.event_bus.subscribe(cap)
-        mock_results = [
-            {
-                "file_path": "pages/hit.md",
-                "source_type": "page",
-                "entry_text": "x",
-                "similarity": 0.9,
-                "modified_at": "",
-                "importance": 0.9,
-            },
-            {
-                "file_path": "pages/miss.md",
-                "source_type": "page",
-                "entry_text": "y",
-                "similarity": 0.01,
-                "modified_at": "",
-                "importance": 0.1,
-            },
-        ]
-        with patch(
-            "decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock_results
-        ):
-            composer = ContextComposer()
-            await composer._compose_vault_retrieval(ctx, config, "q", ComposerMode.INTERACTIVE)
-        assert len(events) == 1
-        assert events[0]["conv_id"] == ctx.conv_id
-        paths = {c["file_path"]: c for c in events[0]["candidates"]}
-        assert paths["pages/hit.md"]["included"] is True
-        assert paths["pages/hit.md"]["drop_reason"] is None
-        assert paths["pages/miss.md"]["included"] is False
-        assert paths["pages/miss.md"]["drop_reason"] in ("score", "budget")
-
-    @pytest.mark.asyncio
-    async def test_caps_injected_candidates_to_max_results(self, ctx, config):
-        """Even if many candidates clear score threshold and fit budget,
-        only top max_results candidates are injected (#1048)."""
-        config.vault_retrieval.max_results = 2
-        config.relevance.min_composite_score = 0.5
-        mock_results = [
-            {
-                "entry_text": "cand1",
-                "source_type": "page",
-                "similarity": 0.95,
-                "file_path": "pages/1.md",
-                "importance": 0.9,
-                "modified_at": "",
-            },
-            {
-                "entry_text": "cand2",
-                "source_type": "page",
-                "similarity": 0.90,
-                "file_path": "pages/2.md",
-                "importance": 0.8,
-                "modified_at": "",
-            },
-            {
-                "entry_text": "cand3",
-                "source_type": "page",
-                "similarity": 0.85,
-                "file_path": "pages/3.md",
-                "importance": 0.7,
-                "modified_at": "",
-            },
-            {
-                "entry_text": "cand4",
-                "source_type": "page",
-                "similarity": 0.80,
-                "file_path": "pages/4.md",
-                "importance": 0.6,
-                "modified_at": "",
-            },
-        ]
-        with (
-            patch(
-                "decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock_results
-            ),
-            patch("decafclaw.context_composer.format_memory_context", return_value="formatted"),
-        ):
-            composer = ContextComposer()
-            msgs, text, raw, entry = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hello",
-                ComposerMode.INTERACTIVE,
-                token_budget=10000,
-            )
-            assert len(msgs) == 1
-            assert len(raw) == 2
-            assert [r["file_path"] for r in raw] == ["pages/1.md", "pages/2.md"]
-            assert msgs[0]["file_paths"] == ["pages/1.md", "pages/2.md"]
-            assert entry.items_included == 2
-            assert entry.items_truncated == 2
-
-    @pytest.mark.asyncio
-    async def test_zero_or_negative_budget_skips_injection(self, ctx, config):
-        """When token_budget <= 0 (e.g. context window exhausted), retrieval is skipped."""
-        mock_results = [
-            {
-                "entry_text": "cand1",
-                "source_type": "page",
-                "similarity": 0.95,
-                "file_path": "pages/1.md",
-                "importance": 0.9,
-                "modified_at": "",
-            },
-        ]
-        with (
-            patch(
-                "decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock_results
-            ),
-        ):
-            composer = ContextComposer()
-            msgs, text, raw, entry = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hello",
-                ComposerMode.INTERACTIVE,
-                token_budget=0,
-            )
-            assert msgs == []
-            assert raw == []
-            assert entry is not None
-            assert entry.items_included == 0
-            assert entry.details["injection_skipped"] is True
-
-
-# -- Retrieval modes (#301) ----------------------------------------------------
-
-
-class TestRetrievalModes:
-    """`vault_retrieval.mode` (a `RetrievalMode` enum): always | headlines | on_demand."""
-
-    def test_enum_values_match_wire_strings(self):
-        """The enum values are the wire strings config files use — changing
-        them would silently break existing configs (#1382)."""
-        assert RetrievalMode.ALWAYS == "always"
-        assert RetrievalMode.HEADLINES == "headlines"
-        assert RetrievalMode.ON_DEMAND == "on_demand"
-
-    @pytest.mark.asyncio
-    async def test_always_mode_emits_full_body_message(self, ctx, config):
-        config.vault_retrieval.mode = RetrievalMode.ALWAYS
-        config.vault_retrieval.max_results = 10
-        config.relevance.min_composite_score = 0.0  # accept anything for the test
-        mock = [
-            {
-                "entry_text": "FULL BODY HERE",
-                "source_type": "page",
-                "similarity": 0.9,
-                "file_path": "p.md",
-                "modified_at": "",
-                "importance": 0.5,
-            },
-        ]
-        with patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock):
-            composer = ContextComposer()
-            msgs, _, _, entry = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hi",
-                ComposerMode.INTERACTIVE,
-            )
-        assert len(msgs) == 1
-        assert "FULL BODY HERE" in msgs[0]["content"]
-        assert entry.details.get("mode") == "always"
-        # The diagnostics carry the typed enum, not a raw string (#1382).
-        assert isinstance(entry.details["mode"], RetrievalMode)
-        assert entry.details.get("injection_skipped") is False
-
-    @pytest.mark.asyncio
-    async def test_headlines_mode_emits_compact_lines(self, ctx, config):
-        config.vault_retrieval.mode = RetrievalMode.HEADLINES
-        config.vault_retrieval.max_results = 10
-        config.relevance.min_composite_score = 0.0
-        mock = [
-            {
-                "entry_text": "Long body text not to inject",
-                "source_type": "page",
-                "similarity": 0.9,
-                "file_path": "p.md",
-                "modified_at": "",
-                "importance": 0.5,
-                "summary": "Concise summary",
-            },
-        ]
-        with patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock):
-            composer = ContextComposer()
-            msgs, _, _, entry = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hi",
-                ComposerMode.INTERACTIVE,
-            )
-        assert len(msgs) == 1
-        # Headlines: summary appears, body does NOT.
-        assert "Concise summary" in msgs[0]["content"]
-        assert "Long body text not to inject" not in msgs[0]["content"]
-        # Header indicates headlines mode.
-        assert "headlines" in msgs[0]["content"]
-        assert entry.details.get("mode") == "headlines"
-
-    @pytest.mark.asyncio
-    async def test_on_demand_mode_skips_retrieval_entirely(self, ctx, config, monkeypatch):
-        """on_demand short-circuits before `retrieve_memory_context`
-        is even called — no LLM/embedding work happens."""
-        config.vault_retrieval.mode = RetrievalMode.ON_DEMAND
-        called = []
-
-        async def should_not_be_called(*a, **kw):
-            called.append(True)
-            return []
-
-        monkeypatch.setattr(
-            "decafclaw.context_composer.retrieve_memory_context",
-            should_not_be_called,
-        )
-
-        composer = ContextComposer()
-        msgs, _, _, entry = await composer._compose_vault_retrieval(
-            ctx,
-            config,
-            "hi",
-            ComposerMode.INTERACTIVE,
-        )
-        assert msgs == []
-        assert called == []
-        assert entry is not None
-        assert entry.details.get("mode") == "on_demand"
-        assert entry.details.get("injection_skipped") is True
-
-    @pytest.mark.asyncio
-    async def test_unknown_mode_falls_back_to_always(self, ctx, config, caplog):
-        # Raw string on purpose: JSON-loaded configs carry plain strings
-        # (load_sub_config does not coerce to the enum), so the resolver
-        # must accept and fall back on non-member values.
-        config.vault_retrieval.mode = "bogus"  # type: ignore[assignment]
-        config.vault_retrieval.max_results = 10
-        config.relevance.min_composite_score = 0.0
-        mock = [
-            {
-                "entry_text": "BODY",
-                "source_type": "page",
-                "similarity": 0.9,
-                "file_path": "p.md",
-                "modified_at": "",
-                "importance": 0.5,
-            },
-        ]
-        with patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock):
-            composer = ContextComposer()
-            msgs, _, _, entry = await composer._compose_vault_retrieval(
-                ctx,
-                config,
-                "hi",
-                ComposerMode.INTERACTIVE,
-            )
-        assert "BODY" in msgs[0]["content"]
-        assert entry.details.get("mode") == "always"
-
-
 # -- Wiki context --------------------------------------------------------------
 
 
@@ -1142,7 +524,9 @@ class TestComposeTools:
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[tool]),
             patch("decafclaw.tool_definitions.TOOL_DEFINITIONS", [tool]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             composed = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
@@ -1683,7 +1067,9 @@ class TestCompose:
         composer = ContextComposer()
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             result = await composer.compose(ctx, "run background job", [], mode=ComposerMode.INTERACTIVE)
 
@@ -1703,7 +1089,9 @@ class TestCompose:
         small_tools = [_make_tool_def("tool_a")]
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=small_tools),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
@@ -1722,7 +1110,9 @@ class TestCompose:
         many_tools.append(_make_tool_def("think", "Think"))
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=many_tools),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
@@ -1748,7 +1138,9 @@ class TestCompose:
         config.compaction.max_tokens = 1000000
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             long_msg = "x" * 200
@@ -1767,7 +1159,9 @@ class TestCompose:
         config.compaction.max_tokens = 1000000
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
@@ -1785,9 +1179,11 @@ class TestCompose:
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
             patch(
-                "decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=mock_results
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context",
+                new_callable=AsyncMock,
+                return_value=mock_results,
             ),
-            patch("decafclaw.context_composer.format_memory_context", return_value="formatted memory"),
+            patch("decafclaw.extensions.vault_retrieval.format_memory_context", return_value="formatted memory"),
         ):
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
@@ -1827,7 +1223,7 @@ class TestCompose:
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools),
             patch(
-                "decafclaw.context_composer.retrieve_memory_context",
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context",
                 new_callable=AsyncMock,
                 return_value=[],
             ),
@@ -1855,23 +1251,15 @@ class TestCompose:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 300000
         config.vault_retrieval.max_tokens = 4000
-        captured_budget = []
-
         composer = ContextComposer()
-        orig_compose_vault = composer._compose_vault_retrieval
-
-        async def spy_compose_vault(*args, **kwargs):
-            captured_budget.append(kwargs.get("token_budget"))
-            return await orig_compose_vault(*args, **kwargs)
-
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
-            patch.object(composer, "_compose_vault_retrieval", side_effect=spy_compose_vault),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
-            assert len(captured_budget) == 1
-            assert captured_budget[0] == 4000
+        assert ctx.composer.dynamic_token_budget == 4000
 
     @pytest.mark.asyncio
     async def test_compose_memory_budget_constrained_by_remaining_space(self, ctx, config):
@@ -1883,24 +1271,17 @@ class TestCompose:
         # remaining_budget is roughly 5000 - 4096 - fixed < 1000.
         config.compaction.max_tokens = 5000
         config.vault_retrieval.max_tokens = 4000
-        captured_budget = []
-
         composer = ContextComposer()
-        orig_compose_vault = composer._compose_vault_retrieval
-
-        async def spy_compose_vault(*args, **kwargs):
-            captured_budget.append(kwargs.get("token_budget"))
-            return await orig_compose_vault(*args, **kwargs)
-
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
-            patch.object(composer, "_compose_vault_retrieval", side_effect=spy_compose_vault),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
-            assert len(captured_budget) == 1
-            assert captured_budget[0] < 4000
-            assert captured_budget[0] > 0
+        assert ctx.composer.dynamic_token_budget is not None
+        assert ctx.composer.dynamic_token_budget < 4000
+        assert ctx.composer.dynamic_token_budget > 0
 
     @pytest.mark.asyncio
     async def test_compose_memory_budget_exhausted(self, ctx, config):
@@ -1910,23 +1291,15 @@ class TestCompose:
         # Window of 4000: less than response_reserve 4096 alone!
         config.compaction.max_tokens = 4000
         config.vault_retrieval.max_tokens = 4000
-        captured_budget = []
-
         composer = ContextComposer()
-        orig_compose_vault = composer._compose_vault_retrieval
-
-        async def spy_compose_vault(*args, **kwargs):
-            captured_budget.append(kwargs.get("token_budget"))
-            return await orig_compose_vault(*args, **kwargs)
-
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
-            patch.object(composer, "_compose_vault_retrieval", side_effect=spy_compose_vault),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
-            assert len(captured_budget) == 1
-            assert captured_budget[0] == 0
+        assert ctx.composer.dynamic_token_budget == 0
 
 
 class TestComposeVaultGuideIntegration:
@@ -1940,7 +1313,9 @@ class TestComposeVaultGuideIntegration:
         config.compaction.max_tokens = 1000000
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
@@ -1963,7 +1338,9 @@ class TestComposeVaultGuideIntegration:
         config.compaction.max_tokens = 1000000
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.HEARTBEAT)
@@ -2010,7 +1387,9 @@ class TestHistoryArchivedRemap:
 
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composed = await composer.compose(
                 ctx,
@@ -2061,7 +1440,9 @@ class TestHistoryArchivedRemap:
 
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composed = await composer.compose(
                 ctx,
@@ -2099,7 +1480,9 @@ class TestHistoryArchivedRemap:
 
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composed = await composer.compose(
                 ctx,
@@ -2167,7 +1550,9 @@ class TestHistoryArchivedRemap:
 
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composed = await composer.compose(
                 ctx,
@@ -2219,7 +1604,9 @@ class TestCancelMarker:
         ]
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(
@@ -2267,7 +1654,9 @@ class TestTurnAbortedMarker:
         ]
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(
@@ -2290,62 +1679,6 @@ class TestTurnAbortedMarker:
 
 
 # -- Relevance scoring ---------------------------------------------------------
-
-
-class TestScoreCandidates:
-    def test_produces_composite_scores(self, config):
-        candidates = [
-            {"similarity": 0.8, "modified_at": "", "importance": 0.5},
-            {"similarity": 0.6, "modified_at": "", "importance": 0.5},
-        ]
-        composer = ContextComposer()
-        scored = composer._score_candidates(candidates, config)
-        assert all("composite_score" in c for c in scored)
-
-    def test_sorted_by_score_descending(self, config):
-        candidates = [
-            {"similarity": 0.3, "modified_at": "", "importance": 0.5},
-            {"similarity": 0.9, "modified_at": "", "importance": 0.5},
-            {"similarity": 0.6, "modified_at": "", "importance": 0.5},
-        ]
-        composer = ContextComposer()
-        scored = composer._score_candidates(candidates, config)
-        scores = [c["composite_score"] for c in scored]
-        assert scores == sorted(scores, reverse=True)
-
-    def test_recency_favors_recent(self, config):
-        now = datetime.now()
-        recent = (now - timedelta(hours=1)).isoformat()
-        old = (now - timedelta(hours=1000)).isoformat()
-        candidates = [
-            {"similarity": 0.5, "modified_at": old, "importance": 0.5},
-            {"similarity": 0.5, "modified_at": recent, "importance": 0.5},
-        ]
-        composer = ContextComposer()
-        scored = composer._score_candidates(candidates, config)
-        # Recent item should score higher
-        assert scored[0]["modified_at"] == recent
-
-    def test_importance_influences_score(self, config):
-        candidates = [
-            {"similarity": 0.5, "modified_at": "", "importance": 0.1},
-            {"similarity": 0.5, "modified_at": "", "importance": 0.9},
-        ]
-        composer = ContextComposer()
-        scored = composer._score_candidates(candidates, config)
-        # Higher importance should score higher
-        assert scored[0]["importance"] == 0.9
-
-    def test_missing_modified_at_defaults_recency(self, config):
-        candidates = [
-            {"similarity": 0.8, "importance": 0.5},
-        ]
-        composer = ContextComposer()
-        scored = composer._score_candidates(candidates, config)
-        assert scored[0]["composite_score"] > 0
-
-
-# -- Diagnostics and sidecar ---------------------------------------------------
 
 
 class TestBuildDiagnostics:
@@ -2459,7 +1792,9 @@ class TestContextSidecar:
         # We also need to patch vault retrieval and tools defs for compose() since they are external
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             # Turn 1
             composed1 = await composer.compose(
@@ -2501,7 +1836,9 @@ class TestContextSidecar:
 
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             # Turn 1 sets the baseline
             composed1 = await composer.compose(
@@ -2586,7 +1923,9 @@ class TestContextStatusInCompose:
         config.compaction.max_tokens = 100000
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
@@ -2605,7 +1944,9 @@ class TestContextStatusInCompose:
         config.compaction.max_tokens = 100000
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
@@ -2778,7 +2119,9 @@ class TestComposeExpandsBackgroundEvent:
 
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(
@@ -2828,7 +2171,9 @@ class TestComposeExpandsBackgroundEvent:
 
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             composer = ContextComposer()
             result = await composer.compose(
@@ -3001,7 +2346,9 @@ class TestComposeRecentJournalIntegration:
         _write_journal_file(config, now, [("14:30", "recently journaled fact")])
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
             patch("decafclaw.context_composer._now", return_value=now),
         ):
             composer = ContextComposer()
@@ -3020,7 +2367,9 @@ class TestComposeRecentJournalIntegration:
         history: list[dict] = []
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
             patch("decafclaw.context_composer._now", return_value=now),
         ):
             composer = ContextComposer(state=ctx.composer)
@@ -3034,7 +2383,9 @@ class TestComposeRecentJournalIntegration:
         # Turn 2: compose with the same live history
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
             patch("decafclaw.context_composer._now", return_value=now),
         ):
             res2 = await composer.compose(ctx, "turn 2", history, mode=ComposerMode.INTERACTIVE)
@@ -3059,7 +2410,7 @@ class TestComposeRecentJournalIntegration:
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
             patch(
-                "decafclaw.context_composer.retrieve_memory_context",
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context",
                 new_callable=AsyncMock,
                 side_effect=asyncio.CancelledError,
             ),
@@ -3072,7 +2423,9 @@ class TestComposeRecentJournalIntegration:
 
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
             patch("decafclaw.context_composer._now", return_value=now),
         ):
             result = await composer.compose(ctx, "turn 1 again", history, mode=ComposerMode.INTERACTIVE)
@@ -3110,7 +2463,11 @@ class TestPromptCachePrefixStability:
         async def run_turn(text: str) -> ComposedContext:
             with (
                 patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-                patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+                patch(
+                    "decafclaw.extensions.vault_retrieval.retrieve_memory_context",
+                    new_callable=AsyncMock,
+                    return_value=[],
+                ),
                 patch.object(
                     ContextComposer, "_compose_preempt_skill_matches", side_effect=lambda *a, **k: next(hints)
                 ),
@@ -3148,7 +2505,9 @@ class TestPromptCachePrefixStability:
         # A restart rebuilds history from the archive; it must match the live view.
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-            patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
         ):
             from_archive = await ContextComposer(state=ctx.composer).compose(
                 ctx, "turn 4", list(archived), mode=ComposerMode.INTERACTIVE

@@ -136,6 +136,7 @@ async def test_dynamic_extension_disable(ctx, config, monkeypatch):
         return {"content": "Response", "usage": {}}
 
     monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm)
+    ctx.event_bus = EventBus()
 
     call_count = 0
 

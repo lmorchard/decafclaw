@@ -224,3 +224,22 @@ async def test_malformed_returns_fail_open(ctx, config, no_tail_notes):
     assert _index(composed.messages, "VALID-MARKER") < _index(composed.messages, "USER-MARKER")
     assert "BAD-SLOT" not in str(composed.messages)
     assert "not-a-dict" not in str(composed.messages)
+
+
+@pytest.mark.asyncio
+async def test_extension_declared_timeout_overrides_shared_default(ctx, config, no_tail_notes):
+    """An extension may declare a larger PRE_COMPOSE bound than the shared default (#1489)."""
+    config.lifecycle.pre_compose_timeout = 0.05
+
+    class SlowCollector:
+        pre_compose_timeout = 0.5
+
+        async def hook(self, context, user_msg):
+            await asyncio.sleep(0.15)
+            return ContextContribution(ContextSlot.TAIL, [{"role": "user", "content": "SLOW-BUT-ALLOWED"}])
+
+    collector = SlowCollector()
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, collector.hook)
+    composed = await _compose(ctx)
+
+    assert "SLOW-BUT-ALLOWED" in str(composed.messages)

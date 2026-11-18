@@ -69,12 +69,15 @@ in the `TAIL` slot containing the bounded `<recalled_facts>` envelope: the
 configured timeout and `lifecycle.pre_compose_token_ceiling` still apply, so
 existing extensions (including `mem0`) need no changes. Structured
 contributions carry their own messages and are not truncated by that legacy
-ceiling. All hooks share the bounded `lifecycle.pre_compose_timeout` wait
-(default 300 ms): hooks that finish inside the bound contribute, a slow hook
-is cancelled and logged, and the turn still composes. A hook that advances
-durable state (such as an injection cursor) must do so immediately before it
-returns, with no `await` in between, so a cancellation cannot strand the
-state.
+ceiling. Hooks run with a per-hook bound: core uses
+`lifecycle.pre_compose_timeout` (default 300 ms), and an extension may declare
+a larger `pre_compose_timeout` on its `BaseExtension` instance (vault
+retrieval declares 5 s for its embedding query). Hooks that finish inside
+their bound contribute, a slow hook is cancelled and logged, and the turn
+still composes. Caller cancellation propagates instead of being swallowed. A
+hook that advances durable state (such as an injection cursor) must do so
+immediately before it returns, with no `await` in between, so a cancellation
+cannot strand the state.
 
 ## Type registry
 
@@ -90,7 +93,7 @@ Registry helpers: `register_extension_type(name, factory, *, default_enabled=Fal
 
 `default_enabled=True` marks a core type that `load_config` seeds when `config.json` defines no entry for it. The flag lives in the `ExtensionTypeMeta` record (`get_extension_type_meta`) and is replaced along with the factory on re-registration, so a test or embedder that swaps a type also chooses its default.
 
-Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`diagnostics_and_telemetry`, `scratchpad_notes`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
+Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`diagnostics_and_telemetry`, `scratchpad_notes`, `vault_retrieval`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
 
 ## Loading
 
@@ -159,6 +162,46 @@ and the legacy `notes.enabled`. Option overrides:
 
 Every failure — config read, file read, cursor update — logs a warning and
 returns no contribution, so the turn still composes.
+
+## Vault retrieval (default on)
+
+`src/decafclaw/extensions/vault_retrieval.py` owns proactive vault retrieval
+(#301, #1048, #1157, epic #1483 phase 4). It subscribes `PRE_COMPOSE`, embeds
+the user message, scores candidates by similarity, recency, and importance,
+suppresses pages the conversation already surfaced, trims to the turn's token
+budget, and returns a `TAIL` `ContextContribution` holding the
+`vault_retrieval` envelope plus a `memory` source entry.
+
+Core computes fixed costs (system prompt, tools, history, response reserve)
+and publishes the remainder on `ComposerState.dynamic_token_budget` before
+dispatching hooks; the extension trims to that budget, capped by its
+`max_tokens` option. It also writes the turn's `last_retrieved_context_text`
+and `last_memory_results` to composer state for reflection and the Context
+Inspector, publishes the `vault_retrieval` UI event, and publishes
+`retrieval_event` telemetry.
+
+Modes and gates match the pre-extraction behavior: `always`, `headlines`,
+`on_demand`; skipped for heartbeat, scheduled, and child-agent turns; honors
+`ctx.skip_vault_retrieval`. The extension declares
+`pre_compose_timeout = 5.0` because the first retrieval loads the embedding
+model.
+
+Options override the legacy [`vault_retrieval`](context-composer.md#configuration)
+section:
+
+| Option | Legacy fallback | Default |
+|--------|-----------------|---------|
+| `mode` | `vault_retrieval.mode` | `always` |
+| `max_results` | `vault_retrieval.max_results` | `5` |
+| `max_tokens` | `vault_retrieval.max_tokens` | `4000` |
+| `headline_summary_max_chars` | `vault_retrieval.headline_summary_max_chars` | `200` |
+| `show_in_ui` | `vault_retrieval.show_in_ui` | `true` |
+
+Disabled (`extensions.vault_retrieval.enabled: false`), the agent keeps
+manual `vault_search` / `vault_read` tools and no proactive injection. Every
+failure path logs and degrades instead of failing the turn. There is no
+in-memory retrieval cache to invalidate on vault writes: each turn queries
+`embeddings.db` through the retrieval provider.
 
 ## Reference extension: mem0
 

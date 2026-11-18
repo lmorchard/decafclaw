@@ -381,7 +381,7 @@ class RetrievalMode(StrEnum):
     String-valued so config JSON round-trips and existing string
     comparisons keep working; the enum makes a typo'd mode impossible to
     construct. Unknown values fall back to ``ALWAYS`` at compose time
-    (context_composer's ``_resolve_retrieval_mode``).
+    (``extensions.vault_retrieval.resolve_retrieval_mode``).
     """
 
     ALWAYS = "always"  # inject scored full-body candidates (default, back-compat)

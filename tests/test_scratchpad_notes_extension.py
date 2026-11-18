@@ -166,6 +166,7 @@ class TestComposerIntegration:
         assert any(s.source == "notes" for s in composed.sources)
 
     async def test_disabled_extension_stops_injection(self, ctx):
+        ctx.event_bus = EventBus()
         ctx.config.extensions["scratchpad_notes"] = ExtensionConfig(enabled=False, type="scratchpad_notes")
         manager = init_extensions(ctx.config, ctx.event_bus)
         assert not manager.is_enabled("scratchpad_notes")

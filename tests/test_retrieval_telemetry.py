@@ -1,7 +1,7 @@
 """Retrieval-event telemetry (#197 Phase 0).
 
 Subscriber consumes ``retrieval_event`` events (published once per
-interactive turn from ``ContextComposer._compose_vault_retrieval``) and
+interactive turn from ``extensions.vault_retrieval``) and
 appends one JSONL record per event, capturing the full scored candidate
 list plus each candidate's include/drop verdict. Fail-open. A report
 aggregates per-page retrieval/include/drop counts and a vault-health
