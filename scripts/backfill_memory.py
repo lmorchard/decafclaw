@@ -222,7 +222,7 @@ def backfill(
         from decafclaw.config import load_config
         from decafclaw.extensions.mem0 import Mem0Extension
 
-        config = load_config(config_path) if config_path else load_config()
+        config = load_config()
         mem0_cfg = config.extensions.get("mem0")
         opts = dict(mem0_cfg.options if mem0_cfg else {})
         if qdrant_path:
@@ -235,7 +235,7 @@ def backfill(
             return 1
 
         total = len(records)
-        print(f"Starting live backfill of {total} records into Mem0...")
+        print(f"Starting live backfill of {total} records into Mem0...", flush=True)
         processed_count = 0
         error_count = 0
 
@@ -244,6 +244,7 @@ def backfill(
             dt_str = r["timestamp"].strftime("%Y-%m-%d %H:%M")
             src_name = Path(r["source"]).name
             res = None
+            print(f"[{i}/{total}] Processing {dt_str} ({src_name})...", flush=True)
 
             try:
                 if r["type"] == "session_message":
@@ -259,7 +260,7 @@ def backfill(
                         processed_count += 1
             except Exception as e:
                 error_count += 1
-                print(f"[{i}/{total}] Error at {dt_str} ({src_name}): {e}")
+                print(f"[{i}/{total}] Error at {dt_str} ({src_name}): {e}", flush=True)
                 continue
 
             # Report extracted/updated facts
@@ -268,14 +269,14 @@ def backfill(
                     event = item.get("event", "ADD")
                     mem = item.get("memory", "")
                     if mem:
-                        print(f"  [{dt_str}] -> [{event}] {mem}")
+                        print(f"  [{dt_str}] -> [{event}] {mem}", flush=True)
 
             # Heartbeat progress reporting every 25 records or at completion
             if i % 25 == 0 or i == total:
                 pct = (i / total) * 100
-                print(f"Progress: [{i}/{total} ({pct:.1f}%)] | Current date: {dt_str} | Source: {src_name}")
+                print(f"Progress: [{i}/{total} ({pct:.1f}%)] | Current date: {dt_str} | Source: {src_name}", flush=True)
 
-        print(f"Live backfill finished: processed {processed_count} records with {error_count} errors.")
+        print(f"Live backfill finished: processed {processed_count} records with {error_count} errors.", flush=True)
     except Exception as e:
         print(f"Error during live backfill: {e}")
         return 1

@@ -37,20 +37,27 @@ class Mem0Extension(BaseExtension):
     def _build_mem0_config(self) -> dict[str, Any]:
         """Construct embedded, local-first Mem0 configuration dictionary."""
         opts = self.options
-        qdrant_path = opts.get("qdrant_path", "data/mem0_qdrant")
         embedder_model = opts.get("embedder_model", "BAAI/bge-small-en-v1.5")
         embedding_model_dims = int(opts.get("embedding_model_dims", 384))
-        llm_base_url = opts.get("llm_base_url", "http://synobian:4100/v1")
-        llm_model = opts.get("llm_model", "mandelbrot3-flint")
-        api_key = opts.get("api_key", "") or "local"
+        llm_base_url = opts.get("llm_base_url", "http://portia:11434/v1")
+        llm_model = opts.get("llm_model", "qwen2.5:32b")
+        api_key = opts.get("api_key", "") or "ollama"
+
+        qdrant_cfg: dict[str, Any] = {
+            "embedding_model_dims": embedding_model_dims,
+        }
+        if opts.get("qdrant_url"):
+            qdrant_cfg["url"] = opts["qdrant_url"]
+        elif opts.get("qdrant_host"):
+            qdrant_cfg["host"] = opts["qdrant_host"]
+            qdrant_cfg["port"] = int(opts.get("qdrant_port", 6333))
+        else:
+            qdrant_cfg["path"] = opts.get("qdrant_path", "data/mem0_qdrant")
 
         return {
             "vector_store": {
                 "provider": "qdrant",
-                "config": {
-                    "path": qdrant_path,
-                    "embedding_model_dims": embedding_model_dims,
-                },
+                "config": qdrant_cfg,
             },
             "embedder": {
                 "provider": "fastembed",
@@ -78,7 +85,8 @@ class Mem0Extension(BaseExtension):
             mem0_config = self._build_mem0_config()
             self.client = Memory.from_config(mem0_config)
             self._initialized = True
-            log.info("Initialized local Mem0 memory store at %s", mem0_config["vector_store"]["config"]["path"])
+            target = mem0_config["vector_store"]["config"].get("url") or mem0_config["vector_store"]["config"].get("path")
+            log.info("Initialized local Mem0 memory store at %s", target)
             return self.client
         except ImportError:
             log.warning("mem0 package is not installed; running in fallback mode")
