@@ -120,17 +120,17 @@ class ReflectionExtension(BaseExtension):
         self, ctx: "Context", config: Any, state: ReflectionState, content: str
     ) -> CandidateVerdict:
         """Skip-path verdict: append the escalation nudge when the budget is spent."""
-        reflected_out = (
+        retries_exhausted = (
             state.retries >= config.reflection.max_retries
             and state.last_result is not None
             and not state.last_result.passed
         )
         # Telemetry (#409): persist the exhausted verdict before nulling
         # last_result, so the per-turn emit can bucket it as loop_exhausted.
-        if reflected_out:
+        if retries_exhausted:
             state.exhausted = True
         state.last_result = None
-        if reflected_out:
+        if retries_exhausted:
             content += _EXHAUSTED_SUFFIX
         await self._emit_metrics(ctx, config, state, content)
         return CandidateVerdict(reject=False, text=content)

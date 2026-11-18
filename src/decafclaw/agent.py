@@ -644,7 +644,6 @@ class TurnRunner:
     messages: list = field(default_factory=list)
     prompt_tokens: int = 0
     empty_retries: int = 0
-    iteration_response: dict = field(default_factory=dict)
     # Per-turn scratch for CANDIDATE_RESPONSE hooks (retry budget, judge token
     # totals). Core owns the dict; each hook owns one key inside it.
     candidate_state: dict[str, Any] = field(default_factory=dict)
@@ -960,7 +959,6 @@ class TurnRunner:
         if cancelled:
             return _Final(result=cancelled)
 
-        self.iteration_response = response
         tool_calls = response.get("tool_calls")
         if tool_calls:
             return await self._handle_tool_calls(response, tool_calls)
