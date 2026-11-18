@@ -13,6 +13,7 @@ import { load as loadBookmarks } from './lib/bookmarks-store.js';
 import { setupResizeHandle } from './lib/utils.js';
 import { shouldFocusChatInput } from './lib/chat-focus.js';
 import { applyPageTitle } from './lib/page-title.js';
+import { updateFaviconBadge } from './lib/favicon-badge.js';
 import { showToast } from './lib/toast.js';
 import {
   setActiveConv,
@@ -66,6 +67,17 @@ function syncPageTitle() {
 }
 store.addEventListener('change', syncPageTitle);
 syncPageTitle();
+
+// Tab favicon: mirrors the selected conversation's activity, like the title,
+// so several open tabs each show their own turn's state instead of one tab's
+// background work lighting up every other tab (#1288, revised after multi-tab
+// use). The helper no-ops on unchanged status and restores the default icons
+// when the selected conversation is idle.
+function syncFavicon() {
+  updateFaviconBadge(store.getConversationStatus(store.currentConvId || ''));
+}
+store.addEventListener('change', syncFavicon);
+syncFavicon();
 
 // -- DOM references -----------------------------------------------------------
 
