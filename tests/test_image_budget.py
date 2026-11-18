@@ -489,22 +489,21 @@ def test_ac5_unresolvable_model_fails_open():
 # ---------------------------------------------------------------------------
 
 
-def test_config_string_override_parses():
-    """A per-provider mapping hand-written as a string in config.json is parsed back.
+def test_config_string_override_ignored():
+    """A per-provider mapping hand-written as a string in config.json is ignored.
 
     The JSON path passes values through untouched, so
-    ``"providers": {"vertex": "{'max_images': 10}"}`` arrives as a string;
-    ``resolved()`` parses it back rather than raising on every turn. (The env
-    path no longer produces strings here — ``_parse_dict`` keeps JSON types,
-    #1306.)
+    ``"providers": {"vertex": "{'max_images': 10}"}`` arrives as a string.
+    ``resolved()`` no longer re-parses it (the ``ast.literal_eval`` recovery
+    was removed in #1307); it warns and falls back to the verified defaults.
     """
     from decafclaw.config_types import ImageBudgetConfig
 
     cfg = ImageBudgetConfig(providers={"vertex": "{'max_images': 10}"})
     limits = cfg.resolved("vertex")
 
-    assert limits.max_images == 10  # parsed from the stringified mapping
-    assert limits.max_request_bytes == 256 * 1024 * 1024  # verified default still applies
+    assert limits.max_images == 3000  # verified default; string override ignored
+    assert limits.max_request_bytes == 256 * 1024 * 1024
 
 
 def test_config_non_numeric_override_disables_dimension():
@@ -519,7 +518,7 @@ def test_config_non_numeric_override_disables_dimension():
 
 
 def test_config_unparseable_override_ignored():
-    """An unparseable per-provider mapping is ignored (verified defaults apply)."""
+    """A per-provider override that is not a mapping (a bare string) is ignored."""
     from decafclaw.config_types import ImageBudgetConfig
 
     cfg = ImageBudgetConfig(providers={"vertex": "max_images 10"})  # not a mapping
@@ -527,6 +526,18 @@ def test_config_unparseable_override_ignored():
 
     assert limits.max_images == 3000  # verified default, override ignored
     assert limits.max_request_bytes == 256 * 1024 * 1024
+
+
+def test_config_non_mapping_override_ignored():
+    """A per-provider override of a non-mapping, non-string type is ignored rather than raising."""
+    from decafclaw.config_types import ImageBudgetConfig
+
+    for bad in (42, [10]):
+        cfg = ImageBudgetConfig(providers={"vertex": bad})
+        limits = cfg.resolved("vertex")  # must not raise
+
+        assert limits.max_images == 3000  # verified default, override ignored
+        assert limits.max_request_bytes == 256 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------

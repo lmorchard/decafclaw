@@ -8,7 +8,6 @@ Field metadata supports:
 
 from __future__ import annotations
 
-import ast
 import logging
 from dataclasses import dataclass, field, replace
 from dataclasses import fields as dc_fields
@@ -599,30 +598,23 @@ class ImageBudgetConfig:
         no override, the verified default applies; with neither, ``None`` (no
         enforcement). An unknown/empty provider type yields all-None.
 
-        Malformed values fail open: a non-numeric dimension value or an
-        unparseable per-provider mapping logs a warning and disables that
-        dimension (or the whole override) rather than raising on every turn.
+        Malformed values fail open: a non-numeric dimension value or a
+        non-mapping per-provider override (e.g. a hand-written string in
+        config.json) logs a warning and disables that dimension (or the whole
+        override) rather than raising on every turn.
         """
         if not provider_type:
             return ResolvedImageLimits(provider_type=provider_type or None)
         defaults = _VERIFIED_IMAGE_LIMITS.get(provider_type, {})
         override = self.providers.get(provider_type) or {}
-        if isinstance(override, str):
-            # A per-provider mapping hand-written as a string in config.json
-            # (the JSON path passes values through untouched) arrives as its
-            # Python/JSON repr. Parse it back; anything that is not a clean
-            # mapping is ignored (with a warning) rather than raising on every
-            # turn. The env path no longer produces strings here: ``_parse_dict``
-            # keeps JSON types (#1306).
-            try:
-                parsed = ast.literal_eval(override)
-            except (ValueError, SyntaxError, TypeError):
-                parsed = None
-            if isinstance(parsed, dict):
-                override = parsed
-            else:
-                log.warning("image_budget: unparseable providers[%r] override %r; ignoring", provider_type, override)
-                override = {}
+        if not isinstance(override, dict):
+            # A per-provider override must be a mapping. The env path always
+            # yields one (``_parse_dict`` keeps JSON types, #1306); any other
+            # type is a hand-written config.json value. Fail open: warn and
+            # ignore rather than raising on every turn (the ``ast.literal_eval``
+            # recovery for stringified mappings was removed in #1307).
+            log.warning("image_budget: providers[%r] override %r is not a mapping; ignoring", provider_type, override)
+            override = {}
 
         def pick(key: str):
             # An explicit override (key present) wins, null included (= disable).
