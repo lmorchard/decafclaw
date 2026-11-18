@@ -3,32 +3,64 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from decafclaw.events import EventBus
 
 log = logging.getLogger(__name__)
 
-# Extension type registry (#1458): type name -> factory(options, config).
+
+@dataclass(frozen=True)
+class ExtensionTypeMeta:
+    """Registry metadata for one extension type.
+
+    ``default_enabled`` marks core types that config should seed when
+    ``config.json`` defines no entry for them.
+    """
+
+    name: str
+    factory: Callable[[dict[str, Any], Any], "Extension"]
+    default_enabled: bool = False
+
+
+# Extension type registry (#1458): type name -> metadata.
 # Built-in extension modules register themselves at import time; third-party
 # types may register too. Factories receive extension-owned options verbatim.
-_EXTENSION_TYPES: dict[str, Callable[[dict[str, Any], Any], "Extension"]] = {}
+_EXTENSION_TYPES: dict[str, ExtensionTypeMeta] = {}
 
 
-def register_extension_type(name: str, factory: Callable[[dict[str, Any], Any], "Extension"]) -> None:
+def register_extension_type(
+    name: str,
+    factory: Callable[[dict[str, Any], Any], "Extension"],
+    *,
+    default_enabled: bool = False,
+) -> None:
     """Register a factory for an extension type name.
 
     Re-registering a name replaces it with a warning (built-in modules import
-    once, but tests and embedders can legitimately swap a type).
+    once, but tests and embedders can legitimately swap a type). The
+    ``default_enabled`` flag is replaced with the rest of the entry.
     """
     if name in _EXTENSION_TYPES:
         log.warning("Replacing already-registered extension type %r", name)
-    _EXTENSION_TYPES[name] = factory
+    _EXTENSION_TYPES[name] = ExtensionTypeMeta(name=name, factory=factory, default_enabled=default_enabled)
 
 
 def get_extension_type(name: str) -> Callable[[dict[str, Any], Any], "Extension"] | None:
     """Return the factory registered for an extension type, if any."""
+    meta = _EXTENSION_TYPES.get(name)
+    return meta.factory if meta is not None else None
+
+
+def get_extension_type_meta(name: str) -> ExtensionTypeMeta | None:
+    """Return the registry metadata for an extension type, if any."""
     return _EXTENSION_TYPES.get(name)
+
+
+def get_default_enabled_extension_types() -> dict[str, ExtensionTypeMeta]:
+    """Return a copy of the types marked ``default_enabled``, in registry order."""
+    return {name: meta for name, meta in _EXTENSION_TYPES.items() if meta.default_enabled}
 
 
 def list_extension_types() -> list[str]:
@@ -39,6 +71,31 @@ def list_extension_types() -> list[str]:
 def clear_extension_types() -> None:
     """Drop all registered extension types (test isolation)."""
     _EXTENSION_TYPES.clear()
+
+
+def ensure_builtin_extension_types() -> None:
+    """Import built-in extension modules and register any missing type.
+
+    Built-in modules register themselves at import time, but the import only
+    runs once. A caller that cleared the registry explicitly (test isolation,
+    embedders) needs the registrations restored, so re-register missing names
+    here. Modules are imported lazily: ``mem0`` imports ``BaseExtension`` from
+    this module, and a top-level import would cycle.
+    """
+    from . import diagnostics_and_telemetry as _diagnostics_and_telemetry
+    from . import improvement_scout as _improvement_scout
+    from . import mem0 as _mem0
+
+    if get_extension_type("diagnostics_and_telemetry") is None:
+        register_extension_type(
+            "diagnostics_and_telemetry",
+            _diagnostics_and_telemetry.DiagnosticsAndTelemetryExtension,
+            default_enabled=True,
+        )
+    if get_extension_type("mem0") is None:
+        register_extension_type("mem0", _mem0.Mem0Extension)
+    if get_extension_type("improvement_scout") is None:
+        register_extension_type("improvement_scout", _improvement_scout.ImprovementScoutExtension)
 
 
 @runtime_checkable
@@ -130,22 +187,7 @@ def init_extensions(config: Any, bus: EventBus) -> ExtensionManager:
     """
     manager = ExtensionManager(bus, config)
 
-    # Import built-ins lazily so their module-level registrations run without
-    # an import cycle (mem0 imports BaseExtension from this module). If a
-    # caller cleared the registry explicitly (test isolation, embedders), the
-    # modules are cached and won't re-register, so re-register the built-ins.
-    from . import diagnostics_and_telemetry as _diagnostics_and_telemetry  # noqa: F401
-    from . import improvement_scout as _improvement_scout  # noqa: F401
-    from . import mem0 as _mem0  # noqa: F401
-
-    if get_extension_type("diagnostics_and_telemetry") is None:
-        register_extension_type(
-            "diagnostics_and_telemetry", _diagnostics_and_telemetry.DiagnosticsAndTelemetryExtension
-        )
-    if get_extension_type("mem0") is None:
-        register_extension_type("mem0", _mem0.Mem0Extension)
-    if get_extension_type("improvement_scout") is None:
-        register_extension_type("improvement_scout", _improvement_scout.ImprovementScoutExtension)
+    ensure_builtin_extension_types()
 
     for name, ext_cfg in getattr(config, "extensions", {}).items():
         if ext_cfg.enabled is False:
