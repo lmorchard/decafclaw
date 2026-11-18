@@ -617,6 +617,7 @@ auth.addEventListener('login', () => {
   // empty; refresh now that the session is (re)established so pinned
   // bookmarks and toolbar stars appear without a manual reload.
   void loadBookmarks();
+  selectSavedConversation(getConvFromUrl());
 });
 auth.addEventListener('logout', () => showLogin());
 
@@ -632,9 +633,16 @@ store.addEventListener('change', () => {
   }
 });
 
-/** Read ?conv= on startup and select that conversation */
+/** Read ?conv= (or #conv= fallback) on startup and select that conversation */
 function getConvFromUrl() {
-  return new URLSearchParams(location.search).get('conv') || null;
+  const fromSearch = new URLSearchParams(location.search).get('conv');
+  if (fromSearch) return fromSearch;
+  if (location.hash) {
+    const raw = location.hash.replace(/^#/, '');
+    const hashParams = new URLSearchParams(raw);
+    return hashParams.get('conv') || null;
+  }
+  return null;
 }
 
 /** Read ?vault= on startup and open that vault page */
@@ -652,6 +660,39 @@ function getScheduleFromUrl() {
   return new URLSearchParams(location.search).get('schedule') || null;
 }
 
+function selectSavedConversation(savedConvId) {
+  if (!savedConvId) return;
+  const selectWhenReady = () => {
+    if (store.conversations.length > 0) {
+      store.selectConversation(savedConvId);
+      return;
+    }
+    const onFirstChange = () => {
+      store.removeEventListener('change', onFirstChange);
+      store.selectConversation(savedConvId);
+    };
+    store.addEventListener('change', onFirstChange);
+  };
+
+  if (ws.connected) {
+    selectWhenReady();
+  } else {
+    const onOpen = () => {
+      selectWhenReady();
+      ws.removeEventListener('open', onOpen);
+    };
+    ws.addEventListener('open', onOpen);
+  }
+}
+
+// Handle hash changes (e.g. clicking #conv= links while app is open)
+window.addEventListener('hashchange', () => {
+  const convId = getConvFromUrl();
+  if (convId && convId !== store.currentConvId) {
+    store.selectConversation(convId);
+  }
+});
+
 // -- Init ---------------------------------------------------------------------
 
 async function init() {
@@ -666,20 +707,7 @@ async function init() {
     if (savedWiki) showWikiPage(savedWiki, { replace: true });
     else if (savedFile) showFilePage({ path: savedFile }, { replace: true });
     else if (savedSchedule) showSchedulePage(savedSchedule, { replace: true });
-    const savedConvId = getConvFromUrl();
-    if (savedConvId) {
-      const onOpen = () => {
-        // Wait for conv_list to arrive, then select
-        const onFirstChange = () => {
-          store.removeEventListener('change', onFirstChange);
-          // Try web conversations first, then select directly (works for system convs too)
-          store.selectConversation(savedConvId);
-        };
-        store.addEventListener('change', onFirstChange);
-        ws.removeEventListener('open', onOpen);
-      };
-      ws.addEventListener('open', onOpen);
-    }
+    selectSavedConversation(getConvFromUrl());
   } else {
     showLogin();
   }
