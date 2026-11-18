@@ -12,16 +12,26 @@ nothing here is durable.
 
 ## What's measured
 
-`metrics.py` subscribes to three events and derives everything from them.
+`metrics.py` subscribes to three events and derives the per-call and per-tool
+counters from them; the token counters arrive from the diagnostics extension
+at turn settle.
 
-| Metric | Type | Labels | Source event |
+| Metric | Type | Labels | Source |
 |---|---|---|---|
-| `llm_calls_total` | counter | `model` | `llm_end` |
-| `llm_call_latency_ms` | histogram | `model` | `llm_end` |
-| `tool_calls_total` | counter | `tool`, `outcome` | `tool_end` |
-| `tool_duration_ms` | histogram | `tool`, `outcome` | `tool_end` |
-| `errors_total` | counter | `component`, `name` | `tool_end` (on error) |
-| `loop_breaker_trips_total` | counter | `action` | `loop_breaker` |
+| `llm_calls_total` | counter | `model` | `llm_end` event |
+| `llm_call_latency_ms` | histogram | `model` | `llm_end` event |
+| `llm_tokens_total` | counter | `model`, `kind` (`prompt`/`cached`/`completion`) | `DiagnosticsAndTelemetryExtension` at `ON_TURN_SETTLE` |
+| `tool_calls_total` | counter | `tool`, `outcome` | `tool_end` event |
+| `tool_duration_ms` | histogram | `tool`, `outcome` | `tool_end` event |
+| `errors_total` | counter | `component`, `name` | `tool_end` event (on error) |
+| `loop_breaker_trips_total` | counter | `action` | `loop_breaker` event |
+
+The first two and the tool/loop-breaker metrics come from the event
+subscriber. `llm_tokens_total` comes from
+[`DiagnosticsAndTelemetryExtension`](extensions.md#diagnostics-and-telemetry-default-on):
+it records the turn's final `ctx.tokens` totals once at turn settle (so a
+multi-call turn is counted once), and only when `telemetry.metrics_enabled` is
+true.
 
 `outcome` comes from `infer_outcome()` in `tool_telemetry.py`, so it matches
 what the tool-usage report shows. `action` is the loop-breaker escalation rung

@@ -456,39 +456,7 @@ async def _call_llm_with_events(
     if llm_api_key:
         llm_kwargs["llm_api_key"] = llm_api_key
 
-    conv_id = getattr(ctx, "conv_id", "") or getattr(ctx, "channel_id", "")
-    if conv_id:
-        try:
-            from .llm import _resolve
-
-            resolved = _resolve(
-                config,
-                model_name=model_name or ctx.active_model,
-                llm_url=llm_url,
-                llm_model=llm_model,
-                llm_api_key=llm_api_key,
-            )
-            target_model = resolved.model
-        except Exception:
-            target_model = model_name or ctx.active_model or effective_default_model(config)
-            if not target_model and hasattr(config, "llm"):
-                target_model = getattr(config.llm, "model", "")
-
-        try:
-            from .context_composer import write_last_request_sidecar
-
-            write_last_request_sidecar(
-                config,
-                conv_id,
-                {
-                    "model": target_model,
-                    "messages": messages,
-                    "tools": tools,
-                },
-            )
-        except Exception as exc:
-            log.debug("last_request sidecar write failed for %s: %s", conv_id, exc)
-
+    conv_id = ctx.conv_id or ctx.channel_id
     iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
     start_time = time.monotonic()
@@ -878,6 +846,24 @@ class TurnRunner:
 
         self.turn_start_index = len(self.history)
 
+    def _dispatch_before_llm_call(self, messages: list[dict], tools: list[dict]) -> None:
+        """Run synchronous BEFORE_LLM_CALL interceptors for one outgoing request.
+
+        Every LLM request in a turn goes through here — tool-loop iterations,
+        the end-turn summary, and the grace call — so observers see the real
+        final payload. Async hooks are not supported in this phase.
+        """
+        for hook in self.ctx.get_interceptors(TurnLifecycle.BEFORE_LLM_CALL):
+            try:
+                res = hook(self.ctx, messages, tools)
+                if inspect.iscoroutine(res):
+                    res.close()
+                    log.warning(
+                        "BEFORE_LLM_CALL interceptor %s returned a coroutine. Async hooks are not supported.", hook
+                    )
+            except Exception as exc:
+                log.exception("BEFORE_LLM_CALL interceptor failed: %s", exc)
+
     async def _run_iteration(self, iteration: int) -> IterationOutcome:
         with _tracer.start_as_current_span("TurnRunner._run_iteration") as span:
             span.set_attribute("iteration", iteration)
@@ -901,16 +887,7 @@ class TurnRunner:
             refresh_dynamic_tools(self.ctx)
             all_tools, _, _ = build_tool_list(self.ctx)
 
-        for hook in self.ctx.get_interceptors(TurnLifecycle.BEFORE_LLM_CALL):
-            try:
-                res = hook(self.ctx, self.messages, all_tools)
-                if inspect.iscoroutine(res):
-                    res.close()
-                    log.warning(
-                        "BEFORE_LLM_CALL interceptor %s returned a coroutine. Async hooks are not supported.", hook
-                    )
-            except Exception as exc:
-                log.exception("BEFORE_LLM_CALL interceptor failed: %s", exc)
+        self._dispatch_before_llm_call(self.messages, all_tools)
 
         try:
             response = await _call_llm_with_events(
@@ -1126,6 +1103,7 @@ class TurnRunner:
         confirm_denied = False
         if isinstance(end_turn_signal, EndTurnConfirm):
             log.info("EndTurnConfirm — making presentation LLM call before confirmation")
+            self._dispatch_before_llm_call(self.messages, [])
             present_response = await _call_llm_with_events(
                 self.ctx,
                 self.config,
@@ -1179,6 +1157,7 @@ class TurnRunner:
                         "content": "Please provide a concise summary of what was accomplished, any relevant results, and any outstanding input.",
                     }
                 )
+            self._dispatch_before_llm_call(final_messages, [])
             final_response = await _call_llm_with_events(
                 self.ctx,
                 self.config,
@@ -1548,6 +1527,7 @@ class TurnRunner:
         }
         self.messages.append(grace_note)
         try:
+            self._dispatch_before_llm_call(self.messages, [])
             response = await _call_llm_with_events(
                 self.ctx,
                 self.config,

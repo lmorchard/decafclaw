@@ -1608,7 +1608,7 @@ async def test_context_optional_and_extra_diagnostics_are_unchanged(authed_clien
 async def test_context_raw_endpoint_serves_sidecar_and_checks_auth(authed_client, app, http_config):
     from httpx import ASGITransport, AsyncClient
 
-    from decafclaw.context_composer import write_last_request_sidecar
+    from decafclaw.extensions.diagnostics_and_telemetry import _write_snapshot
 
     conv = (await authed_client.post("/api/conversations", json={})).json()
     conv_id = conv["conv_id"]
@@ -1621,7 +1621,7 @@ async def test_context_raw_endpoint_serves_sidecar_and_checks_auth(authed_client
         "messages": [{"role": "user", "content": "hello"}],
         "tools": [{"type": "function", "function": {"name": "test"}}],
     }
-    write_last_request_sidecar(http_config, conv_id, payload)
+    _write_snapshot(http_config, conv_id, payload)
 
     # 200 with sidecar
     resp = await authed_client.get(f"/api/conversations/{conv_id}/context/raw")
@@ -1645,7 +1645,7 @@ async def test_context_raw_endpoint_serves_sidecar_and_checks_auth(authed_client
 @pytest.mark.asyncio
 async def test_context_raw_system_conv(authed_client, http_config):
     """REST /context/raw should also serve system conversations."""
-    from decafclaw.context_composer import write_last_request_sidecar
+    from decafclaw.extensions.diagnostics_and_telemetry import _write_snapshot
 
     conv_dir = http_config.workspace_path / "conversations"
     conv_id = "schedule-newsletter-20260520-080000"
@@ -1653,7 +1653,7 @@ async def test_context_raw_system_conv(authed_client, http_config):
     (conv_dir / conv_id / "archive.jsonl").write_text("{}\n")
 
     payload = {"model": "system-model", "messages": [], "tools": []}
-    write_last_request_sidecar(http_config, conv_id, payload)
+    _write_snapshot(http_config, conv_id, payload)
 
     resp = await authed_client.get(f"/api/conversations/{conv_id}/context/raw")
     assert resp.status_code == 200

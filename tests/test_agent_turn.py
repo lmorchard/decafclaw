@@ -913,6 +913,16 @@ async def test_run_agent_turn_end_turn_confirm_denied_no_summary_directive(ctx):
 
     action = EndTurnConfirm(message="Review plan", approve_label="OK", deny_label="Change plan")
 
+    # Every request in the turn must reach BEFORE_LLM_CALL observers (the
+    # diagnostics sidecar depends on it): iteration, presentation, final.
+    from decafclaw.context import TurnLifecycle
+
+    hook_calls = []
+    ctx.add_interceptor(
+        TurnLifecycle.BEFORE_LLM_CALL,
+        lambda _ctx, messages, _tools: hook_calls.append(list(messages)),
+    )
+
     tool_call_response = _mock_llm_response(
         content=None,
         tool_calls=[
@@ -956,6 +966,10 @@ async def test_run_agent_turn_end_turn_confirm_denied_no_summary_directive(ctx):
     assert all("All steps are complete" not in (m.get("content") or "") for m in final_call_messages)
     assert all("Please provide a concise summary" not in (m.get("content") or "") for m in final_call_messages)
     assert any("[User selected 'Change plan'" in (m.get("content") or "") for m in final_call_messages)
+    # The BEFORE_LLM_CALL interceptor ran for all three requests: the tool-loop
+    # iteration, the EndTurnConfirm presentation call, and the final call.
+    assert len(hook_calls) == 3
+    assert any("[User selected 'Change plan'" in (m.get("content") or "") for m in hook_calls[2])
 
 
 @pytest.mark.asyncio
@@ -1022,13 +1036,32 @@ async def test_run_agent_turn_unanswered_widget_summary_directive(ctx):
 
 
 @pytest.mark.asyncio
-async def test_run_agent_turn_overwrites_last_request_sidecar(ctx):
-    """Each LLM call in a turn overwrites last_request.json, and the last call wins."""
+async def test_run_agent_turn_writes_last_request_sidecar_via_extension(ctx, monkeypatch):
+    """The diagnostics extension captures each LLM call and writes the last one at settle."""
+    from decafclaw.config_types import ExtensionConfig
     from decafclaw.context_composer import read_last_request_sidecar
+    from decafclaw.extensions import init_extensions
 
     ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
     ctx.conv_id = "test-conv-last-req"
+    ctx.config.extensions["diagnostics_and_telemetry"] = ExtensionConfig(
+        enabled=True, type="diagnostics_and_telemetry", options={}
+    )
+    manager = init_extensions(ctx.config, ctx.event_bus)
+    assert manager.is_enabled("diagnostics_and_telemetry")
+
+    # ON_TURN_SETTLE hooks are dispatched as unawaited tasks; keep their
+    # handles so the assertion does not race the background write.
+    settle_tasks = []
+    real_create_task = asyncio.create_task
+
+    def capture_create_task(coro, **kwargs):
+        task = real_create_task(coro, **kwargs)
+        settle_tasks.append(task)
+        return task
+
+    monkeypatch.setattr("decafclaw.agent.asyncio.create_task", capture_create_task)
 
     tool_call_response = _mock_llm_response(
         content=None,
@@ -1050,11 +1083,60 @@ async def test_run_agent_turn_overwrites_last_request_sidecar(ctx):
         result = await run_agent_turn(ctx, "show memories", history)
 
     assert result.text == "Here are your memories."
+    await asyncio.gather(*settle_tasks, return_exceptions=True)
     last_req = read_last_request_sidecar(ctx.config, ctx.conv_id)
     assert last_req is not None
     assert last_req["model"] == ctx.config.llm.model
     # The last request sent to the provider included the tool result
     assert any(m.get("role") == "tool" for m in last_req["messages"])
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_sidecar_tracks_grace_call(ctx, monkeypatch):
+    """The sidecar snapshot follows the grace call, not the last tool iteration."""
+    from decafclaw.config_types import ExtensionConfig
+    from decafclaw.context_composer import read_last_request_sidecar
+    from decafclaw.extensions import init_extensions
+
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+    ctx.conv_id = "test-conv-grace-sidecar"
+    ctx.config.agent.max_tool_iterations = 1
+    ctx.config.extensions["diagnostics_and_telemetry"] = ExtensionConfig(
+        enabled=True, type="diagnostics_and_telemetry", options={}
+    )
+    init_extensions(ctx.config, ctx.event_bus)
+
+    settle_tasks = []
+    real_create_task = asyncio.create_task
+
+    def capture_create_task(coro, **kwargs):
+        task = real_create_task(coro, **kwargs)
+        settle_tasks.append(task)
+        return task
+
+    monkeypatch.setattr("decafclaw.agent.asyncio.create_task", capture_create_task)
+
+    tool_call_response = _mock_llm_response(
+        content=None,
+        tool_calls=[
+            {
+                "id": "tc1",
+                "function": {"name": "memory_recent", "arguments": "{}"},
+            }
+        ],
+    )
+    grace_response = _mock_llm_response("Wrapping up.")
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [tool_call_response, grace_response]
+        await run_agent_turn(ctx, "loop forever", [])
+
+    await asyncio.gather(*settle_tasks, return_exceptions=True)
+    last_req = read_last_request_sidecar(ctx.config, ctx.conv_id)
+    assert last_req is not None
+    assert last_req["tools"] == []
+    assert any("[iteration_limit]" in (m.get("content") or "") for m in last_req["messages"])
 
 
 @pytest.mark.asyncio

@@ -134,9 +134,14 @@ def init_extensions(config: Any, bus: EventBus) -> ExtensionManager:
     # an import cycle (mem0 imports BaseExtension from this module). If a
     # caller cleared the registry explicitly (test isolation, embedders), the
     # modules are cached and won't re-register, so re-register the built-ins.
+    from . import diagnostics_and_telemetry as _diagnostics_and_telemetry  # noqa: F401
     from . import improvement_scout as _improvement_scout  # noqa: F401
     from . import mem0 as _mem0  # noqa: F401
 
+    if get_extension_type("diagnostics_and_telemetry") is None:
+        register_extension_type(
+            "diagnostics_and_telemetry", _diagnostics_and_telemetry.DiagnosticsAndTelemetryExtension
+        )
     if get_extension_type("mem0") is None:
         register_extension_type("mem0", _mem0.Mem0Extension)
     if get_extension_type("improvement_scout") is None:
