@@ -14,6 +14,65 @@ class Extension(Protocol):
 
 `enable` subscribes hooks and returns the subscription IDs; `disable` unsubscribes them. `BaseExtension` stores the IDs and implements `disable`; subclasses normally override `enable` only. `ExtensionManager` tracks registration (`register`, `get`, `list_extensions`), activation (`enable`, `disable`, `is_enabled`), and bus subscription bookkeeping.
 
+## PRE_COMPOSE context contributions
+
+`TurnLifecycle.PRE_COMPOSE` is an async collector phase: the composer runs
+every subscribed hook concurrently before assembling the turn. A hook may
+return `None`, legacy fact text (`str` / `list[str]`), or structured
+`ContextContribution` objects from `decafclaw.extensions`:
+
+```python
+from decafclaw.context_composer import SourceEntry
+from decafclaw.extensions import ContextContribution, ContextSlot
+
+async def pre_compose_hook(ctx, user_message, history):
+    return [
+        ContextContribution(
+            slot=ContextSlot.DELTA,
+            messages=[{"role": "user", "content": notes_block}],
+            source_entry=SourceEntry(source="notes_extension", tokens_estimated=120, items_included=1),
+        )
+    ]
+```
+
+Slots mount in one invariant order (#1486):
+
+| Slot | Mount point | Archived? |
+|------|-------------|-----------|
+| `HEAD` | After the system prompt, before history | No — replays at the same offset so the provider prefix cache stays stable (#1117) |
+| `DELTA` | After archived history and this turn's other chronological injections (wiki, notes, journal, memory), before tail envelopes | Yes |
+| `TAIL` | Directly before the current user message | Yes |
+
+Messages follow the composer's normal role filter: `system`, `user`,
+`assistant`, and `tool` are sent as-is, while the composer's internal
+injection roles (`vault_retrieval`, `conversation_notes`, `recent_journal`,
+`skill_hint`, `recalled_facts`, and friends) are remapped to `user`. A
+`DELTA` or `TAIL` message with any other role is archived but left out of
+the provider request; an unsupported role in `HEAD` is skipped with a
+warning.
+
+`DELTA` and `TAIL` contributions are archived with the rest of this turn's
+injections and replayed from history on later turns. A hook that returns the
+same items every turn therefore duplicates them in history — return only new
+items. `HEAD` mounts at the same offset after the system prompt every turn
+and is never archived, so keep it static per conversation: it sits in the
+cached prompt prefix (#1117).
+
+Token accounting and Context Inspector visibility come from the
+contribution's `source_entry`, which is appended to the turn's `sources`
+list. A contribution without one still mounts its messages, but adds no
+source row and no estimated tokens. Malformed contributions and unsupported
+returns are logged and skipped.
+
+Legacy `str` / `list[str]` returns are coerced to one `ContextContribution`
+in the `TAIL` slot containing the bounded `<recalled_facts>` envelope: the
+configured timeout and `lifecycle.pre_compose_token_ceiling` still apply, so
+existing extensions (including `mem0`) need no changes. Structured
+contributions carry their own messages and are not truncated by that legacy
+ceiling. All hooks share the bounded `lifecycle.pre_compose_timeout` wait
+(default 300 ms); a raising or slow hook is logged and the turn still
+composes.
+
 ## Type registry
 
 ```python
@@ -154,4 +213,4 @@ schedules directory.
 
 ## Scope
 
-Extensions cannot change `TurnLifecycle` or `EventBus` subscription/dispatch, and they do not alter the composer's `<recalled_facts>` envelope or tail placement — hooks return facts, core composes them.
+Extensions cannot change `TurnLifecycle` or `EventBus` subscription/dispatch, and they do not control slot ordering or message assembly — `PRE_COMPOSE` hooks return contributions or legacy facts, and core mounts them.
