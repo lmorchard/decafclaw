@@ -95,7 +95,7 @@ async def run_all(app_ctx):
         from .conversation_manager import ConversationManager
         from .widget_input import register_widget_handler
 
-        manager = ConversationManager(config, app_ctx.event_bus)
+        manager = ConversationManager(config, app_ctx.event_bus, extension_manager=app_ctx.extension_manager)
         register_widget_handler(manager.confirmation_registry)
         await manager.startup_scan()
         await manager.startup_scan_workflows()

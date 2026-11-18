@@ -523,11 +523,15 @@ class ConversationManager:
         event_bus,
         confirmation_registry: ConfirmationRegistry | None = None,
         terminal_registry: Any | None = None,
+        extension_manager: Any | None = None,
     ):
         self.config = config
         self.event_bus = event_bus
         self.confirmation_registry = confirmation_registry or ConfirmationRegistry()
         self.terminal_registry = terminal_registry
+        # Runtime extension manager from runner startup (#1490); attached to
+        # every turn context so core extensions can expose direct services.
+        self.extension_manager = extension_manager
         self.mm_client: Any | None = None
 
         # Workflow user-input resumes via the confirmation recovery path.
@@ -1375,6 +1379,7 @@ class ConversationManager:
         from .context import Context
 
         ctx = Context(config=self.config, event_bus=self.event_bus)
+        ctx.extension_manager = self.extension_manager
         ctx.conv_id = conv_id
         ctx.user_id = state.last_user_id if state else ""
         ctx.cancelled = cancel_event
@@ -1946,6 +1951,7 @@ class ConversationManager:
                 channel_id=conv_id,
                 task_mode=effective_task_mode,
             )
+            ctx.extension_manager = self.extension_manager
             ctx.cancelled = state.cancel_event
             ctx.steer_event = state.steer_event
             ctx.wiki_page = wiki_page
@@ -1962,6 +1968,7 @@ class ConversationManager:
             # (Revisit after live smoke: WORKFLOW may want Context.for_task
             # semantics — if so, add it to TASK_KINDS with a KIND_TASK_MODE entry.)
             ctx = Context(config=self.config, event_bus=self.event_bus)
+            ctx.extension_manager = self.extension_manager
             ctx.user_id = user_id
             ctx.channel_id = conv_id
             ctx.conv_id = conv_id

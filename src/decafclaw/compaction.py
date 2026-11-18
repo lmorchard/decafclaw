@@ -27,6 +27,42 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+
+async def _dispatch_pre_compaction(ctx: "Context", history: list) -> None:
+    """Run ``PRE_COMPACTION`` collectors with per-hook fail-open bounds (#1490).
+
+    Hooks are for side effects (flushing pending state, recording episode
+    boundaries) and run immediately before summarization. A raising or slow
+    hook is logged and skipped; caller cancellation still propagates.
+    """
+    hooks = ctx.get_interceptors(TurnLifecycle.PRE_COMPACTION)
+    if not hooks:
+        return
+    lifecycle_cfg = getattr(ctx.config, "lifecycle", None)
+    default_timeout = float(getattr(lifecycle_cfg, "pre_compaction_timeout", 2.0))
+
+    async def _call(hook) -> None:
+        res = hook(ctx, history)
+        if inspect.iscoroutine(res):
+            await res
+
+    async def _bounded(hook) -> None:
+        declared = getattr(hook, "pre_compaction_timeout", None)
+        if declared is None:
+            declared = getattr(getattr(hook, "__self__", None), "pre_compaction_timeout", None)
+        timeout = float(declared) if isinstance(declared, (int, float)) and declared > 0 else default_timeout
+        try:
+            await asyncio.wait_for(_call(hook), timeout=timeout)
+        except asyncio.TimeoutError:
+            log.warning("PRE_COMPACTION hook %s timed out after %.3fs", hook, timeout)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("PRE_COMPACTION hook failed")
+
+    await asyncio.gather(*(_bounded(hook) for hook in hooks))
+
+
 _BUNDLED_SWEEP_PROMPT_PATH = Path(__file__).parent / "prompts" / "MEMORY_SWEEP.md"
 
 
@@ -634,15 +670,6 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     if mode is None:
         return False
 
-    # Dispatch PRE_COMPACTION hooks
-    for hook in ctx.get_interceptors(TurnLifecycle.PRE_COMPACTION):
-        try:
-            res = hook(ctx, history)
-            if inspect.iscoroutine(res):
-                await res
-        except Exception:
-            log.exception("PRE_COMPACTION hook failed")
-
     log.info(
         f"Compacting {len(mode.old_messages)} messages ({len(mode.old_turns)} turns) "
         f"into summary, preserving {len(recent_messages)} messages "
@@ -676,6 +703,10 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     old_slice_block = format_slice(old_slice) if old_slice and not old_slice.is_empty() else ""
 
     try:
+        # Sibling extensions flush pending state immediately before the
+        # transcript is summarized (#1490).
+        await _dispatch_pre_compaction(ctx, history)
+
         await ctx.publish("compaction_start")
 
         # Summarize

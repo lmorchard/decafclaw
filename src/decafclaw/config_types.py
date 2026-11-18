@@ -427,6 +427,8 @@ class LifecycleConfig:
 
     pre_compose_timeout: float = 0.3
     pre_compose_token_ceiling: int = 300
+    # Bound for PRE_COMPACTION collectors before transcript summarization.
+    pre_compaction_timeout: float = 2.0
 
 
 @dataclass

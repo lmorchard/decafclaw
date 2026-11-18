@@ -13,8 +13,22 @@ from decafclaw.llm.types import ContextLengthExceededError
 
 @pytest.fixture
 def manager(config):
+    from decafclaw.extensions import (
+        ExtensionManager,
+        ensure_builtin_extension_types,
+        get_default_enabled_extension_types,
+        get_extension_type,
+    )
+
     bus = EventBus()
-    return ConversationManager(config, bus)
+    ensure_builtin_extension_types()
+    extension_manager = ExtensionManager(bus, config)
+    for name in get_default_enabled_extension_types():
+        factory = get_extension_type(name)
+        assert factory is not None
+        extension_manager.register(name, factory({}, config))
+        extension_manager.enable(name)
+    return ConversationManager(config, bus, extension_manager=extension_manager)
 
 
 @pytest.mark.asyncio
@@ -229,7 +243,7 @@ def test_effective_compaction_threshold_lowered_beats_ratio(ctx, config):
 async def test_maybe_compact_fires_on_ratio_threshold(ctx, config, monkeypatch):
     """Compaction fires when prompt_tokens exceed the ratio-derived threshold."""
     mock_compact = AsyncMock()
-    monkeypatch.setattr("decafclaw.agent.compaction.compact_history", mock_compact)
+    monkeypatch.setattr("decafclaw.compaction.compact_history", mock_compact)
 
     config.compaction.max_tokens = 100000
     config.compaction.threshold_ratio = 0.4

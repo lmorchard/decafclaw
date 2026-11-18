@@ -119,6 +119,7 @@ def ensure_builtin_extension_types() -> None:
     here. Modules are imported lazily: ``mem0`` imports ``BaseExtension`` from
     this module, and a top-level import would cycle.
     """
+    from . import compaction as _compaction
     from . import diagnostics_and_telemetry as _diagnostics_and_telemetry
     from . import improvement_scout as _improvement_scout
     from . import mem0 as _mem0
@@ -141,6 +142,12 @@ def ensure_builtin_extension_types() -> None:
         register_extension_type(
             "vault_retrieval",
             _vault_retrieval.VaultRetrievalExtension,
+            default_enabled=True,
+        )
+    if get_extension_type("compaction") is None:
+        register_extension_type(
+            "compaction",
+            _compaction.CompactionExtension,
             default_enabled=True,
         )
     if get_extension_type("mem0") is None:
