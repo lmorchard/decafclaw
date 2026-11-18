@@ -63,6 +63,19 @@ def test_check_rejects_multi_name_future_import(tmp_path: Path):
     assert "__future__" in result.stderr
 
 
+def test_check_rejects_aliased_future_import(tmp_path: Path):
+    """`from __future__ import annotations as ann` still enables PEP 563 (the
+    alias does not disable it) — the gate must flag it, not just the bare form."""
+    tools_py = tmp_path / "tools.py"
+    tools_py.write_text(
+        "from __future__ import annotations as ann\n\n\ndef tool(ctx):\n    return None\n",
+        encoding="utf-8",
+    )
+    result = run_check(tools_py)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "annotations as ann" in result.stderr
+
+
 def test_check_ignores_docstring_mention(tmp_path: Path):
     """A docstring or comment that merely mentions the import (as
     contrib/skills/improvement-inbox/tools.py does) is not a violation."""

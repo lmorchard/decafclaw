@@ -13,8 +13,10 @@ The rule (CLAUDE.md, Tools): quote the annotation instead — `ctx: "Context"` �
 and never add `from __future__ import annotations` to a skill's tools.py.
 
 This gate scans every bundled skill's tools.py (`src/decafclaw/skills/**/tools.py`)
-and fails on any file that imports it. It parses with `ast`, so a comment or
-docstring merely *mentioning* the import is not flagged.
+and fails on any file that imports the name — including an aliased form such as
+`from __future__ import annotations as ann`, which enables PEP 563 just the same.
+It parses with `ast`, so a comment or docstring merely *mentioning* the import is
+not flagged.
 
 Run via: make check-skill-annotations (part of `make check`, so CI gates it).
 """
@@ -36,8 +38,9 @@ REMEDIATION = (
 
 def find_violations(tools_path: Path) -> list[str]:
     """Return the violations in one tools.py file (empty when clean)."""
+    source = tools_path.read_text(encoding="utf-8")
     try:
-        tree = ast.parse(tools_path.read_text(encoding="utf-8"), filename=str(tools_path))
+        tree = ast.parse(source, filename=str(tools_path))
     except SyntaxError as exc:
         return [f"{tools_path}:{exc.lineno}: cannot parse ({exc.msg}) — the loader would fail to load it"]
     violations: list[str] = []
@@ -45,9 +48,10 @@ def find_violations(tools_path: Path) -> list[str]:
         if not isinstance(node, ast.ImportFrom) or node.module != "__future__":
             continue
         for alias in node.names:
-            if alias.name == "annotations" and alias.asname is None:
+            if alias.name == "annotations":
+                statement = ast.get_source_segment(source, node) or "from __future__ import annotations"
                 violations.append(
-                    f"{tools_path}:{node.lineno}: `from __future__ import annotations` — "
+                    f"{tools_path}:{node.lineno}: `{statement}` — "
                     f"the skill loader execs tools.py in a module that can leave sys.modules, "
                     f"so postponed dataclass annotations can crash loading and silently drop the skill. {REMEDIATION}"
                 )
