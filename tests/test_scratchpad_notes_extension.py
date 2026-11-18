@@ -184,7 +184,7 @@ class TestComposerIntegration:
         append_note(ctx.config, ctx.conv_id, "note 1", now="2026-01-01T00:00:00Z")
         before = replace(ctx.composer.injection_cursors)
 
-        with patch("decafclaw.context_composer.apply_image_budget", side_effect=RuntimeError("boom")):
+        with patch("decafclaw.context_pipeline.apply_image_budget", side_effect=RuntimeError("boom")):
             with pytest.raises(RuntimeError):
                 await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
 

@@ -221,3 +221,18 @@ def effective_compaction_threshold(config, ctx: "Context | None" = None, *, lowe
     if window > 0:
         return int(window * float(ratio))
     return threshold
+
+
+ROLE_REMAP: dict[str, str] = {
+    "vault_retrieval": "user",
+    "vault_references": "user",
+    "workspace_references": "user",
+    "mcp_references": "user",
+    "conversation_notes": "user",
+    "recent_journal": "user",
+    "cancel_marker": "user",
+    "turn_aborted": "user",
+    "skill_hint": "user",
+    "context_status": "user",
+    "recalled_facts": "user",
+}

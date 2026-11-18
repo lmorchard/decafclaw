@@ -123,7 +123,11 @@ def ensure_builtin_extension_types() -> None:
     from . import diagnostics_and_telemetry as _diagnostics_and_telemetry
     from . import improvement_scout as _improvement_scout
     from . import mem0 as _mem0
+    from . import mentions as _mentions
+    from . import recent_journal as _recent_journal
     from . import scratchpad_notes as _scratchpad_notes
+    from . import vault_guide as _vault_guide
+    from . import vault_references as _vault_references
     from . import vault_retrieval as _vault_retrieval
 
     if get_extension_type("diagnostics_and_telemetry") is None:
@@ -150,6 +154,14 @@ def ensure_builtin_extension_types() -> None:
             _compaction.CompactionExtension,
             default_enabled=True,
         )
+    for _name, _cls in (
+        ("vault_references", _vault_references.VaultReferencesExtension),
+        ("mentions", _mentions.MentionsExtension),
+        ("vault_guide", _vault_guide.VaultGuideExtension),
+        ("recent_journal", _recent_journal.RecentJournalExtension),
+    ):
+        if get_extension_type(_name) is None:
+            register_extension_type(_name, _cls, default_enabled=True)
     if get_extension_type("mem0") is None:
         register_extension_type("mem0", _mem0.Mem0Extension)
     if get_extension_type("improvement_scout") is None:

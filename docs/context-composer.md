@@ -243,7 +243,7 @@ The context is archived for auditability and persists in conversation history.
 Automatic proactive retrieval is deduplicated per conversation: a vault page that an earlier turn already surfaced is not surfaced again.
 
 1. After injection, the extension records the injected vault file paths on the `vault_retrieval` message it archives (`file_paths`) and in `ComposerState.injected_paths`.
-2. On each later turn, the composer rebuilds the already-retrieved set from archived history via `get_already_retrieved_paths` and filters retrieval candidates (keyed on `file_path`) against it. Explicit references (`@[[Page]]` in `_compose_vault_references`) continue to use `get_already_injected_pages` to track `vault_references` separately, so explicit mentions are not suppressed by earlier proactive retrievals.
+2. On each later turn, the composer rebuilds the already-retrieved set from archived history via `get_already_retrieved_paths` and filters retrieval candidates (keyed on `file_path`) against it. Explicit references (`@[[Page]]`, handled by `VaultReferencesExtension`) continue to use `get_already_injected_pages` to track `vault_references` separately, so explicit mentions are not suppressed by earlier proactive retrievals.
 3. The live `ComposerState.injected_paths` set is still unioned in for in-flight injections within a turn.
 
 Explicit `vault_search` tool results are not deduplicated — the agent asked for those, so they are delivered in full.
@@ -441,7 +441,7 @@ By default, every interactive turn auto-injects scored full-body candidates from
 
 ## Vault guide
 
-When a guide file exists at the vault root (default `AGENTS.md`, configurable via `vault_guide.path`), `ContextComposer._compose_vault_guide` reads it fresh each interactive turn and injects it as a `<vault_guide>` system message immediately after the main system prompt — before the deferred-tools list and any preempt-skill content.
+When a guide file exists at the vault root (default `AGENTS.md`, configurable via `vault_guide.path`), `VaultGuideExtension` reads it fresh each interactive turn and injects it as a `HEAD` `<vault_guide>` system message immediately after the main system prompt — before the deferred-tools list and any preempt-skill content.
 
 ### Purpose
 
@@ -479,7 +479,7 @@ Config dataclass: `VaultGuideConfig` in `config_types.py`. Settable in `data/{ag
 
 ## Recent journal surfacing
 
-`_compose_recent_journal` auto-injects a bounded summary of recently written journal entries at the start of every **interactive** turn, on a small fixed budget kept separate from the dynamic semantic-retrieval pool so it doesn't compete with it. Journal entries otherwise surface only through embedding similarity, so temporally relevant context — "what was I just thinking about an hour ago?" — appears only when its vocabulary happens to overlap the current message. Recency is a strong signal used as a retrieval *mode*, where it's weak folded into a composite similarity score. Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) notes timestamps and recency are legitimate progressive-disclosure signals. See #306.
+`RecentJournalExtension` auto-injects a bounded summary of recently written journal entries at the start of every **interactive** turn, on a small fixed budget kept separate from the dynamic semantic-retrieval pool so it doesn't compete with it. Journal entries otherwise surface only through embedding similarity, so temporally relevant context — "what was I just thinking about an hour ago?" — appears only when its vocabulary happens to overlap the current message. Recency is a strong signal used as a retrieval *mode*, where it's weak folded into a composite similarity score. Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) notes timestamps and recency are legitimate progressive-disclosure signals. See #306.
 
 ### How it works
 

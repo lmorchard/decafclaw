@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 # turn (issue #491). Strong enough wording that the LLM treats the prior
 # request as closed instead of re-fulfilling it on the next turn. The
 # message is archived under the cancel_marker role and remapped to "user"
-# for the LLM via context_composer.ROLE_REMAP.
+# for the LLM via context_types.ROLE_REMAP.
 CANCEL_MARKER_TEXT = (
     "[User cancelled this turn. Do not retry the cancelled request unless they explicitly ask for it again.]"
 )

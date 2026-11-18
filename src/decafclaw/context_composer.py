@@ -20,23 +20,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from decafclaw.skills.background.tools import format_status_text
-from decafclaw.skills.vault.tools import (
-    format_recent_journal_for_context,
-    read_recent_journal_entries,
-)
 
 from .archive import LLM_ROLES
 from .attachments import resolve_attachments
 from .conversation_paths import sidecar_path
 from .image_budget import apply_image_budget
-from .memory_context import (
-    get_already_injected_pages,
-    parse_bare_mentions,
-    parse_wiki_references,
-    read_wiki_page,
-)
 from .preempt_search import match_tools, tokenize
-from .prompts import wrap_xml
 from .telemetry import get_tracer
 from .tool_definitions import (
     build_tool_list,
@@ -53,9 +42,29 @@ from .util import estimate_tokens
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
+from .context_diagnostics import (
+    build_context_status,
+    build_diagnostics,
+    get_context_window_size,
+    get_effective_compaction_threshold,
+)
 from .context_messages import _expand_background_event, _reorder_tool_results
+from .context_pipeline import (
+    account_history_tokens,
+    assemble_provider_history,
+    compose_pre_compose_hooks,
+    compose_system_prompt,
+)
+from .context_preempt import build_preempt_tool_hint, compose_preempt_matches, compose_preempt_skill_matches
 from .context_sidecars import read_context_sidecar, read_last_request_sidecar, write_context_sidecar
+from .context_tools import (
+    compose_tools,
+    record_prefix,
+    sync_tool_messages,
+    update_iteration_tools,
+)
 from .context_types import (
+    ROLE_REMAP,
     ComposedContext,
     ComposerMode,
     ComposerState,
@@ -72,19 +81,6 @@ log = logging.getLogger(__name__)
 # Roles that are remapped to "user" before sending to the LLM.
 # These messages are auto-injected by the composer per-turn, then
 # archived under their internal role for accounting and dedupe.
-ROLE_REMAP: dict[str, str] = {
-    "vault_retrieval": "user",
-    "vault_references": "user",
-    "workspace_references": "user",
-    "mcp_references": "user",
-    "conversation_notes": "user",
-    "recent_journal": "user",
-    "cancel_marker": "user",
-    "turn_aborted": "user",
-    "skill_hint": "user",
-    "context_status": "user",
-    "recalled_facts": "user",
-}
 
 
 def _now() -> datetime:
@@ -201,7 +197,7 @@ class ContextComposer:
             user_msg["attachments"] = attachments
 
         # -- System prompt --
-        system_text, system_entry = self._compose_system_prompt(config)
+        system_text, system_entry = compose_system_prompt(config)
         sources.append(system_entry)
 
         # -- Detect mid-conversation system updates (#776) --
@@ -215,52 +211,6 @@ class ContextComposer:
                 "source": "system_update",
                 "content": "[System Update: The system context or available tools have changed.]",
             }
-
-        # -- Wiki context (injected before user message in history) --
-        # Explicit @[[Page]] references are fixed costs — always included.
-        wiki_msgs, wiki_entry = self._compose_vault_references(
-            ctx,
-            config,
-            user_message,
-            history,
-            mode,
-        )
-        for wm in wiki_msgs:
-            to_archive.append(wm)
-            await ctx.publish("vault_references", text=wm["content"], page=wm.get("wiki_page"))
-        if wiki_entry:
-            sources.append(wiki_entry)
-
-        # -- Mentions context (injected before user message in history) --
-        # Explicit @file and @mcp references
-        mention_msgs, mention_entry = await self._compose_mentions_references(
-            ctx,
-            config,
-            user_message,
-            history,
-            mode,
-        )
-        for mm in mention_msgs:
-            to_archive.append(mm)
-            await ctx.publish(
-                "mention_references", text=mm["content"], ref=mm.get("workspace_file") or mm.get("mcp_resource")
-            )
-        if mention_entry:
-            sources.append(mention_entry)
-
-        # -- Recent journal entries (#306) --
-        # Auto-surface recently written journal entries on a small fixed
-        # budget, separate from the dynamic semantic pool, so temporally
-        # relevant context appears without depending on vocabulary overlap.
-        recent_journal_msgs, recent_journal_entry = self._compose_recent_journal(
-            ctx,
-            config,
-            mode,
-        )
-        for rm in recent_journal_msgs:
-            to_archive.append(rm)
-        if recent_journal_entry:
-            sources.append(recent_journal_entry)
 
         # -- Pre-emptive tool search (populate ctx.tools.preempt_matches) --
         # Match before classification; deferred matches become discovery
@@ -287,60 +237,17 @@ class ContextComposer:
             sources.append(preempt_skill_entry)
 
         # -- Tools (compute before budget so we have actual token cost) --
-        active_tools, deferred_tools, deferred_text, guidance_text, tools_entry = self._compose_tools(ctx, config)
+        active_tools, deferred_tools, deferred_text, guidance_text, tools_entry = self._compose_tools(ctx)
         sources.append(tools_entry)
 
-        tool_hint_text = None
-        if preempt_entry is not None:
-            deferred_names = {t["function"]["name"] for t in deferred_tools}
-            owners = config.skill_tool_owners
-            suggested = sorted(ctx.tools.preempt_matches & deferred_names - owners.keys())
-            if suggested:
-                safe_names = [html.escape(" ".join(name.split()), quote=False) for name in suggested]
-                tool_hint_text = (
-                    "<preempt_tool_hint>\n"
-                    "These deferred tools may help. Use tool_search to load them before calling them:\n"
-                    + "\n".join(f"- {name}" for name in safe_names)
-                    + "\n</preempt_tool_hint>"
-                )
-            preempt_entry.tokens_estimated = estimate_tokens(tool_hint_text) if tool_hint_text else 0
-            preempt_entry.items_included = len(suggested)
-            preempt_entry.details["suggested"] = suggested
+        tool_hint_text = build_preempt_tool_hint(ctx, config, deferred_tools, preempt_entry)
 
         # -- Compute fixed costs for dynamic budget allocation --
         # Fixed costs: system prompt + wiki refs + notes + tools + existing history
         fixed_tokens = system_entry.tokens_estimated
-        if wiki_entry:
-            fixed_tokens += wiki_entry.tokens_estimated
-        if recent_journal_entry:
-            fixed_tokens += recent_journal_entry.tokens_estimated
-        # History contains only archived prior-turn content at this point —
-        # fresh wiki / notes / memory / user injections are appended after
-        # all token accounting, at the end of compose(). Count messages whose
-        # role is sent to the LLM either directly (LLM_ROLES), after remap
-        # (ROLE_REMAP keys), or after expansion (``background_event``, which
-        # ``_expand_background_event`` turns into a synthetic tool-call pair).
-        # Other roles (e.g. confirmation_request, archive-only bookkeeping)
-        # are not sent and don't count.
-        countable_roles = LLM_ROLES | ROLE_REMAP.keys()
-        history_tokens = 0
-        history_msg_count = 0
-        for m in history:
-            role = m.get("role")
-            if role == "background_event":
-                # Count the expanded content the LLM actually sees (an
-                # assistant tool_call + tool result pair), not the raw
-                # archive record (which has no ``content`` field and is
-                # not the shape sent to the LLM). ``history_msg_count``
-                # feeds the "N messages" status line and must match the
-                # LLM-visible count, so use ``len(expanded)`` — one
-                # archive record contributes two LLM messages here.
-                expanded = _expand_background_event(m)
-                history_tokens += sum(estimate_tokens(str(em.get("content", ""))) for em in expanded)
-                history_msg_count += len(expanded)
-            elif role in countable_roles:
-                history_tokens += estimate_tokens(str(m.get("content", "")))
-                history_msg_count += 1
+        # Archived prior-turn content only: fresh injections are appended after
+        # all token accounting. Counts match the LLM-visible message list.
+        history_tokens, history_msg_count = account_history_tokens(history)
         fixed_tokens += history_tokens
         # User message — has its own SourceEntry so the diagnostics
         # waffle chart and [Context: ...] status line account for the
@@ -359,12 +266,6 @@ class ContextComposer:
             fixed_tokens += preempt_skill_entry.tokens_estimated
         if preempt_entry is not None:
             fixed_tokens += preempt_entry.tokens_estimated
-
-        # -- Vault guide (always-loaded authored vault doc, e.g. AGENTS.md) --
-        vault_guide_text, vault_guide_entry = self._compose_vault_guide(config, mode)
-        if vault_guide_entry is not None:
-            sources.append(vault_guide_entry)
-            fixed_tokens += vault_guide_entry.tokens_estimated
 
         # Response reserve (leave room for the model's response)
         response_reserve = 4096
@@ -395,7 +296,7 @@ class ContextComposer:
         # HEAD messages mount outside the archived history (see below); DELTA
         # and TAIL messages are archived with the rest of this turn's
         # injections.
-        head_msgs, delta_msgs, tail_hook_msgs, hook_sources = await self._compose_pre_compose_hooks(
+        head_msgs, delta_msgs, tail_hook_msgs, hook_sources = await compose_pre_compose_hooks(
             ctx,
             config,
             user_message,
@@ -412,59 +313,23 @@ class ContextComposer:
 
         # -- Build LLM messages (filter + remap roles) --
         # Combine archived history with this turn's injections in the same
-        # order they'll be archived: prior history → wiki → recent journal →
-        # PRE_COMPOSE DELTA → PRE_COMPOSE TAIL (vault retrieval, legacy
-        # <recalled_facts>) → system update → user message. The combined list
-        # is what the LLM sees. DELTA mounts after archived history and before
-        # tail envelopes so append-only contributions land chronologically
-        # before per-turn dynamic context.
+        # order they'll be archived: prior history → PRE_COMPOSE DELTA →
+        # PRE_COMPOSE TAIL (references, retrieval, legacy <recalled_facts>) →
+        # system update → user message. The combined list is what the LLM
+        # sees. DELTA mounts after archived history and before tail envelopes
+        # so append-only contributions land chronologically before per-turn
+        # dynamic context.
         combined = [
             *history,
-            *wiki_msgs,
-            *mention_msgs,
-            *recent_journal_msgs,
             *delta_msgs,
             *tail_hook_msgs,
         ]
         if system_update_msg:
             combined.append(system_update_msg)
         combined.append(user_msg)
-        llm_history = []
-        for m in combined:
-            role = m.get("role")
-            if role == "background_event":
-                # Expand completion records into a synthetic poll pair so the
-                # agent reads background job output as a tool result (correct
-                # prompt-injection posture), not as a bare system/user message.
-                llm_history.extend(_expand_background_event(m))
-            elif role in LLM_ROLES:
-                llm_history.append(m)
-            elif role in ROLE_REMAP:
-                llm_history.append({**m, "role": ROLE_REMAP[role]})
-        # Sanitize tool message ordering for LLM compatibility.
-        # LiteLLM / Gemini require each tool result to immediately follow
-        # the assistant message that issued its tool_call. After compaction
-        # or concurrent archiving, results can end up orphaned (no matching
-        # assistant) or displaced (after a *different* assistant message).
-        # Fix: pull tool results out and reattach them right after their
-        # matching assistant message; drop any with no match.
-        llm_history = _reorder_tool_results(llm_history)
-        # Keep the pre-resolve list so the image budget can attribute filenames
-        # to omission notices; resolve_attachments inlines images as data-URLs.
-        llm_history_originals = llm_history
-        llm_history = [resolve_attachments(config, m) for m in llm_history]
-
-        # -- Image / payload budget (#1143) --
-        # Clamp the outbound request's images to the active provider's count and
-        # byte limits. Runs on the resolved view; never mutates originals or the
-        # archive entries, and fails open when the model can't be resolved.
-        llm_history, image_report = apply_image_budget(
-            config,
-            ctx.active_model,
-            llm_history,
-            originals=llm_history_originals,
-            tools=active_tools,
-        )
+        # Filter/remap roles, reattach tool results, resolve attachments, and
+        # clamp images to the provider budget (#1143).
+        llm_history, image_report = assemble_provider_history(combined, config, ctx, active_tools)
 
         # -- History source entry --
         # history_tokens / history_msg_count were computed above (budget side);
@@ -491,8 +356,6 @@ class ContextComposer:
 
         # -- Assemble final messages --
         messages = [{"role": "system", "content": system_text}]
-        if vault_guide_text:
-            messages.append({"role": "system", "content": vault_guide_text})
         if deferred_text:
             messages.append({"role": "system", "content": deferred_text})
         if guidance_text:
@@ -566,21 +429,49 @@ class ContextComposer:
             memory_results=list(ctx.composer.last_memory_results),
         )
 
-    def _compose_system_prompt(self, config) -> tuple[str, SourceEntry]:
-        """Build the system prompt message content and track it as a source.
+    def _compose_tools(self, ctx) -> tuple[list[dict], list[dict], str | None, str | None, SourceEntry]:
+        return compose_tools(ctx)
 
-        Uses the pre-assembled config.system_prompt (set at startup, includes
-        always-loaded skill bodies). Per-conversation activated skill bodies
-        are delivered as tool results, not injected into the system prompt.
-        """
-        text = config.system_prompt
-        tokens = estimate_tokens(text)
-        entry = SourceEntry(
-            source="system_prompt",
-            tokens_estimated=tokens,
-            items_included=1,
-        )
-        return text, entry
+    def update_iteration_tools(self, ctx: "Context", messages: list[dict]) -> list[dict]:
+        return update_iteration_tools(ctx, messages, self.state)
+
+    @staticmethod
+    def sync_tool_messages(messages: list[dict], deferred_text: str | None, guidance_text: str | None) -> None:
+        sync_tool_messages(messages, deferred_text, guidance_text)
+
+    def _record_prefix(self, ctx: "Context", messages: list[dict], tools: list[dict]) -> None:
+        record_prefix(ctx, messages, tools, self.state)
+
+    def get_effective_compaction_threshold(
+        self, config, ctx: "Context | None" = None, *, lowered: int | None = None
+    ) -> int:
+        return get_effective_compaction_threshold(config, ctx, lowered=lowered)
+
+    def _get_context_window_size(self, config, ctx: Any = None) -> int:
+        return get_context_window_size(config, ctx)
+
+    @staticmethod
+    def _build_context_status(total_tokens: int, context_window: int, message_count: int) -> str | None:
+        return build_context_status(total_tokens, context_window, message_count)
+
+    def record_actuals(self, prompt_tokens: int, completion_tokens: int, cached_prompt_tokens: int = 0) -> None:
+        self.state.last_prompt_tokens_actual = prompt_tokens
+        self.state.last_completion_tokens_actual = completion_tokens
+        self.state.last_cached_prompt_tokens_actual = cached_prompt_tokens
+
+    def build_diagnostics(self, config, composed: ComposedContext, ctx: "Context | None" = None) -> dict:
+        return build_diagnostics(config, self.state, composed, ctx)
+
+    def _compose_preempt_matches(self, ctx, config, user_message: str, mode: ComposerMode) -> SourceEntry | None:
+        return compose_preempt_matches(ctx, config, user_message, mode)
+
+    def _compose_preempt_skill_matches(
+        self, ctx, config, user_message: str, mode: ComposerMode
+    ) -> tuple[SourceEntry | None, str | None]:
+        return compose_preempt_skill_matches(ctx, config, user_message, mode)
+
+    def _compose_system_prompt(self, config) -> tuple[str, SourceEntry]:
+        return compose_system_prompt(config)
 
     async def _compose_pre_compose_hooks(
         self,
@@ -589,996 +480,4 @@ class ContextComposer:
         user_message: str,
         history: list,
     ) -> tuple[list[dict], list[dict], list[dict], list[SourceEntry]]:
-        """Run PRE_COMPOSE lifecycle collector hooks concurrently.
-
-        Hooks may return structured ``ContextContribution`` objects (or lists
-        of them) for the HEAD, DELTA, and TAIL slots, or legacy ``str`` /
-        ``list[str]`` fact text. Legacy text is coerced to one TAIL
-        ``<recalled_facts>`` envelope under the configured timeout and token
-        ceiling, exactly as before (#1454, #1486). Structured contributions
-        carry their own messages and are not subject to that legacy ceiling.
-
-        Returns ``(head, delta, tail, sources)``. Fails open: a raising or slow
-        hook is logged and the turn still composes.
-        """
-        hooks = ctx.get_interceptors(TurnLifecycle.PRE_COMPOSE)
-        if not hooks:
-            return [], [], [], []
-
-        lifecycle_cfg = getattr(config, "lifecycle", None)
-        default_timeout = getattr(lifecycle_cfg, "pre_compose_timeout", 0.3)
-        token_ceiling = getattr(lifecycle_cfg, "pre_compose_token_ceiling", 300)
-
-        def _hook_timeout(hook) -> float:
-            """Per-hook bound; extensions may declare a larger one (#1489)."""
-            owner = getattr(hook, "__self__", None)
-            declared = getattr(owner, "pre_compose_timeout", None)
-            if declared is None:
-                declared = getattr(hook, "pre_compose_timeout", None)
-            if isinstance(declared, (int, float)) and declared > 0:
-                return float(declared)
-            return float(default_timeout)
-
-        async def _call_hook(hook):
-            sig = inspect.signature(hook)
-            params = list(sig.parameters.values())
-            has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
-            if has_varargs or len(params) >= 3:
-                res = hook(ctx, user_message, history)
-            elif len(params) == 2:
-                res = hook(ctx, user_message)
-            elif len(params) == 1:
-                p_name = params[0].name
-                if p_name in ("user_message", "message", "msg"):
-                    res = hook(user_message)
-                else:
-                    res = hook(ctx)
-            else:
-                res = hook()
-            if inspect.iscoroutine(res):
-                res = await res
-            return res
-
-        async def _safe_call_hook(hook):
-            try:
-                return await asyncio.wait_for(_call_hook(hook), timeout=_hook_timeout(hook))
-            except asyncio.TimeoutError:
-                log.warning("PRE_COMPOSE hook %s timed out after %.3fs", hook, _hook_timeout(hook))
-                return None
-            except Exception as e:
-                log.warning("PRE_COMPOSE hook %s failed: %s", hook, e)
-                return None
-
-        tasks = [asyncio.ensure_future(_safe_call_hook(h)) for h in hooks]
-        outer_timeout = max(_hook_timeout(h) for h in hooks) + 0.05
-        try:
-            done, pending = await asyncio.wait(tasks, timeout=outer_timeout)
-        except Exception as e:
-            log.warning("PRE_COMPOSE gathering failed: %s", e)
-            return [], [], [], []
-        if pending:
-            # Keep what finished inside the bound and drop only the slow hooks.
-            # Discarding completed contributions would silently lose context
-            # that a hook already advanced cursors for (scratchpad notes,
-            # #1487) whenever a sibling hook is slow.
-            log.warning("PRE_COMPOSE hook exceeded its bound and ignored cancellation")
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-        results = []
-        for task in tasks:
-            if task not in done:
-                continue
-            if task.cancelled():
-                # A hook that received cancellation (user cancel, shutdown)
-                # must not have that swallowed by the fail-open collector.
-                raise asyncio.CancelledError()
-            try:
-                results.append(task.result())
-            except Exception as e:
-                log.warning("PRE_COMPOSE hook failed: %s", e)
-
-        head: list[dict] = []
-        delta: list[dict] = []
-        tail: list[dict] = []
-        sources: list[SourceEntry] = []
-        fact_texts: list[str] = []
-
-        for r in results:
-            if r is None:
-                continue
-            if isinstance(r, ContextContribution):
-                self._mount_context_contribution(r, head, delta, tail, sources)
-            elif isinstance(r, str):
-                if r.strip():
-                    fact_texts.append(r.strip())
-            elif isinstance(r, (list, tuple)):
-                for item in r:
-                    if isinstance(item, ContextContribution):
-                        self._mount_context_contribution(item, head, delta, tail, sources)
-                    elif isinstance(item, str):
-                        if item.strip():
-                            fact_texts.append(item.strip())
-                    else:
-                        log.warning(
-                            "PRE_COMPOSE hook returned unsupported item %s; ignoring",
-                            type(item).__name__,
-                        )
-            else:
-                log.warning(
-                    "PRE_COMPOSE hook returned unsupported result %s; ignoring",
-                    type(r).__name__,
-                )
-
-        if fact_texts:
-            tail.append(self._legacy_recalled_facts_message(fact_texts, token_ceiling))
-            envelope_text = tail[-1]["content"]
-            sources.append(
-                SourceEntry(
-                    source="recalled_facts",
-                    tokens_estimated=estimate_tokens(envelope_text),
-                    items_included=len(fact_texts),
-                )
-            )
-
-        return head, delta, tail, sources
-
-    @staticmethod
-    def _mount_context_contribution(
-        contribution: ContextContribution,
-        head: list[dict],
-        delta: list[dict],
-        tail: list[dict],
-        sources: list[SourceEntry],
-    ) -> None:
-        """Validate and mount one structured contribution; fail open."""
-        if not isinstance(contribution.slot, ContextSlot):
-            log.warning("PRE_COMPOSE contribution has unknown slot %r; ignoring", contribution.slot)
-            return
-        messages = contribution.messages
-        if not isinstance(messages, (list, tuple)) or any(not isinstance(m, dict) for m in messages):
-            log.warning(
-                "PRE_COMPOSE contribution for slot %s has malformed messages; ignoring",
-                contribution.slot.value,
-            )
-            return
-
-        target = {
-            ContextSlot.HEAD: head,
-            ContextSlot.DELTA: delta,
-            ContextSlot.TAIL: tail,
-        }[contribution.slot]
-        target.extend(messages)
-
-        if contribution.source_entry is None:
-            return
-        if isinstance(contribution.source_entry, SourceEntry):
-            sources.append(contribution.source_entry)
-        else:
-            log.warning(
-                "PRE_COMPOSE contribution for slot %s has malformed source_entry; ignoring",
-                contribution.slot.value,
-            )
-
-    @staticmethod
-    def _legacy_recalled_facts_message(fact_texts: list[str], token_ceiling: int) -> dict:
-        """Coerce legacy ``str``/``list[str]`` hook results into one TAIL envelope."""
-        combined_text = "\n".join(fact_texts)
-        if "<recalled_facts>" in combined_text:
-            envelope_text = combined_text
-        else:
-            envelope_text = f"<recalled_facts>\n{combined_text}\n</recalled_facts>"
-
-        if estimate_tokens(envelope_text) > token_ceiling:
-            lines = combined_text.splitlines()
-            trimmed_lines = []
-            current_tokens = estimate_tokens("<recalled_facts>\n\n</recalled_facts>")
-            for line in lines:
-                line_tokens = estimate_tokens(line + "\n")
-                if current_tokens + line_tokens > token_ceiling:
-                    break
-                trimmed_lines.append(line)
-                current_tokens += line_tokens
-            trimmed_body = "\n".join(trimmed_lines)
-            if not trimmed_body:
-                trimmed_body = combined_text[: token_ceiling * 4]
-            envelope_text = f"<recalled_facts>\n{trimmed_body}\n</recalled_facts>"
-
-        return {"role": "recalled_facts", "content": envelope_text}
-
-    def _compose_vault_references(
-        self,
-        ctx,
-        config,
-        user_message: str,
-        history: list,
-        mode: ComposerMode,
-    ) -> tuple[list[dict], SourceEntry | None]:
-        """Build wiki context messages for referenced/open pages.
-
-        Returns (messages_to_inject, source_entry).
-        """
-        skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
-        if mode in skip_modes:
-            return [], None
-
-        vault_dir = config.vault_root
-        if not vault_dir.exists():
-            return [], None
-
-        wiki_refs = parse_wiki_references(user_message, ctx.wiki_page)
-        if not wiki_refs:
-            return [], None
-
-        already_injected = get_already_injected_pages(history)
-        messages = []
-        skipped = 0
-
-        for ref in wiki_refs:
-            if ref["page"] in already_injected:
-                skipped += 1
-                continue
-            content = read_wiki_page(config, ref["page"])
-            if content is None:
-                text = f"[Wiki page '{ref['page']}' not found]"
-            elif ref["source"] == "open_page":
-                text = f"[Currently viewing wiki page: {ref['page']}]\n\n{content}"
-            else:
-                text = f"[Referenced wiki page: {ref['page']}]\n\n{content}"
-            messages.append(
-                {
-                    "role": "vault_references",
-                    "content": text,
-                    "wiki_page": ref["page"],
-                }
-            )
-
-        if not messages and skipped == 0:
-            return [], None
-
-        tokens = sum(estimate_tokens(m["content"]) for m in messages)
-        entry = SourceEntry(
-            source="wiki",
-            tokens_estimated=tokens,
-            items_included=len(messages),
-            items_truncated=skipped,
-        )
-        return messages, entry
-
-    async def _compose_mentions_references(
-        self,
-        ctx,
-        config,
-        user_message: str,
-        history: list,
-        mode: ComposerMode,
-    ) -> tuple[list[dict], SourceEntry | None]:
-        """Build context messages for referenced workspace files and MCP resources.
-
-        Returns (messages_to_inject, source_entry).
-        """
-        skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
-        if mode in skip_modes:
-            return [], None
-
-        from .mcp_client import ConnState, _convert_resource_response, get_registry
-        from .web.workspace_paths import detect_kind, is_secret, resolve_safe
-
-        mentions = parse_bare_mentions(user_message)
-        if not mentions:
-            return [], None
-
-        # Gather already injected files and mcp resources from history to deduplicate
-        already_injected_files = set()
-        already_injected_mcp = set()
-        for msg in history:
-            if msg.get("role") == "workspace_references":
-                f = msg.get("workspace_file")
-                if f:
-                    already_injected_files.add(f)
-            elif msg.get("role") == "mcp_references":
-                r = msg.get("mcp_resource")
-                if r:
-                    already_injected_mcp.add(r)
-
-        messages = []
-        skipped = 0
-
-        for ref in mentions:
-            if ref["type"] == "file":
-                rel_path = ref["path"]
-                if rel_path in already_injected_files:
-                    skipped += 1
-                    continue
-
-                resolved = resolve_safe(config.workspace_path, rel_path)
-                if not resolved or not resolved.is_file() or detect_kind(resolved) != "text":
-                    text = f"[Workspace file '{rel_path}' not found or not readable as text]"
-                elif is_secret(rel_path):
-                    text = f"[Workspace file '{rel_path}' is a secret and cannot be inlined]"
-                else:
-                    try:
-                        # Only read up to 8193 characters to optimize memory/speed for huge files
-                        with resolved.open("r", encoding="utf-8") as f:
-                            content = f.read(8193)
-                        # Truncate to 8KB (~8192 chars) if larger
-                        if len(content) > 8192:
-                            content = content[:8192] + f"\n\n[Truncated: only first 8KB of {rel_path} inlined]"
-                        text = f"[Referenced workspace file: {rel_path}]\n\n{content}"
-                    except Exception as e:
-                        text = f"[Error reading workspace file '{rel_path}': {e}]"
-
-                messages.append(
-                    {
-                        "role": "workspace_references",
-                        "content": text,
-                        "workspace_file": rel_path,
-                    }
-                )
-
-            elif ref["type"] == "mcp":
-                server_name = ref["server"]
-                resource_name = ref["resource"]
-                raw_ref = ref["raw"]
-                if raw_ref in already_injected_mcp:
-                    skipped += 1
-                    continue
-
-                registry = get_registry()
-                state = registry.servers.get(server_name) if registry else None
-                if not state or state.status != ConnState.CONNECTED or not state.session:
-                    text = f"[MCP server '{server_name}' is not connected to retrieve '{resource_name}']"
-                else:
-                    # Find matching resource by name, uri, or ending
-                    target_res = None
-                    for r in state.resources:
-                        if (
-                            getattr(r, "name", "") == resource_name
-                            or str(getattr(r, "uri", "")) == resource_name
-                            or str(getattr(r, "uri", "")).endswith("/" + resource_name)
-                        ):
-                            target_res = r
-                            break
-
-                    if not target_res:
-                        text = f"[MCP resource '{resource_name}' not found on server '{server_name}']"
-                    else:
-                        import asyncio
-
-                        from pydantic import AnyUrl
-
-                        try:
-                            timeout_s = state.config.timeout / 1000
-                            result = await asyncio.wait_for(
-                                state.session.read_resource(AnyUrl(str(target_res.uri))),
-                                timeout=timeout_s,
-                            )
-                            tool_res = _convert_resource_response(result)
-                            content = tool_res.text
-                            # Truncate to 8KB if larger
-                            if len(content) > 8192:
-                                content = content[:8192] + f"\n\n[Truncated: only first 8KB of {raw_ref} inlined]"
-                            text = f"[Referenced MCP resource: {raw_ref}]\n\n{content}"
-                        except asyncio.TimeoutError:
-                            text = f"[Error: reading MCP resource '{resource_name}' timed out after {timeout_s}s]"
-                        except Exception as e:
-                            text = f"[Error reading MCP resource '{resource_name}': {e}]"
-
-                messages.append(
-                    {
-                        "role": "mcp_references",
-                        "content": text,
-                        "mcp_resource": raw_ref,
-                    }
-                )
-
-        if not messages and skipped == 0:
-            return [], None
-
-        tokens = sum(estimate_tokens(m["content"]) for m in messages)
-        entry = SourceEntry(
-            source="mentions",
-            tokens_estimated=tokens,
-            items_included=len(messages),
-            items_truncated=skipped,
-        )
-        return messages, entry
-
-    def _compose_vault_guide(
-        self,
-        config,
-        mode: ComposerMode,
-    ) -> tuple[str, SourceEntry | None]:
-        """Inject the vault's authored guide (default ``AGENTS.md``) as an
-        always-loaded ``system`` section.
-
-        Read fresh each interactive turn from ``<vault_root>/<path>`` so the
-        single source of truth is the vault file itself (no duplication into
-        SOUL.md/AGENT.md/USER.md, no drift). Authoritative ``system`` role by
-        design (#592): unlike *retrieved* vault content — which the composer
-        remaps to ``user`` for prompt-injection posture — this is the user's
-        own protocol doc and the goal is reliable enforcement.
-
-        Fail-open: missing file / no vault / read error → ("", None).
-        Skipped for heartbeat / scheduled / child-agent modes and when
-        ``config.vault_guide.enabled`` is False. Returns (wrapped_text, entry).
-        """
-        skip_modes = {
-            ComposerMode.HEARTBEAT,
-            ComposerMode.SCHEDULED,
-            ComposerMode.CHILD_AGENT,
-        }
-        if not config.vault_guide.enabled or mode in skip_modes:
-            return "", None
-
-        rel_path = config.vault_guide.path
-        if ".." in rel_path or rel_path.startswith("/") or Path(rel_path).is_absolute():
-            log.debug("vault guide path %r is not vault-relative; skipping", rel_path)
-            return "", None
-
-        try:
-            vault_root = config.vault_root.resolve()
-            guide_path = (vault_root / rel_path).resolve()
-            if not guide_path.is_relative_to(vault_root):
-                log.debug("vault guide path %r escapes vault root; skipping", rel_path)
-                return "", None
-            if not guide_path.is_file():
-                return "", None
-            content = guide_path.read_text(encoding="utf-8").strip()
-        except (OSError, ValueError) as exc:
-            log.debug("vault guide read failed: %s", exc)
-            return "", None
-
-        if not content:
-            return "", None
-
-        max_tokens = config.vault_guide.max_tokens
-        if max_tokens <= 0:
-            # A non-positive cap means "do not inject" rather than
-            # "inject only the truncation marker".
-            return "", None
-
-        truncated = 0
-        if estimate_tokens(content) > max_tokens:
-            marker = "\n\n[vault guide truncated]"
-            # Reserve space for the marker so the truncated content stays
-            # within the configured token cap.
-            char_budget = max(0, max_tokens * 4 - len(marker))
-            full_len = len(content)
-            content = content[:char_budget].rstrip() + marker
-            truncated = 1
-            log.warning(
-                "vault guide %s exceeds max_tokens=%d; truncated from %d chars",
-                config.vault_guide.path,
-                max_tokens,
-                full_len,
-            )
-
-        text = wrap_xml("vault_guide", content)
-        entry = SourceEntry(
-            source="vault_guide",
-            tokens_estimated=estimate_tokens(text),
-            items_included=1,
-            items_truncated=truncated,
-            details={"path": str(config.vault_guide.path)},
-        )
-        return text, entry
-
-    def _compose_recent_journal(
-        self,
-        ctx,
-        config,
-        mode: ComposerMode,
-    ) -> tuple[list[dict], SourceEntry | None]:
-        """Auto-surface recently written journal entries (#306).
-
-        Injects a bounded, recency-windowed summary of the agent's own
-        journal at turn start on a small fixed budget, separate from the
-        dynamic semantic-retrieval pool so it doesn't compete with it.
-        Recency is a strong signal as a retrieval *mode* — "what was I
-        just thinking about?" — where it's weak folded into a composite
-        similarity score.
-
-        Only entries newer than the newest one already surfaced this
-        conversation (``ComposerState.injection_cursors``) are
-        injected, so each entry appears at most once. Emits a
-        ``recent_journal`` role message remapped to ``user`` for the LLM.
-        Skipped in non-interactive modes (heartbeat / scheduled / child
-        agent) and when disabled.
-        """
-        cfg = config.recent_journal
-        if not cfg.enabled:
-            return [], None
-        skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
-        if mode in skip_modes:
-            return [], None
-
-        entries = read_recent_journal_entries(
-            config,
-            now=_now(),
-            max_hours=cfg.max_hours,
-            max_entries=cfg.max_entries,
-        )
-        if not entries:
-            return [], None
-
-        # High-water mark: drop entries already surfaced. Trimming below
-        # only drops oldest, so the newest — and thus the mark — is unaffected.
-        cursors = ctx.composer.injection_cursors
-        entries, journal_ts, journal_boundary = select_unseen_items(
-            entries, cursors.journal_ts, cursors.journal_boundary
-        )
-        if not entries:
-            return [], None
-        ctx.composer.injection_cursors = replace(cursors, journal_ts=journal_ts, journal_boundary=journal_boundary)
-
-        # Trim to the token budget by dropping oldest entries first.
-        truncated = 0
-        text = format_recent_journal_for_context(entries, cfg.max_hours)
-        while len(entries) > 1 and estimate_tokens(text) > cfg.max_tokens:
-            entries = entries[1:]
-            truncated += 1
-            text = format_recent_journal_for_context(entries, cfg.max_hours)
-
-        msg = {"role": "recent_journal", "content": text}
-        entry = SourceEntry(
-            source="recent_journal",
-            tokens_estimated=estimate_tokens(text),
-            items_included=len(entries),
-            items_truncated=truncated,
-        )
-        return [msg], entry
-
-    def _compose_preempt_matches(
-        self,
-        ctx,
-        config,
-        user_message: str,
-        mode: ComposerMode,
-    ) -> SourceEntry | None:
-        """Run pre-emptive keyword match, populate ``ctx.tools.preempt_matches``.
-
-        Matches the raw user message against tool names + descriptions.
-        Deferred matches become archived tail hints after classification.
-        Native schemas stay stable until an explicit fetch or capability
-        change. See docs/preemptive-tool-search.md and #1257.
-
-        Only the user's own input is evaluated (#1049): injected memory /
-        wiki / journal context and prior assistant responses are excluded
-        so background retrieval can't induce irrelevant promotions.
-
-        Returns a ``SourceEntry`` for the diagnostics sidecar, or None if
-        matching is disabled or produced no results.
-
-        The ``mode`` parameter is accepted for API symmetry with other
-        composer methods and to reserve space for future mode-specific
-        gating. Currently all composer-driven modes apply matching
-        (reflection and compaction bypass the composer entirely).
-        """
-        _ = mode  # reserved for future per-mode gating
-
-        # Reset for this turn. The field lives on ctx.tools (a shared
-        # sub-object on the per-turn context), so it's fresh per turn
-        # but stable across agent iterations within the turn.
-        ctx.tools.preempt_matches = set()
-
-        cfg = config.agent.preemptive_search
-        if not cfg.enabled:
-            return None
-
-        # Match input is the raw user message only — no history, no
-        # injected context (#1049).
-        input_tokens = tokenize(user_message)
-        if not input_tokens:
-            return None
-
-        # Candidate pool: all tools not already force-critical.
-        # Already-force-critical names come from the same sources
-        # classify_tools uses: env override + always-loaded skills (via
-        # get_critical_names), fetched (via get_fetched_tools), and
-        # activated skill tools (from ctx.tools.extra_definitions).
-        # Plus declared priority: "critical" on the tool def itself.
-        always_loaded = getattr(config, "always_loaded_skill_tools", set()) or set()
-        on_demand = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions} - always_loaded
-        already_critical: set[str] = get_critical_names(config)
-        already_critical |= get_fetched_tools(ctx)
-        already_critical |= on_demand
-
-        all_defs = collect_all_tool_defs(ctx)
-        # If the context restricts the usable tool set (eval runner,
-        # restricted child agents), don't surface disallowed tools —
-        # they'd waste the match cap and error at execute_tool.
-        allowed = ctx.tools.allowed
-        candidates: list[dict] = []
-        for td in all_defs:
-            name = td.get("function", {}).get("name", "")
-            if not name or name in already_critical:
-                continue
-            # Respect declared critical priority — those are already in.
-            if td.get("priority") == "critical":
-                continue
-            if allowed is not None and name not in allowed:
-                continue
-            if name in (ctx.tools.disallowed or set()):
-                continue
-            candidates.append(td)
-
-        matches = match_tools(input_tokens, candidates, cfg.max_matches)
-        if not matches:
-            return None
-
-        matched_names = {m["name"] for m in matches}
-        ctx.tools.preempt_matches = matched_names
-
-        log.info(
-            "preemptive match: suggested %d tool(s) for conv %s: %s",
-            len(matches),
-            (ctx.conv_id or ctx.context_id)[:12],
-            ", ".join(f"{m['name']}({m['score']})" for m in matches),
-        )
-
-        # The rendered hint cost is filled after classification, which
-        # determines which matches actually need a discovery hint.
-        return SourceEntry(
-            source="preempt_matches",
-            tokens_estimated=0,
-            items_included=len(matches),
-            details={
-                "input_tokens": sorted(input_tokens),
-                "matches": matches,
-                "max_matches": cfg.max_matches,
-            },
-        )
-
-    def _compose_preempt_skill_matches(
-        self,
-        ctx,
-        config,
-        user_message: str,
-        mode: ComposerMode,
-    ) -> tuple[SourceEntry | None, str | None]:
-        """Pre-emptive keyword match against the discovered skill catalog.
-
-        Parallel to ``_compose_preempt_matches`` but for skills instead of
-        tools. Skills already in ``ctx.skills.activated`` (which includes
-        always-loaded bundled skills auto-activated at turn start) are
-        excluded from the candidate pool — surfacing them would just be
-        noise. Matches are rendered as a short system-message hint so the
-        agent considers ``activate_skill`` without first calling a tool
-        that hasn't been loaded yet.
-
-        Only the raw user message is evaluated (#1049) — injected memory /
-        wiki / journal context and prior assistant responses are excluded
-        so background retrieval can't induce irrelevant skill hints.
-
-        Returns ``(source_entry, hint_text)``. Both ``None`` if matching
-        is disabled, the message tokenizes to nothing, or no skills match.
-        """
-        _ = mode  # reserved for future per-mode gating
-
-        ctx.skills.preempt_matches = set()
-
-        cfg = config.agent.preemptive_search
-        if not cfg.enabled or cfg.max_matches <= 0:
-            return None, None
-
-        # Match input is the raw user message only — no history, no
-        # injected context (#1049).
-        input_tokens = tokenize(user_message)
-        if not input_tokens:
-            return None, None
-
-        discovered = config.discovered_skills or []
-        candidates = [s for s in discovered if s.name and s.name not in ctx.skills.activated]
-        if not candidates:
-            return None, None
-
-        scored: list[dict] = []
-        for skill in candidates:
-            skill_tokens = tokenize(f"{skill.name} {skill.description}")
-            overlap = input_tokens & skill_tokens
-            if overlap:
-                scored.append(
-                    {
-                        "name": skill.name,
-                        "score": len(overlap),
-                        "matched_tokens": sorted(overlap),
-                    }
-                )
-
-        if not scored:
-            return None, None
-
-        scored.sort(key=lambda e: (-e["score"], e["name"]))
-        top = scored[: cfg.max_matches]
-        matched_names = {e["name"] for e in top}
-        # Promote ALL top matches for tool loading — the hint trim below only
-        # affects the visible text, not which skills classify_tools can pull in.
-        ctx.skills.preempt_matches = matched_names
-
-        # Trim the *visible* hint to skills within a small gap of the top
-        # scorer so a dense pile of weak matches doesn't dilute the routing
-        # signal (#604). Always keep at least one so the hint is never empty.
-        top_score = top[0]["score"]
-        threshold = max(_HINT_MIN_SCORE, top_score - _HINT_SCORE_GAP)
-        hinted = [e for e in top if e["score"] >= threshold] or top[:1]
-        hinted_names = {e["name"] for e in hinted}
-
-        # Sanitize skill names before interpolating — names come from
-        # SKILL.md frontmatter, which workspace/admin skills control.
-        # Collapse whitespace (incl. newlines) to a single space so a name
-        # can't inject extra hint lines/directives, then html-escape so an
-        # `</preempt_skill_hint>` (or other markup) can't break out of the
-        # wrapper and inject prompt content.
-        safe_names = sorted(html.escape(" ".join(name.split()), quote=False) for name in hinted_names)
-        bullets = "\n".join(f"- {n}" for n in safe_names)
-        hint_text = (
-            "<preempt_skill_hint>\n"
-            "These skills look relevant to the current message. "
-            "Call activate_skill(name) to load their tools.\n\n"
-            f"{bullets}\n"
-            "</preempt_skill_hint>"
-        )
-
-        log.info(
-            "preemptive skill match: promoted %d skill(s), hinted %d, for conv %s: %s",
-            len(top),
-            len(hinted),
-            (ctx.conv_id or ctx.context_id)[:12],
-            ", ".join(f"{e['name']}({e['score']}{'*' if e['name'] in hinted_names else ''})" for e in top),
-        )
-
-        entry = SourceEntry(
-            source="preempt_skill_matches",
-            tokens_estimated=estimate_tokens(hint_text),
-            items_included=len(hinted),  # the entry represents the hint text
-            details={
-                "input_tokens": sorted(input_tokens),
-                "matches": top,  # full promoted set (feeds tool promotion)
-                "hinted": hinted,  # subset actually named in the hint
-                "promoted_count": len(top),
-                "hinted_count": len(hinted),
-                "max_matches": cfg.max_matches,
-            },
-        )
-        return entry, hint_text
-
-    def _compose_tools(self, ctx, config) -> tuple[list[dict], list[dict], str | None, str | None, SourceEntry]:
-        """Classify tools into active and deferred sets, and render tool guidance.
-
-        Returns (active_tools, deferred_tools, deferred_text, guidance_text, source_entry).
-        Uses the same assembly path as iteration requests, with diagnostics.
-        """
-        active, deferred_text, guidance_text = build_tool_list(ctx, all_defs=collect_all_tool_defs(ctx))
-        deferred = ctx.tools.deferred_pool
-
-        tool_tokens = estimate_tool_tokens(active)
-        text_tokens = estimate_tokens(deferred_text) if deferred_text else 0
-        guidance_tokens = estimate_tokens(guidance_text) if guidance_text else 0
-        entry = SourceEntry(
-            source="tools",
-            tokens_estimated=tool_tokens + text_tokens + guidance_tokens,
-            items_included=len(active),
-            items_truncated=len(deferred),
-            details={
-                "deferred_mode": bool(deferred),
-                "has_guidance": bool(guidance_text),
-            },
-        )
-        return active, deferred, deferred_text, guidance_text, entry
-
-    def update_iteration_tools(
-        self,
-        ctx: "Context",
-        messages: list[dict],
-    ) -> list[dict]:
-        """Rebuild active tools and synchronize deferred/guidance messages in-place.
-
-        Called at the start of each agent iteration in TurnRunner.
-        Returns the active tool definitions for the iteration's LLM call.
-        """
-        refresh_dynamic_tools(ctx)
-        all_tools, deferred_text, guidance_text = build_tool_list(ctx)
-        self.sync_tool_messages(messages, deferred_text, guidance_text)
-        self._record_prefix(ctx, messages, all_tools)
-        return all_tools
-
-    def _record_prefix(self, ctx: "Context", messages: list[dict], tools: list[dict]) -> None:
-        """Explain early-prompt changes at the actual iteration boundary (#1257).
-
-        Rebuild from current capabilities every time: cached schemas must never
-        preserve a revoked tool or suppress an explicit activation/config update.
-        """
-        selection = ctx.active_model or ctx.config.default_model
-        model_config = ctx.config.model_configs.get(selection)
-        components = {
-            "model": {"selection": selection, "config": asdict(model_config) if model_config else ctx.config.llm.model},
-            "tools": tools,
-            "system": [m for m in messages if m.get("role") == "system"],
-        }
-        fingerprints = {
-            name: hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
-            for name, value in components.items()
-        }
-        previous = self.state.prefix_fingerprints
-        changed = [name for name, digest in fingerprints.items() if previous and previous.get(name) != digest]
-        if changed:
-            log.info("Prompt prefix reset for conv %s: %s changed", ctx.conv_id, ", ".join(changed))
-        self.state.prefix_fingerprints = fingerprints
-        for source in self.state.last_sources:
-            if source.source == "tools":
-                source.details["prefix_changes"] = changed
-
-    @staticmethod
-    def sync_tool_messages(
-        messages: list[dict],
-        deferred_text: str | None,
-        guidance_text: str | None,
-    ) -> None:
-        """Synchronize <deferred_tools> and <tool_guidance> system messages in-place.
-
-        Maintains the invariant:
-        - If deferred_text is present, a <deferred_tools> message exists.
-        - If guidance_text is present, a <tool_guidance> message exists, placed
-          immediately after <deferred_tools> (or where <deferred_tools> would be).
-        - If either is None, any corresponding existing message is removed.
-        """
-        def_idx = next(
-            (
-                i
-                for i, m in enumerate(messages)
-                if m.get("role") == "system" and m.get("content", "").startswith("<deferred_tools>")
-            ),
-            None,
-        )
-        gui_idx = next(
-            (
-                i
-                for i, m in enumerate(messages)
-                if m.get("role") == "system" and m.get("content", "").startswith("<tool_guidance>")
-            ),
-            None,
-        )
-
-        # Base insertion target: after system prompt (index 0) and vault guide if present
-        base_target = 1
-        if len(messages) > 1 and messages[1].get("role") == "system":
-            content = messages[1].get("content", "")
-            if not content.startswith(("<deferred_tools>", "<tool_guidance>")):
-                base_target = 2
-
-        # 1. Sync deferred_tools
-        if deferred_text:
-            def_msg = {"role": "system", "content": deferred_text}
-            if def_idx is not None:
-                messages[def_idx] = def_msg
-            else:
-                target = gui_idx if gui_idx is not None else base_target
-                messages.insert(target, def_msg)
-                if gui_idx is not None and target <= gui_idx:
-                    gui_idx += 1
-                def_idx = target
-        elif def_idx is not None:
-            messages.pop(def_idx)
-            if gui_idx is not None and gui_idx > def_idx:
-                gui_idx -= 1
-            def_idx = None
-
-        # 2. Sync tool_guidance
-        if guidance_text:
-            gui_msg = {"role": "system", "content": guidance_text}
-            if gui_idx is not None:
-                messages[gui_idx] = gui_msg
-            else:
-                target = (def_idx + 1) if def_idx is not None else base_target
-                messages.insert(target, gui_msg)
-        elif gui_idx is not None:
-            messages.pop(gui_idx)
-
-    def get_effective_compaction_threshold(
-        self, config, ctx: "Context | None" = None, *, lowered: int | None = None
-    ) -> int:
-        """Effective auto-compaction token threshold for this context (#1099).
-
-        Turn-local reactive lowering > per-conversation absolute override >
-        per-conversation (else global) ``compaction.threshold_ratio`` applied to
-        the model context window > fixed ``compaction.max_tokens`` fallback.
-        """
-        return effective_compaction_threshold(config, ctx, lowered=lowered)
-
-    def _get_context_window_size(self, config, ctx: Any = None) -> int:
-        """Return the effective context window size.
-
-        Prefers the explicit context_window_size if set on active model config,
-        or config.llm.context_window_size, otherwise falls back
-        to compaction_max_tokens as a conservative proxy.
-
-        Used by compose() for dynamic budget allocation.
-        """
-        model_name = getattr(ctx, "active_model", "") or getattr(config, "default_model", "")
-        if model_name and model_name in config.model_configs:
-            mc = config.model_configs[model_name]
-            if mc.context_window_size and mc.context_window_size > 0:
-                return mc.context_window_size
-
-        window = config.llm.context_window_size
-        if window and window > 0:
-            return window
-        return config.compaction.max_tokens
-
-    @staticmethod
-    def _build_context_status(
-        total_tokens: int,
-        context_window: int,
-        message_count: int,
-    ) -> str | None:
-        """Build a one-line context usage note for the agent.
-
-        Returns None if context_window is zero (unconfigured).
-        """
-        if context_window <= 0:
-            return None
-        pct = total_tokens / context_window * 100
-        hint = ""
-        if pct > 70:
-            hint = " — consider being concise"
-        return f"[Context: ~{total_tokens:,} / {context_window:,} tokens ({pct:.0f}%), {message_count} messages{hint}]"
-
-    def record_actuals(self, prompt_tokens: int, completion_tokens: int, cached_prompt_tokens: int = 0) -> None:
-        """Record actual token usage from the LLM response."""
-        self.state.last_prompt_tokens_actual = prompt_tokens
-        self.state.last_completion_tokens_actual = completion_tokens
-        self.state.last_cached_prompt_tokens_actual = cached_prompt_tokens
-
-    def build_diagnostics(self, config, composed: ComposedContext, ctx: "Context | None" = None) -> dict:
-        """Build the full diagnostics dict for the context sidecar file."""
-        candidates = []
-        for r in composed.memory_results:
-            entry = {
-                "file_path": r.get("file_path", ""),
-                "source_type": r.get("source_type", ""),
-                "composite_score": round(r.get("composite_score", 0), 3),
-                "similarity": round(r.get("similarity", 0), 3),
-                "recency": round(r.get("recency", 0.5), 3),
-                "importance": round(r.get("importance", 0.5), 3),
-                "modified_at": r.get("modified_at", ""),
-                "tokens_estimated": r.get("tokens_estimated", 0),
-            }
-            if r.get("linked_from"):
-                entry["linked_from"] = r["linked_from"]
-            candidates.append(entry)
-
-        sources = []
-        for s in composed.sources:
-            sources.append(
-                {
-                    "source": s.source,
-                    "tokens_estimated": s.tokens_estimated,
-                    "items_included": s.items_included,
-                    "items_truncated": s.items_truncated,
-                    "details": s.details,
-                }
-            )
-
-        return {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "total_tokens_estimated": composed.total_tokens_estimated,
-            "total_tokens_actual": self.state.last_prompt_tokens_actual,
-            "cached_prompt_tokens": self.state.last_cached_prompt_tokens_actual,
-            "cache_hit_rate": (
-                round(self.state.last_cached_prompt_tokens_actual / self.state.last_prompt_tokens_actual, 4)
-                if self.state.last_prompt_tokens_actual
-                else 0.0
-            ),
-            "context_window_size": self._get_context_window_size(config, ctx),
-            # Effective threshold (#1099): per-conversation override, then
-            # global/per-conv ratio × model window, then the fixed cap. The
-            # Context Inspector reads this to render the "Compact at" stat.
-            "compaction_threshold": self.get_effective_compaction_threshold(config, ctx),
-            "sources": sources,
-            "memory_candidates": candidates,
-            "cleanup": {
-                "cleared_count": self.state.cleanup_cleared_count,
-                "cleared_bytes": self.state.cleanup_cleared_bytes,
-            },
-        }
+        return await compose_pre_compose_hooks(ctx, config, user_message, history)
