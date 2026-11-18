@@ -257,7 +257,10 @@ def test_legacy_memory_without_mem0_provider_creates_no_extension(tmp_path, monk
     (agent_dir / "config.json").write_text(json.dumps({"memory": {"top_k": 4}}))
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
 
-    assert load_config().extensions == {}
+    extensions = load_config().extensions
+    assert "mem0" not in extensions
+    # The default-on diagnostics extension is the only entry.
+    assert set(extensions) == {"diagnostics_and_telemetry"}
 
 
 def test_legacy_memory_env_only_backward_compatibility(tmp_path, monkeypatch, caplog):

@@ -603,7 +603,7 @@ Compaction deliberately rebuilds history. It resets injection cursors and prefix
 
 After each turn, the agent writes a diagnostics sidecar file (`workspace/sessions/{session_id}/{conv_id}/context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
 
-On every LLM call, the agent also writes the request payload to a sidecar file (`workspace/sessions/{session_id}/{conv_id}/last_request.json`). It records the model name, the finalized canonical messages list, and the tools definition payload prepared for the provider. Each provider subsequently translates these canonical structures into its specific API wire format (e.g. Gemini `contents`/`systemInstruction` or OpenAI `input`). Each LLM call overwrites this file so the last call in a multi-step turn wins. Any write failure logs at debug level without failing the turn. Note that because this sidecar records the full prompt and injected context, it holds injected vault content and the full system prompt on disk.
+The `DiagnosticsAndTelemetryExtension` (`src/decafclaw/extensions/diagnostics_and_telemetry.py`, enabled by default) observes the turn loop and writes the request payload to a sidecar file (`workspace/sessions/{session_id}/{conv_id}/last_request.json`). Its `BEFORE_LLM_CALL` hook snapshots the model name, the finalized canonical messages list, the tools definition payload prepared for the provider, and the composer's per-source diagnostics; later iterations cannot mutate the captured snapshot. Its `ON_TURN_SETTLE` hook writes the last snapshot to disk in a background task, so the last LLM call in a multi-step turn wins. Each provider subsequently translates these canonical structures into its specific API wire format (e.g. Gemini `contents`/`systemInstruction` or OpenAI `input`). Any capture or write failure logs a warning at debug level without failing the turn. Because this sidecar records the full prompt and injected context, it holds injected vault content and the full system prompt on disk. Set `extensions.diagnostics_and_telemetry.enabled: false` to suppress the writes; the REST reader still serves any existing file.
 
 **REST endpoints:**
 - `GET /api/conversations/{id}/context` returns the diagnostics sidecar data (`context.json`).
@@ -611,7 +611,7 @@ On every LLM call, the agent also writes the request payload to a sidecar file (
   The inspector retains those types through its state and rendering helpers.
   Optional fields can remain absent. A missing sidecar returns 404 and displays “No context data yet.”
   The route returns the stored data unchanged, including additional fields that the inspector does not use.
-- `GET /api/conversations/{id}/context/raw` returns the raw last request payload (`last_request.json`) with `model`, `messages`, and `tools`.
+- `GET /api/conversations/{id}/context/raw` returns the raw last request payload (`last_request.json`) with `model`, `messages`, and `tools`, plus `sources` when the composer produced per-source diagnostics.
   It requires authentication and applies the same conversation ownership/access checks as `/context`. If no request has been recorded yet, it returns 404.
 
 **Web UI:** Click the context usage bar in the sidebar to open a popover with:

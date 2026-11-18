@@ -41,7 +41,7 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
         notes.md                    # Per-conversation scratchpad
         decisions.json              # Compaction decision slice
         context.json                # Per-turn context diagnostics sidecar
-        last_request.json           # Latest LLM request payload (model, messages, tools; holds full prompt)
+        last_request.json           # Latest LLM request payload (model, messages, tools, sources; holds full prompt)
         canvas.json                 # Canvas panel state
         artifacts.json              # Canvas artifact content, keyed by artifact_id (#1253)
         skills.json                 # Activated-skill state

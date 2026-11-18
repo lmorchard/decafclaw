@@ -26,7 +26,7 @@ A factory has the shape `Callable[[dict[str, Any], Config], Extension]` — it r
 
 Registry helpers: `register_extension_type(name, factory)`, `get_extension_type(name)`, `list_extension_types()`, and `clear_extension_types()` (test isolation).
 
-Built-in modules register themselves at import time. `init_extensions` imports `decafclaw.extensions.mem0` lazily so `BaseExtension` is already defined (avoids an import cycle).
+Built-in modules register themselves at import time. `init_extensions` imports the built-in modules (`diagnostics_and_telemetry`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), and re-registers them if a caller cleared the registry.
 
 ## Loading
 
@@ -42,6 +42,27 @@ Startup is fail-open: an unknown type, a factory exception, or an enable excepti
 ## Secret options
 
 `options` is a free-form dict, so dataclass `secret` metadata cannot reach it. Core redacts one fixed structural path, `extensions.*.options.api_key` (the mem0 convention), from admin reads of `config.json`, and `config show` masks it unless `--reveal`. An extension whose credential has a different key name must declare the path in [`secret_policy.redact_paths`](config.md#secrets-and-secret-references-1032); there is no general key-name matcher.
+
+## Diagnostics and telemetry (default on)
+
+`src/decafclaw/extensions/diagnostics_and_telemetry.py` is the Context
+Inspector's request recorder and the turn-token metric source (#1488). It
+subscribes two hooks and keeps no configuration options:
+
+- `BEFORE_LLM_CALL` (synchronous, allocation-only): deep-copies the outgoing
+  `messages` and `tools` plus the resolved model name and
+  `ctx.composer.last_sources`, replacing the conversation's previous snapshot.
+- `ON_TURN_SETTLE` (background task): writes the last snapshot to
+  `workspace/sessions/{session_id}/{conv_id}/last_request.json` and folds the
+  turn's `ctx.tokens` totals into the Prometheus `llm_tokens_total` counter
+  (gated by `telemetry.metrics_enabled`).
+
+Every failure — model resolution, snapshot copy, file write, metric record —
+logs a warning and is swallowed, so diagnostics cannot fail or delay a turn.
+`load_config` adds an enabled `extensions.diagnostics_and_telemetry` entry when
+`config.json` does not define one; an explicit entry wins, so
+`"enabled": false` cleanly suppresses the sidecar writes and token counters.
+The REST readers in `context_composer.py` stay available for existing files.
 
 ## Reference extension: mem0
 

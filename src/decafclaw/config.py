@@ -331,6 +331,15 @@ def _load_extensions(file_data: dict[str, Any]) -> dict[str, ExtensionConfig]:
             "Migrating legacy 'memory' configuration to extensions.mem0; "
             "move these settings under config.json 'extensions'."
         )
+
+    # Core diagnostics/telemetry extension (#1488) is on by default so the
+    # Context Inspector sidecar keeps working without a config edit. A
+    # config.json entry still wins, so `enabled: false` yanks it cleanly.
+    # An entry under another key that already selects this type also counts.
+    if not any((cfg.type or name) == "diagnostics_and_telemetry" for name, cfg in extensions.items()):
+        extensions["diagnostics_and_telemetry"] = ExtensionConfig(
+            enabled=True, type="diagnostics_and_telemetry", options={}
+        )
     return extensions
 
 
