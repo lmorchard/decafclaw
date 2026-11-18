@@ -20,6 +20,10 @@ class TurnLifecycle(Enum):
     BEFORE_LLM_CALL = auto()  # sync interceptor
     ON_TURN_SETTLE = auto()  # async observer
     PRE_COMPACTION = auto()  # async collector / observer
+    # Async collector run on a candidate final response, before delivery. The
+    # first hook returning a CandidateVerdict settles it; see
+    # decafclaw.candidate_response.
+    CANDIDATE_RESPONSE = auto()
 
 
 class EventBus:

@@ -39,6 +39,7 @@ from decafclaw.archive import read_archive
 from decafclaw.config import Config
 from decafclaw.config_types import (
     AgentConfig,
+    ExtensionConfig,
     ModelConfig,
     ProviderConfig,
     ReflectionConfig,
@@ -46,6 +47,7 @@ from decafclaw.config_types import (
 )
 from decafclaw.conversation_manager import ConversationManager, TurnKind
 from decafclaw.events import EventBus
+from decafclaw.extensions import init_extensions
 from decafclaw.llm.registry import get_provider
 from decafclaw.testing import (
     PROVIDER_SCRIPTED,
@@ -129,11 +131,19 @@ class AgentHarness:
                 )
             },
             default_model=MODEL_NAME,
+            # Reflection lives in a core extension (#1508); mount just that
+            # entry so the harness mirrors the runtime without enabling the
+            # rest of the default context-injection battery.
+            extensions=(
+                {"reflection": ExtensionConfig(enabled=True, type="reflection", options={})} if reflection else {}
+            ),
         )
         self.config.agent.preemptive_search.enabled = False
         self.tools: dict[str, Any] = {}
         self.tool_definitions: list[dict[str, Any]] = []
-        self.manager = ConversationManager(self.config, EventBus())
+        bus = EventBus()
+        self.extension_manager = init_extensions(self.config, bus)
+        self.manager = ConversationManager(self.config, bus, extension_manager=self.extension_manager)
         self.events: list[dict[str, Any]] = []
         self._waiters: list[_Waiter] = []
         self._sub_id = self.manager.subscribe(self.conv_id, self._on_event)

@@ -130,6 +130,7 @@ def ensure_builtin_extension_types() -> None:
     from . import mentions as _mentions
     from . import preempt_hints as _preempt_hints
     from . import recent_journal as _recent_journal
+    from . import reflection as _reflection
     from . import scratchpad_notes as _scratchpad_notes
     from . import vault_guide as _vault_guide
     from . import vault_references as _vault_references
@@ -157,6 +158,12 @@ def ensure_builtin_extension_types() -> None:
         register_extension_type(
             "compaction",
             _compaction.CompactionExtension,
+            default_enabled=True,
+        )
+    if get_extension_type("reflection") is None:
+        register_extension_type(
+            "reflection",
+            _reflection.ReflectionExtension,
             default_enabled=True,
         )
     for _name, _cls in (

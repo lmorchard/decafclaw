@@ -11,10 +11,12 @@ from typing import TypeVar
 from ..agent import run_agent_turn
 from ..commands import dispatch_command
 from ..config import Config
+from ..config_types import ExtensionConfig
 from ..context import Context
 from ..context_composer import read_context_sidecar
 from ..conversation_manager import ConversationManager
 from ..events import EventBus
+from ..extensions import init_extensions
 from ..prompts import load_system_prompt
 from ..skills import build_skill_tool_owners
 from ..skills import discover_skills as _discover_skills_fn
@@ -716,8 +718,24 @@ async def run_test(config: Config, test_case: dict) -> dict:
     auto_confirm = _setup_of(test_case).get("auto_confirm", True)
 
     bus = EventBus()
+    # Turn-loop reflection policy lives in a core extension (#1508). Mount it
+    # so eval turns keep the reflection behavior they had in core: several
+    # cases set `reflection.enabled: false` because the judge can retry into
+    # unexpected tool calls. Only reflection is mounted here — the rest of the
+    # default extension battery (vault retrieval, notes, journal) changes the
+    # composed context, which would move every eval baseline in one change.
+    reflection_entries = {
+        name: ext_cfg for name, ext_cfg in config.extensions.items() if (ext_cfg.type or name) == "reflection"
+    }
+    if not reflection_entries and config.reflection.enabled:
+        # Programmatically built Configs (no load_config seeding) still had
+        # inline reflection before #1508; keep that behavior. An explicit
+        # `enabled: false` entry suppresses this because the entry exists.
+        reflection_entries = {"reflection": ExtensionConfig(enabled=True, type="reflection", options={})}
+    extension_manager = init_extensions(replace(config, extensions=reflection_entries), bus)
     manager = _EvalConversationManager(config, bus, auto_confirm=auto_confirm)
     ctx = Context(config=config, event_bus=bus)
+    ctx.extension_manager = extension_manager
     ctx.conv_id = "eval"
     ctx.channel_id = "eval"
     ctx.channel_name = "eval"
