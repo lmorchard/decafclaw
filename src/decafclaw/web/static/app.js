@@ -606,6 +606,9 @@ function showLogin() {
   if (loginView) loginView.classList.remove('hidden');
   if (chatLayout) chatLayout.classList.add('hidden');
   ws.disconnect();
+  // No conversation is displayed while signed out, so the tab must not keep
+  // naming the last one (#1503). The next login's listing refresh restores it.
+  applyPageTitle('');
 }
 
 auth.addEventListener('login', () => {
