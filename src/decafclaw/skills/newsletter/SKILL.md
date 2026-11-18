@@ -4,7 +4,7 @@ description: Compose and deliver a detailed narrative newsletter summarizing aut
 user-invocable: true
 context: inline
 argument-hint: "[send] [window] e.g. `7d`, `send`, `send 48h`"
-allowed-tools: newsletter_list_scheduled_activity, newsletter_list_vault_changes, newsletter_publish, current_time, vault_read
+allowed-tools: newsletter_list_scheduled_activity, newsletter_list_vault_changes, newsletter_list_recent_memories, newsletter_publish, current_time, vault_read
 required-skills: [newsletter]
 ---
 
@@ -34,17 +34,19 @@ Argument: $ARGUMENTS
 
 2. Call `newsletter_list_vault_changes` with the same `window` value (or omitted if you didn't have one). Use this to enrich the narrative ("while gardening, I noticed X and rewrote [[Some Page]]") and to surface interesting activity the scheduled reports didn't themselves mention. **If needed, use `vault_read` on these changed pages to pull out specific technical details, quotes, and facts.**
 
-3. Group related entries into a flowing narrative, but **dive deep into the actual content**. Don't just say "I researched X" — include specific technical details, facts, or interesting quotes you found during the ingestion or run.
+3. Call `newsletter_list_recent_memories` with the same `window` value (or omitted). If Mem0 is active, it returns newly crystallized facts and observations absorbed into semantic working memory during the window. Weave interesting learned facts into the narrative, or highlight them in a dedicated memory digest subsection. If Mem0 is disabled or returns 0 memories, skip mention of it.
 
-4. Apply the SOUL voice — conversational, curious, reflective. Use first person. **Use bullet points where they help surface rich details** (e.g., listing specific findings, decisions, or summaries of articles). Do not smooth over the details for a quick read; unpack them so the user can genuinely learn what you learned.
+4. Group related entries into a flowing narrative, but **dive deep into the actual content**. Don't just say "I researched X" — include specific technical details, facts, or interesting quotes you found during the ingestion or run.
 
-5. Link to vault pages using Obsidian `[[Page Name]]` syntax (do not wrap in code backticks) when referring to pages I touched. They'll render correctly when the newsletter is filed to the vault. When sent via email, links will automatically resolve to web UI deep links, with fallback to clean tags.
+5. Apply the SOUL voice — conversational, curious, reflective. Use first person. **Use bullet points where they help surface rich details** (e.g., listing specific findings, decisions, or summaries of articles). Do not smooth over the details for a quick read; unpack them so the user can genuinely learn what you learned.
 
-6. At the very end of the newsletter (just before the stats line), include an explicit **"Vault Changes" section** that lists every vault page created or modified during the window. Use `[[Page Name]]` syntax for each page (without backticks) so they are easy to navigate, and group them logically if there are many.
+6. Link to vault pages using Obsidian `[[Page Name]]` syntax (do not wrap in code backticks) when referring to pages I touched. They'll render correctly when the newsletter is filed to the vault. When sent via email, links will automatically resolve to web UI deep links, with fallback to clean tags.
 
-7. Include a stats line at the bottom: "Pages created/modified: N. Scheduled tasks that ran: M." Plain and brief.
+7. At the very end of the newsletter (just before the stats line), include an explicit **"Vault Changes" section** that lists every vault page created or modified during the window. Use `[[Page Name]]` syntax for each page (without backticks) so they are easy to navigate, and group them logically if there are many.
 
-8. Derive a short `subject_hint` — a single-line highlight of the period ("dream woke up early; 3 new vault notes on foo"). This becomes part of the email subject.
+8. Include a stats line at the bottom: "Pages created/modified: N. Scheduled tasks that ran: M. Facts absorbed into memory: K." (omit the facts count if Mem0 is disabled). Plain and brief.
+
+9. Derive a short `subject_hint` — a single-line highlight of the period ("dream woke up early; 3 new vault notes on foo"). This becomes part of the email subject.
 
 ## How to finish
 

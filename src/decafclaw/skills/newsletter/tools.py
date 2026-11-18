@@ -386,6 +386,108 @@ async def newsletter_list_vault_changes(ctx, hours: int | None = None, window: s
     )
 
 
+def _collect_recent_memories(ctx: "Context", hours: int = 24) -> tuple[bool, list[dict], str | None]:
+    """Collect memories created in the last `hours` from Qdrant if Mem0 is enabled.
+
+    Returns (enabled, memories_list, error_message_or_None).
+    Fails safe if Mem0 is not configured, disabled, uninstalled, or unreachable.
+    """
+    mem0_ext = ctx.config.extensions.get("mem0")
+    if not mem0_ext or not getattr(mem0_ext, "enabled", True):
+        return False, [], "Mem0 extension is not enabled"
+
+    try:
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import DatetimeRange, FieldCondition, Filter
+    except ImportError:
+        return False, [], "qdrant-client package is not installed"
+
+    opts = dict(getattr(mem0_ext, "options", None) or {})
+    qdrant_url = opts.get("qdrant_url")
+    qdrant_host = opts.get("qdrant_host")
+    qdrant_port = opts.get("qdrant_port", 6333)
+    qdrant_path = opts.get("qdrant_path")
+
+    try:
+        if qdrant_url:
+            qc = QdrantClient(url=qdrant_url, timeout=3.0)
+        elif qdrant_host:
+            qc = QdrantClient(host=qdrant_host, port=int(qdrant_port), timeout=3.0)
+        elif qdrant_path:
+            qc = QdrantClient(path=qdrant_path, timeout=3.0)
+        else:
+            return False, [], "No valid Qdrant URL, host, or path configured"
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        scroll_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="created_at",
+                    range=DatetimeRange(gte=cutoff),
+                )
+            ]
+        )
+
+        points, _ = qc.scroll(
+            collection_name="mem0",
+            scroll_filter=scroll_filter,
+            limit=200,
+            with_payload=True,
+        )
+
+        memories: list[dict] = []
+        for p in points:
+            payload = p.payload or {}
+            fact = payload.get("data")
+            created_at = payload.get("created_at")
+            if fact:
+                memories.append(
+                    {
+                        "id": str(p.id),
+                        "memory": fact,
+                        "created_at": created_at,
+                        "user_id": payload.get("user_id", "default"),
+                    }
+                )
+
+        memories.sort(key=lambda m: m.get("created_at") or "")
+        return True, memories, None
+    except Exception as exc:
+        log.warning("newsletter: failed to query Qdrant memories: %s", exc)
+        return False, [], str(exc)
+
+
+async def newsletter_list_recent_memories(ctx, hours: int | None = None, window: str = "") -> ToolResult:
+    """List semantic memory facts absorbed into Mem0 / Qdrant in the given window.
+
+    Fails safe if Mem0 is not configured, disabled, or unreachable.
+    """
+    try:
+        resolved_hours, display = _resolve_hours(window, hours)
+    except ValueError as exc:
+        return ToolResult(text=f"[error: {exc}]")
+
+    enabled, memories, err = _collect_recent_memories(ctx, resolved_hours)
+    if not enabled:
+        reason = f" ({err})" if err else ""
+        return ToolResult(
+            text=f"Mem0 memory extension is not active{reason}; 0 memories available.",
+            data={"enabled": False, "memories": [], "total": 0, "hours": resolved_hours, "window": display},
+        )
+
+    summary = f"Found {len(memories)} memory fact(s) absorbed in the last {display}."
+    return ToolResult(
+        text=summary,
+        data={
+            "enabled": True,
+            "memories": memories,
+            "total": len(memories),
+            "hours": resolved_hours,
+            "window": display,
+        },
+    )
+
+
 async def newsletter_publish(
     ctx: "Context",
     markdown: str,
@@ -528,6 +630,7 @@ async def newsletter_publish(
 TOOLS = {
     "newsletter_list_scheduled_activity": newsletter_list_scheduled_activity,
     "newsletter_list_vault_changes": newsletter_list_vault_changes,
+    "newsletter_list_recent_memories": newsletter_list_recent_memories,
     "newsletter_publish": newsletter_publish,
 }
 
@@ -570,6 +673,35 @@ TOOL_DEFINITIONS = [
             "description": (
                 "List vault markdown pages created or modified within a time window "
                 "(mtime-based). Excludes files under the newsletter's own output folder."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "window": {
+                        "type": "string",
+                        "description": (
+                            "Compact time-range string like '24h', '7d', '2w'. "
+                            "Takes precedence over 'hours' when non-empty."
+                        ),
+                    },
+                    "hours": {
+                        "type": "integer",
+                        "description": (
+                            "Numeric window fallback in hours. Defaults to 24 (or SkillConfig.window_hours)."
+                        ),
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "writes": False,
+        "function": {
+            "name": "newsletter_list_recent_memories",
+            "description": (
+                "List semantic memory facts absorbed into Mem0 / Qdrant in the given "
+                "window. Fails safe if Mem0 is not configured, disabled, or unreachable."
             ),
             "parameters": {
                 "type": "object",
