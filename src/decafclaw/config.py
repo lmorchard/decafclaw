@@ -93,14 +93,19 @@ def _parse_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _parse_dict(value: str) -> dict:
-    """Parse a JSON object string into a string-keyed dictionary."""
+def _parse_dict(value: str) -> dict[str, Any]:
+    """Parse a JSON object string into a dictionary.
+
+    Values keep their JSON types (numbers, booleans, null, nested objects and
+    arrays) so env-provided mappings don't need downstream re-parsing. Object
+    keys are always strings in JSON, so the result stays string-keyed.
+    """
     value = value.strip()
     if value.startswith("{") and value.endswith("}"):
         try:
             parsed = json.loads(value)
             if isinstance(parsed, dict):
-                return {str(k): str(v) for k, v in parsed.items()}
+                return {str(k): v for k, v in parsed.items()}
         except json.JSONDecodeError:
             pass
     return {}

@@ -641,6 +641,66 @@ class TestListFields:
         assert c.mattermost.channel_blocklist == ["id1", "id2"]
 
 
+class TestDictFields:
+    """Env dict fields parse as JSON objects and keep scalar types (#1306)."""
+
+    def test_env_dict_preserves_scalar_types(self, tmp_path, monkeypatch):
+        """Numbers, booleans, and null in a nested env dict stay typed."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv(
+            "IMAGE_BUDGET_PROVIDERS",
+            '{"vertex": {"max_images": 10, "ratio": 0.5, "flag": true, "disabled": null}}',
+        )
+        c = load_config()
+        entry = c.image_budget.providers["vertex"]
+        assert isinstance(entry, dict)  # nested mapping stays a mapping
+        assert entry["max_images"] == 10 and isinstance(entry["max_images"], int)
+        assert entry["ratio"] == 0.5 and isinstance(entry["ratio"], float)
+        assert entry["flag"] is True
+        assert entry["disabled"] is None
+
+    def test_env_dict_string_values_unchanged(self, tmp_path, monkeypatch):
+        """String values were always strings; the fix must not change that."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv(
+            "SHELL_AUX_APPROVAL_PRESETS",
+            '{"careful": "confirm destructive commands"}',
+        )
+        c = load_config()
+        assert c.shell.aux_approval_presets == {"careful": "confirm destructive commands"}
+
+    def test_env_dict_malformed_returns_empty(self, tmp_path, monkeypatch):
+        """A non-JSON env value yields an empty dict (fail open)."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("IMAGE_BUDGET_PROVIDERS", "not-json")
+        c = load_config()
+        assert c.image_budget.providers == {}
+
+    def test_dict_from_json_file(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "image_budget": {"providers": {"vertex": {"max_images": 10, "max_request_bytes": None}}},
+                }
+            )
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.delenv("IMAGE_BUDGET_PROVIDERS", raising=False)
+        c = load_config()
+        entry = c.image_budget.providers["vertex"]
+        assert isinstance(entry, dict)
+        assert entry["max_images"] == 10 and isinstance(entry["max_images"], int)
+        assert entry["max_request_bytes"] is None
+
+
 class TestVaultUserWritablePathsTypeGuard:
     """Misconfigured `vault.user_writable_paths` should not crash load_config."""
 
