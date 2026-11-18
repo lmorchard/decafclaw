@@ -279,7 +279,7 @@ async def test_restart_failure_reports_error(tmp_path):
             return 0, "Fast-forward", ""
         if cmd[:2] == ["uv", "sync"]:
             return 0, "Resolved 5 packages", ""
-        if cmd[:4] == ["systemctl", "--user", "restart", "decafclaw"]:
+        if cmd[:5] == ["systemctl", "--user", "restart", "--no-block", "decafclaw"]:
             return 1, "", "Failed to connect to bus"
         return 0, "", ""
 
@@ -313,7 +313,7 @@ async def test_successful_update_and_restart(tmp_path):
             return 0, "Fast-forward", ""
         if cmd[:2] == ["uv", "sync"]:
             return 0, "Resolved 5 packages", ""
-        if cmd[:4] == ["systemctl", "--user", "restart", "decafclaw"]:
+        if cmd[:5] == ["systemctl", "--user", "restart", "--no-block", "decafclaw"]:
             return 0, "", ""
         return 0, "", ""
 
@@ -327,4 +327,4 @@ async def test_successful_update_and_restart(tmp_path):
     assert "Restarting DecafClaw service" in res.message
     assert ["git", "pull", "--ff-only"] in executed
     assert ["uv", "sync"] in executed
-    assert ["systemctl", "--user", "restart", "decafclaw"] in executed
+    assert ["systemctl", "--user", "restart", "--no-block", "decafclaw"] in executed
