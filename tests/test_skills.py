@@ -1,11 +1,13 @@
 """Tests for the skills system — parsing, discovery, catalog, and activation."""
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from decafclaw.config import load_sub_config
 from decafclaw.context import TaskMode
 from decafclaw.media import ToolResult
 from decafclaw.skills import (
@@ -24,6 +26,7 @@ from decafclaw.skills import (
 from decafclaw.tools.skill_tools import (
     _compute_skill_hash,
     _find_skill,
+    _load_native_tools,
     _load_permissions,
     _rejection_display_path,
     _save_permission,
@@ -508,6 +511,41 @@ def test_discover_includes_skill_creator(config):
     assert sc.trust_tier == "bundled"
     assert sc.description.strip(), "skill-creator needs a non-empty description"
     assert sc.body.strip(), "skill-creator needs a non-empty body"
+
+
+def test_discover_includes_garden(config):
+    """The bundled garden skill still loads end-to-end (#1301).
+
+    The loader execs tools.py in a fresh module object that can leave
+    sys.modules (a failed re-import pops it, or a same-named skill shadows
+    it); with PEP 563 string annotations, get_type_hints in load_sub_config
+    then raises NameError on any non-builtin annotation and the skill is
+    silently dropped from the catalog. The import itself is gated by
+    check-skill-annotations; this pins the load path it protects.
+    """
+    skills = discover_skills(config)
+    by_name = {s.name: s for s in skills}
+    assert "garden" in by_name, f"bundled garden skill not discovered; got {sorted(by_name)}"
+    g = by_name["garden"]
+    assert g.trust_tier == "bundled"
+    assert g.has_native_tools is True
+
+    tools, tool_defs, module = _load_native_tools(g)
+    expected = {"vault_recompute_importance", "vault_reorganize_folders"}
+    assert expected <= set(tools), f"garden tools missing after load: {sorted(tools)}"
+    assert tool_defs, "garden should export TOOL_DEFINITIONS alongside TOOLS"
+
+    # The documented failure state: the loader's sys.modules registration is
+    # gone. Restore it afterwards so no later test sees a half-loaded module.
+    module_name = f"decafclaw_skill_{g.name}"
+    saved_module = sys.modules.get(module_name)
+    sys.modules.pop(module_name, None)
+    try:
+        skill_config = load_sub_config(module.SkillConfig, {}, "SKILLS_GARDEN")
+    finally:
+        if saved_module is not None:
+            sys.modules[module_name] = saved_module
+    assert isinstance(skill_config, module.SkillConfig)
 
 
 def test_discover_keeps_auto_approve_on_extra_path_skill(tmp_path, config):
