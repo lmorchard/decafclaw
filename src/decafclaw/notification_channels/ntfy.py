@@ -90,10 +90,11 @@ def build_notification_payload(config: Any, record: NotificationRecord) -> dict:
     payload: dict[str, Any] = {
         "topic": cfg.topic.strip(),
         "title": record.title,
-        "message": record.body or record.title,
+        "message": record.body or record.title or "Notification",
         "priority": _PRIORITY.get(record.priority, 3),
-        "tags": [record.category],
     }
+    if record.category:
+        payload["tags"] = [record.category]
     click = _click_url(config, record)
     if click:
         payload["click"] = click

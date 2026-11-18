@@ -138,6 +138,16 @@ class TestNotificationPayload:
         payload = build_notification_payload(config, _rec(title="Only a title", body=""))
         assert payload["message"] == "Only a title"
 
+    def test_empty_title_and_body_uses_placeholder(self, config):
+        _enable_ntfy(config)
+        payload = build_notification_payload(config, _rec(title="", body=""))
+        assert payload["message"] == "Notification"
+
+    def test_no_tags_without_category(self, config):
+        _enable_ntfy(config)
+        payload = build_notification_payload(config, _rec(category=""))
+        assert "tags" not in payload
+
     def test_explicit_http_link_becomes_click(self, config):
         _enable_ntfy(config)
         _enable_http(config)
