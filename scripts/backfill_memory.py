@@ -11,11 +11,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Disable mem0 telemetry to prevent remote egress and migration store locking conflicts
+os.environ.setdefault("MEM0_TELEMETRY", "false")
 
 log = logging.getLogger("backfill_memory")
 
@@ -127,19 +131,64 @@ def extract_journal_records(journal_dir: Path) -> list[dict[str, Any]]:
     return records
 
 
+def extract_page_records(pages_dir: Path) -> list[dict[str, Any]]:
+    """Scan a directory of markdown pages and extract records using file modification time."""
+    records: list[dict[str, Any]] = []
+    if not pages_dir.is_dir():
+        return records
+
+    for md_file in pages_dir.rglob("*.md"):
+        try:
+            content = md_file.read_text(encoding="utf-8").strip()
+            if not content:
+                continue
+            mtime = md_file.stat().st_mtime
+            dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+            records.append(
+                {
+                    "source": str(md_file),
+                    "timestamp": dt,
+                    "type": "page_entry",
+                    "data": {"content": content},
+                }
+            )
+        except Exception as e:
+            log.warning("Failed to read page %s: %s", md_file, e)
+
+    return records
+
+
 def backfill(
-    session_dir: Path | None,
-    journal_dir: Path | None,
+    session_dirs: list[Path] | Path | None = None,
+    journal_dirs: list[Path] | Path | None = None,
+    pages_dirs: list[Path] | Path | None = None,
     dry_run: bool = False,
     config_path: Path | None = None,
+    qdrant_path: Path | None = None,
+    since: str | None = None,
+    limit: int | None = None,
 ) -> int:
     """Collect records, sort chronologically in ascending order, and ingest or verify."""
     records: list[dict[str, Any]] = []
 
-    if session_dir and session_dir.exists():
-        records.extend(extract_session_records(session_dir))
-    if journal_dir and journal_dir.exists():
-        records.extend(extract_journal_records(journal_dir))
+    # Normalize single paths to lists
+    s_dirs = [session_dirs] if isinstance(session_dirs, Path) else (session_dirs or [])
+    j_dirs = [journal_dirs] if isinstance(journal_dirs, Path) else (journal_dirs or [])
+    p_dirs = [pages_dirs] if isinstance(pages_dirs, Path) else (pages_dirs or [])
+
+    for sd in s_dirs:
+        if sd and sd.exists():
+            records.extend(extract_session_records(sd))
+    for jd in j_dirs:
+        if jd and jd.exists():
+            records.extend(extract_journal_records(jd))
+    for pd in p_dirs:
+        if pd and pd.exists():
+            records.extend(extract_page_records(pd))
+
+    if since:
+        since_dt = parse_timestamp(since)
+        records = [r for r in records if r["timestamp"] >= since_dt]
 
     if not records:
         print("No records found to backfill.")
@@ -148,6 +197,9 @@ def backfill(
     # Sort strictly in ascending chronological order
     records.sort(key=lambda r: r["timestamp"])
 
+    if limit and limit > 0:
+        records = records[:limit]
+
     # Assert and verify chronological ordering
     prev_ts: datetime | None = None
     for r in records:
@@ -155,9 +207,10 @@ def backfill(
             assert r["timestamp"] >= prev_ts, f"Assertion failed: Record out of order ({r['timestamp']} < {prev_ts})"
         prev_ts = r["timestamp"]
 
+    source_names = ", ".join(d.name for d in (s_dirs + j_dirs + p_dirs) if d)
     print(
         f"Chronological backfill verified {len(records)} records across "
-        f"{(session_dir.name if session_dir else '')} in strictly ascending chronological order."
+        f"{source_names} in strictly ascending chronological order."
     )
 
     if dry_run:
@@ -171,24 +224,59 @@ def backfill(
 
         config = load_config()
         mem0_cfg = config.extensions.get("mem0")
-        ext = Mem0Extension(mem0_cfg.options if mem0_cfg else {}, config)
+        opts = dict(mem0_cfg.options if mem0_cfg else {})
+        if qdrant_path:
+            opts["qdrant_path"] = str(qdrant_path)
+            print(f"Staging mode: writing Qdrant store to {qdrant_path}")
+        ext = Mem0Extension(opts, config)
         client = ext._init_client()
         if not client:
             print("Mem0 client could not be initialized; aborting live backfill.")
             return 1
 
-        for r in records:
+        total = len(records)
+        print(f"Starting live backfill of {total} records into Mem0...", flush=True)
+        processed_count = 0
+        error_count = 0
+
+        for i, r in enumerate(records, start=1):
             data = r["data"]
-            if r["type"] == "session_message":
-                role = data.get("role")
-                content = data.get("content")
-                if role in ("user", "assistant") and content and isinstance(content, str):
-                    client.add([{"role": role, "content": content}], user_id="default")
-            elif r["type"] == "journal_entry":
-                content = data.get("content")
-                if content:
-                    client.add([{"role": "user", "content": content}], user_id="default")
-        print("Live backfill completed successfully.")
+            dt_str = r["timestamp"].strftime("%Y-%m-%d %H:%M")
+            src_name = Path(r["source"]).name
+            res = None
+            print(f"[{i}/{total}] Processing {dt_str} ({src_name})...", flush=True)
+
+            try:
+                if r["type"] == "session_message":
+                    role = data.get("role")
+                    content = data.get("content")
+                    if role in ("user", "assistant") and content and isinstance(content, str):
+                        res = client.add([{"role": role, "content": content}], user_id="default")
+                        processed_count += 1
+                elif r["type"] in ("journal_entry", "page_entry"):
+                    content = data.get("content")
+                    if content:
+                        res = client.add([{"role": "user", "content": content}], user_id="default")
+                        processed_count += 1
+            except Exception as e:
+                error_count += 1
+                print(f"[{i}/{total}] Error at {dt_str} ({src_name}): {e}", flush=True)
+                continue
+
+            # Report extracted/updated facts
+            if res and isinstance(res, dict):
+                for item in res.get("results", []):
+                    event = item.get("event", "ADD")
+                    mem = item.get("memory", "")
+                    if mem:
+                        print(f"  [{dt_str}] -> [{event}] {mem}", flush=True)
+
+            # Heartbeat progress reporting every 25 records or at completion
+            if i % 25 == 0 or i == total:
+                pct = (i / total) * 100
+                print(f"Progress: [{i}/{total} ({pct:.1f}%)] | Current date: {dt_str} | Source: {src_name}", flush=True)
+
+        print(f"Live backfill finished: processed {processed_count} records with {error_count} errors.", flush=True)
     except Exception as e:
         print(f"Error during live backfill: {e}")
         return 1
@@ -198,21 +286,53 @@ def backfill(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Chronologically backfill session and journal memory.")
-    parser.add_argument("--dir", dest="session_dir", type=Path, help="Directory containing session archives (.jsonl)")
     parser.add_argument(
-        "--journals-dir", dest="journal_dir", type=Path, help="Directory containing journal notes (.md)"
+        "--dir",
+        "--session-dirs",
+        dest="session_dirs",
+        type=Path,
+        nargs="+",
+        help="One or more directories containing session archives (.jsonl)",
+    )
+    parser.add_argument(
+        "--journals-dir",
+        "--journal-dirs",
+        dest="journal_dirs",
+        type=Path,
+        nargs="+",
+        help="One or more directories containing chronological journal/stream notes (.md)",
+    )
+    parser.add_argument(
+        "--pages-dir",
+        "--pages-dirs",
+        dest="pages_dirs",
+        type=Path,
+        nargs="+",
+        help="Optional directories containing evergreen/wiki pages (.md)",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Parse and verify chronological ordering without ingesting"
     )
     parser.add_argument("--config", dest="config_path", type=Path, help="Optional path to config.json")
+    parser.add_argument(
+        "--qdrant-path",
+        dest="qdrant_path",
+        type=Path,
+        help="Staging path for Qdrant store (e.g. data/mem0_qdrant_staging)",
+    )
+    parser.add_argument("--since", dest="since", type=str, help="Only backfill records with timestamp >= YYYY-MM-DD")
+    parser.add_argument("--limit", dest="limit", type=int, help="Limit to first N chronological records")
 
     args = parser.parse_args()
     return backfill(
-        session_dir=args.session_dir,
-        journal_dir=args.journal_dir,
+        session_dirs=args.session_dirs,
+        journal_dirs=args.journal_dirs,
+        pages_dirs=args.pages_dirs,
         dry_run=args.dry_run,
         config_path=args.config_path,
+        qdrant_path=args.qdrant_path,
+        since=args.since,
+        limit=args.limit,
     )
 
 
