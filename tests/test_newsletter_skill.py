@@ -1140,6 +1140,7 @@ async def test_list_recent_memories_when_mem0_disabled(ctx):
 
     ctx.config.extensions = {}
     res = await newsletter_list_recent_memories(ctx, hours=24)
+    assert res.data is not None
     assert res.data["enabled"] is False
     assert res.data["memories"] == []
     assert res.data["total"] == 0
@@ -1149,6 +1150,9 @@ async def test_list_recent_memories_when_mem0_disabled(ctx):
 @pytest.mark.asyncio
 async def test_list_recent_memories_when_qdrant_unreachable(ctx, monkeypatch):
     """When Qdrant raises an exception, fails safe without crashing."""
+    import sys
+    from unittest.mock import MagicMock
+
     from decafclaw.config import ExtensionConfig
     from decafclaw.skills.newsletter.tools import newsletter_list_recent_memories
 
@@ -1165,11 +1169,15 @@ async def test_list_recent_memories_when_qdrant_unreachable(ctx, monkeypatch):
         def __init__(self, *args, **kwargs):
             raise ConnectionError("Host not found")
 
-    import qdrant_client
+    fake_client_module = MagicMock()
+    fake_models_module = MagicMock()
+    fake_client_module.QdrantClient = FakeQdrantClient
 
-    monkeypatch.setattr(qdrant_client, "QdrantClient", FakeQdrantClient)
+    monkeypatch.setitem(sys.modules, "qdrant_client", fake_client_module)
+    monkeypatch.setitem(sys.modules, "qdrant_client.models", fake_models_module)
 
     res = await newsletter_list_recent_memories(ctx, hours=24)
+    assert res.data is not None
     assert res.data["enabled"] is False
     assert res.data["memories"] == []
     assert "Host not found" in res.text
@@ -1178,7 +1186,8 @@ async def test_list_recent_memories_when_qdrant_unreachable(ctx, monkeypatch):
 @pytest.mark.asyncio
 async def test_list_recent_memories_success(ctx, monkeypatch):
     """When mem0 is enabled and Qdrant returns points, lists them chronologically."""
-    from types import SimpleNamespace
+    import sys
+    from unittest.mock import MagicMock
 
     from decafclaw.config import ExtensionConfig
     from decafclaw.skills.newsletter.tools import newsletter_list_recent_memories
@@ -1206,11 +1215,15 @@ async def test_list_recent_memories_success(ctx, monkeypatch):
                 FakePoint("p2", "Learned fact B", "2026-11-18T02:00:00Z"),
             ], None
 
-    import qdrant_client
+    fake_client_module = MagicMock()
+    fake_models_module = MagicMock()
+    fake_client_module.QdrantClient = FakeQdrantClient
 
-    monkeypatch.setattr(qdrant_client, "QdrantClient", FakeQdrantClient)
+    monkeypatch.setitem(sys.modules, "qdrant_client", fake_client_module)
+    monkeypatch.setitem(sys.modules, "qdrant_client.models", fake_models_module)
 
     res = await newsletter_list_recent_memories(ctx, hours=24)
+    assert res.data is not None
     assert res.data["enabled"] is True
     assert res.data["total"] == 2
     assert len(res.data["memories"]) == 2
