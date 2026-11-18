@@ -240,3 +240,36 @@ class TestSystemConvAccess:
         await _handle_select_conv(ws_send, index, "testuser", {"conv_id": other_conv.conv_id}, ws_state)
         msg = ws_send.call_args[0][0]
         assert msg["type"] == "error"
+
+
+class TestSelectConvTitle:
+    """The web client's tab title (#1503) needs the conversation's name even
+    when its folder-scoped listings do not include that conversation — a deep
+    link, or a sidebar moved to another folder while the conversation stays open.
+    """
+
+    @pytest.mark.asyncio
+    async def test_web_conv_selected_carries_title(self, ws_state, index):
+        conv = index.create("testuser", title="Deep linked chat")
+
+        ws_send = AsyncMock()
+        await _handle_select_conv(ws_send, index, "testuser", {"conv_id": conv.conv_id}, ws_state)
+
+        msg = ws_send.call_args[0][0]
+        assert msg["type"] == "conv_selected"
+        assert msg["title"] == "Deep linked chat"
+
+    @pytest.mark.asyncio
+    async def test_system_conv_selected_has_no_title(self, ws_state, index):
+        config = ws_state["config"]
+        conv_dir = config.workspace_path / "conversations"
+        conv_dir.mkdir(parents=True, exist_ok=True)
+        _write_archive(conv_dir, "schedule-test-20260324-120001", "{}\n")
+
+        ws_send = AsyncMock()
+        await _handle_select_conv(ws_send, index, "testuser", {"conv_id": "schedule-test-20260324-120001"}, ws_state)
+
+        msg = ws_send.call_args[0][0]
+        # System conversations have no ConversationIndex entry, so the client
+        # keeps whatever title its sessions/archived listing supplied.
+        assert "title" not in msg

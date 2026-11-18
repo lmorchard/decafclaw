@@ -187,6 +187,11 @@ async def _handle_select_conv(ws_send: WSSendCallable, index, username, msg, sta
     conv = index.get(conv_id)
     if conv and conv.user_id == username:
         response: SrvConvSelected = {"type": WSMessageType.CONV_SELECTED, "conv_id": conv_id}
+        # The tab title (#1503) needs the conversation's name even when the
+        # client's folder-scoped listings do not contain it — a deep link, or
+        # the sidebar moved to another folder while this conversation stays open.
+        if conv.title:
+            response["title"] = conv.title
         # Check for pending confirmation via the manager
         manager = state.get("manager")
         if manager:

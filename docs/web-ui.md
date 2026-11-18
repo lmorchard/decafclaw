@@ -177,6 +177,20 @@ session — expanding an unselected session keeps it open across re-renders and
 store updates — and selecting a conversation in a collapsed session re-expands
 it (#1115 follow-up).
 
+**Tab title (#1503).** The document title names the selected conversation and
+prefixes its activity: `●` while it waits on input or an approval, `◐` while a
+turn runs, and no marker when idle. With nothing selected it is plain
+`DecafClaw`. `lib/page-title.js` composes the string and `app.js` reapplies it
+on every store `change`, so selection, listing refreshes, background renames,
+and turn-status transitions all land. Each tab therefore names its own session,
+which is what tells several open DecafClaw tabs apart. Listings are
+folder-scoped, so the store remembers the last resolved title and the
+`conv_selected` reply carries the conversation's name: an open tab keeps its
+title after a deep link into another folder or when the sidebar navigates away.
+Finished turns are not marked in the title: the selected conversation's status
+returns to `idle` when its turn ends, so the sidebar's Done badge on
+conversations you are *not* looking at is the completion signal.
+
 ### Vault editor
 
 WYSIWYG markdown editor for vault pages, accessible from the sidebar:

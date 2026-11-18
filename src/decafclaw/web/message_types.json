@@ -55,7 +55,7 @@
     "conv_selected": {
       "direction": "server_to_client",
       "description": "Confirmation that a select_conv subscribed this socket to the named conversation. May include initial conversation state.",
-      "fields": {"conv_id": "string", "read_only": "boolean?", "pending_confirmation": "object?"}
+      "fields": {"conv_id": "string", "title": "string?", "read_only": "boolean?", "pending_confirmation": "object?"}
     },
     "conversation_status": {
       "direction": "server_to_client",

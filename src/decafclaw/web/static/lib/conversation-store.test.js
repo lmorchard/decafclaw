@@ -1485,3 +1485,145 @@ describe('listing response ordering', () => {
     expect(store.sessions.map((s) => s.session_id)).toEqual(['b']);
   });
 });
+
+// #1503 — the tab title names the selected conversation, so the store must
+// expose that title from whichever listing holds it. Delegated children exist
+// only in the session hierarchy; archived conversations only in the archived
+// listing.
+describe('current conversation title (#1503)', () => {
+  /** @type {FakeWS} */
+  let ws;
+  /** @type {ConversationStore} */
+  let store;
+  /** @type {import('vitest').Mock} */
+  let fetchMock;
+
+  const json = (body) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = makeStore(ws);
+    fetchMock = vi.fn(async (url) => {
+      const u = String(url);
+      if (u.startsWith('/api/sessions')) {
+        return json({
+          folder: '',
+          sessions: [
+            {
+              session_id: 'web-alice-s2',
+              title: 'Session root',
+              conversations: [
+                { conv_id: 'web-alice-s2', title: 'Session root', kind: 'parent' },
+                { conv_id: 'web-alice-s2--child-ab', title: 'Child research', kind: 'child' },
+              ],
+            },
+          ],
+        });
+      }
+      if (u.startsWith('/api/conversations/archived')) {
+        return json({
+          folder: '',
+          folders: [],
+          conversations: [{ conv_id: 'web-alice-arch', title: 'Archived chat' }],
+        });
+      }
+      if (u.startsWith('/api/conversations')) {
+        return json({
+          folder: '',
+          folders: [],
+          conversations: [{ conv_id: 'web-alice-r1', title: 'Flat chat' }],
+        });
+      }
+      return json({ folder: '', folders: [], conversations: [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('is empty before a conversation is selected', async () => {
+    await store.listConversations();
+    expect(store.currentConversationTitle).toBe('');
+  });
+
+  it('reads the selected title from the active listing', async () => {
+    await store.listConversations();
+    store.selectConversation('web-alice-r1');
+    expect(store.currentConversationTitle).toBe('Flat chat');
+  });
+
+  it('falls back to the session hierarchy for a delegated child', async () => {
+    await store.listSessions();
+    store.selectConversation('web-alice-s2--child-ab');
+    expect(store.currentConversationTitle).toBe('Child research');
+  });
+
+  it('falls back to the archived listing', async () => {
+    await store.listArchivedConversations();
+    store.selectConversation('web-alice-arch');
+    expect(store.currentConversationTitle).toBe('Archived chat');
+  });
+
+  it('follows a background rename pushed for the selected conversation', async () => {
+    await store.listConversations();
+    store.selectConversation('web-alice-r1');
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_RENAMED,
+      conv_id: 'web-alice-r1',
+      title: 'Renamed in the background',
+      updated_at: 't9',
+    });
+    expect(store.currentConversationTitle).toBe('Renamed in the background');
+  });
+
+  it('is empty for an id no listing knows', () => {
+    store.selectConversation('web-alice-unknown');
+    expect(store.currentConversationTitle).toBe('');
+  });
+
+  it('takes the title from the server when no listing holds the conversation', () => {
+    store.selectConversation('web-alice-deep');
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_SELECTED,
+      conv_id: 'web-alice-deep',
+      title: 'Deep linked chat',
+    });
+    expect(store.currentConversationTitle).toBe('Deep linked chat');
+  });
+
+  it('keeps the remembered title when a folder listing drops the conversation', async () => {
+    await store.listConversations();
+    store.selectConversation('web-alice-r1');
+    expect(store.currentConversationTitle).toBe('Flat chat');
+    // The sidebar moved to another folder; the open conversation is not in it.
+    fetchMock.mockImplementationOnce(async () => json({ folder: 'Work', folders: [], conversations: [] }));
+    await store.listConversations('Work');
+    expect(store.currentConversationTitle).toBe('Flat chat');
+  });
+
+  it('does not let a late conv_selected for another conversation rename the tab', () => {
+    store.selectConversation('web-alice-deep');
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_SELECTED,
+      conv_id: 'web-alice-r1',
+      title: 'Someone else',
+    });
+    expect(store.currentConversationTitle).toBe('');
+  });
+
+  it('applies a pushed rename to the remembered title', () => {
+    store.selectConversation('web-alice-deep');
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_SELECTED,
+      conv_id: 'web-alice-deep',
+      title: 'First title',
+    });
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_RENAMED,
+      conv_id: 'web-alice-deep',
+      title: 'Retitled',
+      updated_at: 't9',
+    });
+    expect(store.currentConversationTitle).toBe('Retitled');
+  });
+});

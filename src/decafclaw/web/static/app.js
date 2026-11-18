@@ -12,6 +12,7 @@ import { SIDE_EFFECT_COMMANDS } from './lib/constants.js';
 import { load as loadBookmarks } from './lib/bookmarks-store.js';
 import { setupResizeHandle } from './lib/utils.js';
 import { shouldFocusChatInput } from './lib/chat-focus.js';
+import { applyPageTitle } from './lib/page-title.js';
 import { showToast } from './lib/toast.js';
 import {
   setActiveConv,
@@ -52,6 +53,19 @@ function getWsUrl() {
 
 const ws = new WebSocketClient(getWsUrl());
 const store = new ConversationStore(ws);
+
+// Browser tab title: selected session + its activity state, so several open
+// tabs are distinguishable and a pending approval or running turn is visible
+// from another tab (#1503). `change` fires for selection, listing refreshes,
+// renames, and turn-status transitions — every input the title reads.
+function syncPageTitle() {
+  applyPageTitle(
+    store.currentConversationTitle,
+    store.getConversationStatus(store.currentConvId || ''),
+  );
+}
+store.addEventListener('change', syncPageTitle);
+syncPageTitle();
 
 // -- DOM references -----------------------------------------------------------
 
@@ -592,6 +606,9 @@ function showLogin() {
   if (loginView) loginView.classList.remove('hidden');
   if (chatLayout) chatLayout.classList.add('hidden');
   ws.disconnect();
+  // No conversation is displayed while signed out, so the tab must not keep
+  // naming the last one (#1503). The next login's listing refresh restores it.
+  applyPageTitle('');
 }
 
 auth.addEventListener('login', () => {

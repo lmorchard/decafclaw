@@ -136,6 +136,8 @@ export class ConversationStore extends EventTarget {
   // -- Current conversation state --
   /** @type {string|null} */
   #currentConvId = null;
+  /** @type {string} last resolved display title of the selected conversation */
+  #currentConvTitle = '';
   /** @type {boolean} */
   #busy = false;
   /** @type {number} prompt tokens used in the last completed turn */
@@ -259,6 +261,42 @@ export class ConversationStore extends EventTarget {
    */
   getConversationStatus(convId) {
     return this.#conversationStatuses.get(convId) || 'idle';
+  }
+
+  /**
+   * Display title for a conversation, from whichever listing holds it: the
+   * active, archived, or system flat lists, then the session hierarchy (which
+   * is where delegated children appear). Empty for an id the store has never
+   * listed, e.g. one created in another tab before the next refresh (#1503).
+   * @param {string} convId
+   * @returns {string}
+   */
+  getConversationTitle(convId) {
+    if (!convId) return '';
+    const flatLists = [this.#conversations, this.#archivedConversations, this.#systemConversations];
+    for (const list of flatLists) {
+      const match = (list || []).find((c) => c?.conv_id === convId);
+      if (match?.title) return match.title;
+    }
+    for (const session of this.#sessions || []) {
+      const match = (session?.conversations || []).find((c) => c?.conv_id === convId);
+      if (match?.title) return match.title;
+    }
+    return '';
+  }
+
+  /**
+   * Display title of the selected conversation, or ''. Listings are
+   * folder-scoped, so the last resolved title is remembered: navigating the
+   * sidebar to another folder, or a listing refresh that drops the selected
+   * conversation, must not erase the open tab's name (#1503).
+   * @returns {string}
+   */
+  get currentConversationTitle() {
+    if (!this.#currentConvId) return '';
+    const resolved = this.getConversationTitle(this.#currentConvId);
+    if (resolved) this.#currentConvTitle = resolved;
+    return this.#currentConvTitle;
   }
 
   /**
@@ -629,6 +667,8 @@ export class ConversationStore extends EventTarget {
   /** @param {string} convId */
   selectConversation(convId) {
     this.#currentConvId = convId;
+    // Never carry the previous conversation's name into the new tab title.
+    this.#currentConvTitle = this.getConversationTitle(convId);
     if (this.#conversationStatuses.get(convId) === 'finished') {
       this.#setConversationStatus(convId, 'idle');
     }
@@ -865,6 +905,13 @@ export class ConversationStore extends EventTarget {
     switch (msg.type) {
       case MESSAGE_TYPES.CONV_SELECTED:
         if (msg.read_only) this.#readOnly = true;
+        // The server names the conversation it just subscribed. Listings are
+        // folder-scoped, so for a deep link into another folder this is the
+        // only title available (#1503). A late reply for a conversation we
+        // already left must not rename the current tab.
+        if (msg.title && msg.conv_id === this.#currentConvId) {
+          this.#currentConvTitle = msg.title;
+        }
         // Restore pending confirmation from server state (survives reload)
         if (msg.pending_confirmation) {
           this.#toolStatusStore.handleMessage({
@@ -907,6 +954,11 @@ export class ConversationStore extends EventTarget {
             conv.updated_at = msg.updated_at;
             this.#conversations.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
           }
+        }
+        // A rename pushed for the selected conversation updates the tab title
+        // even when no listing holds that conversation (#1503).
+        if (convId === this.#currentConvId && msg.title) {
+          this.#currentConvTitle = msg.title;
         }
         // #1274 — the sidebar hierarchy renders from sessions, which this patch
         // does not touch. Refresh it (debounced) when the renamed conversation is

@@ -103,6 +103,7 @@ export interface SrvConvRenamed {
 export interface SrvConvSelected {
   type: "conv_selected";
   conv_id: string;
+  title?: string;
   read_only?: boolean;
   pending_confirmation?: Record<string, unknown>;
 }
