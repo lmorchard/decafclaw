@@ -1103,6 +1103,7 @@ class TurnRunner:
         confirm_denied = False
         if isinstance(end_turn_signal, EndTurnConfirm):
             log.info("EndTurnConfirm — making presentation LLM call before confirmation")
+            self._dispatch_before_llm_call(self.messages, [])
             present_response = await _call_llm_with_events(
                 self.ctx,
                 self.config,
