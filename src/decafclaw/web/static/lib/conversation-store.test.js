@@ -241,6 +241,28 @@ describe('ConversationStore reconnect handling', () => {
 
     expect(ws.sent).toEqual([]);
   });
+
+  // #1443: the open handler also runs after a server restart or a network
+  // blip. It must refetch the folder the sidebar is showing; defaulting to the
+  // top level desynced the store from the sidebar, so a chat created in that
+  // folder was created there but refetched into the top-level hierarchy and
+  // stayed invisible until a page reload.
+  it('refreshes the viewed folder, not the top level, on reconnect', async () => {
+    const store = makeStore(ws);
+    fetchMock.mockImplementation(async (url) => {
+      const folder = new URL(String(url), 'http://test').searchParams.get('folder') || '';
+      return { ok: true, json: async () => ({ conversations: [], folders: [], folder, sessions: [] }) };
+    });
+    await store.listConversations('Work');
+    fetchMock.mockClear();
+
+    ws.fireOpen();
+    await flush();
+
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls).toContain('/api/conversations?folder=Work');
+    expect(urls).toContain('/api/sessions?folder=Work');
+  });
 });
 
 
@@ -371,6 +393,19 @@ describe('conversation creation transport', () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ folder: 'Work', sessions: [] }), { headers: { 'Content-Type': 'application/json' } }));
     await store.createConversation();
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ title: '', model: 'chosen', folder: 'Work' });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/sessions?folder=Work');
+  });
+
+  it('refreshes the folder it created in, even when the store folder is stale (#1443)', async () => {
+    // The sidebar passes the folder it is rendering; the store is still at the
+    // top level here. Refetching `#currentFolder` would refetch the wrong
+    // listing and leave the new row invisible.
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(metadata), { status: 201 }));
+    fetchMock.mockResolvedValueOnce(new Response(
+      JSON.stringify({ folder: 'Work', sessions: [] }),
+      { headers: { 'Content-Type': 'application/json' } },
+    ));
+    await store.createConversation('', '', 'Work');
     expect(fetchMock.mock.calls[1][0]).toBe('/api/sessions?folder=Work');
   });
 

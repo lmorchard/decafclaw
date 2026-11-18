@@ -541,6 +541,33 @@ async def test_poll_confirmation_manager_stops_when_confirmation_cleared():
     manager.respond_to_confirmation.assert_not_called()
 
 
+# -- Static asset caching --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_static_assets_require_revalidation(client):
+    """/static must not let a browser reuse a cached file without asking.
+
+    Starlette sends Last-Modified/ETag but no Cache-Control, so a browser
+    heuristically caches modules for 10% of their age and can keep running
+    pre-fix JavaScript across reloads after a deploy (#1443).
+    """
+    resp = await client.get("/static/app.js")
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-cache"
+    assert resp.headers.get("etag")
+
+    revalidated = await client.get("/static/app.js", headers={"If-None-Match": resp.headers["etag"]})
+    assert revalidated.status_code == 304
+
+
+@pytest.mark.asyncio
+async def test_index_document_requires_revalidation(client):
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-cache"
+
+
 # -- Server shutdown --------------------------------------------------------
 
 
