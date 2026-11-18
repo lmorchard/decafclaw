@@ -489,12 +489,14 @@ def test_ac5_unresolvable_model_fails_open():
 # ---------------------------------------------------------------------------
 
 
-def test_config_env_path_stringified_override_parses():
-    """The generic loader's env path stringifies nested values; resolved() parses them back.
+def test_config_string_override_parses():
+    """A per-provider mapping hand-written as a string in config.json is parsed back.
 
-    ``IMAGE_BUDGET_PROVIDERS='{"vertex": {"max_images": 10}}'`` arrives as
-    ``providers["vertex"] == "{'max_images': 10}"`` (a string) because
-    ``_parse_dict`` maps every value through ``str()``.
+    The JSON path passes values through untouched, so
+    ``"providers": {"vertex": "{'max_images': 10}"}`` arrives as a string;
+    ``resolved()`` parses it back rather than raising on every turn. (The env
+    path no longer produces strings here — ``_parse_dict`` keeps JSON types,
+    #1306.)
     """
     from decafclaw.config_types import ImageBudgetConfig
 

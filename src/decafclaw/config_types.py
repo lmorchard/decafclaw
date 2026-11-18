@@ -608,11 +608,12 @@ class ImageBudgetConfig:
         defaults = _VERIFIED_IMAGE_LIMITS.get(provider_type, {})
         override = self.providers.get(provider_type) or {}
         if isinstance(override, str):
-            # The generic loader's env path stringifies nested values
-            # (``_parse_dict`` maps every value through ``str()``), so a
-            # per-provider mapping arrives as its Python repr. Parse it back;
-            # anything that is not a clean mapping is ignored (with a warning)
-            # rather than raising on every turn.
+            # A per-provider mapping hand-written as a string in config.json
+            # (the JSON path passes values through untouched) arrives as its
+            # Python/JSON repr. Parse it back; anything that is not a clean
+            # mapping is ignored (with a warning) rather than raising on every
+            # turn. The env path no longer produces strings here: ``_parse_dict``
+            # keeps JSON types (#1306).
             try:
                 parsed = ast.literal_eval(override)
             except (ValueError, SyntaxError, TypeError):
@@ -633,7 +634,7 @@ class ImageBudgetConfig:
                 return None
             if val is None:
                 return None
-            if isinstance(val, str):  # env-var path stringifies values
+            if isinstance(val, str):  # config.json (or a JSON string in env) may hand-write strings
                 v = val.strip().lower()
                 if v in ("", "none", "null"):
                     return None

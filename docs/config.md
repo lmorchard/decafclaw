@@ -101,6 +101,8 @@ to Mattermost — useful for local web-only runs and the
 
 List fields accept comma-separated (`a,b,c`) or JSON array (`["a","b"]`) format from env vars.
 
+Dict fields accept a JSON object (`{"key": value}`) from env vars; values keep their JSON types (numbers, booleans, null).
+
 ### `compaction`
 
 History compaction settings. Note: `url`, `model`, and `api_key` are deprecated in favor of setting `auxiliary_model` (which uses the modern `providers` / `model_configs` system).
