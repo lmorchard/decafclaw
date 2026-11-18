@@ -568,6 +568,13 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         await _handle_update_command(ws_send, conv_id, text, username, state, index=index)
         return
 
+    # -- /restart side-effect command (#1533): human-only, no agent turn
+    if (text.startswith("/restart") and (text == "/restart" or text[8:9].isspace())) or (
+        text.startswith("!restart") and (text == "!restart" or text[8:9].isspace())
+    ):
+        await _handle_restart_command(ws_send, conv_id, text, username, state)
+        return
+
     # -- Command dispatch (centralized in commands.py) --
     from ..commands import dispatch_command
     from ..context import Context
@@ -796,12 +803,17 @@ async def _handle_update_command(
 
     confirmed = arg in ("confirm", "yes", "-y", "--yes")
     manager = state.get("manager")
+    restart_coordinator = getattr(manager, "restart_coordinator", None) if manager else None
 
-    result = await perform_self_update(
-        confirmed=confirmed,
-        manager=manager,
-        index=index,
-    )
+    kwargs: dict[str, Any] = {
+        "confirmed": confirmed,
+        "manager": manager,
+        "index": index,
+    }
+    if restart_coordinator is not None:
+        kwargs["restart_coordinator"] = restart_coordinator
+
+    result = await perform_self_update(**kwargs)
 
     await ws_send(
         {
@@ -812,6 +824,58 @@ async def _handle_update_command(
             "final": True,
         }
     )
+
+
+async def _handle_restart_command(
+    ws_send: WSSendCallable,
+    conv_id: str,
+    text: str,
+    username: str,
+    state: dict,
+) -> None:
+    """`/restart`: human-only side-effect command to restart DecafClaw (#1533)."""
+    arg = ""
+    trimmed = text.strip()
+    if trimmed.startswith("/restart"):
+        arg = trimmed[len("/restart") :].strip().lower()
+    elif trimmed.startswith("!restart"):
+        arg = trimmed[len("!restart") :].strip().lower()
+
+    manager = state.get("manager")
+    restart_coord = getattr(manager, "restart_coordinator", None) if manager else None
+
+    if not restart_coord:
+        await ws_send({
+            "type": WSMessageType.MESSAGE_COMPLETE,
+            "conv_id": conv_id,
+            "role": "assistant",
+            "text": "Restart coordinator is not available.",
+            "final": True,
+        })
+        return
+
+    if arg in ("cancel", "abort"):
+        cancelled = await restart_coord.cancel_restart()
+        msg = "Pending restart cancelled." if cancelled else "No restart was pending."
+    else:
+        immediate = arg in ("now", "force", "-f", "--force", "--now")
+        busy = restart_coord.get_busy_conversations()
+        await restart_coord.request_restart(
+            reason=f"Requested by user {username} via {trimmed}",
+            on_idle=not immediate,
+        )
+        if not immediate and busy:
+            msg = f"Restart scheduled on idle. Waiting for {len(busy)} active conversation(s) to finish ({', '.join(busy)})..."
+        else:
+            msg = "Restarting DecafClaw service..."
+
+    await ws_send({
+        "type": WSMessageType.MESSAGE_COMPLETE,
+        "conv_id": conv_id,
+        "role": "assistant",
+        "text": msg,
+        "final": True,
+    })
 
 
 async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:

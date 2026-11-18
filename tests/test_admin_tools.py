@@ -892,3 +892,48 @@ async def test_admin_mutation_recovery_rejects_root_delete(config):
     result = await handler.on_approve(mock_ctx, req, resp)
     assert "error" in result
     assert "agent directory root" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_admin_restart_confirmed(config):
+    from decafclaw.confirmations import ConfirmationResponse
+    from decafclaw.tools.admin_tools import tool_admin_restart
+
+    mock_ctx = MagicMock()
+    mock_ctx.config = config
+    mock_ctx.is_unattended = False
+    mock_ctx.is_child = False
+    mock_ctx.cancelled = None
+
+    coord = MagicMock()
+    coord.request_restart = AsyncMock(return_value=True)
+    coord.get_busy_conversations.return_value = []
+    mock_ctx.restart_coordinator = coord
+
+    mock_ctx.request_confirmation = AsyncMock(return_value=ConfirmationResponse(confirmation_id="c1", approved=True))
+
+    result = await tool_admin_restart(mock_ctx, reason="Config test", on_idle=True)
+    assert "Restarting DecafClaw service" in str(result)
+    coord.request_restart.assert_called_once_with(reason="Config test", on_idle=True)
+
+
+@pytest.mark.asyncio
+async def test_admin_restart_denied(config):
+    from decafclaw.confirmations import ConfirmationResponse
+    from decafclaw.tools.admin_tools import tool_admin_restart
+
+    mock_ctx = MagicMock()
+    mock_ctx.config = config
+    mock_ctx.is_unattended = False
+    mock_ctx.is_child = False
+    mock_ctx.cancelled = None
+
+    coord = MagicMock()
+    coord.request_restart = AsyncMock(return_value=True)
+    mock_ctx.restart_coordinator = coord
+
+    mock_ctx.request_confirmation = AsyncMock(return_value=ConfirmationResponse(confirmation_id="c2", approved=False))
+
+    result = await tool_admin_restart(mock_ctx, reason="Denied test", on_idle=True)
+    assert "denied" in str(result).lower() or "cancelled" in str(result).lower()
+    coord.request_restart.assert_not_called()

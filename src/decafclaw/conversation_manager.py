@@ -524,6 +524,7 @@ class ConversationManager:
         confirmation_registry: ConfirmationRegistry | None = None,
         terminal_registry: Any | None = None,
         extension_manager: Any | None = None,
+        restart_coordinator: Any | None = None,
     ):
         self.config = config
         self.event_bus = event_bus
@@ -532,6 +533,7 @@ class ConversationManager:
         # Runtime extension manager from runner startup (#1490); attached to
         # every turn context so core extensions can expose direct services.
         self.extension_manager = extension_manager
+        self.restart_coordinator = restart_coordinator
         self.mm_client: Any | None = None
 
         # Workflow user-input resumes via the confirmation recovery path.
@@ -561,6 +563,17 @@ class ConversationManager:
         from .scheduled_wakes import ScheduledWakeManager
 
         self.scheduled_wakes = ScheduledWakeManager(self.config, self)
+
+    def get_busy_conversations(self) -> list[str]:
+        """Return IDs of all conversations with an active turn."""
+        busy = []
+        for cid, state in self._conversations.items():
+            is_busy = getattr(state, "busy", False)
+            agent_task = getattr(state, "agent_task", None)
+            has_task = agent_task is not None and not agent_task.done()
+            if is_busy or has_task:
+                busy.append(cid)
+        return busy
 
     def _get_or_create(self, conv_id: str) -> ConversationState:
         """Get existing conversation state or create a new one."""
@@ -724,7 +737,13 @@ class ConversationManager:
                 "future": future,
             }
 
-            if state.busy:
+            restart_pending = bool(self.restart_coordinator and self.restart_coordinator.is_restart_pending())
+            if state.busy or restart_pending:
+                if restart_pending and not state.busy:
+                    log.info("Restart pending; queued turn %s for conv %s", kind.value, conv_id[:8])
+                    setattr(future, "queued", True)
+                    return future
+
                 # Cancel-on-new-message: cancel the current turn if configured
                 # (USER kind only, same as previous send_message behavior)
                 if (
@@ -1380,6 +1399,7 @@ class ConversationManager:
 
         ctx = Context(config=self.config, event_bus=self.event_bus)
         ctx.extension_manager = self.extension_manager
+        ctx.restart_coordinator = self.restart_coordinator
         ctx.conv_id = conv_id
         ctx.user_id = state.last_user_id if state else ""
         ctx.cancelled = cancel_event
@@ -1975,6 +1995,7 @@ class ConversationManager:
             # semantics — if so, add it to TASK_KINDS with a KIND_TASK_MODE entry.)
             ctx = Context(config=self.config, event_bus=self.event_bus)
             ctx.extension_manager = self.extension_manager
+            ctx.restart_coordinator = self.restart_coordinator
             ctx.user_id = user_id
             ctx.channel_id = conv_id
             ctx.conv_id = conv_id
@@ -2402,6 +2423,10 @@ class ConversationManager:
         async with state.lock:
             if state.busy:
                 log.debug("_drain_pending: conv %s already busy with a concurrent turn, deferring", state.conv_id[:8])
+                return
+
+            if self.restart_coordinator and self.restart_coordinator.is_restart_pending():
+                log.debug("_drain_pending: restart pending, deferring turn for conv %s", state.conv_id[:8])
                 return
 
             messages = _read_inbox(self.config, state.conv_id)

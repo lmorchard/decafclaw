@@ -352,8 +352,41 @@ class MattermostClient:
             elif trimmed_cmd.startswith("/update"):
                 arg = trimmed_cmd[7:].strip().lower()
             confirmed = arg in ("confirm", "yes", "-y", "--yes")
-            result = await perform_self_update(confirmed=confirmed, manager=manager)
+            restart_coord = getattr(manager, "restart_coordinator", None) if manager else None
+            result = await perform_self_update(
+                confirmed=confirmed, manager=manager, restart_coordinator=restart_coord
+            )
             await self.send(channel_id, result.message, root_id=root_id)
+            return
+
+        # -- /restart / !restart side-effect command (#1533): human-only, no agent turn
+        if (trimmed_cmd.startswith("!restart") and (trimmed_cmd == "!restart" or trimmed_cmd[8:9].isspace())) or (
+            trimmed_cmd.startswith("/restart") and (trimmed_cmd == "/restart" or trimmed_cmd[8:9].isspace())
+        ):
+            arg = ""
+            if trimmed_cmd.startswith("!restart"):
+                arg = trimmed_cmd[8:].strip().lower()
+            elif trimmed_cmd.startswith("/restart"):
+                arg = trimmed_cmd[8:].strip().lower()
+            restart_coord = getattr(manager, "restart_coordinator", None) if manager else None
+            if not restart_coord:
+                await self.send(channel_id, "Restart coordinator is not available.", root_id=root_id)
+                return
+            if arg in ("cancel", "abort"):
+                cancelled = await restart_coord.cancel_restart()
+                msg = "Pending restart cancelled." if cancelled else "No restart was pending."
+            else:
+                immediate = arg in ("now", "force", "-f", "--force", "--now")
+                busy = restart_coord.get_busy_conversations()
+                await restart_coord.request_restart(
+                    reason=f"Requested via {trimmed_cmd}",
+                    on_idle=not immediate,
+                )
+                if not immediate and busy:
+                    msg = f"Restart scheduled on idle. Waiting for {len(busy)} active conversation(s) to finish ({', '.join(busy)})..."
+                else:
+                    msg = "Restarting DecafClaw service..."
+            await self.send(channel_id, msg, root_id=root_id)
             return
 
         cmd_ctx = Context(config=app_ctx.config, event_bus=app_ctx.event_bus)

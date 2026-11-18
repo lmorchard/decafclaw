@@ -266,17 +266,26 @@ async def config_change_watcher(
 
         unsafe_changed = [key for key in changed if key in UNSAFE_TOP_LEVEL_KEYS]
         if unsafe_changed:
-            # A restart-required section changed: announce it and stop the
-            # process after a short grace so a supervisor can restart us.
-            log.info("Config change requires restart: %s", ", ".join(unsafe_changed))
+            # A restart-required section changed: announce it and request a
+            # restart through the restart coordinator so active conversation turns
+            # drain gracefully before the process exits (#1533).
+            keys_str = ", ".join(unsafe_changed)
+            log.info("Config change requires restart: %s", keys_str)
             await app_ctx.event_bus.publish(
                 {"type": "config_changed", "requires_restart": True, "keys": unsafe_changed}
             )
-            try:
-                await asyncio.sleep(restart_grace_sec)
-            except asyncio.CancelledError:
-                raise
-            shutdown_event.set()
+            restart_coord = getattr(app_ctx, "restart_coordinator", None)
+            if restart_coord is not None:
+                await restart_coord.request_restart(
+                    reason=f"Config change requires restart: {keys_str}",
+                    on_idle=True,
+                )
+            else:
+                try:
+                    await asyncio.sleep(restart_grace_sec)
+                except asyncio.CancelledError:
+                    raise
+                shutdown_event.set()
             return
 
         # Safe sections changed: apply them onto the live config so the next

@@ -211,6 +211,29 @@ async def test_startup_wired_sections_require_restart(ctx, monkeypatch, tmp_path
             await _cancel(task)
 
 
+async def test_unsafe_section_routes_through_restart_coordinator(ctx, monkeypatch, tmp_path):
+    """An unsafe section routes through app_ctx.restart_coordinator if available (#1533)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    _align_config(ctx, monkeypatch, tmp_path)
+    coord = MagicMock()
+    coord.request_restart = AsyncMock(return_value=True)
+    ctx.restart_coordinator = coord
+
+    task, shutdown_event = await _run_watcher(ctx)
+    try:
+        await _settle()
+        _write_config(tmp_path, {"http": {"enabled": True}})
+
+        await _wait_for(lambda: coord.request_restart.called)
+        coord.request_restart.assert_called_once()
+        assert "http" in coord.request_restart.call_args.kwargs["reason"]
+        assert coord.request_restart.call_args.kwargs["on_idle"] is True
+    finally:
+        if not task.done():
+            await _cancel(task)
+
+
 async def test_env_reload_updates_owned_vars_only(ctx, monkeypatch, tmp_path):
     """env hot-apply must update config-owned vars, set new ones, leave
     real-env overrides alone (#149 review: apply_env never updated anything)."""
