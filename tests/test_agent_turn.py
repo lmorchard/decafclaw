@@ -913,6 +913,16 @@ async def test_run_agent_turn_end_turn_confirm_denied_no_summary_directive(ctx):
 
     action = EndTurnConfirm(message="Review plan", approve_label="OK", deny_label="Change plan")
 
+    # Every request in the turn must reach BEFORE_LLM_CALL observers (the
+    # diagnostics sidecar depends on it): iteration, presentation, final.
+    from decafclaw.context import TurnLifecycle
+
+    hook_calls = []
+    ctx.add_interceptor(
+        TurnLifecycle.BEFORE_LLM_CALL,
+        lambda _ctx, messages, _tools: hook_calls.append(list(messages)),
+    )
+
     tool_call_response = _mock_llm_response(
         content=None,
         tool_calls=[
@@ -956,6 +966,10 @@ async def test_run_agent_turn_end_turn_confirm_denied_no_summary_directive(ctx):
     assert all("All steps are complete" not in (m.get("content") or "") for m in final_call_messages)
     assert all("Please provide a concise summary" not in (m.get("content") or "") for m in final_call_messages)
     assert any("[User selected 'Change plan'" in (m.get("content") or "") for m in final_call_messages)
+    # The BEFORE_LLM_CALL interceptor ran for all three requests: the tool-loop
+    # iteration, the EndTurnConfirm presentation call, and the final call.
+    assert len(hook_calls) == 3
+    assert any("[User selected 'Change plan'" in (m.get("content") or "") for m in hook_calls[2])
 
 
 @pytest.mark.asyncio
