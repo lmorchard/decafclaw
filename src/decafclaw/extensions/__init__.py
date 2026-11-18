@@ -2,13 +2,50 @@
 
 from __future__ import annotations
 
+import enum
 import logging
-from dataclasses import dataclass
-from typing import Any, Callable, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from decafclaw.events import EventBus
 
+if TYPE_CHECKING:
+    from decafclaw.context_composer import SourceEntry
+
 log = logging.getLogger(__name__)
+
+
+class ContextSlot(enum.Enum):
+    """Where a ``PRE_COMPOSE`` contribution mounts in the assembled context.
+
+    - HEAD — static instructions mounted after the system prompt and before
+      history. Contributions are not archived: replaying them every turn keeps
+      the provider prompt-cache prefix stable (#1117).
+    - DELTA — chronological append-only items appended to this turn's history
+      slice after archived history and before tail envelopes. Contributions are
+      archived so later turns replay them in place.
+    - TAIL — per-turn envelopes mounted directly before the current user
+      message. Contributions are archived like the legacy ``<recalled_facts>``
+      envelope.
+    """
+
+    HEAD = "head"
+    DELTA = "delta"
+    TAIL = "tail"
+
+
+@dataclass
+class ContextContribution:
+    """Structured result from a ``TurnLifecycle.PRE_COMPOSE`` hook.
+
+    ``messages`` are normal chat messages. ``source_entry`` is optional
+    telemetry for the Context Inspector; when present the composer appends it
+    to the turn's ``sources`` list.
+    """
+
+    slot: ContextSlot
+    messages: list[dict] = field(default_factory=list)
+    source_entry: "SourceEntry | None" = None
 
 
 @dataclass(frozen=True)

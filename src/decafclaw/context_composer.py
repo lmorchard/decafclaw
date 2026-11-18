@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from decafclaw.context import Context
 
 from .events import TurnLifecycle
+from .extensions import ContextContribution, ContextSlot
 
 log = logging.getLogger(__name__)
 
@@ -742,17 +743,19 @@ class ContextComposer:
         if memory_entry:
             sources.append(memory_entry)
 
-        # -- PRE_COMPOSE lifecycle collector hooks (#1454) --
-        recalled_msgs, recalled_entry = await self._compose_pre_compose_hooks(
+        # -- PRE_COMPOSE lifecycle collector hooks (#1454, #1486) --
+        # HEAD messages mount outside the archived history (see below); DELTA
+        # and TAIL messages are archived with the rest of this turn's
+        # injections.
+        head_msgs, delta_msgs, tail_hook_msgs, hook_sources = await self._compose_pre_compose_hooks(
             ctx,
             config,
             user_message,
             history,
         )
-        for rm in recalled_msgs:
-            to_archive.append(rm)
-        if recalled_entry:
-            sources.append(recalled_entry)
+        for hm in (*delta_msgs, *tail_hook_msgs):
+            to_archive.append(hm)
+        sources.extend(hook_sources)
 
         # -- User message (archived; appended to history at the end) --
         if system_update_msg:
@@ -762,8 +765,11 @@ class ContextComposer:
         # -- Build LLM messages (filter + remap roles) --
         # Combine archived history with this turn's injections in the same
         # order they'll be archived: prior history → wiki → notes →
-        # recent journal → memory → recalled facts → system update → user message. The combined list is
-        # what the LLM sees.
+        # recent journal → memory → PRE_COMPOSE DELTA → PRE_COMPOSE TAIL
+        # (legacy <recalled_facts> included) → system update → user message.
+        # The combined list is what the LLM sees. DELTA mounts after archived
+        # history and before tail envelopes so append-only contributions land
+        # chronologically before per-turn dynamic context.
         combined = [
             *history,
             *wiki_msgs,
@@ -771,7 +777,8 @@ class ContextComposer:
             *notes_msgs,
             *recent_journal_msgs,
             *memory_msgs,
-            *recalled_msgs,
+            *delta_msgs,
+            *tail_hook_msgs,
         ]
         if system_update_msg:
             combined.append(system_update_msg)
@@ -844,6 +851,22 @@ class ContextComposer:
             messages.append({"role": "system", "content": deferred_text})
         if guidance_text:
             messages.append({"role": "system", "content": guidance_text})
+
+        # -- PRE_COMPOSE HEAD contributions (#1486) --
+        # Mount after the system-message block and before history. HEAD is
+        # deliberately NOT archived: a static contribution replays at this
+        # same offset every turn, so the provider's prefix cache sees an
+        # unchanged system+HEAD prefix (#1117). Archiving it would inject a
+        # fresh copy into growing history each turn and bust the prefix.
+        for hm in head_msgs:
+            role = hm.get("role")
+            if role in LLM_ROLES:
+                messages.append(hm)
+            elif role in ROLE_REMAP:
+                messages.append({**hm, "role": ROLE_REMAP[role]})
+            else:
+                log.warning("PRE_COMPOSE HEAD message has unsupported role %r; skipping", role)
+
         messages.extend(llm_history)
 
         # -- Tail notes (#1116) --
@@ -1161,16 +1184,22 @@ class ContextComposer:
         config: Any,
         user_message: str,
         history: list,
-    ) -> tuple[list[dict], SourceEntry | None]:
+    ) -> tuple[list[dict], list[dict], list[dict], list[SourceEntry]]:
         """Run PRE_COMPOSE lifecycle collector hooks concurrently.
 
-        Gathers candidate facts/context under a strict timeout and token ceiling,
-        mounted into a bounded <recalled_facts> tail envelope.
-        Fails open on error or timeout.
+        Hooks may return structured ``ContextContribution`` objects (or lists
+        of them) for the HEAD, DELTA, and TAIL slots, or legacy ``str`` /
+        ``list[str]`` fact text. Legacy text is coerced to one TAIL
+        ``<recalled_facts>`` envelope under the configured timeout and token
+        ceiling, exactly as before (#1454, #1486). Structured contributions
+        carry their own messages and are not subject to that legacy ceiling.
+
+        Returns ``(head, delta, tail, sources)``. Fails open: a raising or slow
+        hook is logged and the turn still composes.
         """
         hooks = ctx.get_interceptors(TurnLifecycle.PRE_COMPOSE)
         if not hooks:
-            return [], None
+            return [], [], [], []
 
         lifecycle_cfg = getattr(config, "lifecycle", None)
         timeout = getattr(lifecycle_cfg, "pre_compose_timeout", 0.3)
@@ -1211,31 +1240,103 @@ class ContextComposer:
             )
         except asyncio.TimeoutError:
             log.warning("PRE_COMPOSE hooks timed out after %.3fs", timeout)
-            return [], None
+            return [], [], [], []
         except Exception as e:
             log.warning("PRE_COMPOSE gathering failed: %s", e)
-            return [], None
+            return [], [], [], []
 
-        fact_texts = []
+        head: list[dict] = []
+        delta: list[dict] = []
+        tail: list[dict] = []
+        sources: list[SourceEntry] = []
+        fact_texts: list[str] = []
+
         for r in results:
-            if isinstance(r, str) and r.strip():
-                fact_texts.append(r.strip())
+            if r is None:
+                continue
+            if isinstance(r, ContextContribution):
+                self._mount_context_contribution(r, head, delta, tail, sources)
+            elif isinstance(r, str):
+                if r.strip():
+                    fact_texts.append(r.strip())
             elif isinstance(r, (list, tuple)):
                 for item in r:
-                    if isinstance(item, str) and item.strip():
-                        fact_texts.append(item.strip())
+                    if isinstance(item, ContextContribution):
+                        self._mount_context_contribution(item, head, delta, tail, sources)
+                    elif isinstance(item, str):
+                        if item.strip():
+                            fact_texts.append(item.strip())
+                    else:
+                        log.warning(
+                            "PRE_COMPOSE hook returned unsupported item %s; ignoring",
+                            type(item).__name__,
+                        )
+            else:
+                log.warning(
+                    "PRE_COMPOSE hook returned unsupported result %s; ignoring",
+                    type(r).__name__,
+                )
 
-        if not fact_texts:
-            return [], None
+        if fact_texts:
+            tail.append(self._legacy_recalled_facts_message(fact_texts, token_ceiling))
+            envelope_text = tail[-1]["content"]
+            sources.append(
+                SourceEntry(
+                    source="recalled_facts",
+                    tokens_estimated=estimate_tokens(envelope_text),
+                    items_included=len(fact_texts),
+                )
+            )
 
+        return head, delta, tail, sources
+
+    @staticmethod
+    def _mount_context_contribution(
+        contribution: ContextContribution,
+        head: list[dict],
+        delta: list[dict],
+        tail: list[dict],
+        sources: list[SourceEntry],
+    ) -> None:
+        """Validate and mount one structured contribution; fail open."""
+        if not isinstance(contribution.slot, ContextSlot):
+            log.warning("PRE_COMPOSE contribution has unknown slot %r; ignoring", contribution.slot)
+            return
+        messages = contribution.messages
+        if not isinstance(messages, (list, tuple)) or any(not isinstance(m, dict) for m in messages):
+            log.warning(
+                "PRE_COMPOSE contribution for slot %s has malformed messages; ignoring",
+                contribution.slot.value,
+            )
+            return
+
+        target = {
+            ContextSlot.HEAD: head,
+            ContextSlot.DELTA: delta,
+            ContextSlot.TAIL: tail,
+        }[contribution.slot]
+        target.extend(messages)
+
+        if contribution.source_entry is None:
+            return
+        if isinstance(contribution.source_entry, SourceEntry):
+            sources.append(contribution.source_entry)
+        else:
+            log.warning(
+                "PRE_COMPOSE contribution for slot %s has malformed source_entry; ignoring",
+                contribution.slot.value,
+            )
+
+    @staticmethod
+    def _legacy_recalled_facts_message(fact_texts: list[str], token_ceiling: int) -> dict:
+        """Coerce legacy ``str``/``list[str]`` hook results into one TAIL envelope."""
         combined_text = "\n".join(fact_texts)
         if "<recalled_facts>" in combined_text:
             envelope_text = combined_text
         else:
             envelope_text = f"<recalled_facts>\n{combined_text}\n</recalled_facts>"
 
-        tokens = estimate_tokens(envelope_text)
-        if tokens > token_ceiling:
+        if estimate_tokens(envelope_text) > token_ceiling:
             lines = combined_text.splitlines()
             trimmed_lines = []
             current_tokens = estimate_tokens("<recalled_facts>\n\n</recalled_facts>")
@@ -1249,15 +1350,8 @@ class ContextComposer:
             if not trimmed_body:
                 trimmed_body = combined_text[: token_ceiling * 4]
             envelope_text = f"<recalled_facts>\n{trimmed_body}\n</recalled_facts>"
-            tokens = estimate_tokens(envelope_text)
 
-        msg = {"role": "recalled_facts", "content": envelope_text}
-        entry = SourceEntry(
-            source="recalled_facts",
-            tokens_estimated=tokens,
-            items_included=len(fact_texts),
-        )
-        return [msg], entry
+        return {"role": "recalled_facts", "content": envelope_text}
 
     @staticmethod
     def _resolve_retrieval_mode(config) -> RetrievalMode:
