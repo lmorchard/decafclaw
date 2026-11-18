@@ -134,7 +134,6 @@ An audit of all 63 built-in tools across 19 modules and all capability/skill too
 | | `mcp_list_resources` | Resource URI list | Resources table (URI, name, mimeType) | `data_table` |
 | | `mcp_list_prompts` | Prompt list | Prompts table (name, description) | `data_table` |
 | **dream** | `dream_recent_runs` | Text list of distillation runs | Runs table (date, duration, pages generated) | `data_table` |
-| **friction** | `tool_friction_analyze` | Friction themes text | Themes and proposed additions table | `data_table` |
 | **kindle** | `kindle_list_books` | Text list of books | Books table (Title, Author, Highlights) | `data_table` |
 | | `kindle_fetch_highlights`| Formatted highlight text | Rendered markdown / cards | `markdown_document` |
 | **claude_code** / **opencode** | `*_sessions` | List of sessions | Sessions table (ID, model, status) | `data_table` |
