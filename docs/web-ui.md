@@ -93,6 +93,9 @@ During an active or long-running turn, users can ask out-of-band explanation que
 The sidebar lists conversations organized into folders:
 
 - **Create** new conversations
+- **Open in a new tab** — Cmd-click (macOS) or Ctrl-click (Windows/Linux) a
+  row, or middle-click it. The new tab opens `?conv=<id>`, the same deep link
+  the app restores on startup, so each tab keeps its own session (#1515).
 - **Rename** a conversation by double-clicking its row title (title only)
 - **Move** a session into a folder, or back to the top level, in either way:
   - **Drag and drop** — drag a session's root row onto a folder row in the
@@ -112,6 +115,10 @@ The sidebar lists conversations organized into folders:
 - **Archive** / **unarchive** conversations
 - **Virtual folders**: Archived (preserving folder structure) and System (heartbeat, scheduled, delegated)
 - Folder structure is per-user metadata — archive files stay in place
+
+The create actions sit at the bottom of the sidebar list, below the scrollable
+conversation/page list: **+ Chat / + Folder** on the Chats tab (top level only)
+and **+ Page / + Folder** on the Vault tab's browse view (#1524).
 
 **Periodic auto-titling (#1072).** New conversations start with the first
 100 characters of the opening message as their title, which is often

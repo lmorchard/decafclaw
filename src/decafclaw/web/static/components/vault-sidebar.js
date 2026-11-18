@@ -311,10 +311,6 @@ export class VaultSidebar extends LitElement {
   #renderVaultBrowse() {
     const hasContent = this._vaultFolders.length > 0 || this._wikiPages.length > 0;
     return html`
-      <div class="vault-action-btns">
-        <button class="wiki-new-page-btn outline" @click=${() => this.#createWikiPage()}>+ Page</button>
-        <button class="wiki-new-folder-btn outline" @click=${() => this.#createVaultFolder()}>+ Folder</button>
-      </div>
       <div class="vault-breadcrumbs">${this.#renderVaultBreadcrumbs()}</div>
       ${this._vaultFolders.map(f => html`
         <div class="conv-item wiki-item wiki-folder-item" title=${f.path}
@@ -384,6 +380,12 @@ export class VaultSidebar extends LitElement {
         </div>
         ${this._vaultView === 'browse' ? this.#renderVaultBrowse() : this.#renderVaultRecent()}
       </div>
+      ${this._vaultView === 'browse' ? html`
+        <div class="vault-action-btns">
+          <button class="wiki-new-page-btn outline" @click=${() => this.#createWikiPage()}>+ Page</button>
+          <button class="wiki-new-folder-btn outline" @click=${() => this.#createVaultFolder()}>+ Folder</button>
+        </div>
+      ` : nothing}
     `;
   }
 }

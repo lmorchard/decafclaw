@@ -445,6 +445,47 @@ export class ConversationSidebar extends LitElement {
     this.closeMobile();
   }
 
+  /**
+   * Open a conversation in its own browser tab (#1515). The `?conv=` deep
+   * link is the same one `app.js` restores on startup, so the new tab selects
+   * the conversation once its WebSocket opens.
+   * @param {string} convId
+   */
+  #openConversationInNewTab(convId) {
+    const params = new URLSearchParams({ conv: convId });
+    window.open(`${location.pathname}?${params}`, '_blank', 'noopener');
+  }
+
+  /**
+   * Select on a plain left click; open a new tab when the click carries a
+   * new-tab modifier. Middle click arrives through `auxclick`, not `click`.
+   * @param {MouseEvent} e
+   * @param {string} convId
+   */
+  #handleConversationClick(e, convId) {
+    if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+      this.#handleSelect(convId);
+      return;
+    }
+    if (e.button === 0) {
+      e.preventDefault();
+      this.#openConversationInNewTab(convId);
+    }
+  }
+
+  /**
+   * @param {MouseEvent} e
+   * @param {string} convId
+   */
+  #handleConversationAuxClick(e, convId) {
+    if (e.button !== 1) return;
+    // A middle click on a row button (archive, move, cancel) belongs to the
+    // button, not to the row's open-in-new-tab action.
+    if (/** @type {Element} */ (e.target).closest('button')) return;
+    e.preventDefault();
+    this.#openConversationInNewTab(convId);
+  }
+
   /** @param {string} convId */
   #handleArchive(convId) {
     this.store?.archiveConversation(convId);
@@ -698,7 +739,8 @@ export class ConversationSidebar extends LitElement {
         tabindex="0"
         draggable=${opts.draggable ? 'true' : nothing}
         aria-label=${`Open conversation ${conv.title}`}
-        @click=${() => this.#handleSelect(conv.conv_id)}
+        @click=${(/** @type {MouseEvent} */ e) => this.#handleConversationClick(e, conv.conv_id)}
+        @auxclick=${(/** @type {MouseEvent} */ e) => this.#handleConversationAuxClick(e, conv.conv_id)}
         @keydown=${activateOnEnterOrSpace(() => this.#handleSelect(conv.conv_id))}
         @dragstart=${opts.onDragStart || nothing}
         @dragend=${opts.onDragEnd || nothing}
@@ -993,12 +1035,6 @@ export class ConversationSidebar extends LitElement {
         @wiki-open=${(e) => this.#handleWikiOpen(e)}
       ></tags-sidebar>
       <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
-        ${this._chatSection === '' ? html`
-          <div class="vault-action-btns">
-            <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)" aria-label="New chat">+ Chat</button>
-            <button class="wiki-new-folder-btn outline" @click=${() => this.#createChatFolder()} aria-label="New chat folder">+ Folder</button>
-          </div>
-        ` : nothing}
         ${this.#renderChatBreadcrumbs()}
         ${this._chatFolders.map(f => {
           const isVirtual = ('virtual' in f && f.virtual) || f.path === '_archived' || f.path === '_system' || this._chatSection !== '';
@@ -1055,6 +1091,12 @@ export class ConversationSidebar extends LitElement {
             : this.#renderSessionGroups()
         }
       </div>
+      ${this._sidebarTab === 'conversations' && this._chatSection === '' ? html`
+        <div class="vault-action-btns">
+          <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)" aria-label="New chat">+ Chat</button>
+          <button class="wiki-new-folder-btn outline" @click=${() => this.#createChatFolder()} aria-label="New chat folder">+ Folder</button>
+        </div>
+      ` : nothing}
       ${!this._hasControlsStrip && this._availableModes.length > 0 ? html`
       <div class="mode-picker">
         <label class="mode-picker-label" for="mode-select">Mode</label>
