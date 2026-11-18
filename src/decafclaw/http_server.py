@@ -4499,6 +4499,23 @@ async def openapi_yaml(request: Request) -> Response:
     return Response(content=yaml.dump(app.openapi(), sort_keys=False), media_type="application/x-yaml")
 
 
+class RevalidatingStaticFiles(StaticFiles):
+    """Static assets that every reload must revalidate (#1443).
+
+    Starlette sends ``Last-Modified``/``ETag`` but no ``Cache-Control``.
+    Browsers then apply heuristic freshness (10% of the file's age) and can
+    keep running pre-fix JavaScript across ordinary reloads after a deploy,
+    which made a merged web fix look unshipped. ``no-cache`` forbids reuse
+    without revalidation; the conditional request still answers ``304`` when
+    the file is unchanged.
+    """
+
+    async def get_response(self, path: str, scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["cache-control"] = "no-cache"
+        return response
+
+
 def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     """Wire up the FastAPI ASGI app — handlers live at module level
     and read deps off ``request.app.state`` (populated below).
@@ -5462,14 +5479,14 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     if static_dir.is_dir():
 
         async def serve_index(request: Request):
-            return FileResponse(static_dir / "index.html")
+            return FileResponse(static_dir / "index.html", headers={"cache-control": "no-cache"})
 
         async def serve_favicon(request: Request):
             return FileResponse(static_dir / "icons" / "favicon.ico")
 
         routes.append(APIRoute("/", serve_index, methods=["GET"]))
         routes.append(APIRoute("/favicon.ico", serve_favicon, methods=["GET"], include_in_schema=False))
-        routes.append(Mount("/static", StaticFiles(directory=str(static_dir)), name="static"))
+        routes.append(Mount("/static", RevalidatingStaticFiles(directory=str(static_dir)), name="static"))
 
     app = FastAPI(routes=routes)
     # Module-level handlers read deps off ``request.app.state``. Closures

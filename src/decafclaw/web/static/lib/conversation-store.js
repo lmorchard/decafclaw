@@ -175,9 +175,14 @@ export class ConversationStore extends EventTarget {
     this.#ws.addEventListener('message', (e) => this.#handleMessage(/** @type {CustomEvent} */(e).detail));
     // Sessions feed the sidebar hierarchy (#1115); refresh alongside the
     // flat list so delegated children appear without a page reload.
+    // A reconnect refreshes the folder being viewed, not the top level
+    // (#1443): this handler also runs after every server restart, and
+    // defaulting to '' here desynced the store from the sidebar's folder.
+    // A chat then created in that folder was created there but the sidebar
+    // refetched the top level, so its row stayed invisible until a reload.
     this.#ws.addEventListener('open', () => {
-      this.listConversations();
-      this.listSessions();
+      this.listConversations(this.#currentFolder);
+      this.listSessions(this.#currentFolder);
     });
     // A reconnect gives us a brand-new socket, and the server tracks stream
     // subscriptions per socket — so without this, every per-conversation push
@@ -511,9 +516,13 @@ export class ConversationStore extends EventTarget {
       // #1443 — the active sidebar renders the session hierarchy when it is
       // non-empty, so a new conversation is invisible until that list is
       // refetched. #1274 covered rename/archive/unarchive/move, not create.
+      // Refetch the folder the conversation was created in, not
+      // `#currentFolder`: the sidebar passes its rendered folder explicitly,
+      // and a stale store folder would otherwise refetch the wrong listing
+      // and leave the new row invisible.
       // Refresh after the queued message starts so the extra GET never delays
       // the first turn.
-      await this.listSessions(this.#currentFolder);
+      await this.listSessions(folder);
     } catch (err) {
       if (err instanceof ApiError) return;
       console.error('Failed to create conversation:', err);

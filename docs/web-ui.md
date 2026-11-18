@@ -153,12 +153,15 @@ the active hierarchy — archive / rename / unarchive / move; delete needs
 none, since a deleted conversation was already out of the hierarchy when
 archived — plus a debounced refresh on background `conv_renamed` events,
 #1274, #1443) and falls back to client-side grouping of the flat
-conversation list when the endpoint is unavailable. The sidebar's "+ Chat"
+conversation list when the endpoint is unavailable. Socket connect
+refreshes the **viewed** folder, not the top level, so a reconnect does not
+desync the store from the sidebar's folder (#1443). The sidebar's "+ Chat"
 button and ⌘K both create in the current folder with the active model; a
-successful create refreshes the hierarchy so the selected row appears
-without a reload (#1443). Listing responses apply in request order: a
-superseded `GET /api/conversations` or `GET /api/sessions` response cannot
-overwrite a newer one or move the store to its folder (#1443).
+successful create refreshes the hierarchy for **the folder it created in**
+so the selected row appears without a reload (#1443). Listing responses
+apply in request order: a superseded `GET /api/conversations` or
+`GET /api/sessions` response cannot overwrite a newer one or move the store
+to its folder (#1443).
 
 Child transcripts are **read-only**: only the parent conversation can be
 prompted. Selecting a subagent row opens the transcript with a disabled chat
@@ -598,7 +601,7 @@ The HTTP server (`src/decafclaw/http_server.py`) serves both the web UI and the 
 
 - **REST API** — all conversation and vault management
 - **WebSocket** (`/ws/chat`) — real-time chat streaming, history loading, model changes, turn cancellation
-- **Static files** — serves the frontend from `src/decafclaw/web/static/`. Favicons and the app icon live in `static/icons/` (also served at `/favicon.ico` for clients that ignore the `<link>` tags); full-size logo artwork is in `docs/assets/brand/`.
+- **Static files** — serves the frontend from `src/decafclaw/web/static/`. Favicons and the app icon live in `static/icons/` (also served at `/favicon.ico` for clients that ignore the `<link>` tags); full-size logo artwork is in `docs/assets/brand/`. The index document and `/static` responses carry `Cache-Control: no-cache`, so a reload always revalidates (304 when unchanged) and a browser cannot keep running pre-fix JavaScript after a deploy (#1443).
 
 ### REST vs WebSocket
 
