@@ -57,6 +57,7 @@ from .config_types import (
     WidgetsConfig,
     WorkflowConfig,
 )
+from .extensions import ensure_builtin_extension_types, get_default_enabled_extension_types
 from .modes import SessionMode
 from .secrets import is_secret_ref, resolve_secret
 from .skills import SkillInfo
@@ -332,14 +333,15 @@ def _load_extensions(file_data: dict[str, Any]) -> dict[str, ExtensionConfig]:
             "move these settings under config.json 'extensions'."
         )
 
-    # Core diagnostics/telemetry extension (#1488) is on by default so the
-    # Context Inspector sidecar keeps working without a config edit. A
-    # config.json entry still wins, so `enabled: false` yanks it cleanly.
-    # An entry under another key that already selects this type also counts.
-    if not any((cfg.type or name) == "diagnostics_and_telemetry" for name, cfg in extensions.items()):
-        extensions["diagnostics_and_telemetry"] = ExtensionConfig(
-            enabled=True, type="diagnostics_and_telemetry", options={}
-        )
+    # Default-enabled extensions (#1496) need no config.json entry: seed one
+    # `enabled: true` entry per registered default type. Seeding runs after
+    # user entries so `config.extensions` keeps user-configured entries first.
+    # Any explicit entry selecting the same type wins, including
+    # `enabled: false` (yank) and an alias binding via `type:`.
+    ensure_builtin_extension_types()
+    for type_name in get_default_enabled_extension_types():
+        if not any((cfg.type or name) == type_name for name, cfg in extensions.items()):
+            extensions[type_name] = ExtensionConfig(enabled=True, type=type_name, options={})
     return extensions
 
 
