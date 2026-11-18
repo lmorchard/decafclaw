@@ -195,6 +195,7 @@ export class MessageStore {
             role: msg.role || 'assistant',
             content: msg.text,
             thinking: msg.thinking || this.#streamingThinking || '',
+            recalled_facts: msg.recalled_facts || [],
             timestamp: new Date().toISOString(),
             usage: msg.usage || null,
           });

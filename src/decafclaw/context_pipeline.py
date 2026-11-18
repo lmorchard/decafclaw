@@ -46,7 +46,7 @@ def compose_system_prompt(config) -> tuple[str, SourceEntry]:
 
 async def compose_pre_compose_hooks(
     ctx: "Context", config: Any, user_message: str, history: list
-) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry]]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry], list[str]]:
     """Run PRE_COMPOSE lifecycle collector hooks concurrently.
 
     Hooks may return structured ``ContextContribution`` objects (or lists
@@ -56,12 +56,15 @@ async def compose_pre_compose_hooks(
     ceiling, exactly as before (#1454, #1486). Structured contributions
     carry their own messages and are not subject to that legacy ceiling.
 
-    Returns ``(head, delta, tail, epilogue, sources)``. Fails open: a raising
-    or slow hook is logged and the turn still composes.
+    Returns ``(head, delta, tail, epilogue, sources, recalled_facts)``.
+    ``recalled_facts`` is the atomic fact list mounted in the legacy
+    envelope, after the token-ceiling trim, so the web UI shows exactly
+    what the model received (#1514). Fails open: a raising or slow hook is
+    logged and the turn still composes.
     """
     hooks = ctx.get_interceptors(TurnLifecycle.PRE_COMPOSE)
     if not hooks:
-        return [], [], [], [], []
+        return [], [], [], [], [], []
 
     lifecycle_cfg = getattr(config, "lifecycle", None)
     default_timeout = getattr(lifecycle_cfg, "pre_compose_timeout", 0.3)
@@ -113,7 +116,7 @@ async def compose_pre_compose_hooks(
         done, pending = await asyncio.wait(tasks, timeout=outer_timeout)
     except Exception as e:
         log.warning("PRE_COMPOSE gathering failed: %s", e)
-        return [], [], [], [], []
+        return [], [], [], [], [], []
     if pending:
         # Keep what finished inside the bound and drop only the slow hooks.
         # Discarding completed contributions would silently lose context
@@ -142,6 +145,7 @@ async def compose_pre_compose_hooks(
     epilogue: list[dict] = []
     sources: list[SourceEntry] = []
     fact_texts: list[str] = []
+    recalled_facts: list[str] = []
 
     for r in results:
         if r is None:
@@ -170,8 +174,9 @@ async def compose_pre_compose_hooks(
             )
 
     if fact_texts:
-        tail.append(legacy_recalled_facts_message(fact_texts, token_ceiling))
-        envelope_text = tail[-1]["content"]
+        envelope, recalled_facts = legacy_recalled_facts_message(fact_texts, token_ceiling)
+        tail.append(envelope)
+        envelope_text = envelope["content"]
         sources.append(
             SourceEntry(
                 source="recalled_facts",
@@ -180,7 +185,7 @@ async def compose_pre_compose_hooks(
             )
         )
 
-    return head, delta, tail, epilogue, sources
+    return head, delta, tail, epilogue, sources, recalled_facts
 
 
 def mount_context_contribution(
@@ -222,14 +227,21 @@ def mount_context_contribution(
         )
 
 
-def legacy_recalled_facts_message(fact_texts: list[str], token_ceiling: int) -> dict:
-    """Coerce legacy ``str``/``list[str]`` hook results into one TAIL envelope."""
+def legacy_recalled_facts_message(fact_texts: list[str], token_ceiling: int) -> tuple[dict, list[str]]:
+    """Coerce legacy ``str``/``list[str]`` hook results into one TAIL envelope.
+
+    Returns the envelope message and the atomic fact lines it actually
+    carries. When the ceiling trims the envelope, the returned list drops the
+    lines the model never received, so the web UI's recalled-facts disclosure
+    matches the prompt (#1514).
+    """
     combined_text = "\n".join(fact_texts)
     if "<recalled_facts>" in combined_text:
         envelope_text = combined_text
     else:
         envelope_text = f"<recalled_facts>\n{combined_text}\n</recalled_facts>"
 
+    facts = _recalled_fact_lines(combined_text)
     if estimate_tokens(envelope_text) > token_ceiling:
         lines = combined_text.splitlines()
         trimmed_lines = []
@@ -244,8 +256,15 @@ def legacy_recalled_facts_message(fact_texts: list[str], token_ceiling: int) -> 
         if not trimmed_body:
             trimmed_body = combined_text[: token_ceiling * 4]
         envelope_text = f"<recalled_facts>\n{trimmed_body}\n</recalled_facts>"
+        facts = _recalled_fact_lines(trimmed_body)
 
-    return {"role": "recalled_facts", "content": envelope_text}
+    return {"role": "recalled_facts", "content": envelope_text}, facts
+
+
+def _recalled_fact_lines(text: str) -> list[str]:
+    """Split hook fact text into the atomic lines the UI lists."""
+    body = text.replace("<recalled_facts>", "").replace("</recalled_facts>", "")
+    return [line.strip() for line in body.splitlines() if line.strip()]
 
 
 def account_history_tokens(history: list) -> tuple[int, int]:

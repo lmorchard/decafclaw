@@ -1,6 +1,12 @@
 import { LitElement, html, nothing } from 'lit';
 import { subscribe as subscribeCanvas, resummon } from '../lib/canvas-state.js';
 import { SIDE_EFFECT_COMMANDS } from '../lib/constants.js';
+import {
+  PREFERENCE_EVENT,
+  broadcastShowRecalledFacts,
+  loadShowRecalledFacts,
+  storeShowRecalledFacts,
+} from '../lib/recalled-facts-preference.js';
 import './model-picker.js';
 
 /** @typedef {{ name: string, description?: string }} ModeConfig */
@@ -18,6 +24,7 @@ export class ChatControls extends LitElement {
     _contextLimit: { type: Number, state: true },
     _isBusy: { type: Boolean, state: true },
     _isReadOnly: { type: Boolean, state: true },
+    _showRecalledFacts: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -34,11 +41,16 @@ export class ChatControls extends LitElement {
     this._contextLimit = 100000;
     this._isBusy = false;
     this._isReadOnly = false;
+    this._showRecalledFacts = loadShowRecalledFacts();
+    this._onRecalledFactsPreference = (e) => {
+      this._showRecalledFacts = Boolean(e.detail?.enabled);
+    };
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.store?.removeEventListener('change', this.#onStoreChange);
+    document.removeEventListener(PREFERENCE_EVENT, this._onRecalledFactsPreference);
     this.#canvasUnsub?.();
     this.#canvasUnsub = null;
   }
@@ -51,6 +63,7 @@ export class ChatControls extends LitElement {
       this._canvasSnapshot = snap;
       this.requestUpdate();
     });
+    document.addEventListener(PREFERENCE_EVENT, this._onRecalledFactsPreference);
   }
 
   #onStoreChange = () => {
@@ -123,6 +136,14 @@ export class ChatControls extends LitElement {
 
   #handleSideQuestion() {
     this.dispatchEvent(new CustomEvent('open-side-question', { bubbles: true, composed: true }));
+  }
+
+  /** Desktop parity for the mobile conversation-menu preference (#1514). */
+  #toggleRecalledFacts() {
+    const enabled = !this._showRecalledFacts;
+    this._showRecalledFacts = enabled;
+    storeShowRecalledFacts(enabled);
+    broadcastShowRecalledFacts(enabled);
   }
 
   // The context meter summons the context inspector. The inspector is owned
@@ -215,6 +236,14 @@ export class ChatControls extends LitElement {
               @click=${() => resummon()}
             >&#x1F4C4;<span class="resummon-label"> Canvas</span></button>
           ` : nothing}
+          <button
+            type="button"
+            class="recalled-facts-pref-btn dc-floating-btn"
+            title=${this._showRecalledFacts ? 'Hide recalled facts in conversation' : 'Show recalled facts in conversation'}
+            aria-label="Show recalled facts in conversation"
+            aria-pressed=${this._showRecalledFacts ? 'true' : 'false'}
+            @click=${this.#toggleRecalledFacts}
+          >&#x1F9E0;</button>
           <button
             type="button"
             class="terminal-open-btn dc-floating-btn"

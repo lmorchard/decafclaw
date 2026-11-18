@@ -9,6 +9,7 @@ export class ChatMessage extends LitElement {
     role: { type: String },
     content: { type: String },
     thinking: { type: String },
+    recalledFacts: { type: Array, attribute: false },
     streaming: { type: Boolean },
     tool: { type: String },
     command: { type: String },
@@ -32,6 +33,8 @@ export class ChatMessage extends LitElement {
     this.role = 'user';
     this.content = '';
     this.thinking = '';
+    /** @type {string[]} */
+    this.recalledFacts = [];
     this.streaming = false;
     this.tool = '';
     this.command = '';
@@ -198,6 +201,7 @@ export class ChatMessage extends LitElement {
       return html`<assistant-message
         .content=${this.content}
         .thinking=${this.thinking}
+        .recalledFacts=${this.recalledFacts}
         .streaming=${this.streaming}
         .usage=${this.usage}
         .timestamp=${this.timestamp}

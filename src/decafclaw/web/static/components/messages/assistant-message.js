@@ -3,12 +3,14 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../../lib/markdown.js';
 import { formatTime, copyToClipboard } from '../../lib/utils.js';
 import hljs from 'hljs';
+import '../chat-recalled-facts.js';
 
 /** Assistant message — markdown-rendered, with optional streaming indicator and usage info. */
 export class AssistantMessage extends LitElement {
   static properties = {
     content: { type: String },
     thinking: { type: String },
+    recalledFacts: { type: Array, attribute: false },
     streaming: { type: Boolean },
     usage: { type: Object, attribute: false },
     timestamp: { type: String },
@@ -21,6 +23,8 @@ export class AssistantMessage extends LitElement {
     this.content = '';
     this.streaming = false;
     this.thinking = '';
+    /** @type {string[]} */
+    this.recalledFacts = [];
     /** @type {object|null} */
     this.usage = null;
     this.timestamp = '';
@@ -85,9 +89,13 @@ export class AssistantMessage extends LitElement {
 
   render() {
     const hasThinking = Boolean(this.thinking && this.thinking.trim());
+    const hasRecalledFacts = Boolean(this.recalledFacts && this.recalledFacts.length);
     return html`
       <div class="message assistant">
         <div class="role">assistant</div>
+        ${hasRecalledFacts ? html`
+          <chat-recalled-facts .facts=${this.recalledFacts}></chat-recalled-facts>
+        ` : nothing}
         ${hasThinking ? html`
           <details class="thought-block" ?open=${this.streaming && !this.content}>
             <summary>

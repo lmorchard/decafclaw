@@ -1275,6 +1275,7 @@ class TurnRunner:
             archive_messages = verdict.archive_messages
 
         final_msg = assistant_message(response, content)
+        self._attach_recalled_facts(final_msg)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         for msg in archive_messages:
@@ -1288,6 +1289,19 @@ class TurnRunner:
             lowered=self.lowered_compaction_threshold,
         )
         return _Final(result=self._extract_workspace_media(content, thinking=response.get("thinking")))
+
+    def _attach_recalled_facts(self, msg: dict) -> dict:
+        """Attach this turn's recalled memory facts to a delivered assistant row.
+
+        The composer keeps the atomic fact list from the latest PRE_COMPOSE
+        pass; the archive row carries it so ``conv_history`` can show the same
+        disclosure as the live ``message_complete`` frame (#1514). Turns with
+        no recalled facts add nothing, so history stays uncluttered.
+        """
+        facts = list(self.composed.recalled_facts) if self.composed is not None else []
+        if facts:
+            msg["recalled_facts"] = facts
+        return msg
 
     async def _run_grace_turn(self) -> "ToolResult | None":
         """One-shot final LLM call after budget exhaustion. Appends a
@@ -1348,6 +1362,7 @@ class TurnRunner:
             log.warning("Grace-turn LLM call returned empty content — falling back to notice")
             return None
         final_msg = assistant_message(response, content)
+        self._attach_recalled_facts(final_msg)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(
@@ -1461,6 +1476,7 @@ class TurnRunner:
         else:
             delivered = note
         final_msg = {"role": "assistant", "content": note}
+        self._attach_recalled_facts(final_msg)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(

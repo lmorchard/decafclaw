@@ -2205,6 +2205,9 @@ class ConversationManager:
                 }
                 if response_thinking:
                     msg_complete_payload["thinking"] = response_thinking
+                recalled_facts = list(ctx.composer.last_recalled_facts)
+                if recalled_facts:
+                    msg_complete_payload["recalled_facts"] = recalled_facts
                 await self.emit(conv_id, msg_complete_payload)
                 if kind is TurnKind.WAKE and not suppress and not state.subscribers:
                     transport = getattr(ctx, "transport", "")

@@ -189,6 +189,20 @@ chat-input .conversation-menu-field-label {
   color: var(--pico-muted-color);
 }
 
+chat-input .conversation-menu-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+chat-input .conversation-menu-toggle input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
 chat-input .conversation-menu-select {
   width: 100%;
   min-height: 44px;

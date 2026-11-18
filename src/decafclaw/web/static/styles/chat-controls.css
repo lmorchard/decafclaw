@@ -138,6 +138,11 @@ chat-controls .actions-control .dc-floating-btn {
   font-size: 0.85rem;
 }
 
+/* Desktop preference toggle (#1514); mobile uses the conversation menu. */
+chat-controls .actions-control button.recalled-facts-pref-btn[aria-pressed="false"] {
+  opacity: 0.5;
+}
+
 chat-controls .actions-control .canvas-resummon-pill {
   padding: 0 0.5rem;
   font-size: 0.85rem;

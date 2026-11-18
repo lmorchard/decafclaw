@@ -287,6 +287,9 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         "wake_trigger",
         "skill_hint",
         "context_status",
+        # The legacy PRE_COMPOSE envelope is prompt plumbing; the assistant
+        # row's recalled_facts list renders the user-facing disclosure (#1514).
+        "recalled_facts",
     }
 
     # Read archive once and reuse for history, token estimation, and model scan
@@ -1266,6 +1269,8 @@ def _subscribe_to_conv(state, conv_id):
                 msg_complete["context_usage"] = event["context_usage"]
             if "context_limit" in event:
                 msg_complete["context_limit"] = event["context_limit"]
+            if event.get("recalled_facts"):
+                msg_complete["recalled_facts"] = event["recalled_facts"]
             await ws_send(msg_complete)
 
         elif event_type == "turn_start":
