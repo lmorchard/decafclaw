@@ -270,6 +270,22 @@ export class ConversationStore extends EventTarget {
   }
 
   /**
+   * Aggregate activity across every conversation, most urgent first:
+   * `waiting` (needs the user) > `finished` (unseen result) > `busy` > `idle`.
+   * Drives the tab favicon badge (#1288).
+   * @returns {'idle' | 'busy' | 'waiting' | 'finished'}
+   */
+  getOverallStatus() {
+    /** @type {Record<'idle' | 'busy' | 'waiting' | 'finished', number>} */
+    const rank = { idle: 0, busy: 1, finished: 2, waiting: 3 };
+    let overall = /** @type {'idle' | 'busy' | 'waiting' | 'finished'} */ ('idle');
+    for (const status of this.#conversationStatuses.values()) {
+      if (status !== 'idle' && rank[status] > rank[overall]) overall = status;
+    }
+    return overall;
+  }
+
+  /**
    * Display title for a conversation, from whichever listing holds it: the
    * active, archived, or system flat lists, then the session hierarchy (which
    * is where delegated children appear). Empty for an id the store has never

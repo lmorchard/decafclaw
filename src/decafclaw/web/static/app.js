@@ -13,6 +13,7 @@ import { load as loadBookmarks } from './lib/bookmarks-store.js';
 import { setupResizeHandle } from './lib/utils.js';
 import { shouldFocusChatInput } from './lib/chat-focus.js';
 import { applyPageTitle } from './lib/page-title.js';
+import { updateFaviconBadge } from './lib/favicon-badge.js';
 import { showToast } from './lib/toast.js';
 import {
   setActiveConv,
@@ -66,6 +67,14 @@ function syncPageTitle() {
 }
 store.addEventListener('change', syncPageTitle);
 syncPageTitle();
+
+// Tab favicon: aggregate status across every conversation (#1288), so an
+// approval request or a background finish is visible from another tab even
+// when the selected conversation is idle. The helper no-ops on unchanged
+// status and restores the default icons when everything is idle.
+store.addEventListener('change', () => {
+  updateFaviconBadge(store.getOverallStatus());
+});
 
 // -- DOM references -----------------------------------------------------------
 

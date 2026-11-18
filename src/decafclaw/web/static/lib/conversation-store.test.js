@@ -1662,3 +1662,64 @@ describe('current conversation title (#1503)', () => {
     expect(store.currentConversationTitle).toBe('Retitled');
   });
 });
+
+describe('overall conversation status (#1288)', () => {
+  let ws, store;
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = makeStore(ws);
+  });
+
+  /**
+   * @param {string} convId
+   * @param {string} status
+   */
+  const push = (convId, status) =>
+    ws.fireMessage({ type: MESSAGE_TYPES.CONVERSATION_STATUS, conv_id: convId, status });
+
+  it('is idle with no conversations', () => {
+    expect(store.getOverallStatus()).toBe('idle');
+  });
+
+  it('is busy when any conversation is running', () => {
+    push('c1', 'busy');
+    push('c2', 'idle');
+    expect(store.getOverallStatus()).toBe('busy');
+  });
+
+  it('prefers finished over busy', () => {
+    push('c1', 'busy');
+    push('c2', 'finished');
+    expect(store.getOverallStatus()).toBe('finished');
+  });
+
+  it('prefers waiting over finished and busy', () => {
+    push('c1', 'busy');
+    push('c2', 'finished');
+    push('c3', 'waiting');
+    expect(store.getOverallStatus()).toBe('waiting');
+  });
+
+  it('stays waiting while another conversation is only busy', () => {
+    push('c1', 'busy');
+    push('c2', 'waiting');
+    expect(store.getOverallStatus()).toBe('waiting');
+  });
+
+  it('returns to idle after the finished conversation is selected (read)', () => {
+    push('c1', 'finished');
+    expect(store.getOverallStatus()).toBe('finished');
+
+    store.selectConversation('c1');
+    expect(store.getConversationStatus('c1')).toBe('idle');
+    expect(store.getOverallStatus()).toBe('idle');
+  });
+
+  it('ignores a finished conversation once another one is waiting', () => {
+    push('c1', 'finished');
+    push('c2', 'waiting');
+    store.selectConversation('c1');
+    expect(store.getOverallStatus()).toBe('waiting');
+  });
+});
