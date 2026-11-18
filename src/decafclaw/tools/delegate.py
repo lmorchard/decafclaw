@@ -69,6 +69,7 @@ _ADMIN_WRITE_TOOLS = frozenset(
         "admin_replace_lines",
         "admin_edit",
         "admin_delete",
+        "admin_restart",
     }
 )
 
