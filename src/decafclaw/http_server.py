@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import html
 import json
 import logging
 import math
@@ -16,7 +17,7 @@ from croniter import croniter
 from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, JsonValue, field_validator
-from starlette.responses import FileResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
@@ -653,8 +654,8 @@ async def _read_json_object(request: Request) -> dict:
     return body if isinstance(body, dict) else {}
 
 
-async def handle_confirm(request: Request) -> JSONResponse:
-    """Handle Mattermost interactive button callbacks for tool confirmation."""
+async def handle_confirm(request: Request) -> Response:
+    """Handle interactive button/link callbacks for tool confirmation."""
     config = request.app.state.config
     event_bus = request.app.state.event_bus
     manager = request.app.state.manager
@@ -669,6 +670,15 @@ async def handle_confirm(request: Request) -> JSONResponse:
 
     if not token_data and not has_valid_secret:
         log.warning("Confirm callback rejected: invalid token and no valid secret")
+        if request.method == "GET":
+            return HTMLResponse(
+                "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
+                "<title>Token Invalid</title>"
+                "<style>body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 500px; margin: 0 auto; text-align: center; color: #24292f; background: #f6f8fa; }"
+                ".card { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }</style></head>"
+                "<body><div class='card'><h2>⚠️ Token Expired or Invalid</h2><p>This confirmation link has already been used or has expired.</p></div></body></html>",
+                status_code=403,
+            )
         return JSONResponse({"error": "unauthorized"}, status_code=403)
 
     body = await _read_json_object(request)
@@ -740,6 +750,24 @@ async def handle_confirm(request: Request) -> JSONResponse:
     }
     label = labels.get(action, f"\u2753 Unknown action: {action}")
 
+    if request.method == "GET":
+        escaped_msg = html.escape(original_message).replace("\n", "<br>")
+        html_content = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            f"<title>{label}</title>"
+            "<style>"
+            "body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 600px; margin: 0 auto; color: #24292f; background: #f6f8fa; }"
+            ".card { background: #ffffff; border: 1px solid #d0d7de; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }"
+            "h2 { margin-top: 0; }"
+            "pre { background: #f6f8fa; padding: 1rem; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 0.875rem; }"
+            "</style></head><body>"
+            f"<div class='card'><h2>{label}</h2><p>Decision has been recorded.</p>"
+            f"{f'<pre>{escaped_msg}</pre>' if escaped_msg else ''}"
+            "</div></body></html>"
+        )
+        return HTMLResponse(html_content)
+
     # Return update response — removes buttons, shows result
     return JSONResponse(
         {
@@ -751,8 +779,8 @@ async def handle_confirm(request: Request) -> JSONResponse:
     )
 
 
-async def handle_cancel(request: Request) -> JSONResponse:
-    """Handle Mattermost interactive button callback for stop/cancel."""
+async def handle_cancel(request: Request) -> Response:
+    """Handle interactive button/link callback for stop/cancel."""
     event_bus = request.app.state.event_bus
     manager = request.app.state.manager
 
@@ -761,6 +789,15 @@ async def handle_cancel(request: Request) -> JSONResponse:
 
     if not token_data:
         log.warning("Cancel callback rejected: invalid or expired token")
+        if request.method == "GET":
+            return HTMLResponse(
+                "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
+                "<title>Token Invalid</title>"
+                "<style>body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 500px; margin: 0 auto; text-align: center; color: #24292f; background: #f6f8fa; }"
+                ".card { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }</style></head>"
+                "<body><div class='card'><h2>⚠️ Token Expired or Invalid</h2><p>This cancellation link has already been used or has expired.</p></div></body></html>",
+                status_code=403,
+            )
         return JSONResponse({"error": "unauthorized"}, status_code=403)
 
     conv_id = token_data.get("conv_id", "") or token_data.get("context_id", "")
@@ -774,6 +811,15 @@ async def handle_cancel(request: Request) -> JSONResponse:
                 "type": "cancel_turn",
                 "conv_id": conv_id,
             }
+        )
+
+    if request.method == "GET":
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>"
+            "<title>Stopped</title>"
+            "<style>body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; max-width: 500px; margin: 0 auto; text-align: center; color: #24292f; background: #f6f8fa; }"
+            ".card { background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }</style></head>"
+            "<body><div class='card'><h2>⏹️ Stopped</h2><p>The turn was cancelled.</p></div></body></html>"
         )
 
     return JSONResponse(
@@ -4542,8 +4588,8 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/openapi.yaml", openapi_yaml, methods=["GET"], include_in_schema=False),
         APIRoute("/health", health, methods=["GET"]),
         APIRoute("/metrics", metrics_endpoint, methods=["GET"]),
-        APIRoute("/actions/confirm", handle_confirm, methods=["POST"]),
-        APIRoute("/actions/cancel", handle_cancel, methods=["POST"]),
+        APIRoute("/actions/confirm", handle_confirm, methods=["GET", "POST"]),
+        APIRoute("/actions/cancel", handle_cancel, methods=["GET", "POST"]),
         APIRoute(
             "/api/auth/login",
             auth_login,

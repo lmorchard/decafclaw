@@ -85,11 +85,11 @@ def _clean_token_registry():
 
 
 class TestPublishEndpoint:
-    def test_joins_server_and_topic(self, config):
+    def test_root_url_used_for_json_publish(self, config):
         cfg = config.notifications.channels.ntfy
         cfg.server_url = "https://ntfy.example/"
         cfg.topic = "agent-alerts"
-        assert _publish_url(cfg) == "https://ntfy.example/agent-alerts"
+        assert _publish_url(cfg) == "https://ntfy.example/"
 
     def test_empty_topic_disables(self, config):
         cfg = config.notifications.channels.ntfy
@@ -347,7 +347,7 @@ class TestDelivery:
         client = _RecordingClient.instances[-1]
         assert client.calls == [
             {
-                "url": "https://ntfy.example/agent-alerts",
+                "url": "https://ntfy.example/",
                 "json": {"topic": "agent-alerts", "title": "T"},
                 "headers": {"Content-Type": "application/json", "Authorization": "Bearer tk_secret"},
             }
