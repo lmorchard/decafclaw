@@ -12,7 +12,9 @@ from decafclaw.events import EventBus, TurnLifecycle
 from decafclaw.extensions import (
     BaseExtension,
     clear_extension_types,
+    get_default_enabled_extension_types,
     get_extension_type,
+    get_extension_type_meta,
     init_extensions,
     list_extension_types,
     register_extension_type,
@@ -283,3 +285,98 @@ def test_legacy_memory_env_only_backward_compatibility(tmp_path, monkeypatch, ca
     assert mem0.options["qdrant_path"] == "/tmp/env-only-qdrant"
     assert mem0.options["top_k"] == 5
     assert any("extensions.mem0" in rec.message for rec in caplog.records)
+
+
+def test_register_extension_type_default_flag_round_trips():
+    """WHEN a type is registered with default_enabled=True,
+    get_default_enabled_extension_types SHALL expose its metadata, and
+    re-registering without the flag SHALL replace the flag with the entry.
+    """
+    factory = _recording_factory("seeded")
+    register_extension_type("seeded", factory, default_enabled=True)
+
+    meta = get_extension_type_meta("seeded")
+    assert meta is not None
+    assert (meta.name, meta.factory, meta.default_enabled) == ("seeded", factory, True)
+    assert get_default_enabled_extension_types() == {"seeded": meta}
+
+    register_extension_type("seeded", factory)
+
+    assert get_default_enabled_extension_types() == {}
+    assert get_extension_type_meta("seeded").default_enabled is False
+
+
+def test_clean_config_seeds_default_enabled_type(tmp_path, monkeypatch):
+    """WHEN config.json defines no extensions, load_config SHALL seed an
+    enabled entry for each registered default_enabled type with empty options.
+    """
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({}))
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+
+    extensions = load_config().extensions
+
+    assert set(extensions) == {"diagnostics_and_telemetry"}
+    entry = extensions["diagnostics_and_telemetry"]
+    assert entry.enabled is True
+    assert entry.type == "diagnostics_and_telemetry"
+    assert entry.options == {}
+
+
+def test_declarative_seeding_covers_newly_registered_type(tmp_path, monkeypatch):
+    """WHEN any type, including a non-core test type, is registered with
+    default_enabled=True, load_config SHALL seed it: the loop is declarative,
+    not a hardcoded core name.
+    """
+    factory = _recording_factory("test-league")
+    register_extension_type("test-league", factory, default_enabled=True)
+
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({}))
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+
+    extensions = load_config().extensions
+
+    seeded = extensions["test-league"]
+    assert seeded.enabled is True
+    assert seeded.type == "test-league"
+    assert seeded.options == {}
+    # Seeded defaults come after user entries; the built-in default remains.
+    assert "diagnostics_and_telemetry" in extensions
+
+
+def test_explicit_disabled_entry_yanks_default(tmp_path, monkeypatch):
+    """WHEN config.json sets enabled: false for a default-enabled type,
+    load_config SHALL keep that disabled entry instead of seeding an enabled one.
+    """
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(
+        json.dumps({"extensions": {"diagnostics_and_telemetry": {"enabled": False}}})
+    )
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+
+    extensions = load_config().extensions
+
+    assert set(extensions) == {"diagnostics_and_telemetry"}
+    assert extensions["diagnostics_and_telemetry"].enabled is False
+
+
+def test_aliased_binding_suppresses_default_seed(tmp_path, monkeypatch):
+    """WHEN an entry aliases a default-enabled type via ``type:``,
+    load_config SHALL NOT add a second entry for the canonical type name.
+    """
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(
+        json.dumps({"extensions": {"my_diag": {"type": "diagnostics_and_telemetry"}}})
+    )
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+
+    extensions = load_config().extensions
+
+    assert set(extensions) == {"my_diag"}
+    assert extensions["my_diag"].enabled is True
+    assert extensions["my_diag"].type == "diagnostics_and_telemetry"

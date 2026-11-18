@@ -159,4 +159,4 @@ class DiagnosticsAndTelemetryExtension(BaseExtension):
             log.warning("Failed to record token metrics: %s", exc)
 
 
-register_extension_type("diagnostics_and_telemetry", DiagnosticsAndTelemetryExtension)
+register_extension_type("diagnostics_and_telemetry", DiagnosticsAndTelemetryExtension, default_enabled=True)
