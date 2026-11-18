@@ -262,6 +262,33 @@ export class ConversationStore extends EventTarget {
   }
 
   /**
+   * Display title for a conversation, from whichever listing holds it: the
+   * active, archived, or system flat lists, then the session hierarchy (which
+   * is where delegated children appear). Empty for an id the store has never
+   * listed, e.g. one created in another tab before the next refresh (#1503).
+   * @param {string} convId
+   * @returns {string}
+   */
+  getConversationTitle(convId) {
+    if (!convId) return '';
+    const flatLists = [this.#conversations, this.#archivedConversations, this.#systemConversations];
+    for (const list of flatLists) {
+      const match = (list || []).find((c) => c?.conv_id === convId);
+      if (match?.title) return match.title;
+    }
+    for (const session of this.#sessions || []) {
+      const match = (session?.conversations || []).find((c) => c?.conv_id === convId);
+      if (match?.title) return match.title;
+    }
+    return '';
+  }
+
+  /** @returns {string} display title of the selected conversation, or '' */
+  get currentConversationTitle() {
+    return this.getConversationTitle(this.#currentConvId || '');
+  }
+
+  /**
    * @param {string} convId
    * @param {'idle' | 'busy' | 'waiting' | 'finished'} status
    */
