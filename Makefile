@@ -141,7 +141,7 @@ test-tui: install-tui
 # `check` used to carry its own `ruff check src/ tests/` line, so widening the
 # `lint` target did not widen what CI actually gates — the same duplication
 # that let check-message-types and check-js run nowhere before #854.
-check: install-js check-npm-policy check-message-types fmt-check lint typecheck check-js check-browser-assets
+check: install-js check-npm-policy check-message-types check-skill-annotations fmt-check lint typecheck check-js check-browser-assets
 
 # Regenerate the WebSocket message-type enum/JS/docs from the manifest
 gen-message-types:
@@ -159,6 +159,14 @@ check-message-types:
 # never carries its own copy of this command.
 check-npm-policy:
 	uv run python scripts/check_npm_policy.py
+
+# Verify no bundled skill tools.py uses `from __future__ import annotations`
+# (#1302): the skill loader execs tools.py in a module that can leave
+# sys.modules, and postponed dataclass annotations then crash loading.
+# Composed into `check` below so CI gates it through the make target — CI
+# never carries its own copy of this command.
+check-skill-annotations:
+	uv run python scripts/check_skill_annotations.py
 
 # Auto-fix lint issues
 lint-fix:

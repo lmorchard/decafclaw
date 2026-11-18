@@ -27,7 +27,7 @@ worktree:
 - `cp ../../../.env .env` from the main clone (it points at the main clone's `data/`), then add `HTTP_PORT=<port>` (default 18880) to avoid port conflicts with other worktrees. Run `make test` once for a baseline before code changes.
 
 ## Gates
-- `make fmt` before every commit. `make check` = `install-js check-npm-policy check-message-types fmt-check lint typecheck check-js check-browser-assets`; `make test` = `uv run pytest tests/ contrib/skills/`.
+- `make fmt` before every commit. `make check` = `install-js check-npm-policy check-message-types check-skill-annotations fmt-check lint typecheck check-js check-browser-assets`; `make test` = `uv run pytest tests/ contrib/skills/`.
 - CI: required `lint-and-test` (`make check`, `playwright install chromium`, pytest) and `js-test` (`make test-js`); `check-tui` runs `make check-tui test-tui` outside `make check`.
 - npm policy (#930): direct deps exact-pinned (no ^/~); every Makefile npm install runs `--ignore-scripts` (allowlisted scripts via `npm rebuild`); `make check-npm-policy` gates it (detail in `docs/dependency-install-policy.md`). `make install-js` uses `npm ci`; do not `npm install` in `src/decafclaw/web/static/` — dependency changes go through `make vendor`.
 
