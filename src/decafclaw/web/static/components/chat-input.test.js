@@ -747,6 +747,47 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('m1');
   });
 
+  it('updates the menu disabled state when only busy changes', async () => {
+    const el = await mount();
+    const store = /** @type {any} */ (new EventTarget());
+    store.activeModel = 'm1';
+    store.availableModels = ['m1', 'm2'];
+    store.modelGroups = [{ name: 'Models', models: ['m1', 'm2'] }];
+    store.activeMode = 'default';
+    store.availableModes = [
+      { name: 'default', description: 'Standard' },
+      { name: 'dev', description: 'Development' },
+    ];
+    store.isBusy = false;
+    el.store = store;
+    await el.updateComplete;
+
+    const menu = await openMenu(el);
+    expect(menu).not.toBeNull();
+    const picker = /** @type {any} */ (menu.querySelector('model-picker'));
+    const modeSelect = menu.querySelector('#conversation-menu-mode');
+
+    // Idle: both settings controls are enabled.
+    expect(picker.disabled).toBe(false);
+    expect(modeSelect.disabled).toBe(false);
+
+    // Only busy moves — no other store field changes, so the re-render must
+    // come from _isBusy itself being reactive.
+    store.isBusy = true;
+    store.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+
+    expect(picker.disabled).toBe(true);
+    expect(modeSelect.disabled).toBe(true);
+
+    store.isBusy = false;
+    store.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+
+    expect(picker.disabled).toBe(false);
+    expect(modeSelect.disabled).toBe(false);
+  });
+
   it('closes the menu on Escape', async () => {
     const el = await mount();
     const menu = await openMenu(el);

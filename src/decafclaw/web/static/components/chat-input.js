@@ -73,6 +73,7 @@ export class ChatInput extends LitElement {
     _defaultModel: { type: String, state: true },
     _activeMode: { type: String, state: true },
     _availableModes: { type: Array, state: true },
+    _isBusy: { type: Boolean, state: true },
     _pendingAttachments: { type: Array, state: true },
     _dragOver: { type: Boolean, state: true },
     _trigger: { type: Object, state: true },
@@ -168,6 +169,7 @@ export class ChatInput extends LitElement {
     this._defaultModel = '';
     this._activeMode = 'default';
     this._availableModes = [];
+    this._isBusy = false;
     /** @type {Array<UploadedAttachment | PendingAttachment>} */
     this._pendingAttachments = [];
     this._dragOver = false;
