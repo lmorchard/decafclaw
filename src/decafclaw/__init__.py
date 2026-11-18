@@ -4,6 +4,9 @@ import asyncio
 import logging
 import os
 import sys
+
+# Disable mem0 telemetry globally to prevent cloud egress and migration SQLite lock conflicts
+os.environ.setdefault("MEM0_TELEMETRY", "false")
 from typing import Any, Callable
 
 from .config import load_config
