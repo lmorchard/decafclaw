@@ -397,8 +397,12 @@ def _collect_recent_memories(ctx: "Context", hours: int = 24) -> tuple[bool, lis
         return False, [], "Mem0 extension is not enabled"
 
     try:
-        from qdrant_client import QdrantClient
-        from qdrant_client.models import DatetimeRange, FieldCondition, Filter
+        from qdrant_client import QdrantClient  # pyright: ignore[reportMissingImports]
+        from qdrant_client.models import (  # pyright: ignore[reportMissingImports]
+            DatetimeRange,
+            FieldCondition,
+            Filter,
+        )
     except ImportError:
         return False, [], "qdrant-client package is not installed"
 
@@ -410,11 +414,11 @@ def _collect_recent_memories(ctx: "Context", hours: int = 24) -> tuple[bool, lis
 
     try:
         if qdrant_url:
-            qc = QdrantClient(url=qdrant_url, timeout=3.0)
+            qc = QdrantClient(url=qdrant_url, timeout=3)
         elif qdrant_host:
-            qc = QdrantClient(host=qdrant_host, port=int(qdrant_port), timeout=3.0)
+            qc = QdrantClient(host=qdrant_host, port=int(qdrant_port), timeout=3)
         elif qdrant_path:
-            qc = QdrantClient(path=qdrant_path, timeout=3.0)
+            qc = QdrantClient(path=qdrant_path, timeout=3)
         else:
             return False, [], "No valid Qdrant URL, host, or path configured"
 
