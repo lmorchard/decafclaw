@@ -9,6 +9,7 @@ to preserve conflict resolution and supersession semantics.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -22,6 +23,27 @@ from typing import Any
 os.environ.setdefault("MEM0_TELEMETRY", "false")
 
 log = logging.getLogger("backfill_memory")
+
+
+def load_state(state_file: Path) -> dict[str, Any]:
+    """Load backfill progress checkpoint state."""
+    if state_file.is_file():
+        try:
+            return json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            log.warning("Could not read backfill state file %s: %s", state_file, e)
+    return {"completed": {}, "last_timestamp": None}
+
+
+def save_state(state_file: Path, state: dict[str, Any]) -> None:
+    """Atomically save backfill progress checkpoint state."""
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = state_file.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp_path.replace(state_file)
+    except Exception as e:
+        log.warning("Could not save backfill state file %s: %s", state_file, e)
 
 
 def parse_timestamp(ts_raw: Any) -> datetime:
@@ -167,6 +189,8 @@ def backfill(
     qdrant_path: Path | None = None,
     since: str | None = None,
     limit: int | None = None,
+    state_file: Path | None = None,
+    reset_state: bool = False,
 ) -> int:
     """Collect records, sort chronologically in ascending order, and ingest or verify."""
     records: list[dict[str, Any]] = []
@@ -217,7 +241,14 @@ def backfill(
         print("[DRY-RUN] Finished chronological verification without writing to memory backend.")
         return 0
 
-    # Live backfill
+    # Live backfill with persistent checkpointing
+    state_path = state_file or Path("data/mem0_backfill_state.json")
+    state = {"completed": {}, "last_timestamp": None} if reset_state else load_state(state_path)
+    completed_map: dict[str, Any] = state.setdefault("completed", {})
+
+    if completed_map and not reset_state:
+        print(f"Resuming backfill: found {len(completed_map)} previously ingested records in {state_path}.", flush=True)
+
     try:
         from decafclaw.config import load_config
         from decafclaw.extensions.mem0 import Mem0Extension
@@ -237,27 +268,55 @@ def backfill(
         total = len(records)
         print(f"Starting live backfill of {total} records into Mem0...", flush=True)
         processed_count = 0
+        skipped_count = 0
         error_count = 0
 
         for i, r in enumerate(records, start=1):
             data = r["data"]
             dt_str = r["timestamp"].strftime("%Y-%m-%d %H:%M")
             src_name = Path(r["source"]).name
+
+            role = "user"
+            content = ""
+            if r["type"] == "session_message":
+                role = data.get("role")
+                content = data.get("content")
+                if role not in ("user", "assistant") or not content or not isinstance(content, str):
+                    continue
+            elif r["type"] in ("journal_entry", "page_entry"):
+                content = data.get("content", "")
+                if not content or not isinstance(content, str):
+                    continue
+
+            # Deterministic idempotency key: sha256(source + timestamp + role + content)
+            rec_key = hashlib.sha256(f"{r['source']}:{dt_str}:{role}:{content}".encode()).hexdigest()
+
+            if rec_key in completed_map:
+                skipped_count += 1
+                continue
+
             res = None
             print(f"[{i}/{total}] Processing {dt_str} ({src_name})...", flush=True)
 
             try:
-                if r["type"] == "session_message":
-                    role = data.get("role")
-                    content = data.get("content")
-                    if role in ("user", "assistant") and content and isinstance(content, str):
-                        res = client.add([{"role": role, "content": content}], user_id="default")
-                        processed_count += 1
-                elif r["type"] in ("journal_entry", "page_entry"):
-                    content = data.get("content")
-                    if content:
-                        res = client.add([{"role": "user", "content": content}], user_id="default")
-                        processed_count += 1
+                res = client.add([{"role": role, "content": content}], user_id="default")
+                processed_count += 1
+                facts_count = len(res.get("results", [])) if isinstance(res, dict) else 0
+                completed_map[rec_key] = {
+                    "timestamp": dt_str,
+                    "source": r["source"],
+                    "facts": facts_count,
+                }
+                state["last_timestamp"] = dt_str
+                save_state(state_path, state)
+            except KeyboardInterrupt:
+                print(
+                    f"\n[INTERRUPTED] Gracefully stopped at record {i}/{total} ({dt_str}). State safely saved.",
+                    flush=True,
+                )
+                print("Run the same command again to resume without repeating processed records.", flush=True)
+                save_state(state_path, state)
+                return 0
             except Exception as e:
                 error_count += 1
                 print(f"[{i}/{total}] Error at {dt_str} ({src_name}): {e}", flush=True)
@@ -276,7 +335,14 @@ def backfill(
                 pct = (i / total) * 100
                 print(f"Progress: [{i}/{total} ({pct:.1f}%)] | Current date: {dt_str} | Source: {src_name}", flush=True)
 
-        print(f"Live backfill finished: processed {processed_count} records with {error_count} errors.", flush=True)
+        print(
+            f"Live backfill finished: processed {processed_count} new records, "
+            f"skipped {skipped_count} existing records, with {error_count} errors.",
+            flush=True,
+        )
+    except KeyboardInterrupt:
+        print("\n[INTERRUPTED] Backfill stopped cleanly.", flush=True)
+        return 0
     except Exception as e:
         print(f"Error during live backfill: {e}")
         return 1
@@ -322,6 +388,18 @@ def main() -> int:
     )
     parser.add_argument("--since", dest="since", type=str, help="Only backfill records with timestamp >= YYYY-MM-DD")
     parser.add_argument("--limit", dest="limit", type=int, help="Limit to first N chronological records")
+    parser.add_argument(
+        "--state-file",
+        dest="state_file",
+        type=Path,
+        help="Optional checkpoint statefile path (default: data/mem0_backfill_state.json)",
+    )
+    parser.add_argument(
+        "--reset-state",
+        dest="reset_state",
+        action="store_true",
+        help="Ignore and reset existing progress statefile",
+    )
 
     args = parser.parse_args()
     return backfill(
@@ -333,6 +411,8 @@ def main() -> int:
         qdrant_path=args.qdrant_path,
         since=args.since,
         limit=args.limit,
+        state_file=args.state_file,
+        reset_state=args.reset_state,
     )
 
 
