@@ -79,7 +79,7 @@ def _session_url(config: Any, conv_id: str) -> str:
     base = _web_base(config)
     if not base or not conv_id:
         return ""
-    return f"{base}/#conv={conv_id}"
+    return f"{base}/?conv={conv_id}"
 
 
 def _click_url(config: Any, record: NotificationRecord) -> str:

@@ -333,7 +333,7 @@ Configured under `config.notifications.channels.ntfy`:
 title, `message` is the body (falling back to the title), `priority`
 maps low/normal/high to 2/3/4, and `tags` carries the record category.
 When the HTTP server is enabled, the record's `http(s)` link (or its
-`conv_id` mapped to `<web base>/#conv=<id>`) becomes the notification
+`conv_id` mapped to `<web base>/?conv=<id>`) becomes the notification
 `click` target.
 
 **Confirmation pushes.** `confirmation_request` events become urgent
@@ -344,7 +344,7 @@ When the HTTP server is enabled, the record's `http(s)` link (or its
   Tokens come from the shared `ConfirmTokenRegistry` and carry
   `conv_id` + `confirmation_id`, so the HTTP handler resolves the
   pending confirmation through `ConversationManager`.
-- **Open Session** (`action=view`) → `<web base>/#conv=<conv_id>`.
+- **Open Session** (`action=view`) → `<web base>/?conv=<conv_id>`.
 
 The Approve/Deny actions are only included when `config.http.enabled`
 (the callback must be reachable) and the event carries both routing

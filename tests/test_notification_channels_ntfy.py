@@ -158,7 +158,7 @@ class TestNotificationPayload:
         _enable_ntfy(config)
         _enable_http(config)
         payload = build_notification_payload(config, _rec(link="conv://c-1", conv_id="c-1"))
-        assert payload["click"] == "https://agent.example/#conv=c-1"
+        assert payload["click"] == "https://agent.example/?conv=c-1"
 
     def test_no_click_when_http_disabled(self, config):
         _enable_ntfy(config)
@@ -184,8 +184,8 @@ class TestConfirmationPayload:
         assert [a["label"] for a in actions] == ["Approve", "Deny", "Open Session"]
         assert actions[0]["method"] == "POST"
         assert actions[0]["clear"] is True
-        assert actions[2]["url"] == "https://agent.example/#conv=conv-1"
-        assert payload["click"] == "https://agent.example/#conv=conv-1"
+        assert actions[2]["url"] == "https://agent.example/?conv=conv-1"
+        assert payload["click"] == "https://agent.example/?conv=conv-1"
 
     def test_action_tokens_bind_confirmation_and_action(self, config):
         _enable_ntfy(config)
