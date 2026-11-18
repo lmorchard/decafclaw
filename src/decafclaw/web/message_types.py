@@ -219,6 +219,7 @@ class SrvConvRenamed(TypedDict):
 class SrvConvSelected(TypedDict):
     type: Literal[WSMessageType.CONV_SELECTED]
     conv_id: str
+    title: NotRequired[str]
     read_only: NotRequired[bool]
     pending_confirmation: NotRequired[dict[str, object]]
 

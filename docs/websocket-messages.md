@@ -145,6 +145,7 @@ Confirmation that a select_conv subscribed this socket to the named conversation
 **Fields:**
 
 - `conv_id` — string
+- `title` — string?
 - `read_only` — boolean?
 - `pending_confirmation` — object?
 

@@ -1580,4 +1580,50 @@ describe('current conversation title (#1503)', () => {
     store.selectConversation('web-alice-unknown');
     expect(store.currentConversationTitle).toBe('');
   });
+
+  it('takes the title from the server when no listing holds the conversation', () => {
+    store.selectConversation('web-alice-deep');
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_SELECTED,
+      conv_id: 'web-alice-deep',
+      title: 'Deep linked chat',
+    });
+    expect(store.currentConversationTitle).toBe('Deep linked chat');
+  });
+
+  it('keeps the remembered title when a folder listing drops the conversation', async () => {
+    await store.listConversations();
+    store.selectConversation('web-alice-r1');
+    expect(store.currentConversationTitle).toBe('Flat chat');
+    // The sidebar moved to another folder; the open conversation is not in it.
+    fetchMock.mockImplementationOnce(async () => json({ folder: 'Work', folders: [], conversations: [] }));
+    await store.listConversations('Work');
+    expect(store.currentConversationTitle).toBe('Flat chat');
+  });
+
+  it('does not let a late conv_selected for another conversation rename the tab', () => {
+    store.selectConversation('web-alice-deep');
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_SELECTED,
+      conv_id: 'web-alice-r1',
+      title: 'Someone else',
+    });
+    expect(store.currentConversationTitle).toBe('');
+  });
+
+  it('applies a pushed rename to the remembered title', () => {
+    store.selectConversation('web-alice-deep');
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_SELECTED,
+      conv_id: 'web-alice-deep',
+      title: 'First title',
+    });
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_RENAMED,
+      conv_id: 'web-alice-deep',
+      title: 'Retitled',
+      updated_at: 't9',
+    });
+    expect(store.currentConversationTitle).toBe('Retitled');
+  });
 });

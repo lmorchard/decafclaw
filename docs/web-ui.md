@@ -183,10 +183,13 @@ turn runs, and no marker when idle. With nothing selected it is plain
 `DecafClaw`. `lib/page-title.js` composes the string and `app.js` reapplies it
 on every store `change`, so selection, listing refreshes, background renames,
 and turn-status transitions all land. Each tab therefore names its own session,
-which is what tells several open DecafClaw tabs apart. Finished turns are not
-marked in the title: the selected conversation's status returns to `idle` when
-its turn ends, so the sidebar's Done badge on conversations you are *not*
-looking at is the completion signal.
+which is what tells several open DecafClaw tabs apart. Listings are
+folder-scoped, so the store remembers the last resolved title and the
+`conv_selected` reply carries the conversation's name: an open tab keeps its
+title after a deep link into another folder or when the sidebar navigates away.
+Finished turns are not marked in the title: the selected conversation's status
+returns to `idle` when its turn ends, so the sidebar's Done badge on
+conversations you are *not* looking at is the completion signal.
 
 ### Vault editor
 
