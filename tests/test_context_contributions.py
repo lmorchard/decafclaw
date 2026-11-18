@@ -35,8 +35,8 @@ def _archived_text(history):
 
 
 def test_context_slots_and_contribution_contract():
-    """ContextContribution and ContextSlot expose the three documented slots."""
-    assert [slot.value for slot in ContextSlot] == ["head", "delta", "tail"]
+    """ContextContribution and ContextSlot expose the four documented slots."""
+    assert [slot.value for slot in ContextSlot] == ["head", "delta", "tail", "epilogue"]
 
     message = {"role": "user", "content": "structured"}
     contribution = ContextContribution(slot=ContextSlot.DELTA, messages=[message])
@@ -167,6 +167,39 @@ async def test_contribution_source_entry_reaches_turn_sources(ctx, config, no_ta
     assert entry in composed.sources
     assert "vault_retrieval_extension" in {s.source for s in composed.sources}
     assert _index(composed.messages, "RETRIEVED-MARKER") < _index(composed.messages, "USER-MARKER")
+
+
+@pytest.mark.asyncio
+async def test_epilogue_mounts_after_user_message(ctx, config, no_tail_notes):
+    """EPILOGUE mounts after the user message, archives, and replays in place (#1507)."""
+
+    calls = {"n": 0}
+
+    async def hook(context, user_msg):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return None
+        return ContextContribution(
+            ContextSlot.EPILOGUE,
+            [{"role": "skill_hint", "content": "EPILOGUE-MARKER"}],
+        )
+
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, hook)
+    composer = ContextComposer(state=ctx.composer)
+
+    first = await composer.compose(ctx=ctx, user_message="FIRST", history=[])
+    user = _index(first.messages, "FIRST")
+    epilogue = _index(first.messages, "EPILOGUE-MARKER")
+    assert epilogue > user
+    assert first.messages[epilogue]["role"] == "user"  # internal skill_hint role remaps
+    assert "EPILOGUE-MARKER" in _archived_text(first.messages_to_archive)
+
+    # Turn 2 replays the archived hint where turn 1 sent it, not at the new
+    # generation boundary.
+    history = list(first.messages_to_archive)
+    second = await composer.compose(ctx=ctx, user_message="SECOND", history=history)
+    assert sum(1 for m in second.messages if "EPILOGUE-MARKER" in str(m.get("content", ""))) == 1
+    assert _index(second.messages, "EPILOGUE-MARKER") < _index(second.messages, "SECOND")
 
 
 @pytest.mark.asyncio

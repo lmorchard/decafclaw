@@ -1,8 +1,8 @@
 """Composer lifecycle pipeline: system prompt, PRE_COMPOSE dispatch, mounting (#1491).
 
-Owns how collector hooks become HEAD/DELTA/TAIL messages and source entries.
-The orchestrator in ``context_composer.py`` calls these helpers; extensions
-only see the lifecycle contract.
+Owns how collector hooks become HEAD/DELTA/TAIL/EPILOGUE messages and source
+entries. The orchestrator in ``context_composer.py`` calls these helpers;
+extensions only see the lifecycle contract.
 """
 
 from __future__ import annotations
@@ -46,22 +46,22 @@ def compose_system_prompt(config) -> tuple[str, SourceEntry]:
 
 async def compose_pre_compose_hooks(
     ctx: "Context", config: Any, user_message: str, history: list
-) -> tuple[list[dict], list[dict], list[dict], list[SourceEntry]]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry]]:
     """Run PRE_COMPOSE lifecycle collector hooks concurrently.
 
     Hooks may return structured ``ContextContribution`` objects (or lists
-    of them) for the HEAD, DELTA, and TAIL slots, or legacy ``str`` /
-    ``list[str]`` fact text. Legacy text is coerced to one TAIL
+    of them) for the HEAD, DELTA, TAIL, and EPILOGUE slots, or legacy ``str``
+    / ``list[str]`` fact text. Legacy text is coerced to one TAIL
     ``<recalled_facts>`` envelope under the configured timeout and token
     ceiling, exactly as before (#1454, #1486). Structured contributions
     carry their own messages and are not subject to that legacy ceiling.
 
-    Returns ``(head, delta, tail, sources)``. Fails open: a raising or slow
-    hook is logged and the turn still composes.
+    Returns ``(head, delta, tail, epilogue, sources)``. Fails open: a raising
+    or slow hook is logged and the turn still composes.
     """
     hooks = ctx.get_interceptors(TurnLifecycle.PRE_COMPOSE)
     if not hooks:
-        return [], [], [], []
+        return [], [], [], [], []
 
     lifecycle_cfg = getattr(config, "lifecycle", None)
     default_timeout = getattr(lifecycle_cfg, "pre_compose_timeout", 0.3)
@@ -113,7 +113,7 @@ async def compose_pre_compose_hooks(
         done, pending = await asyncio.wait(tasks, timeout=outer_timeout)
     except Exception as e:
         log.warning("PRE_COMPOSE gathering failed: %s", e)
-        return [], [], [], []
+        return [], [], [], [], []
     if pending:
         # Keep what finished inside the bound and drop only the slow hooks.
         # Discarding completed contributions would silently lose context
@@ -139,6 +139,7 @@ async def compose_pre_compose_hooks(
     head: list[dict] = []
     delta: list[dict] = []
     tail: list[dict] = []
+    epilogue: list[dict] = []
     sources: list[SourceEntry] = []
     fact_texts: list[str] = []
 
@@ -146,14 +147,14 @@ async def compose_pre_compose_hooks(
         if r is None:
             continue
         if isinstance(r, ContextContribution):
-            mount_context_contribution(r, head, delta, tail, sources)
+            mount_context_contribution(r, head, delta, tail, epilogue, sources)
         elif isinstance(r, str):
             if r.strip():
                 fact_texts.append(r.strip())
         elif isinstance(r, (list, tuple)):
             for item in r:
                 if isinstance(item, ContextContribution):
-                    mount_context_contribution(item, head, delta, tail, sources)
+                    mount_context_contribution(item, head, delta, tail, epilogue, sources)
                 elif isinstance(item, str):
                     if item.strip():
                         fact_texts.append(item.strip())
@@ -179,7 +180,7 @@ async def compose_pre_compose_hooks(
             )
         )
 
-    return head, delta, tail, sources
+    return head, delta, tail, epilogue, sources
 
 
 def mount_context_contribution(
@@ -187,6 +188,7 @@ def mount_context_contribution(
     head: list[dict],
     delta: list[dict],
     tail: list[dict],
+    epilogue: list[dict],
     sources: list[SourceEntry],
 ) -> None:
     """Validate and mount one structured contribution; fail open."""
@@ -205,6 +207,7 @@ def mount_context_contribution(
         ContextSlot.HEAD: head,
         ContextSlot.DELTA: delta,
         ContextSlot.TAIL: tail,
+        ContextSlot.EPILOGUE: epilogue,
     }[contribution.slot]
     target.extend(messages)
 

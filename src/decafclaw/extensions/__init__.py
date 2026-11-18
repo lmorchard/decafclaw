@@ -27,11 +27,15 @@ class ContextSlot(enum.Enum):
     - TAIL — per-turn envelopes mounted directly before the current user
       message. Contributions are archived like the legacy ``<recalled_facts>``
       envelope.
+    - EPILOGUE — generation-boundary hints mounted directly after the current
+      user message and before dispatch. Contributions are archived at that
+      position so later turns replay them there (#1507).
     """
 
     HEAD = "head"
     DELTA = "delta"
     TAIL = "tail"
+    EPILOGUE = "epilogue"
 
 
 @dataclass
@@ -124,6 +128,7 @@ def ensure_builtin_extension_types() -> None:
     from . import improvement_scout as _improvement_scout
     from . import mem0 as _mem0
     from . import mentions as _mentions
+    from . import preempt_hints as _preempt_hints
     from . import recent_journal as _recent_journal
     from . import scratchpad_notes as _scratchpad_notes
     from . import vault_guide as _vault_guide
@@ -159,6 +164,7 @@ def ensure_builtin_extension_types() -> None:
         ("mentions", _mentions.MentionsExtension),
         ("vault_guide", _vault_guide.VaultGuideExtension),
         ("recent_journal", _recent_journal.RecentJournalExtension),
+        ("preempt_hints", _preempt_hints.PreemptHintsExtension),
     ):
         if get_extension_type(_name) is None:
             register_extension_type(_name, _cls, default_enabled=True)
