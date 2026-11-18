@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -191,6 +192,7 @@ def backfill(
     limit: int | None = None,
     state_file: Path | None = None,
     reset_state: bool = False,
+    time_budget: float = 0.0,
 ) -> int:
     """Collect records, sort chronologically in ascending order, and ingest or verify."""
     records: list[dict[str, Any]] = []
@@ -270,6 +272,7 @@ def backfill(
         processed_count = 0
         skipped_count = 0
         error_count = 0
+        start_time = time.time()
 
         for i, r in enumerate(records, start=1):
             data = r["data"]
@@ -295,6 +298,13 @@ def backfill(
                 skipped_count += 1
                 continue
 
+            if time_budget > 0 and (time.time() - start_time) >= time_budget:
+                print(
+                    f"\n[TIME-BUDGET] Reached {time_budget:.1f}s time budget before record {i}/{total} ({dt_str}). State safely saved.",
+                    flush=True,
+                )
+                return 0
+
             res = None
             print(f"[{i}/{total}] Processing {dt_str} ({src_name})...", flush=True)
 
@@ -309,6 +319,14 @@ def backfill(
                 }
                 state["last_timestamp"] = dt_str
                 save_state(state_path, state)
+
+                if time_budget > 0 and (time.time() - start_time) >= time_budget:
+                    print(
+                        f"\n[TIME-BUDGET] Reached {time_budget:.1f}s time budget. "
+                        f"State safely saved at record {i}/{total} ({dt_str}).",
+                        flush=True,
+                    )
+                    return 0
             except KeyboardInterrupt:
                 print(
                     f"\n[INTERRUPTED] Gracefully stopped at record {i}/{total} ({dt_str}). State safely saved.",
@@ -400,6 +418,13 @@ def main() -> int:
         action="store_true",
         help="Ignore and reset existing progress statefile",
     )
+    parser.add_argument(
+        "--time-budget",
+        dest="time_budget",
+        type=float,
+        default=0.0,
+        help="Max runtime in seconds before cleanly saving state and exiting 0",
+    )
 
     args = parser.parse_args()
     return backfill(
@@ -413,6 +438,7 @@ def main() -> int:
         limit=args.limit,
         state_file=args.state_file,
         reset_state=args.reset_state,
+        time_budget=args.time_budget,
     )
 
 
