@@ -46,12 +46,14 @@ async def test_newsletter_tools_register_via_skill_loader(ctx):
 
     assert "newsletter_list_scheduled_activity" in ctx.tools.extra
     assert "newsletter_list_vault_changes" in ctx.tools.extra
+    assert "newsletter_list_recent_memories" in ctx.tools.extra
     assert "newsletter_publish" in ctx.tools.extra
 
-    # All three should also have definitions
+    # All four should also have definitions
     def_names = {d["function"]["name"] for d in ctx.tools.extra_definitions}
     assert "newsletter_list_scheduled_activity" in def_names
     assert "newsletter_list_vault_changes" in def_names
+    assert "newsletter_list_recent_memories" in def_names
     assert "newsletter_publish" in def_names
 
 
@@ -1124,3 +1126,107 @@ def test_render_newsletter_email_backticked_markdown_link(ctx, tmp_path):
     assert '<a href="https://example.com/docs">Documentation</a>' in html
     assert "`<a href=" not in html
     assert "[Documentation](https://example.com/docs)" in plain
+
+
+# ---------------------------------------------------------------------------
+# newsletter_list_recent_memories tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_recent_memories_when_mem0_disabled(ctx):
+    """When mem0 extension is absent or disabled, fails safe with 0 memories."""
+    from decafclaw.skills.newsletter.tools import newsletter_list_recent_memories
+
+    ctx.config.extensions = {}
+    res = await newsletter_list_recent_memories(ctx, hours=24)
+    assert res.data is not None
+    assert res.data["enabled"] is False
+    assert res.data["memories"] == []
+    assert res.data["total"] == 0
+    assert "Mem0 memory extension is not active" in res.text
+
+
+@pytest.mark.asyncio
+async def test_list_recent_memories_when_qdrant_unreachable(ctx, monkeypatch):
+    """When Qdrant raises an exception, fails safe without crashing."""
+    import sys
+    from unittest.mock import MagicMock
+
+    from decafclaw.config import ExtensionConfig
+    from decafclaw.skills.newsletter.tools import newsletter_list_recent_memories
+
+    ctx.config.extensions = {
+        "mem0": ExtensionConfig(
+            type="mem0",
+            enabled=True,
+            options={"qdrant_url": "http://invalid-host:6333"},
+        )
+    }
+
+    # Mock QdrantClient to raise
+    class FakeQdrantClient:
+        def __init__(self, *args, **kwargs):
+            raise ConnectionError("Host not found")
+
+    fake_client_module = MagicMock()
+    fake_models_module = MagicMock()
+    fake_client_module.QdrantClient = FakeQdrantClient
+
+    monkeypatch.setitem(sys.modules, "qdrant_client", fake_client_module)
+    monkeypatch.setitem(sys.modules, "qdrant_client.models", fake_models_module)
+
+    res = await newsletter_list_recent_memories(ctx, hours=24)
+    assert res.data is not None
+    assert res.data["enabled"] is False
+    assert res.data["memories"] == []
+    assert "Host not found" in res.text
+
+
+@pytest.mark.asyncio
+async def test_list_recent_memories_success(ctx, monkeypatch):
+    """When mem0 is enabled and Qdrant returns points, lists them chronologically."""
+    import sys
+    from unittest.mock import MagicMock
+
+    from decafclaw.config import ExtensionConfig
+    from decafclaw.skills.newsletter.tools import newsletter_list_recent_memories
+
+    ctx.config.extensions = {
+        "mem0": ExtensionConfig(
+            type="mem0",
+            enabled=True,
+            options={"qdrant_url": "http://myriad-docker:6333"},
+        )
+    }
+
+    class FakePoint:
+        def __init__(self, point_id, data, created_at):
+            self.id = point_id
+            self.payload = {"data": data, "created_at": created_at, "user_id": "default"}
+
+    class FakeQdrantClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def scroll(self, collection_name, scroll_filter, limit, with_payload):
+            return [
+                FakePoint("p1", "Learned fact A", "2026-11-18T01:00:00Z"),
+                FakePoint("p2", "Learned fact B", "2026-11-18T02:00:00Z"),
+            ], None
+
+    fake_client_module = MagicMock()
+    fake_models_module = MagicMock()
+    fake_client_module.QdrantClient = FakeQdrantClient
+
+    monkeypatch.setitem(sys.modules, "qdrant_client", fake_client_module)
+    monkeypatch.setitem(sys.modules, "qdrant_client.models", fake_models_module)
+
+    res = await newsletter_list_recent_memories(ctx, hours=24)
+    assert res.data is not None
+    assert res.data["enabled"] is True
+    assert res.data["total"] == 2
+    assert len(res.data["memories"]) == 2
+    assert res.data["memories"][0]["memory"] == "Learned fact A"
+    assert res.data["memories"][1]["memory"] == "Learned fact B"
+    assert "Found 2 memory fact(s)" in res.text
