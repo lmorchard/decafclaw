@@ -336,6 +336,31 @@ Startup guard is 4-way: channel `enabled` **and** non-empty
 consult `email.allowed_recipients` (that applies only to the
 `send_email` agent tool).
 
+#### `notifications.channels.ntfy`
+
+Fan-out push channel that publishes matching notifications to an ntfy
+topic, and pushes pending tool confirmations with interactive
+Approve/Deny buttons. See
+[notifications.md#ntfy-adapter](notifications.md#ntfy-adapter).
+
+| Field | Type | Default | Env Var | Secret |
+|-------|------|---------|---------|--------|
+| `enabled` | bool | `false` | `NOTIFICATIONS_CHANNELS_NTFY_ENABLED` | |
+| `server_url` | str | `https://ntfy.sh` | `NOTIFICATIONS_CHANNELS_NTFY_SERVER_URL` | |
+| `topic` | str | `""` | `NOTIFICATIONS_CHANNELS_NTFY_TOPIC` | |
+| `access_token` | str | `""` | `NOTIFICATIONS_CHANNELS_NTFY_ACCESS_TOKEN` | yes |
+| `min_priority` | str | `high` | `NOTIFICATIONS_CHANNELS_NTFY_MIN_PRIORITY` | |
+| `notify_on_confirmation` | bool | `true` | `NOTIFICATIONS_CHANNELS_NTFY_NOTIFY_ON_CONFIRMATION` | |
+
+The adapter is only wired at startup when `enabled` is `true`, `topic`
+is non-empty, and `server_url` is an absolute `http(s)://` URL.
+`access_token` is sent as `Authorization: Bearer`. Confirmation pushes
+carry Approve/Deny callback buttons only when `http.enabled` is true
+(they POST single-use tokens to `/actions/confirm`); they ignore
+`min_priority` because a pending approval always warrants a push.
+Use a private or self-hosted topic — the push contains approval
+links.
+
 #### `notifications.channels.vault_page`
 
 Fan-out channel that appends each matching notification to a daily

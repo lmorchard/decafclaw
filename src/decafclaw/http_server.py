@@ -638,6 +638,21 @@ async def metrics_endpoint(request: Request) -> Response:
     return Response(content, media_type="text/plain")
 
 
+async def _read_json_object(request: Request) -> dict:
+    """Read a JSON object body, tolerating empty and non-object payloads.
+
+    Mattermost sends a rich action payload; ntfy ``action=http`` callbacks
+    typically send an empty POST and carry everything in the
+    authenticated query token. A malformed body must fall through to the
+    token data, not raise a 500.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 async def handle_confirm(request: Request) -> JSONResponse:
     """Handle Mattermost interactive button callbacks for tool confirmation."""
     config = request.app.state.config
@@ -656,8 +671,10 @@ async def handle_confirm(request: Request) -> JSONResponse:
         log.warning("Confirm callback rejected: invalid token and no valid secret")
         return JSONResponse({"error": "unauthorized"}, status_code=403)
 
-    body = await request.json()
+    body = await _read_json_object(request)
     context = body.get("context", {})
+    if not isinstance(context, dict):
+        context = {}
 
     # Use token data if available, fall back to POST body context
     if token_data:

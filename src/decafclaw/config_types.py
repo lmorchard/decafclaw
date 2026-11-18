@@ -706,6 +706,34 @@ class MattermostDMChannelConfig:
 
 
 @dataclass
+class NtfyChannelConfig:
+    """NTFY push channel for notifications and tool confirmations (#1494).
+
+    Publishes inbox notifications to an ntfy topic, and (when
+    ``notify_on_confirmation`` is true) pushes pending tool
+    confirmations with Approve/Deny action buttons. The buttons POST
+    single-use tokens to ``{http callback base}/actions/confirm``, so
+    they are only included when ``config.http.enabled`` is true.
+    ``server_url`` must be an ``http(s)://`` URL; an empty ``topic``
+    keeps the adapter unsubscribed at startup.
+
+    ``access_token`` is sent as ``Authorization: Bearer``. Use a
+    private/self-hosted topic: the push carries approve links.
+    """
+
+    enabled: bool = False
+    server_url: str = "https://ntfy.sh"
+    # Topic name, appended to server_url for the publish endpoint.
+    topic: str = ""
+    access_token: str = field(default="", metadata={"secret": True})
+    min_priority: str = "high"  # "low" | "normal" | "high"
+    # Push pending tool confirmations as urgent notifications with
+    # Approve/Deny action buttons. Independent of min_priority: a
+    # confirmation is always worth a phone ping.
+    notify_on_confirmation: bool = True
+
+
+@dataclass
 class VaultPageChannelConfig:
     """Vault page notification channel — appends each matching
     notification to a daily rollup file under the configured folder.
@@ -736,6 +764,7 @@ class NotificationsChannelsConfig:
 
     mattermost_dm: MattermostDMChannelConfig = field(default_factory=MattermostDMChannelConfig)
     email: EmailChannelConfig = field(default_factory=EmailChannelConfig)
+    ntfy: NtfyChannelConfig = field(default_factory=NtfyChannelConfig)
     vault_page: VaultPageChannelConfig = field(default_factory=VaultPageChannelConfig)
 
 

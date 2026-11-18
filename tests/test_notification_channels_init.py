@@ -42,6 +42,13 @@ def _enable_vault_page(config, folder="agent/pages/notifications"):
     config.notifications.channels.vault_page.folder = folder
 
 
+def _enable_ntfy(config, topic="agent-alerts"):
+    ntfy = config.notifications.channels.ntfy
+    ntfy.enabled = True
+    ntfy.server_url = "https://ntfy.example"
+    ntfy.topic = topic
+
+
 class TestInitNotificationChannels:
     def test_no_channels_enabled_nothing_subscribed(self, config):
         bus = MagicMock()
@@ -139,3 +146,38 @@ class TestInitNotificationChannels:
         bus = MagicMock()
         init_notification_channels(config, bus, mm_client=MagicMock())
         assert bus.subscribe.call_count == 3
+
+    def test_ntfy_subscribed_when_configured(self, config):
+        _enable_ntfy(config)
+        bus = MagicMock()
+        init_notification_channels(config, bus, mm_client=None)
+        assert bus.subscribe.call_count == 1
+
+    def test_ntfy_skipped_when_disabled(self, config):
+        _enable_ntfy(config)
+        config.notifications.channels.ntfy.enabled = False
+        bus = MagicMock()
+        init_notification_channels(config, bus, mm_client=None)
+        bus.subscribe.assert_not_called()
+
+    def test_ntfy_skipped_when_topic_empty(self, config):
+        _enable_ntfy(config, topic="")
+        bus = MagicMock()
+        init_notification_channels(config, bus, mm_client=None)
+        bus.subscribe.assert_not_called()
+
+    def test_ntfy_skipped_when_server_url_not_http(self, config):
+        _enable_ntfy(config)
+        config.notifications.channels.ntfy.server_url = "ntfy.example"
+        bus = MagicMock()
+        init_notification_channels(config, bus, mm_client=None)
+        bus.subscribe.assert_not_called()
+
+    def test_all_four_channels_subscribed(self, config):
+        _enable_mm_dm(config)
+        _enable_email(config)
+        _enable_ntfy(config)
+        _enable_vault_page(config)
+        bus = MagicMock()
+        init_notification_channels(config, bus, mm_client=MagicMock())
+        assert bus.subscribe.call_count == 4

@@ -1,6 +1,7 @@
 """Tests for HTTP server routes and button building."""
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -130,6 +131,80 @@ async def test_confirm_rejects_bad_token(client):
         json=_confirm_body(),
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_confirm_empty_body_with_valid_token(client, bus):
+    """ntfy action=http callbacks POST no body — the token alone must authorize."""
+    received = []
+    bus.subscribe(lambda e: received.append(e))
+
+    token = get_token_registry().create("ctx-1", "shell", "msg", action="approve")
+    resp = await client.post(f"/actions/confirm?token={token}")
+    assert resp.status_code == 200
+    await asyncio.sleep(0)
+
+    assert received[0]["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_confirm_non_json_body_with_valid_token(client, bus):
+    received = []
+    bus.subscribe(lambda e: received.append(e))
+
+    token = get_token_registry().create("ctx-1", "shell", "msg", action="deny")
+    resp = await client.post(
+        f"/actions/confirm?token={token}",
+        content=b"not json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200
+    await asyncio.sleep(0)
+
+    assert received[0]["approved"] is False
+
+
+@pytest.mark.asyncio
+async def test_confirm_json_non_object_body_with_valid_token(client, bus):
+    received = []
+    bus.subscribe(lambda e: received.append(e))
+
+    token = get_token_registry().create("ctx-1", "shell", "msg", action="approve")
+    resp = await client.post(f"/actions/confirm?token={token}", json=["approve"])
+    assert resp.status_code == 200
+    await asyncio.sleep(0)
+
+    assert received[0]["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_confirm_empty_body_routes_through_manager(http_config, bus):
+    """A bodyless ntfy callback resolves the pending confirmation via the manager."""
+    manager = AsyncMock()
+    app = create_app(http_config, bus, manager=manager)
+    token = get_token_registry().create(
+        "ctx-1",
+        "shell",
+        "msg",
+        action="approve",
+        conv_id="conv-9",
+        confirmation_id="conf-9",
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.post(f"/actions/confirm?token={token}")
+
+    assert resp.status_code == 200
+    manager.respond_to_confirmation.assert_awaited_once_with(
+        "conv-9",
+        "conf-9",
+        approved=True,
+        always=False,
+        add_pattern=False,
+        add_rule=False,
+        rule="",
+    )
 
 
 @pytest.mark.asyncio
