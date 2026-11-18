@@ -14,7 +14,7 @@ from decafclaw.confirmations import (
     ConfirmationResponse,
 )
 from decafclaw.context import TaskMode
-from decafclaw.context_composer import InjectionCursors
+from decafclaw.context_types import InjectionCursors
 from decafclaw.conversation_manager import (
     _CTX_DRIVEN_FIELDS,
     _PERSISTED_BINDINGS,

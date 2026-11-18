@@ -23,7 +23,7 @@ from starlette.staticfiles import StaticFiles
 from decafclaw import notifications as notifs
 from decafclaw.archive import append_message, archive_path
 from decafclaw.config_types import ModelConfig
-from decafclaw.context_composer import write_context_sidecar
+from decafclaw.context_sidecars import write_context_sidecar
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.sticky import write_sticky_state

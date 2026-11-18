@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from decafclaw.agent import TurnRunner, _Continue, _Final, _maybe_compact
-from decafclaw.context_composer import effective_compaction_threshold
+from decafclaw.context_types import effective_compaction_threshold
 from decafclaw.conversation_manager import ConversationManager, TurnKind
 from decafclaw.events import EventBus
 from decafclaw.llm.types import ContextLengthExceededError

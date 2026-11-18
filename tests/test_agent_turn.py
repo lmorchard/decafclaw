@@ -1039,7 +1039,7 @@ async def test_run_agent_turn_unanswered_widget_summary_directive(ctx):
 async def test_run_agent_turn_writes_last_request_sidecar_via_extension(ctx, monkeypatch):
     """The diagnostics extension captures each LLM call and writes the last one at settle."""
     from decafclaw.config_types import ExtensionConfig
-    from decafclaw.context_composer import read_last_request_sidecar
+    from decafclaw.context_sidecars import read_last_request_sidecar
     from decafclaw.extensions import init_extensions
 
     ctx.config.llm.streaming = False
@@ -1095,7 +1095,7 @@ async def test_run_agent_turn_writes_last_request_sidecar_via_extension(ctx, mon
 async def test_run_agent_turn_sidecar_tracks_grace_call(ctx, monkeypatch):
     """The sidecar snapshot follows the grace call, not the last tool iteration."""
     from decafclaw.config_types import ExtensionConfig
-    from decafclaw.context_composer import read_last_request_sidecar
+    from decafclaw.context_sidecars import read_last_request_sidecar
     from decafclaw.extensions import init_extensions
 
     ctx.config.llm.streaming = False

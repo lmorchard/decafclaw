@@ -14,7 +14,7 @@ from decafclaw.context_cleanup import (
     _user_turn_boundary_indices,
     clear_old_tool_results,
 )
-from decafclaw.context_composer import ComposerMode
+from decafclaw.context_types import ComposerMode
 
 
 def _cfg(**overrides):

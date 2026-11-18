@@ -12,6 +12,19 @@ from decafclaw.memory_context import (
 # -- parse_wiki_references ----------------------------------------------------
 
 
+def _wiki_refs(context, config, message, history, mode):
+    """Run VaultReferencesExtension and return its legacy (messages, entry) shape."""
+    import asyncio
+
+    from decafclaw.extensions.vault_references import VaultReferencesExtension
+
+    context.composer.mode = mode
+    contribution = asyncio.run(VaultReferencesExtension({}, config)._contribute(context, message, history))
+    if contribution is None:
+        return [], None
+    return contribution.messages, contribution.source_entry
+
+
 def test_parse_no_mentions_no_page():
     """No @[[...]] and no wiki_page → empty list."""
     result = parse_wiki_references("hello world")
@@ -138,14 +151,15 @@ def test_already_retrieved_paths_ignores_other_roles():
 
 def test_compose_wiki_context_injects(ctx):
     """Wiki context messages are produced for @[[PageName]] references."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
     (vault_dir / "TestPage.md").write_text("wiki content here")
 
-    composer = ContextComposer()
-    msgs, entry = composer._compose_vault_references(
+    ContextComposer()
+    msgs, entry = _wiki_refs(
         ctx,
         ctx.config,
         "tell me about @[[TestPage]]",
@@ -161,7 +175,8 @@ def test_compose_wiki_context_injects(ctx):
 
 def test_compose_wiki_context_skips_already_injected(ctx):
     """Pages already in history are not re-injected."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
@@ -174,8 +189,8 @@ def test_compose_wiki_context_skips_already_injected(ctx):
             "wiki_page": "TestPage",
         },
     ]
-    composer = ContextComposer()
-    msgs, entry = composer._compose_vault_references(
+    ContextComposer()
+    msgs, entry = _wiki_refs(
         ctx,
         ctx.config,
         "tell me more about @[[TestPage]]",
@@ -187,15 +202,16 @@ def test_compose_wiki_context_skips_already_injected(ctx):
 
 def test_compose_wiki_context_injects_open_page(ctx):
     """Open wiki page from ctx.wiki_page is injected."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
     (vault_dir / "OpenPage.md").write_text("open page content")
     ctx.wiki_page = "OpenPage"
 
-    composer = ContextComposer()
-    msgs, _ = composer._compose_vault_references(
+    ContextComposer()
+    msgs, _ = _wiki_refs(
         ctx,
         ctx.config,
         "hello",
@@ -208,13 +224,14 @@ def test_compose_wiki_context_injects_open_page(ctx):
 
 def test_compose_wiki_context_missing_page(ctx):
     """Missing @[[PageName]] produces error note."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
 
-    composer = ContextComposer()
-    msgs, _ = composer._compose_vault_references(
+    ContextComposer()
+    msgs, _ = _wiki_refs(
         ctx,
         ctx.config,
         "see @[[NonExistent]]",
@@ -228,7 +245,8 @@ def test_compose_wiki_context_missing_page(ctx):
 def test_compose_wiki_context_allows_explicit_reference_after_headline_retrieval(ctx):
     """#1157: an explicit @[[Page]] reference must not be suppressed by an earlier
     proactive vault_retrieval (e.g. headlines mode), even if the path matches."""
-    from decafclaw.context_composer import ComposerMode, ContextComposer
+    from decafclaw.context_composer import ContextComposer
+    from decafclaw.context_types import ComposerMode
 
     vault_dir = ctx.config.vault_root
     pages_dir = vault_dir / "pages"
@@ -242,8 +260,8 @@ def test_compose_wiki_context_allows_explicit_reference_after_headline_retrieval
             "file_paths": ["pages/Foo.md"],
         },
     ]
-    composer = ContextComposer()
-    msgs, entry = composer._compose_vault_references(
+    ContextComposer()
+    msgs, entry = _wiki_refs(
         ctx,
         ctx.config,
         "tell me about @[[pages/Foo.md]]",

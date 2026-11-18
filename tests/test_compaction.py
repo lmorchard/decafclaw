@@ -21,7 +21,7 @@ from decafclaw.compaction import (
     estimate_tokens,
     flatten_messages,
 )
-from decafclaw.context_composer import InjectionCursors
+from decafclaw.context_types import InjectionCursors
 
 
 class TestSplitIntoTurns:

@@ -110,8 +110,8 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
     "'always'-permission semantics, out of scope for #741.",
     # -- no grant: name/description only (catalog-equivalent) ------------------
     (
-        "context_composer.py",
-        "_compose_preempt_skill_matches",
+        "context_preempt.py",
+        "compose_preempt_skill_matches",
     ): "NO GRANT: scores skill name + description for a pre-emptive "
     "suggestion. Catalog-equivalent data; acting on the suggestion still "
     "goes through activate_skill's gate.",

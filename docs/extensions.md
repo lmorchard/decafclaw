@@ -79,6 +79,34 @@ hook that advances durable state (such as an injection cursor) must do so
 immediately before it returns, with no `await` in between, so a cancellation
 cannot strand the state.
 
+## Reference and journal extensions (default on)
+
+Four small extensions own the remaining per-turn fixed-cost injections, so
+`ContextComposer` only orchestrates slots and provider assembly (#1491):
+
+- `vault_references.py` — explicit `@[[Page]]` references and the currently
+  open wiki page, deduplicated against history and published as
+  `vault_references` events. `TAIL`, archived, source `wiki`.
+- `mentions.py` — `@path` workspace files and `@mcp:server/resource`
+  references, deduplicated against history and published as
+  `mention_references` events. `TAIL`, archived, source `mentions`.
+- `vault_guide.py` — the authored vault protocol document (`AGENTS.md` by
+  default) as an authoritative `system` message. `HEAD`, not archived, source
+  `vault_guide`. Read fresh each turn; traversal and absolute paths are
+  refused.
+- `recent_journal.py` — recently written journal entries on a small fixed
+  budget with the same delta-cursor contract as scratchpad notes. `DELTA`,
+  archived, source `recent_journal` (clock seam at
+  `extensions.recent_journal._now`).
+
+All four skip heartbeat / scheduled / child-agent turns and fail open.
+
+Tool-discovery hints (`<preempt_tool_hint>`, `<preempt_skill_hint>`) and the
+`[Context: ...]` status line stay core pipeline stages: they are appended
+after the user message in the archived position, which the `HEAD`/`DELTA`/
+`TAIL` slot contract does not express. Their logic lives in
+`context_preempt.py`.
+
 ## PRE_COMPACTION collectors
 
 `TurnLifecycle.PRE_COMPACTION` runs immediately before `compact_history`
@@ -135,7 +163,7 @@ Registry helpers: `register_extension_type(name, factory, *, default_enabled=Fal
 
 `default_enabled=True` marks a core type that `load_config` seeds when `config.json` defines no entry for it. The flag lives in the `ExtensionTypeMeta` record (`get_extension_type_meta`) and is replaced along with the factory on re-registration, so a test or embedder that swaps a type also chooses its default.
 
-Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`compaction`, `diagnostics_and_telemetry`, `scratchpad_notes`, `vault_retrieval`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
+Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`compaction`, `diagnostics_and_telemetry`, `mentions`, `recent_journal`, `scratchpad_notes`, `vault_guide`, `vault_references`, `vault_retrieval`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
 
 ## Loading
 

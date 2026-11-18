@@ -4,11 +4,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from decafclaw.context_composer import (
-    ComposerMode,
-    ContextComposer,
-    _reorder_tool_results,
-)
+from decafclaw.context_composer import ContextComposer
+from decafclaw.context_messages import _reorder_tool_results
+from decafclaw.context_types import ComposerMode
 
 # -- Unit tests for _reorder_tool_results ------------------------------------
 
@@ -115,7 +113,7 @@ def _compose(ctx, config, user_message, history):
     config.agent.tool_context_budget_pct = 1.0
     config.compaction.max_tokens = 1000000
     with (
-        patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+        patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
         patch("decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
     ):
         composer = ContextComposer()

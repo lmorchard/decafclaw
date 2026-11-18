@@ -5,9 +5,21 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from decafclaw.context_composer import ComposerMode, ContextComposer
+from decafclaw.context_composer import ContextComposer
+from decafclaw.context_types import ComposerMode
 from decafclaw.mcp_client import ConnState
 from decafclaw.memory_context import parse_bare_mentions
+
+
+async def _mention_refs(context, config, message, history, mode):
+    """Run MentionsExtension and return its legacy (messages, entry) shape."""
+    from decafclaw.extensions.mentions import MentionsExtension
+
+    context.composer.mode = mode
+    contribution = await MentionsExtension({}, config)._contribute(context, message, history)
+    if contribution is None:
+        return [], None
+    return contribution.messages, contribution.source_entry
 
 
 def test_parse_bare_mentions():
@@ -31,7 +43,7 @@ def test_parse_bare_mentions():
 @pytest.mark.asyncio
 async def test_compose_mentions_references_file(ctx, config, tmp_path):
     """Verify workspace files mentioned with @ are resolved and injected."""
-    composer = ContextComposer()
+    ContextComposer()
     config.agent.data_home = str(tmp_path / "data")
     config.agent_path.mkdir(parents=True, exist_ok=True)
     config.workspace_path.mkdir(parents=True, exist_ok=True)
@@ -50,9 +62,7 @@ async def test_compose_mentions_references_file(ctx, config, tmp_path):
     secret_file.write_text("my-secret-key", encoding="utf-8")
 
     # Verify small file injection
-    messages, entry = await composer._compose_mentions_references(
-        ctx, config, "Read @small.txt please", [], ComposerMode.INTERACTIVE
-    )
+    messages, entry = await _mention_refs(ctx, config, "Read @small.txt please", [], ComposerMode.INTERACTIVE)
     assert len(messages) == 1
     assert messages[0]["role"] == "workspace_references"
     assert "Hello World" in messages[0]["content"]
@@ -61,7 +71,7 @@ async def test_compose_mentions_references_file(ctx, config, tmp_path):
     assert entry.items_truncated == 0
 
     # Verify large file injection and truncation
-    messages_large, entry_large = await composer._compose_mentions_references(
+    messages_large, entry_large = await _mention_refs(
         ctx, config, "Read @large.txt please", [], ComposerMode.INTERACTIVE
     )
     assert len(messages_large) == 1
@@ -70,7 +80,7 @@ async def test_compose_mentions_references_file(ctx, config, tmp_path):
     assert "[Truncated: only first 8KB of large.txt inlined]" in messages_large[0]["content"]
 
     # Verify secret file exclusion
-    messages_secret, entry_secret = await composer._compose_mentions_references(
+    messages_secret, entry_secret = await _mention_refs(
         ctx, config, "Read @secret.key please", [], ComposerMode.INTERACTIVE
     )
     assert len(messages_secret) == 1
@@ -80,7 +90,7 @@ async def test_compose_mentions_references_file(ctx, config, tmp_path):
 @pytest.mark.asyncio
 async def test_compose_mentions_references_mcp(ctx, config, monkeypatch):
     """Verify active MCP resources mentioned with @ are resolved and injected."""
-    composer = ContextComposer()
+    ContextComposer()
 
     # Mock MCP Registry
     mock_registry = MagicMock()
@@ -118,9 +128,7 @@ async def test_compose_mentions_references_mcp(ctx, config, monkeypatch):
     monkeypatch.setattr("decafclaw.mcp_client.get_registry", lambda: mock_registry)
 
     # Verify MCP resource injection
-    messages, entry = await composer._compose_mentions_references(
-        ctx, config, "Check @mcp/demo_server/notes", [], ComposerMode.INTERACTIVE
-    )
+    messages, entry = await _mention_refs(ctx, config, "Check @mcp/demo_server/notes", [], ComposerMode.INTERACTIVE)
     assert len(messages) == 1
     assert messages[0]["role"] == "mcp_references"
     assert "MCP Notes Content" in messages[0]["content"]
@@ -130,7 +138,7 @@ async def test_compose_mentions_references_mcp(ctx, config, monkeypatch):
 @pytest.mark.asyncio
 async def test_compose_mentions_references_dedup(ctx, config, tmp_path):
     """Verify that already injected mentions are skipped."""
-    composer = ContextComposer()
+    ContextComposer()
     config.agent.data_home = str(tmp_path / "data")
     config.agent_path.mkdir(parents=True, exist_ok=True)
     config.workspace_path.mkdir(parents=True, exist_ok=True)
@@ -147,9 +155,7 @@ async def test_compose_mentions_references_dedup(ctx, config, tmp_path):
         }
     ]
 
-    messages, entry = await composer._compose_mentions_references(
-        ctx, config, "Read @small.txt please", history, ComposerMode.INTERACTIVE
-    )
+    messages, entry = await _mention_refs(ctx, config, "Read @small.txt please", history, ComposerMode.INTERACTIVE)
 
     # Should be skipped
     assert len(messages) == 0

@@ -8,7 +8,7 @@ import pytest
 from decafclaw.config import load_sub_config
 from decafclaw.config_types import ShellConfig
 from decafclaw.context import Context, SkillState, TaskMode, ToolState
-from decafclaw.context_composer import ComposerState
+from decafclaw.context_types import ComposerState
 from decafclaw.media import ToolResult
 from decafclaw.security_monitor import SecurityDecision, SecurityStatus
 from decafclaw.tools.shell_tools import (

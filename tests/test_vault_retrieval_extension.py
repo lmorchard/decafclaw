@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.config_types import ExtensionConfig, RetrievalMode
-from decafclaw.context_composer import ComposerMode
+from decafclaw.context_types import ComposerMode
 from decafclaw.events import EventBus
 from decafclaw.extensions import init_extensions
 from decafclaw.extensions.vault_retrieval import (

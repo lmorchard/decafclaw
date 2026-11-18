@@ -8,16 +8,54 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.config_types import RetrievalMode
-from decafclaw.context_composer import (
+from decafclaw.context_composer import ContextComposer
+from decafclaw.context_messages import _expand_background_event
+from decafclaw.context_types import (
     ComposedContext,
     ComposerMode,
     ComposerState,
-    ContextComposer,
     InjectionCursors,
     SourceEntry,
-    _expand_background_event,
 )
 from decafclaw.util import estimate_tokens
+
+
+def _wiki_refs(context, config, message, history, mode):
+    """Run VaultReferencesExtension and return its legacy (messages, entry) shape."""
+    import asyncio
+
+    from decafclaw.extensions.vault_references import VaultReferencesExtension
+
+    context.composer.mode = mode
+    contribution = asyncio.run(VaultReferencesExtension({}, config)._contribute(context, message, history))
+    if contribution is None:
+        return [], None
+    return contribution.messages, contribution.source_entry
+
+
+def _vault_guide(composer, config, mode):
+    """Run VaultGuideExtension and return its legacy (text, entry) shape."""
+    from types import SimpleNamespace
+
+    from decafclaw.extensions.vault_guide import VaultGuideExtension
+
+    context = SimpleNamespace(composer=SimpleNamespace(mode=mode), config=config)
+    contribution = VaultGuideExtension({}, config)._contribute(context)
+    if contribution is None:
+        return "", None
+    return contribution.messages[0]["content"], contribution.source_entry
+
+
+def _recent_journal(composer, context, config, mode):
+    """Run RecentJournalExtension and return its legacy (messages, entry) shape."""
+    from decafclaw.extensions.recent_journal import RecentJournalExtension
+
+    context.composer.mode = mode
+    contribution = RecentJournalExtension({}, config)._contribute(context)
+    if contribution is None:
+        return [], None
+    return contribution.messages, contribution.source_entry
+
 
 # -- Dataclass construction ---------------------------------------------------
 
@@ -226,8 +264,8 @@ class TestAutoRefreshSkills:
 
 class TestComposeWikiContext:
     def test_skips_for_heartbeat_mode(self, ctx, config):
-        composer = ContextComposer()
-        msgs, entry = composer._compose_vault_references(
+        ContextComposer()
+        msgs, entry = _wiki_refs(
             ctx,
             config,
             "hello",
@@ -240,8 +278,8 @@ class TestComposeWikiContext:
     def test_skips_when_no_vault_dir(self, ctx, config, tmp_path):
         # Point vault to non-existent dir
         config.vault.vault_path = str(tmp_path / "nonexistent")
-        composer = ContextComposer()
-        msgs, entry = composer._compose_vault_references(
+        ContextComposer()
+        msgs, entry = _wiki_refs(
             ctx,
             config,
             "hello",
@@ -257,11 +295,12 @@ class TestComposeWikiContext:
         vault_dir.mkdir()
         config.vault.vault_path = str(vault_dir)
         with patch(
-            "decafclaw.context_composer.parse_wiki_references", return_value=[{"page": "TestPage", "source": "mention"}]
+            "decafclaw.extensions.vault_references.parse_wiki_references",
+            return_value=[{"page": "TestPage", "source": "mention"}],
         ):
-            with patch("decafclaw.context_composer.read_wiki_page", return_value="Page content here"):
-                composer = ContextComposer()
-                msgs, entry = composer._compose_vault_references(
+            with patch("decafclaw.extensions.vault_references.read_wiki_page", return_value="Page content here"):
+                ContextComposer()
+                msgs, entry = _wiki_refs(
                     ctx,
                     config,
                     "@[[TestPage]]",
@@ -281,10 +320,11 @@ class TestComposeWikiContext:
         config.vault.vault_path = str(vault_dir)
         history = [{"role": "vault_references", "content": "old", "wiki_page": "TestPage"}]
         with patch(
-            "decafclaw.context_composer.parse_wiki_references", return_value=[{"page": "TestPage", "source": "mention"}]
+            "decafclaw.extensions.vault_references.parse_wiki_references",
+            return_value=[{"page": "TestPage", "source": "mention"}],
         ):
-            composer = ContextComposer()
-            msgs, entry = composer._compose_vault_references(
+            ContextComposer()
+            msgs, entry = _wiki_refs(
                 ctx,
                 config,
                 "@[[TestPage]]",
@@ -308,7 +348,7 @@ class TestComposeVaultGuide:
     def test_returns_section_when_present(self, config, tmp_path):
         self._write_guide(config, tmp_path, "# Vault Guide\nUser journals live in journals/.")
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert text.startswith("<vault_guide>")
         assert "journals/" in text
         assert entry is not None
@@ -320,7 +360,7 @@ class TestComposeVaultGuide:
         self._write_guide(config, tmp_path, "# Guide")
         config.vault_guide.enabled = False
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert text == ""
         assert entry is None
 
@@ -329,14 +369,14 @@ class TestComposeVaultGuide:
         vault_dir.mkdir()
         config.vault.vault_path = str(vault_dir)  # no AGENTS.md written
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert text == ""
         assert entry is None
 
     def test_skips_when_file_empty(self, config, tmp_path):
         self._write_guide(config, tmp_path, "   \n  ")
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert text == ""
         assert entry is None
 
@@ -351,7 +391,7 @@ class TestComposeVaultGuide:
     def test_skips_background_modes(self, config, tmp_path, mode):
         self._write_guide(config, tmp_path, "# Guide")
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, mode)
+        text, entry = _vault_guide(composer, config, mode)
         assert text == ""
         assert entry is None
 
@@ -362,7 +402,7 @@ class TestComposeVaultGuide:
         # Latin-1 byte 0xff is invalid UTF-8 → read_text raises UnicodeDecodeError
         (vault_dir / config.vault_guide.path).write_bytes(b"\xff\xfe guide")
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert text == ""
         assert entry is None
 
@@ -370,7 +410,7 @@ class TestComposeVaultGuide:
         config.vault_guide.max_tokens = 10  # ~40 char budget
         self._write_guide(config, tmp_path, "WORD " * 200)  # ~1000 chars
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert "[vault guide truncated]" in text
         assert entry.items_truncated == 1
 
@@ -383,7 +423,7 @@ class TestComposeVaultGuide:
         secret.write_text("TOP SECRET", encoding="utf-8")
         config.vault_guide.path = str(secret)  # absolute
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert text == ""
         assert entry is None
 
@@ -395,7 +435,7 @@ class TestComposeVaultGuide:
         secret.write_text("TOP SECRET", encoding="utf-8")
         config.vault_guide.path = "../secret.md"
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert text == ""
         assert entry is None
 
@@ -403,7 +443,7 @@ class TestComposeVaultGuide:
         self._write_guide(config, tmp_path, "# Guide\nlots of content here")
         config.vault_guide.max_tokens = 0
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert text == ""
         assert entry is None
 
@@ -413,7 +453,7 @@ class TestComposeVaultGuide:
         config.vault_guide.max_tokens = 20
         self._write_guide(config, tmp_path, "WORD " * 300)
         composer = ContextComposer()
-        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        text, entry = _vault_guide(composer, config, ComposerMode.INTERACTIVE)
         assert entry.items_truncated == 1
         # The truncated content (incl. marker) stays within the cap.
         assert "[vault guide truncated]" in text
@@ -447,9 +487,9 @@ class TestComposeTools:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 1000000
         small_tools = [_make_tool_def("tool_a"), _make_tool_def("tool_b")]
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=small_tools):
+        with patch("decafclaw.context_tools.collect_all_tool_defs", return_value=small_tools):
             composer = ContextComposer()
-            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx)
             assert len(active) == 2
             assert len(deferred) == 0
             assert text is None
@@ -466,9 +506,9 @@ class TestComposeTools:
         # Add one critical tool — should survive deferral
         critical_def = _make_tool_def("current_time", "Get current time", priority="critical")
         many_tools.append(critical_def)
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=many_tools):
+        with patch("decafclaw.context_tools.collect_all_tool_defs", return_value=many_tools):
             composer = ContextComposer()
-            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx)
             assert len(deferred) > 0
             assert text is not None
             assert entry.details["deferred_mode"] is True
@@ -482,9 +522,9 @@ class TestComposeTools:
         config.compaction.max_tokens = 1000000
         tools = [_make_tool_def("allowed_tool"), _make_tool_def("blocked_tool")]
         ctx.tools.allowed = {"allowed_tool"}
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.context_tools.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
-            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx)
             active_names = {t["function"]["name"] for t in active}
             assert "allowed_tool" in active_names
             assert "blocked_tool" not in active_names
@@ -497,9 +537,9 @@ class TestComposeTools:
         tools = [_make_tool_def(f"tool_{i}", "x" * 200) for i in range(20)]
         # A keyword match must remain deferred until explicitly fetched.
         ctx.tools.preempt_matches = {"tool_7"}
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.context_tools.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
-            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx)
             active_names = {t["function"]["name"] for t in active}
             assert "tool_7" not in active_names
             assert "tool_7" in {t["function"]["name"] for t in deferred}
@@ -508,11 +548,11 @@ class TestComposeTools:
         """Active tool with prompt_guidelines produces guidance_text and increments tokens."""
         tool = _make_tool_def("workspace_read", prompt_guidelines=["Guideline line."])
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[tool]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[tool]),
             patch("decafclaw.tool_definitions.TOOL_DEFINITIONS", [tool]),
         ):
             composer = ContextComposer()
-            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx, config)
+            active, deferred, text, guidance_text, entry = composer._compose_tools(ctx)
             assert guidance_text is not None
             assert "<tool_guidance>\n- Guideline line.\n</tool_guidance>" in guidance_text
             assert entry.details["has_guidance"] is True
@@ -522,7 +562,7 @@ class TestComposeTools:
         """Integration: compose() emits <tool_guidance> system message."""
         tool = _make_tool_def("workspace_read", prompt_guidelines=["Read exact lines."])
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[tool]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[tool]),
             patch("decafclaw.tool_definitions.TOOL_DEFINITIONS", [tool]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
@@ -646,7 +686,7 @@ class TestComposePreemptMatches:
         """When pre-emptive search is disabled, no matching happens and no entry is returned."""
         config.agent.preemptive_search.enabled = False
         tools = [_make_tool_def("vault_read", "Read a vault page")]
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.context_preempt.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx,
@@ -660,7 +700,7 @@ class TestComposePreemptMatches:
     def test_empty_user_message_no_match(self, ctx, config):
         """Empty user message with no prior history yields no matches."""
         tools = [_make_tool_def("vault_read", "vault page")]
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.context_preempt.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx,
@@ -677,7 +717,7 @@ class TestComposePreemptMatches:
             _make_tool_def("vault_backlinks", "List pages linking to a vault page"),
             _make_tool_def("unrelated_tool", "Totally unrelated"),
         ]
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.context_preempt.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx,
@@ -696,7 +736,7 @@ class TestComposePreemptMatches:
         """Tools already declared critical don't get re-promoted — they're in already."""
         crit = _make_tool_def("shell", "Run a shell command")
         crit["priority"] = "critical"
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[crit]):
+        with patch("decafclaw.context_preempt.collect_all_tool_defs", return_value=[crit]):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx,
@@ -712,7 +752,7 @@ class TestComposePreemptMatches:
         """Already-fetched tools don't get re-promoted."""
         ctx.skills.data = {"fetched_tools": ["vault_backlinks"]}
         tools = [_make_tool_def("vault_backlinks", "vault backlinks")]
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.context_preempt.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx,
@@ -727,7 +767,7 @@ class TestComposePreemptMatches:
         """max_matches caps the number of promoted tools."""
         config.agent.preemptive_search.max_matches = 3
         tools = [_make_tool_def(f"vault_tool_{i}", "vault operation") for i in range(10)]
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.context_preempt.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx,
@@ -747,7 +787,7 @@ class TestComposePreemptMatches:
             _make_tool_def("blocked_tool", "Also vault backlinks description"),
         ]
         ctx.tools.allowed = {"vault_backlinks"}
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.context_preempt.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx,
@@ -763,7 +803,7 @@ class TestComposePreemptMatches:
         """Calling _compose_preempt_matches resets ctx.tools.preempt_matches."""
         ctx.tools.preempt_matches = {"stale_tool"}
         tools = [_make_tool_def("vault_backlinks", "vault backlinks")]
-        with patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.context_preempt.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             composer._compose_preempt_matches(
                 ctx,
@@ -1066,7 +1106,7 @@ class TestCompose:
         config.compaction.max_tokens = 1000000
         composer = ContextComposer()
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1088,7 +1128,7 @@ class TestCompose:
         config.compaction.max_tokens = 1000000
         small_tools = [_make_tool_def("tool_a")]
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=small_tools),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=small_tools),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1109,7 +1149,7 @@ class TestCompose:
         many_tools = [_make_tool_def(f"t_{i}", "x" * 200) for i in range(20)]
         many_tools.append(_make_tool_def("think", "Think"))
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=many_tools),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=many_tools),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1137,7 +1177,7 @@ class TestCompose:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 1000000
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1158,7 +1198,7 @@ class TestCompose:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 1000000
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1177,7 +1217,7 @@ class TestCompose:
             {"entry_text": "memory entry", "source_type": "page", "similarity": 0.8},
         ]
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context",
                 new_callable=AsyncMock,
@@ -1221,7 +1261,7 @@ class TestCompose:
             },
         ]
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=tools),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=tools),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context",
                 new_callable=AsyncMock,
@@ -1253,7 +1293,7 @@ class TestCompose:
         config.vault_retrieval.max_tokens = 4000
         composer = ContextComposer()
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1273,7 +1313,7 @@ class TestCompose:
         config.vault_retrieval.max_tokens = 4000
         composer = ContextComposer()
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1293,7 +1333,7 @@ class TestCompose:
         config.vault_retrieval.max_tokens = 4000
         composer = ContextComposer()
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1312,7 +1352,7 @@ class TestComposeVaultGuideIntegration:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 1000000
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1337,7 +1377,7 @@ class TestComposeVaultGuideIntegration:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 1000000
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1386,7 +1426,7 @@ class TestHistoryArchivedRemap:
         ]
 
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1439,7 +1479,7 @@ class TestHistoryArchivedRemap:
         ]
 
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1479,7 +1519,7 @@ class TestHistoryArchivedRemap:
         ]
 
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1549,7 +1589,7 @@ class TestHistoryArchivedRemap:
         ]
 
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1603,7 +1643,7 @@ class TestCancelMarker:
             },
         ]
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1653,7 +1693,7 @@ class TestTurnAbortedMarker:
             },
         ]
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1760,7 +1800,7 @@ class TestBuildDiagnostics:
 
 class TestContextSidecar:
     def test_write_and_read(self, config):
-        from decafclaw.context_composer import read_context_sidecar, write_context_sidecar
+        from decafclaw.context_sidecars import read_context_sidecar, write_context_sidecar
 
         data = {"timestamp": "2026-04-02T12:00:00", "sources": [], "total_tokens_estimated": 100}
         write_context_sidecar(config, "test-conv", data)
@@ -1769,13 +1809,13 @@ class TestContextSidecar:
         assert result["total_tokens_estimated"] == 100
 
     def test_read_missing_returns_none(self, config):
-        from decafclaw.context_composer import read_context_sidecar
+        from decafclaw.context_sidecars import read_context_sidecar
 
         result = read_context_sidecar(config, "nonexistent-conv")
         assert result is None
 
     def test_write_fail_open(self, config):
-        from decafclaw.context_composer import write_context_sidecar
+        from decafclaw.context_sidecars import write_context_sidecar
 
         # Should not raise even with bad data
         with patch("decafclaw.context_composer.Path.write_text", side_effect=OSError("fail")):
@@ -1791,7 +1831,7 @@ class TestContextSidecar:
 
         # We also need to patch vault retrieval and tools defs for compose() since they are external
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1835,7 +1875,7 @@ class TestContextSidecar:
         assert composer.state.baseline_system_context is None
 
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1922,7 +1962,7 @@ class TestContextStatusInCompose:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 100000
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -1943,7 +1983,7 @@ class TestContextStatusInCompose:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 100000
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -2118,7 +2158,7 @@ class TestComposeExpandsBackgroundEvent:
         ]
 
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -2170,7 +2210,7 @@ class TestComposeExpandsBackgroundEvent:
         ]
 
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
@@ -2206,8 +2246,8 @@ class TestComposeRecentJournal:
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "just thinking about X")])
         composer = ContextComposer()
-        with patch("decafclaw.context_composer._now", return_value=now):
-            msgs, entry = composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         assert len(msgs) == 1
         assert msgs[0]["role"] == "recent_journal"
         assert "just thinking about X" in msgs[0]["content"]
@@ -2219,10 +2259,10 @@ class TestComposeRecentJournal:
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "entry one")])
         composer = ContextComposer()
-        with patch("decafclaw.context_composer._now", return_value=now):
-            composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
             # Same entries, later turn — nothing new since the mark.
-            msgs, entry = composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         assert msgs == []
         assert entry is None
 
@@ -2230,13 +2270,13 @@ class TestComposeRecentJournal:
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "old entry")])
         composer = ContextComposer()
-        with patch("decafclaw.context_composer._now", return_value=now):
-            composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         # A new entry lands; next turn should surface only it.
         later = datetime(2026, 7, 23, 15, 5)
         _write_journal_file(config, later, [("14:30", "old entry"), ("15:02", "brand new entry")])
-        with patch("decafclaw.context_composer._now", return_value=later):
-            msgs, entry = composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=later):
+            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         assert len(msgs) == 1
         assert "brand new entry" in msgs[0]["content"]
         assert "old entry" not in msgs[0]["content"]
@@ -2249,16 +2289,16 @@ class TestComposeRecentJournal:
 
         now = datetime(2026, 7, 23, 14, 30, 20)
         _write_journal_file(config, now, [("14:30", "first entry")])
-        with patch("decafclaw.context_composer._now", return_value=now):
-            ContextComposer()._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            _recent_journal(None, ctx, config, ComposerMode.INTERACTIVE)
 
         # Next turn: fresh context carrying the persisted cursor.
         next_ctx = Context(config=config, event_bus=ctx.event_bus)
         next_ctx.composer.injection_cursors = ctx.composer.injection_cursors
         later = datetime(2026, 7, 23, 14, 30, 50)
         _write_journal_file(config, later, [("14:30", "first entry"), ("14:30", "second entry")])
-        with patch("decafclaw.context_composer._now", return_value=later):
-            msgs, entry = ContextComposer()._compose_recent_journal(next_ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=later):
+            msgs, entry = _recent_journal(None, next_ctx, config, ComposerMode.INTERACTIVE)
         assert len(msgs) == 1
         assert "second entry" in msgs[0]["content"]
         assert "first entry" not in msgs[0]["content"]
@@ -2267,8 +2307,8 @@ class TestComposeRecentJournal:
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "entry one")])
         composer = ContextComposer()
-        with patch("decafclaw.context_composer._now", return_value=now):
-            composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         assert ctx.composer.injection_cursors.journal_ts == datetime(2026, 7, 23, 14, 30)
 
         # Compaction reset
@@ -2276,8 +2316,8 @@ class TestComposeRecentJournal:
         assert ctx.composer.injection_cursors.journal_ts is None
 
         # Next turn re-surfaces full baseline
-        with patch("decafclaw.context_composer._now", return_value=now):
-            msgs, entry = composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         assert len(msgs) == 1
         assert "entry one" in msgs[0]["content"]
 
@@ -2286,8 +2326,8 @@ class TestComposeRecentJournal:
         _write_journal_file(config, now, [("14:30", "entry")])
         config.recent_journal.enabled = False
         composer = ContextComposer()
-        with patch("decafclaw.context_composer._now", return_value=now):
-            msgs, entry = composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         assert msgs == []
         assert entry is None
 
@@ -2303,16 +2343,16 @@ class TestComposeRecentJournal:
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "entry")])
         composer = ContextComposer()
-        with patch("decafclaw.context_composer._now", return_value=now):
-            msgs, entry = composer._compose_recent_journal(ctx, config, mode)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            msgs, entry = _recent_journal(composer, ctx, config, mode)
         assert msgs == []
         assert entry is None
 
     def test_no_entries_returns_empty(self, ctx, config):
         now = datetime(2026, 7, 23, 15, 0)
         composer = ContextComposer()
-        with patch("decafclaw.context_composer._now", return_value=now):
-            msgs, entry = composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         assert msgs == []
         assert entry is None
 
@@ -2330,8 +2370,8 @@ class TestComposeRecentJournal:
         )
         config.recent_journal.max_tokens = 40
         composer = ContextComposer()
-        with patch("decafclaw.context_composer._now", return_value=now):
-            msgs, entry = composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         # Newest survives; older bulky entries trimmed away.
         assert "newest keep-me" in msgs[0]["content"]
         assert entry.items_truncated > 0
@@ -2345,11 +2385,11 @@ class TestComposeRecentJournalIntegration:
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "recently journaled fact")])
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
-            patch("decafclaw.context_composer._now", return_value=now),
+            patch("decafclaw.extensions.recent_journal._now", return_value=now),
         ):
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
@@ -2366,11 +2406,11 @@ class TestComposeRecentJournalIntegration:
         _write_journal_file(config, now, [("14:30", "retained journal fact")])
         history: list[dict] = []
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
-            patch("decafclaw.context_composer._now", return_value=now),
+            patch("decafclaw.extensions.recent_journal._now", return_value=now),
         ):
             composer = ContextComposer(state=ctx.composer)
             await composer.compose(ctx, "turn 1", history, mode=ComposerMode.INTERACTIVE)
@@ -2382,11 +2422,11 @@ class TestComposeRecentJournalIntegration:
 
         # Turn 2: compose with the same live history
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
-            patch("decafclaw.context_composer._now", return_value=now),
+            patch("decafclaw.extensions.recent_journal._now", return_value=now),
         ):
             res2 = await composer.compose(ctx, "turn 2", history, mode=ComposerMode.INTERACTIVE)
 
@@ -2408,13 +2448,13 @@ class TestComposeRecentJournalIntegration:
         history: list[dict] = []
         composer = ContextComposer(state=ctx.composer)
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context",
                 new_callable=AsyncMock,
                 side_effect=asyncio.CancelledError,
             ),
-            patch("decafclaw.context_composer._now", return_value=now),
+            patch("decafclaw.extensions.recent_journal._now", return_value=now),
         ):
             with pytest.raises(asyncio.CancelledError):
                 await composer.compose(ctx, "turn 1", history, mode=ComposerMode.INTERACTIVE)
@@ -2422,11 +2462,11 @@ class TestComposeRecentJournalIntegration:
         assert history == []
 
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),
-            patch("decafclaw.context_composer._now", return_value=now),
+            patch("decafclaw.extensions.recent_journal._now", return_value=now),
         ):
             result = await composer.compose(ctx, "turn 1 again", history, mode=ComposerMode.INTERACTIVE)
         user_content = " ".join(str(m.get("content", "")) for m in result.messages if m.get("role") == "user")
@@ -2436,7 +2476,7 @@ class TestComposeRecentJournalIntegration:
 
 class TestLastRequestSidecar:
     def test_read_missing_returns_none(self, config):
-        from decafclaw.context_composer import read_last_request_sidecar
+        from decafclaw.context_sidecars import read_last_request_sidecar
 
         assert read_last_request_sidecar(config, "nonexistent-conv") is None
         assert read_last_request_sidecar(config, "") is None
@@ -2462,7 +2502,7 @@ class TestPromptCachePrefixStability:
 
         async def run_turn(text: str) -> ComposedContext:
             with (
-                patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+                patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
                 patch(
                     "decafclaw.extensions.vault_retrieval.retrieve_memory_context",
                     new_callable=AsyncMock,
@@ -2504,7 +2544,7 @@ class TestPromptCachePrefixStability:
 
         # A restart rebuilds history from the archive; it must match the live view.
         with (
-            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
                 "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
             ),

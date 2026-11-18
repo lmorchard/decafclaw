@@ -1589,7 +1589,7 @@ async def test_context_export_requires_auth_before_format(suffix, unauthed_clien
 
 
 async def test_context_optional_and_extra_diagnostics_are_unchanged(authed_client, http_config):
-    from decafclaw.context_composer import write_context_sidecar
+    from decafclaw.context_sidecars import write_context_sidecar
 
     conv = (await authed_client.post("/api/conversations", json={})).json()
     conv_id = conv["conv_id"]
