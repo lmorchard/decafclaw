@@ -27,19 +27,13 @@ from decafclaw.skills.vault.tools import (
 
 from .archive import LLM_ROLES
 from .attachments import resolve_attachments
-from .config_types import RetrievalMode
 from .conversation_paths import sidecar_path
 from .image_budget import apply_image_budget
 from .memory_context import (
-    _trim_to_token_budget,
-    format_memory_context,
-    format_memory_headlines,
     get_already_injected_pages,
-    get_already_retrieved_paths,
     parse_bare_mentions,
     parse_wiki_references,
     read_wiki_page,
-    retrieve_memory_context,
 )
 from .preempt_search import match_tools, tokenize
 from .prompts import wrap_xml
@@ -214,6 +208,14 @@ class ComposerState:
     # lifecycle hook extensions can classify interactive vs unattended turns
     # without re-deriving the mapping from ctx.task_mode.
     mode: ComposerMode = ComposerMode.INTERACTIVE
+    # Remaining token budget for dynamic PRE_COMPOSE contributions, computed
+    # by compose() from the model window minus fixed costs (#1048, #1489).
+    # ``None`` means the composer could not determine a budget.
+    dynamic_token_budget: int | None = None
+    # Latest vault retrieval output, carried to ComposedContext for
+    # reflection and the Context Inspector. Owned by VaultRetrievalExtension.
+    last_retrieved_context_text: str = ""
+    last_memory_results: list[dict] = field(default_factory=list)
     last_prompt_tokens_actual: int = 0
     last_completion_tokens_actual: int = 0
     last_cached_prompt_tokens_actual: int = 0  # prompt tokens served from provider cache (#480)
@@ -724,19 +726,14 @@ class ContextComposer:
             # Fall back to fixed max_tokens if context_window_size is unconfigured
             memory_budget = ceiling
 
-        # -- Memory context (injected before user message in history) --
-        memory_msgs, retrieved_context_text, mc_results, memory_entry = await self._compose_vault_retrieval(
-            ctx,
-            config,
-            user_message,
-            mode,
-            token_budget=memory_budget,
-            history=history,
-        )
-        for mm in memory_msgs:
-            to_archive.append(mm)
-        if memory_entry:
-            sources.append(memory_entry)
+        # PRE_COMPOSE extensions that own a dynamic pool (vault retrieval,
+        # #1489) trim to this budget; core owns fixed-cost accounting.
+        ctx.composer.dynamic_token_budget = memory_budget
+        # Contribution owners refill these each turn. Clear them first so a
+        # disabled extension cannot leak the previous turn's retrieval into
+        # reflection or the Context Inspector.
+        ctx.composer.last_retrieved_context_text = ""
+        ctx.composer.last_memory_results = []
 
         # -- PRE_COMPOSE lifecycle collector hooks (#1454, #1486) --
         # HEAD messages mount outside the archived history (see below); DELTA
@@ -759,18 +756,17 @@ class ContextComposer:
 
         # -- Build LLM messages (filter + remap roles) --
         # Combine archived history with this turn's injections in the same
-        # order they'll be archived: prior history → wiki → notes →
-        # recent journal → memory → PRE_COMPOSE DELTA → PRE_COMPOSE TAIL
-        # (legacy <recalled_facts> included) → system update → user message.
-        # The combined list is what the LLM sees. DELTA mounts after archived
-        # history and before tail envelopes so append-only contributions land
-        # chronologically before per-turn dynamic context.
+        # order they'll be archived: prior history → wiki → recent journal →
+        # PRE_COMPOSE DELTA → PRE_COMPOSE TAIL (vault retrieval, legacy
+        # <recalled_facts>) → system update → user message. The combined list
+        # is what the LLM sees. DELTA mounts after archived history and before
+        # tail envelopes so append-only contributions land chronologically
+        # before per-turn dynamic context.
         combined = [
             *history,
             *wiki_msgs,
             *mention_msgs,
             *recent_journal_msgs,
-            *memory_msgs,
             *delta_msgs,
             *tail_hook_msgs,
         ]
@@ -875,10 +871,6 @@ class ContextComposer:
         if preempt_skill_text:
             tail_msgs.append({"role": "skill_hint", "content": preempt_skill_text})
 
-        # -- Publish memory context event (after user message for UI ordering) --
-        if mc_results and config.vault_retrieval.show_in_ui:
-            await ctx.publish("vault_retrieval", text=retrieved_context_text, results=mc_results)
-
         # -- Total token estimate --
         total_tokens = sum(s.tokens_estimated for s in sources)
 
@@ -914,8 +906,8 @@ class ContextComposer:
             total_tokens_estimated=total_tokens,
             sources=sources,
             messages_to_archive=to_archive,
-            retrieved_context_text=retrieved_context_text,
-            memory_results=mc_results,
+            retrieved_context_text=ctx.composer.last_retrieved_context_text,
+            memory_results=list(ctx.composer.last_memory_results),
         )
 
     def _compose_system_prompt(self, config) -> tuple[str, SourceEntry]:
@@ -933,244 +925,6 @@ class ContextComposer:
             items_included=1,
         )
         return text, entry
-
-    def _score_candidates(self, candidates: list[dict], config) -> list[dict]:
-        """Score retrieval candidates using recency + importance + similarity.
-
-        Each candidate gets a composite_score field. Returns sorted descending.
-        """
-        relevance = config.relevance
-        now = datetime.now()
-
-        for c in candidates:
-            similarity = min(1.0, max(0.0, c.get("similarity", 0.0)))
-
-            # Recency: exponential decay based on hours since modification
-            modified_at = c.get("modified_at", "")
-            if modified_at:
-                try:
-                    mod_time = datetime.fromisoformat(modified_at)
-                    hours = max(0.0, (now - mod_time).total_seconds() / 3600)
-                    recency = relevance.recency_decay_rate**hours
-                    recency = min(1.0, max(0.0, recency))
-                except (ValueError, TypeError):
-                    recency = 0.5
-            else:
-                recency = 0.5
-
-            importance = min(1.0, max(0.0, c.get("importance", 0.5)))
-
-            c["recency"] = recency
-            c["composite_score"] = (
-                relevance.w_similarity * similarity
-                + relevance.w_recency * recency
-                + relevance.w_importance * importance
-            )
-
-        candidates.sort(key=lambda c: c.get("composite_score", 0), reverse=True)
-        return candidates
-
-    async def _compose_vault_retrieval(
-        self,
-        ctx,
-        config,
-        user_message: str,
-        mode: ComposerMode,
-        token_budget: int | None = None,
-        history: list | None = None,
-    ) -> tuple[list[dict], str, list[dict], SourceEntry | None]:
-        """Retrieve and format memory context for injection.
-
-        Args:
-            token_budget: Dynamic budget from composer. If None, falls back
-                to config.vault_retrieval.max_tokens for backward compatibility.
-            history: Archived conversation history to rebuild the
-                already-injected page set from (``#1157``). None means no history.
-
-        Returns (messages_to_inject, formatted_text, raw_results, source_entry).
-        Retrieval candidates are scored by composite relevance and selected
-        by score order within the token budget.
-        Fail-open: exceptions log a warning and return empty results.
-
-        Mode-aware (#301): ``config.vault_retrieval.mode`` (a
-        ``RetrievalMode`` enum) controls what gets injected:
-          - ``always``    full-body candidates (default, back-compat).
-          - ``headlines`` compact title/summary/score lines only;
-                          agent calls ``vault_read`` for full bodies.
-          - ``on_demand`` no auto-injection; agent drives via
-                          ``vault_search`` / ``vault_read``.
-        Unknown values log a warning and fall back to ``always``.
-        ``@[[Page]]`` mentions inject regardless of mode (handled
-        separately by ``_compose_vault_references``).
-        """
-        skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
-        if ctx.skip_vault_retrieval or mode in skip_modes:
-            return [], "", [], None
-
-        # Resolve retrieval mode early so the on_demand path can
-        # short-circuit before any retrieval work runs.
-        retrieval_mode = self._resolve_retrieval_mode(config)
-
-        if retrieval_mode == RetrievalMode.ON_DEMAND:
-            entry = SourceEntry(
-                source="memory",
-                tokens_estimated=0,
-                items_included=0,
-                items_truncated=0,
-                details={"mode": retrieval_mode, "injection_skipped": True},
-            )
-            return [], "", [], entry
-
-        try:
-            results = await retrieve_memory_context(config, user_message)
-            if not results:
-                entry = SourceEntry(
-                    source="memory",
-                    tokens_estimated=0,
-                    items_included=0,
-                    items_truncated=0,
-                    details={"mode": retrieval_mode, "injection_skipped": True},
-                )
-                return [], "", [], entry
-
-            # Select by token budget (score order replaces similarity order)
-            budget = token_budget if token_budget is not None else config.vault_retrieval.max_tokens
-            score_threshold = config.relevance.min_composite_score
-
-            # Score the full retrieved candidate pool before the already-injected
-            # dedupe filter runs, so suppressed (already-injected) candidates
-            # remain observable in retrieval telemetry (#197/#1157).
-            all_scored = self._score_candidates(list(results), config)
-            total_candidates = len(all_scored)
-
-            # Filter out candidates already injected in this conversation
-            # (they're already in history — re-injecting wastes tokens). The
-            # already-retrieved set is rebuilt from archived history each turn
-            # (#1157) so a fresh composer state still suppresses repeats from
-            # earlier turns; unioned with this turn's in-flight injections.
-            already_injected = get_already_retrieved_paths(history) if history is not None else set()
-            already_injected |= self.state.injected_paths
-            results = [r for r in all_scored if r.get("file_path", "") not in already_injected]
-            suppressed = total_candidates - len(results)
-            if suppressed:
-                log.debug("Memory context: suppressed %d already-injected candidates", suppressed)
-
-            if not results:
-                await self._publish_retrieval_telemetry(
-                    ctx,
-                    all_scored=all_scored,
-                    survived_paths=set(),
-                    already_injected=already_injected,
-                    score_threshold=score_threshold,
-                )
-                entry = SourceEntry(
-                    source="memory",
-                    tokens_estimated=0,
-                    items_included=0,
-                    items_truncated=suppressed,
-                    details={
-                        "mode": retrieval_mode,
-                        "injection_skipped": True,
-                        "drop_reason": "already_injected",
-                        "suppressed": suppressed,
-                        "candidates_considered": total_candidates,
-                        "token_budget": budget,
-                        "budget_source": "dynamic" if token_budget is not None else "fixed",
-                    },
-                )
-                return [], "", [], entry
-
-            # Drop candidates below minimum score threshold
-            results = [r for r in results if r.get("composite_score", 0) >= score_threshold]
-
-            # Cap candidate count to max_results (#1048)
-            max_results = config.vault_retrieval.max_results
-            if max_results and max_results > 0:
-                results = results[:max_results]
-
-            log.debug(
-                "Memory context: %d candidates, budget=%d tokens (%s, mode=%s)",
-                total_candidates,
-                budget,
-                "dynamic" if token_budget is not None else "fixed",
-                retrieval_mode,
-            )
-            if budget <= 0:
-                results = []
-            else:
-                results = _trim_to_token_budget(results, budget)
-            if results:
-                log.debug(
-                    "Memory context: selected %d/%d candidates (scores %.3f–%.3f)",
-                    len(results),
-                    total_candidates,
-                    results[0].get("composite_score", 0),
-                    results[-1].get("composite_score", 0),
-                )
-
-            # Retrieval-event telemetry (#197 Phase 0): publish the full
-            # scored candidate list — not just what got injected — tagged
-            # with include/drop verdicts. Fail-open: telemetry must never
-            # break retrieval.
-            await self._publish_retrieval_telemetry(
-                ctx,
-                all_scored=all_scored,
-                survived_paths={r.get("file_path", "") for r in results},
-                already_injected=already_injected,
-                score_threshold=score_threshold,
-            )
-
-            # Compute per-candidate token estimates for diagnostics
-            for r in results:
-                r["tokens_estimated"] = estimate_tokens(r.get("entry_text", ""))
-
-            # Format per mode. In headlines mode the message is much
-            # smaller — the model gets a directory of available pages
-            # and pulls full bodies via vault_read on demand.
-            if retrieval_mode == RetrievalMode.HEADLINES:
-                formatted = format_memory_headlines(
-                    results,
-                    max_summary_chars=config.vault_retrieval.headline_summary_max_chars,
-                )
-            else:
-                formatted = format_memory_context(results)
-            msg: dict = {"role": "vault_retrieval", "content": formatted}
-            # Record which vault pages this injection surfaced so later turns
-            # can rebuild the already-injected set from archived history (#1157).
-            msg["file_paths"] = [r.get("file_path", "") for r in results if r.get("file_path")]
-
-            # Track injected paths so they're suppressed in future turns.
-            # In headlines mode the model only saw the headline (not the
-            # body), but suppressing repeats still matches user intent —
-            # if the agent wanted the body it had a chance via vault_read.
-            for r in results:
-                path = r.get("file_path", "")
-                if path:
-                    self.state.injected_paths.add(path)
-
-            tokens = estimate_tokens(formatted)
-            top_score = results[0].get("composite_score", 0) if results else 0
-            min_score = results[-1].get("composite_score", 0) if results else 0
-            entry = SourceEntry(
-                source="memory",
-                tokens_estimated=tokens,
-                items_included=len(results),
-                items_truncated=total_candidates - len(results),
-                details={
-                    "mode": retrieval_mode,
-                    "injection_skipped": not results,
-                    "top_score": round(top_score, 3),
-                    "min_score": round(min_score, 3),
-                    "candidates_considered": total_candidates,
-                    "token_budget": budget,
-                    "budget_source": "dynamic" if token_budget is not None else "fixed",
-                },
-            )
-            return [msg] if results else [], formatted, results, entry
-
-        except Exception:
-            log.warning("Memory context composition failed", exc_info=True)
-            return [], "", [], None
 
     async def _compose_pre_compose_hooks(
         self,
@@ -1196,8 +950,18 @@ class ContextComposer:
             return [], [], [], []
 
         lifecycle_cfg = getattr(config, "lifecycle", None)
-        timeout = getattr(lifecycle_cfg, "pre_compose_timeout", 0.3)
+        default_timeout = getattr(lifecycle_cfg, "pre_compose_timeout", 0.3)
         token_ceiling = getattr(lifecycle_cfg, "pre_compose_token_ceiling", 300)
+
+        def _hook_timeout(hook) -> float:
+            """Per-hook bound; extensions may declare a larger one (#1489)."""
+            owner = getattr(hook, "__self__", None)
+            declared = getattr(owner, "pre_compose_timeout", None)
+            if declared is None:
+                declared = getattr(hook, "pre_compose_timeout", None)
+            if isinstance(declared, (int, float)) and declared > 0:
+                return float(declared)
+            return float(default_timeout)
 
         async def _call_hook(hook):
             sig = inspect.signature(hook)
@@ -1221,14 +985,18 @@ class ContextComposer:
 
         async def _safe_call_hook(hook):
             try:
-                return await _call_hook(hook)
+                return await asyncio.wait_for(_call_hook(hook), timeout=_hook_timeout(hook))
+            except asyncio.TimeoutError:
+                log.warning("PRE_COMPOSE hook %s timed out after %.3fs", hook, _hook_timeout(hook))
+                return None
             except Exception as e:
                 log.warning("PRE_COMPOSE hook %s failed: %s", hook, e)
                 return None
 
         tasks = [asyncio.ensure_future(_safe_call_hook(h)) for h in hooks]
+        outer_timeout = max(_hook_timeout(h) for h in hooks) + 0.05
         try:
-            done, pending = await asyncio.wait(tasks, timeout=timeout)
+            done, pending = await asyncio.wait(tasks, timeout=outer_timeout)
         except Exception as e:
             log.warning("PRE_COMPOSE gathering failed: %s", e)
             return [], [], [], []
@@ -1237,14 +1005,18 @@ class ContextComposer:
             # Discarding completed contributions would silently lose context
             # that a hook already advanced cursors for (scratchpad notes,
             # #1487) whenever a sibling hook is slow.
-            log.warning("PRE_COMPOSE hooks timed out after %.3fs", timeout)
+            log.warning("PRE_COMPOSE hook exceeded its bound and ignored cancellation")
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
         results = []
         for task in tasks:
-            if task not in done or task.cancelled():
+            if task not in done:
                 continue
+            if task.cancelled():
+                # A hook that received cancellation (user cancel, shutdown)
+                # must not have that swallowed by the fail-open collector.
+                raise asyncio.CancelledError()
             try:
                 results.append(task.result())
             except Exception as e:
@@ -1357,67 +1129,6 @@ class ContextComposer:
             envelope_text = f"<recalled_facts>\n{trimmed_body}\n</recalled_facts>"
 
         return {"role": "recalled_facts", "content": envelope_text}
-
-    @staticmethod
-    def _resolve_retrieval_mode(config) -> RetrievalMode:
-        """Validate ``vault_retrieval.mode``; unknown values fall back
-        to ``always`` with a warning. See #301."""
-        raw = getattr(config.vault_retrieval, "mode", None) or RetrievalMode.ALWAYS
-        try:
-            return RetrievalMode(raw)
-        except ValueError:
-            log.warning(
-                "Unknown vault_retrieval.mode %r; falling back to 'always'",
-                raw,
-            )
-            return RetrievalMode.ALWAYS
-
-    @staticmethod
-    async def _publish_retrieval_telemetry(
-        ctx,
-        all_scored: list[dict],
-        survived_paths: set[str],
-        already_injected: set[str],
-        score_threshold: float,
-    ) -> None:
-        """Publish full scored candidate list tagged with include/drop verdicts.
-
-        Fail-open: telemetry must never break retrieval (#197 Phase 0).
-        """
-        try:
-            candidates_payload = []
-            for c in all_scored:
-                path = c.get("file_path", "")
-                included = path in survived_paths
-                if included:
-                    drop_reason = None
-                elif path in already_injected:
-                    # Already injected this conversation — suppressed as a
-                    # repeat rather than by score/budget (#1157).
-                    drop_reason = "already_injected"
-                elif c.get("composite_score", 0) < score_threshold:
-                    drop_reason = "score"
-                else:
-                    drop_reason = "budget"
-                candidates_payload.append(
-                    {
-                        "file_path": path,
-                        "source_type": c.get("source_type", ""),
-                        "similarity": c.get("similarity", 0.0),
-                        "recency": c.get("recency", 0.0),
-                        "importance": c.get("importance", 0.0),
-                        "composite_score": c.get("composite_score", 0.0),
-                        "included": included,
-                        "drop_reason": drop_reason,
-                    }
-                )
-            await ctx.publish(
-                "retrieval_event",
-                conv_id=ctx.conv_id,
-                candidates=candidates_payload,
-            )
-        except Exception as exc:
-            log.debug("Retrieval telemetry emit failed: %s", exc)
 
     def _compose_vault_references(
         self,

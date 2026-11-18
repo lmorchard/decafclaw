@@ -225,7 +225,7 @@ Providers normalize their native counter into a common `cached_tokens` usage key
 
 ## Vault retrieval
 
-Before each interactive turn, the composer automatically surfaces relevant vault content — without the agent needing to explicitly search.
+Before each interactive turn, the default-on [`VaultRetrievalExtension`](extensions.md#vault-retrieval-default-on) surfaces relevant vault content as a `PRE_COMPOSE` `TAIL` contribution — without the agent needing to explicitly search. The composer owns fixed-cost accounting; the extension trims to `ComposerState.dynamic_token_budget`.
 
 ### How it works
 
@@ -242,7 +242,7 @@ The context is archived for auditability and persists in conversation history.
 
 Automatic proactive retrieval is deduplicated per conversation: a vault page that an earlier turn already surfaced is not surfaced again.
 
-1. After injection, the composer records the injected vault file paths on the `vault_retrieval` message it archives (`file_paths`).
+1. After injection, the extension records the injected vault file paths on the `vault_retrieval` message it archives (`file_paths`) and in `ComposerState.injected_paths`.
 2. On each later turn, the composer rebuilds the already-retrieved set from archived history via `get_already_retrieved_paths` and filters retrieval candidates (keyed on `file_path`) against it. Explicit references (`@[[Page]]` in `_compose_vault_references`) continue to use `get_already_injected_pages` to track `vault_references` separately, so explicit mentions are not suppressed by earlier proactive retrievals.
 3. The live `ComposerState.injected_paths` set is still unioned in for in-flight injections within a turn.
 
@@ -252,7 +252,7 @@ Compaction resets the in-memory injected paths (`ComposerState.reset_for_compact
 
 ### Configuration
 
-All settings live under the `vault_retrieval` section in `config.json`:
+Legacy settings live under the `vault_retrieval` section in `config.json`; `extensions.vault_retrieval.options` overrides them (see [extensions](extensions.md#vault-retrieval-default-on)):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -373,9 +373,9 @@ records which retrieval candidates were considered and which survived to
 injection — the measurement foundation later phases (notably an
 importance-formula rework) build on.
 
-Once per interactive turn, after `_score_candidates` produces the full
+Once per interactive turn, after `score_candidates` produces the full
 scored candidate list and before the `min_composite_score` threshold and
-token-budget trim are applied, `_compose_vault_retrieval` publishes a
+token-budget trim are applied, `VaultRetrievalExtension` publishes a
 `retrieval_event` on the event bus. The full scored list includes
 already-injected candidates, which are tagged with
 `drop_reason: "already_injected"` instead of being silently absent (#1157).

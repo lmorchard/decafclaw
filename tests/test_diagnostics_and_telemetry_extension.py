@@ -98,6 +98,7 @@ async def test_empty_conversation_id_is_noop(ctx):
 
 @pytest.mark.asyncio
 async def test_attach_to_bus_and_dispatch(ctx):
+    ctx.event_bus = EventBus()
     """The extension's hooks are what the bus gives the core loop."""
     ext = _extension(ctx.config)
     ext.enable(ctx.event_bus)
@@ -181,6 +182,7 @@ async def test_token_counters_respect_metrics_switch(ctx):
 
 @pytest.mark.asyncio
 async def test_disable_detaches_hooks_and_drops_snapshots(ctx):
+    ctx.event_bus = EventBus()
     ext = _extension(ctx.config)
     ext.enable(ctx.event_bus)
     ext.on_before_llm_call(ctx, [{"role": "user", "content": "hi"}], [])
@@ -208,6 +210,7 @@ def test_disabled_extension_has_no_hooks(config):
 
 
 def test_enabled_extension_initialized_from_config(ctx):
+    ctx.event_bus = EventBus()
     ctx.config.extensions["diagnostics_and_telemetry"] = ExtensionConfig(
         enabled=True, type="diagnostics_and_telemetry", options={}
     )

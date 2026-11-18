@@ -116,7 +116,7 @@ def _compose(ctx, config, user_message, history):
     config.compaction.max_tokens = 1000000
     with (
         patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
-        patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
+        patch("decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
     ):
         composer = ContextComposer()
         return composer.compose(ctx, user_message, history, mode=ComposerMode.INTERACTIVE)

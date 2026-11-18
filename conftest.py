@@ -32,13 +32,27 @@ def config(tmp_data):
 @pytest.fixture
 def ctx(config):
     """Provides a Context with config and event bus."""
+    from decafclaw.extensions import (
+        ensure_builtin_extension_types,
+        get_default_enabled_extension_types,
+        get_extension_type,
+    )
     from decafclaw.skills import discover_skills
+
     bus = EventBus()
     context = Context(config=config, event_bus=bus)
     context.conv_id = "test-conv"
     context.channel_id = "test-channel"
     context.user_id = "testuser"
     context.config.discovered_skills = discover_skills(config)
+    # Mirror runtime seeding: default-enabled core extensions run on every
+    # conversation. `load_config` seeds these entries in production; the test
+    # Config is built directly, so enable the registered defaults here.
+    ensure_builtin_extension_types()
+    for name in get_default_enabled_extension_types():
+        factory = get_extension_type(name)
+        assert factory is not None
+        factory({}, config).enable(bus)
     return context
 
 

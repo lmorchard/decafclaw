@@ -123,6 +123,7 @@ def ensure_builtin_extension_types() -> None:
     from . import improvement_scout as _improvement_scout
     from . import mem0 as _mem0
     from . import scratchpad_notes as _scratchpad_notes
+    from . import vault_retrieval as _vault_retrieval
 
     if get_extension_type("diagnostics_and_telemetry") is None:
         register_extension_type(
@@ -134,6 +135,12 @@ def ensure_builtin_extension_types() -> None:
         register_extension_type(
             "scratchpad_notes",
             _scratchpad_notes.ScratchpadNotesExtension,
+            default_enabled=True,
+        )
+    if get_extension_type("vault_retrieval") is None:
+        register_extension_type(
+            "vault_retrieval",
+            _vault_retrieval.VaultRetrievalExtension,
             default_enabled=True,
         )
     if get_extension_type("mem0") is None:
@@ -157,6 +164,11 @@ class Extension(Protocol):
 
 class BaseExtension:
     """Convenience base class for extensions that track their own subscriptions."""
+
+    # Optional per-hook bound for ``TurnLifecycle.PRE_COMPOSE`` dispatch. ``None``
+    # uses ``lifecycle.pre_compose_timeout``; a heavyweight collector (such as
+    # vault retrieval) may declare a larger value (#1489).
+    pre_compose_timeout: float | None = None
 
     def __init__(self, name: str = ""):
         self.name = name

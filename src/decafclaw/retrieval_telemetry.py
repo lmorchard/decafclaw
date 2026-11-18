@@ -9,7 +9,7 @@ injected — tagged with an ``included`` verdict and, for dropped candidates,
 a ``drop_reason`` (``"score"`` for below the composite-score threshold,
 ``"budget"`` for trimmed by the token budget, ``"already_injected"`` for
 suppressed because the conversation already surfaced that page). Published
-once per interactive turn from ``ContextComposer._compose_vault_retrieval``.
+once per interactive turn from ``extensions.vault_retrieval``.
 
 This is Phase 0 of #197: later phases (notably Phase 5's importance
 formula) consume the aggregated form of this stream to learn which vault
