@@ -1,4 +1,6 @@
-from __future__ import annotations
+# No `from __future__ import annotations` here: the skill loader execs this
+# module in a fresh object that can leave sys.modules, and postponed dataclass
+# annotations then crash loading (see docs/skills.md). Quote them instead.
 
 import logging
 import re

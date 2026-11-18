@@ -141,6 +141,12 @@ TOOL_DEFINITIONS = [
 ]
 ```
 
+##### No `from __future__ import annotations` in tools.py
+
+Do not add `from __future__ import annotations` to a tools.py. The loader compiles the file and execs it in a fresh module object; with PEP 563 every annotation becomes a string, and `typing.get_type_hints` (which `load_sub_config` calls on the skill's SkillConfig) resolves those strings through `sys.modules[cls.__module__]`. When that registration is gone — a failed re-import pops it, or a same-named skill shadows it — any non-builtin annotation (a `Path`, a custom type) raises `NameError` and the skill is silently dropped from the catalog. Quote the annotation instead: `ctx: "Context"`.
+
+A CI gate enforces this for bundled skills: `make check-skill-annotations` (part of `make check`) fails on any `src/decafclaw/skills/**/tools.py` that imports it.
+
 #### Tool names must not collide with core tools
 
 Pick a name no core tool already uses. `debug_context`, `shell`, `read_file` and friends are taken — check `docs/tools.md` or the catalog before choosing.

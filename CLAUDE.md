@@ -28,7 +28,7 @@ AI agent testbed with Mattermost, web, and terminal clients. Multi-provider LLMs
 
 - Use bounded searches. After 2–3 targeted queries fail to locate a fact, stop varying searches and read the relevant caller/callee top-to-bottom.
 - For test failures, inspect the traceback and actual output (`pytest -vv -s`) instead of searching for every possible caller.
-- **Compose gates from their Make targets.** `make check` depends on `install-js check-npm-policy check-message-types fmt-check lint typecheck check-js check-browser-assets`. Do not duplicate their commands in `check` or CI.
+- **Compose gates from their Make targets.** `make check` depends on `install-js check-npm-policy check-message-types check-skill-annotations fmt-check lint typecheck check-js check-browser-assets`. Do not duplicate their commands in `check` or CI.
 - When adding a gate, confirm CI invokes its target, inspect the job log for execution, and prove it fails on a deliberate fault in a throwaway file. Pyright exits 0 for warnings alone; reporting a path does not necessarily gate it.
 - Tests use `pytest-xdist -n auto`. Never use fixed `asyncio.sleep(X)` waits. Await the task/event or patch the clock.
 - Tests running a real scheduler/timer must patch the work function. Patch `decafclaw.schedules.run_schedule_task` even for “no tasks” cases: bundled `dream`/`garden` schedules can be due on fresh data.
@@ -66,7 +66,7 @@ See [eval loop](docs/eval-loop.md). Unit tests cover deterministic behavior; eva
 Read [tools](docs/tools.md), [priority](docs/tool-priority.md), [search](docs/tool-search.md), and [pre-emptive search](docs/preemptive-tool-search.md).
 
 - **Every tool receives `ctx: "Context"` first**, even when unused. Import Context under `if TYPE_CHECKING:` to avoid the context/composer/skill import cycle. An untyped ctx prevents Pyright checking its calls.
-- **Quote the annotation. Do not add `from __future__ import annotations` to a skill's `tools.py`.** The loader executes modules outside `sys.modules`; postponed dataclass annotations can crash loading and silently remove the skill from the catalog.
+- **Quote the annotation. Do not add `from __future__ import annotations` to a skill's `tools.py`.** The loader executes modules outside `sys.modules`; postponed dataclass annotations can crash loading and silently remove the skill from the catalog. Enforced for bundled skills by `make check-skill-annotations` (part of `make check`).
 - `execute_tool` detects sync/async; sync tools run through `asyncio.to_thread`. Calls run concurrently with `asyncio.gather` and a semaphore (`max_concurrent_tools`, default 5). Each gets a forked ctx and its own `current_tool_call_id`.
 - Return errors as `ToolResult(text="[error: ...]")`, never bare strings. `ToolResult.data` is structured output, rendered as fenced JSON.
 - Group tools by noun, not verb (`conversation_search` and `conversation_compact` share a module).
@@ -182,7 +182,7 @@ Common Make targets (see `Makefile` for the complete list):
 | Full gate | `check` (composes its prerequisite targets) |
 | Web | `check-js`, `test-js`, `vendor`, `gen-api-client`, `check-browser-assets` |
 | TUI | `check-tui`, `test-tui` (separate from `check`) |
-| Policy/generated types | `check-npm-policy`, `gen-message-types`, `check-message-types` |
+| Policy/generated types | `check-npm-policy`, `gen-message-types`, `check-message-types`, `check-skill-annotations` |
 | Evals | `eval`, `eval-tools`, `eval-history`, `build-eval-fixtures` |
 | Data | `config`, `reindex`, `prune-embeddings`, `migrate-sidecars`, `migrate-sessions` |
 | Worktrees | `prune-worktrees-dry`, `prune-worktrees` |
