@@ -245,6 +245,50 @@ async def test_confirm_token_is_single_use(client, bus):
 
 
 @pytest.mark.asyncio
+async def test_confirm_via_get_request(client, bus):
+    """GET requests (e.g. clicking a link in a browser/email) resolve and return HTML."""
+    received = []
+    bus.subscribe(lambda e: received.append(e))
+
+    token = get_token_registry().create("ctx-1", "shell", "echo hello", action="approve")
+    resp = await client.get(f"/actions/confirm?token={token}")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert "Approved" in resp.text
+    await asyncio.sleep(0)
+
+    assert len(received) == 1
+    assert received[0]["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_confirm_via_get_invalid_token(client):
+    """GET request with invalid or expired token returns 403 HTML page."""
+    resp = await client.get("/actions/confirm?token=expired-or-bad")
+    assert resp.status_code == 403
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert "Token Expired or Invalid" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_cancel_via_get_request(client, bus):
+    """GET request to /actions/cancel cancels turn and returns HTML."""
+    received = []
+    bus.subscribe(lambda e: received.append(e))
+
+    token = get_token_registry().create("conv-123", "", "", action="cancel")
+    resp = await client.get(f"/actions/cancel?token={token}")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert "Stopped" in resp.text
+    await asyncio.sleep(0)
+
+    assert len(received) == 1
+    assert received[0]["type"] == "cancel_turn"
+    assert received[0]["conv_id"] == "conv-123"
+
+
+@pytest.mark.asyncio
 async def test_confirm_with_static_secret_fallback(client, bus):
     """Static secret still works as fallback."""
     received = []

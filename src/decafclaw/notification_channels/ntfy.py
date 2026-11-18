@@ -46,6 +46,10 @@ def _publish_url(cfg: Any) -> str:
 
     ``server_url`` must be an absolute http(s) URL and ``topic`` must be
     non-empty; anything else disables delivery instead of guessing.
+
+    When publishing as JSON, ntfy requires POSTing to the root URL (not
+    ``{server}/{topic}``); the topic is specified inside the payload body.
+    POSTing to the topic URL causes ntfy to treat the body as raw text.
     """
     server = (cfg.server_url or "").strip().rstrip("/")
     topic = (cfg.topic or "").strip()
@@ -53,7 +57,7 @@ def _publish_url(cfg: Any) -> str:
         return ""
     if not topic:
         return ""
-    return f"{server}/{topic}"
+    return f"{server}/"
 
 
 def _headers(cfg: Any) -> dict[str, str]:
