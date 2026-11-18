@@ -186,8 +186,8 @@ async def test_failing_hook_does_not_block_other_contributions(ctx, config, no_t
 
 
 @pytest.mark.asyncio
-async def test_timeout_drops_contributions_without_failing_turn(ctx, config, no_tail_notes):
-    """The collector still honors its bounded wait when a hook is slow."""
+async def test_timeout_keeps_fast_contributions(ctx, config, no_tail_notes):
+    """The collector keeps contributions finished inside the bound, dropping only slow hooks."""
     config.lifecycle.pre_compose_timeout = 0.05
 
     async def slow_hook(context, user_msg):
@@ -203,7 +203,7 @@ async def test_timeout_drops_contributions_without_failing_turn(ctx, config, no_
     composed = await _compose(ctx)
     assert composed is not None
     assert "SLOW-MARKER" not in str(composed.messages)
-    assert "FAST-MARKER" not in str(composed.messages)
+    assert "FAST-MARKER" in str(composed.messages)
 
 
 @pytest.mark.asyncio

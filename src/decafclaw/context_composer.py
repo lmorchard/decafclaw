@@ -41,7 +41,6 @@ from .memory_context import (
     read_wiki_page,
     retrieve_memory_context,
 )
-from .notes import format_notes_for_context, read_notes
 from .preempt_search import match_tools, tokenize
 from .prompts import wrap_xml
 from .telemetry import get_tracer
@@ -180,7 +179,7 @@ class InjectionCursors:
     journal_boundary: frozenset[str] = frozenset()
 
 
-def _select_unseen(items: list, last_ts: Any, boundary: frozenset[str]) -> tuple[list, Any, frozenset[str]]:
+def select_unseen_items(items: list, last_ts: Any, boundary: frozenset[str]) -> tuple[list, Any, frozenset[str]]:
     """Return ``(unseen, new_ts, new_boundary)`` for chronological ``items``.
 
     ``items`` carry ``.timestamp`` and ``.text``. An item is unseen when it
@@ -211,6 +210,10 @@ class ComposerState:
 
     last_sources: list[SourceEntry] = field(default_factory=list)
     last_total_tokens_estimated: int = 0
+    # Turn mode for the current compose() call. Set by the composer so
+    # lifecycle hook extensions can classify interactive vs unattended turns
+    # without re-deriving the mapping from ctx.task_mode.
+    mode: ComposerMode = ComposerMode.INTERACTIVE
     last_prompt_tokens_actual: int = 0
     last_completion_tokens_actual: int = 0
     last_cached_prompt_tokens_actual: int = 0  # prompt tokens served from provider cache (#480)
@@ -477,6 +480,9 @@ class ContextComposer:
         with self._tracer.start_as_current_span("ContextComposer.compose") as span:
             span.set_attribute("conversation.id", ctx.conv_id)
             span.set_attribute("composer.mode", str(mode))
+            # Lifecycle hook extensions read the mode off the shared composer
+            # state; compose() is the single owner of the classification.
+            ctx.composer.mode = mode
             # Injection helpers advance the cursors before the injected
             # messages reach history and the archive. If composition fails or
             # is cancelled after that, roll the cursors back so the next turn
@@ -584,15 +590,6 @@ class ContextComposer:
         if mention_entry:
             sources.append(mention_entry)
 
-        # -- Per-conversation scratchpad notes (#299) --
-        # Auto-inject the recent notes block so the agent doesn't pay a
-        # tool call per turn to read them.
-        notes_msgs, notes_entry = self._compose_notes(ctx, config, mode)
-        for nm in notes_msgs:
-            to_archive.append(nm)
-        if notes_entry:
-            sources.append(notes_entry)
-
         # -- Recent journal entries (#306) --
         # Auto-surface recently written journal entries on a small fixed
         # budget, separate from the dynamic semantic pool, so temporally
@@ -657,8 +654,6 @@ class ContextComposer:
         fixed_tokens = system_entry.tokens_estimated
         if wiki_entry:
             fixed_tokens += wiki_entry.tokens_estimated
-        if notes_entry:
-            fixed_tokens += notes_entry.tokens_estimated
         if recent_journal_entry:
             fixed_tokens += recent_journal_entry.tokens_estimated
         # History contains only archived prior-turn content at this point —
@@ -774,7 +769,6 @@ class ContextComposer:
             *history,
             *wiki_msgs,
             *mention_msgs,
-            *notes_msgs,
             *recent_journal_msgs,
             *memory_msgs,
             *delta_msgs,
@@ -1232,18 +1226,29 @@ class ContextComposer:
                 log.warning("PRE_COMPOSE hook %s failed: %s", hook, e)
                 return None
 
-        tasks = [_safe_call_hook(h) for h in hooks]
+        tasks = [asyncio.ensure_future(_safe_call_hook(h)) for h in hooks]
         try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*tasks),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            log.warning("PRE_COMPOSE hooks timed out after %.3fs", timeout)
-            return [], [], [], []
+            done, pending = await asyncio.wait(tasks, timeout=timeout)
         except Exception as e:
             log.warning("PRE_COMPOSE gathering failed: %s", e)
             return [], [], [], []
+        if pending:
+            # Keep what finished inside the bound and drop only the slow hooks.
+            # Discarding completed contributions would silently lose context
+            # that a hook already advanced cursors for (scratchpad notes,
+            # #1487) whenever a sibling hook is slow.
+            log.warning("PRE_COMPOSE hooks timed out after %.3fs", timeout)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+        results = []
+        for task in tasks:
+            if task not in done or task.cancelled():
+                continue
+            try:
+                results.append(task.result())
+            except Exception as e:
+                log.warning("PRE_COMPOSE hook failed: %s", e)
 
         head: list[dict] = []
         delta: list[dict] = []
@@ -1692,56 +1697,6 @@ class ContextComposer:
         )
         return text, entry
 
-    def _compose_notes(
-        self,
-        ctx,
-        config,
-        mode: ComposerMode,
-    ) -> tuple[list[dict], SourceEntry | None]:
-        """Auto-inject the per-conversation scratchpad (#299).
-
-        Reads the most recent N notes (capped by char budget) and emits
-        a ``conversation_notes`` role message that gets remapped to
-        ``user`` for the LLM. Skipped in non-interactive modes
-        (heartbeat / scheduled / child agent) and when notes are
-        disabled.
-
-        Only newly added notes since the previous injection are surfaced
-        (delta injection, #1111) to avoid duplicate injections across turns.
-        """
-        if not config.notes.enabled:
-            return [], None
-        skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
-        if mode in skip_modes:
-            return [], None
-
-        conv_id = ctx.conv_id or ctx.channel_id or "default"
-        items = read_notes(
-            config,
-            conv_id,
-            limit=config.notes.context_max_entries,
-            max_chars=config.notes.context_max_chars,
-        )
-        if not items:
-            return [], None
-
-        cursors = ctx.composer.injection_cursors
-        new_items, notes_ts, notes_boundary = _select_unseen(items, cursors.notes_ts, cursors.notes_boundary)
-        ctx.composer.injection_cursors = replace(cursors, notes_ts=notes_ts, notes_boundary=notes_boundary)
-
-        if not new_items:
-            return [], None
-
-        text = format_notes_for_context(new_items)
-        msg = {"role": "conversation_notes", "content": text}
-        entry = SourceEntry(
-            source="notes",
-            tokens_estimated=estimate_tokens(text),
-            items_included=len(new_items),
-            items_truncated=0,
-        )
-        return [msg], entry
-
     def _compose_recent_journal(
         self,
         ctx,
@@ -1783,7 +1738,9 @@ class ContextComposer:
         # High-water mark: drop entries already surfaced. Trimming below
         # only drops oldest, so the newest — and thus the mark — is unaffected.
         cursors = ctx.composer.injection_cursors
-        entries, journal_ts, journal_boundary = _select_unseen(entries, cursors.journal_ts, cursors.journal_boundary)
+        entries, journal_ts, journal_boundary = select_unseen_items(
+            entries, cursors.journal_ts, cursors.journal_boundary
+        )
         if not entries:
             return [], None
         ctx.composer.injection_cursors = replace(cursors, journal_ts=journal_ts, journal_boundary=journal_boundary)

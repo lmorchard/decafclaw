@@ -25,7 +25,7 @@ There's no `notes_clear` tool in v1 — manual cleanup via the workspace files t
 
 ## Auto-inject on turn start
 
-Every interactive turn, the `ContextComposer` reads up to `notes.context_max_entries` (default 20) recent notes (capped by `notes.context_max_chars`, default 4096 chars total — drops oldest first when over cap) and injects them as a single message:
+Every interactive turn, the default-on `ScratchpadNotesExtension` ([extensions](extensions.md#scratchpad-notes-default-on)) reads up to `notes.context_max_entries` (default 20) recent notes (capped by `notes.context_max_chars`, default 4096 chars total — drops oldest first when over cap) and returns them as a single `DELTA` contribution, which the `ContextComposer` injects as one message:
 
 ```
 [Conversation notes — your scratchpad for this conversation]
@@ -60,7 +60,7 @@ See [config.md#notes](config.md#notes). Tunables:
 - `notes.context_max_chars` (default `4096`)
 - `notes.max_total_entries` (default `1000`) — file-level cap. When an append would push the file over the limit, oldest entries get dropped via an atomic rewrite so long-running conversations don't accumulate unbounded read cost per turn.
 
-`notes.enabled = false` short-circuits both the tools (they return an error stub) and the auto-inject (no message added).
+`notes.enabled = false` short-circuits both the tools (they return an error stub) and the auto-inject (no message added). To keep the notes tools but stop injection, disable the extension instead: `extensions.scratchpad_notes.enabled = false`.
 
 ## When to use vs other places
 

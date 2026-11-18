@@ -261,8 +261,7 @@ def test_legacy_memory_without_mem0_provider_creates_no_extension(tmp_path, monk
 
     extensions = load_config().extensions
     assert "mem0" not in extensions
-    # The default-on diagnostics extension is the only entry.
-    assert set(extensions) == {"diagnostics_and_telemetry"}
+    assert set(extensions) == {"diagnostics_and_telemetry", "scratchpad_notes"}
 
 
 def test_legacy_memory_env_only_backward_compatibility(tmp_path, monkeypatch, caplog):
@@ -317,7 +316,7 @@ def test_clean_config_seeds_default_enabled_type(tmp_path, monkeypatch):
 
     extensions = load_config().extensions
 
-    assert set(extensions) == {"diagnostics_and_telemetry"}
+    assert set(extensions) == {"diagnostics_and_telemetry", "scratchpad_notes"}
     entry = extensions["diagnostics_and_telemetry"]
     assert entry.enabled is True
     assert entry.type == "diagnostics_and_telemetry"
@@ -360,8 +359,9 @@ def test_explicit_disabled_entry_yanks_default(tmp_path, monkeypatch):
 
     extensions = load_config().extensions
 
-    assert set(extensions) == {"diagnostics_and_telemetry"}
+    assert set(extensions) == {"diagnostics_and_telemetry", "scratchpad_notes"}
     assert extensions["diagnostics_and_telemetry"].enabled is False
+    assert extensions["scratchpad_notes"].enabled is True
 
 
 def test_aliased_binding_suppresses_default_seed(tmp_path, monkeypatch):
@@ -377,6 +377,6 @@ def test_aliased_binding_suppresses_default_seed(tmp_path, monkeypatch):
 
     extensions = load_config().extensions
 
-    assert set(extensions) == {"my_diag"}
+    assert set(extensions) == {"my_diag", "scratchpad_notes"}
     assert extensions["my_diag"].enabled is True
     assert extensions["my_diag"].type == "diagnostics_and_telemetry"
