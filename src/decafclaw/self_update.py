@@ -93,7 +93,7 @@ async def perform_self_update(
     7. If confirmed:
        a. git pull --ff-only
        b. uv sync
-       c. systemctl --user restart decafclaw
+       c. systemctl --user restart --no-block decafclaw
     """
     runner = cmd_runner or _default_cmd_runner
 
@@ -198,7 +198,7 @@ async def perform_self_update(
         )
 
     # 10. Restart service
-    ret, stdout, stderr = await runner(["systemctl", "--user", "restart", "decafclaw"], target_repo, None)
+    ret, stdout, stderr = await runner(["systemctl", "--user", "restart", "--no-block", "decafclaw"], target_repo, None)
     if ret != 0:
         return UpdateResult(
             ok=False,
