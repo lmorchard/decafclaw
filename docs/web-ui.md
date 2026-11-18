@@ -48,6 +48,19 @@ switching away shows everything streamed before the switch. `turn_complete`
 and the final `message_complete` clear the buffers, so a finished turn leaves
 no stale streaming block (#1439).
 
+**Recalled memory facts (#1514).** When a `PRE_COMPOSE` hook returns legacy
+fact text (the `mem0` extension's semantic recall), the legacy
+`<recalled_facts>` envelope stays in the prompt, while the turn's assistant
+row carries the same facts as an atomic `recalled_facts` list. The chat stream
+renders that list as a collapsed `🧠 Recalled N facts` chip above the
+assistant response; clicking expands the facts. Turns with no recall render
+nothing. Both the live `message_complete` frame and the reloaded
+`conv_history` row carry the list, and the raw envelope role is hidden from
+the transcript. `Show recalled facts in conversation` in the desktop control
+strip (brain toggle) or the mobile conversation menu persists the preference
+in `localStorage` (`decafclaw-show-recalled-facts`, default on) and updates
+open transcripts immediately.
+
 **Command autocomplete.** Typing `/` or `!` at the start of a line in the
 composer opens a suggestion menu listing every user-invokable skill command
 plus every MCP prompt (`mcp__<server>__<prompt>`), each with its

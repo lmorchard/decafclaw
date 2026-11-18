@@ -130,6 +130,7 @@ export interface SrvMessageComplete {
   usage?: Record<string, unknown>;
   context_usage?: number;
   context_limit?: number;
+  recalled_facts?: string[];
 }
 
 export interface SrvModeChanged {

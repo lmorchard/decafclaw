@@ -17,6 +17,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {string} role
  * @property {string} [content]
  * @property {string} [thinking]
+ * @property {string[]} [recalled_facts]
  * @property {string} [timestamp]
  * @property {string} [tool]
  * @property {string} [command]

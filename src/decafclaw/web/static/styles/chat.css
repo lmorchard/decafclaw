@@ -429,6 +429,67 @@ details.thought-block summary:hover {
   margin-bottom: 0;
 }
 
+/* Recalled memory facts disclosure (#1514) */
+.recalled-facts {
+  margin: 0.5rem 0;
+}
+
+button.recalled-facts-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: auto;
+  margin: 0;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 999px;
+  background: var(--pico-card-background-color, rgba(127, 127, 127, 0.05));
+  color: var(--pico-muted-color);
+  font-size: 0.78rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+button.recalled-facts-toggle:hover,
+button.recalled-facts-toggle:focus-visible {
+  color: var(--pico-primary);
+  border-color: var(--pico-primary);
+  background: var(--pico-form-element-background-color);
+}
+
+.recalled-facts-caret {
+  font-size: 0.7rem;
+}
+
+ul.recalled-facts-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 6px;
+  background: var(--pico-card-background-color, rgba(127, 127, 127, 0.05));
+  color: var(--pico-color);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+ul.recalled-facts-list li {
+  position: relative;
+  margin: 0 0 0.3rem;
+  padding-left: 0.9rem;
+}
+
+ul.recalled-facts-list li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--pico-muted-color);
+}
+
+ul.recalled-facts-list li:last-child {
+  margin-bottom: 0;
+}
+
 /* Streaming indicator */
 .streaming-indicator {
   display: inline-block;

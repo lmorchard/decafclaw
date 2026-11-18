@@ -181,6 +181,7 @@ Final form of an assistant message after streaming completed (or when replayed f
 - `usage` — object?
 - `context_usage` — number?
 - `context_limit` — number?
+- `recalled_facts` — array of string?
 
 ### `mode_changed`
 

@@ -62,6 +62,20 @@ describe('chat-message role rendering', () => {
     el.remove();
   });
 
+  it('forwards recalled facts to the assistant message (#1514)', async () => {
+    const el = document.createElement('chat-message');
+    el.role = 'assistant';
+    el.content = 'Answer';
+    el.recalledFacts = ['User prefers espresso.'];
+    document.body.append(el);
+    await el.updateComplete;
+
+    const assistant = el.querySelector('assistant-message');
+    expect(assistant).not.toBeNull();
+    expect(assistant?.recalledFacts).toEqual(['User prefers espresso.']);
+    el.remove();
+  });
+
   it('renders cancel_marker as a distinct event banner', async () => {
     const el = document.createElement('chat-message');
     el.role = 'cancel_marker';

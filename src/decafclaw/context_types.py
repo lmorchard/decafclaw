@@ -63,6 +63,9 @@ class ComposedContext:
     messages_to_archive: list[dict] = field(default_factory=list)
     retrieved_context_text: str = ""
     memory_results: list[dict] = field(default_factory=list)
+    # Atomic facts from legacy PRE_COMPOSE string hook results, surfaced to
+    # the web UI as the turn's recalled-memory disclosure (#1514).
+    recalled_facts: list[str] = field(default_factory=list)
 
 
 # -- Per-conversation state ---------------------------------------------------
@@ -131,6 +134,10 @@ class ComposerState:
     # reflection and the Context Inspector. Owned by VaultRetrievalExtension.
     last_retrieved_context_text: str = ""
     last_memory_results: list[dict] = field(default_factory=list)
+    # Legacy PRE_COMPOSE string results from the latest compose() call, kept
+    # for the turn's message_complete payload (#1514). Refilled per compose;
+    # a disabled extension cannot leak the previous turn's facts.
+    last_recalled_facts: list[str] = field(default_factory=list)
     last_prompt_tokens_actual: int = 0
     last_completion_tokens_actual: int = 0
     last_cached_prompt_tokens_actual: int = 0  # prompt tokens served from provider cache (#480)

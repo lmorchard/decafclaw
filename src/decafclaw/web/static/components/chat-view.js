@@ -1,6 +1,10 @@
 import { LitElement, html, nothing } from 'lit';
 import './chat-message.js';
 import './confirm-view.js';
+import {
+  PREFERENCE_EVENT,
+  loadShowRecalledFacts,
+} from '../lib/recalled-facts-preference.js';
 
 export class ChatView extends LitElement {
   static properties = {
@@ -14,6 +18,7 @@ export class ChatView extends LitElement {
     _convId: { type: String, state: true },
     _showScrollBtn: { type: Boolean, state: true },
     _hasMore: { type: Boolean, state: true },
+    _showRecalledFacts: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -34,6 +39,7 @@ export class ChatView extends LitElement {
     this._loadingMore = false;
     this._savedScrollHeight = 0;
     this._resizeObserver = null;
+    this._showRecalledFacts = loadShowRecalledFacts();
   }
 
   connectedCallback() {
@@ -100,6 +106,10 @@ export class ChatView extends LitElement {
       });
       this._resizeObserver.observe(this);
     }
+    this._onRecalledFactsPreference = (e) => {
+      this._showRecalledFacts = Boolean(e.detail?.enabled);
+    };
+    document.addEventListener(PREFERENCE_EVENT, this._onRecalledFactsPreference);
   }
 
   disconnectedCallback() {
@@ -107,6 +117,7 @@ export class ChatView extends LitElement {
     this.store?.removeEventListener('change', this._onStoreChange);
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
+    document.removeEventListener(PREFERENCE_EVENT, this._onRecalledFactsPreference);
   }
 
   updated(changedProps) {
@@ -167,6 +178,7 @@ export class ChatView extends LitElement {
           .role=${m.role}
           .content=${m.content || ''}
           .thinking=${m.thinking || ''}
+          .recalledFacts=${this._showRecalledFacts ? (m.recalled_facts || []) : []}
           .tool=${m.tool || ''}
           .command=${m.command || ''}
           .display_short_text=${m.display_short_text || ''}

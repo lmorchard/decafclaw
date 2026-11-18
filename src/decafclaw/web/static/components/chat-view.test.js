@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './chat-view.js';
+import { STORAGE_KEY, PREFERENCE_EVENT } from '../lib/recalled-facts-preference.js';
 
 /**
  * Tests for #1090: transcript scroll following and resize behavior.
@@ -164,5 +165,61 @@ describe('chat-view scroll following on resize (#1090)', () => {
     expect(assistant).toBeTruthy();
     await assistant.updateComplete;
     expect(assistant.querySelector('.thought-block')).toBeTruthy();
+  });
+});
+
+describe('chat-view recalled facts preference (#1514)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+    localStorage.clear();
+  });
+
+  function storeWithFacts() {
+    return Object.assign(new EventTarget(), {
+      currentConvId: 'conv-1',
+      currentMessages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi', recalled_facts: ['User prefers espresso.'] },
+      ],
+      streamingText: '',
+      streamingThinking: '',
+      isBusy: false,
+      toolStatus: null,
+      pendingConfirms: [],
+      hasMore: false,
+    });
+  }
+
+  async function mount() {
+    const el = /** @type {any} */ (document.createElement('chat-view'));
+    el.store = storeWithFacts();
+    document.body.appendChild(el);
+    await el.updateComplete;
+    return el;
+  }
+
+  function assistantMessage(el) {
+    return /** @type {any} */ ([...el.querySelectorAll('chat-message')][1]);
+  }
+
+  it('passes recalled facts to assistant messages by default', async () => {
+    const el = await mount();
+    expect(assistantMessage(el).recalledFacts).toEqual(['User prefers espresso.']);
+  });
+
+  it('hides recalled facts when the stored preference is off', async () => {
+    localStorage.setItem(STORAGE_KEY, 'false');
+    const el = await mount();
+    expect(assistantMessage(el).recalledFacts).toEqual([]);
+  });
+
+  it('reacts to a preference change without a reload', async () => {
+    const el = await mount();
+    expect(assistantMessage(el).recalledFacts).toHaveLength(1);
+
+    document.dispatchEvent(new CustomEvent(PREFERENCE_EVENT, { detail: { enabled: false } }));
+    await el.updateComplete;
+
+    expect(assistantMessage(el).recalledFacts).toEqual([]);
   });
 });

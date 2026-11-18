@@ -246,6 +246,7 @@ class SrvMessageComplete(TypedDict):
     usage: NotRequired[dict[str, object]]
     context_usage: NotRequired[int]
     context_limit: NotRequired[int]
+    recalled_facts: NotRequired[list[str]]
 
 
 class SrvModeChanged(TypedDict):

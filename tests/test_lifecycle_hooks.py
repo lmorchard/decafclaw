@@ -54,6 +54,77 @@ async def test_pre_compose_hook_injection(ctx, config, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_recalled_facts_attach_to_archived_assistant_row(ctx, config, monkeypatch):
+    """The delivered assistant row carries the turn's atomic recalled facts (#1514).
+
+    ``conv_history`` reloads this row, so the disclosure must survive a
+    reload without re-deriving it from the hidden prompt envelope.
+    """
+
+    async def mock_call_llm(ctx, config, messages, tools, **kwargs):
+        return {"content": "Here is your answer.", "usage": {}}
+
+    monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm)
+
+    async def sample_pre_compose_hook(context, user_msg):
+        return ["User prefers espresso.", "User is in Pacific time."]
+
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, sample_pre_compose_hook)
+
+    runner = TurnRunner(
+        ctx=ctx,
+        config=config,
+        history=[],
+        user_message="What should I drink?",
+        archive_text="",
+        attachments=None,
+    )
+    await runner.run()
+
+    from decafclaw.archive import read_archive
+
+    archived = read_archive(config, ctx.conv_id)
+    assistant_rows = [m for m in archived if m.get("role") == "assistant"]
+    assert assistant_rows
+    assert assistant_rows[-1]["recalled_facts"] == [
+        "User prefers espresso.",
+        "User is in Pacific time.",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_recalled_facts_absent_from_archive_without_a_hit(ctx, config, monkeypatch):
+    """A turn with no memory hit archives no recalled_facts key (#1514)."""
+
+    async def mock_call_llm(ctx, config, messages, tools, **kwargs):
+        return {"content": "No memory needed.", "usage": {}}
+
+    monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm)
+
+    async def empty_hook(context, user_msg):
+        return None
+
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, empty_hook)
+
+    runner = TurnRunner(
+        ctx=ctx,
+        config=config,
+        history=[],
+        user_message="Hello",
+        archive_text="",
+        attachments=None,
+    )
+    await runner.run()
+
+    from decafclaw.archive import read_archive
+
+    archived = read_archive(config, ctx.conv_id)
+    assistant_rows = [m for m in archived if m.get("role") == "assistant"]
+    assert assistant_rows
+    assert "recalled_facts" not in assistant_rows[-1]
+
+
+@pytest.mark.asyncio
 async def test_pre_compose_hook_timeout_and_fail_open(ctx, config):
     """WHEN a PRE_COMPOSE hook raises an exception or exceeds its execution timeout,
     ContextComposer SHALL log a warning and complete turn composition without failing the turn.

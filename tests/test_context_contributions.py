@@ -148,6 +148,31 @@ async def test_legacy_string_results_coerce_to_tail_envelope(ctx, config, no_tai
     assert entry.items_included == 2
     assert entry.tokens_estimated > 0
 
+    # The UI discloses the atomic facts, not the rendered envelope (#1514).
+    assert composed.recalled_facts == ["Coffee preference: espresso", "Timezone: Pacific"]
+
+
+@pytest.mark.asyncio
+async def test_recalled_facts_match_the_trimmed_envelope(ctx, config, no_tail_notes):
+    """Over the token ceiling, the exposed facts list drops lines the model never saw (#1514)."""
+    config.lifecycle.pre_compose_token_ceiling = 20
+
+    async def hook(context, user_msg):
+        return [
+            "Fact one fits inside the ceiling",
+            "Fact two does not fit inside the ceiling at all",
+        ]
+
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, hook)
+    composed = await _compose(ctx)
+
+    recalled = [m for m in composed.messages if m.get("role") == "user" and "<recalled_facts>" in m["content"]]
+    assert len(recalled) == 1
+    assert "Fact one fits inside the ceiling" in recalled[0]["content"]
+    assert "Fact two" not in recalled[0]["content"]
+
+    assert composed.recalled_facts == ["Fact one fits inside the ceiling"]
+
 
 @pytest.mark.asyncio
 async def test_contribution_source_entry_reaches_turn_sources(ctx, config, no_tail_notes):
