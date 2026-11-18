@@ -242,6 +242,9 @@ class Context:
         self.request_confirmation: Any = None  # set by ConversationManager
         self.confirmation_active: asyncio.Event = asyncio.Event()
         self.manager: Any = None  # set by ConversationManager
+        # ExtensionManager from runner startup; core extensions that expose a
+        # direct service (compaction, #1490) are looked up through it.
+        self.extension_manager: Any = None
         self.terminal_registry: Any = None  # AgentTerminalHandle, set by ConversationManager
         self._parent_ctx: Any = None
         self._interceptors: dict[TurnLifecycle, list[Callable]] = {}

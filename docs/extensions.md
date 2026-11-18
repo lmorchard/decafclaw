@@ -79,6 +79,48 @@ hook that advances durable state (such as an injection cursor) must do so
 immediately before it returns, with no `await` in between, so a cancellation
 cannot strand the state.
 
+## PRE_COMPACTION collectors
+
+`TurnLifecycle.PRE_COMPACTION` runs immediately before `compact_history`
+summarizes the transcript (#1490). Hooks take `(ctx, history)` and exist for
+side effects — flushing unpersisted state, recording boundaries, or preparing
+a sibling extension for the history rewrite. Return values are ignored.
+
+Each hook is awaited with a fail-open bound: `lifecycle.pre_compaction_timeout`
+(default 2 s), or a larger `pre_compaction_timeout` declared on the hook's
+extension instance. A raising or slow hook is logged and skipped; caller
+cancellation propagates.
+
+## Compaction (default on)
+
+`src/decafclaw/extensions/compaction.py` owns the compaction policy for the
+turn loop. Core decides *when* to ask — after each LLM call with actual prompt
+usage, and after a provider context-length error — because compaction rewrites
+live history and performs its own LLM call, which cannot live inside a bounded
+`PRE_COMPOSE` collector. Core looks up the enabled extension through
+`ctx.extension_manager` and calls:
+
+- `maybe_compact(ctx, history, prompt_tokens, lowered=None)` — compacts when
+  usage exceeds the effective threshold (resolved by
+  `effective_compaction_threshold`).
+- `compact(ctx, history)` — runs `compact_history`, fail-open.
+- `overflow_threshold(prompt_tokens, estimate)` — turn-local threshold after a
+  context-length error.
+
+Options override the policy fields the extension owns; summarization settings
+(`model`, `preserve_turns`, decisions slice, memory sweep) stay on
+`config.compaction` because `compact_history` reads them:
+
+| Option | Legacy fallback | Default |
+|--------|-----------------|---------|
+| `max_tokens` | `compaction.max_tokens` | `100000` |
+| `threshold_ratio` | `compaction.threshold_ratio` | `None` (fixed cap) |
+
+Disabled (`extensions.compaction.enabled: false`), core performs no proactive
+compaction and no reactive overflow recovery; the bounded LLM recovery policy
+still handles the resulting provider error. `PRE_COMPACTION` collectors run
+only when compaction runs.
+
 ## Type registry
 
 ```python
@@ -93,7 +135,7 @@ Registry helpers: `register_extension_type(name, factory, *, default_enabled=Fal
 
 `default_enabled=True` marks a core type that `load_config` seeds when `config.json` defines no entry for it. The flag lives in the `ExtensionTypeMeta` record (`get_extension_type_meta`) and is replaced along with the factory on re-registration, so a test or embedder that swaps a type also chooses its default.
 
-Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`diagnostics_and_telemetry`, `scratchpad_notes`, `vault_retrieval`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
+Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`compaction`, `diagnostics_and_telemetry`, `scratchpad_notes`, `vault_retrieval`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
 
 ## Loading
 

@@ -26,12 +26,11 @@ if TYPE_CHECKING:
     from .context_composer import ComposedContext
     from .reflection import ReflectionResult
 
-from . import compaction
 from .archive import append_message
 from .config_types import LoopBreakerConfig
 from .context import TaskMode, TurnLifecycle
 from .context_cleanup import clear_old_tool_results
-from .context_composer import ComposerMode, ContextComposer, effective_compaction_threshold
+from .context_composer import ComposerMode, ContextComposer
 from .conversation_paths import approval_state_path
 from .iteration_budget import IterationBudget
 from .llm import call_llm
@@ -199,14 +198,15 @@ async def _maybe_compact(ctx: "Context", config, history, prompt_tokens, lowered
         # signal we'd need to fix recurring failures.
         log.exception("Tool-result clearing failed")
 
-    threshold = effective_compaction_threshold(config, ctx, lowered=lowered)
-    log.info(f"Compaction check: prompt_tokens={prompt_tokens}, threshold={threshold}")
-    if prompt_tokens and prompt_tokens > threshold:
-        log.info(f"Token budget exceeded ({prompt_tokens} > {threshold}), triggering compaction")
-        try:
-            await compaction.compact_history(ctx, history)
-        except Exception as e:
-            log.error(f"Compaction failed: {e}", exc_info=True)
+    # Compaction policy lives in the core extension (#1490); core only
+    # decides when to ask. A disabled extension stops proactive compaction.
+    from .extensions.compaction import find_compaction_extension
+
+    policy = find_compaction_extension(ctx)
+    if policy is None:
+        log.debug("Compaction extension disabled; skipping proactive compaction")
+        return
+    await policy.maybe_compact(ctx, history, prompt_tokens, lowered=lowered)
 
 
 def _extract_call_signatures(tool_calls, messages) -> list[CallSignature]:
@@ -900,31 +900,35 @@ class TurnRunner:
         except Exception as exc:
             if _is_context_length_exceeded(exc):
                 log.warning("Context length exceeded during LLM call, forcing compaction.")
-                # Dynamically lower the compaction threshold for this turn without mutating shared config
-                lower_threshold = max(
-                    1000,
-                    int(
-                        (self.prompt_tokens or (self.composed.total_tokens_estimated if self.composed else 0) or 10000)
-                        * 0.8
-                    ),
-                )
-                self.config = replace(
-                    self.config,
-                    compaction=replace(
-                        self.config.compaction,
-                        max_tokens=lower_threshold,
-                    ),
-                )
-                self.ctx.config = self.config
-                # #1099 — record the turn-local lowering so the threshold
-                # resolution prefers it over a configured global
-                # ``compaction.threshold_ratio`` for the rest of this turn.
-                self.lowered_compaction_threshold = lower_threshold
+                from .extensions.compaction import find_compaction_extension
 
-                await compaction.compact_history(self.ctx, self.history)
-                # Re-compose to pick up the compacted history
-                await self._compose()
-                return _Continue()
+                policy = find_compaction_extension(self.ctx)
+                if policy is None:
+                    log.warning("Context length exceeded and the compaction extension is disabled; not recovering")
+                else:
+                    # Dynamically lower the compaction threshold for this turn
+                    # without mutating shared config.
+                    lower_threshold = policy.overflow_threshold(
+                        self.prompt_tokens,
+                        self.composed.total_tokens_estimated if self.composed else 0,
+                    )
+                    self.config = replace(
+                        self.config,
+                        compaction=replace(
+                            self.config.compaction,
+                            max_tokens=lower_threshold,
+                        ),
+                    )
+                    self.ctx.config = self.config
+                    # #1099 — record the turn-local lowering so the threshold
+                    # resolution prefers it over a configured global
+                    # ``compaction.threshold_ratio`` for the rest of this turn.
+                    self.lowered_compaction_threshold = lower_threshold
+
+                    await policy.compact(self.ctx, self.history)
+                    # Re-compose to pick up the compacted history
+                    await self._compose()
+                    return _Continue()
             # Bounded recovery policy (#1144): after a non-context-length LLM
             # failure, choose retry / continue / stop from the turn's recovery
             # state instead of blindly re-issuing a request whose output may

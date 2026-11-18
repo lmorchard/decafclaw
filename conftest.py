@@ -47,12 +47,17 @@ def ctx(config):
     context.config.discovered_skills = discover_skills(config)
     # Mirror runtime seeding: default-enabled core extensions run on every
     # conversation. `load_config` seeds these entries in production; the test
-    # Config is built directly, so enable the registered defaults here.
+    # Config is built directly, so register and enable the defaults here.
+    from decafclaw.extensions import ExtensionManager
+
     ensure_builtin_extension_types()
+    manager = ExtensionManager(bus, config)
     for name in get_default_enabled_extension_types():
         factory = get_extension_type(name)
         assert factory is not None
-        factory({}, config).enable(bus)
+        manager.register(name, factory({}, config))
+        manager.enable(name)
+    context.extension_manager = manager
     return context
 
 
