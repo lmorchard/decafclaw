@@ -86,7 +86,12 @@ async def test_slot_ordering_invariant(ctx, config, no_tail_notes):
 
 @pytest.mark.asyncio
 async def test_head_prefix_stable_across_turns(ctx, config, no_tail_notes):
-    """HEAD mounts at the same offset every turn so the cached prefix is unchanged."""
+    """HEAD mounts at the same offset every turn and is never archived.
+
+    Turn 2 composes against the history turn 1 actually produced and archived,
+    so the test fails if HEAD lands in history (archived) or gets re-added per
+    turn on top of an archived copy.
+    """
     config.system_prompt = "<soul>STATIC PREFIX</soul>"
 
     async def hook(context, user_msg):
@@ -96,12 +101,20 @@ async def test_head_prefix_stable_across_turns(ctx, config, no_tail_notes):
     composer = ContextComposer(state=ctx.composer)
 
     first = await composer.compose(ctx=ctx, user_message="FIRST", history=[])
-    second = await composer.compose(ctx=ctx, user_message="SECOND", history=[])
+    # Turn 2 gets the history turn 1 actually archived — what the caller
+    # persists and reloads — so a HEAD message that leaked into the archive
+    # would reappear here on top of the freshly mounted contribution.
+    history: list[dict] = list(first.messages_to_archive)
+    second = await composer.compose(ctx=ctx, user_message="SECOND", history=history)
+
+    for composed in (first, second):
+        assert sum(1 for m in composed.messages if "HEAD-STATIC" in str(m.get("content", ""))) == 1
+    assert "HEAD-STATIC" not in _archived_text(first.messages_to_archive)
+    assert "HEAD-STATIC" not in _archived_text(history)
 
     first_prefix = first.messages[: _index(first.messages, "HEAD-STATIC") + 1]
     second_prefix = second.messages[: _index(second.messages, "HEAD-STATIC") + 1]
     assert first_prefix == second_prefix
-    assert sum(1 for m in second.messages if "HEAD-STATIC" in str(m.get("content", ""))) == 1
 
 
 @pytest.mark.asyncio

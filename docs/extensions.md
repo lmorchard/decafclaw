@@ -43,9 +43,26 @@ Slots mount in one invariant order (#1486):
 | `DELTA` | After archived history and this turn's other chronological injections (wiki, notes, journal, memory), before tail envelopes | Yes |
 | `TAIL` | Directly before the current user message | Yes |
 
-Any `source_entry` on a contribution is appended to the turn's `sources`
-list for the Context Inspector and token reporting. Malformed contributions
-and unsupported returns are logged and skipped.
+Messages follow the composer's normal role filter: `system`, `user`,
+`assistant`, and `tool` are sent as-is, while the composer's internal
+injection roles (`vault_retrieval`, `conversation_notes`, `recent_journal`,
+`skill_hint`, `recalled_facts`, and friends) are remapped to `user`. A
+`DELTA` or `TAIL` message with any other role is archived but left out of
+the provider request; an unsupported role in `HEAD` is skipped with a
+warning.
+
+`DELTA` and `TAIL` contributions are archived with the rest of this turn's
+injections and replayed from history on later turns. A hook that returns the
+same items every turn therefore duplicates them in history — return only new
+items. `HEAD` mounts at the same offset after the system prompt every turn
+and is never archived, so keep it static per conversation: it sits in the
+cached prompt prefix (#1117).
+
+Token accounting and Context Inspector visibility come from the
+contribution's `source_entry`, which is appended to the turn's `sources`
+list. A contribution without one still mounts its messages, but adds no
+source row and no estimated tokens. Malformed contributions and unsupported
+returns are logged and skipped.
 
 Legacy `str` / `list[str]` returns are coerced to one `ContextContribution`
 in the `TAIL` slot containing the bounded `<recalled_facts>` envelope: the
