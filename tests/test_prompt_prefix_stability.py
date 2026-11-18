@@ -41,9 +41,8 @@ async def test_laptop_question_preserves_real_native_tools(ctx, composer):
 
 async def test_sent_tail_replays_in_live_history_and_archive(ctx, composer):
     history = []
-    with patch.object(
-        composer,
-        "_compose_preempt_skill_matches",
+    with patch(
+        "decafclaw.extensions.preempt_hints.compose_preempt_skill_matches",
         return_value=(None, "<preempt_skill_hint>sample</preempt_skill_hint>"),
     ):
         first = await composer.compose(ctx, "Hello?", history)

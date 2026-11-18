@@ -55,7 +55,6 @@ from .context_pipeline import (
     compose_pre_compose_hooks,
     compose_system_prompt,
 )
-from .context_preempt import build_preempt_tool_hint, compose_preempt_matches, compose_preempt_skill_matches
 from .context_sidecars import read_context_sidecar, read_last_request_sidecar, write_context_sidecar
 from .context_tools import (
     compose_tools,
@@ -90,18 +89,6 @@ def _now() -> datetime:
     (``datetime.now()``), so the recency window compares apples to apples.
     """
     return datetime.now()
-
-
-# Preempt-skill-hint trimming (#604). The visible <preempt_skill_hint> lists
-# only skills scoring within _HINT_SCORE_GAP of the top match and at least
-# _HINT_MIN_SCORE — so a clearly-relevant skill isn't diluted by a pile of
-# weak keyword matches. Exception: at least one match is always shown, so when
-# the top scorer is itself below the floor the single best match still appears.
-# Lower scorers still land in ctx.skills.preempt_matches for tool promotion;
-# only the hint text is trimmed. Hardcoded for now; promote to config if these
-# need per-deployment tuning.
-_HINT_SCORE_GAP = 1
-_HINT_MIN_SCORE = 2
 
 
 # -- Enums --------------------------------------------------------------------
@@ -212,35 +199,11 @@ class ContextComposer:
                 "content": "[System Update: The system context or available tools have changed.]",
             }
 
-        # -- Pre-emptive tool search (populate ctx.tools.preempt_matches) --
-        # Match before classification; deferred matches become discovery
-        # hints rather than changing the native tools prefix (#1257).
-        preempt_entry = self._compose_preempt_matches(
-            ctx,
-            config,
-            user_message,
-            mode,
-        )
-        if preempt_entry is not None:
-            sources.append(preempt_entry)
-
-        # -- Pre-emptive skill catalog match (populate ctx.skills.preempt_matches) --
-        # Surfaces likely-relevant non-activated skills as a hint message so
-        # the agent considers activate_skill without a failed tool call first.
-        preempt_skill_entry, preempt_skill_text = self._compose_preempt_skill_matches(
-            ctx,
-            config,
-            user_message,
-            mode,
-        )
-        if preempt_skill_entry is not None:
-            sources.append(preempt_skill_entry)
-
         # -- Tools (compute before budget so we have actual token cost) --
+        # Pre-emptive discovery hints run in PRE_COMPOSE after classification,
+        # so deferred matches are known when the hints render (#1507).
         active_tools, deferred_tools, deferred_text, guidance_text, tools_entry = self._compose_tools(ctx)
         sources.append(tools_entry)
-
-        tool_hint_text = build_preempt_tool_hint(ctx, config, deferred_tools, preempt_entry)
 
         # -- Compute fixed costs for dynamic budget allocation --
         # Fixed costs: system prompt + wiki refs + notes + tools + existing history
@@ -262,10 +225,6 @@ class ContextComposer:
         fixed_tokens += user_msg_tokens
         # Tools (actual token cost, not estimate)
         fixed_tokens += tools_entry.tokens_estimated
-        if preempt_skill_entry is not None:
-            fixed_tokens += preempt_skill_entry.tokens_estimated
-        if preempt_entry is not None:
-            fixed_tokens += preempt_entry.tokens_estimated
 
         # Response reserve (leave room for the model's response)
         response_reserve = 4096
@@ -292,11 +251,11 @@ class ContextComposer:
         ctx.composer.last_retrieved_context_text = ""
         ctx.composer.last_memory_results = []
 
-        # -- PRE_COMPOSE lifecycle collector hooks (#1454, #1486) --
+        # -- PRE_COMPOSE lifecycle collector hooks (#1454, #1486, #1507) --
         # HEAD messages mount outside the archived history (see below); DELTA
         # and TAIL messages are archived with the rest of this turn's
-        # injections.
-        head_msgs, delta_msgs, tail_hook_msgs, hook_sources = await compose_pre_compose_hooks(
+        # injections; EPILOGUE messages mount after the user message.
+        head_msgs, delta_msgs, tail_hook_msgs, epilogue_msgs, hook_sources = await compose_pre_compose_hooks(
             ctx,
             config,
             user_message,
@@ -378,22 +337,28 @@ class ContextComposer:
 
         messages.extend(llm_history)
 
-        # -- Tail notes (#1116) --
-        # The skill hint and context status go after the user message rather
-        # than in the system prefix (Vertex folds system messages into
-        # systemInstruction, which would bust the prefix cache every turn).
-        # They are archived and kept in history at this position, so later
-        # turns replay them where they were sent and the cached prefix holds.
-        tail_msgs: list[dict] = []
-        if tool_hint_text:
-            tail_msgs.append({"role": "skill_hint", "content": tool_hint_text})
-        if preempt_skill_text:
-            tail_msgs.append({"role": "skill_hint", "content": preempt_skill_text})
+        # -- PRE_COMPOSE EPILOGUE contributions (#1507) --
+        # Mount after the user message, at the immediate generation boundary.
+        # They are archived at this position, so later turns replay them where
+        # they were sent and the cached provider prefix holds (#1116, #1117).
+        # The internal injection roles (such as skill_hint) remap to "user";
+        # an unsupported role is archived but left out of the provider request.
+        for em in epilogue_msgs:
+            role = em.get("role")
+            if role in LLM_ROLES:
+                messages.append(em)
+            elif role in ROLE_REMAP:
+                messages.append({**em, "role": ROLE_REMAP[role]})
+            else:
+                log.warning("PRE_COMPOSE EPILOGUE message has unsupported role %r; skipping", role)
+            to_archive.append(em)
 
         # -- Total token estimate --
         total_tokens = sum(s.tokens_estimated for s in sources)
 
         # -- Context status note (for agent self-regulation) --
+        # Appended after the EPILOGUE hints, still after the user message.
+        tail_msgs: list[dict] = []
         if config.agent.show_context_status:
             effective_window = self._get_context_window_size(config, ctx)
             status_line = self._build_context_status(
@@ -416,6 +381,7 @@ class ContextComposer:
         # to read self.history after compose() returns. Append this turn's
         # injections in the same order as `combined` above.
         history.extend(combined[len(history) :])
+        history.extend(epilogue_msgs)
         history.extend(tail_msgs)
 
         return ComposedContext(
@@ -462,14 +428,6 @@ class ContextComposer:
     def build_diagnostics(self, config, composed: ComposedContext, ctx: "Context | None" = None) -> dict:
         return build_diagnostics(config, self.state, composed, ctx)
 
-    def _compose_preempt_matches(self, ctx, config, user_message: str, mode: ComposerMode) -> SourceEntry | None:
-        return compose_preempt_matches(ctx, config, user_message, mode)
-
-    def _compose_preempt_skill_matches(
-        self, ctx, config, user_message: str, mode: ComposerMode
-    ) -> tuple[SourceEntry | None, str | None]:
-        return compose_preempt_skill_matches(ctx, config, user_message, mode)
-
     def _compose_system_prompt(self, config) -> tuple[str, SourceEntry]:
         return compose_system_prompt(config)
 
@@ -479,5 +437,5 @@ class ContextComposer:
         config: Any,
         user_message: str,
         history: list,
-    ) -> tuple[list[dict], list[dict], list[dict], list[SourceEntry]]:
+    ) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry]]:
         return await compose_pre_compose_hooks(ctx, config, user_message, history)

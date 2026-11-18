@@ -1,23 +1,34 @@
-"""Pre-emptive tool and skill matching (#1257, #604, #1491).
+"""Pre-emptive tool and skill discovery hints (#1257, #604, #1507).
 
 Keyword-matches the raw user message against deferred tool schemas and the
 discovered skill catalog, populating ``ctx.tools.preempt_matches`` /
 ``ctx.skills.preempt_matches`` and rendering the archived discovery hints.
+
+The hints mount in the ``EPILOGUE`` slot: directly after the user message, so
+the model sees them at the immediate generation boundary. They are archived at
+that position and replayed from history on later turns. The composer used to
+append them as an inline tail stage; ``PreemptHintsExtension`` now owns the
+injection through the lifecycle hook contract (#1507).
+
 Only the user's own input is evaluated (#1049) so retrieved context cannot
-induce irrelevant promotions.
+induce irrelevant promotions. Every failure logs and returns no contribution,
+so a broken match cannot fail the turn.
 """
 
 from __future__ import annotations
 
 import html
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from .context_types import ComposerMode, SourceEntry
-from .preempt_search import match_tools, tokenize
-from .tool_definitions import collect_all_tool_defs
-from .tools.tool_registry import get_critical_names, get_fetched_tools
-from .util import estimate_tokens
+from decafclaw.context_types import ComposerMode, SourceEntry
+from decafclaw.events import EventBus, TurnLifecycle
+from decafclaw.preempt_search import match_tools, tokenize
+from decafclaw.tool_definitions import collect_all_tool_defs
+from decafclaw.tools.tool_registry import get_critical_names, get_fetched_tools
+from decafclaw.util import estimate_tokens
+
+from . import BaseExtension, ContextContribution, ContextSlot, register_extension_type
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -30,11 +41,67 @@ _HINT_SCORE_GAP = 1
 _HINT_MIN_SCORE = 2
 
 
+class PreemptHintsExtension(BaseExtension):
+    """Render pre-emptive tool and skill discovery hints as EPILOGUE messages."""
+
+    def __init__(self, options: dict[str, Any], config: Any):
+        super().__init__(name="preempt_hints")
+        self.options = options or {}
+        self.config = config
+
+    def enable(self, bus: EventBus) -> list[str]:
+        self.disable(bus)
+        self.subscription_ids = [bus.subscribe(TurnLifecycle.PRE_COMPOSE, self.pre_compose_hook)]
+        return self.subscription_ids
+
+    async def pre_compose_hook(self, ctx: Any, user_message: str = "", history: list | None = None):
+        try:
+            return self._contribute(ctx, user_message)
+        except Exception:
+            log.warning("Preemptive hint injection failed", exc_info=True)
+            return None
+
+    def _contribute(self, ctx: Any, user_message: str):
+        config = getattr(ctx, "config", None) or self.config
+        mode = getattr(getattr(ctx, "composer", None), "mode", ComposerMode.INTERACTIVE)
+
+        tool_entry = compose_preempt_matches(ctx, config, user_message, mode)
+        skill_entry, skill_text = compose_preempt_skill_matches(ctx, config, user_message, mode)
+
+        # Tool hints only cover matches that classification left deferred; the
+        # composer builds the pool before PRE_COMPOSE hooks run.
+        deferred = getattr(getattr(ctx, "tools", None), "deferred_pool", []) or []
+        tool_hint = build_preempt_tool_hint(ctx, config, deferred, tool_entry)
+
+        contributions: list[ContextContribution] = []
+        if tool_hint:
+            contributions.append(
+                ContextContribution(
+                    slot=ContextSlot.EPILOGUE,
+                    messages=[{"role": "skill_hint", "content": tool_hint}],
+                    source_entry=tool_entry,
+                )
+            )
+        elif tool_entry is not None:
+            # Matches existed but all were already active: keep the
+            # diagnostics row without adding a hint message.
+            contributions.append(ContextContribution(slot=ContextSlot.EPILOGUE, source_entry=tool_entry))
+        if skill_text:
+            contributions.append(
+                ContextContribution(
+                    slot=ContextSlot.EPILOGUE,
+                    messages=[{"role": "skill_hint", "content": skill_text}],
+                    source_entry=skill_entry,
+                )
+            )
+        return contributions or None
+
+
 def compose_preempt_matches(ctx: "Context", config, user_message: str, mode: ComposerMode) -> SourceEntry | None:
     """Run pre-emptive keyword match, populate ``ctx.tools.preempt_matches``.
 
     Matches the raw user message against tool names + descriptions.
-    Deferred matches become archived tail hints after classification.
+    Deferred matches become archived epilogue hints after classification.
     Native schemas stay stable until an explicit fetch or capability
     change. See docs/preemptive-tool-search.md and #1257.
 
@@ -46,7 +113,7 @@ def compose_preempt_matches(ctx: "Context", config, user_message: str, mode: Com
     matching is disabled or produced no results.
 
     The ``mode`` parameter is accepted for API symmetry with other
-    composer methods and to reserve space for future mode-specific
+    collector stages and to reserve space for future mode-specific
     gating. Currently all composer-driven modes apply matching
     (reflection and compaction bypass the composer entirely).
     """
@@ -131,7 +198,7 @@ def compose_preempt_skill_matches(
 ) -> tuple[SourceEntry | None, str | None]:
     """Pre-emptive keyword match against the discovered skill catalog.
 
-    Parallel to ``_compose_preempt_matches`` but for skills instead of
+    Parallel to ``compose_preempt_matches`` but for skills instead of
     tools. Skills already in ``ctx.skills.activated`` (which includes
     always-loaded bundled skills auto-activated at turn start) are
     excluded from the candidate pool — surfacing them would just be
@@ -258,3 +325,6 @@ def build_preempt_tool_hint(
     entry.items_included = len(suggested)
     entry.details["suggested"] = suggested
     return tool_hint_text
+
+
+register_extension_type("preempt_hints", PreemptHintsExtension, default_enabled=True)

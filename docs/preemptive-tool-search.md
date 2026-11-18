@@ -6,7 +6,7 @@ Keyword matches do not change native tool schemas, the deferred catalog, or tool
 
 ## Matching
 
-`ContextComposer._compose_preempt_matches` uses the raw user message. It excludes prior replies and injected context (#1049).
+`PreemptHintsExtension` (`extensions/preempt_hints.py`) uses the raw user message. It excludes prior replies and injected context (#1049).
 
 1. Lowercase the input and split it at non-alphanumeric boundaries.
 2. Remove short tokens and common English stopwords.
@@ -16,11 +16,11 @@ Keyword matches do not change native tool schemas, the deferred catalog, or tool
 
 The hint excludes disallowed tools and hidden skill tools. Already active tools need no hint. Hidden tools remain discoverable through their owning skill.
 
-The hint uses `<preempt_tool_hint>` and the internal `skill_hint` archive role. It maps to `user` for the LLM, remains at its original history position, and stays hidden in the UI.
+The hint uses `<preempt_tool_hint>` and the internal `skill_hint` archive role. It maps to `user` for the LLM, remains at its original history position, and stays hidden in the UI. Hints mount in the `EPILOGUE` slot: directly after the user message, so the model reads them at the generation boundary (#1507). They run after tool classification, so only matches that remain deferred are named.
 
 ## Skill catalog hints
 
-The composer also matches non-activated skills against the user message. `<preempt_skill_hint>` names the strongest matches and directs the agent to `activate_skill`.
+The same extension also matches non-activated skills against the user message. `<preempt_skill_hint>` names the strongest matches and directs the agent to `activate_skill`.
 
 The visible skill hint keeps candidates scoring at least `max(2, top_score - 1)`, with at least one result. This keeps weak matches from obscuring a clear winner (#604). Activation still follows the existing trust rules.
 
@@ -35,7 +35,7 @@ Under `agent.preemptive_search`:
 | `enabled` | `true` | Enable tool and skill discovery hints |
 | `max_matches` | `10` | Limit candidates for each keyword match |
 
-There are no environment aliases for these fields. Set `enabled: false` to disable both hint passes.
+There are no environment aliases for these fields. Set `enabled: false` to disable both hint passes. The extension itself is default-on; disable it without changing matching behavior with `extensions.preempt_hints.enabled: false` (see [Extensions](extensions.md#pre-emptive-hints-default-on)).
 
 Matching runs in composer-driven interactive, heartbeat, scheduled, and child-agent turns. Reflection and compaction use their own tool sets.
 

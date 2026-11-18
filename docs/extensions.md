@@ -35,28 +35,31 @@ async def pre_compose_hook(ctx, user_message, history):
     ]
 ```
 
-Slots mount in one invariant order (#1486):
+Slots mount in one invariant order (#1486, #1507):
 
 | Slot | Mount point | Archived? |
 |------|-------------|-----------|
 | `HEAD` | After the system prompt, before history | No — replays at the same offset so the provider prefix cache stays stable (#1117) |
 | `DELTA` | After archived history and this turn's other chronological injections (wiki, journal, memory), before tail envelopes | Yes |
 | `TAIL` | Directly before the current user message | Yes |
+| `EPILOGUE` | Directly after the current user message, before dispatch | Yes — replays in place so the prefix cache stays stable |
 
 Messages follow the composer's normal role filter: `system`, `user`,
 `assistant`, and `tool` are sent as-is, while the composer's internal
 injection roles (`vault_retrieval`, `conversation_notes`, `recent_journal`,
 `skill_hint`, `recalled_facts`, and friends) are remapped to `user`. A
-`DELTA` or `TAIL` message with any other role is archived but left out of
-the provider request; an unsupported role in `HEAD` is skipped with a
-warning.
+`DELTA`, `TAIL`, or `EPILOGUE` message with any other role is archived but
+left out of the provider request; an unsupported role in `HEAD` is skipped
+with a warning.
 
-`DELTA` and `TAIL` contributions are archived with the rest of this turn's
-injections and replayed from history on later turns. A hook that returns the
-same items every turn therefore duplicates them in history — return only new
-items. `HEAD` mounts at the same offset after the system prompt every turn
-and is never archived, so keep it static per conversation: it sits in the
-cached prompt prefix (#1117).
+`DELTA`, `TAIL`, and `EPILOGUE` contributions are archived with the rest of
+this turn's injections and replayed from history on later turns. A hook that
+returns the same items every turn therefore duplicates them in history —
+return only new items. An `EPILOGUE` contribution lands at the immediate
+generation boundary, after the user message; use it for hints that must be
+read last. `HEAD` mounts at the same offset after the system prompt every
+turn and is never archived, so keep it static per conversation: it sits in
+the cached prompt prefix (#1117).
 
 Token accounting and Context Inspector visibility come from the
 contribution's `source_entry`, which is appended to the turn's `sources`
@@ -101,11 +104,36 @@ Four small extensions own the remaining per-turn fixed-cost injections, so
 
 All four skip heartbeat / scheduled / child-agent turns and fail open.
 
-Tool-discovery hints (`<preempt_tool_hint>`, `<preempt_skill_hint>`) and the
-`[Context: ...]` status line stay core pipeline stages: they are appended
-after the user message in the archived position, which the `HEAD`/`DELTA`/
-`TAIL` slot contract does not express. Their logic lives in
-`context_preempt.py`.
+The `[Context: ...]` status line stays a core pipeline stage: its content
+depends on the final token accounting of every source in the turn, including
+the contributions collected during `PRE_COMPOSE`, so it cannot be computed by
+a concurrently dispatched hook. The composer still mounts it after the
+`EPILOGUE` contributions.
+
+## Pre-emptive hints (default on)
+
+`src/decafclaw/extensions/preempt_hints.py` owns tool and skill discovery
+hints (#1257, #604, #1507). It subscribes `PRE_COMPOSE` and returns up to two
+`EPILOGUE` contributions:
+
+- `<preempt_tool_hint>` lists keyword-matched tools that classification left
+  in the deferred pool, telling the agent to `tool_search` before calling
+  them. Source `preempt_matches`; details carry the input tokens, scored
+  matches, and the deferred names actually suggested.
+- `<preempt_skill_hint>` names the strongest keyword-matched non-activated
+  skills and directs the agent to `activate_skill`. Source
+  `preempt_skill_matches`; the visible hint keeps candidates within a small
+  score gap of the top match (#604).
+
+Both hints use the internal `skill_hint` archive role, which remaps to `user`
+for the provider request, stays at its archived position on later turns, and
+stays hidden in the CLI/web transcript. Matching reads only the raw user
+message (#1049). The extension runs after tool classification, so the
+deferred pool is known when the tool hint renders. It is registered with
+`default_enabled=True`; `extensions.preempt_hints.enabled: false` yanks it
+without touching `agent.preemptive_search`, which still gates both matchers.
+Every failure logs and yields no contribution, so a broken match cannot fail
+the turn.
 
 ## PRE_COMPACTION collectors
 
@@ -163,7 +191,7 @@ Registry helpers: `register_extension_type(name, factory, *, default_enabled=Fal
 
 `default_enabled=True` marks a core type that `load_config` seeds when `config.json` defines no entry for it. The flag lives in the `ExtensionTypeMeta` record (`get_extension_type_meta`) and is replaced along with the factory on re-registration, so a test or embedder that swaps a type also chooses its default.
 
-Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`compaction`, `diagnostics_and_telemetry`, `mentions`, `recent_journal`, `scratchpad_notes`, `vault_guide`, `vault_references`, `vault_retrieval`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
+Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`compaction`, `diagnostics_and_telemetry`, `mentions`, `preempt_hints`, `recent_journal`, `scratchpad_notes`, `vault_guide`, `vault_references`, `vault_retrieval`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
 
 ## Loading
 
