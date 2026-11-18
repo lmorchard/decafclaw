@@ -135,6 +135,32 @@ without touching `agent.preemptive_search`, which still gates both matchers.
 Every failure logs and yields no contribution, so a broken match cannot fail
 the turn.
 
+## CANDIDATE_RESPONSE verdicts
+
+`TurnLifecycle.CANDIDATE_RESPONSE` runs when an LLM response with no tool
+calls is about to become the turn's final answer (#1508). Hooks take
+`(ctx, candidate)` — a `CandidateResponse` from
+`decafclaw.candidate_response` — and return `None` or a `CandidateVerdict`:
+
+- `reject=False`, `text=None`: deliver the candidate unchanged.
+- `reject=False`, `text="..."`: deliver the replacement text. `archive_messages`
+  adds transcript-only records (reflection's visibility row) after the final
+  assistant message.
+- `reject=True`: the runner appends the rejected candidate as an assistant
+  message (keeping its thinking/replay metadata), then `retry_messages`, to
+  history, the outgoing message list, and the archive, and runs another
+  iteration.
+
+Hooks run sequentially in registration order and the first verdict settles the
+turn, so a critic's decision is never overwritten by a sibling. Delivery,
+archival, and compaction stay in core. A raising hook is logged and skipped;
+caller cancellation still propagates.
+
+A stateful hook (a retry budget, judge token totals) keeps per-turn state in
+`candidate.state` under a key it owns. Core creates a fresh dict for every
+turn, so nothing needs resetting between conversations. See
+`tests/test_reflection_extension.py` for the contract.
+
 ## PRE_COMPACTION collectors
 
 `TurnLifecycle.PRE_COMPACTION` runs immediately before `compact_history`
@@ -177,6 +203,35 @@ compaction and no reactive overflow recovery; the bounded LLM recovery policy
 still handles the resulting provider error. `PRE_COMPACTION` collectors run
 only when compaction runs.
 
+## Reflection (default on)
+
+`src/decafclaw/extensions/reflection.py` owns response self-critique (#1508).
+It subscribes `CANDIDATE_RESPONSE` and returns a verdict: deliver the candidate,
+or reject it with a `[reflection]` critique message so the runner iterates
+again. It also publishes the `reflection_result` UI event and the
+`reflection_turn` telemetry row, and returns the visibility record
+(`reflection: PASS` / `reflection: retry N`) for the transcript when
+`reflection.visibility` is `visible` or `debug`.
+
+The judge policy, prompt, and model selection stay in
+[`reflection.py`](reflection.md): the extension moves only the turn-loop
+glue. Its per-turn state (retry count, summed judge tokens, first response,
+exhausted flag) lives under the `candidate.state["reflection"]` key.
+
+Gates:
+
+- `extensions.reflection.enabled: false` yanks the hook entirely — no judge
+  call, no telemetry.
+- `reflection.enabled: false` keeps the hook registered but delivers every
+  candidate unjudged.
+- `ctx.skip_reflection` (child agents), cancelled turns, empty content, and an
+  exhausted retry budget deliver as-is. An exhausted turn appends the
+  model-picker escalation nudge.
+
+Judge failures are fail-open: the candidate is delivered and the turn emits an
+`errored` telemetry row. Eval runs mount this extension explicitly (and only
+this one) so eval turns keep the reflection behavior they had in core.
+
 ## Type registry
 
 ```python
@@ -191,7 +246,7 @@ Registry helpers: `register_extension_type(name, factory, *, default_enabled=Fal
 
 `default_enabled=True` marks a core type that `load_config` seeds when `config.json` defines no entry for it. The flag lives in the `ExtensionTypeMeta` record (`get_extension_type_meta`) and is replaced along with the factory on re-registration, so a test or embedder that swaps a type also chooses its default.
 
-Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`compaction`, `diagnostics_and_telemetry`, `mentions`, `preempt_hints`, `recent_journal`, `scratchpad_notes`, `vault_guide`, `vault_references`, `vault_retrieval`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
+Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`compaction`, `diagnostics_and_telemetry`, `mentions`, `preempt_hints`, `recent_journal`, `reflection`, `scratchpad_notes`, `vault_guide`, `vault_references`, `vault_retrieval`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
 
 ## Loading
 

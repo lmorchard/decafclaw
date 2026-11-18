@@ -5,10 +5,11 @@ Self-reflection evaluates the agent's response before delivering it to the user.
 ## How it works
 
 1. The agent produces a final response (no more tool calls).
-2. A separate "judge" LLM call evaluates whether the response addresses the user's request.
-3. If the judge says **pass**, the response is delivered normally.
-4. If the judge says **fail**, the critique is injected as a user-role message and the agent retries from the LLM call step within the existing iteration loop.
-5. The retried response goes through reflection again, up to `max_retries`.
+2. The turn loop hands it to `ReflectionExtension` through the `CANDIDATE_RESPONSE` lifecycle hook (`src/decafclaw/extensions/reflection.py`).
+3. A separate "judge" LLM call evaluates whether the response addresses the user's request.
+4. If the judge says **pass**, the response is delivered normally.
+5. If the judge says **fail**, the critique is injected as a user-role message and the agent retries from the LLM call step within the existing iteration loop.
+6. The retried response goes through reflection again, up to `max_retries`.
 
 The judge uses a chain-of-thought-before-verdict prompt (G-Eval pattern): it reasons about what the user asked, whether the response addresses it, and notes gaps before outputting a binary `{"pass": true/false, "critique": "..."}` verdict.
 
@@ -64,6 +65,8 @@ Selecting a reflection judge equal to the active conversation model is allowed b
 ## Configuration
 
 All settings live under the `reflection` group in `config.json`. See [Configuration Reference](config.md#reflection) for the full table.
+
+Reflection is a default-on core [extension](extensions.md#reflection-default-on). `reflection.enabled: false` keeps the hook mounted but delivers every response unjudged, while `extensions.reflection.enabled: false` yanks the hook entirely so candidate responses pay no reflection work at all.
 
 ```json
 {
@@ -136,7 +139,7 @@ The template receives these variables:
 
 Reflection is automatically skipped when:
 
-- **Disabled** — `reflection.enabled = false`
+- **Disabled** — `reflection.enabled = false`, or the extension is yanked with `extensions.reflection.enabled: false`
 - **Max iterations hit** — the agent already exhausted `max_tool_iterations`
 - **Cancelled turn** — user interrupted
 - **Child agent turn** — delegation subtasks aren't evaluated; the parent turn is (detected via `ctx.is_child`)
@@ -178,7 +181,9 @@ This is measurement only — reflection behavior is unchanged (issue #409). See 
 ## Files
 
 - `src/decafclaw/reflection.py` — judge call, prompt assembly, result parsing (now also carries per-round judge token usage on `ReflectionResult`)
-- `src/decafclaw/agent.py` — reflection check after final response, retry integration, per-turn `reflection_turn` metrics emit (`_emit_reflection_metrics`)
+- `src/decafclaw/extensions/reflection.py` — `ReflectionExtension`: candidate check after the final response, retry/verdict integration, per-turn `reflection_turn` metrics emit, visibility records
+- `src/decafclaw/candidate_response.py` — `CANDIDATE_RESPONSE` hook contract (`CandidateResponse` / `CandidateVerdict`) and dispatch
+- `src/decafclaw/agent.py` — turn loop dispatches candidate hooks and applies retry/delivery verdicts
 - `src/decafclaw/reflection_metrics.py` — metrics subscriber, `response_delta` / `classify_outcome`, stats aggregation, `make reflection-stats`
 - `src/decafclaw/config_types.py` — `ReflectionConfig` and `TelemetryConfig` dataclasses
 - `data/{agent_id}/REFLECTION.md` — optional custom judge prompt override

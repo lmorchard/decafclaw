@@ -24,9 +24,9 @@ if TYPE_CHECKING:
     from decafclaw.context import Context
 
     from .context_types import ComposedContext
-    from .reflection import ReflectionResult
 
 from .archive import append_message
+from .candidate_response import CandidateResponse, dispatch_candidate_response
 from .config_types import LoopBreakerConfig
 from .context import TaskMode, TurnLifecycle
 from .context_cleanup import clear_old_tool_results
@@ -48,7 +48,6 @@ from .loop_breaker import (
 from .media import EndTurnConfirm, TerminationReason, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .recovery import RECOVERY_CONTINUE, RECOVERY_STOP, RecoveryState, decide_recovery_retry
-from .reflection_metrics import classify_outcome, response_delta
 from .reminders import reminder_message
 from .skills import activate_always_loaded
 from .telemetry import get_tracer
@@ -279,39 +278,6 @@ def _note_cancel_observed(ctx: "Context") -> None:
         ctx.manager.note_cancel_observed_by_agent(_conv_id(ctx))
     except Exception as exc:
         log.debug("note_cancel_observed_by_agent failed: %s", exc)
-
-
-@dataclass(frozen=True)
-class ReflectionOutcome:
-    """Result of evaluating a candidate final response.
-
-    Replaces the 4-tuple return shape of the old _handle_reflection.
-    `text` is None when the caller should retry (critique already
-    injected into history/messages by the helper). When `should_retry`
-    is False, `text` is the response to deliver (with optional
-    exhaustion-escalation suffix appended in the skip path).
-
-    `reflection_retries` and `last_reflection` are mutated on the call
-    sites' state directly — they don't appear in this return type.
-    """
-
-    text: str | None
-    should_retry: bool
-
-
-def _should_reflect(ctx: "Context", config, content: str, reflection_retries: int) -> bool:
-    """Check whether reflection should run on this response."""
-    if not config.reflection.enabled:
-        return False
-    if reflection_retries >= config.reflection.max_retries:
-        return False
-    if ctx.skip_reflection:
-        return False
-    if not content or not content.strip():
-        return False
-    if ctx.cancelled and ctx.cancelled.is_set():
-        return False
-    return True
 
 
 async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause) -> str | None:
@@ -678,17 +644,9 @@ class TurnRunner:
     messages: list = field(default_factory=list)
     prompt_tokens: int = 0
     empty_retries: int = 0
-    reflection_retries: int = 0
-    last_reflection: "ReflectionResult | None" = None
-    iteration_response: dict = field(default_factory=dict)
-    # Reflection telemetry (#409) — captured across rounds for the per-turn
-    # metrics emit. first_response is the round-0 response the judge saw;
-    # exhausted survives _reflection_skip nulling last_reflection.
-    reflection_first_response: "str | None" = None
-    reflection_judge_prompt_tokens: int = 0
-    reflection_judge_completion_tokens: int = 0
-    reflection_exhausted: bool = False
-    reflection_last_critique: str = ""
+    # Per-turn scratch for CANDIDATE_RESPONSE hooks (retry budget, judge token
+    # totals). Core owns the dict; each hook owns one key inside it.
+    candidate_state: dict[str, Any] = field(default_factory=dict)
     turn_start_index: int = 0
     turn_initial_history_len: int = 0
     accumulated_text_parts: list[str] = field(default_factory=list)
@@ -725,13 +683,7 @@ class TurnRunner:
             await self._compose()
             self.prompt_tokens = 0
             self.empty_retries = 0
-            self.reflection_retries = 0
-            self.last_reflection = None  # last ReflectionResult, for archiving after final response
-            self.reflection_first_response = None
-            self.reflection_judge_prompt_tokens = 0
-            self.reflection_judge_completion_tokens = 0
-            self.reflection_exhausted = False
-            self.reflection_last_critique = ""
+            self.candidate_state = {}
 
             self.accumulated_text_parts = []  # text from iterations that also had tool calls
             self.recovery_continuations = 0
@@ -1007,7 +959,6 @@ class TurnRunner:
         if cancelled:
             return _Final(result=cancelled)
 
-        self.iteration_response = response
         tool_calls = response.get("tool_calls")
         if tool_calls:
             return await self._handle_tool_calls(response, tool_calls)
@@ -1272,9 +1223,10 @@ class TurnRunner:
         return _Continue()
 
     async def _handle_no_tool_calls(self, response: dict) -> IterationOutcome:
-        """Process a no-tool-calls LLM response. Handles empty-retry,
-        reflection, archive of last_reflection, and compaction trigger.
-        Returns _Continue (retry) or _Final(result) (deliver response)."""
+        """Process a no-tool-calls LLM response. Handles empty-retry, the
+        candidate-response hooks (reflection and friends), archival of the
+        delivered text, and compaction. Returns _Continue (retry) or
+        _Final(result) (deliver response)."""
         content = response.get("content") or ""
         # If cancellation fired mid-stream and the provider returned an
         # empty body, don't archive an empty assistant message — the
@@ -1293,34 +1245,41 @@ class TurnRunner:
                 return _Continue()
             log.warning("LLM returned empty content with no tool calls (after retry)")
 
-        log.debug(
-            "Reflection check: enabled=%s, retries=%d/%d, skip=%s, has_content=%s",
-            self.config.reflection.enabled,
-            self.reflection_retries,
-            self.config.reflection.max_retries,
-            self.ctx.skip_reflection,
-            bool(content),
+        candidate = CandidateResponse(
+            content=content,
+            history=self.history,
+            turn_start_index=self.turn_start_index,
+            accumulated_text_parts=self.accumulated_text_parts,
+            user_message=self.user_message,
+            attachments=self.attachments or [],
+            retrieved_context_text=self.retrieved_context_text,
+            state=self.candidate_state,
         )
-        outcome = await self._handle_reflection(content)
-        if outcome.should_retry:
-            return _Continue()
-        assert outcome.text is not None  # invariant: should_retry=False implies text is not None
-        content = outcome.text
+        verdict = await dispatch_candidate_response(self.ctx, candidate)
+        archive_messages: tuple[dict, ...] = ()
+        if verdict is not None:
+            if verdict.reject:
+                # The critic wants another iteration: persist the rejected
+                # candidate and the critique so the retry continues from them.
+                rejected_msg = assistant_message(response, content)
+                self.history.append(rejected_msg)
+                self.messages.append(rejected_msg)
+                _archive(self.ctx, rejected_msg)
+                for msg in verdict.retry_messages:
+                    self.history.append(msg)
+                    self.messages.append(msg)
+                    _archive(self.ctx, msg)
+                return _Continue()
+            if verdict.text is not None:
+                content = verdict.text
+            archive_messages = verdict.archive_messages
 
         final_msg = assistant_message(response, content)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
+        for msg in archive_messages:
+            _archive(self.ctx, msg)
 
-        if self.last_reflection is not None:
-            visibility = self.config.reflection.visibility
-            r = self.last_reflection
-            should_archive = visibility == "debug" or (visibility == "visible" and not r.passed)
-            if should_archive:
-                detail = r.raw_response or r.critique or ("Response passed evaluation" if r.passed else "No details")
-                label = "reflection: PASS" if r.passed else f"reflection: retry {self.reflection_retries}"
-                _archive(self.ctx, {"role": "reflection", "tool": label, "content": detail})
-
-        await self._emit_reflection_metrics(content)
         await _maybe_compact(
             self.ctx,
             self.config,
@@ -1329,175 +1288,6 @@ class TurnRunner:
             lowered=self.lowered_compaction_threshold,
         )
         return _Final(result=self._extract_workspace_media(content, thinking=response.get("thinking")))
-
-    async def _emit_reflection_metrics(self, final_content: str) -> None:
-        """Publish one reflection_turn telemetry event per judge-eligible turn
-        (#409). Fail-open — measurement only, never affects the turn."""
-        try:
-            config = self.config
-            if not config.reflection.enabled or self.ctx.skip_reflection:
-                return  # disabled or child agent — not a reflection turn
-            if self.ctx.cancelled and self.ctx.cancelled.is_set():
-                return
-            last_error = self.last_reflection.error if self.last_reflection else ""
-            outcome = classify_outcome(
-                first_response=self.reflection_first_response,
-                last_error=last_error,
-                retry_count=self.reflection_retries,
-                exhausted=self.reflection_exhausted,
-                final_content=final_content,
-            )
-            if outcome is None:
-                return
-            first = self.reflection_first_response or final_content
-            char_delta, overlap = response_delta(first, final_content)
-            await self.ctx.publish(
-                "reflection_turn",
-                conv_id=self.ctx.conv_id,
-                outcome=outcome,
-                retry_count=self.reflection_retries,
-                judge_prompt_tokens=self.reflection_judge_prompt_tokens,
-                judge_completion_tokens=self.reflection_judge_completion_tokens,
-                char_delta=char_delta,
-                overlap_ratio=overlap,
-                critique_fingerprint=self.reflection_last_critique[:120],
-            )
-        except Exception as exc:  # fail-open
-            log.debug("reflection metrics emit failed: %s", exc)
-
-    async def _handle_reflection(self, content: str) -> ReflectionOutcome:
-        """Thin orchestrator. Mutates self.reflection_retries and
-        self.last_reflection; returns ReflectionOutcome."""
-        if not _should_reflect(
-            self.ctx,
-            self.config,
-            content,
-            self.reflection_retries,
-        ):
-            return self._reflection_skip(content)
-        result = await self._reflection_evaluate(content)
-        self.last_reflection = result
-        return self._reflection_apply_verdict(content, result)
-
-    def _reflection_skip(self, content: str) -> ReflectionOutcome:
-        """Reflection-did-not-run branch. Appends escalation suffix
-        on exhaustion; clears self.last_reflection."""
-        reflection_exhausted = (
-            self.reflection_retries >= self.config.reflection.max_retries
-            and self.last_reflection is not None
-            and not self.last_reflection.passed
-        )
-        # Telemetry (#409): persist the exhausted verdict before nulling
-        # last_reflection, so the per-turn emit can bucket it as loop_exhausted.
-        if reflection_exhausted:
-            self.reflection_exhausted = True
-        self.last_reflection = None
-        if reflection_exhausted:
-            content += (
-                "\n\n---\n*I'm not confident in this answer. "
-                "Try switching to a more capable model in the web UI model picker.*"
-            )
-        return ReflectionOutcome(text=content, should_retry=False)
-
-    async def _reflection_evaluate(self, content: str) -> "ReflectionResult":
-        """Build summaries + attachment annotation + accumulated-text
-        concat, call evaluate_response, publish reflection_result event."""
-        from .reflection import (
-            build_prior_turn_summary,
-            build_tool_summary,
-            evaluate_response,
-        )
-
-        tool_summary = build_tool_summary(
-            self.history,
-            self.turn_start_index,
-            max_result_len=self.config.reflection.max_tool_result_len,
-        )
-        prior_turn_summary = build_prior_turn_summary(
-            self.history,
-            self.turn_start_index - 1,
-            max_turns=3,
-            max_result_len=200,
-        )
-        judge_user_message = self.user_message
-        if self.attachments:
-            att_desc = ", ".join(f"{a.get('filename', '?')} ({a.get('mime_type', '?')})" for a in self.attachments)
-            judge_user_message += f"\n\n[User attached files: {att_desc}]"
-        judge_agent_response = (
-            "\n\n".join(part for part in [*self.accumulated_text_parts, content] if part and part.strip()) or content
-        )
-        # Telemetry (#409): capture the first response the judge sees and
-        # accumulate judge token cost across rounds.
-        if self.reflection_first_response is None:
-            self.reflection_first_response = content
-
-        result = await evaluate_response(
-            self.config,
-            judge_user_message,
-            judge_agent_response,
-            tool_summary,
-            prior_turn_summary=prior_turn_summary,
-            retrieved_context=self.retrieved_context_text,
-        )
-        self.reflection_judge_prompt_tokens += result.prompt_tokens
-        self.reflection_judge_completion_tokens += result.completion_tokens
-        if result.critique:
-            self.reflection_last_critique = result.critique
-
-        log.info(
-            "Reflection result: passed=%s, critique=%s, error=%s",
-            result.passed,
-            result.critique[:200] if result.critique else "",
-            result.error[:100] if result.error else "",
-        )
-        await self.ctx.publish(
-            "reflection_result",
-            passed=result.passed,
-            critique=result.critique,
-            raw_response=result.raw_response,
-            retry_number=self.reflection_retries + 1,
-            error=result.error,
-        )
-        return result
-
-    def _reflection_apply_verdict(
-        self,
-        content: str,
-        result: "ReflectionResult",
-    ) -> ReflectionOutcome:
-        """Apply the judge's verdict. On fail-with-real-critique,
-        append failed_msg + critique_msg, archive, bump retries.
-        Fail-open errors treated as PASS."""
-        if not result.passed and not result.error:
-            log.info(
-                "Reflection failed (retry %d/%d): %s",
-                self.reflection_retries + 1,
-                self.config.reflection.max_retries,
-                result.critique[:200],
-            )
-            failed_msg = assistant_message(self.iteration_response, content)
-            self.history.append(failed_msg)
-            self.messages.append(failed_msg)
-            _archive(self.ctx, failed_msg)
-
-            critique_msg = {
-                "role": "user",
-                "source": "reflection_retry",
-                "content": (
-                    "[reflection] Your previous response may not fully "
-                    "address the user's request.\n"
-                    f"Feedback: {result.critique}\n"
-                    "Please try again, addressing the feedback above."
-                ),
-            }
-            self.history.append(critique_msg)
-            self.messages.append(critique_msg)
-            _archive(self.ctx, critique_msg)
-
-            self.reflection_retries += 1
-            return ReflectionOutcome(text=None, should_retry=True)
-
-        return ReflectionOutcome(text=content, should_retry=False)
 
     async def _run_grace_turn(self) -> "ToolResult | None":
         """One-shot final LLM call after budget exhaustion. Appends a
