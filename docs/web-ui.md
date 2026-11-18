@@ -214,15 +214,19 @@ Finished turns are not marked in the title: the selected conversation's status
 returns to `idle` when its turn ends, so the sidebar's Done badge on
 conversations you are *not* looking at is the completion signal.
 
-**Tab favicon (#1288).** The tab icon follows the most urgent status across
-*all* conversations, in priority order: `waiting` (orange `!`), `finished`
-(green check), `busy` (blue ellipsis), then the unbadged default icon when
-everything is idle. `ConversationStore.getOverallStatus()` resolves the
-aggregate; `lib/favicon-badge.js` draws the base 32px icon plus the badge on an
-offscreen canvas and points every `<link rel="icon">` at the PNG data URI,
-restoring the original hrefs on idle. Every favicon link is updated because a
-browser may otherwise prefer the untouched 16/32px PNGs. Selecting a
-`finished` conversation clears it, exactly as the sidebar does.
+**Tab favicon (#1288).** The tab icon mirrors the **selected** conversation's
+activity, like the tab title: orange `!` while it waits on input or an
+approval, blue ellipsis while a turn runs, and the unbadged default icon when
+it is idle. Several open tabs therefore each show their own conversation
+rather than every tab lighting up for one tab's background work. A `finished`
+background turn does not badge: the selected conversation returns to `idle`
+when its turn ends (exactly as in the title), so the sidebar's Done badge
+remains the completion signal for conversations you are not looking at.
+`lib/favicon-badge.js` draws the base 32px icon plus the badge on an offscreen
+canvas and points every `<link rel="icon">` at the PNG data URI, restoring the
+original hrefs on idle. Every favicon link is updated because a browser may
+otherwise prefer the untouched 16/32px PNGs. Statuses of other conversations
+are irrelevant to the favicon.
 
 ### Vault editor
 

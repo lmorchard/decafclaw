@@ -68,13 +68,16 @@ function syncPageTitle() {
 store.addEventListener('change', syncPageTitle);
 syncPageTitle();
 
-// Tab favicon: aggregate status across every conversation (#1288), so an
-// approval request or a background finish is visible from another tab even
-// when the selected conversation is idle. The helper no-ops on unchanged
-// status and restores the default icons when everything is idle.
-store.addEventListener('change', () => {
-  updateFaviconBadge(store.getOverallStatus());
-});
+// Tab favicon: mirrors the selected conversation's activity, like the title,
+// so several open tabs each show their own turn's state instead of one tab's
+// background work lighting up every other tab (#1288, revised after multi-tab
+// use). The helper no-ops on unchanged status and restores the default icons
+// when the selected conversation is idle.
+function syncFavicon() {
+  updateFaviconBadge(store.getConversationStatus(store.currentConvId || ''));
+}
+store.addEventListener('change', syncFavicon);
+syncFavicon();
 
 // -- DOM references -----------------------------------------------------------
 

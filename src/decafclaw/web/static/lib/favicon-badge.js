@@ -1,9 +1,9 @@
 /**
- * Tab favicon badge for aggregate conversation status (#1288).
+ * Tab favicon badge for the selected conversation's status (#1288).
  *
  * Draws the base DecafClaw icon plus a status badge on a 32x32 offscreen
  * canvas and points every `<link rel="icon">` at the resulting PNG. When the
- * session returns to idle the original hrefs are restored.
+ * conversation returns to idle the original hrefs are restored.
  *
  * Canvas (not an SVG data URI) because not every browser renders SVG favicons;
  * every favicon link is updated because leaving the 16/32px defaults in place

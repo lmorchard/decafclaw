@@ -127,7 +127,7 @@ describe('favicon badge', () => {
     ]);
   });
 
-  it('draws a green checkmark when a background turn finished', async () => {
+  it('draws a green checkmark for the finished status', async () => {
     const { updateFaviconBadge } = await loadModule();
 
     await updateFaviconBadge('finished');
