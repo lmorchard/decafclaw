@@ -122,11 +122,18 @@ def ensure_builtin_extension_types() -> None:
     from . import diagnostics_and_telemetry as _diagnostics_and_telemetry
     from . import improvement_scout as _improvement_scout
     from . import mem0 as _mem0
+    from . import scratchpad_notes as _scratchpad_notes
 
     if get_extension_type("diagnostics_and_telemetry") is None:
         register_extension_type(
             "diagnostics_and_telemetry",
             _diagnostics_and_telemetry.DiagnosticsAndTelemetryExtension,
+            default_enabled=True,
+        )
+    if get_extension_type("scratchpad_notes") is None:
+        register_extension_type(
+            "scratchpad_notes",
+            _scratchpad_notes.ScratchpadNotesExtension,
             default_enabled=True,
         )
     if get_extension_type("mem0") is None:

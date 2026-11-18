@@ -3047,8 +3047,10 @@ class TestComposeRecentJournalIntegration:
     async def test_cancelled_compose_rolls_back_cursors(self, ctx, config):
         """Cancellation after the injection helpers ran must not advance the
         cursors, or the next turn skips context that was never delivered."""
+        from decafclaw.extensions.scratchpad_notes import ScratchpadNotesExtension
         from decafclaw.notes import append_note
 
+        ScratchpadNotesExtension({}, config).enable(ctx.event_bus)
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "undelivered journal")])
         append_note(config, ctx.conv_id, "undelivered note", now="2026-07-23T14:31:00Z")

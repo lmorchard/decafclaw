@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 
 def _resolve_conv_id(ctx: "Context") -> str:
-    """Match the fallback chain `_compose_notes` uses so writes and
+    """Match the fallback chain `ScratchpadNotesExtension` uses so writes and
     reads always target the same file. ``ctx.conv_id`` may be empty
     in contexts that key off ``channel_id`` instead (top-level
     Mattermost messages, some scheduled/heartbeat code paths)."""

@@ -40,7 +40,7 @@ Slots mount in one invariant order (#1486):
 | Slot | Mount point | Archived? |
 |------|-------------|-----------|
 | `HEAD` | After the system prompt, before history | No — replays at the same offset so the provider prefix cache stays stable (#1117) |
-| `DELTA` | After archived history and this turn's other chronological injections (wiki, notes, journal, memory), before tail envelopes | Yes |
+| `DELTA` | After archived history and this turn's other chronological injections (wiki, journal, memory), before tail envelopes | Yes |
 | `TAIL` | Directly before the current user message | Yes |
 
 Messages follow the composer's normal role filter: `system`, `user`,
@@ -70,8 +70,11 @@ configured timeout and `lifecycle.pre_compose_token_ceiling` still apply, so
 existing extensions (including `mem0`) need no changes. Structured
 contributions carry their own messages and are not truncated by that legacy
 ceiling. All hooks share the bounded `lifecycle.pre_compose_timeout` wait
-(default 300 ms); a raising or slow hook is logged and the turn still
-composes.
+(default 300 ms): hooks that finish inside the bound contribute, a slow hook
+is cancelled and logged, and the turn still composes. A hook that advances
+durable state (such as an injection cursor) must do so immediately before it
+returns, with no `await` in between, so a cancellation cannot strand the
+state.
 
 ## Type registry
 
@@ -87,7 +90,7 @@ Registry helpers: `register_extension_type(name, factory, *, default_enabled=Fal
 
 `default_enabled=True` marks a core type that `load_config` seeds when `config.json` defines no entry for it. The flag lives in the `ExtensionTypeMeta` record (`get_extension_type_meta`) and is replaced along with the factory on re-registration, so a test or embedder that swaps a type also chooses its default.
 
-Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`diagnostics_and_telemetry`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
+Built-in modules register themselves at import time. `ensure_builtin_extension_types()` imports the built-in modules (`diagnostics_and_telemetry`, `scratchpad_notes`, `improvement_scout`, `mem0`) lazily so `BaseExtension` is already defined (avoids an import cycle), registers any missing name, and is idempotent. Both `load_config` (for seeding) and `init_extensions` call it.
 
 ## Loading
 
@@ -133,6 +136,29 @@ subscribes two hooks and keeps no configuration options:
 Every failure — model resolution, snapshot copy, file write, metric record —
 logs a warning and is swallowed, so diagnostics cannot fail or delay a turn.
 `diagnostics_and_telemetry` is registered with `default_enabled=True`, so `load_config` seeds an enabled `extensions.diagnostics_and_telemetry` entry when `config.json` does not define one; an explicit entry wins, so `"enabled": false` cleanly suppresses the sidecar writes and token counters. The REST readers in `context_composer.py` stay available for existing files.
+
+## Scratchpad notes (default on)
+
+`src/decafclaw/extensions/scratchpad_notes.py` moves the per-conversation
+scratchpad auto-inject (#299) out of the composer (#1487). It subscribes
+`PRE_COMPOSE`, reads `notes.md` for the conversation off the event loop, drops
+items at or behind `ComposerState.injection_cursors`, and returns one
+`DELTA` contribution with role `conversation_notes` and a `notes` source
+entry. The composer archives it with the turn, so later turns replay it from
+history; the cursor keeps it from repeating.
+
+The extension is registered with `default_enabled=True`, so notes injection
+works out of the box. It yields nothing in heartbeat, scheduled, and
+child-agent modes, and honors both gates: `config.extensions.scratchpad_notes.enabled`
+and the legacy `notes.enabled`. Option overrides:
+
+| Option | Legacy fallback | Default |
+|--------|-----------------|---------|
+| `context_max_entries` | `notes.context_max_entries` | `20` |
+| `context_max_chars` | `notes.context_max_chars` | `4096` |
+
+Every failure — config read, file read, cursor update — logs a warning and
+returns no contribution, so the turn still composes.
 
 ## Reference extension: mem0
 

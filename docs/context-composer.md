@@ -126,7 +126,7 @@ the slice guidance still lives in the system prompt via the addendum.
 | Slot | Position | Archived? |
 |------|----------|-----------|
 | `HEAD` | After the system-message block, before history | No — the same prefix replays each turn, preserving the provider prompt cache (#1117) |
-| `DELTA` | After archived history and the composer's other chronological injections (wiki, notes, journal, memory), before tail envelopes | Yes |
+| `DELTA` | After archived history and the composer's other chronological injections (wiki, journal, memory, scratchpad notes), before tail envelopes | Yes |
 | `TAIL` | Directly before the current user message | Yes |
 
 Legacy text coerces to one `TAIL` `ContextContribution` holding the bounded
@@ -145,7 +145,7 @@ legacy ceiling. Any contribution `source_entry` lands in the turn's
 
 #### History accounting
 
-`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, `conversation_notes`, `recent_journal`, `vault_retrieval`, `PRE_COMPOSE` DELTA/TAIL contributions, and the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `notes_entry`, `recent_journal_entry`, `memory_entry`, contribution `source_entry`, `user_msg_entry`). `PRE_COMPOSE` HEAD contributions are not archived and therefore are not part of `history` accounting. The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
+`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, `recent_journal`, `vault_retrieval`, `PRE_COMPOSE` DELTA/TAIL contributions — including the `conversation_notes` contribution from `ScratchpadNotesExtension` — and the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `recent_journal_entry`, `memory_entry`, contribution `source_entry`, `user_msg_entry`). `PRE_COMPOSE` HEAD contributions are not archived and therefore are not part of `history` accounting. The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
 
 `ROLE_REMAP` also covers two turn-closure markers (both remapped to `user`): `cancel_marker`, written when a user cancels a turn, and `turn_aborted`, written when a turn aborts via an unexpected exception. See [Cancelled turns](conversations.md#cancelled-turns) and [Aborted turns](conversations.md#aborted-turns-unexpected-exceptions) for producer-side details. The remap is what guarantees each marker reaches the LLM at the right position regardless of provider (Vertex collapses `system`-role messages into `systemInstruction`).
 
@@ -490,7 +490,7 @@ Config dataclass: `VaultGuideConfig` in `config_types.py`. Settable in `data/{ag
 
 ### Skip conditions
 
-Skipped for heartbeat / scheduled / child-agent modes (mirrors `_compose_notes`), and when `recent_journal.enabled` is `false`.
+Skipped for heartbeat / scheduled / child-agent modes (the same skip rule as `ScratchpadNotesExtension`), and when `recent_journal.enabled` is `false`.
 
 ### Relationship to `dream`
 

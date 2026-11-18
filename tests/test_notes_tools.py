@@ -64,7 +64,7 @@ class TestNotesAppend:
         assert "disabled" in result.text
 
     def test_uses_channel_id_when_conv_id_empty(self, ctx):
-        """conv_id fallback chain matches `_compose_notes` so writes
+        """conv_id fallback chain matches `ScratchpadNotesExtension` so writes
         and reads always target the same file."""
         from decafclaw.notes import notes_path
 
