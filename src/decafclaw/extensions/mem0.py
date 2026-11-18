@@ -85,7 +85,9 @@ class Mem0Extension(BaseExtension):
             mem0_config = self._build_mem0_config()
             self.client = Memory.from_config(mem0_config)
             self._initialized = True
-            target = mem0_config["vector_store"]["config"].get("url") or mem0_config["vector_store"]["config"].get("path")
+            target = mem0_config["vector_store"]["config"].get("url") or mem0_config["vector_store"]["config"].get(
+                "path"
+            )
             log.info("Initialized local Mem0 memory store at %s", target)
             return self.client
         except ImportError:
