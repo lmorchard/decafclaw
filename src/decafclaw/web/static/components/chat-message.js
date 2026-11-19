@@ -24,6 +24,9 @@ export class ChatMessage extends LitElement {
     widget: { type: Object, attribute: false },
     submitted: { type: Boolean },
     response: { type: Object, attribute: false },
+    isError: { type: Boolean, attribute: false },
+    timedOut: { type: Boolean, attribute: false },
+    timeoutSec: { type: Number, attribute: false },
   };
 
   createRenderRoot() { return this; }
@@ -56,6 +59,9 @@ export class ChatMessage extends LitElement {
     this.submitted = false;
     /** @type {object|null} */
     this.response = null;
+    this.isError = false;
+    this.timedOut = false;
+    this.timeoutSec = null;
   }
 
   connectedCallback() {
@@ -190,7 +196,7 @@ export class ChatMessage extends LitElement {
     }
 
     if (this.role === 'tool') {
-      return html`<tool-message .tool=${this.tool} .command=${this.command} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response} .toolCallId=${this.toolCallId}></tool-message>`;
+      return html`<tool-message .tool=${this.tool} .command=${this.command} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response} .toolCallId=${this.toolCallId} .isError=${this.isError} .timedOut=${this.timedOut} .timeoutSec=${this.timeoutSec}></tool-message>`;
     }
 
     if (this.role === 'assistant' && this.toolCalls?.length) {

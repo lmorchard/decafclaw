@@ -311,7 +311,7 @@ Accumulated text and thinking for the current unarchived assistant segment, sent
 
 ### `tool_end`
 
-Final result of a tool call. Replaces the in-flight tool_status with terminal state.
+Final result of a tool call. Replaces the in-flight tool_status with terminal state. `is_error` and `timed_out` are structured outcome tags so clients render failures without parsing result_text; `timeout_sec` is the watchdog limit that fired.
 
 **Fields:**
 
@@ -321,6 +321,9 @@ Final result of a tool call. Replaces the in-flight tool_status with terminal st
 - `result_text` — string
 - `display_short_text` — string?
 - `widget` — object?
+- `is_error` — boolean?
+- `timed_out` — boolean?
+- `timeout_sec` — number?
 
 ### `tool_start`
 

@@ -591,6 +591,9 @@ class MattermostClient:
                     event.get("media", []),
                     tool_call_id=event.get("tool_call_id", ""),
                     display_short_text=event.get("display_short_text"),
+                    is_error=bool(event.get("is_error")),
+                    timed_out=bool(event.get("timed_out")),
+                    timeout_sec=event.get("timeout_sec"),
                 )
 
             elif event_type == "tool_media_uploaded":

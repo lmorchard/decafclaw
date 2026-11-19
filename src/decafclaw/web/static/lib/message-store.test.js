@@ -81,6 +81,32 @@ describe('MessageStore', () => {
             expect(store.hasMore).toBe(true);
         });
 
+        it('keeps outcome tags when merging archived tool messages (#1569)', () => {
+            const store = new MessageStore(() => {});
+            store.handleMessage({
+                type: MESSAGE_TYPES.CONV_HISTORY,
+                conv_id: '1',
+                has_more: false,
+                messages: [
+                    { role: 'assistant', content: '', tool_calls: [{ id: 'tc1', function: { name: 'wait' } }], timestamp: 't1' },
+                    {
+                        role: 'tool',
+                        tool_call_id: 'tc1',
+                        content: '[error: tool wait timed out after 180s]',
+                        is_error: true,
+                        timed_out: true,
+                        timeout_sec: 180,
+                        timestamp: 't2',
+                    },
+                ],
+            }, '1');
+
+            const toolMsg = store.currentMessages[0];
+            expect(toolMsg.is_error).toBe(true);
+            expect(toolMsg.timed_out).toBe(true);
+            expect(toolMsg.timeout_sec).toBe(180);
+        });
+
         it('handles CHUNK and clearStreamingText', () => {
             const store = new MessageStore(() => {});
             store.handleMessage({ type: MESSAGE_TYPES.CHUNK, conv_id: '1', text: 'part1 ' }, '1');

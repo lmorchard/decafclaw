@@ -212,6 +212,9 @@ export class ChatView extends LitElement {
           .widget=${m.widget || null}
           .submitted=${!!m.submitted}
           .response=${m.response || null}
+          .isError=${!!m.is_error}
+          .timedOut=${!!m.timed_out}
+          .timeoutSec=${m.timeout_sec ?? null}
         ></chat-message>
       `)}
 

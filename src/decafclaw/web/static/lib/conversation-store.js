@@ -33,6 +33,9 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {{widget_type: string, target: string, data: object}|null} [widget]
  * @property {boolean} [submitted]
  * @property {object} [response]
+ * @property {boolean} [is_error]
+ * @property {boolean} [timed_out]
+ * @property {number|null} [timeout_sec]
  * @property {string} [source]
  * @property {AttachmentResponse[]} [attachments]
  */

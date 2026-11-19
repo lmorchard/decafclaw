@@ -351,6 +351,9 @@ class SrvToolEnd(TypedDict):
     result_text: str
     display_short_text: NotRequired[str]
     widget: NotRequired[dict[str, object]]
+    is_error: NotRequired[bool]
+    timed_out: NotRequired[bool]
+    timeout_sec: NotRequired[int]
 
 
 class SrvToolStart(TypedDict):

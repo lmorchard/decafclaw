@@ -1042,6 +1042,74 @@ def test_browser_canvas_tabs_and_standalone_page(built_static, chromium, config)
         assert widget_catalog_requests() == [True, True]
 
 
+def test_browser_canvas_resize_drag_survives_iframe(built_static, chromium, config):
+    """The canvas divider keeps tracking after the pointer enters an iframe (#1577).
+
+    ``#canvas-main`` animates its width, so a fast rightward drag leaves the
+    rendered left edge behind the pointer: the pointer ends up over the widget
+    iframe. Mouse events over an iframe go to the iframe document, so the
+    parent used to miss every later ``mousemove`` and the final ``mouseup``.
+    The drag froze and the width was never saved.
+    """
+    conv_id = seed_conversation(config, "Canvas resize test")
+    with browser_scenario(built_static, chromium, config, viewport={"width": 1280, "height": 800}) as scenario:
+        page = scenario.page
+        page.goto(scenario.base + "/")
+        page.wait_for_selector("#chat-layout:not(.hidden)", timeout=15000)
+        page.evaluate(
+            """async (convId) => {
+            const response = await fetch(`/api/canvas/${convId}/new_tab`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({
+                widget_type: 'iframe_sandbox',
+                data: {body: '<p>iframe target</p>', title: 'Frame'},
+                label: 'Frame',
+              }),
+            });
+            if (!response.ok) throw new Error(`new_tab failed: ${response.status}`);
+            const canvas = await import('/static/lib/canvas-state.js');
+            await canvas.setActiveConv(convId);
+        }""",
+            conv_id,
+        )
+        page.wait_for_selector("#canvas-main dc-widget-iframe-sandbox iframe", timeout=15000)
+        # Let the panel's own open transition finish before measuring.
+        page.evaluate(
+            """async () => {
+            const main = document.getElementById('canvas-main');
+            await Promise.all(main.getAnimations({subtree: true}).map(a => a.finished));
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        }"""
+        )
+
+        handle = page.locator("#canvas-resize-handle").bounding_box()
+        assert handle is not None
+        x = handle["x"] + handle["width"] / 2
+        y = handle["y"] + handle["height"] / 2
+        initial = page.evaluate("() => document.getElementById('canvas-main').getBoundingClientRect().width")
+        target = "() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-width'))"
+
+        page.mouse.move(x, y)
+        page.mouse.down()
+        # Nudge the handle so the drag starts, then jump into the widget iframe.
+        # A single large jump never reaches the parent at all: the first event
+        # is already delivered to the iframe document.
+        page.mouse.move(x + 2, y)
+        first = page.evaluate(target)
+        assert abs(initial - first) <= 3
+
+        page.mouse.move(x + 120, y)
+        second = page.evaluate(target)
+        assert first - second > 50, "drag stopped while the pointer was over the iframe"
+
+        page.mouse.up()
+        assert page.locator("#canvas-resize-handle").evaluate("h => h.classList.contains('dragging')") is False
+        saved = page.evaluate("() => localStorage.getItem('canvas-width')")
+        assert saved is not None
+        assert abs(float(saved) - second) <= 1
+
+
 def test_browser_vault_standalone_page(built_static, chromium, config):
     seed_vault_page(config)
     with browser_scenario(built_static, chromium, config) as scenario:

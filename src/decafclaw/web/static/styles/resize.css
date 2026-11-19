@@ -1,3 +1,18 @@
+/* Active resize drags route pointer events through this overlay. Without it,
+   a pointer that crosses an <iframe> (canvas widgets, embedded content) sends
+   mousemove/mouseup to the iframe document, freezing the drag. */
+.resize-drag-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: none;
+  cursor: col-resize;
+}
+
+.resize-drag-shield.active {
+  display: block;
+}
+
 /* Resize handle */
 #sidebar-resize-handle {
   width: 4px;

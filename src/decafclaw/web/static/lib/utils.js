@@ -82,46 +82,96 @@ export async function copyToClipboard(text) {
 }
 
 /**
+ * @typedef {number | ((rect: DOMRect) => number)} ResizeSize
+ */
+
+/** @type {HTMLElement | null} */
+let resizeDragShield = null;
+
+/**
+ * Show a full-viewport overlay for the duration of a resize drag.
+ *
+ * The overlay keeps mouse events in the parent document. Without it, a
+ * pointer over an `<iframe>` (canvas widgets, embedded content) sends
+ * `mousemove`/`mouseup` to the iframe document instead, so the drag freezes
+ * and the width is never persisted.
+ */
+function beginResizeDrag() {
+  if (!resizeDragShield) {
+    resizeDragShield = document.createElement('div');
+    resizeDragShield.className = 'resize-drag-shield';
+    resizeDragShield.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(resizeDragShield);
+  }
+  resizeDragShield.classList.add('active');
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
+
+function endResizeDrag() {
+  resizeDragShield?.classList.remove('active');
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+}
+
+/**
  * Set up a drag-to-resize handle that adjusts a CSS custom property.
  *
  * Restores the last saved width from localStorage on init, and persists
- * the width on mouseup.
+ * the target width on mouseup. A drag shield routes pointer events through
+ * the parent document while the drag crosses iframes.
  *
  * @param {object} opts
  * @param {HTMLElement} opts.handle       - The draggable handle element
  * @param {HTMLElement} opts.container    - The layout element whose bounding rect provides the origin
- * @param {number}      opts.minWidth     - Minimum width in px
- * @param {number}      opts.maxWidth     - Maximum width in px
+ * @param {'left' | 'right'} [opts.edge]  - Panel edge: 'left' grows rightward from clientX (default), 'right' grows leftward from the container's right edge
+ * @param {ResizeSize} opts.minWidth      - Minimum width in px, or a function of the layout rect
+ * @param {ResizeSize} opts.maxWidth      - Maximum width in px, or a function of the layout rect
+ * @param {ResizeSize} [opts.offset]      - Pixels between the container edge and the dragged panel (default 0)
  * @param {string}      opts.storageKey   - localStorage key for persisting width
  * @param {string}      opts.cssVar       - CSS custom property name (e.g. '--sidebar-width')
  */
-export function setupResizeHandle({ handle, container, minWidth, maxWidth, storageKey, cssVar }) {
+export function setupResizeHandle({
+  handle, container, edge = 'left', minWidth, maxWidth, offset = 0, storageKey, cssVar,
+}) {
   // Restore saved width
   const saved = localStorage.getItem(storageKey);
   if (saved) document.documentElement.style.setProperty(cssVar, saved + 'px');
 
+  const size = (value, rect) => (typeof value === 'function' ? value(rect) : value);
+
   let dragging = false;
+  /** @type {number | null} */
+  let lastWidth = null;
 
   handle.addEventListener('mousedown', (e) => {
     dragging = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    lastWidth = null;
+    handle.classList.add('dragging');
+    beginResizeDrag();
     e.preventDefault();
   });
 
   document.addEventListener('mousemove', (e) => {
     if (!dragging) return;
     const rect = container.getBoundingClientRect();
-    const newWidth = Math.min(maxWidth, Math.max(minWidth, e.clientX - rect.left));
+    const gap = size(offset, rect);
+    const raw = edge === 'right'
+      ? rect.right - gap - e.clientX
+      : e.clientX - rect.left - gap;
+    const newWidth = Math.min(size(maxWidth, rect), Math.max(size(minWidth, rect), raw));
+    lastWidth = newWidth;
     document.documentElement.style.setProperty(cssVar, newWidth + 'px');
   });
 
   document.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-    const w = getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
-    localStorage.setItem(storageKey, String(parseInt(w)));
+    handle.classList.remove('dragging');
+    endResizeDrag();
+    if (lastWidth !== null) {
+      localStorage.setItem(storageKey, String(Math.round(lastWidth)));
+    }
+    lastWidth = null;
   });
 }

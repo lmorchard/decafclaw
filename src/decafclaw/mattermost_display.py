@@ -217,9 +217,31 @@ class ConversationDisplay:
             except Exception as exc:
                 log.debug("Mattermost API call failed: %s", exc)
 
-    async def on_tool_end(self, tool_name, result_text, display_text, media, tool_call_id="", display_short_text=None):
-        """Tool finished — edit tool call message with result, handle media."""
-        if display_text:
+    async def on_tool_end(
+        self,
+        tool_name,
+        result_text,
+        display_text,
+        media,
+        tool_call_id="",
+        display_short_text=None,
+        is_error=False,
+        timed_out=False,
+        timeout_sec=None,
+    ):
+        """Tool finished — edit tool call message with result, handle media.
+
+        ``timed_out`` and ``is_error`` are structured outcome tags (#1569):
+        the watchdog kill and tool failures render as an explicit warning
+        instead of a normal checkmark.
+        """
+        if timed_out:
+            limit = f" after {round(timeout_sec)}s" if timeout_sec is not None else ""
+            msg = f"\u26a0\ufe0f Tool {tool_name} timed out{limit}"
+        elif is_error:
+            detail = (result_text or "").strip()
+            msg = f"\u26a0\ufe0f {tool_name} failed: {detail[:500]}" if detail else f"\u26a0\ufe0f {tool_name} failed"
+        elif display_text:
             msg = display_text
         elif display_short_text:
             msg = f"\U0001f527 {tool_name}: {display_short_text} \u2714\ufe0f"
@@ -227,7 +249,7 @@ class ConversationDisplay:
             msg = f"\U0001f527 {tool_name} \u2714\ufe0f"
 
         command = self._tool_commands.pop(tool_call_id, None)
-        if command is not None:
+        if command is not None and not is_error:
             output = display_text or result_text or "(no output)"
             msg = (
                 f"\U0001f527 {tool_name} \u2714\ufe0f\n\n**Command:**\n\n{_shell_preview(command)}"

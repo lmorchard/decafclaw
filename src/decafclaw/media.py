@@ -105,6 +105,10 @@ class ToolResult:
     widget: WidgetRequest | None = None
     termination_reason: TerminationReason | None = None
     thinking: str | None = None
+    # Structured timeout tags (#1569) so transports can render a loud
+    # watchdog failure without parsing `text`.
+    timed_out: bool = False
+    timeout_sec: float | None = None
 
     @classmethod
     def from_text(cls, text: str) -> "ToolResult":

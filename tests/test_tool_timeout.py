@@ -10,6 +10,7 @@ from decafclaw.media import ToolResult
 from decafclaw.skills.tabstack.tools import (
     TOOL_DEFINITIONS as TABSTACK_TOOL_DEFINITIONS,
 )
+from decafclaw.tool_execution import _tool_heartbeat, execute_single_tool
 from decafclaw.tools import TOOL_DEFINITIONS, TOOLS, execute_tool
 
 
@@ -258,6 +259,171 @@ async def test_confirmation_active_pauses_tool_timeout(ctx):
     # 1s watchdog would fire before 1.2s sleep if confirmation_active didn't pause it
     result = await _safe_execute(ctx, "prompt_tool")
     assert result.text == "approved and finished"
+
+
+@pytest.mark.asyncio
+async def test_timeout_logs_watchdog_warning(ctx, caplog):
+    """The watchdog announces the kill instead of silently returning (#1569)."""
+
+    async def hang(ctx):
+        await asyncio.sleep(10)
+
+    _register_extra_tool(ctx, "hang", hang)
+    _set_timeout(ctx, 1)
+
+    with caplog.at_level("WARNING", logger="decafclaw.tools"):
+        result = await _safe_execute(ctx, "hang")
+
+    assert result.timed_out is True
+    assert result.timeout_sec == 1
+    warnings = [r for r in caplog.records if "[watchdog]" in r.message]
+    assert warnings, "watchdog did not log a warning"
+    assert "hang" in warnings[0].message
+
+
+@pytest.mark.asyncio
+async def test_timeout_tags_tool_end_and_tool_message(ctx):
+    """tool_end and the archived tool message carry structured outcome tags."""
+
+    async def hang(ctx):
+        await asyncio.sleep(10)
+
+    _register_extra_tool(ctx, "hang", hang)
+    _set_timeout(ctx, 1)
+
+    events: list[dict] = []
+
+    async def _capture(ev):
+        events.append(ev)
+
+    ctx.event_bus.subscribe(_capture)
+    tc = {"id": "tc-timeout", "function": {"name": "hang", "arguments": "{}"}}
+    tool_msg, _ = await execute_single_tool(ctx, tc, asyncio.Semaphore(1))
+
+    end = next(e for e in events if e.get("type") == "tool_end")
+    assert end["is_error"] is True
+    assert end["timed_out"] is True
+    assert end["timeout_sec"] == 1
+
+    assert tool_msg["is_error"] is True
+    assert tool_msg["timed_out"] is True
+    assert tool_msg["timeout_sec"] == 1
+
+
+@pytest.mark.asyncio
+async def test_success_tags_tool_end_without_error(ctx):
+    """A successful tool is not tagged as an error."""
+
+    async def fast(ctx):
+        return "fine"
+
+    _register_extra_tool(ctx, "fast", fast)
+
+    events: list[dict] = []
+
+    async def _capture(ev):
+        events.append(ev)
+
+    ctx.event_bus.subscribe(_capture)
+    tc = {"id": "tc-ok", "function": {"name": "fast", "arguments": "{}"}}
+    tool_msg, _ = await execute_single_tool(ctx, tc, asyncio.Semaphore(1))
+
+    end = next(e for e in events if e.get("type") == "tool_end")
+    assert "is_error" not in end
+    assert "timed_out" not in end
+    assert "is_error" not in tool_msg
+
+
+@pytest.mark.asyncio
+async def test_long_tool_emits_progress_heartbeat(ctx, monkeypatch):
+    """A silent long-running tool produces periodic tool_status events (#1569)."""
+
+    from decafclaw import tool_execution
+
+    monkeypatch.setattr(tool_execution, "TOOL_HEARTBEAT_INTERVAL_SEC", 0.01)
+
+    statuses: list[dict] = []
+    release = asyncio.Event()
+
+    async def _capture(ev):
+        if ev.get("type") == "tool_status" and ev.get("tool") == "slow_tool":
+            statuses.append(ev)
+            release.set()
+
+    ctx.event_bus.subscribe(_capture)
+
+    async def slow_tool(ctx):
+        await asyncio.wait_for(release.wait(), timeout=5)
+        return "done"
+
+    _register_extra_tool(ctx, "slow_tool", slow_tool)
+    tc = {"id": "tc-heartbeat", "function": {"name": "slow_tool", "arguments": "{}"}}
+    tool_msg, _ = await execute_single_tool(ctx, tc, asyncio.Semaphore(1))
+
+    assert tool_msg["content"] == "done"
+    assert statuses, "no heartbeat tool_status emitted"
+    assert "still running" in statuses[0]["message"]
+    assert statuses[0]["tool_call_id"] == "tc-heartbeat"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_quiet_when_tool_reports_progress(ctx):
+    """A native tool_status suppresses the heartbeat for the next interval."""
+    statuses: list[dict] = []
+
+    async def _capture(ev):
+        if ev.get("type") == "tool_status":
+            statuses.append(ev)
+
+    ctx.event_bus.subscribe(_capture)
+
+    ticks = 0
+    statuses_at_tick2: list[int] = []
+
+    async def fake_sleep(_seconds):
+        nonlocal ticks
+        ticks += 1
+        if ticks == 1:
+            # The tool published its own progress during the first interval.
+            ctx.tools.last_status_at = time.monotonic()
+        elif ticks == 2:
+            statuses_at_tick2.append(len(statuses))
+        elif ticks >= 3:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _tool_heartbeat(ctx, "slow_tool", "tc-hb", time.monotonic(), interval=1.0, sleep=fake_sleep)
+
+    assert statuses_at_tick2 == [0], "heartbeat fired despite native progress"
+    # Once the native report ages out, the heartbeat resumes.
+    assert len(statuses) == 1
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_quiet_during_confirmation(ctx):
+    """A paused watchdog (awaiting a human) produces no progress heartbeats."""
+    statuses: list[dict] = []
+
+    async def _capture(ev):
+        if ev.get("type") == "tool_status":
+            statuses.append(ev)
+
+    ctx.event_bus.subscribe(_capture)
+
+    ticks = 0
+
+    async def fake_sleep(_seconds):
+        nonlocal ticks
+        ticks += 1
+        if ticks == 1:
+            ctx.confirmation_active.set()
+        elif ticks >= 3:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _tool_heartbeat(ctx, "prompt_tool", "tc-confirm", time.monotonic(), interval=1.0, sleep=fake_sleep)
+
+    assert statuses == []
 
 
 def test_confirmation_gated_tools_have_timeout_none():

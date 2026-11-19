@@ -415,6 +415,23 @@ first wording, so a `TypeError` from inside a tool body was reported as a
 bad-argument error — and for a tool taking only `ctx`, it rendered as an empty
 `Expected parameters: `, pointing the author at a call site that was correct.
 
+### Watchdog timeouts and in-flight progress (#1569)
+
+A tool that exceeds its per-call timeout is killed by the watchdog in
+`tools/__init__.py`, which logs `[watchdog] Tool '<name>' timed out after Ns`
+and returns a `ToolResult` tagged `timed_out=True` with the limit in
+`timeout_sec`. `tool_execution.py` tags every `tool_end` event (and the archived
+tool message) with structured `is_error`/`timed_out`/`timeout_sec` fields, so
+transports render failures without parsing `result_text`: the web UI shows a
+warning badge and auto-expands the error text; Mattermost edits the tool post to
+`⚠️ Tool <name> timed out after Ns` (or `⚠️ <name> failed: ...`).
+
+Tools without native progress reporting also emit a `tool_status` heartbeat
+every `TOOL_HEARTBEAT_INTERVAL_SEC` (15s) carrying the elapsed time. A tool
+that publishes its own `tool_status` suppresses the heartbeat for the next
+interval; `Context.publish` records the timestamp on the per-call
+`ToolState.last_status_at`.
+
 ## MCP (`skills/mcp/tools.py`)
 
 MCP admin tools live in the bundled `mcp` skill (auto-activates). See [MCP Server Support](mcp-servers.md).
