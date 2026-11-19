@@ -45,6 +45,7 @@ These docs are as much for me as they are for agents working on this project. Th
 - [Pre-emptive Tool Search](preemptive-tool-search.md) — Keyword-match user message at turn start to auto-promote relevant tools
 - [User Commands](commands.md) — User-invokable commands (!command / /command) with argument substitution
 - [Project Skill](project-skill.md) — Structured workflow: brainstorm → spec → plan → execute for multi-step tasks
+- [Marimo Pairing](marimo.md) — Native tools for driving a live marimo notebook, inspecting its kernel, and opening it in a canvas tab
 - [Postmortem Skill](postmortem-skill.md) — User-invokable blameless RCA: structured report on what went wrong, archived to the vault
 - [Ingest Skill](ingest-skill.md) — User-invokable one-shot ingestion: fetch a URL/file/attachment, synthesize it into vault pages
 - [Kindle](kindle.md) — Periodic ingest of Kindle highlights and notes into per-book vault pages

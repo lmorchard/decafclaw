@@ -1,0 +1,23 @@
+# marimo pairing skill (#1555) — catalog activation only.
+#
+# The tools themselves need a running marimo server with a browser session,
+# which this eval environment does not provide. This case isolates the
+# catalog question: does the marimo description make the agent activate the
+# skill for a live-notebook request instead of reaching for workspace file
+# tools or shell?
+
+- name: "activates the marimo pairing skill for a live notebook request"
+  input: >
+    I have a marimo notebook open in my browser and I want to add a cell that
+    loads the latest CSV from my workspace. Use the live notebook, not the file
+    on disk.
+  setup:
+    config_overrides:
+      reflection.enabled: false
+  expect:
+    expect_tool_args:
+      - tool: activate_skill
+        args:
+          name: marimo
+    max_tool_calls: 6
+    max_tool_errors: 2

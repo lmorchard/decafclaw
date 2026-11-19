@@ -580,6 +580,14 @@ Tools: `tabstack_extract_markdown`, `tabstack_extract_json`, `tabstack_generate`
 
 `tabstack_automate` supports **interactive form-fill**: pass `interactive: true` plus a `data` dict (keyed by form field label) and the browser agent's form-data requests are answered from `data`, gated by a per-submission user confirmation. Missing required fields cancel the request and are reported back for a retry. See the skill's `SKILL.md` for details.
 
+### marimo
+
+Pairs with a running marimo notebook over its HTTP API: lists browser sessions, inspects cells and the dataflow graph, adds/edits/deletes and runs cells through `marimo._code_mode`, evaluates scratchpad Python, and opens the notebook in a canvas tab. No marimo package is required in DecafClaw.
+
+Tools: `marimo_list_sessions`, `marimo_inspect`, `marimo_add_cell`, `marimo_edit_cell`, `marimo_delete_cell`, `marimo_eval`, `marimo_open_in_canvas`
+
+See [Marimo Pairing](marimo.md) for discovery, configuration, and the arbitrary-code security boundary.
+
 ### claude_code
 
 Delegates coding tasks to [Claude Code](https://claude.com/claude-code) as a subagent. The agent can start sessions, send coding tasks, and get results back — all within Mattermost conversations. Requires `ANTHROPIC_API_KEY`.
