@@ -36,7 +36,7 @@ async def run_all(app_ctx):
 
     from .restart import RestartCoordinator
 
-    restart_coordinator = RestartCoordinator(shutdown_event, event_bus=app_ctx.event_bus)
+    restart_coordinator = RestartCoordinator(shutdown_event, event_bus=app_ctx.event_bus, config=config)
     app_ctx.restart_coordinator = restart_coordinator
 
     def _signal_handler():
@@ -221,6 +221,9 @@ async def run_all(app_ctx):
         # Resume pending scheduled wake timers now that transports are listening (#1119 review)
         await manager.startup_scan_scheduled_wakes()
         await manager.startup_scan_file_watches()
+
+        # Resume post-restart conversation wakes after transports are up (#1554)
+        await manager.startup_scan_restart_wakes()
 
         # Wait for shutdown
         await shutdown_event.wait()

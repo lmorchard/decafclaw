@@ -265,6 +265,12 @@ def delete_conversation_files(config, conv_id: str) -> None:
                 watch_file.unlink()
             except OSError as exc:
                 log.warning("Failed to remove file watches file %s: %s", watch_file, exc)
+        restart_wake_file = restart_wake_path(config, conv_id)
+        if restart_wake_file.exists():
+            try:
+                restart_wake_file.unlink()
+            except OSError as exc:
+                log.warning("Failed to remove restart wake file %s: %s", restart_wake_file, exc)
         approval_file = approval_state_path(config, conv_id)
         if approval_file.exists():
             try:
@@ -295,6 +301,18 @@ def file_watches_path(config, conv_id: str) -> Path:
     watches or overwrite pending state (#1560).
     """
     base = (config.agent_path / "file_watches").resolve()
+    safe = _safe_conv_id(conv_id)
+    return base / f"{safe}.json"
+
+
+def restart_wake_path(config, conv_id: str) -> Path:
+    """Resolve the per-conversation post-restart wake record under the admin data dir:
+    data/{agent_id}/restart_wakes/{conv_id}.json (#1554).
+
+    Stored outside the agent-writable workspace: a workspace-writable record would
+    let the agent forge a wake turn in any conversation.
+    """
+    base = (config.agent_path / "restart_wakes").resolve()
     safe = _safe_conv_id(conv_id)
     return base / f"{safe}.json"
 

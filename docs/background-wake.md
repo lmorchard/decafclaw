@@ -79,6 +79,18 @@ These also fire as `TurnKind.WAKE` turns:
 - During the wake turn, the agent can inspect history/output and notify the user, or reply with `BACKGROUND_WAKE_OK` to remain silent if no action is needed.
 - Pending wake timers can be inspected via `schedule_list` and cancelled via `schedule_cancel(schedule_id=...)`.
 
+## Post-Restart Wakes (`admin_restart`, #1554)
+
+`admin_restart` can wake the conversation that requested it once the daemon is
+back. Before signalling shutdown it writes
+`data/{agent_id}/restart_wakes/{conv_id}.json` with the reason, requesting
+conversation, transport addresses, and request time; the startup scan reads
+and deletes the record before enqueueing a `TurnKind.WAKE` turn. The agent can
+then verify the restart (health, MCP connections, the change it made) and
+report to the user instead of leaving the turn cut off at the process exit.
+Cancelling a pending restart removes the record. `wake_on_restart=false` opts
+out.
+
 ## File Watch Wakes (`watch_file`, #1560)
 
 Timer wakes are blind to *when* an external event actually happens. A file

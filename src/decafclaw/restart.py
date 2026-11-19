@@ -13,6 +13,8 @@ import logging
 import time
 from typing import Any
 
+from .restart_wake import RestartWake, delete_restart_wake, save_restart_wake
+
 log = logging.getLogger(__name__)
 
 DEFAULT_MAX_WAIT_SECONDS = 120.0
@@ -27,15 +29,22 @@ class RestartCoordinator:
         shutdown_event: asyncio.Event,
         manager: Any | None = None,
         event_bus: Any | None = None,
+        config: Any | None = None,
     ) -> None:
         self.shutdown_event = shutdown_event
         self.manager = manager
         self.event_bus = event_bus
+        self.config = config
         self.restart_pending = False
         self.restart_reason = ""
         self.restart_requested_at: float | None = None
         self._drain_task: asyncio.Task | None = None
+        self._wake_conv_ids: set[str] = set()
         self._lock = asyncio.Lock()
+
+    def _config(self) -> Any | None:
+        """Config for wake-record persistence; falls back to the bound manager."""
+        return self.config if self.config is not None else getattr(self.manager, "config", None)
 
     def set_manager(self, manager: Any) -> None:
         """Bind the conversation manager once instantiated."""
@@ -72,14 +81,31 @@ class RestartCoordinator:
         on_idle: bool = True,
         max_wait_seconds: float = DEFAULT_MAX_WAIT_SECONDS,
         poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+        wake: RestartWake | None = None,
     ) -> bool:
         """Request a server restart.
 
         If ``on_idle=False``, signals the shutdown event immediately.
         If ``on_idle=True``, schedules on-idle draining: waits for active turns
         across all conversations to settle before signaling shutdown.
+
+        ``wake`` records a single-shot post-restart wake for the calling
+        conversation (#1554). It is persisted before any restart state changes,
+        so a write failure leaves the restart unrequested. Cancelling the
+        restart removes it.
         """
         async with self._lock:
+            if wake is not None:
+                config = self._config()
+                if config is None:
+                    log.warning(
+                        "Cannot persist post-restart wake for conv %s: no config available",
+                        wake.conv_id[:8],
+                    )
+                else:
+                    save_restart_wake(config, wake)
+                    self._wake_conv_ids.add(wake.conv_id)
+
             if not on_idle:
                 log.info("Immediate restart requested: %s", reason)
                 self.restart_pending = True
@@ -152,6 +178,11 @@ class RestartCoordinator:
             self.restart_pending = False
             self.restart_reason = ""
             self.restart_requested_at = None
+            config = self._config()
+            if config is not None:
+                for conv_id in self._wake_conv_ids:
+                    delete_restart_wake(config, conv_id)
+            self._wake_conv_ids.clear()
             if self._drain_task and not self._drain_task.done():
                 self._drain_task.cancel()
                 self._drain_task = None

@@ -55,6 +55,23 @@ Dedicated file tools for the agent's administrative directory (`config.agent_pat
 | `admin_replace_lines` | | Replace or delete a range of lines (requires confirmation) |
 | `admin_edit` | | Exact string replacement in an admin file (requires confirmation) |
 | `admin_delete` | | Delete an admin file or directory (requires confirmation) |
+| `admin_restart` | | Request a service restart (requires confirmation) |
+
+### Post-restart wake (`admin_restart`, #1554)
+
+`admin_restart` restarts the daemon on idle (`on_idle=true`) or immediately
+(`on_idle=false`). With `wake_on_restart=true` (the default), it first writes
+a single record to `data/{agent_id}/restart_wakes/{conv_id}.json` capturing the
+conversation, reason, transport addresses, and request time. That restores the
+turn the restart would otherwise cut short: the calling conversation can make a
+change, request a restart, and then verify the change after the daemon is back.
+
+On startup, after transports are listening, `ConversationManager.startup_scan_restart_wakes()`
+reads and deletes each record, then enqueues a `TurnKind.WAKE` turn in that
+conversation with the restart reason and elapsed time. Deletion happens before
+the enqueue, so a failing wake cannot replay on a later restart. Cancelling a
+pending restart (`/restart cancel`) deletes its record. The records live outside
+the workspace so workspace tools cannot forge a wake in another conversation.
 
 ### Secret-file protection
 

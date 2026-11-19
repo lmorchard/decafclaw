@@ -2625,6 +2625,65 @@ class ConversationManager:
         """Scan and resume pending file watches after transports are ready (#1560)."""
         return await self.file_watches.startup_scan()
 
+    async def startup_scan_restart_wakes(self) -> int:
+        """Wake conversations that requested a post-restart notification (#1554).
+
+        Each record is consumed (read and unlinked) before the turn is
+        enqueued, so a failed wake cannot replay on a later restart.
+        Per-conversation enqueue errors log and continue: startup must not be
+        stalled by one bad record. Returns the number of wake turns enqueued.
+        """
+        from .restart_wake import build_restart_wake_prompt, consume_restart_wakes
+
+        records = consume_restart_wakes(self.config)
+        if not records:
+            return 0
+
+        resumed = 0
+        for record in records:
+            try:
+                await self.enqueue_turn(
+                    conv_id=record.conv_id,
+                    kind=TurnKind.WAKE,
+                    prompt=build_restart_wake_prompt(record),
+                    metadata={"restart_wake": True},
+                    user_id=record.user_id,
+                    context_setup=self._restart_wake_context_setup(record),
+                )
+            except Exception as exc:
+                log.warning(
+                    "Failed to enqueue post-restart wake for conv %s: %s",
+                    record.conv_id[:8],
+                    exc,
+                )
+                continue
+            log.info("Post-restart wake enqueued for conv %s", record.conv_id[:8])
+            resumed += 1
+        return resumed
+
+    def _restart_wake_context_setup(self, record: Any) -> Callable[[Any], None]:
+        """Restore the calling conversation's transport fields on the wake ctx."""
+        state = self.get_state(record.conv_id)
+        base_setup = state.last_context_setup if state else None
+
+        def setup(ctx) -> None:
+            if base_setup:
+                base_setup(ctx)
+            if record.channel_id:
+                ctx.channel_id = record.channel_id
+            if record.thread_id:
+                ctx.thread_id = record.thread_id
+            if record.transport:
+                ctx.transport = record.transport
+            if record.transport == "mattermost" and getattr(ctx, "media_handler", None) is None and record.channel_id:
+                mm_client = getattr(self, "mm_client", None)
+                if mm_client and getattr(mm_client, "_http", None):
+                    from .media import MattermostMediaHandler
+
+                    ctx.media_handler = MattermostMediaHandler(mm_client._http, channel_id=record.channel_id)
+
+        return setup
+
     async def startup_scan_workflows(self) -> int:
         """Recover workflows in status='running' by re-enqueueing them (#581).
 

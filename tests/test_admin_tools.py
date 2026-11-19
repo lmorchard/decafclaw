@@ -901,6 +901,11 @@ async def test_admin_restart_confirmed(config):
 
     mock_ctx = MagicMock()
     mock_ctx.config = config
+    mock_ctx.conv_id = "test-conv"
+    mock_ctx.user_id = "user-1"
+    mock_ctx.channel_id = "channel-1"
+    mock_ctx.thread_id = "thread-1"
+    mock_ctx.transport = "web"
     mock_ctx.is_unattended = False
     mock_ctx.is_child = False
     mock_ctx.cancelled = None
@@ -914,7 +919,64 @@ async def test_admin_restart_confirmed(config):
 
     result = await tool_admin_restart(mock_ctx, reason="Config test", on_idle=True)
     assert "Restarting DecafClaw service" in str(result)
-    coord.request_restart.assert_called_once_with(reason="Config test", on_idle=True)
+    call = coord.request_restart.call_args
+    assert call.kwargs["reason"] == "Config test"
+    assert call.kwargs["on_idle"] is True
+    wake = call.kwargs["wake"]
+    assert wake.conv_id == "test-conv"
+    assert wake.reason == "Config test"
+    assert wake.channel_id == "channel-1"
+    assert wake.thread_id == "thread-1"
+    assert wake.transport == "web"
+    assert wake.user_id == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_admin_restart_wake_disabled(config):
+    from decafclaw.confirmations import ConfirmationResponse
+    from decafclaw.tools.admin_tools import tool_admin_restart
+
+    mock_ctx = MagicMock()
+    mock_ctx.config = config
+    mock_ctx.conv_id = "test-conv"
+    mock_ctx.is_unattended = False
+    mock_ctx.is_child = False
+    mock_ctx.cancelled = None
+
+    coord = MagicMock()
+    coord.request_restart = AsyncMock(return_value=True)
+    mock_ctx.restart_coordinator = coord
+    mock_ctx.request_confirmation = AsyncMock(return_value=ConfirmationResponse(confirmation_id="c3", approved=True))
+
+    await tool_admin_restart(mock_ctx, reason="No wake", on_idle=False, wake_on_restart=False)
+
+    call = coord.request_restart.call_args
+    assert call.kwargs["wake"] is None
+    assert call.kwargs["on_idle"] is False
+
+
+@pytest.mark.asyncio
+async def test_admin_restart_reports_wake_persistence_failure(config):
+    from decafclaw.confirmations import ConfirmationResponse
+    from decafclaw.tools.admin_tools import tool_admin_restart
+
+    mock_ctx = MagicMock()
+    mock_ctx.config = config
+    mock_ctx.conv_id = "test-conv"
+    mock_ctx.is_unattended = False
+    mock_ctx.is_child = False
+    mock_ctx.cancelled = None
+
+    coord = MagicMock()
+    coord.request_restart = AsyncMock(side_effect=OSError("disk full"))
+    mock_ctx.restart_coordinator = coord
+    mock_ctx.request_confirmation = AsyncMock(return_value=ConfirmationResponse(confirmation_id="c4", approved=True))
+
+    result = await tool_admin_restart(mock_ctx, reason="Disk full", on_idle=False)
+
+    assert isinstance(result, ToolResult)
+    assert "restart not requested" in result.text
+    assert "disk full" in result.text
 
 
 @pytest.mark.asyncio
