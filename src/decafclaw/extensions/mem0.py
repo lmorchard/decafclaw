@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import logging
 import os
+import threading
 from typing import Any
 
 # Disable mem0 telemetry to prevent remote egress and migration store locking conflicts
@@ -42,8 +43,18 @@ class Mem0Extension(BaseExtension):
         self._initialized = False
         # mem0's add() is read-modify-write (search existing facts, then let an
         # LLM choose ADD/UPDATE/DELETE), so concurrent settled turns must not
-        # interleave writes or both insert the same fact.
-        self._write_lock = asyncio.Lock()
+        # interleave writes or both insert the same fact. Embedded Qdrant keeps
+        # collection state in process memory without its own locking, so there
+        # every call is serialized; remote Qdrant serves concurrent clients, so
+        # searches stay parallel and only writes are serialized.
+        self._embedded_store = not (self.options.get("qdrant_url") or self.options.get("qdrant_host"))
+        # Sync clients are guarded by threading locks acquired inside the worker
+        # thread: cancelling the awaiting task (hook timeout, shutdown) must not
+        # release the lock while the client call is still running.
+        self._sync_write_lock = threading.Lock()
+        self._sync_all_lock = threading.Lock() if self._embedded_store else None
+        self._async_write_lock = asyncio.Lock()
+        self._async_all_lock = asyncio.Lock() if self._embedded_store else None
 
     def _build_mem0_config(self) -> dict[str, Any]:
         """Construct embedded, local-first Mem0 configuration dictionary."""
@@ -117,7 +128,17 @@ class Mem0Extension(BaseExtension):
         self.subscription_ids = [sub_pre, sub_settle]
         return self.subscription_ids
 
-    async def _call_client(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+    def _call_locks(self, *, write: bool) -> tuple[threading.Lock | None, asyncio.Lock | None]:
+        """Pick the sync and async guards for one client call.
+
+        Embedded stores serialize every call; remote stores serialize writes
+        and let searches run concurrently.
+        """
+        if self._sync_all_lock is not None:
+            return self._sync_all_lock, self._async_all_lock
+        return (self._sync_write_lock if write else None), (self._async_write_lock if write else None)
+
+    async def _call_client(self, fn: Any, *args: Any, write: bool = False, **kwargs: Any) -> Any:
         """Invoke a mem0 client method without stalling the event loop.
 
         mem0's ``Memory`` client is synchronous: a single call can embed text,
@@ -126,10 +147,26 @@ class Mem0Extension(BaseExtension):
         transport until it returns, and ``pre_compose_timeout`` cannot fire
         because the loop never yields. Sync methods run in a worker thread;
         coroutine methods (``AsyncMemory``) are awaited in place.
+
+        The sync lock is acquired inside the worker thread rather than around
+        the ``await``: cancelling the awaiting task must not release it while
+        the client call still runs.
         """
+        sync_lock, async_lock = self._call_locks(write=write)
         if inspect.iscoroutinefunction(fn):
-            return await fn(*args, **kwargs)
-        res = await asyncio.to_thread(fn, *args, **kwargs)
+            if async_lock is None:
+                return await fn(*args, **kwargs)
+            async with async_lock:
+                return await fn(*args, **kwargs)
+        if sync_lock is None:
+            res = await asyncio.to_thread(fn, *args, **kwargs)
+        else:
+
+            def _locked_call() -> Any:
+                with sync_lock:
+                    return fn(*args, **kwargs)
+
+            res = await asyncio.to_thread(_locked_call)
         if inspect.isawaitable(res):
             return await res
         return res
@@ -198,8 +235,7 @@ class Mem0Extension(BaseExtension):
             add_fn = getattr(self.client, "add", None)
             if not callable(add_fn):
                 return
-            async with self._write_lock:
-                await self._call_client(add_fn, messages, user_id=user_id)
+            await self._call_client(add_fn, messages, user_id=user_id, write=True)
         except Exception as e:
             log.warning("Mem0 on_turn_settle_hook add failed: %s", e)
 

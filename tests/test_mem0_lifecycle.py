@@ -170,13 +170,25 @@ class _OverlapDetectingClient:
         self.max_active = 0
         self._guard = threading.Lock()
 
-    def add(self, *args, **kwargs):
+    def _enter(self):
         with self._guard:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
-        time.sleep(self.delay)
+
+    def _leave(self):
         with self._guard:
             self.active -= 1
+
+    def search(self, *args, **kwargs):
+        self._enter()
+        time.sleep(self.delay)
+        self._leave()
+        return [{"memory": "User lives in Portland."}]
+
+    def add(self, *args, **kwargs):
+        self._enter()
+        time.sleep(self.delay)
+        self._leave()
         return {"status": "ok"}
 
 
@@ -191,5 +203,25 @@ async def test_mem0_settle_writes_are_serialized(ctx, config):
     transcript = [{"role": "user", "content": "I like dark roast."}]
 
     await asyncio.gather(*(ext.on_turn_settle_hook(ctx, transcript) for _ in range(3)))
+
+    assert client.max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_mem0_embedded_store_serializes_reads_and_writes(ctx, config):
+    """WHEN the store is embedded (process-local Qdrant state with no internal
+    locking), concurrent search and add() calls SHALL not touch the shared
+    client at the same time; remote Qdrant alone serves concurrent clients."""
+    client = _OverlapDetectingClient(delay=0.05)
+    ext = Mem0Extension({"qdrant_path": "data/mem0_qdrant"}, config, client=client)
+    ctx.user_id = "user123"
+    ctx.skip_memory_extension = False
+    transcript = [{"role": "user", "content": "I like dark roast."}]
+
+    await asyncio.gather(
+        ext.pre_compose_hook(ctx, "Where do I live?"),
+        ext.on_turn_settle_hook(ctx, transcript),
+        ext.on_turn_settle_hook(ctx, transcript),
+    )
 
     assert client.max_active == 1
