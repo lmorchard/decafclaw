@@ -447,6 +447,10 @@ async def test_vault_write_frontmatter_stale_modified_conflicts(
         json={"frontmatter": {"summary": "S"}, "modified": 1.0},
     )
     assert resp.status_code == 409
+    data = resp.json()
+    assert data["error"] == "conflict"
+    # Unified conflict payload: the server's current mtime under `modified`.
+    assert data["modified"] == pytest.approx(path.stat().st_mtime)
 
 
 @pytest.mark.asyncio

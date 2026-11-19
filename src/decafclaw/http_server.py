@@ -690,6 +690,28 @@ async def _read_json_body(request: Request) -> dict | None:
     return body if isinstance(body, dict) else None
 
 
+# Tolerance for mtime conflict detection, in seconds. An unchanged file stats
+# to the same mtime on every read; drift beyond this means the file changed
+# since the client's snapshot. 1ms absorbs float and filesystem-precision noise.
+MTIME_CONFLICT_TOLERANCE = 1e-3
+
+
+def check_mtime_conflict(existing_mtime: float, client_mtime: float) -> JSONResponse | None:
+    """Return a 409 conflict response if the file changed since the client's snapshot.
+
+    Shared by workspace, vault, and config writes: one tolerance
+    (:data:`MTIME_CONFLICT_TOLERANCE`) and one payload key (``modified``,
+    matching every read and write-success response in this API). Returns
+    ``None`` when the mtimes agree within tolerance.
+    """
+    if abs(existing_mtime - client_mtime) > MTIME_CONFLICT_TOLERANCE:
+        return JSONResponse(
+            {"error": "conflict", "modified": existing_mtime},
+            status_code=409,
+        )
+    return None
+
+
 async def handle_confirm(request: Request) -> Response:
     """Handle interactive button/link callbacks for tool confirmation."""
     config = request.app.state.config
@@ -2095,12 +2117,9 @@ async def workspace_write(request: Request, username: str) -> JSONResponse:
         except (TypeError, ValueError):
             return JSONResponse({"error": "modified must be a number"}, status_code=400)
         if resolved.exists():
-            file_mtime = resolved.stat().st_mtime
-            if abs(file_mtime - modified) > 1e-3:
-                return JSONResponse(
-                    {"error": "conflict", "modified": file_mtime},
-                    status_code=409,
-                )
+            conflict = check_mtime_conflict(resolved.stat().st_mtime, modified)
+            if conflict is not None:
+                return conflict
 
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
@@ -3301,12 +3320,9 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
         except (TypeError, ValueError):
             return JSONResponse({"error": "modified must be a number"}, status_code=400)
         if target.exists():
-            file_mtime = target.stat().st_mtime
-            if file_mtime > modified + 1.0:
-                return JSONResponse(
-                    {"error": "conflict", "server_modified": file_mtime},
-                    status_code=409,
-                )
+            conflict = check_mtime_conflict(target.stat().st_mtime, modified)
+            if conflict is not None:
+                return conflict
 
     existed = target.exists()
     existing_text = target.read_text(encoding="utf-8") if existed else ""
@@ -3636,12 +3652,9 @@ async def config_write_file(request: Request, username: str) -> JSONResponse:
         except (TypeError, ValueError):
             return JSONResponse({"error": "modified must be a number"}, status_code=400)
         if fpath.exists():
-            file_mtime = fpath.stat().st_mtime
-            if file_mtime > modified + 1.0:
-                return JSONResponse(
-                    {"error": "conflict", "server_modified": file_mtime},
-                    status_code=409,
-                )
+            conflict = check_mtime_conflict(fpath.stat().st_mtime, modified)
+            if conflict is not None:
+                return conflict
     fpath.parent.mkdir(parents=True, exist_ok=True)
     fpath.write_text(content, encoding="utf-8")
     return JSONResponse({"ok": True, "modified": fpath.stat().st_mtime})
