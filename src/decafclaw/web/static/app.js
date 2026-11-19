@@ -552,11 +552,6 @@ document.addEventListener('schedule-open', (e) => {
 // Close schedule page via back button
 schedulePageEl?.addEventListener('close', () => hideSchedulePage());
 
-// Surface store errors as toasts
-store.addEventListener('change', () => {
-  // The store clears errors after emitting, so we check via a custom approach
-});
-
 // Listen for WebSocket error messages directly
 ws.addEventListener('message', (e) => {
   const msg = /** @type {CustomEvent} */ (e).detail;

@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_config = None
 _skill_config = None
 
 
@@ -26,8 +25,7 @@ class SkillConfig:
 
 def init(config, skill_config: SkillConfig) -> None:
     """Initialize the dream skill. Called by the skill loader on activation."""
-    global _config, _skill_config
-    _config = config
+    global _skill_config
     _skill_config = skill_config
 
 
