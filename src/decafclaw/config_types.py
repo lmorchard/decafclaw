@@ -298,10 +298,19 @@ class MapWidgetConfig:
 
 
 @dataclass
+class WebFrameWidgetConfig:
+    """Security allowlist for the bundled `web_frame` canvas widget."""
+
+    allowed_origins: list[str] = field(default_factory=list)
+    allow_lan_and_tailnet: bool = True
+
+
+@dataclass
 class WidgetsConfig:
     """Per-widget server-side configuration."""
 
     map: MapWidgetConfig = field(default_factory=MapWidgetConfig)
+    web_frame: WebFrameWidgetConfig = field(default_factory=WebFrameWidgetConfig)
 
 
 @dataclass

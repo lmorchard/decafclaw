@@ -40,9 +40,24 @@
       }
     },
     "/actions/confirm": {
+      "get": {
+        "summary": "Handle Confirm",
+        "description": "Handle interactive button/link callbacks for tool confirmation.",
+        "operationId": "handle_confirm_actions_confirm_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
       "post": {
         "summary": "Handle Confirm",
-        "description": "Handle Mattermost interactive button callbacks for tool confirmation.",
+        "description": "Handle interactive button/link callbacks for tool confirmation.",
         "operationId": "handle_confirm_actions_confirm_post",
         "responses": {
           "200": {
@@ -57,9 +72,24 @@
       }
     },
     "/actions/cancel": {
+      "get": {
+        "summary": "Handle Cancel",
+        "description": "Handle interactive button/link callback for stop/cancel.",
+        "operationId": "handle_cancel_actions_cancel_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
       "post": {
         "summary": "Handle Cancel",
-        "description": "Handle Mattermost interactive button callback for stop/cancel.",
+        "description": "Handle interactive button/link callback for stop/cancel.",
         "operationId": "handle_cancel_actions_cancel_post",
         "responses": {
           "200": {

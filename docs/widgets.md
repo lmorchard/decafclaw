@@ -66,6 +66,7 @@ Post-Phase 4 (#358 part B):
 
 - **`iframe_sandbox`** — agent-authored HTML/CSS/JS rendered in a CSP-locked sandboxed iframe; inline + canvas modes. Data shape (input): `{body: string, title?: string}`. See [iframe_sandbox](#iframe_sandbox-widget).
 - **`map`** — interactive geographic map (Leaflet + OSM tiles). Trusted first-party widget: the agent supplies structured data only; the tile source is server config (`config.widgets.map`), injected server-side. Data shape (input): `{markers: [{lat, lng, label?, popup?}], center?: {lat, lng}, zoom?, title?}`. See [map](#map-widget).
+- **`web_frame`** — approved local or homelab companion web application (Marimo notebooks, Television artifacts) rendered inside an iframe in canvas mode. Supports scripts, forms, and WebSocket connections with server-side origin allowlisting. Data shape (input): `{url: string, title?: string}`. See [web_frame](#web_frame-widget).
 
 Post-#414:
 
@@ -589,6 +590,50 @@ return ToolResult(
 ```
 
 Or `canvas_new_tab(widget_type="map", data={"markers": [...]})`.
+
+## `web_frame` widget
+
+Bundled at `src/decafclaw/web/static/widgets/web_frame/`. Renders an approved
+local or homelab companion web application (e.g. Marimo notebooks, Television
+artifacts) inside an iframe in canvas mode.
+
+Unlike `iframe_sandbox`, which enforces a strict `default-src 'none'` CSP and
+runs in a null origin without network access, `web_frame` allows interactive
+companion applications that need live HTTP and WebSocket connections (such as
+communicating with a running Marimo kernel or a Television artifact server).
+
+### Security and origin allowlist
+
+To protect the user from phishing, clickjacking, or unwanted third-party tracking,
+the server-side normalizer (`widgets.py::_normalize_web_frame`) verifies the
+requested URL before opening the tab:
+
+1. Scheme must be `http` or `https`.
+2. Host is checked against permitted origins:
+   - **Localhost / loopback** (`127.0.0.1`, `localhost`, `::1`) is always permitted.
+   - **LAN & Tailnet** (when `config.widgets.web_frame.allow_lan_and_tailnet` is true,
+     which is the default): RFC1918 private IPs (`10.0.0.0/8`, `172.16.0.0/12`,
+     `192.168.0.0/16`), Tailscale CGNAT IPs (`100.64.0.0/10`), and common local
+     hostnames (`decafclaw`, `*.local`, `*.lan`, `*.internal`, `*.home.arpa`) are allowed.
+   - **Configured origins**: explicit entries in `config.widgets.web_frame.allowed_origins`,
+     or configured Television server URLs (`config.television.base_url`).
+
+Any URL not meeting these criteria raises a validation error and rejects tab creation.
+
+### Data shape
+
+**Input**:
+- `url` (string, required, max length 2048) — target HTTP or HTTPS URL.
+- `title` (string, optional, max length 200) — optional title header.
+
+### Usage
+
+```python
+canvas_new_tab(
+    widget_type="web_frame",
+    data={"url": "http://decafclaw:2718", "title": "Marimo Companion"},
+)
+```
 
 ## `progress_tracker` widget
 

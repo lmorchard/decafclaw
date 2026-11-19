@@ -1,0 +1,23 @@
+{
+  "name": "web_frame",
+  "description": "Embed an approved local or homelab companion web application in a canvas tab (e.g. Marimo notebooks, Television artifacts). URLs must use http or https and resolve to an approved local, tailnet, or configured origin.",
+  "modes": ["canvas"],
+  "accepts_input": false,
+  "data_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "url": {
+        "type": "string",
+        "maxLength": 2048,
+        "description": "Target HTTP/HTTPS URL of the companion application."
+      },
+      "title": {
+        "type": "string",
+        "maxLength": 200,
+        "description": "Optional tab title header."
+      }
+    },
+    "required": ["url"]
+  }
+}

@@ -4,8 +4,10 @@ See docs/widgets.md for the admin-facing guide.
 """
 
 import html as html_lib
+import ipaddress
 import json
 import logging
+import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -185,7 +187,11 @@ def load_widget_registry(config, bundled_dir: Path | None = None, admin_dir: Pat
     `admin_dir` params are for tests; production uses the defaults.
     """
     bundled_root = bundled_dir if bundled_dir is not None else _BUNDLED_DIR
-    admin_root = admin_dir if admin_dir is not None else config.agent_path / "widgets"
+    if admin_dir is not None:
+        admin_root = admin_dir
+    else:
+        agent_path = getattr(config, "agent_path", None)
+        admin_root = Path(agent_path) / "widgets" if agent_path is not None else Path("/nonexistent/admin")
 
     merged: dict[str, WidgetDescriptor] = {}
     merged.update(_scan_tier(bundled_root, "bundled"))
@@ -321,3 +327,97 @@ def _normalize_map(data: dict, config=None) -> dict:
 
 
 _NORMALIZERS["map"] = _normalize_map
+
+
+def is_allowed_web_frame_url(url: str, config=None) -> tuple[bool, str | None]:
+    """Validate whether a URL is permitted to be embedded in web_frame.
+
+    Returns (True, None) if permitted, or (False, error_reason).
+    """
+    if not isinstance(url, str) or not url.strip():
+        return False, "url must be a non-empty string"
+    clean_url = url.strip()
+    try:
+        parsed = urllib.parse.urlsplit(clean_url)
+    except Exception as e:
+        return False, f"invalid URL: {e}"
+
+    if parsed.scheme not in ("http", "https"):
+        return False, f"scheme must be http or https, got {parsed.scheme!r}"
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False, "URL missing host"
+
+    # 1. Configured allowlist overrides
+    from .config_types import WebFrameWidgetConfig
+
+    web_frame_cfg = getattr(getattr(config, "widgets", None), "web_frame", None) or WebFrameWidgetConfig()
+
+    for origin in web_frame_cfg.allowed_origins:
+        origin_str = origin.strip().lower()
+        if not origin_str:
+            continue
+        if origin_str.startswith("http://") or origin_str.startswith("https://"):
+            try:
+                op = urllib.parse.urlsplit(origin_str)
+                if op.scheme == parsed.scheme and op.netloc.lower() == parsed.netloc.lower():
+                    return True, None
+            except Exception:
+                pass
+        elif origin_str == parsed.netloc.lower() or origin_str == hostname.lower():
+            return True, None
+
+    # Check television base_url if television config exists
+    tv_base = getattr(getattr(config, "television", None), "base_url", None)
+    if tv_base and isinstance(tv_base, str):
+        try:
+            tp = urllib.parse.urlsplit(tv_base)
+            if tp.scheme == parsed.scheme and tp.netloc.lower() == parsed.netloc.lower():
+                return True, None
+        except Exception:
+            pass
+
+    # 2. Localhost / loopback is always permitted
+    if hostname.lower() in ("localhost", "127.0.0.1", "::1"):
+        return True, None
+
+    # 3. LAN and Tailnet (if allow_lan_and_tailnet is True, default True)
+    if web_frame_cfg.allow_lan_and_tailnet:
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_loopback or ip.is_private:
+                return True, None
+            tailscale_net = ipaddress.ip_network("100.64.0.0/10")
+            if ip in tailscale_net:
+                return True, None
+        except ValueError:
+            h_lower = hostname.lower()
+            if (
+                h_lower == "decafclaw"
+                or h_lower.endswith(".local")
+                or h_lower.endswith(".lan")
+                or h_lower.endswith(".internal")
+                or h_lower.endswith(".home.arpa")
+            ):
+                return True, None
+
+    return False, f"URL origin '{parsed.scheme}://{parsed.netloc}' is not in allowed web_frame origins"
+
+
+def _normalize_web_frame(data: dict, config=None) -> dict:
+    """Validate origin allowlist for web_frame URLs.
+
+    Input shape: ``{url: str, title?: str}``.
+    Raises ValueError if URL scheme or origin is not permitted.
+    """
+    url = data.get("url", "")
+    ok, err = is_allowed_web_frame_url(url, config)
+    if not ok:
+        raise ValueError(err)
+    out = dict(data)
+    out["url"] = url.strip()
+    return out
+
+
+_NORMALIZERS["web_frame"] = _normalize_web_frame
