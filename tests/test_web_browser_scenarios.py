@@ -1880,6 +1880,103 @@ def test_browser_chat_input_height_alignment(built_static, chromium, config):
         assert_aligned("after clearing the text")
 
 
+def test_browser_mobile_composer_maximizes_textarea(built_static, chromium, config):
+    """#1540: on mobile the textarea owns the composer row.
+
+    Icons replace words, attach moves into the ``⋮`` menu, and send/stop share
+    one primary button. The row's other controls keep their 44px tap-target
+    floor while the textarea takes the remaining width.
+    """
+    with browser_scenario(built_static, chromium, config, viewport={"width": 390, "height": 844}) as scenario:
+        page = scenario.page
+        page.goto(scenario.base + "/")
+        page.wait_for_selector("chat-input textarea", timeout=15000)
+
+        layout = page.evaluate(
+            """() => {
+            const ci = document.querySelector('chat-input');
+            const row = ci.querySelector('.input-row');
+            const ta = ci.querySelector('textarea');
+            const attach = ci.querySelector('.attach-btn');
+            const primary = ci.querySelector('.composer-primary-btn');
+            const actions = ci.querySelector('.conversation-actions-btn');
+            const label = primary.querySelector('.composer-primary-label');
+            const box = (el) => el.getBoundingClientRect();
+            return {
+                rowWidth: box(row).width,
+                textareaWidth: box(ta).width,
+                attachDisplay: getComputedStyle(attach).display,
+                labelDisplay: getComputedStyle(label).display,
+                primary: {
+                    width: box(primary).width,
+                    height: box(primary).height,
+                    aria: primary.getAttribute('aria-label'),
+                },
+                actions: {width: box(actions).width, height: box(actions).height},
+            };
+        }"""
+        )
+        assert layout["attachDisplay"] == "none"
+        assert layout["labelDisplay"] == "none"
+        assert layout["primary"]["aria"] == "Send message"
+        assert layout["primary"]["width"] >= 44 - 0.5
+        assert layout["primary"]["height"] >= 44 - 0.5
+        assert layout["actions"]["width"] >= 44 - 0.5
+        assert layout["actions"]["height"] >= 44 - 0.5
+        # 390px viewport minus composer padding leaves a ~374px row; the two
+        # icon controls and gaps take ~96px. Pre-#1540 four row buttons left
+        # the textarea below a third of the row.
+        assert layout["textareaWidth"] >= 0.65 * layout["rowWidth"]
+
+        busy = page.evaluate(
+            """async () => {
+            const ci = document.querySelector('chat-input');
+            ci.busy = true;
+            await ci.updateComplete;
+            const primary = ci.querySelector('.composer-primary-btn');
+            return {
+                count: ci.querySelectorAll('.composer-primary-btn').length,
+                aria: primary.getAttribute('aria-label'),
+                label: primary.querySelector('.composer-primary-label').textContent.trim(),
+                labelDisplay: getComputedStyle(primary.querySelector('.composer-primary-label')).display,
+                isStop: primary.classList.contains('stop-btn'),
+            };
+        }"""
+        )
+        assert busy == {
+            "count": 1,
+            "aria": "Stop generation",
+            "label": "Stop",
+            "labelDisplay": "none",
+            "isStop": True,
+        }
+        page.evaluate("document.querySelector('chat-input').busy = false")
+
+        attach = page.evaluate(
+            """async () => {
+            window.__attachClicked = false;
+            document.querySelector('#file-input').addEventListener('click', (e) => {
+                e.preventDefault();
+                window.__attachClicked = true;
+            }, { once: true });
+            const ci = document.querySelector('chat-input');
+            ci.querySelector('.conversation-actions-btn').click();
+            await ci.updateComplete;
+            const item = [...ci.querySelectorAll('.conversation-menu-item')]
+                .find((b) => b.querySelector('.conversation-menu-label')?.textContent.trim() === 'Attach file');
+            if (!item) return {found: false};
+            item.click();
+            await ci.updateComplete;
+            return {
+                found: true,
+                clicked: window.__attachClicked,
+                menuClosed: !ci.querySelector('.conversation-menu'),
+            };
+        }"""
+        )
+        assert attach == {"found": True, "clicked": True, "menuClosed": True}
+
+
 def test_browser_sidebar_collapse_button_visible_when_narrow(built_static, chromium, config):
     """The sidebar hide (collapse) button must stay inside the sidebar bounds (#1189).
 
