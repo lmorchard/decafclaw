@@ -193,12 +193,16 @@ def _read_registry() -> list[_Server]:
             base_url = str(data.get("base_url") or "")
             url = _normalize_server_url(host, port, base_url)
             server_id = str(data.get("server_id") or f"{host}:{port}")
+            try:
+                pid = int(data.get("pid") or 0)
+            except (TypeError, ValueError):
+                pid = 0
             servers[url] = _Server(
                 server_id=server_id,
                 url=url,
                 host=host,
                 port=port,
-                pid=int(data.get("pid") or 0),
+                pid=pid,
                 version=str(data.get("version") or ""),
                 started_at=str(data.get("started_at") or ""),
             )
@@ -405,12 +409,18 @@ def _parse_sse_event(event: str | None, data_lines: list[str]) -> tuple[bool, bo
     return False, False, "", "", "", payload_text
 
 
-async def execute_code(server: _Server, session_id: str, code: str) -> _Execution:
+async def execute_code(
+    server: _Server,
+    session_id: str,
+    code: str,
+    timeout_sec: float | None = None,
+) -> _Execution:
     """Run Python in a marimo session's scratchpad and collect its SSE output."""
     headers = _auth_headers()
     headers["Marimo-Session-Id"] = session_id
     headers["Accept"] = "text/event-stream"
-    timeout = httpx.Timeout(_skill_config.execute_timeout_sec, connect=5.0)
+    effective_timeout = _skill_config.execute_timeout_sec if timeout_sec is None else timeout_sec
+    timeout = httpx.Timeout(effective_timeout, connect=5.0)
 
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
@@ -456,7 +466,7 @@ async def execute_code(server: _Server, session_id: str, code: str) -> _Executio
                         raw_error += line + "\n"
     except httpx.TimeoutException as exc:
         raise MarimoError(
-            f"marimo did not finish within {_skill_config.execute_timeout_sec:g}s; "
+            f"marimo did not finish within {effective_timeout:g}s; "
             "the server interrupts the kernel when the stream disconnects"
         ) from exc
     except httpx.HTTPError as exc:
@@ -490,8 +500,13 @@ def _without_marker(stdout: str) -> str:
     return "\n".join(line for line in stdout.splitlines() if not line.startswith(RESULT_MARKER)).strip()
 
 
-async def _run_operation(server: _Server, session_id: str, code: str) -> dict:
-    execution = await execute_code(server, session_id, code)
+async def _run_operation(
+    server: _Server,
+    session_id: str,
+    code: str,
+    timeout_sec: float | None = None,
+) -> dict:
+    execution = await execute_code(server, session_id, code, timeout_sec=timeout_sec)
     payload = _parse_marker(execution.stdout)
     if payload is None:
         detail = execution.stderr.strip() or execution.raw_error
@@ -686,7 +701,12 @@ def _operation_text(payload: dict) -> str:
 async def _session_details(session: _Session) -> dict:
     """Return live cell count and aggregate status for one session."""
     try:
-        payload = await _run_operation(session.server, session.session_id, _inspect_code(False, 1))
+        payload = await _run_operation(
+            session.server,
+            session.session_id,
+            _inspect_code(False, 1),
+            timeout_sec=min(_skill_config.request_timeout_sec, 15.0),
+        )
     except MarimoError as exc:
         log.debug("[marimo] session detail failed for %s: %s", session.session_id, exc)
         return {"cell_count": None, "status": "unknown", "detail_error": str(exc)}
