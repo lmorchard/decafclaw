@@ -154,15 +154,7 @@ export class ToolStatusStore {
         const tcId = msg.tool_call_id || '';
         this.#activeTools.set(tcId, `${msg.tool}: ${msg.message}`);
         if (msg.conv_id === currentConvId) {
-          if (msg.tool === 'vault_retrieval' || msg.tool === 'vault_references') {
-            this.#messageStore.insertBeforeLastUser({
-              role: msg.tool,
-              content: msg.message,
-              timestamp: new Date().toISOString(),
-            });
-          } else {
-            this.#messageStore.updateToolCall(tcId, `${msg.tool}: ${msg.message}`);
-          }
+          this.#messageStore.updateToolCall(tcId, `${msg.tool}: ${msg.message}`);
         }
         return true;
       }

@@ -159,6 +159,7 @@ class TestTurnProvenanceWebSocket:
             ("recent_journal", "Recent journal entries"),
             ("conversation_notes", "[Conversation notes]"),
             ("vault_retrieval", "--- page (score: 0.82) ---"),
+            ("vault_references", "[Referenced wiki page: Foo]"),
         ):
             append_message(config, conv_id, {"role": role, "content": content})
         append_message(
@@ -175,3 +176,36 @@ class TestTurnProvenanceWebSocket:
 
         assert [m["role"] for m in messages] == ["user", "assistant"]
         assert messages[-1]["provenance"] == PROVENANCE
+
+    @pytest.mark.asyncio
+    async def test_passive_vault_retrieval_does_not_emit_tool_status(self, ws_context, monkeypatch):
+        """Passive vault hydration events must not emit fake TOOL_STATUS frames (#1571)."""
+        state, _index, sent, manager, _config = ws_context
+        conv_id = "conv-provenance"
+        ws_mock = AsyncMock(side_effect=lambda m: sent.append(m))
+        state["ws_send"] = ws_mock
+        _subscribe_to_conv(state, conv_id)
+
+        async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+            await ctx.publish("vault_retrieval", text="[Automatically retrieved context]", results=[{"page": "p"}])
+            await ctx.publish("vault_references", text="[Referenced wiki page: p]")
+            append_message(ctx.config, ctx.conv_id, {"role": "user", "content": user_message})
+            append_message(ctx.config, ctx.conv_id, {"role": "assistant", "content": "Done"})
+            return ToolResult(text="Done")
+
+        monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+        future = await manager.enqueue_turn(
+            conv_id=conv_id,
+            kind=TurnKind.USER,
+            prompt="Hello",
+            user_id="alice",
+        )
+        await asyncio.wait_for(future, timeout=2.0)
+
+        tool_status_frames = [
+            m
+            for m in sent
+            if m.get("type") == WSMessageType.TOOL_STATUS and m.get("tool") in ("vault_retrieval", "vault_references")
+        ]
+        assert not tool_status_frames
