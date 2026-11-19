@@ -329,6 +329,77 @@ async def test_providers_change_rebuilds_registry(ctx, monkeypatch, tmp_path):
         await _cancel(task)
 
 
+async def test_providers_reload_retries_failed_model_info(ctx, monkeypatch, tmp_path):
+    """A model whose get_model_info lookup failed must be retried after a
+    providers reload: the negative cache resets with the registry, so a model
+    that becomes resolvable picks up its context window without a process
+    restart (#1304)."""
+    _align_config(ctx, monkeypatch, tmp_path)
+    config = ctx.config
+
+    from decafclaw.llm import _failed_model_info, ensure_model_context_window
+    from decafclaw.llm.registry import clear_providers, get_provider, list_providers
+
+    class FailingProvider:
+        def __init__(self, url: str = "", api_key: str = "") -> None:
+            self.url = url
+
+        async def get_model_info(self, model):
+            raise RuntimeError("endpoint unreachable")
+
+    class WorkingProvider:
+        def __init__(self, url: str = "", api_key: str = "") -> None:
+            self.url = url
+
+        async def get_model_info(self, model):
+            return {"inputTokenLimit": 131072}
+
+    clear_providers()
+    task, shutdown_event = await _run_watcher(ctx)
+    events: list[dict] = []
+    sub_id = ctx.event_bus.subscribe(events.append)
+
+    try:
+        await _settle()
+
+        # Phase 1: a provider whose model-info lookup fails. The reload
+        # registers it and the first ensure call negatively caches the pair,
+        # so the model rides on the compaction fallback.
+        monkeypatch.setattr("decafclaw.llm.providers.openai_compat.OpenAICompatProvider", FailingProvider)
+        _write_config(
+            tmp_path,
+            {
+                "providers": {"p1": {"type": "openai-compat", "url": "http://x/v1"}},
+                "model_configs": {"m1": {"provider": "p1", "model": "some-model"}},
+            },
+        )
+        await _wait_for(lambda: "p1" in list_providers())
+
+        fallback = config.compaction.max_tokens
+        assert await ensure_model_context_window(config, "m1") == fallback
+        assert ("p1", "some-model") in _failed_model_info
+
+        # Phase 2: the user points the provider at a working endpoint. The
+        # reload must clear the negative cache so the lookup is retried and
+        # resolves — before the fix it stayed at the fallback until restart.
+        monkeypatch.setattr("decafclaw.llm.providers.openai_compat.OpenAICompatProvider", WorkingProvider)
+        _write_config(
+            tmp_path,
+            {
+                "providers": {"p1": {"type": "openai-compat", "url": "http://x/v2"}},
+                "model_configs": {"m1": {"provider": "p1", "model": "some-model"}},
+            },
+        )
+        await _wait_for(lambda: get_provider("p1").url == "http://x/v2")
+
+        assert await ensure_model_context_window(config, "m1") == 131072
+        assert config.model_configs["m1"].context_window_size == 131072
+    finally:
+        ctx.event_bus.unsubscribe(sub_id)
+        await _cancel(task)
+        clear_providers()
+
+
 async def test_skill_catalog_change_rescans(ctx, monkeypatch, tmp_path):
     """extra_skill_paths changes re-run the skill discovery mutation path
     (#149 review: runtime-only catalog fields were never refreshed)."""

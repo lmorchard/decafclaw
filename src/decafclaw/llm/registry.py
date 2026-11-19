@@ -18,6 +18,12 @@ log = logging.getLogger(__name__)
 # Module-level registry: provider_name -> Provider instance
 _providers: dict[str, Provider] = {}
 
+# Negative cache of (provider_name, model) pairs whose get_model_info lookup
+# failed or returned no usable limit. Entries are only valid for the current
+# provider generation: a re-initialized provider may resolve where the
+# previous instance failed, so the cache resets with the registry (#1304).
+_failed_model_info: set[tuple[str, str]] = set()
+
 
 def register_provider(name: str, provider: Provider) -> None:
     """Register a provider instance by name."""
@@ -45,8 +51,13 @@ def list_providers() -> list[str]:
 
 
 def clear_providers() -> None:
-    """Clear all registered providers (for testing)."""
+    """Clear all registered providers and the failed model-info cache.
+
+    ``init_providers`` (the config-reload point) calls this, so a reload
+    resets both the registry and the negative cache in one step (#1304).
+    """
     _providers.clear()
+    _failed_model_info.clear()
 
 
 def init_providers(config: Any) -> None:

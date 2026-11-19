@@ -684,7 +684,9 @@ While the server process is running, the agent watches `data/{agent_id}/config.j
   turn. A few get an explicit re-application so the claim is honest:
   - `env`: keys are updated/unset in the environment, but only where the
     config owns the variable (see `apply_env_update` above).
-  - `providers`: the LLM provider registry is rebuilt (`init_providers`).
+  - `providers`: the LLM provider registry is rebuilt (`init_providers`), and
+    the failed model-info negative cache resets with it, so a model whose
+    context-window lookup previously failed is retried after the reload (#1304).
   - `extra_skill_paths` / `skills_always_loaded`: the skill catalog is
     re-scanned and the system prompt rebuilt (`rediscover_skills`).
   - `heartbeat.interval`: re-read by the heartbeat timer each poll.
