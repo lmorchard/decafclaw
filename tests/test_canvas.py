@@ -862,3 +862,48 @@ async def test_mutations_keep_content_out_of_canvas_json(config, md_doc_registry
     # Content still comes back hydrated from the artifact store.
     assert canvas.get_tab(config, "c", first.tab_id)["data"] == {"content": "# One"}
     assert _raw_artifacts(config, "c")["artifacts"]["artifact_2"]["data"] == {"content": "# Two"}
+
+
+@pytest.mark.asyncio
+async def test_canvas_new_tab_web_frame_lifecycle(config, emit_recorder):
+    """web_frame creates a canvas tab with allowed origins and rejects untrusted origins."""
+    from decafclaw.widgets import init_widgets
+
+    init_widgets(config)
+
+    # 1. Allowed origin (localhost)
+    result = await canvas.new_tab(
+        config,
+        "c",
+        "web_frame",
+        {"url": "http://localhost:2718", "title": "Marimo"},
+        emit=emit_recorder,
+    )
+    assert result.ok is True
+    assert result.tab_id == "canvas_1"
+    tab = canvas.get_tab(config, "c", "canvas_1")
+    assert tab["label"] == "Marimo"
+    assert tab["data"]["url"] == "http://localhost:2718"
+
+    # 2. Derive label from url netloc when title omitted
+    result2 = await canvas.new_tab(
+        config,
+        "c",
+        "web_frame",
+        {"url": "http://decafclaw:2718"},
+        emit=emit_recorder,
+    )
+    assert result2.ok is True
+    tab2 = canvas.get_tab(config, "c", result2.tab_id)
+    assert tab2["label"] == "decafclaw:2718"
+
+    # 3. Disallowed origin rejected by normalization
+    bad_result = await canvas.new_tab(
+        config,
+        "c",
+        "web_frame",
+        {"url": "https://untrusted-external-site.com"},
+        emit=emit_recorder,
+    )
+    assert bad_result.ok is False
+    assert "not in allowed web_frame origins" in bad_result.error

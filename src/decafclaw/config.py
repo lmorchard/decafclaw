@@ -54,6 +54,7 @@ from .config_types import (
     VaultConfig,
     VaultGuideConfig,
     VaultRetrievalConfig,
+    WebFrameWidgetConfig,
     WidgetsConfig,
     WorkflowConfig,
 )
@@ -812,7 +813,11 @@ def load_config() -> Config:
     if not isinstance(map_data, dict):
         map_data = {}
     map_widget = load_sub_config(MapWidgetConfig, map_data, "WIDGETS_MAP")
-    widgets = WidgetsConfig(map=map_widget)
+    web_frame_data = widgets_data.get("web_frame", {})
+    if not isinstance(web_frame_data, dict):
+        web_frame_data = {}
+    web_frame_widget = load_sub_config(WebFrameWidgetConfig, web_frame_data, "WIDGETS_WEB_FRAME")
+    widgets = WidgetsConfig(map=map_widget, web_frame=web_frame_widget)
 
     # Providers — named provider connection configs
     providers = _load_providers(file_data.get("providers", {}))

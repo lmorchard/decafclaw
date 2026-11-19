@@ -40,6 +40,7 @@ as empty canvas state.
 
 import json
 import logging
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -267,6 +268,18 @@ def _derive_label(widget_type: str, data: dict) -> str:
             if stripped.startswith("# "):
                 return stripped[2:].strip() or "Untitled"
         return "Untitled"
+    if widget_type == "web_frame":
+        title = data.get("title")
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+        url = data.get("url", "")
+        if isinstance(url, str) and url.strip():
+            try:
+                parsed = urllib.parse.urlsplit(url.strip())
+                return parsed.netloc or "Web Frame"
+            except Exception:
+                return "Web Frame"
+        return "Web Frame"
     return _humanize(widget_type)
 
 
@@ -396,7 +409,10 @@ async def new_tab(
             descriptor = registry.get(widget_type)
             if descriptor and not getattr(descriptor, "agent_creatable", getattr(descriptor, "agent_createable", True)):
                 return CanvasOpResult(ok=False, error=f"widget type '{widget_type}' is not agent_creatable")
-        data = registry.normalize(widget_type, data)
+        try:
+            data = registry.normalize(widget_type, data)
+        except ValueError as e:
+            return CanvasOpResult(ok=False, error=str(e))
     state = read_canvas_state(config, conv_id)
     next_n = state.get("next_tab_id", 1)
     tab_id = f"canvas_{next_n}"
@@ -482,7 +498,10 @@ async def update_tab(config, conv_id: str, tab_id: str, data: dict, emit: EmitFn
                 return CanvasOpResult(ok=False, error=err)
             registry = get_widget_registry()
             if registry is not None:
-                data = registry.normalize(tab["widget_type"], data)
+                try:
+                    data = registry.normalize(tab["widget_type"], data)
+                except ValueError as e:
+                    return CanvasOpResult(ok=False, error=str(e))
             artifact_id = tab.get("artifact_id")
             if artifact_id:
                 artifacts_state = read_artifact_state(config, conv_id)

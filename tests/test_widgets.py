@@ -719,3 +719,80 @@ def test_json_view_schema_validation(fake_config):
     # Wrong type for expand_depth
     bad_ok, _ = reg.validate("json_view", {"value": {}, "expand_depth": "two"})
     assert bad_ok is False
+
+
+def test_bundled_web_frame_is_registered(fake_config):
+    """Fresh registry scan finds the bundled web_frame widget descriptor."""
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("web_frame")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert desc.modes == ["canvas"]
+    assert desc.accepts_input is False
+
+    # url alone is valid
+    ok, err = reg.validate("web_frame", {"url": "http://localhost:2718"})
+    assert ok is True, err
+
+    # url + title is valid
+    ok, err = reg.validate("web_frame", {"url": "http://decafclaw:2718", "title": "Marimo"})
+    assert ok is True, err
+
+    # missing url rejected
+    bad, _ = reg.validate("web_frame", {"title": "no url"})
+    assert not bad
+
+    # non-string url rejected
+    bad, _ = reg.validate("web_frame", {"url": 123})
+    assert not bad
+
+    # unexpected properties rejected
+    bad, _ = reg.validate("web_frame", {"url": "http://localhost:2718", "unexpected": True})
+    assert not bad
+
+
+def test_web_frame_normalizer_origin_filtering(fake_config):
+    """web_frame normalizer validates and permits safe origins, rejecting untrusted ones."""
+    import pytest
+
+    from decafclaw.config_types import WebFrameWidgetConfig, WidgetsConfig
+    from decafclaw.widgets import is_allowed_web_frame_url
+
+    # 1. Localhost and loopback
+    assert is_allowed_web_frame_url("http://localhost:2718", fake_config)[0] is True
+    assert is_allowed_web_frame_url("http://127.0.0.1:8080/app", fake_config)[0] is True
+    assert is_allowed_web_frame_url("https://localhost/test", fake_config)[0] is True
+
+    # 2. LAN and Tailnet
+    assert is_allowed_web_frame_url("http://decafclaw:2718", fake_config)[0] is True
+    assert is_allowed_web_frame_url("http://myriad.local:3000", fake_config)[0] is True
+    assert is_allowed_web_frame_url("http://192.168.123.200:2718", fake_config)[0] is True
+    assert is_allowed_web_frame_url("http://10.0.0.5:8000", fake_config)[0] is True
+    assert is_allowed_web_frame_url("http://100.83.148.46:2718", fake_config)[0] is True
+
+    # 3. Disallowed schemes
+    assert is_allowed_web_frame_url("javascript:alert(1)", fake_config)[0] is False
+    assert is_allowed_web_frame_url("file:///etc/passwd", fake_config)[0] is False
+    assert is_allowed_web_frame_url("data:text/html,<h1>hi</h1>", fake_config)[0] is False
+
+    # 4. Untrusted public origins
+    assert is_allowed_web_frame_url("https://malicious.example.com", fake_config)[0] is False
+    assert is_allowed_web_frame_url("http://1.1.1.1", fake_config)[0] is False
+
+    # 5. Configured allowlist overrides
+    fake_config.widgets = WidgetsConfig(
+        web_frame=WebFrameWidgetConfig(
+            allowed_origins=["https://custom-service.internal:8443", "trusted-app.example.com"]
+        )
+    )
+    assert is_allowed_web_frame_url("https://custom-service.internal:8443/dashboard", fake_config)[0] is True
+    assert is_allowed_web_frame_url("http://trusted-app.example.com/view", fake_config)[0] is True
+
+    # 6. Normalizer execution via registry
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
+    normalized = reg.normalize("web_frame", {"url": "http://decafclaw:2718", "title": "Marimo"})
+    assert normalized["url"] == "http://decafclaw:2718"
+    assert normalized["title"] == "Marimo"
+
+    with pytest.raises(ValueError, match="not in allowed web_frame origins"):
+        reg.normalize("web_frame", {"url": "https://untrusted-tracker.com"})

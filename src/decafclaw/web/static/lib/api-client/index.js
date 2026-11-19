@@ -606,11 +606,23 @@ var DefaultService = class {
   }
   /**
    * Handle Confirm
-   * Handle Mattermost interactive button callbacks for tool confirmation.
+   * Handle interactive button/link callbacks for tool confirmation.
    * @returns any Successful Response
    * @throws ApiError
    */
   static handleConfirmActionsConfirmPost() {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/actions/confirm"
+    });
+  }
+  /**
+   * Handle Confirm
+   * Handle interactive button/link callbacks for tool confirmation.
+   * @returns any Successful Response
+   * @throws ApiError
+   */
+  static handleConfirmActionsConfirmPost1() {
     return request2(OpenAPI, {
       method: "POST",
       url: "/actions/confirm"
@@ -618,11 +630,23 @@ var DefaultService = class {
   }
   /**
    * Handle Cancel
-   * Handle Mattermost interactive button callback for stop/cancel.
+   * Handle interactive button/link callback for stop/cancel.
    * @returns any Successful Response
    * @throws ApiError
    */
   static handleCancelActionsCancelPost() {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/actions/cancel"
+    });
+  }
+  /**
+   * Handle Cancel
+   * Handle interactive button/link callback for stop/cancel.
+   * @returns any Successful Response
+   * @throws ApiError
+   */
+  static handleCancelActionsCancelPost1() {
     return request2(OpenAPI, {
       method: "POST",
       url: "/actions/cancel"
