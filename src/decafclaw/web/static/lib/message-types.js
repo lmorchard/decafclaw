@@ -14,6 +14,7 @@ export const MESSAGE_TYPES = Object.freeze({
   CONV_RENAMED: 'conv_renamed',
   CONV_SELECTED: 'conv_selected',
   CONVERSATION_STATUS: 'conversation_status',
+  DISSECT_NOTICE: 'dissect_notice',
   ERROR: 'error',
   MESSAGE_COMPLETE: 'message_complete',
   MODE_CHANGED: 'mode_changed',

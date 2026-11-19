@@ -1271,6 +1271,19 @@ class ConversationCreateResponse(TypedDict):
     model: NotRequired[str]
 
 
+class ConversationDissectRequest(BaseModel):
+    tool_call_id: str = ""
+    instruction: str = ""
+
+
+class ConversationDissectResponse(TypedDict):
+    conv_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    forked_from: str
+
+
 class ConversationLifecycleResponse(BaseModel):
     ok: Literal[True]
 
@@ -1309,6 +1322,44 @@ async def create_conversation(request: Request) -> JSONResponse:
         result["folder"] = folder
     if model_name:
         result["model"] = model_name
+    return JSONResponse(result, status_code=201)
+
+
+async def dissect_conversation(request: Request, id: str) -> JSONResponse:
+    """Fork a conversation into a seeded dissection conversation (#1570)."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    manager = request.app.state.manager
+    conv_id = id
+    from .web.conversations import ConversationIndex
+
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    body = await request.json()
+    if manager is None:
+        return JSONResponse({"error": "chat service unavailable"}, status_code=503)
+    tool_call_id = str(body.get("tool_call_id", "") or "").strip()
+    instruction = str(body.get("instruction", "") or "").strip()[:4000]
+
+    from .web.dissection import DissectionError, create_dissection, resolve_conversation_model
+
+    try:
+        result = await create_dissection(
+            config,
+            conv_id,
+            username,
+            manager=manager,
+            focus_tool_call_id=tool_call_id,
+            instruction=instruction,
+            model=resolve_conversation_model(config, conv_id, manager),
+        )
+    except DissectionError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
     return JSONResponse(result, status_code=201)
 
 
@@ -4707,6 +4758,21 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute("/api/conversations/{id}", get_conversation, methods=["GET"]),
+        APIRoute(
+            "/api/conversations/{id}/dissect",
+            dissect_conversation,
+            methods=["POST"],
+            status_code=201,
+            response_model=ConversationDissectResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": ConversationDissectRequest.model_json_schema()},
+                    },
+                }
+            },
+        ),
         # Document the input without replacing this route's legacy parsing,
         # null/coercion behavior, authentication order, or 400 responses.
         APIRoute(

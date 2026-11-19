@@ -143,6 +143,52 @@ describe('MessageStore', () => {
             expect(store.currentMessages[2].role).toBe('background_event');
         });
 
+        it('renders a live dissect notice as a link record (#1570)', () => {
+            const store = new MessageStore(() => {});
+            store.handleMessage({
+                type: MESSAGE_TYPES.DISSECT_NOTICE,
+                conv_id: '1',
+                fork_conv_id: 'web-user-child',
+                fork_title: 'Dissect: shell failure',
+                source_conv_id: 'web-user-parent',
+                tool: 'shell',
+                had_error: true,
+            }, '1');
+
+            expect(store.currentMessages[0].role).toBe('dissect_notice');
+            expect(store.currentMessages[0].record.fork_conv_id).toBe('web-user-child');
+            expect(store.currentMessages[0].record.fork_title).toBe('Dissect: shell failure');
+        });
+
+        it('restores an archived dissect notice from CONV_HISTORY (#1570)', () => {
+            const store = new MessageStore(() => {});
+            store.handleMessage({
+                type: MESSAGE_TYPES.CONV_HISTORY,
+                conv_id: '1',
+                has_more: false,
+                messages: [
+                    { role: 'user', content: 'hello', timestamp: 't1' },
+                    {
+                        role: 'dissect_notice',
+                        content: 'Dissected shell into a fork',
+                        data: {
+                            fork_conv_id: 'web-user-child',
+                            fork_title: 'Dissect: shell failure',
+                            source_conv_id: 'web-user-parent',
+                            tool: 'shell',
+                            had_error: true,
+                        },
+                        timestamp: 't2',
+                    },
+                ],
+            }, '1');
+
+            const notice = store.currentMessages.find(m => m.role === 'dissect_notice');
+            expect(notice).toBeDefined();
+            expect(notice.record.fork_conv_id).toBe('web-user-child');
+            expect(notice.record.tool).toBe('shell');
+        });
+
         it('marks a failed compaction as failed, not silently compacted (#1005)', () => {
             const store = new MessageStore(() => {});
             store.handleMessage({

@@ -57,6 +57,11 @@
       "description": "Confirmation that a select_conv subscribed this socket to the named conversation. May include initial conversation state.",
       "fields": {"conv_id": "string", "title": "string?", "read_only": "boolean?", "pending_confirmation": "object?"}
     },
+    "dissect_notice": {
+      "direction": "server_to_client",
+      "description": "A dissection conversation was created from this one (#1570). Render a link card that opens the fork in a new tab; the same record is archived under role `dissect_notice` for reload.",
+      "fields": {"conv_id": "string", "fork_conv_id": "string", "fork_title": "string", "source_conv_id": "string", "tool": "string?", "had_error": "boolean?"}
+    },
     "conversation_status": {
       "direction": "server_to_client",
       "description": "Activity status of a conversation changed (busy, waiting, finished, or idle).",

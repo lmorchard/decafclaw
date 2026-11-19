@@ -96,6 +96,15 @@ never grabs focus mid-turn. The policy lives in `static/lib/chat-focus.js`;
 fires on *every* WebSocket message, so a looser condition there steals focus
 on each streamed chunk.
 
+**Dissect a failure (#1570).** An errored tool card shows a **🔬 Dissect**
+button in its header. Clicking it forks the failure into a new conversation —
+triggering prompt, failing call/arguments, and exact error — opens that
+conversation in a new tab, and leaves a `dissect_notice` card (**Open
+dissection ↗**) in this transcript. You can also type `/dissect [instruction]`
+or let the agent call `conversation_fork`. The parent conversation runs no
+agent turn and keeps its context; see
+[dissection conversations](conversations.md#dissection-conversations).
+
 ### Side Questions (Explanation Only)
 
 During an active or long-running turn, users can ask out-of-band explanation questions without interrupting or steering the main agent loop (#1141).

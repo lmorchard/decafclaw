@@ -583,6 +583,69 @@
         }
       }
     },
+    "/api/conversations/{id}/dissect": {
+      "post": {
+        "summary": "Dissect Conversation",
+        "description": "Fork a conversation into a seeded dissection conversation (#1570).",
+        "operationId": "dissect_conversation_api_conversations__id__dissect_post",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDissectResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "tool_call_id": {
+                    "default": "",
+                    "title": "Tool Call Id",
+                    "type": "string"
+                  },
+                  "instruction": {
+                    "default": "",
+                    "title": "Instruction",
+                    "type": "string"
+                  }
+                },
+                "title": "ConversationDissectRequest",
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conversations/{id}/history": {
       "get": {
         "summary": "Wrapper",
@@ -4665,6 +4728,39 @@
           "updated_at"
         ],
         "title": "ConversationCreateResponse"
+      },
+      "ConversationDissectResponse": {
+        "properties": {
+          "conv_id": {
+            "type": "string",
+            "title": "Conv Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "forked_from": {
+            "type": "string",
+            "title": "Forked From"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conv_id",
+          "title",
+          "created_at",
+          "updated_at",
+          "forked_from"
+        ],
+        "title": "ConversationDissectResponse"
       },
       "ConversationFolderCreateResponse": {
         "properties": {

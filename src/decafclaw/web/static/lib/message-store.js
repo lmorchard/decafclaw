@@ -165,6 +165,9 @@ export class MessageStore {
                 timestamp: m.timestamp,
               };
             }
+            if (m.role === 'dissect_notice') {
+              return { role: 'dissect_notice', record: m.data || m.record || m, timestamp: m.timestamp };
+            }
             return m;
           });
           this.#currentMessages = [...this.#mergeToolMessages(newMsgs), ...this.#currentMessages];
@@ -298,6 +301,17 @@ export class MessageStore {
             record,
             content: '',
             timestamp: record.timestamp || new Date().toISOString(),
+          });
+        }
+        return true;
+
+      case MESSAGE_TYPES.DISSECT_NOTICE:
+        if (msg.conv_id === currentConvId) {
+          this.#currentMessages.push({
+            role: 'dissect_notice',
+            record: msg,
+            content: '',
+            timestamp: new Date().toISOString(),
           });
         }
         return true;

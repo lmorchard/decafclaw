@@ -27,6 +27,7 @@ export type { ContextRawResponse } from './models/ContextRawResponse';
 export type { ContextSource } from './models/ContextSource';
 export type { ContextSourceDetails } from './models/ContextSourceDetails';
 export type { ConversationCreateResponse } from './models/ConversationCreateResponse';
+export type { ConversationDissectResponse } from './models/ConversationDissectResponse';
 export type { ConversationFolderCreateResponse } from './models/ConversationFolderCreateResponse';
 export type { ConversationFolderEntry } from './models/ConversationFolderEntry';
 export type { ConversationFolderResponse } from './models/ConversationFolderResponse';

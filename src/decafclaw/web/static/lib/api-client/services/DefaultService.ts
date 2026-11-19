@@ -15,6 +15,7 @@ import type { ConfigWriteResponse } from '../models/ConfigWriteResponse';
 import type { ContextDiagnosticsResponse } from '../models/ContextDiagnosticsResponse';
 import type { ContextRawResponse } from '../models/ContextRawResponse';
 import type { ConversationCreateResponse } from '../models/ConversationCreateResponse';
+import type { ConversationDissectResponse } from '../models/ConversationDissectResponse';
 import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
 import type { ConversationFolderResponse } from '../models/ConversationFolderResponse';
 import type { ConversationLifecycleResponse } from '../models/ConversationLifecycleResponse';
@@ -430,6 +431,34 @@ export class DefaultService {
             path: {
                 'id': id,
             },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Dissect Conversation
+     * Fork a conversation into a seeded dissection conversation (#1570).
+     * @param id
+     * @param requestBody
+     * @returns ConversationDissectResponse Successful Response
+     * @throws ApiError
+     */
+    public static dissectConversationApiConversationsIdDissectPost(
+        id: string,
+        requestBody: {
+            tool_call_id?: string;
+            instruction?: string;
+        },
+    ): CancelablePromise<ConversationDissectResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/dissect',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 422: `Validation Error`,
             },

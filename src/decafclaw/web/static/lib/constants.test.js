@@ -37,6 +37,8 @@ describe('web UI constants', () => {
       BANG_RETITLE: '!retitle',
       UPDATE: '/update',
       BANG_UPDATE: '!update',
+      DISSECT: '/dissect',
+      BANG_DISSECT: '!dissect',
     });
     expect(Object.isFrozen(SIDE_EFFECT_COMMANDS)).toBe(true);
     expect(new Set(COMMAND_VALUES).size).toBe(COMMAND_VALUES.length);

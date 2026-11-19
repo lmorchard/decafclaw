@@ -180,6 +180,27 @@ Place a `COMPACTION.md` file at `data/{agent_id}/COMPACTION.md` to customize the
 
 - **`conversation_compact`** — manually trigger compaction without waiting for the token budget to be exceeded
 - **`conversation_search`** — search past conversations by stemmed word overlap plus substring, ranked by relevance (across all archived conversations, not just the current one). Stemming means plural/inflected queries match — `"embedding providers"` finds `"embedding provider"`.
+- **`conversation_fork`** — fork the current web conversation into a seeded dissection conversation (see below).
+
+### Dissection conversations
+
+A dissection conversation isolates debugging work — source reading, diffs, test output, a PR — from a conversation whose context should stay clean (#1570).
+
+Trigger it three ways:
+
+- Type `/dissect [instruction]` in the web chat (also `!dissect`). It runs as a server-side side-effect: no parent agent turn and no parent user echo.
+- Click **🔬 Dissect** on an errored tool card. The request targets that exact `tool_call_id` and opens the new tab.
+- Let the agent call `conversation_fork` when it decides a failure needs deep investigation. This tool is web-only because there must be a tab to open.
+
+All three paths share `web/dissection.py` + `dissect.py`. The fork:
+
+1. Creates a normal top-level web conversation, recorded with `forked_from` in `web_conversations.json` (it is *not* a delegated `--child-` conversation, which would be read-only).
+2. Scans the parent archive for the last tool result starting with `[error`, or the named call. It copies the triggering user prompt, the assistant turn, the failing call's name and arguments, and the exact error (bounded to keep the brief reasonable). With no failure it copies the latest exchange.
+3. Appends the parent's active model and starts the child's first turn immediately with the brief. The brief tells the child to activate the relevant skills (`project`, `postmortem`), to use a worktree, and that the parent archive is available through `conversation_search` under the source conv id.
+4. Appends a `dissect_notice` archive record to the parent (`data` carries the fork id/title/tool) and emits the same record live. The web UI renders a card with an **Open dissection ↗** link; the record survives reload.
+5. Leaves the parent transcript otherwise untouched.
+
+REST: `POST /api/conversations/{id}/dissect` with `{tool_call_id?, instruction?}` returns `201 {conv_id, title, created_at, updated_at, forked_from}`. It requires ownership of the source conversation.
 
 ## Web UI conversations
 

@@ -245,15 +245,22 @@ class ConversationMeta:
     updated_at: str  # ISO timestamp
     archived: bool = False
     custom_title: bool = False  # user renamed manually; auto-titling must not overwrite (#1072)
+    # Parent conversation this one was dissected/forked from (#1570). Empty
+    # for ordinary conversations, including delegated children whose id
+    # already encodes the parent.
+    forked_from: str = ""
 
     def to_dict(self) -> dict:
         """Serialize to dict for API/websocket responses (excludes internal fields)."""
-        return {
+        data = {
             "conv_id": self.conv_id,
             "title": self.title,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.forked_from:
+            data["forked_from"] = self.forked_from
+        return data
 
 
 class ConversationIndex:
@@ -294,7 +301,7 @@ class ConversationIndex:
         convs.sort(key=lambda c: c.updated_at, reverse=True)
         return convs
 
-    def create(self, user_id: str, title: str = "") -> ConversationMeta:
+    def create(self, user_id: str, title: str = "", *, forked_from: str = "") -> ConversationMeta:
         """Create a new conversation. Returns the metadata."""
         now = datetime.now(timezone.utc).isoformat()
         conv = ConversationMeta(
@@ -303,6 +310,7 @@ class ConversationIndex:
             title=title or "New conversation",
             created_at=now,
             updated_at=now,
+            forked_from=forked_from,
         )
         data = self._load()
         data.append(asdict(conv))

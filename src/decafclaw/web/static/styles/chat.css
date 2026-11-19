@@ -151,6 +151,16 @@ chat-message .chat-event.background-event pre.stderr {
   color: var(--pico-del-color, #c0392b);
 }
 
+chat-message .chat-event.dissect-notice {
+  border-left-color: var(--pico-primary, #4a7bd0);
+}
+
+chat-message .chat-event.dissect-notice .dissect-open {
+  margin-left: auto;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
 /* Chat message */
 chat-message {
   display: block;
@@ -215,6 +225,30 @@ chat-message .tool-preview {
 chat-message .expand-toggle {
   flex-shrink: 0;
   font-size: 0.7rem;
+}
+
+chat-message button.tool-dissect-btn {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  padding: 0.15rem 0.45rem;
+  margin: 0;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--pico-muted-color);
+  width: auto;
+  cursor: pointer;
+}
+
+chat-message button.tool-dissect-btn:hover:not(:disabled) {
+  color: var(--pico-primary);
+  border-color: var(--pico-primary);
+}
+
+chat-message button.tool-dissect-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 chat-message .tool-result-detail {

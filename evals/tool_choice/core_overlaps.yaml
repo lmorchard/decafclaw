@@ -177,6 +177,30 @@
     conversation_compact is for proactively shrinking history before
     context fills up — never invoked because the user has a question.
 
+# -- conversation_fork vs conversation_search / conversation_compact (#1570) --
+
+- name: conv-fork-vs-search-isolate-failure
+  scenario: "That shell command just timed out. Fork the investigation into a new conversation so this draft stays clean, then dig into why the timeout happens."
+  expected: conversation_fork
+  near_miss: [conversation_search, conversation_compact]
+  notes: |
+    The user asks to move work elsewhere ("fork", "new conversation",
+    "this draft stays clean") because the debugging output would pollute
+    the current context. conversation_fork copies the failing call and
+    starts a separate web conversation; conversation_search only reads
+    history and compact shrinks this conversation's own history.
+
+- name: conv-fork-vs-compact-long-debugging
+  scenario: "This timeout is going to need a lot of source reading and test runs. Spawn a separate conversation to chase it down and leave me a link here."
+  expected: conversation_fork
+  near_miss: [conversation_compact, delegate_task]
+  notes: |
+    A persistent, user-openable conversation that starts with the failure
+    is conversation_fork. conversation_compact would destroy the current
+    context instead of isolating the investigation, and delegate_task's
+    child is a lifecycle-managed subagent, not a fork the user can open
+    and keep prompting.
+
 # -- vault_journal_append vs notes_append ------------------------------------
 
 - name: vault-vs-notes-remember-preference

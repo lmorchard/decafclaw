@@ -854,6 +854,28 @@ var DefaultService = class {
     });
   }
   /**
+   * Dissect Conversation
+   * Fork a conversation into a seeded dissection conversation (#1570).
+   * @param id
+   * @param requestBody
+   * @returns ConversationDissectResponse Successful Response
+   * @throws ApiError
+   */
+  static dissectConversationApiConversationsIdDissectPost(id, requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/conversations/{id}/dissect",
+      path: {
+        "id": id
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
    * Wrapper
    * @returns any Successful Response
    * @throws ApiError

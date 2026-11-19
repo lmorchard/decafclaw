@@ -99,6 +99,23 @@ export class ChatMessage extends LitElement {
       return html`<tool-message .tool=${this.content} .content=${''} .icon=${'\u{2699}\u{fe0f}'}></tool-message>`;
     }
 
+    if (this.role === 'dissect_notice') {
+      const rec = this.record || {};
+      const forkId = rec.fork_conv_id || '';
+      const forkTitle = rec.fork_title || 'dissection conversation';
+      const subject = rec.tool ? `${rec.tool} failure` : 'this conversation';
+      return html`
+        <div class="chat-event dissect-notice">
+          <span class="icon">🔬</span>
+          <span class="title">Dissection started</span>
+          <span class="detail">${subject} — “${forkTitle}”</span>
+          ${forkId ? html`
+            <a class="dissect-open" href="?conv=${encodeURIComponent(forkId)}" target="_blank" rel="noopener">Open dissection ↗</a>
+          ` : ''}
+        </div>
+      `;
+    }
+
     if (this.role === 'compaction') {
       const rec = this.record?.data || this.record || {};
       const beforeMsgs = rec.before_messages;
@@ -173,7 +190,7 @@ export class ChatMessage extends LitElement {
     }
 
     if (this.role === 'tool') {
-      return html`<tool-message .tool=${this.tool} .command=${this.command} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response}></tool-message>`;
+      return html`<tool-message .tool=${this.tool} .command=${this.command} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response} .toolCallId=${this.toolCallId}></tool-message>`;
     }
 
     if (this.role === 'assistant' && this.toolCalls?.length) {

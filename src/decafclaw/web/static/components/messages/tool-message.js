@@ -10,6 +10,8 @@ export class ToolMessage extends LitElement {
     content: { type: String },
     icon: { type: String },
     display_short_text: { type: String },
+    /** Stable id of the tool call, used to target the failing call on fork. */
+    toolCallId: { type: String, attribute: false },
     /** Array of {text, timestamp} status history entries from the tool_call phase */
     statusHistory: { type: Array, attribute: false },
     /** Optional widget payload: {widget_type, target, data} */
@@ -19,6 +21,7 @@ export class ToolMessage extends LitElement {
     /** Response data for a submitted input widget: {selected, ...} */
     response: { type: Object, attribute: false },
     _expanded: { type: Boolean, state: true },
+    _dissecting: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -30,6 +33,7 @@ export class ToolMessage extends LitElement {
     this.content = '';
     this.icon = '\u{1f527}';
     this.display_short_text = '';
+    this.toolCallId = '';
     /** @type {Array<{text: string, timestamp: string}>|null} */
     this.statusHistory = null;
     /** @type {{widget_type: string, target: string, data: object}|null} */
@@ -38,6 +42,7 @@ export class ToolMessage extends LitElement {
     /** @type {object|null} */
     this.response = null;
     this._expanded = false;
+    this._dissecting = false;
     // Tracks whether we've auto-expanded for this widget yet, so user
     // collapse choices aren't overridden on re-render.
     this._autoExpanded = false;
@@ -56,6 +61,35 @@ export class ToolMessage extends LitElement {
 
   #toggleExpand() {
     this._expanded = !this._expanded;
+  }
+
+  /**
+   * Fork this failing tool call into a dissection conversation (#1570).
+   * Opens the tab synchronously so the click remains a user gesture, then
+   * fills in its URL once the server returns the new conversation id.
+   * @param {Event} ev
+   */
+  async #dissect(ev) {
+    ev.stopPropagation();
+    if (this._dissecting) return;
+    const host = /** @type {any} */ (this.closest('chat-view'));
+    const store = host?.store;
+    if (!store?.dissectConversation) return;
+    this._dissecting = true;
+    const tab = window.open('', '_blank');
+    try {
+      const convId = await store.dissectConversation(this.toolCallId || '');
+      if (convId && tab) {
+        tab.location.replace(`${location.pathname}?conv=${encodeURIComponent(convId)}`);
+      } else {
+        tab?.close();
+      }
+    } catch (err) {
+      tab?.close();
+      console.error('Failed to dissect tool failure:', err);
+    } finally {
+      this._dissecting = false;
+    }
   }
 
   /** @param {string} content */
@@ -79,6 +113,7 @@ export class ToolMessage extends LitElement {
     const hasHistory = this.statusHistory?.length > 0;
     const hasWidget = !!this.widget;
     const expandable = hasContent || hasHistory || hasWidget || !!this.command;
+    const isError = typeof this.content === 'string' && this.content.trimStart().startsWith('[error');
     return html`
       <div class="message tool">
         <div class="tool-result-header" @click=${expandable ? this.#toggleExpand : nothing}>
@@ -89,6 +124,14 @@ export class ToolMessage extends LitElement {
           ` : nothing}
           ${hasHistory && !hasContent ? html`
             <span class="tool-preview">${this.statusHistory.length} progress updates</span>
+          ` : nothing}
+          ${isError ? html`
+            <button
+              class="tool-dissect-btn"
+              title="Investigate this failure in a new conversation without polluting this one"
+              ?disabled=${this._dissecting}
+              @click=${this.#dissect}
+            >${this._dissecting ? 'Dissecting…' : '🔬 Dissect'}</button>
           ` : nothing}
           ${expandable ? html`
             ${hasHistory ? html`<span class="status-history-badge">${this.statusHistory.length}</span>` : nothing}

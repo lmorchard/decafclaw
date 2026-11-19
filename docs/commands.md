@@ -71,3 +71,17 @@ Commands are found in the same locations as skills:
 1. Workspace (`data/{agent_id}/workspace/skills/`)
 2. Agent-level (`data/{agent_id}/skills/`)
 3. Bundled (`src/decafclaw/skills/`)
+
+## Built-in side-effect commands
+
+Some commands are handled by the server before skill dispatch. They run no agent turn in the current conversation, so the client sends them without the busy flag or a user echo. The table below is the web UI's set; Mattermost intercepts `/update` and `/restart` separately and does not have the tab-based commands.
+
+| Command | What it does |
+|---|---|
+| `/dissect [instruction]` (`!dissect`) | Fork the last failure into a seeded dissection conversation; see [dissection conversations](conversations.md#dissection-conversations) |
+| `/retitle` (`!retitle`) | Regenerate the conversation title |
+| `/terminal [cwd]` | Spawn a PTY in a canvas tab (web only) |
+| `/update` (`!update`) | Self-update DecafClaw |
+| `/restart` (`!restart`) | Restart the service, optionally on idle |
+
+These share the command prefix but are not SKILL.md commands and do not appear in the skill catalog. `/dissect` accepts free-form text after the command as the investigation focus.

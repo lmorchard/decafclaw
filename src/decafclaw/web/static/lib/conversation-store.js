@@ -561,6 +561,31 @@ export class ConversationStore extends EventTarget {
   }
 
   /**
+   * Fork the current conversation into a seeded dissection conversation
+   * (#1570). Used by the errored-tool-card button; the server also appends a
+   * notice card and starts the child turn.
+   * @param {string} [toolCallId]
+   * @param {string} [instruction]
+   * @returns {Promise<string|null>} new conversation id, or null on failure
+   */
+  async dissectConversation(toolCallId = '', instruction = '') {
+    if (!this.#currentConvId || parentConvIdOf(this.#currentConvId)) return null;
+    try {
+      const conv = await DefaultService.dissectConversationApiConversationsIdDissectPost(
+        this.#currentConvId,
+        {
+          ...(toolCallId ? { tool_call_id: toolCallId } : {}),
+          ...(instruction ? { instruction } : {}),
+        },
+      );
+      return conv?.conv_id || null;
+    } catch (err) {
+      if (!(err instanceof ApiError)) console.error('Failed to dissect conversation:', err);
+      return null;
+    }
+  }
+
+  /**
    * Move a conversation (a session's root) into a folder; '' is the top level.
    * Returns false when the move failed so callers can tell the user (#1277).
    * @param {string} convId @param {string} folder
@@ -883,6 +908,11 @@ export class ConversationStore extends EventTarget {
             ...msg.pending_confirmation,
           }, this.#currentConvId);
         }
+      }
+      if (msg.type === MESSAGE_TYPES.DISSECT_NOTICE && msg.conv_id === this.#currentConvId) {
+        // The new fork is a separate session in the sidebar; refetch so its
+        // row appears without a page reload.
+        this.listSessions(this.#currentFolder);
       }
       if (msg.type === MESSAGE_TYPES.MESSAGE_COMPLETE && msg.conv_id === this.#currentConvId) {
         this.#toolStatusStore.clearToolStatus();

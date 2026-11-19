@@ -150,9 +150,45 @@ async def tool_conversation_compact(ctx: "Context") -> str | ToolResult:
         return "No compaction needed (not enough turns to compact)."
 
 
+async def tool_conversation_fork(ctx: "Context", instruction: str = "", tool_call_id: str = "") -> str | ToolResult:
+    """Fork this conversation into an isolated dissection conversation (#1570)."""
+    log.info("[tool:conversation_fork] source=%s tool_call_id=%s", ctx.conv_id, tool_call_id)
+    if not ctx.conv_id:
+        return ToolResult(text="[error: no source conversation to fork]")
+    if ctx.manager is None:
+        return ToolResult(text="[error: chat service unavailable]")
+    if ctx.transport != "web":
+        return ToolResult(
+            text="[error: conversation_fork is only available in the web UI; there is no tab to open elsewhere]"
+        )
+    from ..web.dissection import DissectionError, create_dissection
+
+    try:
+        result = await create_dissection(
+            ctx.config,
+            ctx.conv_id,
+            ctx.user_id or ctx.config.agent.user_id,
+            manager=ctx.manager,
+            focus_tool_call_id=tool_call_id,
+            instruction=instruction,
+            model=ctx.active_model,
+        )
+    except DissectionError as exc:
+        return ToolResult(text=f"[error: {exc}]")
+    conv_id = result["conv_id"]
+    return ToolResult(
+        text=(
+            f"Dissection conversation started: “{result['title']}” (conv_id: {conv_id}). "
+            f"Open it in a new tab with ?conv={conv_id}. The parent conversation is unchanged."
+        ),
+        data={"conv_id": conv_id, "title": result["title"], "forked_from": result["forked_from"]},
+    )
+
+
 CONVERSATION_TOOLS = {
     "conversation_search": tool_conversation_search,
     "conversation_compact": tool_conversation_compact,
+    "conversation_fork": tool_conversation_fork,
 }
 
 CONVERSATION_TOOL_DEFINITIONS = [
@@ -204,6 +240,44 @@ CONVERSATION_TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        # Creates a new conversation and starts its first turn; the call
+        # itself returns as soon as the child turn is queued.
+        "writes": True,
+        "function": {
+            "name": "conversation_fork",
+            "description": (
+                "Fork this conversation into a fresh, isolated conversation that "
+                "investigates a failure without polluting the current context. "
+                "Copies the triggering prompt, the failing tool call and arguments, "
+                "and the exact error into the new conversation, primes it to debug, "
+                "and starts its first turn immediately. Use this when a tool error, "
+                "timeout, or bug needs source reading, diffs, tests, or a PR — work "
+                "that would otherwise fill this conversation's context. Only "
+                "available in the web UI. The parent conversation is unchanged "
+                "except for a small link notice."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instruction": {
+                        "type": "string",
+                        "description": "Optional focus for the investigation, e.g. 'find why shell_exec timed out'.",
+                    },
+                    "tool_call_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional id of the failing tool call to copy. Defaults to "
+                            "the most recent tool error, or the latest exchange."
+                        ),
+                    },
+                },
                 "required": [],
             },
         },

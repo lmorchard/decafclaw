@@ -43,6 +43,8 @@ export const SIDE_EFFECT_COMMANDS = Object.freeze({
   BANG_RETITLE: '!retitle',
   UPDATE: '/update',
   BANG_UPDATE: '!update',
+  DISSECT: '/dissect',
+  BANG_DISSECT: '!dissect',
 });
 
 /** Separator between a root conversation id and a delegated child's id. */
