@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 import httpx_sse
 
-from ..types import StreamCallback
+from ..types import LLMRetryExhaustedError, StreamCallback
 from .openai import OpenAIProvider
 from .openai_compat import _MAX_RETRIES, _cancellable_sleep, _RetryableError
 
@@ -210,7 +210,12 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 return
             except _RetryableError as exc:
                 if attempt == _MAX_RETRIES:
-                    raise RuntimeError(f"LLM failed after {_MAX_RETRIES} retries (status {exc.status})") from exc
+                    raise LLMRetryExhaustedError(
+                        f"LLM failed after {_MAX_RETRIES} retries (status {exc.status}): {exc.body[:200]}",
+                        status=exc.status,
+                        body=exc.body,
+                        retry_after=exc.retry_after,
+                    ) from exc
                 await _cancellable_sleep(min(int(exc.retry_after or 2**attempt), 30), cancel_event)
             except Exception as exc:
                 if not state.has_output:

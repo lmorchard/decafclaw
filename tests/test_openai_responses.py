@@ -13,6 +13,7 @@ from decafclaw.config_types import ModelConfig, ProviderConfig
 from decafclaw.llm import call_llm, call_llm_streaming, init_providers
 from decafclaw.llm.history import assistant_message
 from decafclaw.llm.providers.openai_responses import OpenAIResponsesProvider
+from decafclaw.llm.types import LLMRetryExhaustedError
 
 # Bypass the completion guard only because every transport is mocked below.
 pytestmark = pytest.mark.live_llm
@@ -331,13 +332,18 @@ async def test_retryable_errors_before_output(status):
 
 async def test_retry_exhaustion_is_bounded():
     client = mock_http({"error": "retry"}, 429)
+    client.post.return_value.headers["retry-after"] = "7"
     with (
         patch("httpx.AsyncClient", return_value=client),
         patch("decafclaw.llm.providers.openai_responses._cancellable_sleep", new_callable=AsyncMock),
-        pytest.raises(RuntimeError, match="after 3 retries"),
+        pytest.raises(LLMRetryExhaustedError, match="after 3 retries") as excinfo,
     ):
         await OpenAIResponsesProvider().complete(MODEL, [])
     assert client.post.call_count == 4
+    exc = excinfo.value
+    assert exc.status == 429
+    assert "retry" in exc.body
+    assert exc.retry_after == "7"
 
 
 async def test_disconnect_preserves_partial_but_never_retries_callbacks():
