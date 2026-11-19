@@ -490,6 +490,43 @@ async def test_vault_create_duplicate(client, http_config):
     assert resp.status_code == 409
 
 
+@pytest.mark.asyncio
+async def test_vault_create_allows_dots_in_name(client, http_config):
+    """A name that merely *contains* `..` is an ordinary file, not a hop.
+
+    Regression: the old substring check `".." in name` rejected `foo..bar`,
+    which resolves to a plain file inside the vault rather than a parent
+    directory. It must be accepted and written.
+    """
+    resp = await client.post(
+        "/api/vault",
+        json={"name": "agent/pages/foo..bar"},
+    )
+    assert resp.status_code == 200
+    path = http_config.vault_agent_pages_dir / "foo..bar.md"
+    assert path.exists()
+
+
+@pytest.mark.asyncio
+async def test_vault_create_rejects_traversal(client):
+    """A real `..` component is still refused."""
+    resp = await client.post(
+        "/api/vault",
+        json={"name": "../evil"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_vault_create_rejects_absolute(client):
+    """An absolute path is still refused."""
+    resp = await client.post(
+        "/api/vault",
+        json={"name": "/etc/passwd"},
+    )
+    assert resp.status_code == 400
+
+
 # -- vault_rename --------------------------------------------------------------
 
 
@@ -1220,3 +1257,41 @@ def test_resolve_frontmatter_helper():
     assert new_raw is None
     assert err["status_code"] == 400
     assert "malformed" in err["error"]
+
+
+# -- validate_vault_page_name --------------------------------------------------
+#
+# Direct unit tests of the shared traversal validator. These pin the contract:
+# a real `..` component or an absolute path is rejected with one canonical
+# message, while names that merely *contain* the `..` substring are allowed.
+
+
+def test_validate_vault_page_name_accepts_ordinary_names():
+    from decafclaw.http_server import validate_vault_page_name
+
+    assert validate_vault_page_name("agent/pages/Normal") is None
+    # Contains `..` as a substring but not as a path component — allowed.
+    assert validate_vault_page_name("foo..bar") is None
+    # Three dots is an ordinary name, not a traversal step.
+    assert validate_vault_page_name("...") is None
+
+
+def test_validate_vault_page_name_rejects_traversal():
+    from decafclaw.http_server import validate_vault_page_name
+
+    # Every unsafe shape returns the same canonical message.
+    assert validate_vault_page_name("../evil") == "invalid vault page name"
+    assert validate_vault_page_name("a/../b") == "invalid vault page name"
+    assert validate_vault_page_name("..") == "invalid vault page name"
+
+
+def test_validate_vault_page_name_rejects_absolute():
+    from decafclaw.http_server import validate_vault_page_name
+
+    assert validate_vault_page_name("/etc/passwd") == "invalid vault page name"
+
+
+def test_validate_vault_page_name_rejects_empty():
+    from decafclaw.http_server import validate_vault_page_name
+
+    assert validate_vault_page_name("") == "invalid vault page name"
