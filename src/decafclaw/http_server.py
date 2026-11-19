@@ -1670,6 +1670,8 @@ async def delete_conversation(request: Request, id: str) -> JSONResponse:
     manager = getattr(request.app.state, "manager", None)
     if manager and hasattr(manager, "scheduled_wakes"):
         await manager.scheduled_wakes.cancel_all_for_conversation(conv_id)
+    if manager and hasattr(manager, "file_watches"):
+        await manager.file_watches.cancel_all_for_conversation(conv_id)
 
     # Remove the {id}/ dir (archive, sidecars, uploads, workflow.json) and
     # any leftover flat legacy sidecar files.

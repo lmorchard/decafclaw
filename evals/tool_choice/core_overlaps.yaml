@@ -552,5 +552,25 @@
     cleanly and wake up later is schedule_turn. wait() caps at 300 seconds and
     would block the interactive session.
 
+# -- watch_file vs wait / schedule_turn (#1560) -------------------------------
+
+- name: watch-file-vs-wait-canvas-approval
+  scenario: "The approval board in the canvas writes television/board/content.json when the user clicks a button. Don't poll it — wake me up when that file changes so I can run the next step."
+  expected: watch_file
+  near_miss: [wait, schedule_turn]
+  notes: |
+    The event time is unknown but the file that signals it is known, so the
+    right deferred-attention tool is watch_file. wait() would burn iterations
+    polling and schedule_turn would only guess a delay.
+
+- name: watch-file-vs-schedule-turn-build-sentinel
+  scenario: "The build writes dist/ready.txt when it finishes. Wait for that sentinel file instead of guessing how long the build will take, then verify the output."
+  expected: watch_file
+  near_miss: [schedule_turn, shell_background_status]
+  notes: |
+    A known completion artifact is an event, not a delay — watch_file wakes on
+    the write. schedule_turn is for cases where no filesystem signal exists and
+    the agent must pick a delay.
+
 
 

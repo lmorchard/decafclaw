@@ -172,6 +172,16 @@ Tools for scheduling asynchronous wake turns in long-running workflows (#1103). 
 | `schedule_cancel` | | Cancel a pending scheduled wake turn by schedule_id |
 | `schedule_list` | | List all pending scheduled wake turns for the current conversation |
 
+## File Watches (`tools/watch_tools.py`)
+
+One-shot file watches (#1560). The agent arms a watch on a workspace file; the first matching filesystem event (or the timeout) disarms it and enqueues a `TurnKind.WAKE` turn. State is persisted per-conversation in `data/{agent_id}/file_watches/{conv_id}.json` outside the agent-writable workspace, so it resumes across restarts — a change that landed while the server was down fires on the startup scan from the persisted baseline signature. The watcher polls a stat signature (mtime/size/inode) at `file_watch.poll_interval_sec`, so no new runtime dependency is required. Use this instead of polling with `wait` or guessing a delay with `schedule_turn` when an external app or person writes a known file.
+
+| Tool | Always | What it does |
+|------|:------:|--------------|
+| `watch_file` | | Arm a one-shot watch on a workspace file (`event`: `modify`, `create`, `delete`, `any`; `timeout` seconds) |
+| `watch_cancel` | | Disarm a pending file watch by watch_id |
+| `watch_list` | | List all pending file watches for the current conversation |
+
 ## Tool Output (`tools/tool_output_tools.py`)
 
 | Tool | Always | What it does |

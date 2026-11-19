@@ -220,6 +220,7 @@ async def run_all(app_ctx):
 
         # Resume pending scheduled wake timers now that transports are listening (#1119 review)
         await manager.startup_scan_scheduled_wakes()
+        await manager.startup_scan_file_watches()
 
         # Wait for shutdown
         await shutdown_event.wait()

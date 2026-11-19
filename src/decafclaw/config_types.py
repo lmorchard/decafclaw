@@ -781,6 +781,23 @@ class NotificationsConfig:
 
 
 @dataclass
+class FileWatchConfig:
+    """Configuration for one-shot file watches (#1560).
+
+    ``poll_interval_sec`` bounds wake latency; the watch uses a stat call, so
+    the default 1s poll stays cheap. ``notify_on_timeout`` turns a silent
+    expiry into a wake turn that tells the agent the wait ended without an
+    event.
+    """
+
+    enabled: bool = True
+    poll_interval_sec: float = 1.0
+    max_timeout_sec: int = 86400
+    max_watches_per_conversation: int = 16
+    notify_on_timeout: bool = False
+
+
+@dataclass
 class BackgroundConfig:
     """Configuration for background-process tool behavior."""
 
