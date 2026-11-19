@@ -359,9 +359,6 @@ def _suggest_aux_approval_pattern(command: str, has_guidance: bool) -> str:
     return cmd_stripped
 
 
-DEFAULT_AUX_APPROVAL_PRESETS = DEFAULT_AUX_APPROVAL_PRESETS
-
-
 def _saved_presets_path(config) -> Path:
     """Path to custom saved presets file in the agent data directory."""
     return config.agent_path / "shell_approval_presets.json"

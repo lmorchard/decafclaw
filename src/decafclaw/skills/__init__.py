@@ -274,13 +274,6 @@ def _coerce_str_list(value) -> list[str]:
     return [str(value)]
 
 
-def _coerce_bool(value) -> bool:
-    """Coerce a YAML value to bool (handles string 'false', etc.)."""
-    if isinstance(value, bool):
-        return value
-    return str(value).lower() not in ("false", "0", "no", "off")
-
-
 def _frontmatter_span(text: str) -> tuple[str, str] | None:
     """Locate the frontmatter block. Returns (frontmatter_text, body_text).
 
