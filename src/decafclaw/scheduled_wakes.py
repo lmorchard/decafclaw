@@ -78,6 +78,43 @@ def save_scheduled_wakes(config, conv_id: str, schedules: list[ScheduledWake]) -
         raise
 
 
+def compose_wake_context_setup(
+    manager,
+    conv_id: str,
+    *,
+    channel_id: str = "",
+    thread_id: str = "",
+    transport: str = "",
+):
+    """Build the ``context_setup`` callable shared by all wake producers.
+
+    Wakes have no transport of their own, so they inherit the conversation's
+    last context setup (media handlers, etc.) and then re-apply their own
+    channel/thread/transport fields. Extracted for file watches (#1560) so the
+    two wake sources cannot drift.
+    """
+    state = manager.get_state(conv_id) if manager is not None else None
+    base_setup = state.last_context_setup if state else None
+
+    def composed_setup(ctx):
+        if base_setup:
+            base_setup(ctx)
+        if channel_id:
+            ctx.channel_id = channel_id
+        if thread_id:
+            ctx.thread_id = thread_id
+        if transport:
+            ctx.transport = transport
+        if transport == "mattermost" and getattr(ctx, "media_handler", None) is None and channel_id:
+            mm_client = getattr(manager, "mm_client", None)
+            if mm_client and getattr(mm_client, "_http", None):
+                from .media import MattermostMediaHandler
+
+                ctx.media_handler = MattermostMediaHandler(mm_client._http, channel_id=channel_id)
+
+    return composed_setup
+
+
 class ScheduledWakeManager:
     """Coordinates in-memory timers and persistent sidecars for scheduled wakes."""
 
@@ -261,24 +298,13 @@ class ScheduledWakeManager:
         }
 
         # Compose context setup: preserve existing/inherited setup (media handlers, etc.)
-        state = self.manager.get_state(entry.conv_id)
-        base_setup = state.last_context_setup if state else None
-
-        def composed_setup(ctx):
-            if base_setup:
-                base_setup(ctx)
-            if entry.channel_id:
-                ctx.channel_id = entry.channel_id
-            if entry.thread_id:
-                ctx.thread_id = entry.thread_id
-            if entry.transport:
-                ctx.transport = entry.transport
-            if entry.transport == "mattermost" and getattr(ctx, "media_handler", None) is None and entry.channel_id:
-                mm_client = getattr(self.manager, "mm_client", None)
-                if mm_client and getattr(mm_client, "_http", None):
-                    from .media import MattermostMediaHandler
-
-                    ctx.media_handler = MattermostMediaHandler(mm_client._http, channel_id=entry.channel_id)
+        composed_setup = compose_wake_context_setup(
+            self.manager,
+            entry.conv_id,
+            channel_id=entry.channel_id,
+            thread_id=entry.thread_id,
+            transport=entry.transport,
+        )
 
         try:
             future = await self.manager.enqueue_turn(

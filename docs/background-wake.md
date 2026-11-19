@@ -79,6 +79,47 @@ These also fire as `TurnKind.WAKE` turns:
 - During the wake turn, the agent can inspect history/output and notify the user, or reply with `BACKGROUND_WAKE_OK` to remain silent if no action is needed.
 - Pending wake timers can be inspected via `schedule_list` and cancelled via `schedule_cancel(schedule_id=...)`.
 
+## File Watch Wakes (`watch_file`, #1560)
+
+Timer wakes are blind to *when* an external event actually happens. A file
+watch waits for one: the agent arms it on a workspace file and a matching
+filesystem event wakes it with a `TurnKind.WAKE` turn, the same unattended
+mode as `schedule_turn`.
+
+- **One-shot.** The watch disarms on the first matching event (`modify`,
+  `create`, `delete`, or `any`), or when its timeout expires. Anything else
+  requires a new `watch_file` call — so a wake cannot loop on its own.
+- **Durable sidecar.** Pending watches live in
+  `data/{agent_id}/file_watches/{conv_id}.json` outside the workspace.
+  The baseline stat signature (mtime/size/inode) is stored with the watch, so
+  the startup scan fires immediately when a file changed while the server was
+  down. Expired watches are dropped; `file_watch.notify_on_timeout: true`
+  turns an expiry into a wake notice instead.
+- **Polling, not inotify.** A per-watch task stats the file every
+  `file_watch.poll_interval_sec` (default 1s). This is a stat call — no new
+  runtime dependency and no platform-specific watcher — and keeps wake
+  latency within about a second.
+- **Wake prompt.** `File modified: {path}. Reason: {reason}.` followed by the
+  usual reminder that the agent may reply with `BACKGROUND_WAKE_OK` to stay
+  silent. Metadata carries `watch_id`, `path`, and the observed event.
+- **Scope.** Paths are resolved inside the workspace, and protected secret
+  paths (`secret_policy`) are refused. `watch_file` is unavailable to child
+  agents, heartbeat/scheduled runs, and unattended parents.
+
+Use it for companion-app round trips: a Television artifact's
+`content.json` after a user interaction, a Marimo notebook save, a build
+sentinel file. `watch_list`/`watch_cancel` mirror the schedule tools.
+
+Configuration (`config.json`, env prefix `FILE_WATCH_`):
+
+| Field | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Global switch for arming watches |
+| `poll_interval_sec` | `1.0` | Stat interval per watch |
+| `max_timeout_sec` | `86400` | Longest allowed timeout (1 day) |
+| `max_watches_per_conversation` | `16` | Cap on pending watches per conversation |
+| `notify_on_timeout` | `false` | Wake on expiry instead of expiring silently |
+
 ## History rendering — tool-result framing
 
 The `background_event` archive role is not a native LLM role. At

@@ -259,6 +259,12 @@ def delete_conversation_files(config, conv_id: str) -> None:
                 wake_file.unlink()
             except OSError as exc:
                 log.warning("Failed to remove scheduled wakes file %s: %s", wake_file, exc)
+        watch_file = file_watches_path(config, conv_id)
+        if watch_file.exists():
+            try:
+                watch_file.unlink()
+            except OSError as exc:
+                log.warning("Failed to remove file watches file %s: %s", watch_file, exc)
         approval_file = approval_state_path(config, conv_id)
         if approval_file.exists():
             try:
@@ -278,6 +284,17 @@ def scheduled_wakes_path(config, conv_id: str) -> Path:
     Stored outside the agent-writable workspace to prevent unauthorized wake scheduling or forgery (#1119).
     """
     base = (config.agent_path / "scheduled_wakes").resolve()
+    safe = _safe_conv_id(conv_id)
+    return base / f"{safe}.json"
+
+
+def file_watches_path(config, conv_id: str) -> Path:
+    """Resolve the per-conversation file watches sidecar under the admin data dir:
+    data/{agent_id}/file_watches/{conv_id}.json.
+    Stored outside the agent-writable workspace so workspace tools cannot forge
+    watches or overwrite pending state (#1560).
+    """
+    base = (config.agent_path / "file_watches").resolve()
     safe = _safe_conv_id(conv_id)
     return base / f"{safe}.json"
 

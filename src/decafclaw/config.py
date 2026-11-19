@@ -27,6 +27,7 @@ from .config_types import (
     EmailConfig,
     EmbeddingConfig,
     ExtensionConfig,
+    FileWatchConfig,
     HeartbeatConfig,
     HttpConfig,
     ImageBudgetConfig,
@@ -401,6 +402,7 @@ class Config:
     audit_log: AuditLogConfig = field(default_factory=AuditLogConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
+    file_watch: FileWatchConfig = field(default_factory=FileWatchConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     loop_breaker: LoopBreakerConfig = field(default_factory=LoopBreakerConfig)
     lifecycle: LifecycleConfig = field(default_factory=LifecycleConfig)
@@ -788,6 +790,8 @@ def load_config() -> Config:
 
     background = load_sub_config(BackgroundConfig, file_data.get("background", {}), "BACKGROUND")
 
+    file_watch = load_sub_config(FileWatchConfig, file_data.get("file_watch", {}), "FILE_WATCH")
+
     workflow = load_sub_config(WorkflowConfig, file_data.get("workflow", {}), "WORKFLOW")
 
     loop_breaker = load_sub_config(LoopBreakerConfig, file_data.get("loop_breaker", {}), "LOOP_BREAKER")
@@ -924,6 +928,7 @@ def load_config() -> Config:
         audit_log=audit_log,
         email=email,
         background=background,
+        file_watch=file_watch,
         workflow=workflow,
         loop_breaker=loop_breaker,
         lifecycle=lifecycle,

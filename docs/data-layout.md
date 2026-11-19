@@ -22,6 +22,10 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
   web_tokens.json                   # Web UI auth tokens (managed by decafclaw-token CLI)
   approval_state/
     {conv_id}.json                  # Per-conversation shell approval state (#1160)
+  scheduled_wakes/
+    {conv_id}.json                  # Pending timer-based wake turns (#1103)
+  file_watches/
+    {conv_id}.json                  # Pending one-shot file watches (#1560)
   skills/                           # Admin-managed skills
     my-skill/SKILL.md
   schedules/                        # Admin-managed scheduled tasks
@@ -174,6 +178,7 @@ The key architectural decision: **admin files are read-only to the agent, worksp
 - MCP server config lives here so the agent can't add its own tool providers
 - Schedule files here are admin-authored; workspace/schedules are agent-authored (no trust inheritance)
 - Per-conversation shell approval state (`approval_state/{conv_id}.json`, #1160) lives here, not in the conversation's workspace directory: its "remember why" rules steer the shell reviewer, so the agent must not be able to write it. Written atomically by `ConversationManager` when the state changes; removed with the conversation.
+- Pending scheduled wakes (`scheduled_wakes/{conv_id}.json`, #1103) and file watches (`file_watches/{conv_id}.json`, #1560) live here too, so workspace tools cannot forge or clear a wake.
 
 ### Workspace (`data/{agent_id}/workspace/`)
 

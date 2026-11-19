@@ -564,6 +564,10 @@ class ConversationManager:
 
         self.scheduled_wakes = ScheduledWakeManager(self.config, self)
 
+        from .file_watches import FileWatchManager
+
+        self.file_watches = FileWatchManager(self.config, self)
+
     def get_busy_conversations(self) -> list[str]:
         """Return IDs of all conversations with an active turn."""
         busy = []
@@ -1450,6 +1454,7 @@ class ConversationManager:
         """
         # Stop timers first so idle conversations cannot spawn new turns during shutdown (#1119 review)
         await self.scheduled_wakes.shutdown()
+        await self.file_watches.shutdown()
 
         tasks = [s.agent_task for s in self._conversations.values() if s.agent_task and not s.agent_task.done()]
         if tasks:
@@ -2599,14 +2604,19 @@ class ConversationManager:
                 # but startup_scan is async!
                 await self._drain_pending(state)
 
-        # Phase 4: Resume pending scheduled wakes (#1103)
+        # Phase 4: Resume pending scheduled wakes (#1103) and file watches (#1560)
         await self.startup_scan_scheduled_wakes()
+        await self.startup_scan_file_watches()
 
         return recovered
 
     async def startup_scan_scheduled_wakes(self) -> int:
         """Scan and resume pending scheduled wakes after transports are ready."""
         return await self.scheduled_wakes.startup_scan()
+
+    async def startup_scan_file_watches(self) -> int:
+        """Scan and resume pending file watches after transports are ready (#1560)."""
+        return await self.file_watches.startup_scan()
 
     async def startup_scan_workflows(self) -> int:
         """Recover workflows in status='running' by re-enqueueing them (#581).
