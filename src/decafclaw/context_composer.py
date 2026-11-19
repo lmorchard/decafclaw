@@ -54,6 +54,7 @@ from .context_pipeline import (
     assemble_provider_history,
     compose_pre_compose_hooks,
     compose_system_prompt,
+    working_memory_envelope,
 )
 from .context_sidecars import read_context_sidecar, read_last_request_sidecar, write_context_sidecar
 from .context_tools import (
@@ -253,15 +254,18 @@ class ContextComposer:
         ctx.composer.last_recalled_facts = []
         ctx.composer.last_provenance = {}
 
-        # -- PRE_COMPOSE lifecycle collector hooks (#1454, #1486, #1507) --
+        # -- PRE_COMPOSE lifecycle collector hooks (#1454, #1486, #1507, #1574) --
         # HEAD messages mount outside the archived history (see below); DELTA
         # and TAIL messages are archived with the rest of this turn's
-        # injections; EPILOGUE messages mount after the user message.
+        # injections; EPILOGUE messages mount after the user message and are
+        # archived there; WORKING_MEMORY messages are bundled into one
+        # transient envelope that is never archived.
         (
             head_msgs,
             delta_msgs,
             tail_hook_msgs,
             epilogue_msgs,
+            working_memory_msgs,
             hook_sources,
             recalled_facts,
             provenance,
@@ -278,18 +282,22 @@ class ContextComposer:
         sources.extend(hook_sources)
 
         # -- User message (archived; appended to history at the end) --
+        # The archive row is a copy so provenance metadata can attach to it
+        # without ever reaching the provider (#1574).
         if system_update_msg:
             to_archive.append(system_update_msg)
-        to_archive.append(user_msg)
+        archived_user_msg = dict(user_msg)
+        to_archive.append(archived_user_msg)
 
         # -- Build LLM messages (filter + remap roles) --
         # Combine archived history with this turn's injections in the same
         # order they'll be archived: prior history → PRE_COMPOSE DELTA →
-        # PRE_COMPOSE TAIL (references, retrieval, legacy <recalled_facts>) →
-        # system update → user message. The combined list is what the LLM
-        # sees. DELTA mounts after archived history and before tail envelopes
-        # so append-only contributions land chronologically before per-turn
-        # dynamic context.
+        # PRE_COMPOSE TAIL (references) → system update → user message. The
+        # combined list is what the LLM sees. DELTA mounts after archived
+        # history and before tail envelopes so append-only contributions land
+        # chronologically before per-turn dynamic context. WORKING_MEMORY is
+        # not part of this list because it is not archived; it mounts after
+        # the user message below.
         combined = [
             *history,
             *delta_msgs,
@@ -369,8 +377,8 @@ class ContextComposer:
         total_tokens = sum(s.tokens_estimated for s in sources)
 
         # -- Context status note (for agent self-regulation) --
-        # Appended after the EPILOGUE hints, still after the user message.
-        tail_msgs: list[dict] = []
+        # It rides in the ephemeral working-memory envelope: the line changes
+        # every turn and would otherwise replay as a stale number in history.
         if config.agent.show_context_status:
             effective_window = self._get_context_window_size(config, ctx)
             status_line = self._build_context_status(
@@ -379,11 +387,33 @@ class ContextComposer:
                 history_msg_count,
             )
             if status_line:
-                tail_msgs.append({"role": "context_status", "content": status_line})
+                working_memory_msgs.append({"role": "context_status", "content": status_line})
 
-        for tm in tail_msgs:
-            messages.append({**tm, "role": ROLE_REMAP[tm["role"]]})
-            to_archive.append(tm)
+        # -- PRE_COMPOSE WORKING_MEMORY bundle (#1574) --
+        # One transient envelope after the EPILOGUE hints, at the true
+        # generation boundary. It is never archived and never replayed: the
+        # conversation prefix through the previous assistant turn stays
+        # cacheable, and compaction never has to summarize per-turn retrieval
+        # that was already ephemeral.
+        working_memory_msg = working_memory_envelope(working_memory_msgs)
+        if working_memory_msg is not None:
+            messages.append({**working_memory_msg, "role": ROLE_REMAP["working_memory"]})
+
+        # -- Provenance references on the archived user row (#1574) --
+        # The archive no longer carries retrieval text, so restart dedupe
+        # reads the surfaced paths from this metadata. The live prompt keeps
+        # the plain user message; assemble_provider_history strips the key.
+        provenance_refs: dict = {}
+        vault_paths = [r.get("file_path", "") for r in ctx.composer.last_memory_results if r.get("file_path")]
+        if vault_paths:
+            provenance_refs["vault_paths"] = vault_paths
+        if working_memory_msgs:
+            provenance_refs["sources"] = [
+                {"role": m.get("role"), "tokens": estimate_tokens(str(m.get("content") or ""))}
+                for m in working_memory_msgs
+            ]
+        if provenance_refs:
+            archived_user_msg["working_memory"] = provenance_refs
 
         # -- Update state --
         self.state.last_sources = sources
@@ -391,10 +421,10 @@ class ContextComposer:
 
         # Preserve the load-bearing side effect: caller (agent.py) continues
         # to read self.history after compose() returns. Append this turn's
-        # injections in the same order as `combined` above.
+        # injections in the same order as `combined` above. Working memory is
+        # deliberately excluded: it is this turn's prompt only, not history.
         history.extend(combined[len(history) :])
         history.extend(epilogue_msgs)
-        history.extend(tail_msgs)
 
         return ComposedContext(
             messages=messages,
@@ -451,5 +481,14 @@ class ContextComposer:
         config: Any,
         user_message: str,
         history: list,
-    ) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry], list[str], dict[str, list[dict]]]:
+    ) -> tuple[
+        list[dict],
+        list[dict],
+        list[dict],
+        list[dict],
+        list[dict],
+        list[SourceEntry],
+        list[str],
+        dict[str, list[dict]],
+    ]:
         return await compose_pre_compose_hooks(ctx, config, user_message, history)

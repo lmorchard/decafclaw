@@ -1141,11 +1141,11 @@ class TestCompose:
             # Deferred text second (since tools are over budget)
             assert result.messages[1]["role"] == "system"
             assert "tool_search" in result.messages[1]["content"]
-            # User message before context status
+            # User message before the working-memory block
             user_msgs = [
                 m
                 for m in result.messages
-                if m.get("role") == "user" and not m.get("content", "").startswith("[Context:")
+                if m.get("role") == "user" and not m.get("content", "").startswith("<working_memory>")
             ]
             assert user_msgs[-1]["content"] == "hello"
 
@@ -1167,7 +1167,7 @@ class TestCompose:
             user_msgs = [
                 m
                 for m in result.messages
-                if m.get("role") == "user" and not m.get("content", "").startswith("[Context:")
+                if m.get("role") == "user" and not m.get("content", "").startswith("<working_memory>")
             ]
             assert "[truncated at" in user_msgs[-1]["content"]
 
@@ -2394,8 +2394,8 @@ class TestComposeRecentJournalIntegration:
         assert "recent_journal" not in [m.get("role") for m in result.messages]
 
     @pytest.mark.asyncio
-    async def test_recent_journal_retained_in_live_history(self, ctx, config):
-        """recent_journal messages must be appended to history so turn 2 retains them (#1117)."""
+    async def test_recent_journal_is_working_memory_only(self, ctx, config):
+        """recent_journal reaches the current prompt but never replays (#1574)."""
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "retained journal fact")])
         history: list[dict] = []
@@ -2407,14 +2407,18 @@ class TestComposeRecentJournalIntegration:
             patch("decafclaw.extensions.recent_journal._now", return_value=now),
         ):
             composer = ContextComposer(state=ctx.composer)
-            await composer.compose(ctx, "turn 1", history, mode=ComposerMode.INTERACTIVE)
+            res1 = await composer.compose(ctx, "turn 1", history, mode=ComposerMode.INTERACTIVE)
 
-        # history must contain the injected recent_journal message
-        journal_in_hist = [m for m in history if m.get("role") == "recent_journal"]
-        assert len(journal_in_hist) == 1
-        assert "retained journal fact" in journal_in_hist[0]["content"]
+        # Turn 1's prompt carries the entry inside the working-memory block,
+        # and the archive/live history stays clean.
+        assert any(
+            "<recent_journal>" in str(m.get("content", "")) and "retained journal fact" in str(m.get("content", ""))
+            for m in res1.messages
+        )
+        assert [m for m in history if m.get("role") == "recent_journal"] == []
 
-        # Turn 2: compose with the same live history
+        # Turn 2: the cursor already consumed the entry, and the turn-1 block
+        # does not replay, so the fact is absent from the new prompt.
         with (
             patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
@@ -2424,9 +2428,8 @@ class TestComposeRecentJournalIntegration:
         ):
             res2 = await composer.compose(ctx, "turn 2", history, mode=ComposerMode.INTERACTIVE)
 
-        # Turn 2 outgoing messages must still include the fact from turn 1 via history!
-        user_content_t2 = " ".join(str(m.get("content", "")) for m in res2.messages if m.get("role") == "user")
-        assert "retained journal fact" in user_content_t2
+        outgoing = " ".join(str(m.get("content", "")) for m in res2.messages)
+        assert "retained journal fact" not in outgoing
 
     @pytest.mark.asyncio
     async def test_cancelled_compose_rolls_back_cursors(self, ctx, config):
@@ -2479,9 +2482,10 @@ class TestLastRequestSidecar:
 class TestPromptCachePrefixStability:
     @pytest.mark.asyncio
     async def test_composed_messages_prefix_identical_across_turns(self, ctx, config):
-        """Between compactions, request N (including its tail skill hint and
-        context status) must be an exact prefix of request N+1, both from the
-        live history and from history rebuilt out of the archive (#1116).
+        """Between compactions, request N's archived messages (including its tail
+        skill hint) must be an exact prefix of request N+1, both from the live
+        history and from history rebuilt out of the archive (#1116). The
+        per-turn working-memory block is excluded by design (#1574).
         """
         config.system_prompt = "You are a test assistant."
         config.agent.tool_context_budget_pct = 1.0
@@ -2523,15 +2527,20 @@ class TestPromptCachePrefixStability:
             archived.extend(turn_tail)
             return result
 
+        def stable(messages: list[dict]) -> list[dict]:
+            return [m for m in messages if not str(m.get("content", "")).startswith("<working_memory>")]
+
         def assert_prefix(earlier: ComposedContext, later: ComposedContext) -> None:
-            assert len(earlier.messages) < len(later.messages)
-            for i, expected in enumerate(earlier.messages):
-                assert later.messages[i]["role"] == expected["role"], f"Role mismatch at index {i}"
-                assert later.messages[i]["content"] == expected["content"], f"Content mismatch at index {i}"
+            expected_msgs = stable(earlier.messages)
+            later_msgs = stable(later.messages)
+            assert len(expected_msgs) < len(later_msgs)
+            for i, expected in enumerate(expected_msgs):
+                assert later_msgs[i]["role"] == expected["role"], f"Role mismatch at index {i}"
+                assert later_msgs[i]["content"] == expected["content"], f"Content mismatch at index {i}"
 
         res1 = await run_turn("turn 1")
         assert any("<preempt_skill_hint>" in m["content"] for m in res1.messages)
-        assert res1.messages[-1]["content"].startswith("[Context:")
+        assert any("<context_status>" in str(m.get("content", "")) for m in res1.messages)
         res2 = await run_turn("turn 2")
         assert_prefix(res1, res2)
         res3 = await run_turn("turn 3")

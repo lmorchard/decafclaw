@@ -77,7 +77,11 @@ async def test_hint_mounts_after_user_message_and_before_status(ctx, config):
     hint_idx = _index(result.messages, lambda m: "<preempt_skill_hint>" in str(m.get("content", "")))
     assert hint_idx == user_idx + 1
     assert result.messages[hint_idx]["role"] == "user"
-    assert result.messages[-1]["content"].startswith("[Context:")
+    # The status line rides in the ephemeral working-memory block (#1574).
+    status = [m for m in result.messages if "<context_status>" in str(m.get("content", ""))]
+    assert len(status) == 1
+    assert "[Context:" in status[0]["content"]
+    assert result.messages[-1] is status[0]
     assert "preempt_skill_matches" in {s.source for s in result.sources}
 
     archived = [m for m in result.messages_to_archive if "<preempt_skill_hint>" in str(m.get("content", ""))]

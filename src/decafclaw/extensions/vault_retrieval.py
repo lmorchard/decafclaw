@@ -5,7 +5,9 @@ Moves semantic vault retrieval (#301, #1048, #1157) out of
 queries ``embeddings.db`` through ``memory_context.retrieve_memory_context``,
 scores candidates with the configured relevance weights, filters pages the
 conversation already surfaced, trims to the turn's token budget, and returns a
-``TAIL`` ``ContextContribution`` holding the ``vault_retrieval`` envelope.
+``WORKING_MEMORY`` ``ContextContribution`` holding the ``vault_retrieval``
+block. The block reaches the provider for the current turn only and is never
+archived (#1574).
 
 Retrieval runs on every interactive turn unless
 ``ctx.skip_vault_retrieval`` is set. Modes (``vault_retrieval.mode``):
@@ -101,7 +103,7 @@ def score_candidates(candidates: list[dict], config: Any) -> list[dict]:
 
 
 class VaultRetrievalExtension(BaseExtension):
-    """Inject scored proactive vault retrieval as a TAIL contribution."""
+    """Inject scored proactive vault retrieval as a WORKING_MEMORY contribution."""
 
     # Local embedding plus SQLite query; the shared 300 ms collector bound is
     # too tight for the first call that loads the embedding model.
@@ -154,7 +156,7 @@ class VaultRetrievalExtension(BaseExtension):
         retrieval_mode = resolve_retrieval_mode(config, self._option(config, "mode", RetrievalMode.ALWAYS))
         if retrieval_mode == RetrievalMode.ON_DEMAND:
             return ContextContribution(
-                slot=ContextSlot.TAIL,
+                slot=ContextSlot.WORKING_MEMORY,
                 messages=[],
                 source_entry=self._source_entry(
                     tokens=0,
@@ -167,7 +169,7 @@ class VaultRetrievalExtension(BaseExtension):
         results = await retrieve_memory_context(config, user_message)
         if not results:
             return ContextContribution(
-                slot=ContextSlot.TAIL,
+                slot=ContextSlot.WORKING_MEMORY,
                 messages=[],
                 source_entry=self._source_entry(
                     tokens=0,
@@ -204,7 +206,7 @@ class VaultRetrievalExtension(BaseExtension):
                 score_threshold=score_threshold,
             )
             return ContextContribution(
-                slot=ContextSlot.TAIL,
+                slot=ContextSlot.WORKING_MEMORY,
                 messages=[],
                 source_entry=self._source_entry(
                     tokens=0,
@@ -245,7 +247,7 @@ class VaultRetrievalExtension(BaseExtension):
 
         if not results:
             return ContextContribution(
-                slot=ContextSlot.TAIL,
+                slot=ContextSlot.WORKING_MEMORY,
                 messages=[],
                 source_entry=self._source_entry(
                     tokens=0,
@@ -292,7 +294,7 @@ class VaultRetrievalExtension(BaseExtension):
         top_score = results[0].get("composite_score", 0)
         min_score = results[-1].get("composite_score", 0)
         return ContextContribution(
-            slot=ContextSlot.TAIL,
+            slot=ContextSlot.WORKING_MEMORY,
             messages=[msg],
             source_entry=self._source_entry(
                 tokens=estimate_tokens(formatted),

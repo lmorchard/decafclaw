@@ -95,21 +95,25 @@ the slice guidance still lives in the system prompt via the addendum.
 │ - Fetched tools (via tool_search)       │
 │ - Over budget → deferred behind search  │
 ├─────────────────────────────────────────┤
-│ VAULT CONTEXT (injected by composer)    │
-│ - @[[Page]] references                  │
-│ - Open web UI page                      │
-│ - Recent journal entries (recency)      │
-│ - Proactive vault retrieval results     │
-├─────────────────────────────────────────┤
 │ [CONVERSATION SUMMARY]                  │
-│ - Only present after compaction         │
-│ - Single user message with prefix       │
+│ - Only present after compaction        │
+│ - Single user message with prefix      │
 ├─────────────────────────────────────────┤
 │ CONVERSATION HISTORY                    │
 │ - user messages                         │
 │ - assistant messages (with tool_calls)  │
 │ - tool result messages                  │
 │ - Grows until compaction triggers       │
+├─────────────────────────────────────────┤
+│ EPILOGUE HINTS                          │
+│ - pre-emptive tool/skill discovery      │
+├─────────────────────────────────────────┤
+│ WORKING MEMORY (this turn only)         │
+│ - proactive vault retrieval             │
+│ - recent journal entries                │
+│ - scratchpad notes                      │
+│ - recalled facts                        │
+│ - [Context: ...] status line            │
 ├─────────────────────────────────────────┤
 │ ~~~ FREE SPACE ~~~                      │
 │ - Room for LLM response                │
@@ -120,25 +124,63 @@ the slice guidance still lives in the system prompt via the addendum.
 #### PRE_COMPOSE contributions (#1486)
 
 `TurnLifecycle.PRE_COMPOSE` collector hooks may return a `ContextContribution`
-(`decafclaw.extensions`) with one of four slots, or the legacy `str` /
+(`decafclaw.extensions`) with one of five slots, or the legacy `str` /
 `list[str]` fact text. Mount order is fixed:
 
 | Slot | Position | Archived? |
 |------|----------|-----------|
 | `HEAD` | After the system-message block, before history | No — the same prefix replays each turn, preserving the provider prompt cache (#1117) |
-| `DELTA` | After archived history and the composer's other chronological injections (wiki, journal, memory, scratchpad notes), before tail envelopes | Yes |
+| `DELTA` | After archived history and the composer's other chronological injections (wiki), before tail envelopes | Yes |
 | `TAIL` | Directly before the current user message | Yes |
 | `EPILOGUE` | Directly after the current user message, at the generation boundary | Yes — replays in place from history (#1507) |
+| `WORKING_MEMORY` | Bundled into one `<working_memory>` message after the `EPILOGUE` hints | No — this turn's prompt only (#1574) |
 
-Legacy text coerces to one `TAIL` `ContextContribution` holding the bounded
-`<recalled_facts>` envelope, so the configured timeout and token ceiling are
-unchanged. Structured contributions carry their own messages and skip that
-legacy ceiling. Any contribution `source_entry` lands in the turn's
-`sources`. A contribution may also set `provenance` (source key → item dicts);
-the composer merges those into `ComposedContext.provenance`, and legacy fact
-lines that survive the envelope's token ceiling land there as the `facts`
-capsule. The web UI renders the merged payload as the turn's capsule row
-(#1563); a list trimmed by the ceiling contains only what the model received.
+Legacy text coerces to one `recalled_facts` sub-block inside the working-memory
+bundle, so the configured timeout and token ceiling are unchanged. Structured
+contributions carry their own messages and skip that legacy ceiling. Any
+contribution `source_entry` lands in the turn's `sources`. A contribution may
+also set `provenance` (source key → item dicts); the composer merges those into
+`ComposedContext.provenance`, and legacy fact lines that survive the block's
+token ceiling land there as the `facts` capsule. The web UI renders the merged
+payload as the turn's capsule row (#1563); a list trimmed by the ceiling
+contains only what the model received.
+
+#### Working memory and the cache boundary (#1574)
+
+`WORKING_MEMORY` carries everything the composer discovered for this turn and
+does not need to replay: proactive vault retrieval, recent journal entries,
+scratchpad notes, recalled facts, and the `[Context: ...]` status line. The
+composer wraps each source in a tag named after its message role and emits one
+message:
+
+```
+<working_memory>
+<vault_retrieval>…</vault_retrieval>
+<recent_journal>…</recent_journal>
+<context_status>…</context_status>
+</working_memory>
+```
+
+The block mounts after the user message and the `EPILOGUE` hints and is never
+archived, appended to live history, or summarized by compaction. That leaves
+the conversational prefix through the previous assistant turn byte-identical
+across turns, which is what provider prefix caches match. The tradeoff is
+deliberate: the block itself is new tokens on every request and is never
+served from cache, but it also never consumes context-window budget on later
+turns. Archiving it would extend the cached prefix slightly while replaying
+3–5K retrieved tokens forever and feeding them to compaction.
+
+Restart-time dedupe no longer has a retrieval row to scan. The surfaced vault
+paths ride as `working_memory.vault_paths` metadata on the archived user row;
+`get_already_retrieved_paths` reads both that and legacy `vault_retrieval`
+rows. `assemble_provider_history` strips the metadata before the provider
+request. Within one process, `ComposerState.injected_paths` is also persisted
+per turn through `PersistedTurnState`, so a fresh per-turn `ctx` keeps the
+suppression set.
+
+Not every injection is ephemeral. Explicit `@` references and pre-emptive
+discovery hints stay in `TAIL`/`EPILOGUE` because they are tied to the user's
+request and remain useful when the turn is replayed.
 
 ### Token budget
 
@@ -150,7 +192,7 @@ capsule. The web UI renders the merged payload as the turn's capsule row
 
 #### History accounting
 
-`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, `recent_journal`, `vault_retrieval`, `PRE_COMPOSE` DELTA/TAIL/EPILOGUE contributions — including the `conversation_notes` contribution from `ScratchpadNotesExtension` — and the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `recent_journal_entry`, `memory_entry`, contribution `source_entry`, `user_msg_entry`). `PRE_COMPOSE` HEAD contributions are not archived and therefore are not part of `history` accounting. The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
+`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, the `WORKING_MEMORY` bundle from `recent_journal`, `vault_retrieval`, `ScratchpadNotesExtension`, recalled facts, and the `[Context: ...]` line — and `PRE_COMPOSE` DELTA/TAIL/EPILOGUE contributions — plus the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `memory_entry`, contribution `source_entry`, `user_msg_entry`). `PRE_COMPOSE` HEAD contributions and the `WORKING_MEMORY` bundle are not archived and therefore are not part of `history` accounting. The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
 
 `ROLE_REMAP` also covers two turn-closure markers (both remapped to `user`): `cancel_marker`, written when a user cancels a turn, and `turn_aborted`, written when a turn aborts via an unexpected exception. See [Cancelled turns](conversations.md#cancelled-turns) and [Aborted turns](conversations.md#aborted-turns-unexpected-exceptions) for producer-side details. The remap is what guarantees each marker reaches the LLM at the right position regardless of provider (Vertex collapses `system`-role messages into `systemInstruction`).
 
@@ -170,12 +212,12 @@ This contract closes a class of underreporting bugs (#393) where a role-based fi
 
 1. Truncates oversized user messages
 2. Assembles the system prompt (from `config.system_prompt`)
-3. Retrieves and injects vault context (page references, open pages)
-4. Retrieves and injects memory context (semantic search over vault/journal)
-5. Runs `PRE_COMPOSE` hooks and mounts their HEAD/DELTA/TAIL/EPILOGUE contributions
-6. Builds the user message and archives it
+3. Retrieves and injects explicit vault references (page references, open pages)
+4. Prepares the memory budget
+5. Runs `PRE_COMPOSE` hooks and mounts their HEAD/DELTA/TAIL/EPILOGUE contributions; working-memory discovery is bundled after the user message
+6. Builds and archives the user message, with provenance metadata on the archive row
 7. Filters/remaps history roles for the LLM
-8. Runs `PreemptHintsExtension`, which keyword-matches the raw user message against tool names/descriptions and the skill catalog and mounts the discovery hints as an `EPILOGUE` contribution. See [Pre-emptive Tool Search](preemptive-tool-search.md).
+8. `PreemptHintsExtension` keyword-matches the raw user message against tool names/descriptions and the skill catalog and mounts the discovery hints as an `EPILOGUE` contribution. See [Pre-emptive Tool Search](preemptive-tool-search.md).
 9. Classifies tools into active vs deferred sets using the priority system. See [Tool Priority](tool-priority.md).
 10. Returns a `ComposedContext` with everything ready to send
 
@@ -230,7 +272,7 @@ Providers normalize their native counter into a common `cached_tokens` usage key
 
 ## Vault retrieval
 
-Before each interactive turn, the default-on [`VaultRetrievalExtension`](extensions.md#vault-retrieval-default-on) surfaces relevant vault content as a `PRE_COMPOSE` `TAIL` contribution — without the agent needing to explicitly search. The composer owns fixed-cost accounting; the extension trims to `ComposerState.dynamic_token_budget`.
+Before each interactive turn, the default-on [`VaultRetrievalExtension`](extensions.md#vault-retrieval-default-on) surfaces relevant vault content as a `PRE_COMPOSE` `WORKING_MEMORY` contribution — without the agent needing to explicitly search. The composer owns fixed-cost accounting; the extension trims to `ComposerState.dynamic_token_budget`.
 
 ### How it works
 
@@ -239,17 +281,17 @@ Before each interactive turn, the default-on [`VaultRetrievalExtension`](extensi
 3. Scores candidates using a three-factor composite score (see [Scoring](#scoring) below)
 4. Follows `[[wiki-links]]` one hop from top hits to expand the candidate pool
 5. Fills remaining token budget with top-scoring candidates
-6. Injects matching entries as context before the user's message
+6. Injects matching entries inside that turn's `<working_memory>` block, after the user message
 
-The context is archived for auditability and persists in conversation history.
+The retrieval text is ephemeral: it reaches the provider for that turn only and is never written to the archive or replayed (#1574). See [working memory](#working-memory-and-the-cache-boundary-1574).
 
 ### Deduplication across turns (#1157)
 
 Automatic proactive retrieval is deduplicated per conversation: a vault page that an earlier turn already surfaced is not surfaced again.
 
-1. After injection, the extension records the injected vault file paths on the `vault_retrieval` message it archives (`file_paths`) and in `ComposerState.injected_paths`.
-2. On each later turn, the composer rebuilds the already-retrieved set from archived history via `get_already_retrieved_paths` and filters retrieval candidates (keyed on `file_path`) against it. Explicit references (`@[[Page]]`, handled by `VaultReferencesExtension`) continue to use `get_already_injected_pages` to track `vault_references` separately, so explicit mentions are not suppressed by earlier proactive retrievals.
-3. The live `ComposerState.injected_paths` set is still unioned in for in-flight injections within a turn.
+1. After injection, the extension records the injected vault file paths in `ComposerState.injected_paths`. The composer writes those paths as `working_memory.vault_paths` metadata on the archived user row.
+2. On each later turn, the composer rebuilds the already-retrieved set from archived history via `get_already_retrieved_paths`, which reads that metadata (and legacy `vault_retrieval` rows), and filters retrieval candidates (keyed on `file_path`) against it. Explicit references (`@[[Page]]`, handled by `VaultReferencesExtension`) continue to use `get_already_injected_pages` to track `vault_references` separately, so explicit mentions are not suppressed by earlier proactive retrievals.
+3. The live `ComposerState.injected_paths` set is still unioned in for in-flight injections within a turn, and it rides `PersistedTurnState` so a fresh per-turn `ctx` keeps it.
 
 Explicit `vault_search` tool results are not deduplicated — the agent asked for those, so they are delivered in full.
 

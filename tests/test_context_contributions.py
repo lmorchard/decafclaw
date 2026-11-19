@@ -35,8 +35,8 @@ def _archived_text(history):
 
 
 def test_context_slots_and_contribution_contract():
-    """ContextContribution and ContextSlot expose the four documented slots."""
-    assert [slot.value for slot in ContextSlot] == ["head", "delta", "tail", "epilogue"]
+    """ContextContribution and ContextSlot expose the five documented slots."""
+    assert [slot.value for slot in ContextSlot] == ["head", "delta", "tail", "epilogue", "working_memory"]
 
     message = {"role": "user", "content": "structured"}
     contribution = ContextContribution(slot=ContextSlot.DELTA, messages=[message])
@@ -47,7 +47,7 @@ def test_context_slots_and_contribution_contract():
 
 @pytest.mark.asyncio
 async def test_slot_ordering_invariant(ctx, config, no_tail_notes):
-    """HEAD precedes HISTORY, DELTA sits before TAIL, and the user message is last."""
+    """HEAD precedes HISTORY, DELTA before TAIL, and working memory mounts last."""
     config.system_prompt = "<soul>STATIC PREFIX</soul>"
 
     async def hook(context, user_msg):
@@ -56,6 +56,7 @@ async def test_slot_ordering_invariant(ctx, config, no_tail_notes):
             ContextContribution(ContextSlot.TAIL, [{"role": "user", "content": "TAIL-MARKER"}]),
             ContextContribution(ContextSlot.HEAD, [{"role": "system", "content": "HEAD-MARKER"}]),
             ContextContribution(ContextSlot.DELTA, [{"role": "user", "content": "DELTA-MARKER"}]),
+            ContextContribution(ContextSlot.WORKING_MEMORY, [{"role": "vault_retrieval", "content": "MEMORY-MARKER"}]),
         ]
 
     ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, hook)
@@ -71,16 +72,22 @@ async def test_slot_ordering_invariant(ctx, config, no_tail_notes):
     delta = _index(messages, "DELTA-MARKER")
     tail = _index(messages, "TAIL-MARKER")
     user = _index(messages, "USER-MARKER")
+    memory = _index(messages, "MEMORY-MARKER")
 
     assert messages[0]["role"] == "system"
     assert messages[0]["content"] == "<soul>STATIC PREFIX</soul>"
     assert head > 0
-    assert head < history_idx < delta < tail < user
-    assert messages[-1]["content"] == "USER-MARKER"
+    assert head < history_idx < delta < tail < user < memory
+    assert messages[memory]["role"] == "user"  # internal working_memory role remaps
+    assert messages[memory]["content"] == (
+        "<working_memory>\n<vault_retrieval>\nMEMORY-MARKER\n</vault_retrieval>\n</working_memory>"
+    )
 
-    # HEAD is a stable prefix contribution: it is not appended to history.
+    # HEAD is a stable prefix contribution and working memory is transient;
+    # neither is appended to history.
     archived = _archived_text(history)
     assert "HEAD-MARKER" not in archived
+    assert "MEMORY-MARKER" not in archived
     assert "DELTA-MARKER" in archived
     assert "TAIL-MARKER" in archived
 
@@ -119,30 +126,37 @@ async def test_head_prefix_stable_across_turns(ctx, config, no_tail_notes):
 
 
 @pytest.mark.asyncio
-async def test_legacy_string_results_coerce_to_tail_envelope(ctx, config, no_tail_notes):
-    """str / list[str] hooks keep the bounded <recalled_facts> TAIL behavior."""
+async def test_legacy_string_results_coerce_to_working_memory(ctx, config, no_tail_notes):
+    """str / list[str] hooks keep the bounded <recalled_facts> block, unarchived."""
 
     async def hook(context, user_msg):
         return ["Coffee preference: espresso", "Timezone: Pacific"]
 
     ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, hook)
-    composed = await _compose(
-        ctx,
-        history=[{"role": "user", "content": "HISTORY-MARKER"}],
-    )
+    history = [{"role": "user", "content": "HISTORY-MARKER"}]
+    composed = await _compose(ctx, history=history)
 
     messages = composed.messages
     recalled = [m for m in messages if "<recalled_facts>" in str(m.get("content", ""))]
     assert len(recalled) == 1
     assert recalled[0]["role"] == "user"
     assert recalled[0]["content"] == (
-        "<recalled_facts>\nCoffee preference: espresso\nTimezone: Pacific\n</recalled_facts>"
+        "<working_memory>\n"
+        "<recalled_facts>\n"
+        "Coffee preference: espresso\n"
+        "Timezone: Pacific\n"
+        "</recalled_facts>\n"
+        "</working_memory>"
     )
 
-    history = _index(messages, "HISTORY-MARKER")
-    tail = _index(messages, "<recalled_facts>")
+    history_idx = _index(messages, "HISTORY-MARKER")
     user = _index(messages, "USER-MARKER")
-    assert history < tail < user
+    memory = _index(messages, "<recalled_facts>")
+    assert history_idx < user < memory
+
+    # The block is this turn's prompt only; it never reaches the archive.
+    assert "<recalled_facts>" not in _archived_text(composed.messages_to_archive)
+    assert "<recalled_facts>" not in _archived_text(history)
 
     entry = next(s for s in composed.sources if s.source == "recalled_facts")
     assert entry.items_included == 2
@@ -282,6 +296,54 @@ async def test_contribution_source_entry_reaches_turn_sources(ctx, config, no_ta
     assert entry in composed.sources
     assert "vault_retrieval_extension" in {s.source for s in composed.sources}
     assert _index(composed.messages, "RETRIEVED-MARKER") < _index(composed.messages, "USER-MARKER")
+
+
+@pytest.mark.asyncio
+async def test_working_memory_bundles_sources_and_never_replays(ctx, config, no_tail_notes):
+    """Transient discovery lands in one block and is absent from later turns (#1574)."""
+
+    calls = {"n": 0}
+
+    async def hook(context, user_msg):
+        calls["n"] += 1
+        turn = calls["n"]
+        return [
+            ContextContribution(
+                ContextSlot.WORKING_MEMORY,
+                [{"role": "vault_retrieval", "content": f"VAULT-{turn}"}],
+            ),
+            ContextContribution(
+                ContextSlot.WORKING_MEMORY,
+                [{"role": "conversation_notes", "content": f"NOTES-{turn}"}],
+            ),
+        ]
+
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, hook)
+    composer = ContextComposer(state=ctx.composer)
+
+    first = await composer.compose(ctx=ctx, user_message="FIRST", history=[])
+    memory_msgs = [m for m in first.messages if str(m.get("content", "")).startswith("<working_memory>")]
+    assert len(memory_msgs) == 1
+    content = memory_msgs[0]["content"]
+    assert "<vault_retrieval>\nVAULT-1\n</vault_retrieval>" in content
+    assert "<conversation_notes>\nNOTES-1\n</conversation_notes>" in content
+    assert content.index("VAULT-1") < content.index("NOTES-1")
+    assert first.messages[-1] is memory_msgs[0]
+
+    # Only the user turn is archived; the working-memory block is not.
+    archived_text = _archived_text(first.messages_to_archive)
+    assert "VAULT-1" not in archived_text
+    assert "NOTES-1" not in archived_text
+
+    # Turn 2 gets its own block; turn 1's retrieval does not replay.
+    history = list(first.messages_to_archive)
+    second = await composer.compose(ctx=ctx, user_message="SECOND", history=history)
+    second_text = "\n".join(str(m.get("content", "")) for m in second.messages)
+    assert "VAULT-1" not in second_text
+    assert "NOTES-1" not in second_text
+    assert "<vault_retrieval>\nVAULT-2\n</vault_retrieval>" in second_text
+    assert second.messages[-1]["role"] == "user"
+    assert str(second.messages[-1]["content"]).startswith("<working_memory>")
 
 
 @pytest.mark.asyncio

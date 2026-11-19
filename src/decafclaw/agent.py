@@ -791,11 +791,15 @@ class TurnRunner:
                     "role": "wake_trigger",
                     "content": msg.get("content", ""),
                 }
+                if msg.get("working_memory"):
+                    archive_msg["working_memory"] = msg["working_memory"]
                 _archive(self.ctx, archive_msg)
             elif self.archive_text and msg.get("role") == "user":
                 archive_msg = {"role": "user", "content": self.archive_text}
                 if msg.get("attachments"):
                     archive_msg["attachments"] = msg["attachments"]
+                if msg.get("working_memory"):
+                    archive_msg["working_memory"] = msg["working_memory"]
                 _archive(self.ctx, archive_msg)
             else:
                 _archive(self.ctx, msg)

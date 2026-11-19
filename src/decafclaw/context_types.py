@@ -246,6 +246,7 @@ ROLE_REMAP: dict[str, str] = {
     "mcp_references": "user",
     "conversation_notes": "user",
     "recent_journal": "user",
+    "working_memory": "user",
     "cancel_marker": "user",
     "turn_aborted": "user",
     "skill_hint": "user",

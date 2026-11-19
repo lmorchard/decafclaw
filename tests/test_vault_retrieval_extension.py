@@ -79,7 +79,7 @@ class TestContribution:
             contribution = await _hook(ctx)
 
         assert contribution is not None
-        assert contribution.slot.value == "tail"
+        assert contribution.slot.value == "working_memory"
         assert len(contribution.messages) == 1
         assert contribution.messages[0]["role"] == "vault_retrieval"
         assert contribution.messages[0]["content"] == "formatted memory"
@@ -190,6 +190,24 @@ class TestContribution:
         history = [
             {"role": "vault_retrieval", "content": "earlier", "file_paths": ["pages/first.md"]},
             {"role": "user", "content": "hello again"},
+        ]
+        with (
+            patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[_candidate()]),
+            patch(FORMAT_PATCH, return_value="formatted"),
+        ):
+            contribution = await _hook(ctx, history=history)
+
+        assert contribution.messages == []
+        assert contribution.source_entry.details["drop_reason"] == "already_injected"
+
+    async def test_history_metadata_dedupe_suppresses_restored_pages(self, ctx):
+        """A restart rebuilds dedupe from the archived user-row metadata (#1574)."""
+        history = [
+            {
+                "role": "user",
+                "content": "hello again",
+                "working_memory": {"vault_paths": ["pages/first.md"]},
+            },
         ]
         with (
             patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[_candidate()]),
@@ -356,7 +374,17 @@ class TestComposerIntegration:
 
         assert composed.retrieved_context_text == "formatted memory"
         assert [r["file_path"] for r in composed.memory_results] == ["pages/first.md"]
-        assert any(m["role"] == "vault_retrieval" for m in composed.messages_to_archive)
+        # Retrieval is per-turn working memory; it reaches the prompt but not
+        # the conversation archive (#1574).
+        assert any("<vault_retrieval>" in str(m.get("content", "")) for m in composed.messages)
+        assert not any(m["role"] == "vault_retrieval" for m in composed.messages_to_archive)
+        # Paths survive as metadata on the archived user row for restart dedupe.
+        user_rows = [m for m in composed.messages_to_archive if m.get("role") == "user"]
+        assert user_rows[0]["working_memory"]["vault_paths"] == ["pages/first.md"]
+        assert all("working_memory" not in m for m in composed.messages)
+        from decafclaw.memory_context import get_already_retrieved_paths
+
+        assert get_already_retrieved_paths(composed.messages_to_archive) == {"pages/first.md"}
         assert any(s.source == "memory" and s.items_included == 1 for s in composed.sources)
         assert len(events) == 1
         assert events[0]["text"] == "formatted memory"

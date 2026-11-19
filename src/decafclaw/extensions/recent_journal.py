@@ -1,10 +1,10 @@
 """Recent journal core extension (#306, #1491).
 
-Auto-surfaces recently written journal entries as a `DELTA` contribution at
-interactive turn start, on a small fixed budget separate from the dynamic
-semantic-retrieval pool so it doesn't compete with it. Recency is a strong
-signal as a retrieval *mode* ("what was I just thinking about?") where it is
-weak folded into a composite score.
+Auto-surfaces recently written journal entries as a `WORKING_MEMORY`
+contribution at interactive turn start, on a small fixed budget separate from
+the dynamic semantic-retrieval pool so it doesn't compete with it. Recency is a
+strong signal as a retrieval *mode* ("what was I just thinking about?") where
+it is weak folded into a composite score.
 
 Only entries newer than the newest one already surfaced this conversation
 (``ComposerState.injection_cursors``) are injected, so each entry appears at
@@ -36,7 +36,7 @@ def _now() -> datetime:
 
 
 class RecentJournalExtension(BaseExtension):
-    """Inject unseen recent journal entries as a DELTA contribution."""
+    """Inject unseen recent journal entries as a WORKING_MEMORY contribution."""
 
     def __init__(self, options: dict[str, Any], config: Any):
         super().__init__(name="recent_journal")
@@ -89,7 +89,7 @@ class RecentJournalExtension(BaseExtension):
             text = format_recent_journal_for_context(entries, cfg.max_hours)
 
         return ContextContribution(
-            slot=ContextSlot.DELTA,
+            slot=ContextSlot.WORKING_MEMORY,
             messages=[{"role": "recent_journal", "content": text}],
             source_entry=SourceEntry(
                 source="recent_journal",

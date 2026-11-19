@@ -217,6 +217,10 @@ class PersistedTurnState:
     aux_approval_guidance: list = field(default_factory=list, metadata={"replaceable": True})
     llm_approved_shell_patterns: list = field(default_factory=list, metadata={"replaceable": True})
     injection_cursors: InjectionCursors = field(default_factory=InjectionCursors, metadata={"replaceable": True})
+    # Vault pages already surfaced this conversation by proactive retrieval.
+    # Ephemeral working-memory blocks are no longer archived (#1574), so the
+    # archive cannot rebuild this set after a restart.
+    injected_paths: list[str] = field(default_factory=list, metadata={"replaceable": True})
     prefix_fingerprints: dict[str, str] = field(default_factory=dict, metadata={"replaceable": True})
     # Per-conversation auto-compaction threshold overrides (#1099). Externally
     # driven (ConversationManager.set_flag from the web / transport handlers) —
@@ -280,6 +284,10 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
         lambda ctx: ctx.composer.injection_cursors,
         lambda ctx, v: setattr(ctx.composer, "injection_cursors", v),
     ),
+    "injected_paths": (
+        lambda ctx: sorted(ctx.composer.injected_paths),
+        lambda ctx, v: setattr(ctx.composer, "injected_paths", set(v or ())),
+    ),
     "prefix_fingerprints": (
         lambda ctx: ctx.composer.prefix_fingerprints,
         lambda ctx, v: setattr(ctx.composer, "prefix_fingerprints", v),
@@ -313,6 +321,7 @@ _CTX_DRIVEN_FIELDS: frozenset[str] = frozenset(
         "aux_approval_guidance",
         "llm_approved_shell_patterns",
         "injection_cursors",
+        "injected_paths",
         "prefix_fingerprints",
     }
 )

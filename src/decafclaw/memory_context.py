@@ -412,14 +412,21 @@ def get_already_injected_pages(history: list) -> set[str]:
 
 
 def get_already_retrieved_paths(history: list) -> set[str]:
-    """Scan history for vault_retrieval messages and return set of file paths
-    already surfaced to the conversation (#1157).
+    """Return vault paths already surfaced to the conversation (#1157).
+
+    Newer archives store the references as metadata on the user row because
+    the retrieval text itself is now ephemeral (#1574); older archives carry
+    ``vault_retrieval`` rows, which this still reads.
     """
     paths: set[str] = set()
     for msg in history:
         if msg.get("role") == "vault_retrieval":
-            file_paths = msg.get("file_paths") or []
-            for path in file_paths:
+            for path in msg.get("file_paths") or []:
                 if path:
+                    paths.add(path)
+        metadata = msg.get("working_memory")
+        if isinstance(metadata, dict):
+            for path in metadata.get("vault_paths") or []:
+                if isinstance(path, str) and path:
                     paths.add(path)
     return paths

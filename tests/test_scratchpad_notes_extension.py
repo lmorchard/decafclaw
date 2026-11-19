@@ -28,14 +28,14 @@ class TestContribution:
     async def test_no_notes_returns_none(self, ctx):
         assert await _hook(ctx) is None
 
-    async def test_delta_contribution_with_unseen_notes(self, ctx):
+    async def test_working_memory_contribution_with_unseen_notes(self, ctx):
         append_note(ctx.config, ctx.conv_id, "user prefers concise replies")
         append_note(ctx.config, ctx.conv_id, "decided to use vertex provider", now="2026-01-02T00:00:00Z")
 
         contribution = await _hook(ctx)
 
         assert contribution is not None
-        assert contribution.slot.value == "delta"
+        assert contribution.slot.value == "working_memory"
         assert len(contribution.messages) == 1
         assert contribution.messages[0]["role"] == "conversation_notes"
         assert "user prefers concise replies" in contribution.messages[0]["content"]
@@ -158,16 +158,19 @@ class TestLifecycle:
 
 
 class TestComposerIntegration:
-    async def test_compose_injects_archived_delta_and_source(self, ctx):
+    async def test_compose_bundles_notes_without_archiving(self, ctx):
         ctx.config.extensions["scratchpad_notes"] = ExtensionConfig(enabled=True, type="scratchpad_notes")
         init_extensions(ctx.config, ctx.event_bus)
         append_note(ctx.config, ctx.conv_id, "remember the flaky test", now="2026-01-01T00:00:00Z")
 
         composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
 
-        assert any(m["role"] == "conversation_notes" for m in composed.messages_to_archive)
+        assert not any(m["role"] == "conversation_notes" for m in composed.messages_to_archive)
         assert any(
-            m["role"] == "user" and "remember the flaky test" in str(m.get("content", "")) for m in composed.messages
+            m["role"] == "user"
+            and "<conversation_notes>" in str(m.get("content", ""))
+            and "remember the flaky test" in str(m.get("content", ""))
+            for m in composed.messages
         )
         assert any(s.source == "notes" for s in composed.sources)
 

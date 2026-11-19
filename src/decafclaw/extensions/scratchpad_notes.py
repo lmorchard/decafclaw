@@ -1,7 +1,7 @@
 """Scratchpad notes core extension (#1487).
 
-Auto-injects the per-conversation scratchpad (#299) as a ``DELTA`` context
-contribution. The extension is observed by the composer through the
+Auto-injects the per-conversation scratchpad (#299) as a ``WORKING_MEMORY``
+context contribution. The extension is observed by the composer through the
 ``PRE_COMPOSE`` lifecycle hook, so notes reading, cursor progression, and
 formatting no longer live in ``context_composer.py``.
 
@@ -47,7 +47,7 @@ def _is_interactive(ctx: Any) -> bool:
 
 
 class ScratchpadNotesExtension(BaseExtension):
-    """Inject unseen conversation notes as a DELTA contribution."""
+    """Inject unseen conversation notes as a WORKING_MEMORY contribution."""
 
     def __init__(self, options: dict[str, Any], config: Any):
         super().__init__(name="scratchpad_notes")
@@ -65,7 +65,7 @@ class ScratchpadNotesExtension(BaseExtension):
         _user_message: str = "",
         _history: list | None = None,
     ) -> ContextContribution | None:
-        """Return unseen notes for the DELTA slot; fail open."""
+        """Return unseen notes for the working-memory bundle; fail open."""
         try:
             return await self._contribution(ctx)
         except Exception as exc:  # fail-open collector
@@ -101,7 +101,7 @@ class ScratchpadNotesExtension(BaseExtension):
         from decafclaw.util import estimate_tokens
 
         return ContextContribution(
-            slot=ContextSlot.DELTA,
+            slot=ContextSlot.WORKING_MEMORY,
             messages=[{"role": "conversation_notes", "content": text}],
             source_entry=SourceEntry(
                 source="notes",

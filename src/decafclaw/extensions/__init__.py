@@ -30,12 +30,18 @@ class ContextSlot(enum.Enum):
     - EPILOGUE — generation-boundary hints mounted directly after the current
       user message and before dispatch. Contributions are archived at that
       position so later turns replay them there (#1507).
+    - WORKING_MEMORY — per-turn discovery (retrieval, notes, journal, facts)
+      bundled into one ``<working_memory>`` envelope after the EPILOGUE
+      hints. Contributions are ephemeral: they reach the provider for this
+      turn only and are never archived or replayed, so they cannot pollute
+      the conversation prefix or compaction input (#1574).
     """
 
     HEAD = "head"
     DELTA = "delta"
     TAIL = "tail"
     EPILOGUE = "epilogue"
+    WORKING_MEMORY = "working_memory"
 
 
 @dataclass
@@ -48,6 +54,11 @@ class ContextContribution:
     JSON-ready items that source injected, for the turn's provenance capsule
     row (#1563). Keys must be strings and values lists of dicts; malformed
     entries are logged and dropped.
+
+    ``WORKING_MEMORY`` contributions are bundled, in hook completion order,
+    into one ``<working_memory>`` message with each source wrapped in a tag
+    named after its message role. The bundle is mounted after the user
+    message and is never archived (#1574).
     """
 
     slot: ContextSlot
