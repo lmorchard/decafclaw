@@ -130,7 +130,7 @@ the slice guidance still lives in the system prompt via the addendum.
 | Slot | Position | Archived? |
 |------|----------|-----------|
 | `HEAD` | After the system-message block, before history | No — the same prefix replays each turn, preserving the provider prompt cache (#1117) |
-| `DELTA` | After archived history and the composer's other chronological injections (wiki), before tail envelopes | Yes |
+| `DELTA` | After archived history, before tail envelopes | Yes |
 | `TAIL` | Directly before the current user message | Yes |
 | `EPILOGUE` | Directly after the current user message, at the generation boundary | Yes — replays in place from history (#1507) |
 | `WORKING_MEMORY` | Bundled into one `<working_memory>` message after the `EPILOGUE` hints | No — this turn's prompt only (#1574) |

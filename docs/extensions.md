@@ -40,7 +40,7 @@ Slots mount in one invariant order (#1486, #1507, #1574):
 | Slot | Mount point | Archived? |
 |------|-------------|-----------|
 | `HEAD` | After the system prompt, before history | No — replays at the same offset so the provider prefix cache stays stable (#1117) |
-| `DELTA` | After archived history and this turn's other chronological injections (wiki), before tail envelopes | Yes |
+| `DELTA` | After archived history, before tail envelopes | Yes |
 | `TAIL` | Directly before the current user message | Yes |
 | `EPILOGUE` | Directly after the current user message, before dispatch | Yes — replays in place so the prefix cache stays stable |
 | `WORKING_MEMORY` | Bundled into one `<working_memory>` message after the `EPILOGUE` hints | No — reaches the provider for this turn only and never replays |
