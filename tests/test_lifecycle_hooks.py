@@ -114,6 +114,14 @@ async def test_provenance_attaches_to_archived_assistant_row(ctx, config, monkey
     ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, structured_hook)
     ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, legacy_hook)
 
+    events: list[dict] = []
+
+    def _capture(event: dict) -> None:
+        if event.get("type") == "turn_provenance":
+            events.append(event)
+
+    ctx.event_bus.subscribe(_capture)
+
     runner = TurnRunner(
         ctx=ctx,
         config=config,
@@ -133,6 +141,8 @@ async def test_provenance_attaches_to_archived_assistant_row(ctx, config, monkey
         "scratchpad": [{"timestamp": "2026-11-19T10:00:00Z", "text": "Ship capsules."}],
         "facts": [{"fact": "User prefers espresso."}],
     }
+    assert events
+    assert events[-1]["provenance"] == assistant_rows[-1]["provenance"]
 
 
 @pytest.mark.asyncio
