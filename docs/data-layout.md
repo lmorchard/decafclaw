@@ -26,6 +26,8 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
     {conv_id}.json                  # Pending timer-based wake turns (#1103)
   file_watches/
     {conv_id}.json                  # Pending one-shot file watches (#1560)
+  restart_wakes/
+    {conv_id}.json                  # Single-shot post-restart conversation wake (#1554)
   skills/                           # Admin-managed skills
     my-skill/SKILL.md
   schedules/                        # Admin-managed scheduled tasks

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..media import ToolResult, WidgetRequest
+from ..restart_wake import new_restart_wake
 from ..secret_policy import (
     is_redactable,
     is_refused,
@@ -876,22 +877,44 @@ async def tool_admin_delete(ctx: "Context", path: str, recursive: bool = False) 
             return _file_error(e, path)
 
 
+def _restart_wake_for_ctx(ctx: "Context", reason: str):
+    """Build a post-restart wake record for the calling conversation (#1554)."""
+    conv_id = getattr(ctx, "conv_id", "") or ""
+    if not conv_id:
+        log.warning("[tool:admin_restart] no conversation id; post-restart wake skipped")
+        return None
+    return new_restart_wake(
+        conv_id=conv_id,
+        reason=reason,
+        user_id=getattr(ctx, "user_id", "") or "",
+        channel_id=getattr(ctx, "channel_id", "") or "",
+        thread_id=getattr(ctx, "thread_id", "") or "",
+        transport=getattr(ctx, "transport", "") or "",
+    )
+
+
 async def tool_admin_restart(
-    ctx: "Context", reason: str = "Admin requested restart", on_idle: bool = True
+    ctx: "Context",
+    reason: str = "Admin requested restart",
+    on_idle: bool = True,
+    wake_on_restart: bool = True,
 ) -> str | ToolResult:
     """Request a restart of the DecafClaw service, optionally waiting for active turns to finish.
 
+    When ``wake_on_restart`` is true, the calling conversation is woken after
+    the daemon comes back so the agent can verify the restart and report back.
+
     REQUIRES USER CONFIRMATION before execution.
     """
-    log.info(f"[tool:admin_restart] reason={reason!r} on_idle={on_idle}")
+    log.info(f"[tool:admin_restart] reason={reason!r} on_idle={on_idle} wake_on_restart={wake_on_restart}")
     restart_coord = getattr(ctx, "restart_coordinator", None)
     if not restart_coord and ctx.manager:
         restart_coord = getattr(ctx.manager, "restart_coordinator", None)
     if not restart_coord:
         return ToolResult(text="[error: restart coordinator is not available]")
 
-    preview = f"Restart DecafClaw service (reason: {reason!r}, on_idle={on_idle})"
-    payload = {"reason": reason, "on_idle": on_idle}
+    preview = f"Restart DecafClaw service (reason: {reason!r}, on_idle={on_idle}, wake_on_restart={wake_on_restart})"
+    payload = {"reason": reason, "on_idle": on_idle, "wake_on_restart": wake_on_restart}
 
     gate = await _confirm_admin_mutation(
         ctx,
@@ -906,7 +929,11 @@ async def tool_admin_restart(
     if _is_cancelled(ctx):
         return ToolResult(text="[tool interrupted: agent turn cancelled]")
 
-    await restart_coord.request_restart(reason=reason, on_idle=on_idle)
+    wake = _restart_wake_for_ctx(ctx, reason) if wake_on_restart else None
+    try:
+        await restart_coord.request_restart(reason=reason, on_idle=on_idle, wake=wake)
+    except OSError as exc:
+        return ToolResult(text=f"[error: could not record post-restart wake; restart not requested: {exc}]")
     if on_idle:
         busy = restart_coord.get_busy_conversations()
         if busy:
@@ -1064,12 +1091,14 @@ class AdminMutationHandler:
             elif tool_name == "admin_restart":
                 reason = payload.get("reason", "Admin requested restart")
                 on_idle = payload.get("on_idle", True)
+                wake_on_restart = payload.get("wake_on_restart", True)
                 restart_coord = getattr(ctx, "restart_coordinator", None)
                 if not restart_coord and ctx.manager:
                     restart_coord = getattr(ctx.manager, "restart_coordinator", None)
                 if not restart_coord:
                     return ToolResult(text="[error: restart coordinator is not available]")
-                await restart_coord.request_restart(reason=reason, on_idle=on_idle)
+                wake = _restart_wake_for_ctx(ctx, reason) if wake_on_restart else None
+                await restart_coord.request_restart(reason=reason, on_idle=on_idle, wake=wake)
                 if on_idle:
                     busy = restart_coord.get_busy_conversations()
                     if busy:
@@ -1284,7 +1313,9 @@ ADMIN_TOOL_DEFINITIONS = [
                 "Request a restart of the DecafClaw daemon/service. "
                 "REQUIRES USER CONFIRMATION before execution. "
                 "By default (on_idle=true), waits for active conversation turns to finish "
-                "before triggering the restart so running work is not interrupted."
+                "before triggering the restart so running work is not interrupted. "
+                "By default (wake_on_restart=true), wakes this conversation after the "
+                "daemon comes back so you can verify the restart and report the result."
             ),
             "parameters": {
                 "type": "object",
@@ -1296,6 +1327,10 @@ ADMIN_TOOL_DEFINITIONS = [
                     "on_idle": {
                         "type": "boolean",
                         "description": "Wait for active conversation turns to finish before restarting (default: true). Set false for immediate restart.",
+                    },
+                    "wake_on_restart": {
+                        "type": "boolean",
+                        "description": "Wake this conversation with a follow-up turn once the daemon is back (default: true). Set false when no post-restart verification is needed.",
                     },
                 },
             },
