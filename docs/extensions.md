@@ -374,7 +374,7 @@ in-memory retrieval cache to invalidate on vault writes: each turn queries
 | `top_k` | `5` |
 | `pre_compose_timeout` | `5.0` |
 
-The extension declares `pre_compose_timeout = 5.0` because cold-start embedding initialization exceeds the default 300 ms collector timeout.
+The extension declares `pre_compose_timeout = 5.0` because cold-start embedding initialization exceeds the default 300 ms collector timeout. Both hooks offload the synchronous `Memory` client (search and `add`, including its extraction LLM and Qdrant I/O) with `asyncio.to_thread`: calling it inline stalls every conversation and transport, and the timeout cannot fire while the loop is blocked. Sync locks are acquired inside the worker thread so cancelling the awaiting hook cannot release them mid-call. Writes are serialized because `add()` is a read-modify-write that would otherwise double-insert facts when concurrent conversations settle; an embedded Qdrant store (process-local state, no internal locking) serializes every call, while a remote Qdrant store keeps searches concurrent with writes.
 
 **Dependencies:** `mem0ai` is an optional dependency extra (`memory`). Environments running the mem0 extension must be synced with:
 ```bash

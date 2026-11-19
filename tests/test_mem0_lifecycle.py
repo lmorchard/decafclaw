@@ -1,3 +1,6 @@
+import asyncio
+import threading
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -94,3 +97,131 @@ async def test_mem0_hooks_execution_and_skip(ctx, config):
     ctx.skip_memory_extension = True
     await ext.on_turn_settle_hook(ctx, transcript)
     mock_client.add.assert_not_called()
+
+
+class _SlowSyncClient:
+    """Stand-in for mem0's synchronous ``Memory`` client.
+
+    Real calls embed text, run an extraction LLM, and write to Qdrant before
+    returning, all inside a blocking call.
+    """
+
+    def __init__(self, delay: float):
+        self.delay = delay
+        self.thread_ids: dict[str, int] = {}
+
+    def search(self, *args, **kwargs):
+        self.thread_ids["search"] = threading.get_ident()
+        time.sleep(self.delay)
+        return [{"memory": "User lives in Portland."}]
+
+    def add(self, *args, **kwargs):
+        self.thread_ids["add"] = threading.get_ident()
+        time.sleep(self.delay)
+        return {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_mem0_sync_client_calls_do_not_block_event_loop(ctx, config):
+    """WHEN a synchronous mem0 client call is slow (extraction LLM, FastEmbed,
+    Qdrant I/O), DecafClaw SHALL run it off the event loop so other
+    conversations keep running and the PRE_COMPOSE timeout can fire.
+
+    Inline calls stall the whole service: the turn loop, WebSocket traffic,
+    and the hook timeout itself all wait for the syscall to return.
+    """
+    client = _SlowSyncClient(delay=0.3)
+    ext = Mem0Extension({}, config, client=client)
+    ctx.user_id = "user123"
+    ctx.skip_memory_extension = False
+    transcript = [{"role": "user", "content": "I like dark roast."}]
+    main_thread = threading.get_ident()
+
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def heartbeat():
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    hb = asyncio.create_task(heartbeat())
+    try:
+        await ext.on_turn_settle_hook(ctx, transcript)
+        settle_ticks = ticks
+        ticks = 0
+        facts = await ext.pre_compose_hook(ctx, "Where do I live?")
+    finally:
+        stop.set()
+        await hb
+
+    assert facts == "User lives in Portland."
+    assert client.thread_ids["add"] != main_thread
+    assert client.thread_ids["search"] != main_thread
+    assert settle_ticks >= 5, "on_turn_settle_hook blocked the event loop"
+    assert ticks >= 5, "pre_compose_hook blocked the event loop"
+
+
+class _OverlapDetectingClient:
+    def __init__(self, delay: float):
+        self.delay = delay
+        self.active = 0
+        self.max_active = 0
+        self._guard = threading.Lock()
+
+    def _enter(self):
+        with self._guard:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+
+    def _leave(self):
+        with self._guard:
+            self.active -= 1
+
+    def search(self, *args, **kwargs):
+        self._enter()
+        time.sleep(self.delay)
+        self._leave()
+        return [{"memory": "User lives in Portland."}]
+
+    def add(self, *args, **kwargs):
+        self._enter()
+        time.sleep(self.delay)
+        self._leave()
+        return {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_mem0_settle_writes_are_serialized(ctx, config):
+    """WHEN two conversations settle at the same time, mem0's read-modify-write
+    add() calls SHALL not overlap, or both can insert the same extracted fact."""
+    client = _OverlapDetectingClient(delay=0.05)
+    ext = Mem0Extension({}, config, client=client)
+    ctx.user_id = "user123"
+    ctx.skip_memory_extension = False
+    transcript = [{"role": "user", "content": "I like dark roast."}]
+
+    await asyncio.gather(*(ext.on_turn_settle_hook(ctx, transcript) for _ in range(3)))
+
+    assert client.max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_mem0_embedded_store_serializes_reads_and_writes(ctx, config):
+    """WHEN the store is embedded (process-local Qdrant state with no internal
+    locking), concurrent search and add() calls SHALL not touch the shared
+    client at the same time; remote Qdrant alone serves concurrent clients."""
+    client = _OverlapDetectingClient(delay=0.05)
+    ext = Mem0Extension({"qdrant_path": "data/mem0_qdrant"}, config, client=client)
+    ctx.user_id = "user123"
+    ctx.skip_memory_extension = False
+    transcript = [{"role": "user", "content": "I like dark roast."}]
+
+    await asyncio.gather(
+        ext.pre_compose_hook(ctx, "Where do I live?"),
+        ext.on_turn_settle_hook(ctx, transcript),
+        ext.on_turn_settle_hook(ctx, transcript),
+    )
+
+    assert client.max_active == 1
