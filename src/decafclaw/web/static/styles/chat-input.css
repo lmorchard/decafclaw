@@ -77,6 +77,19 @@ chat-input button {
   white-space: nowrap;
 }
 
+chat-input .composer-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+chat-input .composer-primary-icon {
+  line-height: 1;
+}
+
 chat-input .stop-btn {
   background: var(--pico-del-color);
   border-color: var(--pico-del-color);
@@ -219,6 +232,33 @@ chat-input .conversation-menu-select {
   chat-input button.conversation-actions-btn,
   chat-input .conversation-menu {
     display: none;
+  }
+}
+
+/* Mobile composer (#1540): the textarea gets the row. Attach moves into the
+   conversation menu; the primary action shows only its icon. Tap-target floors
+   keep both buttons at 44px. */
+@media (max-width: 639px) {
+  chat-input {
+    padding: 0.5rem;
+  }
+
+  chat-input .input-row {
+    gap: 0.25rem;
+  }
+
+  chat-input .attach-btn {
+    display: none;
+  }
+
+  chat-input .composer-primary-label {
+    display: none;
+  }
+
+  chat-input .composer-primary-btn {
+    min-width: 44px;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
   }
 }
 

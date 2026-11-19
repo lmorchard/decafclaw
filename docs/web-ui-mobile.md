@@ -140,18 +140,31 @@ file).
 
 On mobile (≤639px), the chat-control strip is hidden and replaced by the
 composer's conversation-actions menu. The whole strip (`<chat-controls>`) is
-the mobile surface and vanishes into the button menu, which now hosts the
-Context, Canvas, Terminal, and Side question actions plus the Model and Mode
-selects. The toggle is the `⋮` button (`.conversation-actions-btn`) rendered
-left of the paperclip (attach) button in the chat-input row; tapping it opens
-a vertical `.conversation-menu` floated above the composer. Menu items
-dispatch document-level events the app handles: Context → `toggle-context-inspector`,
-Canvas → `conversation-action` (canvas resummon), Terminal →
-`conversation-action`, Side question → `open-side-question`.
+the mobile surface and vanishes into the button menu, which hosts Attach file,
+Context, Canvas, Terminal, and Side question plus the Model and Mode selects.
+The toggle is the `⋮` button (`.conversation-actions-btn`) in the chat-input
+row; tapping it opens a vertical `.conversation-menu` floated above the
+composer. Menu items dispatch document-level events the app handles: Context →
+`toggle-context-inspector`, Canvas → `conversation-action` (canvas resummon),
+Terminal → `conversation-action`, Side question → `open-side-question`; Attach
+file opens the hidden file input.
 
 The conversation-actions toggle and menu are mobile-only: at desktop widths
 (≥640px) they are hidden and the chat-control strip keeps hosting the
 conversation actions as before.
+
+## Composer on mobile (#1540)
+
+The textarea owns the composer row. Below 640px:
+
+- The `⋮` toggle and the primary action are icon-only 44px controls. The
+  primary action merges Send and Stop: idle it sends (➤), and while a turn
+  runs it stops (■). Enter still sends while busy, which keeps mid-turn
+  steering available from the keyboard.
+- The paperclip is hidden from the row; Attach file lives in the `⋮` menu.
+  Desktop keeps the paperclip beside the composer.
+- Composer padding and row gaps shrink to 0.5rem and 0.25rem so the textarea
+  takes the remaining width.
 
 ## Quick checklist before merging a UI change
 

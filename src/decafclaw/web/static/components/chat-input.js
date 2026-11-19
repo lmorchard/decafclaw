@@ -419,6 +419,12 @@ export class ChatInput extends LitElement {
     this.dispatchEvent(new CustomEvent('open-side-question', { bubbles: true, composed: true }));
   }
 
+  /** Attach lives in the menu on mobile (#1540); the row button stays for desktop. */
+  #handleMenuAttach() {
+    this._conversationMenuOpen = false;
+    this.#openFilePicker();
+  }
+
   /** Mode menu item: switch the conversation's mode via the set-mode event. */
   #handleMenuModeChange(e) {
     const newMode = e.target.value;
@@ -746,6 +752,12 @@ export class ChatInput extends LitElement {
           @keydown=${this.#handleConversationKeydown}>
           <div class="conversation-menu-heading">Conversation</div>
           <div class="conversation-menu-actions">
+            ${!this.disabled ? html`
+              <button type="button" class="conversation-menu-item" @click=${this.#handleMenuAttach}>
+                <span class="conversation-menu-icon" aria-hidden="true">&#128206;</span>
+                <span class="conversation-menu-label">Attach file</span>
+              </button>
+            ` : nothing}
             <button type="button" class="conversation-menu-item" @click=${this.#handleMenuContext}>
               <span class="conversation-menu-icon" aria-hidden="true">&#x1F50D;</span>
               <span class="conversation-menu-label">Context</span>
@@ -833,10 +845,17 @@ export class ChatInput extends LitElement {
           @click=${this.#syncMenu}
           @paste=${this.#handlePaste}
         ></textarea>
-        ${this.busy ? html`
-          <button class="stop-btn" @click=${this.#handleStop} aria-label="Stop generation">&#9632; Stop</button>
-        ` : ''}
-        <button @click=${this.#handleSend} ?disabled=${this.disabled} aria-label="Send message">Send</button>
+        <button
+          type="button"
+          class="composer-primary-btn ${this.busy ? 'stop-btn' : ''}"
+          @click=${this.busy ? this.#handleStop : this.#handleSend}
+          ?disabled=${!this.busy && this.disabled}
+          aria-label=${this.busy ? 'Stop generation' : 'Send message'}
+          title=${this.busy ? 'Stop generation' : 'Send message'}
+        >
+          <span class="composer-primary-icon" aria-hidden="true">${this.busy ? '\u25A0' : '\u27A4'}</span>
+          <span class="composer-primary-label">${this.busy ? 'Stop' : 'Send'}</span>
+        </button>
       </div>
     `;
   }

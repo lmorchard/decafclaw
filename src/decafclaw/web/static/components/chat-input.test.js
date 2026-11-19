@@ -329,6 +329,37 @@ describe('chat-input existing send/stop behaviour (menu closed)', () => {
 
     expect(onStop).toHaveBeenCalledTimes(1);
   });
+
+  it('sends from the merged primary action when idle', async () => {
+    const el = await mount();
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    el.addEventListener('send', onSend);
+    el.addEventListener('stop', onStop);
+    await type(el, 'hello there');
+
+    el.querySelector('.composer-primary-btn').click();
+    await el.updateComplete;
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0][0].detail.text).toBe('hello there');
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
+  it('stops from the merged primary action while busy', async () => {
+    const el = await mount({ busy: true });
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    el.addEventListener('send', onSend);
+    el.addEventListener('stop', onStop);
+    await type(el, 'hello there');
+
+    el.querySelector('.composer-primary-btn').click();
+    await el.updateComplete;
+
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+  });
 });
 
 describe('chat-input message history navigation', () => {
@@ -550,15 +581,19 @@ describe('chat-input accessible button names (#166)', () => {
   it('labels the send, attach, and conversation actions buttons', async () => {
     const el = await mount();
 
-    expect(byLabel(el, 'Send message')?.textContent.trim()).toBe('Send');
+    expect(byLabel(el, 'Send message')?.querySelector('.composer-primary-label')?.textContent.trim()).toBe('Send');
     expect(byLabel(el, 'Attach file')?.classList.contains('attach-btn')).toBe(true);
     expect(byLabel(el, 'Conversation actions')?.classList.contains('conversation-actions-btn')).toBe(true);
   });
 
-  it('labels the stop button while busy', async () => {
+  it('merges stop into the single primary action while busy', async () => {
     const el = await mount({ busy: true });
 
-    expect(byLabel(el, 'Stop generation')?.classList.contains('stop-btn')).toBe(true);
+    const primary = byLabel(el, 'Stop generation');
+    expect(primary?.classList.contains('stop-btn')).toBe(true);
+    expect(primary?.querySelector('.composer-primary-label')?.textContent.trim()).toBe('Stop');
+    expect(el.querySelectorAll('.composer-primary-btn')).toHaveLength(1);
+    expect(byLabel(el, 'Send message')).toBeNull();
   });
 
   it('labels the attachment remove button', async () => {
@@ -581,10 +616,11 @@ describe('chat-input accessible button names (#166)', () => {
     await el.updateComplete;
 
     const buttons = [...el.querySelectorAll('button')];
-    // conversation-actions + attach + stop + send + attachment-remove (the
+    // conversation-actions + attach + merged send/stop + attachment-remove (the
     // side-question entry moved to the chat-controls action cluster, issue
-    // #1190; the conversation menu itself is a single toggle, issue #1192).
-    expect(buttons.length).toBe(5);
+    // #1190; the conversation menu itself is a single toggle, issue #1192;
+    // send and stop merged into one primary action, issue #1540).
+    expect(buttons.length).toBe(4);
     for (const b of buttons) {
       expect(b.getAttribute('aria-label')?.trim()).toBeTruthy();
     }
@@ -786,6 +822,22 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
 
     expect(picker.disabled).toBe(false);
     expect(modeSelect.disabled).toBe(false);
+  });
+
+  it('moves attach into the menu and opens the file picker (#1540)', async () => {
+    const el = await mount();
+    const input = /** @type {HTMLInputElement} */ (el.querySelector('#file-input'));
+    const clickSpy = vi.spyOn(input, 'click');
+    const menu = await openMenu(el);
+
+    const item = [...menu.querySelectorAll('.conversation-menu-item')]
+      .find((b) => b.querySelector('.conversation-menu-label')?.textContent.trim() === 'Attach file');
+    expect(item).toBeTruthy();
+    item.click();
+    await el.updateComplete;
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(el.querySelector('.conversation-menu')).toBeNull();
   });
 
   it('closes the menu on Escape', async () => {
