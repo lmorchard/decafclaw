@@ -26,9 +26,15 @@ log = logging.getLogger(__name__)
 class Mem0Extension(BaseExtension):
     """Mem0 semantic memory extension providing local-first fact extraction and recall."""
 
+    # Local FastEmbed query plus vector store search; the shared 300 ms collector
+    # bound is too tight for the first call that loads the embedding model.
+    pre_compose_timeout = 5.0
+
     def __init__(self, options: dict[str, Any], config: Any, client: Any = None):
         super().__init__(name="mem0")
         self.options = options or {}
+        if "pre_compose_timeout" in self.options:
+            self.pre_compose_timeout = float(self.options["pre_compose_timeout"])
         # Retained for extensions that want core config (non-memory) access.
         self.config = config
         self.client = client

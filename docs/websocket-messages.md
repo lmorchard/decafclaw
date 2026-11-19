@@ -231,6 +231,15 @@ A notification was marked read (push from notification subsystem).
 - `ids` — array of string
 - `unread_count` — number
 
+### `recalled_facts`
+
+Recalled memory facts injected into the active turn prompt, emitted as soon as prompt composition settles.
+
+**Fields:**
+
+- `conv_id` — string
+- `facts` — array of string
+
 ### `recovery_decision`
 
 Bounded recovery policy outcome after a recoverable LLM failure: retry / continue / stop, with phase and retry-budget state (#1144).

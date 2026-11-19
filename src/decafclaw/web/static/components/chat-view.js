@@ -19,6 +19,7 @@ export class ChatView extends LitElement {
     _showScrollBtn: { type: Boolean, state: true },
     _hasMore: { type: Boolean, state: true },
     _showRecalledFacts: { type: Boolean, state: true },
+    _streamingRecalledFacts: { type: Array, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -29,6 +30,7 @@ export class ChatView extends LitElement {
     this._messages = [];
     this._streamingText = '';
     this._streamingThinking = '';
+    this._streamingRecalledFacts = [];
     this._busy = false;
     this._toolStatus = null;
     this._showScrollBtn = false;
@@ -57,6 +59,7 @@ export class ChatView extends LitElement {
       this._messages = this.store?.currentMessages || [];
       this._streamingText = this.store?.streamingText || '';
       this._streamingThinking = this.store?.streamingThinking || '';
+      this._streamingRecalledFacts = this.store?.streamingRecalledFacts || [];
       this._busy = this.store?.isBusy || false;
       this._toolStatus = this.store?.toolStatus;
       this._pendingConfirms = [...(this.store?.pendingConfirms || [])];
@@ -195,20 +198,33 @@ export class ChatView extends LitElement {
         ></chat-message>
       `)}
 
-      ${(this._streamingText || this._streamingThinking) ? html`
-        <chat-message
-          .role=${'assistant'}
-          .content=${this._streamingText || ''}
-          .thinking=${this._streamingThinking || ''}
-          .streaming=${true}
-        ></chat-message>
-      ` : ''}
+      ${(() => {
+        const hasStreamingFacts = Boolean(this._showRecalledFacts && this._streamingRecalledFacts?.length);
+        const isStreaming = Boolean(this._streamingText || this._streamingThinking || hasStreamingFacts);
+        if (!isStreaming) return '';
+        return html`
+          <chat-message
+            .role=${'assistant'}
+            .content=${this._streamingText || ''}
+            .thinking=${this._streamingThinking || ''}
+            .recalledFacts=${this._showRecalledFacts ? this._streamingRecalledFacts : []}
+            .streaming=${true}
+          ></chat-message>
+        `;
+      })()}
 
-      ${this._busy && !this._streamingText && !this._streamingThinking && !this._toolStatus ? html`
-        <div class="thinking-indicator">
-          <span></span><span></span><span></span>
-        </div>
-      ` : ''}
+      ${(() => {
+        const hasStreamingFacts = Boolean(this._showRecalledFacts && this._streamingRecalledFacts?.length);
+        const isStreaming = Boolean(this._streamingText || this._streamingThinking || hasStreamingFacts);
+        if (this._busy && !isStreaming && !this._toolStatus) {
+          return html`
+            <div class="thinking-indicator">
+              <span></span><span></span><span></span>
+            </div>
+          `;
+        }
+        return '';
+      })()}
 
       <confirm-view .store=${this.store} .confirms=${this._pendingConfirms}></confirm-view>
 

@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/decafclaw
-ExecStart=%h/.local/bin/uv run decafclaw
-Restart=on-failure
+ExecStart=%h/.local/bin/uv run --extra memory decafclaw
+Restart=always
 RestartSec=5
 # Stop gracefully (SIGTERM), then force after 15s
 TimeoutStopSec=15

@@ -361,16 +361,29 @@ in-memory retrieval cache to invalidate on vault writes: each turn queries
 
 ## Reference extension: mem0
 
-`src/decafclaw/extensions/mem0.py` provides local-first semantic memory: embedded Qdrant on disk, FastEmbed embeddings, and a local OpenAI-compatible LLM endpoint. It subscribes `PRE_COMPOSE` (search) and `ON_TURN_SETTLE` (fact extraction), honors `ctx.skip_memory_extension`, and reads options with defaults:
+`src/decafclaw/extensions/mem0.py` provides local-first semantic memory: embedded or remote Qdrant, FastEmbed embeddings, and a local OpenAI-compatible LLM endpoint. It subscribes `PRE_COMPOSE` (search) and `ON_TURN_SETTLE` (fact extraction), honors `ctx.skip_memory_extension`, and reads options with defaults:
 
 | Option | Default |
 |--------|---------|
 | `qdrant_path` | `data/mem0_qdrant` |
+| `qdrant_url` | `""` (remote Qdrant endpoint, e.g. `http://host:6333`) |
 | `embedder_model` | `BAAI/bge-small-en-v1.5` |
 | `llm_base_url` | `http://synobian:4100/v1` |
 | `llm_model` | `mandelbrot3-flint` |
-| `api_key` | `""` (falls back to `local`) |
+| `api_key` | `""` (falls back to `local` or `ollama`) |
 | `top_k` | `5` |
+| `pre_compose_timeout` | `5.0` |
+
+The extension declares `pre_compose_timeout = 5.0` because cold-start embedding initialization exceeds the default 300 ms collector timeout.
+
+**Dependencies:** `mem0ai` is an optional dependency extra (`memory`). Environments running the mem0 extension must be synced with:
+```bash
+uv sync --extra memory
+```
+And systemd service units invoking `uv run` should pass `--extra memory`:
+```ini
+ExecStart=%h/.local/bin/uv run --extra memory decafclaw
+```
 
 Example config: [`extensions`](config.md#extensions).
 

@@ -782,6 +782,9 @@ class TurnRunner:
         self.ctx.messages = self.messages
         self.retrieved_context_text = self.composed.retrieved_context_text
 
+        if self.composed.recalled_facts:
+            await self.ctx.publish("recalled_facts", facts=list(self.composed.recalled_facts))
+
         for msg in self.composed.messages_to_archive:
             if self.ctx.task_mode is TaskMode.BACKGROUND_WAKE and msg.get("role") == "user":
                 archive_msg: dict = {

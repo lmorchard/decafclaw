@@ -26,7 +26,6 @@ from decafclaw.web.websocket import _handle_load_history, _subscribe_to_conv
 def ws_context(tmp_path):
     config = Config()
     config.agent.data_home = str(tmp_path)
-    config.agent.workspace_path = str(tmp_path / "workspace")
     bus = EventBus()
     manager = ConversationManager(config, bus)
 
@@ -76,6 +75,42 @@ class TestRecalledFactsWebSocket:
         completes = [m for m in sent if m.get("type") == WSMessageType.MESSAGE_COMPLETE]
         assert completes
         assert completes[-1]["recalled_facts"] == facts
+
+    @pytest.mark.asyncio
+    async def test_recalled_facts_emitted_during_turn(self, ws_context, monkeypatch):
+        """Turn composition emits recalled_facts frame before generation completes."""
+        state, _index, sent, manager, _config = ws_context
+        conv_id = "conv-recall"
+        ws_mock = AsyncMock(side_effect=lambda m: sent.append(m))
+        state["ws_send"] = ws_mock
+        _subscribe_to_conv(state, conv_id)
+
+        facts = ["User prefers espresso.", "User is in Pacific time."]
+
+        async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+            await ctx.publish("recalled_facts", facts=list(facts))
+            append_message(ctx.config, ctx.conv_id, {"role": "user", "content": user_message})
+            append_message(
+                ctx.config,
+                ctx.conv_id,
+                {"role": "assistant", "content": "Here is your answer.", "recalled_facts": list(facts)},
+            )
+            return ToolResult(text="Here is your answer.")
+
+        monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+        future = await manager.enqueue_turn(
+            conv_id=conv_id,
+            kind=TurnKind.USER,
+            prompt="What should I drink?",
+            user_id="alice",
+        )
+        await asyncio.wait_for(future, timeout=2.0)
+
+        fact_frames = [m for m in sent if m.get("type") == WSMessageType.RECALLED_FACTS]
+        assert fact_frames
+        assert fact_frames[0]["facts"] == facts
+        assert fact_frames[0]["conv_id"] == conv_id
 
     @pytest.mark.asyncio
     async def test_message_complete_omits_empty_recalled_facts(self, ws_context, monkeypatch):

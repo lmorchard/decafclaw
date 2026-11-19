@@ -39,6 +39,7 @@ from decafclaw.web.message_types import (
     SrvConvSelected,
     SrvMessageComplete,
     SrvModeChanged,
+    SrvRecalledFacts,
     SrvStickyClear,
     SrvStickySet,
     SrvStreamState,
@@ -1255,6 +1256,16 @@ def _subscribe_to_conv(state, conv_id):
                         "tool_call_id": "",
                     }
                 )
+
+        elif event_type == "recalled_facts":
+            facts = event.get("facts") or event.get("recalled_facts") or []
+            if facts:
+                facts_payload: SrvRecalledFacts = {
+                    "type": WSMessageType.RECALLED_FACTS,
+                    "conv_id": event_conv_id,
+                    "facts": list(facts),
+                }
+                await ws_send(facts_payload)
 
         elif event_type == "confirmation_request":
             # Flush any pending streamed text or thinking
