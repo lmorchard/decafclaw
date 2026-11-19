@@ -204,8 +204,8 @@ class TestTurnProvenanceWebSocket:
         await asyncio.wait_for(future, timeout=2.0)
 
         tool_status_frames = [
-            m for m in sent
-            if m.get("type") == WSMessageType.TOOL_STATUS
-            and m.get("tool") in ("vault_retrieval", "vault_references")
+            m
+            for m in sent
+            if m.get("type") == WSMessageType.TOOL_STATUS and m.get("tool") in ("vault_retrieval", "vault_references")
         ]
         assert not tool_status_frames
