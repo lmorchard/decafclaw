@@ -71,9 +71,9 @@ def _legacy_tool_name(action_type: str) -> str:
 def _project_tool_end(event: dict, conv_id: str) -> SrvToolEnd:
     """Project a bus tool_end event into the WebSocket payload shape.
 
-    Fields are included selectively: display_short_text and widget only
-    appear when the upstream event set them, to keep the socket messages
-    compact.
+    Fields are included selectively: display_short_text, widget, and the
+    outcome tags (is_error/timed_out/timeout_sec) only appear when the
+    upstream event set them, to keep the socket messages compact.
     """
     payload: SrvToolEnd = {
         "type": WSMessageType.TOOL_END,
@@ -88,6 +88,13 @@ def _project_tool_end(event: dict, conv_id: str) -> SrvToolEnd:
     widget = event.get("widget")
     if widget:
         payload["widget"] = widget
+    if event.get("is_error"):
+        payload["is_error"] = True
+    if event.get("timed_out"):
+        payload["timed_out"] = True
+        timeout_sec = event.get("timeout_sec")
+        if timeout_sec is not None:
+            payload["timeout_sec"] = timeout_sec
     return payload
 
 

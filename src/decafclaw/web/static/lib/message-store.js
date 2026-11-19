@@ -347,6 +347,10 @@ export class MessageStore {
           let resultSubmitted = false;
           /** @type {object|null} */
           let resultResponse = null;
+          let resultIsError = false;
+          let resultTimedOut = false;
+          /** @type {number|null} */
+          let resultTimeoutSec = null;
           for (let j = i + 1; j < messages.length; j++) {
             if (messages[j].role === 'tool' && messages[j].tool_call_id === tcId) {
               resultContent = messages[j].content || '';
@@ -354,6 +358,9 @@ export class MessageStore {
               resultWidget = messages[j].widget || null;
               resultSubmitted = !!messages[j].submitted;
               resultResponse = messages[j].response || null;
+              resultIsError = !!messages[j].is_error;
+              resultTimedOut = !!messages[j].timed_out;
+              resultTimeoutSec = messages[j].timeout_sec ?? null;
               messages[j]._merged = true; // mark as consumed
               break;
             }
@@ -368,6 +375,9 @@ export class MessageStore {
             widget: resultWidget,
             submitted: resultSubmitted,
             response: resultResponse,
+            is_error: resultIsError,
+            timed_out: resultTimedOut,
+            timeout_sec: resultTimeoutSec,
             timestamp: msg.timestamp,
           });
         }

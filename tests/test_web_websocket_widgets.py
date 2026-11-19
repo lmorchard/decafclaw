@@ -85,3 +85,32 @@ def test_tool_end_falls_back_to_caller_conv_id():
         conv_id="caller-conv",
     )
     assert payload["conv_id"] == "caller-conv"
+
+
+def test_tool_end_timeout_tags():
+    """Watchdog outcome tags are projected so the client can render a loud pill."""
+    payload = _project_tool_end(
+        {
+            "type": "tool_end",
+            "tool": "slow_tool",
+            "result_text": "[error: tool slow_tool timed out after 180s]",
+            "tool_call_id": "tc-6",
+            "is_error": True,
+            "timed_out": True,
+            "timeout_sec": 180,
+        },
+        conv_id="c",
+    )
+    assert payload["is_error"] is True
+    assert payload["timed_out"] is True
+    assert payload["timeout_sec"] == 180
+
+
+def test_tool_end_success_omits_outcome_tags():
+    payload = _project_tool_end(
+        {"type": "tool_end", "tool": "x", "result_text": "ok", "tool_call_id": "tc-7"},
+        conv_id="c",
+    )
+    assert "is_error" not in payload
+    assert "timed_out" not in payload
+    assert "timeout_sec" not in payload

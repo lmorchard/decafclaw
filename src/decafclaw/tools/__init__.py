@@ -195,7 +195,17 @@ async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name="", c
                 pass
             if cancel_task is not None and not cancel_task.done():
                 cancel_task.cancel()
-            return tool_task, ToolResult(text=f"[error: tool {tool_name} timed out after {timeout_sec}s]")
+            log.warning(
+                "[watchdog] Tool '%s' timed out after %ss (conv=%s)",
+                tool_name,
+                timeout_sec,
+                getattr(ctx, "conv_id", ""),
+            )
+            return tool_task, ToolResult(
+                text=f"[error: tool {tool_name} timed out after {timeout_sec}s]",
+                timed_out=True,
+                timeout_sec=timeout_sec,
+            )
 
 
 _MISSING = object()

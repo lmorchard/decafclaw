@@ -18,6 +18,12 @@ export class ToolMessage extends LitElement {
     submitted: { type: Boolean },
     /** Response data for a submitted input widget: {selected, ...} */
     response: { type: Object, attribute: false },
+    /** Structured failure tag from tool_end/archive (#1569) */
+    isError: { type: Boolean, attribute: false },
+    /** Watchdog killed the tool (#1569) */
+    timedOut: { type: Boolean, attribute: false },
+    /** Watchdog limit in seconds, for the Timed Out pill (#1569) */
+    timeoutSec: { type: Number, attribute: false },
     _expanded: { type: Boolean, state: true },
   };
 
@@ -37,10 +43,17 @@ export class ToolMessage extends LitElement {
     this.submitted = false;
     /** @type {object|null} */
     this.response = null;
+    this.isError = false;
+    this.timedOut = false;
+    /** @type {number|null} */
+    this.timeoutSec = null;
     this._expanded = false;
     // Tracks whether we've auto-expanded for this widget yet, so user
     // collapse choices aren't overridden on re-render.
     this._autoExpanded = false;
+    // Separate flag so a failure flag arriving later (live tool_end) still
+    // auto-expands even after the widget already did.
+    this._autoExpandedFailure = false;
   }
 
   /** @param {Map<string, any>} changed */
@@ -51,6 +64,12 @@ export class ToolMessage extends LitElement {
     if (changed.has('widget') && this.widget && !this._autoExpanded) {
       this._expanded = true;
       this._autoExpanded = true;
+    }
+    // Failures are loud: expose the error text without a click (#1569).
+    const failed = this.timedOut || this.isError;
+    if (failed && (changed.has('isError') || changed.has('timedOut')) && !this._autoExpandedFailure) {
+      this._expanded = true;
+      this._autoExpandedFailure = true;
     }
   }
 
@@ -79,11 +98,17 @@ export class ToolMessage extends LitElement {
     const hasHistory = this.statusHistory?.length > 0;
     const hasWidget = !!this.widget;
     const expandable = hasContent || hasHistory || hasWidget || !!this.command;
+    const failed = this.timedOut || this.isError;
+    const failureClass = this.timedOut ? 'tool-timeout' : this.isError ? 'tool-error' : '';
+    const failureLabel = this.timedOut
+      ? `Timed Out (${this.timeoutSec != null ? Math.round(this.timeoutSec) : '?'}s)`
+      : this.isError ? 'Error' : '';
     return html`
-      <div class="message tool">
+      <div class="message tool ${failureClass}">
         <div class="tool-result-header" @click=${expandable ? this.#toggleExpand : nothing}>
-          <span class="tool-icon">${this.icon}</span>
+          <span class="tool-icon">${failed ? '\u26a0\ufe0f' : this.icon}</span>
           <span class="tool-name">${this.tool}</span>
+          ${failureLabel ? html`<span class="tool-badge">${failureLabel}</span>` : nothing}
           ${hasContent ? html`
             <span class="tool-preview">${this.display_short_text || this.#truncate(this.content)}</span>
           ` : nothing}

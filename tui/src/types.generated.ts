@@ -221,6 +221,9 @@ export interface SrvToolEnd {
   result_text: string;
   display_short_text?: string;
   widget?: Record<string, unknown>;
+  is_error?: boolean;
+  timed_out?: boolean;
+  timeout_sec?: number;
 }
 
 export interface SrvToolStart {
