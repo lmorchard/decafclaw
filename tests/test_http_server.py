@@ -1,6 +1,7 @@
 """Tests for HTTP server routes and button building."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -726,3 +727,41 @@ async def test_shutdown_http_server_noop_when_not_running():
     assert http_server_module._http_server is None
     assert http_server_module._http_app is None
     await http_server_module.shutdown_http_server()  # must not raise
+
+
+# -- check_mtime_conflict ------------------------------------------------------
+
+
+def _payload(resp) -> dict:
+    return json.loads(resp.body)
+
+
+def test_check_mtime_conflict_flags_a_newer_file():
+    """File changed after the client's snapshot → 409 carrying the server mtime."""
+    from decafclaw.http_server import check_mtime_conflict
+
+    resp = check_mtime_conflict(100.5, 100.4)
+    assert resp.status_code == 409
+    data = _payload(resp)
+    assert data["error"] == "conflict"
+    assert data["modified"] == pytest.approx(100.5)
+
+
+def test_check_mtime_conflict_flags_a_stale_client_stamp():
+    """Client stamp newer than the file (clock skew, recreated file) → 409 too."""
+    from decafclaw.http_server import check_mtime_conflict
+
+    resp = check_mtime_conflict(100.4, 100.5)
+    assert resp.status_code == 409
+    data = _payload(resp)
+    assert data["error"] == "conflict"
+    assert data["modified"] == pytest.approx(100.4)
+
+
+def test_check_mtime_conflict_allows_matching_and_close_stamps():
+    """Unchanged file — identical or sub-millisecond drift → no conflict."""
+    from decafclaw.http_server import check_mtime_conflict
+
+    assert check_mtime_conflict(100.5, 100.5) is None
+    assert check_mtime_conflict(100.5, 100.5 + 1e-4) is None
+    assert check_mtime_conflict(100.5, 100.5 - 1e-4) is None

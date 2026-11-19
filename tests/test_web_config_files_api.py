@@ -116,6 +116,10 @@ async def test_write_keeps_conflict_and_legacy_400_responses(client, http_config
         json={"content": "stale", "modified": stale_mtime},
     )
     assert conflict.status_code == 409
+    data = conflict.json()
+    assert data["error"] == "conflict"
+    # Unified conflict payload: the server's current mtime under `modified`.
+    assert data["modified"] == pytest.approx(target.stat().st_mtime)
     assert target.read_text() == "old"
 
     invalid_body = await client.put(
