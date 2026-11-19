@@ -421,12 +421,12 @@ def get_already_retrieved_paths(history: list) -> set[str]:
     paths: set[str] = set()
     for msg in history:
         if msg.get("role") == "vault_retrieval":
-            for path in msg.get("file_paths") or []:
-                if path:
-                    paths.add(path)
+            legacy_paths = msg.get("file_paths")
+            if isinstance(legacy_paths, (list, tuple)):
+                paths.update(p for p in legacy_paths if isinstance(p, str) and p)
         metadata = msg.get("working_memory")
         if isinstance(metadata, dict):
-            for path in metadata.get("vault_paths") or []:
-                if isinstance(path, str) and path:
-                    paths.add(path)
+            vault_paths = metadata.get("vault_paths")
+            if isinstance(vault_paths, (list, tuple)):
+                paths.update(p for p in vault_paths if isinstance(p, str) and p)
     return paths

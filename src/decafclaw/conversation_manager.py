@@ -218,8 +218,9 @@ class PersistedTurnState:
     llm_approved_shell_patterns: list = field(default_factory=list, metadata={"replaceable": True})
     injection_cursors: InjectionCursors = field(default_factory=InjectionCursors, metadata={"replaceable": True})
     # Vault pages already surfaced this conversation by proactive retrieval.
-    # Ephemeral working-memory blocks are no longer archived (#1574), so the
-    # archive cannot rebuild this set after a restart.
+    # Ephemeral working-memory blocks leave no retrieval rows (#1574), so the
+    # fresh per-turn ctx restores this set from persisted state; restart replay
+    # also reads the paths from archive metadata.
     injected_paths: list[str] = field(default_factory=list, metadata={"replaceable": True})
     prefix_fingerprints: dict[str, str] = field(default_factory=dict, metadata={"replaceable": True})
     # Per-conversation auto-compaction threshold overrides (#1099). Externally

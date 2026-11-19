@@ -219,6 +219,22 @@ class TestContribution:
         assert contribution.source_entry.details["drop_reason"] == "already_injected"
 
 
+def test_retrieved_paths_ignore_malformed_metadata():
+    """Corrupt archive metadata must not turn a string into one path per char."""
+    from decafclaw.memory_context import get_already_retrieved_paths
+
+    history = [
+        {"role": "user", "content": "x", "working_memory": {"vault_paths": "pages/a.md"}},
+        {
+            "role": "user",
+            "content": "y",
+            "working_memory": {"vault_paths": ["pages/b.md", None, 3]},
+        },
+        {"role": "vault_retrieval", "content": "z", "file_paths": "pages/c.md"},
+    ]
+    assert get_already_retrieved_paths(history) == {"pages/b.md"}
+
+
 class TestRetrievalModes:
     def test_enum_values_match_wire_strings(self):
         assert RetrievalMode.ALWAYS == "always"
