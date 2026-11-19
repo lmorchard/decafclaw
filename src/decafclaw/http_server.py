@@ -506,6 +506,24 @@ def _resolve_vault_page(config, page_name: str):
     return resolve_page(config, page_name)
 
 
+def validate_vault_page_name(name: str) -> str | None:
+    """Validate a vault page or folder name against path traversal.
+
+    Returns ``None`` when the name is safe, otherwise a single canonical
+    error message. Rejects absolute paths and any path component that is
+    exactly ``..`` (a real parent-directory hop). Names that merely *contain*
+    the substring ``..`` — such as ``foo..bar`` or ``...`` — are allowed,
+    since they resolve to an ordinary file name rather than a traversal.
+    """
+    if not isinstance(name, str) or not name:
+        return "invalid vault page name"
+    if name.startswith("/"):
+        return "invalid vault page name"
+    if any(part == ".." for part in name.split("/")):
+        return "invalid vault page name"
+    return None
+
+
 def _vault_source_type(config, filepath: Path) -> str:
     """Determine source type for a vault file."""
     from .skills.vault.tools import _source_type_for_path
@@ -652,6 +670,46 @@ async def _read_json_object(request: Request) -> dict:
     except ValueError:
         return {}
     return body if isinstance(body, dict) else {}
+
+
+async def _read_json_body(request: Request) -> dict | None:
+    """Read and parse a JSON object body, returning ``None`` when it is not one.
+
+    ``request.json()`` raises an unhandled ``JSONDecodeError`` (a 500) on a
+    malformed body. Endpoints that must answer a clean 400 for bad input call
+    this helper and check the result: ``None`` means the body was malformed JSON
+    or not a JSON object, so they should return ``400 invalid JSON body``.
+
+    Distinct from :func:`_read_json_object`, which returns ``{}`` for a missing
+    or malformed body because the confirm callbacks treat an empty POST as valid.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+# Tolerance for mtime conflict detection, in seconds. An unchanged file stats
+# to the same mtime on every read; drift beyond this means the file changed
+# since the client's snapshot. 1ms absorbs float and filesystem-precision noise.
+MTIME_CONFLICT_TOLERANCE = 1e-3
+
+
+def check_mtime_conflict(existing_mtime: float, client_mtime: float) -> JSONResponse | None:
+    """Return a 409 conflict response if the file changed since the client's snapshot.
+
+    Shared by workspace, vault, and config writes: one tolerance
+    (:data:`MTIME_CONFLICT_TOLERANCE`) and one payload key (``modified``,
+    matching every read and write-success response in this API). Returns
+    ``None`` when the mtimes agree within tolerance.
+    """
+    if abs(existing_mtime - client_mtime) > MTIME_CONFLICT_TOLERANCE:
+        return JSONResponse(
+            {"error": "conflict", "modified": existing_mtime},
+            status_code=409,
+        )
+    return None
 
 
 async def handle_confirm(request: Request) -> Response:
@@ -1866,8 +1924,10 @@ async def serve_workspace_file(request: Request, username: str):
     if is_secret(file_path):
         return JSONResponse({"error": "secret path"}, status_code=403)
     workspace = config.workspace_path.resolve()
-    resolved = (workspace / file_path).resolve()
-    if not str(resolved).startswith(str(workspace)):
+    # resolve_safe uses relative_to, not string prefix: a sibling directory
+    # sharing the workspace's name prefix (workspace-evil) must not pass.
+    resolved = resolve_safe(workspace, file_path)
+    if resolved is None:
         return JSONResponse({"error": "path outside workspace"}, status_code=403)
     if not resolved.is_file():
         # Stored paths from before make migrate-sessions (#1112) point at
@@ -2057,12 +2117,9 @@ async def workspace_write(request: Request, username: str) -> JSONResponse:
         except (TypeError, ValueError):
             return JSONResponse({"error": "modified must be a number"}, status_code=400)
         if resolved.exists():
-            file_mtime = resolved.stat().st_mtime
-            if abs(file_mtime - modified) > 1e-3:
-                return JSONResponse(
-                    {"error": "conflict", "modified": file_mtime},
-                    status_code=409,
-                )
+            conflict = check_mtime_conflict(resolved.stat().st_mtime, modified)
+            if conflict is not None:
+                return conflict
 
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
@@ -2334,8 +2391,9 @@ async def vault_list(request: Request, username: str) -> JSONResponse:
 
     folder_param = request.query_params.get("folder", "").strip()
     if folder_param:
-        if ".." in folder_param or folder_param.startswith("/"):
-            return JSONResponse({"error": "invalid folder path"}, status_code=400)
+        error = validate_vault_page_name(folder_param)
+        if error:
+            return JSONResponse({"error": error}, status_code=400)
         target_dir = (vault / folder_param).resolve()
         if not target_dir.is_relative_to(vault.resolve()):
             return JSONResponse({"error": "path outside vault"}, status_code=403)
@@ -3049,8 +3107,8 @@ async def post_conversation_shell_promote(request: Request, id: str) -> JSONResp
         return JSONResponse({"error": "invalid conv_id"}, status_code=400)
     if not _user_owns_conv(config, conv_id, username):
         return JSONResponse({"error": "not found"}, status_code=404)
-    body = await request.json()
-    if not isinstance(body, dict):
+    body = await _read_json_body(request)
+    if body is None:
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     rule_text = str(body.get("rule") or "").strip()
     preset_name = str(body.get("preset") or "").strip()
@@ -3130,8 +3188,9 @@ async def _vault_rename(
     if not isinstance(rename_to, str) or not rename_to.strip():
         return JSONResponse({"error": "rename_to must be a non-empty string"}, status_code=400)
     rename_to = rename_to.strip()
-    if ".." in rename_to or rename_to.startswith("/"):
-        return JSONResponse({"error": "invalid rename path"}, status_code=400)
+    error = validate_vault_page_name(rename_to)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     rename_path = Path(rename_to)
     if not rename_path.name:
         return JSONResponse({"error": "invalid rename path"}, status_code=400)
@@ -3190,14 +3249,17 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     page_name = request.path_params.get("page", "")
     if not page_name:
         return JSONResponse({"error": "page name required"}, status_code=400)
-    if ".." in page_name or page_name.startswith("/"):
-        return JSONResponse({"error": "invalid page path"}, status_code=400)
+    error = validate_vault_page_name(page_name)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     vault.mkdir(parents=True, exist_ok=True)
     target = (vault / f"{page_name}.md").resolve()
     if not target.is_relative_to(vault.resolve()):
         return JSONResponse({"error": "path outside vault directory"}, status_code=403)
-    body = await request.json()
+    body = await _read_json_body(request)
+    if body is None:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
 
     rename_to = body.get("rename_to")
     if rename_to is not None:
@@ -3258,12 +3320,9 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
         except (TypeError, ValueError):
             return JSONResponse({"error": "modified must be a number"}, status_code=400)
         if target.exists():
-            file_mtime = target.stat().st_mtime
-            if file_mtime > modified + 1.0:
-                return JSONResponse(
-                    {"error": "conflict", "server_modified": file_mtime},
-                    status_code=409,
-                )
+            conflict = check_mtime_conflict(target.stat().st_mtime, modified)
+            if conflict is not None:
+                return conflict
 
     existed = target.exists()
     existing_text = target.read_text(encoding="utf-8") if existed else ""
@@ -3324,15 +3383,18 @@ async def vault_create(request: Request, username: str) -> JSONResponse:
     """Create a new vault page."""
     config = request.app.state.config
     event_bus = request.app.state.event_bus
-    body = await request.json()
+    body = await _read_json_body(request)
+    if body is None:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     name = body.get("name")
     if not name or not isinstance(name, str):
         return JSONResponse({"error": "name (string) required"}, status_code=400)
     name = name.strip()
     if not name:
         return JSONResponse({"error": "name (string) required"}, status_code=400)
-    if ".." in name or name.startswith("/"):
-        return JSONResponse({"error": "invalid page name"}, status_code=400)
+    error = validate_vault_page_name(name)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     vault.mkdir(parents=True, exist_ok=True)
     target = (vault / f"{name}.md").resolve()
@@ -3362,15 +3424,18 @@ async def vault_create_folder(request: Request, username: str) -> JSONResponse:
     """Create a new empty folder in the vault."""
     config = request.app.state.config
     event_bus = request.app.state.event_bus
-    body = await request.json()
+    body = await _read_json_body(request)
+    if body is None:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     folder = body.get("folder")
     if not folder or not isinstance(folder, str):
         return JSONResponse({"error": "folder (string) required"}, status_code=400)
     folder = folder.strip()
     if not folder:
         return JSONResponse({"error": "folder (string) required"}, status_code=400)
-    if ".." in folder or folder.startswith("/"):
-        return JSONResponse({"error": "invalid folder path"}, status_code=400)
+    error = validate_vault_page_name(folder)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     target = (vault / folder).resolve()
     if not target.is_relative_to(vault.resolve()):
@@ -3390,8 +3455,9 @@ async def vault_delete(request: Request, username: str) -> JSONResponse:
     page_name = request.path_params.get("page", "")
     if not page_name:
         return JSONResponse({"error": "page name required"}, status_code=400)
-    if ".." in page_name or page_name.startswith("/"):
-        return JSONResponse({"error": "invalid page path"}, status_code=400)
+    error = validate_vault_page_name(page_name)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     target = (vault / f"{page_name}.md").resolve()
     if not target.is_relative_to(vault.resolve()):
@@ -3586,12 +3652,9 @@ async def config_write_file(request: Request, username: str) -> JSONResponse:
         except (TypeError, ValueError):
             return JSONResponse({"error": "modified must be a number"}, status_code=400)
         if fpath.exists():
-            file_mtime = fpath.stat().st_mtime
-            if file_mtime > modified + 1.0:
-                return JSONResponse(
-                    {"error": "conflict", "server_modified": file_mtime},
-                    status_code=409,
-                )
+            conflict = check_mtime_conflict(fpath.stat().st_mtime, modified)
+            if conflict is not None:
+                return conflict
     fpath.parent.mkdir(parents=True, exist_ok=True)
     fpath.write_text(content, encoding="utf-8")
     return JSONResponse({"ok": True, "modified": fpath.stat().st_mtime})

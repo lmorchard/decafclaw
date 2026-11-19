@@ -617,10 +617,13 @@ operations directly while retaining this host contract:
 - `PUT` accepts `{content, modified}` and returns `modified`.
 
 Force-save omits `modified` for vault, config, and schedules. Vault and config
-use that omission to skip optimistic concurrency. The schedule server already
-uses last-write-wins and accepts `modified` only as an editor compatibility
-hint. Config reload consumes `content` directly; it does not share the vault
-and schedule `body` field.
+use that omission to skip optimistic concurrency — otherwise the shared
+`check_mtime_conflict` helper compares the client's `modified` against the
+file's current mtime, and drift > 1 ms → a 409 conflict with the current
+mtime in the response body under `modified`. The schedule server already uses
+last-write-wins and accepts `modified` only as an editor compatibility hint.
+Config reload consumes `content` directly; it does not share the vault and
+schedule `body` field.
 
 `/api/schedules/{name}` wraps its payload in `{"schedule": ...}` for
 `schedule-page`, so it aliases `body` and `modified` to the top level for this
