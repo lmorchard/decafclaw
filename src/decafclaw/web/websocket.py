@@ -297,6 +297,7 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         "recent_journal",
         "conversation_notes",
         "vault_retrieval",
+        "vault_references",
     }
 
     # Read archive once and reuse for history, token estimation, and model scan
@@ -1240,32 +1241,6 @@ def _subscribe_to_conv(state, conv_id):
                     "conv_id": event_conv_id,
                 }
                 await ws_send(sticky_clear_payload)
-
-        elif event_type == "vault_retrieval":
-            text = event.get("text", "")
-            if text:
-                await ws_send(
-                    {
-                        "type": WSMessageType.TOOL_STATUS,
-                        "conv_id": event_conv_id,
-                        "tool": "vault_retrieval",
-                        "message": text,
-                        "tool_call_id": "",
-                    }
-                )
-
-        elif event_type == "vault_references":
-            text = event.get("text", "")
-            if text:
-                await ws_send(
-                    {
-                        "type": WSMessageType.TOOL_STATUS,
-                        "conv_id": event_conv_id,
-                        "tool": "vault_references",
-                        "message": text,
-                        "tool_call_id": "",
-                    }
-                )
 
         elif event_type == "turn_provenance":
             provenance = event.get("provenance") or {}

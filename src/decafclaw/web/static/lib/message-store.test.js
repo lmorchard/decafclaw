@@ -61,18 +61,6 @@ describe('MessageStore', () => {
         expect(msg.response).toEqual({ some: 'data' });
     });
 
-    it('handles insertBeforeLastUser', () => {
-        const store = new MessageStore(() => {});
-        store.pushMessage({ role: 'user', content: 'user msg 1' });
-        store.pushMessage({ role: 'user', content: 'user msg 2' });
-        store.insertBeforeLastUser({ role: 'system', content: 'inserted' });
-        
-        expect(store.currentMessages.length).toBe(3);
-        expect(store.currentMessages[1].role).toBe('system');
-        expect(store.currentMessages[1].content).toBe('inserted');
-        expect(store.currentMessages[2].content).toBe('user msg 2');
-    });
-
     describe('handleMessage', () => {
         it('handles CONV_HISTORY and merges tool messages', () => {
             const store = new MessageStore(() => {});

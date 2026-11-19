@@ -123,19 +123,6 @@ export class MessageStore {
     }
   }
 
-  /** Insert a message before the last user message (for memory context). */
-  insertBeforeLastUser(/** @type {ChatMessage} */ msg) {
-    let lastUserIdx = -1;
-    for (let i = this.#currentMessages.length - 1; i >= 0; i--) {
-      if (this.#currentMessages[i].role === 'user') { lastUserIdx = i; break; }
-    }
-    if (lastUserIdx >= 0) {
-      this.#currentMessages.splice(lastUserIdx, 0, msg);
-    } else {
-      this.#currentMessages.push(msg);
-    }
-  }
-
   clearStreamingText() {
     this.#streamingText = '';
     this.#streamingThinking = '';
