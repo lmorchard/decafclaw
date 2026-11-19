@@ -20,22 +20,22 @@ def _extension(ctx) -> ScratchpadNotesExtension:
     return ScratchpadNotesExtension({}, ctx.config)
 
 
-async def _hook(ctx, ext: ScratchpadNotesExtension | None = None):
-    return await (ext or _extension(ctx)).pre_compose_hook(ctx, "hello", [])
+async def _hook(ctx, ext: ScratchpadNotesExtension | None = None, history: list | None = None):
+    return await (ext or _extension(ctx)).pre_compose_hook(ctx, "hello", history)
 
 
 class TestContribution:
     async def test_no_notes_returns_none(self, ctx):
         assert await _hook(ctx) is None
 
-    async def test_delta_contribution_with_unseen_notes(self, ctx):
+    async def test_working_memory_contribution_with_unseen_notes(self, ctx):
         append_note(ctx.config, ctx.conv_id, "user prefers concise replies")
         append_note(ctx.config, ctx.conv_id, "decided to use vertex provider", now="2026-01-02T00:00:00Z")
 
         contribution = await _hook(ctx)
 
         assert contribution is not None
-        assert contribution.slot.value == "delta"
+        assert contribution.slot.value == "working_memory"
         assert len(contribution.messages) == 1
         assert contribution.messages[0]["role"] == "conversation_notes"
         assert "user prefers concise replies" in contribution.messages[0]["content"]
@@ -48,20 +48,42 @@ class TestContribution:
             "decided to use vertex provider",
         ]
 
-    async def test_cursor_advances_and_second_call_is_empty(self, ctx):
+    async def test_notes_persist_across_ephemeral_turns(self, ctx):
+        """Under prompt-residency deduplication, ephemeral turns keep surfacing notes (#1574)."""
         append_note(ctx.config, ctx.conv_id, "note 1", now="2026-01-01T00:00:00Z")
-        await _hook(ctx)
-        assert ctx.composer.injection_cursors.notes_ts == "2026-01-01T00:00:00Z"
+        contribution1 = await _hook(ctx)
+        assert contribution1 is not None
+        assert "note 1" in contribution1.messages[0]["content"]
 
-        assert await _hook(ctx) is None
-        assert ctx.composer.injection_cursors.notes_ts == "2026-01-01T00:00:00Z"
+        # Turn 2: working memory was evicted, history is empty.
+        # Note 1 must still surface so the model does not suffer amnesia.
+        contribution2 = await _hook(ctx, history=[])
+        assert contribution2 is not None
+        assert "note 1" in contribution2.messages[0]["content"]
 
-    async def test_only_new_notes_after_cursor(self, ctx):
+    async def test_deduplicates_notes_resident_in_history(self, ctx):
+        """Notes already resident in active conversation history are suppressed (#1574)."""
         append_note(ctx.config, ctx.conv_id, "note 1", now="2026-01-01T00:00:00Z")
-        await _hook(ctx)
+        history = [
+            {
+                "role": "conversation_notes",
+                "content": "[Conversation scratchpad notes]\n- 2026-01-01T00:00:00Z — note 1",
+            }
+        ]
+        contribution = await _hook(ctx, history=history)
+        assert contribution is None
 
+    async def test_only_new_notes_when_older_resident_in_history(self, ctx):
+        """When an older note is resident in history, only newer notes surface (#1574)."""
+        append_note(ctx.config, ctx.conv_id, "note 1", now="2026-01-01T00:00:00Z")
         append_note(ctx.config, ctx.conv_id, "note 2", now="2026-01-02T00:00:00Z")
-        contribution = await _hook(ctx)
+        history = [
+            {
+                "role": "conversation_notes",
+                "content": "[Conversation scratchpad notes]\n- 2026-01-01T00:00:00Z — note 1",
+            }
+        ]
+        contribution = await _hook(ctx, history=history)
 
         assert contribution is not None
         content = contribution.messages[0]["content"]
@@ -80,27 +102,6 @@ class TestContribution:
         assert "note-7" in content
         assert "note-9" in content
         assert "note-0" not in content
-
-    async def test_same_second_note_surfaces_after_injection(self, ctx):
-        """Notes record whole seconds, so a later note can share the cursor timestamp."""
-        append_note(ctx.config, ctx.conv_id, "first", now="2026-01-01T00:00:00Z")
-        await _hook(ctx)
-
-        append_note(ctx.config, ctx.conv_id, "second", now="2026-01-01T00:00:00Z")
-        contribution = await _hook(ctx)
-        assert "second" in contribution.messages[0]["content"]
-        assert "first" not in contribution.messages[0]["content"]
-
-        assert await _hook(ctx) is None
-
-    async def test_compaction_reset_reinjects_baseline(self, ctx):
-        append_note(ctx.config, ctx.conv_id, "note 1", now="2026-01-01T00:00:00Z")
-        await _hook(ctx)
-        ctx.composer.reset_for_compaction()
-        assert ctx.composer.injection_cursors.notes_ts == ""
-
-        contribution = await _hook(ctx)
-        assert "note 1" in contribution.messages[0]["content"]
 
 
 class TestGates:
@@ -158,16 +159,19 @@ class TestLifecycle:
 
 
 class TestComposerIntegration:
-    async def test_compose_injects_archived_delta_and_source(self, ctx):
+    async def test_compose_bundles_notes_without_archiving(self, ctx):
         ctx.config.extensions["scratchpad_notes"] = ExtensionConfig(enabled=True, type="scratchpad_notes")
         init_extensions(ctx.config, ctx.event_bus)
         append_note(ctx.config, ctx.conv_id, "remember the flaky test", now="2026-01-01T00:00:00Z")
 
         composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
 
-        assert any(m["role"] == "conversation_notes" for m in composed.messages_to_archive)
+        assert not any(m["role"] == "conversation_notes" for m in composed.messages_to_archive)
         assert any(
-            m["role"] == "user" and "remember the flaky test" in str(m.get("content", "")) for m in composed.messages
+            m["role"] == "user"
+            and "<conversation_notes>" in str(m.get("content", ""))
+            and "remember the flaky test" in str(m.get("content", ""))
+            for m in composed.messages
         )
         assert any(s.source == "notes" for s in composed.sources)
 

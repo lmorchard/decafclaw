@@ -412,14 +412,18 @@ def get_already_injected_pages(history: list) -> set[str]:
 
 
 def get_already_retrieved_paths(history: list) -> set[str]:
-    """Scan history for vault_retrieval messages and return set of file paths
-    already surfaced to the conversation (#1157).
+    """Return vault paths currently resident in conversation history (#1157, #1574).
+
+    Under ephemeral working memory (#1574), only pages actually present in
+    history (such as legacy ``vault_retrieval`` rows) are deduplicated.
+    Ephemeral working-memory blocks evicted on prior turns do not suppress
+    subsequent turns, allowing the model to re-retrieve context if the user
+    continues asking about that topic (prompt-residency deduplication).
     """
     paths: set[str] = set()
     for msg in history:
         if msg.get("role") == "vault_retrieval":
-            file_paths = msg.get("file_paths") or []
-            for path in file_paths:
-                if path:
-                    paths.add(path)
+            legacy_paths = msg.get("file_paths")
+            if isinstance(legacy_paths, (list, tuple)):
+                paths.update(p for p in legacy_paths if isinstance(p, str) and p)
     return paths

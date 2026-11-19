@@ -35,22 +35,23 @@ async def pre_compose_hook(ctx, user_message, history):
     ]
 ```
 
-Slots mount in one invariant order (#1486, #1507):
+Slots mount in one invariant order (#1486, #1507, #1574):
 
 | Slot | Mount point | Archived? |
 |------|-------------|-----------|
 | `HEAD` | After the system prompt, before history | No — replays at the same offset so the provider prefix cache stays stable (#1117) |
-| `DELTA` | After archived history and this turn's other chronological injections (wiki, journal, memory), before tail envelopes | Yes |
+| `DELTA` | After archived history, before tail envelopes | Yes |
 | `TAIL` | Directly before the current user message | Yes |
 | `EPILOGUE` | Directly after the current user message, before dispatch | Yes — replays in place so the prefix cache stays stable |
+| `WORKING_MEMORY` | Bundled into one `<working_memory>` message after the `EPILOGUE` hints | No — reaches the provider for this turn only and never replays |
 
 Messages follow the composer's normal role filter: `system`, `user`,
 `assistant`, and `tool` are sent as-is, while the composer's internal
 injection roles (`vault_retrieval`, `conversation_notes`, `recent_journal`,
-`skill_hint`, `recalled_facts`, and friends) are remapped to `user`. A
-`DELTA`, `TAIL`, or `EPILOGUE` message with any other role is archived but
-left out of the provider request; an unsupported role in `HEAD` is skipped
-with a warning.
+`skill_hint`, `recalled_facts`, `working_memory`, and friends) are remapped
+to `user`. A `DELTA`, `TAIL`, or `EPILOGUE` message with any other role is
+archived but left out of the provider request; an unsupported role in `HEAD`
+is skipped with a warning.
 
 `DELTA`, `TAIL`, and `EPILOGUE` contributions are archived with the rest of
 this turn's injections and replayed from history on later turns. A hook that
@@ -60,6 +61,16 @@ generation boundary, after the user message; use it for hints that must be
 read last. `HEAD` mounts at the same offset after the system prompt every
 turn and is never archived, so keep it static per conversation: it sits in
 the cached prompt prefix (#1117).
+
+`WORKING_MEMORY` is for per-turn discovery — proactive retrieval, recent
+journal entries, scratchpad notes, and recalled facts. The composer wraps each
+message's content in a tag named after its role and bundles all of them into
+one `<working_memory>` block at the end of the request. Nothing in that block
+is archived: the conversational prefix through the previous assistant turn
+stays byte-identical for the provider's prompt cache, compaction never
+summarizes consumed retrieval, and surfacing references for the UI
+travel as metadata on the archived user row (see
+[working memory](context-composer.md#working-memory-and-the-cache-boundary-1574)).
 
 Token accounting and Context Inspector visibility come from the
 contribution's `source_entry`, which is appended to the turn's `sources`
@@ -72,15 +83,16 @@ JSON-ready item dicts. The composer merges those items into the turn's
 provenance payload, which the web UI renders as capsule rows under the
 assistant message (#1563). In-tree keys are `facts`, `journals`, `vault`, and
 `scratchpad`; unknown keys render as generic capsules. Keep items small
-(excerpts, not full bodies) — the full injection is already archived. A bad
+(excerpts, not full bodies) — for `WORKING_MEMORY` the capsules are the only
+record of what was injected, so include enough to identify it. A bad
 provenance entry is logged and dropped without failing the turn.
 
-Legacy `str` / `list[str]` returns are coerced to one `ContextContribution`
-in the `TAIL` slot containing the bounded `<recalled_facts>` envelope: the
-configured timeout and `lifecycle.pre_compose_token_ceiling` still apply, so
-existing extensions (including `mem0`) need no changes. The composer also
-exposes the envelope's atomic fact lines (after any ceiling trim) on the turn
-as the `facts` provenance capsule (#1514, #1563).
+Legacy `str` / `list[str]` returns are coerced to one `recalled_facts` block
+inside the `WORKING_MEMORY` bundle: the configured timeout and
+`lifecycle.pre_compose_token_ceiling` still apply, so existing extensions
+(including `mem0`) need no changes. The composer also exposes the block's
+atomic fact lines (after any ceiling trim) on the turn as the `facts`
+provenance capsule (#1514, #1563).
 Structured
 contributions carry their own messages and are not truncated by that legacy
 ceiling. Hooks run with a per-hook bound: core uses
@@ -109,8 +121,8 @@ Four small extensions own the remaining per-turn fixed-cost injections, so
   `vault_guide`. Read fresh each turn; traversal and absolute paths are
   refused.
 - `recent_journal.py` — recently written journal entries on a small fixed
-  budget with the same delta-cursor contract as scratchpad notes. `DELTA`,
-  archived, source `recent_journal` (clock seam at
+  budget with the same delta-cursor contract as scratchpad notes.
+  `WORKING_MEMORY`, not archived, source `recent_journal` (clock seam at
   `extensions.recent_journal._now`).
 
 All four skip heartbeat / scheduled / child-agent turns and fail open.
@@ -118,8 +130,9 @@ All four skip heartbeat / scheduled / child-agent turns and fail open.
 The `[Context: ...]` status line stays a core pipeline stage: its content
 depends on the final token accounting of every source in the turn, including
 the contributions collected during `PRE_COMPOSE`, so it cannot be computed by
-a concurrently dispatched hook. The composer still mounts it after the
-`EPILOGUE` contributions.
+a concurrently dispatched hook. The composer appends it to the
+`WORKING_MEMORY` bundle, so it reaches the provider last but never replays as
+a stale number in history.
 
 ## Pre-emptive hints (default on)
 
@@ -310,9 +323,9 @@ logs a warning and is swallowed, so diagnostics cannot fail or delay a turn.
 scratchpad auto-inject (#299) out of the composer (#1487). It subscribes
 `PRE_COMPOSE`, reads `notes.md` for the conversation off the event loop, drops
 items at or behind `ComposerState.injection_cursors`, and returns one
-`DELTA` contribution with role `conversation_notes` and a `notes` source
-entry. The composer archives it with the turn, so later turns replay it from
-history; the cursor keeps it from repeating.
+`WORKING_MEMORY` contribution with role `conversation_notes` and a `notes`
+source entry. The note rides in that turn's `<working_memory>` block only; the
+cursor keeps it from repeating.
 
 The extension is registered with `default_enabled=True`, so notes injection
 works out of the box. It yields nothing in heartbeat, scheduled, and
@@ -332,9 +345,12 @@ returns no contribution, so the turn still composes.
 `src/decafclaw/extensions/vault_retrieval.py` owns proactive vault retrieval
 (#301, #1048, #1157, epic #1483 phase 4). It subscribes `PRE_COMPOSE`, embeds
 the user message, scores candidates by similarity, recency, and importance,
-suppresses pages the conversation already surfaced, trims to the turn's token
-budget, and returns a `TAIL` `ContextContribution` holding the
-`vault_retrieval` envelope plus a `memory` source entry.
+suppresses pages resident in active history, trims to the turn's token
+budget, and returns a `WORKING_MEMORY` `ContextContribution` holding the
+`vault_retrieval` block plus a `memory` source entry. The block reaches the
+provider for that turn only; the surfaced paths travel as metadata on the
+archived user row for auditing and Context Inspector display without suppressing
+future turns.
 
 Core computes fixed costs (system prompt, tools, history, response reserve)
 and publishes the remainder on `ComposerState.dynamic_token_budget` before

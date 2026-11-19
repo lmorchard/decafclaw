@@ -42,15 +42,20 @@ async def test_pre_compose_hook_injection(ctx, config, monkeypatch):
     # Assert static system prompt was NEVER mutated
     assert config.system_prompt == system_prompt_before
 
-    # Assert that <recalled_facts> was injected in history right before user message
-    recalled_msgs = [m for m in ctx.history if "<recalled_facts>" in str(m.get("content", ""))]
-    assert len(recalled_msgs) == 1
-    assert "User prefers dark mode and espresso." in recalled_msgs[0]["content"]
+    # Assert that <recalled_facts> reached this turn's prompt after the user
+    # message and was not written into history (#1574).
+    recalled_archived = [m for m in ctx.history if "<recalled_facts>" in str(m.get("content", ""))]
+    assert recalled_archived == []
 
-    # Verify that the message sent to the LLM had the facts mapped
+    # Verify that the message sent to the LLM had the facts mapped into the
+    # transient working-memory block.
     llm_recalled = [m for m in runner.messages if "<recalled_facts>" in str(m.get("content", ""))]
     assert len(llm_recalled) == 1
     assert llm_recalled[0]["role"] == "user"
+    assert "User prefers dark mode and espresso." in llm_recalled[0]["content"]
+    assert "<working_memory>" in llm_recalled[0]["content"]
+    user_index = next(i for i, m in enumerate(runner.messages) if m.get("content") == "What should I have?")
+    assert runner.messages.index(llm_recalled[0]) > user_index
 
 
 @pytest.mark.asyncio

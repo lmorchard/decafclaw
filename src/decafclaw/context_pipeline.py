@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from .archive import LLM_ROLES
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
+
+# Roles used as working-memory sub-block tags; anything else is normalized.
+_WORKING_MEMORY_TAG = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 def compose_system_prompt(config) -> tuple[str, SourceEntry]:
@@ -46,26 +50,38 @@ def compose_system_prompt(config) -> tuple[str, SourceEntry]:
 
 async def compose_pre_compose_hooks(
     ctx: "Context", config: Any, user_message: str, history: list
-) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry], list[str], dict[str, list[dict]]]:
+) -> tuple[
+    list[dict],
+    list[dict],
+    list[dict],
+    list[dict],
+    list[dict],
+    list[SourceEntry],
+    list[str],
+    dict[str, list[dict]],
+]:
     """Run PRE_COMPOSE lifecycle collector hooks concurrently.
 
     Hooks may return structured ``ContextContribution`` objects (or lists
-    of them) for the HEAD, DELTA, TAIL, and EPILOGUE slots, or legacy ``str``
-    / ``list[str]`` fact text. Legacy text is coerced to one TAIL
-    ``<recalled_facts>`` envelope under the configured timeout and token
-    ceiling, exactly as before (#1454, #1486). Structured contributions
-    carry their own messages and are not subject to that legacy ceiling.
+    of them) for the HEAD, DELTA, TAIL, EPILOGUE, and WORKING_MEMORY slots,
+    or legacy ``str`` / ``list[str]`` fact text. Legacy text is coerced to
+    one ephemeral ``<recalled_facts>`` working-memory block under the
+    configured timeout and token ceiling, exactly as before (#1454, #1486).
+    Structured contributions carry their own messages and are not subject to
+    that legacy ceiling.
 
-    Returns ``(head, delta, tail, epilogue, sources, recalled_facts,
-    provenance)``. ``recalled_facts`` is the atomic fact list mounted in the
-    legacy envelope, after the token-ceiling trim, so the web UI shows exactly
-    what the model received (#1514). ``provenance`` merges the structured
-    contributions' capsule items plus the trimmed legacy facts (#1563).
+    Returns ``(head, delta, tail, epilogue, working_memory, sources,
+    recalled_facts, provenance)``. ``recalled_facts`` is the atomic fact list
+    mounted in the legacy block, after the token-ceiling trim, so the web UI
+    shows exactly what the model received (#1514). ``provenance`` merges the
+    structured contributions' capsule items plus the trimmed legacy facts
+    (#1563). ``working_memory`` messages are transient this-turn discovery:
+    the caller bundles them and never archives them (#1574).
     Fails open: a raising or slow hook is logged and the turn still composes.
     """
     hooks = ctx.get_interceptors(TurnLifecycle.PRE_COMPOSE)
     if not hooks:
-        return [], [], [], [], [], [], {}
+        return [], [], [], [], [], [], [], {}
 
     lifecycle_cfg = getattr(config, "lifecycle", None)
     default_timeout = getattr(lifecycle_cfg, "pre_compose_timeout", 0.3)
@@ -117,7 +133,7 @@ async def compose_pre_compose_hooks(
         done, pending = await asyncio.wait(tasks, timeout=outer_timeout)
     except Exception as e:
         log.warning("PRE_COMPOSE gathering failed: %s", e)
-        return [], [], [], [], [], [], {}
+        return [], [], [], [], [], [], [], {}
     if pending:
         # Keep what finished inside the bound and drop only the slow hooks.
         # Discarding completed contributions would silently lose context
@@ -144,6 +160,7 @@ async def compose_pre_compose_hooks(
     delta: list[dict] = []
     tail: list[dict] = []
     epilogue: list[dict] = []
+    working_memory: list[dict] = []
     sources: list[SourceEntry] = []
     fact_texts: list[str] = []
     recalled_facts: list[str] = []
@@ -153,7 +170,7 @@ async def compose_pre_compose_hooks(
         if r is None:
             continue
         if isinstance(r, ContextContribution):
-            mount_context_contribution(r, head, delta, tail, epilogue, sources)
+            mount_context_contribution(r, head, delta, tail, epilogue, working_memory, sources)
             merge_provenance(r.provenance, provenance)
         elif isinstance(r, str):
             if r.strip():
@@ -161,7 +178,7 @@ async def compose_pre_compose_hooks(
         elif isinstance(r, (list, tuple)):
             for item in r:
                 if isinstance(item, ContextContribution):
-                    mount_context_contribution(item, head, delta, tail, epilogue, sources)
+                    mount_context_contribution(item, head, delta, tail, epilogue, working_memory, sources)
                     merge_provenance(item.provenance, provenance)
                 elif isinstance(item, str):
                     if item.strip():
@@ -178,20 +195,19 @@ async def compose_pre_compose_hooks(
             )
 
     if fact_texts:
-        envelope, recalled_facts = legacy_recalled_facts_message(fact_texts, token_ceiling)
-        tail.append(envelope)
-        envelope_text = envelope["content"]
+        block, recalled_facts = legacy_recalled_facts_message(fact_texts, token_ceiling)
+        working_memory.append(block)
         sources.append(
             SourceEntry(
                 source="recalled_facts",
-                tokens_estimated=estimate_tokens(envelope_text),
+                tokens_estimated=estimate_tokens(block["content"]),
                 items_included=len(fact_texts),
             )
         )
         if recalled_facts:
             provenance.setdefault("facts", []).extend({"fact": fact} for fact in recalled_facts)
 
-    return head, delta, tail, epilogue, sources, recalled_facts, provenance
+    return head, delta, tail, epilogue, working_memory, sources, recalled_facts, provenance
 
 
 def merge_provenance(contribution: dict[str, list[dict]] | None, into: dict[str, list[dict]]) -> None:
@@ -226,6 +242,7 @@ def mount_context_contribution(
     delta: list[dict],
     tail: list[dict],
     epilogue: list[dict],
+    working_memory: list[dict],
     sources: list[SourceEntry],
 ) -> None:
     """Validate and mount one structured contribution; fail open."""
@@ -245,6 +262,7 @@ def mount_context_contribution(
         ContextSlot.DELTA: delta,
         ContextSlot.TAIL: tail,
         ContextSlot.EPILOGUE: epilogue,
+        ContextSlot.WORKING_MEMORY: working_memory,
     }[contribution.slot]
     target.extend(messages)
 
@@ -260,22 +278,24 @@ def mount_context_contribution(
 
 
 def legacy_recalled_facts_message(fact_texts: list[str], token_ceiling: int) -> tuple[dict, list[str]]:
-    """Coerce legacy ``str``/``list[str]`` hook results into one TAIL envelope.
+    """Coerce legacy ``str``/``list[str]`` hook results into one fact block.
 
-    Returns the envelope message and the atomic fact lines it actually
-    carries. When the ceiling trims the envelope, the returned list drops the
-    lines the model never received, so the web UI's recalled-facts disclosure
-    matches the prompt (#1514).
+    Returns the unwrapped block message and the atomic fact lines it actually
+    carries. ``working_memory_envelope`` adds the ``<recalled_facts>`` tag
+    when it bundles the block into the turn's working memory (#1574). When
+    the ceiling trims the block, the returned list drops the lines the model
+    never received, so the web UI's recalled-facts disclosure matches the
+    prompt (#1514).
     """
     combined_text = "\n".join(fact_texts)
-    if "<recalled_facts>" in combined_text:
-        envelope_text = combined_text
-    else:
-        envelope_text = f"<recalled_facts>\n{combined_text}\n</recalled_facts>"
+    # A hook may have pre-wrapped its own text. Unwrap it so the working
+    # memory envelope's own <recalled_facts> tag is not nested twice.
+    body = combined_text.replace("<recalled_facts>", "").replace("</recalled_facts>", "").strip()
 
-    facts = _recalled_fact_lines(combined_text)
+    facts = _recalled_fact_lines(body)
+    envelope_text = f"<recalled_facts>\n{body}\n</recalled_facts>"
     if estimate_tokens(envelope_text) > token_ceiling:
-        lines = combined_text.splitlines()
+        lines = body.splitlines()
         trimmed_lines = []
         current_tokens = estimate_tokens("<recalled_facts>\n\n</recalled_facts>")
         for line in lines:
@@ -286,11 +306,34 @@ def legacy_recalled_facts_message(fact_texts: list[str], token_ceiling: int) -> 
             current_tokens += line_tokens
         trimmed_body = "\n".join(trimmed_lines)
         if not trimmed_body:
-            trimmed_body = combined_text[: token_ceiling * 4]
-        envelope_text = f"<recalled_facts>\n{trimmed_body}\n</recalled_facts>"
-        facts = _recalled_fact_lines(trimmed_body)
+            trimmed_body = body[: token_ceiling * 4]
+        body = trimmed_body
+        facts = _recalled_fact_lines(body)
 
-    return {"role": "recalled_facts", "content": envelope_text}, facts
+    return {"role": "recalled_facts", "content": body}, facts
+
+
+def working_memory_envelope(messages: list[dict]) -> dict | None:
+    """Bundle transient discovery messages into one ``<working_memory>`` block.
+
+    Each message's content is wrapped in a tag named after its role, so the
+    model can attribute retrieval, notes, journal, and recalled facts. Returns
+    ``None`` when no message has content. The caller mounts the block after
+    the user message and never archives it (#1574).
+    """
+    blocks = []
+    for message in messages:
+        content = str(message.get("content") or "")
+        if not content.strip():
+            continue
+        tag = _WORKING_MEMORY_TAG.sub("_", str(message.get("role") or "context")).strip("_") or "context"
+        if not (tag[0].isalpha() or tag[0] == "_"):
+            tag = f"_{tag}"
+        blocks.append(f"<{tag}>\n{content}\n</{tag}>")
+    if not blocks:
+        return None
+    body = "\n".join(blocks)
+    return {"role": "working_memory", "content": f"<working_memory>\n{body}\n</working_memory>"}
 
 
 def _recalled_fact_lines(text: str) -> list[str]:
@@ -321,6 +364,18 @@ def account_history_tokens(history: list) -> tuple[int, int]:
     return history_tokens, history_msg_count
 
 
+def _strip_archive_metadata(message: dict) -> dict:
+    """Drop archive-only provenance before a provider request (#1574).
+
+    ``working_memory`` references ride on archived user rows for restart
+    dedupe. Providers never need them, and stricter endpoints reject unknown
+    message keys.
+    """
+    if "working_memory" not in message:
+        return message
+    return {k: v for k, v in message.items() if k != "working_memory"}
+
+
 def assemble_provider_history(combined: list, config: Any, ctx: "Context", active_tools: list[dict]):
     """Filter, remap, reorder, resolve attachments, and apply the image budget."""
     llm_history = []
@@ -329,9 +384,9 @@ def assemble_provider_history(combined: list, config: Any, ctx: "Context", activ
         if role == "background_event":
             llm_history.extend(_expand_background_event(message))
         elif role in LLM_ROLES:
-            llm_history.append(message)
+            llm_history.append(_strip_archive_metadata(message))
         elif role in ROLE_REMAP:
-            llm_history.append({**message, "role": ROLE_REMAP[role]})
+            llm_history.append({**_strip_archive_metadata(message), "role": ROLE_REMAP[role]})
     llm_history = _reorder_tool_results(llm_history)
     llm_history_originals = llm_history
     llm_history = [resolve_attachments(config, m) for m in llm_history]

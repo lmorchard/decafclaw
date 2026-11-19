@@ -1,14 +1,16 @@
 """Recent journal core extension (#306, #1491).
 
-Auto-surfaces recently written journal entries as a `DELTA` contribution at
-interactive turn start, on a small fixed budget separate from the dynamic
-semantic-retrieval pool so it doesn't compete with it. Recency is a strong
-signal as a retrieval *mode* ("what was I just thinking about?") where it is
-weak folded into a composite score.
+Auto-surfaces recently written journal entries as a `WORKING_MEMORY`
+contribution at interactive turn start, on a small fixed budget separate from
+the dynamic semantic-retrieval pool so it doesn't compete with it. Recency is a
+strong signal as a retrieval *mode* ("what was I just thinking about?") where
+it is weak folded into a composite score.
 
-Only entries newer than the newest one already surfaced this conversation
-(``ComposerState.injection_cursors``) are injected, so each entry appears at
-most once. Emits a ``recent_journal`` role message remapped to ``user``.
+Under ephemeral working memory (#1574), entries are deduplicated against active
+conversation history (prompt-residency deduplication) rather than advancing a
+persistent cursor: entries already resident in history (e.g. legacy
+recent_journal rows) are suppressed, while entries evicted with prior ephemeral
+blocks remain visible across turns. Emits a ``recent_journal`` role message.
 
 Skipped for heartbeat / scheduled / child-agent turns and when disabled.
 Fail-open: read or formatting failures log and yield no contribution.
@@ -17,7 +19,6 @@ Fail-open: read or formatting failures log and yield no contribution.
 from __future__ import annotations
 
 import logging
-from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -35,8 +36,21 @@ def _now() -> datetime:
     return datetime.now()
 
 
+def _is_entry_in_history(entry: Any, history: list | None) -> bool:
+    """Check if a journal entry is already resident in conversation history (#1574)."""
+    if not history:
+        return False
+    entry_header = f"## {entry.timestamp.strftime('%Y-%m-%d %H:%M')}"
+    for msg in history:
+        if msg.get("role") == "recent_journal":
+            content = str(msg.get("content") or "")
+            if entry_header in content or entry.text in content:
+                return True
+    return False
+
+
 class RecentJournalExtension(BaseExtension):
-    """Inject unseen recent journal entries as a DELTA contribution."""
+    """Inject unseen recent journal entries as a WORKING_MEMORY contribution."""
 
     def __init__(self, options: dict[str, Any], config: Any):
         super().__init__(name="recent_journal")
@@ -50,13 +64,13 @@ class RecentJournalExtension(BaseExtension):
 
     async def pre_compose_hook(self, ctx: Any, user_message: str = "", history: list | None = None):
         try:
-            return self._contribute(ctx)
+            return self._contribute(ctx, history)
         except Exception:
             log.warning("Recent journal injection failed", exc_info=True)
             return None
 
-    def _contribute(self, ctx: Any):
-        from decafclaw.context_types import ComposerMode, SourceEntry, select_unseen_items
+    def _contribute(self, ctx: Any, history: list | None = None):
+        from decafclaw.context_types import ComposerMode, SourceEntry
 
         config = getattr(ctx, "config", None) or self.config
         mode = getattr(getattr(ctx, "composer", None), "mode", ComposerMode.INTERACTIVE)
@@ -73,13 +87,14 @@ class RecentJournalExtension(BaseExtension):
         if not entries:
             return None
 
-        cursors = ctx.composer.injection_cursors
-        entries, journal_ts, journal_boundary = select_unseen_items(
-            entries, cursors.journal_ts, cursors.journal_boundary
-        )
-        if not entries:
-            return None
-        ctx.composer.injection_cursors = replace(cursors, journal_ts=journal_ts, journal_boundary=journal_boundary)
+        # Prompt-residency deduplication (#1574): only deduplicate entries that
+        # are actually resident in active conversation history (such as legacy
+        # archived recent_journal rows). Ephemeral working-memory blocks evicted on
+        # prior turns do not suppress subsequent turns.
+        if history:
+            entries = [e for e in entries if not _is_entry_in_history(e, history)]
+            if not entries:
+                return None
 
         truncated = 0
         text = format_recent_journal_for_context(entries, cfg.max_hours)
@@ -89,7 +104,7 @@ class RecentJournalExtension(BaseExtension):
             text = format_recent_journal_for_context(entries, cfg.max_hours)
 
         return ContextContribution(
-            slot=ContextSlot.DELTA,
+            slot=ContextSlot.WORKING_MEMORY,
             messages=[{"role": "recent_journal", "content": text}],
             source_entry=SourceEntry(
                 source="recent_journal",

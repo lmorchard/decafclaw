@@ -25,17 +25,21 @@ There's no `notes_clear` tool in v1 — manual cleanup via the workspace files t
 
 ## Auto-inject on turn start
 
-Every interactive turn, the default-on `ScratchpadNotesExtension` ([extensions](extensions.md#scratchpad-notes-default-on)) reads up to `notes.context_max_entries` (default 20) recent notes (capped by `notes.context_max_chars`, default 4096 chars total — drops oldest first when over cap) and returns them as a single `DELTA` contribution, which the `ContextComposer` injects as one message:
+Every interactive turn, the default-on `ScratchpadNotesExtension` ([extensions](extensions.md#scratchpad-notes-default-on)) reads up to `notes.context_max_entries` (default 20) recent notes (capped by `notes.context_max_chars`, default 4096 chars total — drops oldest first when over cap) and returns them as a single `WORKING_MEMORY` contribution. The composer wraps it in that turn's `<working_memory>` block:
 
 ```
+<working_memory>
+<conversation_notes>
 [Conversation notes — your scratchpad for this conversation]
 
 - 2026-04-27T15:30:42Z — User prefers concise replies
 - 2026-04-27T15:31:18Z — Decided to use vertex provider
 - 2026-04-27T15:32:55Z — Try the gemini-2.5-pro model next
+</conversation_notes>
+</working_memory>
 ```
 
-The message has role `conversation_notes` (remapped to `user` for the LLM), so the agent reads its own scratchpad without a tool call. Skipped in heartbeat / scheduled / child-agent modes — those don't have a meaningful per-conversation scope to inject into.
+The message has role `conversation_notes` (remapped to `user` for the LLM), so the agent reads its own scratchpad without a tool call. The block is this turn's prompt only and is never archived (#1574); the cursor means only unseen notes are injected. Skipped in heartbeat / scheduled / child-agent modes — those don't have a meaningful per-conversation scope to inject into.
 
 ## Storage
 

@@ -59,9 +59,10 @@ composition settles, before token streaming starts; the final
 `message_complete` frame and the archived assistant row carry the same
 `provenance` map, so a reload renders identical capsules. The passive prompt
 rows (`recalled_facts`, `recent_journal`, `conversation_notes`,
-`vault_retrieval`) stay in the prompt and archive but are hidden from the
-transcript. Rows archived before #1563 carry only the atomic `recalled_facts`
-list; the client derives a facts capsule from it. `Show context capsules` in
+`vault_retrieval`) are hidden from the transcript; since #1574 they do not
+enter the archive at all and reach the provider only inside that turn's
+`<working_memory>` block. Rows archived before #1563 carry only the atomic
+`recalled_facts` list; the client derives a facts capsule from it. `Show context capsules` in
 the conversation settings menu persists visibility in `localStorage`
 (`decafclaw-show-context-provenance`, default on; the pre-#1563
 `decafclaw-show-recalled-facts` value is read once for migration) and updates

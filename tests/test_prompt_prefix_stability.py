@@ -39,6 +39,15 @@ async def test_laptop_question_preserves_real_native_tools(ctx, composer):
     assert [m for m in second.messages if m["role"] == "system"] == [m for m in first.messages if m["role"] == "system"]
 
 
+def _without_working_memory(messages):
+    """Drop this turn's transient working-memory block (#1574).
+
+    The block is deliberately outside the replayable prefix: everything
+    before it must remain a byte-identical prefix across turns.
+    """
+    return [m for m in messages if not str(m.get("content", "")).startswith("<working_memory>")]
+
+
 async def test_sent_tail_replays_in_live_history_and_archive(ctx, composer):
     history = []
     with patch(
@@ -46,15 +55,31 @@ async def test_sent_tail_replays_in_live_history_and_archive(ctx, composer):
         return_value=(None, "<preempt_skill_hint>sample</preempt_skill_hint>"),
     ):
         first = await composer.compose(ctx, "Hello?", history)
-    sent = deepcopy(_clean_messages(first.messages))
+    sent = _without_working_memory(deepcopy(_clean_messages(first.messages)))
     archived = deepcopy(first.messages_to_archive)
     reply = {"role": "assistant", "content": "Hello!"}
     history.append(reply)
     archived.append(reply)
     second = await composer.compose(ctx, "Hello again?", history)
-    assert _clean_messages(second.messages)[: len(sent)] == sent
+    assert _without_working_memory(_clean_messages(second.messages))[: len(sent)] == sent
     restored = await ContextComposer(ctx.composer).compose(ctx, "After restart", archived)
-    assert _clean_messages(restored.messages)[: len(sent)] == sent
+    assert _without_working_memory(_clean_messages(restored.messages))[: len(sent)] == sent
+
+
+async def test_working_memory_is_the_only_turn_varying_tail(ctx, composer):
+    """The conversation prefix is stable; only the ephemeral block differs (#1574)."""
+    history = []
+    first = await composer.compose(ctx, "Hello?", history)
+    first_sent = deepcopy(_clean_messages(first.messages))
+    history.append({"role": "assistant", "content": "Hello!"})
+    second = await composer.compose(ctx, "Hello again?", history)
+    second_sent = _clean_messages(second.messages)
+
+    assert str(first_sent[-1]["content"]).startswith("<working_memory>")
+    assert str(second_sent[-1]["content"]).startswith("<working_memory>")
+    stable = _without_working_memory(first_sent)
+    assert _without_working_memory(second_sent)[: len(stable)] == stable
+    assert "<working_memory>" not in "\n".join(str(m.get("content", "")) for m in history)
 
 
 async def test_explicit_fetch_changes_once_then_stabilizes(ctx, composer):
@@ -164,8 +189,16 @@ async def test_system_updates_have_identical_live_and_archive_order(ctx, compose
     ctx.config.system_prompt = "Updated system context"
     second = await composer.compose(ctx, "Next turn", history)
     archived.extend(second.messages_to_archive)
-    assert archived == history
+
+    # The archive carries working-memory references as metadata on user rows
+    # (#1574); order and content are otherwise identical to live history.
+    def content_view(messages):
+        return [{k: v for k, v in m.items() if k != "working_memory"} for m in messages]
+
+    assert content_view(archived) == content_view(history)
     assert any(m.get("source") == "system_update" for m in archived)
+    assert any(m.get("role") == "user" and m.get("working_memory") for m in archived)
+    assert not any("working_memory" in m for m in history)
 
 
 @pytest.mark.live_llm
@@ -187,7 +220,8 @@ async def test_provider_receives_stable_tools_and_exact_message_prefix(ctx, comp
             history.append({"role": "assistant", "content": "Hello"})
     first, second = [call.kwargs["json"] for call in post.call_args_list]
     assert second["tools"] == first["tools"]
-    assert second["messages"][: len(first["messages"])] == first["messages"]
+    first_messages = _without_working_memory(first["messages"])
+    assert _without_working_memory(second["messages"])[: len(first_messages)] == first_messages
 
 
 @pytest.mark.scripted_provider
@@ -205,8 +239,12 @@ async def test_manager_preserves_prefix_across_real_turn_boundaries(tmp_path):
             [t["function"]["name"] for t in first.tools],
             [t["function"]["name"] for t in second.tools],
         )
-        assert second.messages[: len(first.messages)] == first.messages
-        assert any(m["role"] == "context_status" for m in harness.archive())
+        first_messages = _without_working_memory(first.messages)
+        assert _without_working_memory(second.messages)[: len(first_messages)] == first_messages
+        # The status line is per-turn working memory, not archived history
+        # (#1574): it reaches the provider but never replays as a stale row.
+        assert any("<context_status>" in str(m.get("content", "")) for m in first.messages)
+        assert not any(m.get("role") == "context_status" for m in harness.archive())
 
 
 def test_skill_restore_order_cannot_change_budget_selection(ctx):
@@ -243,8 +281,10 @@ async def test_disk_archive_replays_model_visible_prefix_after_restart(tmp_path)
     first, restored = requests
     assert restored.tools == first.tools
     # JSONL adds archive timestamps; chat templates do not consume that key.
-    replay = [{k: v for k, v in m.items() if k != "timestamp"} for m in restored.messages]
-    assert replay[: len(first.messages)] == first.messages
+    # The working-memory block is per-turn only (#1574); the archived
+    # conversation prefix must still replay byte-identically.
+    replay = [{k: v for k, v in m.items() if k != "timestamp"} for m in _without_working_memory(restored.messages)]
+    assert replay[: len(_without_working_memory(first.messages))] == _without_working_memory(first.messages)
 
 
 @pytest.mark.parametrize("named", [True, False])
