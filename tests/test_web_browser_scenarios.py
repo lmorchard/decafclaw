@@ -1836,6 +1836,60 @@ def test_browser_shell_command_and_result(built_static, chromium, config):
         assert page.locator("#shell-test-view hello").count() == 0
 
 
+def test_browser_turn_provenance_capsules(built_static, chromium, config):
+    """The assistant turn renders provenance capsules and expands one at a time (#1563)."""
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        page.evaluate("""async () => {
+            const { MessageStore } = await import('/static/lib/message-store.js');
+            const { MESSAGE_TYPES } = await import('/static/lib/message-types.js');
+            await import('/static/components/chat-view.js');
+            const store = new MessageStore(() => {});
+            store.handleMessage({ type: MESSAGE_TYPES.CONV_HISTORY, conv_id: '1', messages: [
+                { role: 'user', content: 'What should I drink?' },
+                {
+                    role: 'assistant',
+                    content: 'Espresso.',
+                    timestamp: 't1',
+                    provenance: {
+                        facts: [{ fact: 'User prefers espresso.' }],
+                        journals: [{ timestamp: '2026-11-19 09:00', text: 'Thinking about provenance.' }],
+                        vault: [{ page: 'agent/pages/decafclaw.md', score: 0.82, excerpt: 'Agent testbed.' }],
+                        scratchpad: [{ timestamp: '2026-11-19T10:00:00Z', text: 'Ship capsules.' }],
+                    },
+                },
+            ] }, '1');
+            const view = document.createElement('chat-view');
+            view.id = 'provenance-test-view';
+            view._convId = '1';
+            view._messages = store.currentMessages;
+            document.body.append(view);
+            await view.updateComplete;
+        }""")
+        view = page.locator("#provenance-test-view")
+        view.locator("button.turn-provenance-capsule").first.wait_for()
+        caps = view.locator("button.turn-provenance-capsule")
+        assert [caps.nth(i).inner_text().replace("\\n", " ").split() for i in range(4)] == [
+            ["🧠", "1", "fact", "▾"],
+            ["📖", "1", "journal", "entry", "▾"],
+            ["🏛️", "1", "vault", "page", "▾"],
+            ["📝", "1", "note", "▾"],
+        ]
+        # No passive context row leaks into the transcript as a tool message.
+        assert view.locator("tool-message").count() == 0
+
+        caps.nth(0).click()
+        view.locator(".turn-provenance-panel").wait_for()
+        assert "User prefers espresso." in view.locator(".turn-provenance-panel").inner_text()
+
+        caps.nth(2).click()
+        page.wait_for_function("""() => {
+            const panels = document.querySelectorAll('#provenance-test-view .turn-provenance-panel');
+            return panels.length === 1 && panels[0].textContent.includes('agent/pages/decafclaw.md');
+        }""")
+        assert "Thinking about provenance." not in view.locator(".turn-provenance-panel").inner_text()
+
+
 def test_browser_chat_input_height_alignment(built_static, chromium, config):
     """The textarea and its flanking buttons share one border-box height (#1073).
 
