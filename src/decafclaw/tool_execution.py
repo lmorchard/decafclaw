@@ -233,6 +233,42 @@ def resolve_widget(fn_name: str, result: ToolResult, tool_call_id: str = "") -> 
     return payload
 
 
+# Generic in-flight progress heartbeat (#1569). Tools without native progress
+# reporting get a `tool_status` this often, so a long call shows elapsed time
+# instead of a silent pill that is indistinguishable from a wedged tool.
+TOOL_HEARTBEAT_INTERVAL_SEC = 15.0
+
+
+async def _tool_heartbeat(ctx, tool_name, tool_call_id, started, interval=None, sleep=asyncio.sleep):
+    """Publish periodic `tool_status` events until cancelled.
+
+    `started` is a `time.monotonic()` baseline. A tool that publishes its own
+    `tool_status` stamps `ctx.tools.last_status_at` (see Context.publish); the
+    heartbeat stays quiet for the interval after such a report and resumes
+    when the tool goes silent again.
+    """
+    interval = TOOL_HEARTBEAT_INTERVAL_SEC if interval is None else interval
+    last_check = time.monotonic()
+    while True:
+        await sleep(interval)
+        now = time.monotonic()
+        native_progress = ctx.tools.last_status_at > last_check
+        last_check = now
+        if native_progress:
+            continue
+        elapsed = max(0, round(time.monotonic() - started))
+        await ctx.publish(
+            "tool_status",
+            tool=tool_name,
+            message=f"still running ({elapsed}s)",
+            tool_call_id=tool_call_id,
+            conv_id=ctx.conv_id,
+        )
+        # Our own event stamps `last_status_at`; move the baseline past it so
+        # the next interval is not mistaken for native progress.
+        last_check = time.monotonic()
+
+
 async def execute_single_tool(call_ctx, tc, semaphore):
     with _tracer.start_as_current_span("execute_single_tool") as span:
         span.set_attribute("tool.name", tc["function"]["name"])
@@ -259,10 +295,12 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
     result = ToolResult(text=f"[error: {fn_name} did not complete]")
     async with semaphore:
         started = time.perf_counter()
+        heartbeat_task: asyncio.Task | None = None
         try:
             await call_ctx.publish(
                 "tool_start", tool=fn_name, args=fn_args, tool_call_id=tool_call_id, conv_id=call_ctx.conv_id
             )
+            heartbeat_task = asyncio.create_task(_tool_heartbeat(call_ctx, fn_name, tool_call_id, time.monotonic()))
             result = await execute_tool(call_ctx, fn_name, fn_args)
             log.debug(f"Tool result [{fn_name}]: {result.text[:200]}...")
 
@@ -278,6 +316,15 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
             log.error(f"Tool call {fn_name} failed: {e}", exc_info=True)
             result = ToolResult(text=f"[error executing {fn_name}: {e}]")
         finally:
+            if heartbeat_task is not None:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    # Progress is best-effort; never fail the tool result for it.
+                    log.debug("Tool progress heartbeat failed: %s", exc)
             widget_payload = resolve_widget(fn_name, result, tool_call_id)
             try:
                 input_bytes = len(json.dumps(fn_args, default=str).encode("utf-8"))
@@ -297,6 +344,15 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
             }
             if widget_payload is not None:
                 publish_kwargs["widget"] = widget_payload
+            # Structured outcome tags (#1569): clients render errors and
+            # watchdog kills without parsing `result_text`.
+            is_error = result.text.lstrip().startswith("[error")
+            if is_error:
+                publish_kwargs["is_error"] = True
+            if result.timed_out:
+                publish_kwargs["timed_out"] = True
+                if result.timeout_sec is not None:
+                    publish_kwargs["timeout_sec"] = result.timeout_sec
             await call_ctx.publish("tool_end", **publish_kwargs)
 
     content = result.text
@@ -345,6 +401,14 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
     }
     if result.display_short_text:
         tool_msg["display_short_text"] = result.display_short_text
+    # Persist the same outcome tags so reloaded history keeps the loud
+    # affordance (#1569).
+    if is_error:
+        tool_msg["is_error"] = True
+    if result.timed_out:
+        tool_msg["timed_out"] = True
+        if result.timeout_sec is not None:
+            tool_msg["timeout_sec"] = result.timeout_sec
     if widget_payload is not None:
         tool_msg["widget"] = widget_payload
     _archive(call_ctx, tool_msg)

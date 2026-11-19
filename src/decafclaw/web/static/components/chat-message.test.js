@@ -136,3 +136,23 @@ describe('chat-message role rendering', () => {
     el.remove();
   });
 });
+
+describe('chat-message tool failure tags (#1569)', () => {
+  it('forwards isError/timedOut/timeoutSec to tool-message', async () => {
+    const el = document.createElement('chat-message');
+    el.role = 'tool';
+    el.tool = 'slow_tool';
+    el.content = '[error: tool slow_tool timed out after 180s]';
+    el.isError = true;
+    el.timedOut = true;
+    el.timeoutSec = 180;
+    document.body.append(el);
+    await el.updateComplete;
+
+    const toolMsg = el.querySelector('tool-message');
+    expect(toolMsg.isError).toBe(true);
+    expect(toolMsg.timedOut).toBe(true);
+    expect(toolMsg.timeoutSec).toBe(180);
+    el.remove();
+  });
+});

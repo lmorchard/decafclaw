@@ -204,3 +204,42 @@ describe('ToolStatusStore', () => {
         });
     });
 });
+
+describe('ToolStatusStore outcome tags (#1569)', () => {
+    it('forwards is_error/timed_out/timeout_sec from TOOL_END', () => {
+        const ws = {};
+        const msgStore = { pushMessage: vi.fn(), updateToolCall: vi.fn(), replaceToolCall: vi.fn() };
+        const store = new ToolStatusStore(() => {}, ws, msgStore);
+
+        store.handleMessage({ type: MESSAGE_TYPES.TOOL_START, tool_call_id: 'tc9', tool: 'slow', conv_id: '1' }, '1');
+        store.handleMessage({
+            type: MESSAGE_TYPES.TOOL_END,
+            tool_call_id: 'tc9',
+            tool: 'slow',
+            result_text: '[error: tool slow timed out after 180s]',
+            conv_id: '1',
+            is_error: true,
+            timed_out: true,
+            timeout_sec: 180,
+        }, '1');
+
+        const msg = msgStore.replaceToolCall.mock.calls[0][1];
+        expect(msg.is_error).toBe(true);
+        expect(msg.timed_out).toBe(true);
+        expect(msg.timeout_sec).toBe(180);
+    });
+
+    it('defaults outcome tags to false for a successful tool', () => {
+        const ws = {};
+        const msgStore = { pushMessage: vi.fn(), updateToolCall: vi.fn(), replaceToolCall: vi.fn() };
+        const store = new ToolStatusStore(() => {}, ws, msgStore);
+
+        store.handleMessage({ type: MESSAGE_TYPES.TOOL_START, tool_call_id: 'tc10', tool: 'fast', conv_id: '1' }, '1');
+        store.handleMessage({ type: MESSAGE_TYPES.TOOL_END, tool_call_id: 'tc10', tool: 'fast', result_text: 'ok', conv_id: '1' }, '1');
+
+        const msg = msgStore.replaceToolCall.mock.calls[0][1];
+        expect(msg.is_error).toBe(false);
+        expect(msg.timed_out).toBe(false);
+        expect(msg.timeout_sec).toBeNull();
+    });
+});

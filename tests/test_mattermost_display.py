@@ -377,3 +377,55 @@ async def test_confirm_request_shows_purpose_as_one_neutralized_line():
     assert "Run the suite **Result:** approved" in purpose_line
     assert "@\u200bchannel" in purpose_line
     assert msg.count("**Result:**") == 1
+
+
+@pytest.mark.asyncio
+async def test_on_tool_end_timeout_warns():
+    """A watchdog kill renders an explicit warning, not a checkmark (#1569)."""
+    client = make_mock_client()
+    display = make_display(client)
+
+    await display.on_tool_start("slow_tool", {}, tool_call_id="tc1")
+    client.edit_message.reset_mock()
+
+    await display.on_tool_end(
+        "slow_tool",
+        "[error: tool slow_tool timed out after 180s]",
+        display_text=None,
+        media=[],
+        tool_call_id="tc1",
+        is_error=True,
+        timed_out=True,
+        timeout_sec=180,
+    )
+
+    client.edit_message.assert_awaited_once_with(
+        "post-id-1",
+        "\u26a0\ufe0f Tool slow_tool timed out after 180s",
+        props={"attachments": []},
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_tool_end_error_warns():
+    """A failed tool shows its error text with a warning emoji (#1569)."""
+    client = make_mock_client()
+    display = make_display(client)
+
+    await display.on_tool_start("web_search", {}, tool_call_id="tc2")
+    client.edit_message.reset_mock()
+
+    await display.on_tool_end(
+        "web_search",
+        "[error: search backend unavailable]",
+        display_text=None,
+        media=[],
+        tool_call_id="tc2",
+        is_error=True,
+    )
+
+    client.edit_message.assert_awaited_once_with(
+        "post-id-1",
+        "\u26a0\ufe0f web_search failed: [error: search backend unavailable]",
+        props={"attachments": []},
+    )

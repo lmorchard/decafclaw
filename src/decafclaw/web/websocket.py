@@ -88,6 +88,13 @@ def _project_tool_end(event: dict, conv_id: str) -> SrvToolEnd:
     widget = event.get("widget")
     if widget:
         payload["widget"] = widget
+    if event.get("is_error"):
+        payload["is_error"] = True
+    if event.get("timed_out"):
+        payload["timed_out"] = True
+        timeout_sec = event.get("timeout_sec")
+        if timeout_sec is not None:
+            payload["timeout_sec"] = timeout_sec
     return payload
 
 

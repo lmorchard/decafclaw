@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import time
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Callable
@@ -91,6 +92,10 @@ class ToolState:
     # interactive runs.
     preapproved_email_recipients: list[str] = field(default_factory=list)
     current_call_id: str = ""
+    # Monotonic time of the last tool_status this tool call published
+    # (#1569). `fork_for_tool_call` gives each call its own ToolState, so the
+    # generic progress heartbeat reads only its own call's progress.
+    last_status_at: float = 0.0
     # Dynamic tool providers: skill_name → get_tools(ctx) callable.
     # Called each turn to refresh that skill's tools and definitions.
     dynamic_providers: dict[str, Any] = field(default_factory=dict)
@@ -407,6 +412,10 @@ class Context:
         event = {"type": event_type, "context_id": ctx_id, **kwargs}
         if self.tools.current_call_id and "tool_call_id" not in kwargs:
             event["tool_call_id"] = self.tools.current_call_id
+        if event_type == "tool_status":
+            # A tool reported its own progress; the generic heartbeat stays
+            # quiet for the next interval (#1569).
+            self.tools.last_status_at = time.monotonic()
         await self.event_bus.publish(event)
 
     async def notify(self, **kwargs) -> None:
