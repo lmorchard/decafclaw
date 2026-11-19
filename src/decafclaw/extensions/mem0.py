@@ -9,6 +9,7 @@ Reference implementation using:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import os
@@ -39,6 +40,10 @@ class Mem0Extension(BaseExtension):
         self.config = config
         self.client = client
         self._initialized = False
+        # mem0's add() is read-modify-write (search existing facts, then let an
+        # LLM choose ADD/UPDATE/DELETE), so concurrent settled turns must not
+        # interleave writes or both insert the same fact.
+        self._write_lock = asyncio.Lock()
 
     def _build_mem0_config(self) -> dict[str, Any]:
         """Construct embedded, local-first Mem0 configuration dictionary."""
@@ -112,6 +117,23 @@ class Mem0Extension(BaseExtension):
         self.subscription_ids = [sub_pre, sub_settle]
         return self.subscription_ids
 
+    async def _call_client(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Invoke a mem0 client method without stalling the event loop.
+
+        mem0's ``Memory`` client is synchronous: a single call can embed text,
+        run an extraction LLM, and read/write Qdrant before returning. Called
+        directly from a hook coroutine it blocks every conversation and
+        transport until it returns, and ``pre_compose_timeout`` cannot fire
+        because the loop never yields. Sync methods run in a worker thread;
+        coroutine methods (``AsyncMemory``) are awaited in place.
+        """
+        if inspect.iscoroutinefunction(fn):
+            return await fn(*args, **kwargs)
+        res = await asyncio.to_thread(fn, *args, **kwargs)
+        if inspect.isawaitable(res):
+            return await res
+        return res
+
     async def pre_compose_hook(self, ctx: Any, user_message: str, history: list | None = None) -> str | None:
         """Search memory store for relevant facts prior to composing the turn."""
         if getattr(ctx, "skip_memory_extension", False):
@@ -126,11 +148,9 @@ class Mem0Extension(BaseExtension):
             if not callable(search_fn):
                 return None
             try:
-                res = search_fn(user_message, filters={"user_id": user_id}, limit=top_k)
+                res = await self._call_client(search_fn, user_message, filters={"user_id": user_id}, limit=top_k)
             except (TypeError, ValueError):
-                res = search_fn(user_message, user_id=user_id, limit=top_k)
-            if inspect.iscoroutine(res):
-                res = await res
+                res = await self._call_client(search_fn, user_message, user_id=user_id, limit=top_k)
             if not res:
                 return None
 
@@ -178,9 +198,8 @@ class Mem0Extension(BaseExtension):
             add_fn = getattr(self.client, "add", None)
             if not callable(add_fn):
                 return
-            res = add_fn(messages, user_id=user_id)
-            if inspect.iscoroutine(res):
-                await res
+            async with self._write_lock:
+                await self._call_client(add_fn, messages, user_id=user_id)
         except Exception as e:
             log.warning("Mem0 on_turn_settle_hook add failed: %s", e)
 
