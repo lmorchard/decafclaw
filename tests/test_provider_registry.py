@@ -94,6 +94,16 @@ def test_empty_registry_after_clear(config):
     assert len(list_providers()) == 0
 
 
+def test_init_providers_resets_failed_model_info_cache(config):
+    """Re-initializing providers resets the failed model-info negative cache,
+    so a model that becomes resolvable after a reload is retried (#1304)."""
+    from decafclaw.llm import _failed_model_info
+
+    _failed_model_info.add(("p1", "some-model"))
+    init_providers(config)
+    assert ("p1", "some-model") not in _failed_model_info
+
+
 def test_model_resolution_uses_registered_provider(config):
     """Named model resolution finds the provider in the registry."""
     from decafclaw.llm import _resolve

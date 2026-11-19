@@ -14,6 +14,7 @@ from typing import Any
 
 from ..telemetry import get_tracer
 from .registry import (  # noqa: F401
+    _failed_model_info,
     clear_providers,
     get_provider,
     init_providers,
@@ -225,11 +226,13 @@ def _resolve(
     return ResolvedModel(provider, model, timeout)
 
 
-_failed_model_info: set[tuple[str, str]] = set()
-
-
 async def ensure_model_context_window(config: Any, model_name: str | None = None) -> int:
-    """Get context window size for a model, querying provider API if not configured (0)."""
+    """Get context window size for a model, querying provider API if not configured (0).
+
+    Failed lookups are negatively cached per (provider, model) until the
+    provider registry is re-initialized on a config reload, so a model that
+    becomes resolvable later is retried without a process restart (#1304).
+    """
     model_name = model_name or getattr(config, "default_model", "")
     if model_name and model_name in config.model_configs:
         mc = config.model_configs[model_name]
