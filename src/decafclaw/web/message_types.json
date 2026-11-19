@@ -102,6 +102,11 @@
       "description": "Output of the post-turn reflection step for a conversation.",
       "fields": {"conv_id": "string", "passed": "boolean", "critique": "string", "retry_number": "number", "raw_response": "string", "error": "string"}
     },
+    "recalled_facts": {
+      "direction": "server_to_client",
+      "description": "Recalled memory facts injected into the active turn prompt, emitted as soon as prompt composition settles.",
+      "fields": {"conv_id": "string", "facts": "array of string"}
+    },
     "recovery_decision": {
       "direction": "server_to_client",
       "description": "Bounded recovery policy outcome after a recoverable LLM failure: retry / continue / stop, with phase and retry-budget state (#1144).",

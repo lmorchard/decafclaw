@@ -40,6 +40,9 @@ def test_mem0_local_hook_registration(config):
     assert built_cfg["llm"]["config"]["openai_base_url"] == "http://synobian:4100/v1"
     assert built_cfg["llm"]["config"]["model"] == "mandelbrot3-flint"
 
+    # Verify pre_compose_timeout default
+    assert mem0_ext.pre_compose_timeout == 5.0
+
     # Verify both hooks are registered on the event bus
     pre_compose_hooks = bus.get_lifecycle_hooks(TurnLifecycle.PRE_COMPOSE)
     settle_hooks = bus.get_lifecycle_hooks(TurnLifecycle.ON_TURN_SETTLE)

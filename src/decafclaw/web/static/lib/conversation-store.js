@@ -210,6 +210,8 @@ export class ConversationStore extends EventTarget {
   get streamingText() { return this.#messageStore.streamingText; }
   /** @returns {string} */
   get streamingThinking() { return this.#messageStore.streamingThinking; }
+  /** @returns {string[]} */
+  get streamingRecalledFacts() { return this.#messageStore.streamingRecalledFacts; }
   /** @returns {boolean} */
   get isBusy() { return this.#busy; }
   /** @returns {boolean} */

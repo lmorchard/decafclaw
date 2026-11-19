@@ -292,3 +292,54 @@ it.each(['not json', undefined, '{}'])('renders shell results with unavailable a
     expect(store.currentMessages[0].command).toBe('');
     expect(store.currentMessages[0].content).toBe('output');
 });
+
+describe('streaming recalled facts (#1538)', () => {
+    it('records recalled facts during streaming and attaches them on completion', () => {
+        const store = new MessageStore(() => {});
+        store.handleMessage({
+            type: MESSAGE_TYPES.RECALLED_FACTS,
+            conv_id: '1',
+            facts: ['User prefers espresso.', 'Homelab uses Qdrant.'],
+        }, '1');
+
+        expect(store.streamingRecalledFacts).toEqual([
+            'User prefers espresso.',
+            'Homelab uses Qdrant.',
+        ]);
+
+        // Message completes without explicit recalled_facts field (falls back to streaming facts)
+        store.handleMessage({
+            type: MESSAGE_TYPES.MESSAGE_COMPLETE,
+            conv_id: '1',
+            text: 'Here is your coffee.',
+        }, '1');
+
+        expect(store.streamingRecalledFacts).toEqual([]);
+        expect(store.currentMessages).toHaveLength(1);
+        expect(store.currentMessages[0].recalled_facts).toEqual([
+            'User prefers espresso.',
+            'Homelab uses Qdrant.',
+        ]);
+    });
+
+    it('clears streaming recalled facts on clear() and clearStreamingText()', () => {
+        const store = new MessageStore(() => {});
+        store.handleMessage({
+            type: MESSAGE_TYPES.RECALLED_FACTS,
+            conv_id: '1',
+            facts: ['Fact A'],
+        }, '1');
+        expect(store.streamingRecalledFacts).toEqual(['Fact A']);
+
+        store.clearStreamingText();
+        expect(store.streamingRecalledFacts).toEqual([]);
+
+        store.handleMessage({
+            type: MESSAGE_TYPES.RECALLED_FACTS,
+            conv_id: '1',
+            facts: ['Fact B'],
+        }, '1');
+        store.clear();
+        expect(store.streamingRecalledFacts).toEqual([]);
+    });
+});

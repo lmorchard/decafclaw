@@ -190,10 +190,11 @@ describe('chat-view recalled facts preference (#1514)', () => {
     });
   }
 
-  async function mount() {
+  async function mount(store = storeWithFacts()) {
     const el = /** @type {any} */ (document.createElement('chat-view'));
-    el.store = storeWithFacts();
+    el.store = store;
     document.body.appendChild(el);
+    await el.updateComplete;
     await el.updateComplete;
     return el;
   }
@@ -221,5 +222,46 @@ describe('chat-view recalled facts preference (#1514)', () => {
     await el.updateComplete;
 
     expect(assistantMessage(el).recalledFacts).toEqual([]);
+  });
+
+  it('renders recalled facts on the streaming message when streamingRecalledFacts is present (#1538)', async () => {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'conv-1',
+      currentMessages: [{ role: 'user', content: 'hello' }],
+      streamingText: '',
+      streamingThinking: '',
+      streamingRecalledFacts: ['User prefers espresso.'],
+      isBusy: true,
+      toolStatus: null,
+      pendingConfirms: [],
+      hasMore: false,
+    });
+    const el = await mount(store);
+
+    // The streaming message should be mounted even before text arrives, carrying recalled facts
+    const messages = [...el.querySelectorAll('chat-message')];
+    expect(messages).toHaveLength(2);
+    const streamingMsg = messages[1];
+    expect(streamingMsg.streaming).toBe(true);
+    expect(streamingMsg.recalledFacts).toEqual(['User prefers espresso.']);
+  });
+
+  it('hides streaming recalled facts when preference is disabled (#1538)', async () => {
+    localStorage.setItem(STORAGE_KEY, 'false');
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'conv-1',
+      currentMessages: [{ role: 'user', content: 'hello' }],
+      streamingText: 'some text',
+      streamingThinking: '',
+      streamingRecalledFacts: ['User prefers espresso.'],
+      isBusy: true,
+      toolStatus: null,
+      pendingConfirms: [],
+      hasMore: false,
+    });
+    const el = await mount(store);
+
+    const streamingMsg = [...el.querySelectorAll('chat-message')][1];
+    expect(streamingMsg.recalledFacts).toEqual([]);
   });
 });

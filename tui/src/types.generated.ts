@@ -166,6 +166,12 @@ export interface SrvNotificationRead {
   unread_count: number;
 }
 
+export interface SrvRecalledFacts {
+  type: "recalled_facts";
+  conv_id: string;
+  facts: string[];
+}
+
 export interface SrvRecoveryDecision {
   type: "recovery_decision";
   conv_id: string;
@@ -348,6 +354,7 @@ export type ServerMessage =
   | SrvModelsAvailable
   | SrvNotificationCreated
   | SrvNotificationRead
+  | SrvRecalledFacts
   | SrvRecoveryDecision
   | SrvReflectionResult
   | SrvShellApproval

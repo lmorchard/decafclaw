@@ -14,6 +14,8 @@ export class MessageStore {
   #streamingText = '';
   /** @type {string} */
   #streamingThinking = '';
+  /** @type {string[]} */
+  #streamingRecalledFacts = [];
   /** @type {boolean} */
   #hasMore = false;
   /** @type {() => void} */
@@ -32,6 +34,8 @@ export class MessageStore {
   get streamingText() { return this.#streamingText; }
   /** @returns {string} */
   get streamingThinking() { return this.#streamingThinking; }
+  /** @returns {string[]} */
+  get streamingRecalledFacts() { return this.#streamingRecalledFacts; }
   /** @returns {boolean} */
   get hasMore() { return this.#hasMore; }
 
@@ -42,7 +46,13 @@ export class MessageStore {
     this.#currentMessages = [];
     this.#streamingText = '';
     this.#streamingThinking = '';
+    this.#streamingRecalledFacts = [];
     this.#hasMore = false;
+  }
+
+  /** Reset streaming recalled facts (e.g. on new turn start). */
+  clearStreamingRecalledFacts() {
+    this.#streamingRecalledFacts = [];
   }
   /** @param {ChatMessage} msg */
   pushMessage(msg) {
@@ -133,6 +143,7 @@ export class MessageStore {
   clearStreamingText() {
     this.#streamingText = '';
     this.#streamingThinking = '';
+    this.#streamingRecalledFacts = [];
   }
 
   /** Replace the live buffers with the server's accumulated segment,
@@ -189,18 +200,25 @@ export class MessageStore {
         }
         return true;
 
+      case MESSAGE_TYPES.RECALLED_FACTS:
+        if (msg.conv_id === currentConvId) {
+          this.#streamingRecalledFacts = Array.isArray(msg.facts) ? [...msg.facts] : [];
+        }
+        return true;
+
       case MESSAGE_TYPES.MESSAGE_COMPLETE:
         if (msg.conv_id === currentConvId) {
           this.#currentMessages.push({
             role: msg.role || 'assistant',
             content: msg.text,
             thinking: msg.thinking || this.#streamingThinking || '',
-            recalled_facts: msg.recalled_facts || [],
+            recalled_facts: msg.recalled_facts || (this.#streamingRecalledFacts.length ? [...this.#streamingRecalledFacts] : []),
             timestamp: new Date().toISOString(),
             usage: msg.usage || null,
           });
           this.#streamingText = '';
           this.#streamingThinking = '';
+          this.#streamingRecalledFacts = [];
         }
         return true;
 

@@ -32,6 +32,7 @@ class WSMessageType(StrEnum):
     MODELS_AVAILABLE = "models_available"
     NOTIFICATION_CREATED = "notification_created"
     NOTIFICATION_READ = "notification_read"
+    RECALLED_FACTS = "recalled_facts"
     RECOVERY_DECISION = "recovery_decision"
     REFLECTION_RESULT = "reflection_result"
     SHELL_APPROVAL = "shell_approval"
@@ -80,6 +81,7 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.MODELS_AVAILABLE,
         WSMessageType.NOTIFICATION_CREATED,
         WSMessageType.NOTIFICATION_READ,
+        WSMessageType.RECALLED_FACTS,
         WSMessageType.RECOVERY_DECISION,
         WSMessageType.REFLECTION_RESULT,
         WSMessageType.SHELL_APPROVAL,
@@ -282,6 +284,12 @@ class SrvNotificationRead(TypedDict):
     unread_count: int
 
 
+class SrvRecalledFacts(TypedDict):
+    type: Literal[WSMessageType.RECALLED_FACTS]
+    conv_id: str
+    facts: list[str]
+
+
 class SrvRecoveryDecision(TypedDict):
     type: Literal[WSMessageType.RECOVERY_DECISION]
     conv_id: str
@@ -466,6 +474,7 @@ ServerMessage = (
     | SrvModelsAvailable
     | SrvNotificationCreated
     | SrvNotificationRead
+    | SrvRecalledFacts
     | SrvRecoveryDecision
     | SrvReflectionResult
     | SrvShellApproval
