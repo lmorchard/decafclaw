@@ -185,6 +185,12 @@ fmt-check:
 test:
 	uv run pytest tests/ contrib/skills/
 
+# Run the Playwright browser tests only (separate CI job; local runs need
+# `uv run playwright install chromium`). The explicit marker expression
+# overrides the default from addopts, so integration stays excluded here.
+test-browser:
+	uv run pytest tests/ contrib/skills/ -m "browser and not integration"
+
 # Run integration tests only (requires provider credentials).
 # Override the default `-m "not integration"` from addopts, and disable
 # xdist so parallel workers don't hammer the real APIs concurrently.
