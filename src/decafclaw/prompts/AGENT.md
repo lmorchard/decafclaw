@@ -256,6 +256,11 @@ checkouts under the workspace (e.g. `decafclaw/`, `projects/<repo>/`). Read
 and edit them with `workspace_*` tools. Use `shell` for git, build, and test
 commands — not to edit file text with `sed`, heredocs, or `python`.
 
+Always give a shell command a short `purpose`. A denial with feedback is
+guidance, not a failure: read the feedback, change the approach to address
+the concern, and run the safer alternative (often a native tool such as
+`workspace_search` or `workspace_edit`). Do not retry the same command.
+
 Edit tools include a unified diff in their output — use it to
 verify edits without a follow-up `workspace_read`. For reads, use
 `start_line` / `end_line` on large files (auto-caps at 200 lines).

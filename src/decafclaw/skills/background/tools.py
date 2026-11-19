@@ -758,6 +758,7 @@ async def tool_shell_background_start(
     completion_tail_lines: int | None = None,
     pin_sticky: bool = False,
     progress_parser: str | ProgressParserPreset = ProgressParserPreset.AUTO,
+    purpose: str = "",
 ) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
@@ -770,11 +771,16 @@ async def tool_shell_background_start(
         command,
         tool_name="shell_background_start",
         message=f"Background process: `{command}`",
+        purpose=purpose,
     )
     if not result.get("approved"):
         reason = result.get("reason") or "background process was denied by user"
+        feedback = str(result.get("feedback") or "").strip()
+        text = f"[error: {reason}]"
+        if feedback:
+            text = f"[error: {reason}. Feedback: {feedback}]"
         return ToolResult(
-            text=f"[error: {reason}]",
+            text=text,
             data={"status": "error"},
         )
 
@@ -988,7 +994,10 @@ TOOL_DEFINITIONS = [
                 "Use shell_background_status to monitor progress and check back on output, "
                 "shell_background_stop to terminate. Pair with wait or schedule_turn to check status without "
                 "busy-looping. REQUIRES USER CONFIRMATION unless the command matches an allow pattern. "
-                "Jobs auto-expire after 10 minutes."
+                "Jobs auto-expire after 10 minutes. Always fill `purpose` with what you are "
+                "trying to accomplish; the security and auto-approval evaluators use it, and the "
+                "user sees it on the confirmation prompt. If a command is denied with feedback, "
+                "read it carefully and run the safer alternative."
             ),
             "parameters": {
                 "type": "object",
@@ -996,6 +1005,14 @@ TOOL_DEFINITIONS = [
                     "command": {
                         "type": "string",
                         "description": "The shell command to run in the background",
+                    },
+                    "purpose": {
+                        "type": "string",
+                        "description": (
+                            "Brief explanation of what you intend to accomplish with this "
+                            "command and why it is needed. Used by the security and "
+                            "auto-approval evaluators, and shown to the user on confirmation."
+                        ),
                     },
                     "completion_tail_lines": {
                         "type": "integer",

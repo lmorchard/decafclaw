@@ -80,6 +80,17 @@ class TestConfirmationResponseArchive:
         roundtripped = ConfirmationResponse.from_archive_message(resp.to_archive_message())
         assert roundtripped == resp
 
+    def test_feedback_roundtrip(self):
+        """Denial feedback survives the archive round-trip (#1559)."""
+        resp = ConfirmationResponse(
+            confirmation_id="conf_fb",
+            approved=False,
+            feedback="Use workspace_search instead of grep.",
+        )
+        roundtripped = ConfirmationResponse.from_archive_message(resp.to_archive_message())
+        assert roundtripped.feedback == "Use workspace_search instead of grep."
+        assert roundtripped == resp
+
     def test_falsy_optional_flags_dropped_from_archive(self):
         """Lean archive: omit always/add_pattern when False. Round-trip
         still works because from_archive falls back to dataclass defaults."""
@@ -105,6 +116,7 @@ class TestConfirmationResponseArchive:
             add_pattern=True,
             add_rule=True,
             rule="auto-approve echo *",
+            feedback="use workspace_search instead",
             data={"choice": "option_a"},
         )
         msg = resp.to_archive_message()

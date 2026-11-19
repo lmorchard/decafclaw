@@ -848,6 +848,7 @@ class ConversationManager:
         add_pattern: bool = False,
         add_rule: bool = False,
         rule: str = "",
+        feedback: str = "",
         data: dict | None = None,
     ) -> None:
         """Resolve a pending confirmation request.
@@ -855,6 +856,9 @@ class ConversationManager:
         Persists the response to the archive and wakes the suspended
         agent loop (if still running) or dispatches recovery (if the
         loop died).
+
+        ``feedback`` carries a human or reviewer's denial feedback (#1559);
+        the tool surfaces it to the agent in the denial result.
 
         ``data`` carries free-form response payload (widget selections,
         etc.).
@@ -903,6 +907,7 @@ class ConversationManager:
                 add_pattern=add_pattern,
                 add_rule=add_rule,
                 rule=rule,
+                feedback=feedback,
                 data=data or {},
             )
             # Archive the response under the lock so the durable record
@@ -964,6 +969,8 @@ class ConversationManager:
                 "confirmation_id": confirmation_id,
                 "approved": approved,
             }
+            if response.feedback:
+                emit_payload["feedback"] = response.feedback
             if response.data:
                 emit_payload["data"] = response.data
             await self.emit(conv_id, emit_payload)

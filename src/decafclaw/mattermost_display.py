@@ -285,6 +285,7 @@ class ConversationDisplay:
         decline_reason="",
         suggested_rule="",
         cwd="",
+        purpose="",
     ) -> str:
         """Tool needs confirmation — show prompt with buttons and/or emoji.
 
@@ -304,6 +305,8 @@ class ConversationDisplay:
         msg = f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```"
         if cwd:
             msg += f"\n> **Working directory:** `{cwd}`"
+        if purpose:
+            msg += f"\n> **Purpose:** {purpose}"
         if decline_reason:
             msg += f"\n> **Reviewer:** {decline_reason}"
         if suggested_rule:
@@ -320,7 +323,10 @@ class ConversationDisplay:
                     react_parts.append("\U0001f4dd approve + remember why")
                 if suggested_pattern:
                     react_parts.append(f"\U0001f4d3 allow `{suggested_pattern}`")
+                react_parts.append("\U0001f527 needs a native tool")
                 msg += f"\nReact: {' | '.join(react_parts)}"
+            elif tool_name == "shell":
+                msg += "\nReact: \U0001f44d approve | \U0001f44e deny | \U0001f527 needs a native tool"
             else:
                 msg += "\nReact: \U0001f44d approve | \U0001f44e deny | \u2705 always"
 

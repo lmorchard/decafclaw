@@ -398,6 +398,7 @@ User's decision on a pending confirm_request.
 - `add_pattern` — boolean
 - `add_rule` — boolean?
 - `rule` — string?
+- `feedback` — string?
 - `data` — object?
 
 ### `list_commands`

@@ -172,3 +172,99 @@ describe('confirm-view dialog semantics', () => {
     });
   });
 });
+
+describe('shell purpose and denial feedback (#1559)', () => {
+  /** @param {object[]} confirms @returns {Promise<{el: any, responses: object[]}>} */
+  async function mountWithStore(confirms) {
+    const responses = [];
+    const el = /** @type {any} */ (document.createElement('confirm-view'));
+    el.store = {
+      respondToConfirm: (contextId, tool, toolCallId, approved, extra) => {
+        responses.push({ contextId, tool, toolCallId, approved, extra });
+      },
+    };
+    el.confirms = confirms;
+    document.body.appendChild(el);
+    await el.updateComplete;
+    return { el, responses };
+  }
+
+  function denyButton(el) {
+    return Array.from(el.querySelectorAll('.confirm-buttons button'))
+      .find(b => b.textContent?.trim() === 'Deny');
+  }
+
+  it('renders the stated purpose under the command', async () => {
+    const { el } = await mountWithStore([{
+      context_id: 'ctx-p', tool: 'shell', tool_call_id: 'tc-p', command: 'pytest tests',
+      action_data: { purpose: 'Run the test suite before committing' },
+    }]);
+
+    const purpose = el.querySelector('.confirm-purpose');
+    expect(purpose).toBeTruthy();
+    expect(purpose.textContent).toContain('Run the test suite before committing');
+  });
+
+  it('omits the purpose line when none was stated', async () => {
+    const { el } = await mountWithStore([{
+      context_id: 'ctx-np', tool: 'shell', tool_call_id: 'tc-np', command: 'ls',
+    }]);
+
+    expect(el.querySelector('.confirm-purpose')).toBeNull();
+  });
+
+  it('sends typed feedback with a denial', async () => {
+    const { el, responses } = await mountWithStore([{
+      context_id: 'ctx-fb', confirmation_id: 'c-fb', tool: 'shell', tool_call_id: 'tc-fb',
+      command: 'grep -rn TODO src/', action_data: { purpose: 'Find TODOs' },
+    }]);
+
+    const input = el.querySelector('.confirm-feedback-input');
+    input.value = 'Use workspace_search instead.';
+    input.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+
+    denyButton(el).click();
+
+    expect(responses).toHaveLength(1);
+    expect(responses[0].approved).toBe(false);
+    expect(responses[0].extra).toEqual({ feedback: 'Use workspace_search instead.' });
+  });
+
+  it('omits feedback when the field is empty', async () => {
+    const { el, responses } = await mountWithStore([{
+      context_id: 'ctx-empty', confirmation_id: 'c-empty', tool: 'shell', tool_call_id: 'tc-empty',
+      command: 'ls',
+    }]);
+
+    denyButton(el).click();
+
+    expect(responses[0].approved).toBe(false);
+    expect(responses[0].extra).toEqual({});
+  });
+
+  it('flags a missing native tool on denial', async () => {
+    const { el, responses } = await mountWithStore([{
+      context_id: 'ctx-flag', confirmation_id: 'c-flag', tool: 'shell', tool_call_id: 'tc-flag',
+      command: 'systemctl restart nginx', action_data: { purpose: 'Restart the server' },
+    }]);
+
+    const flag = el.querySelector('.confirm-feedback-flag input');
+    flag.checked = true;
+    flag.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+
+    denyButton(el).click();
+
+    expect(responses[0].extra).toEqual({ data: { flag_missing_tool: true } });
+  });
+
+  it('does not offer the missing-tool flag for non-shell tools', async () => {
+    const { el } = await mountWithStore([{
+      context_id: 'ctx-skill', tool: 'activate_skill', tool_call_id: 'tc-skill',
+      command: 'project', message: 'Activate project?',
+    }]);
+
+    expect(el.querySelector('.confirm-feedback-flag')).toBeNull();
+  });
+});
