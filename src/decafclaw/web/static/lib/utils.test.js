@@ -134,5 +134,63 @@ describe('utils', () => {
 
             expect(addSpy).toHaveBeenCalledWith('mousedown', expect.any(Function));
         });
+
+        function makeContainer() {
+            const container = document.createElement('div');
+            container.getBoundingClientRect = () => ({
+                left: 0, right: 1000, top: 0, bottom: 800,
+                width: 1000, height: 800, x: 0, y: 0,
+                toJSON() { return this; },
+            });
+            return container;
+        }
+
+        it('clamps left-edge drags, persists the target, and toggles the drag shield', () => {
+            const handle = document.createElement('div');
+            setupResizeHandle({
+                handle,
+                container: makeContainer(),
+                minWidth: 100,
+                maxWidth: 500,
+                storageKey: 'my_width',
+                cssVar: '--my-width'
+            });
+
+            handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            expect(handle.classList.contains('dragging')).toBe(true);
+            expect(document.querySelector('.resize-drag-shield').classList.contains('active')).toBe(true);
+
+            document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 900 }));
+            expect(document.documentElement.style.getPropertyValue('--my-width')).toBe('500px');
+            document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 50 }));
+            expect(document.documentElement.style.getPropertyValue('--my-width')).toBe('100px');
+            document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 250 }));
+
+            document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            expect(localStorage.getItem('my_width')).toBe('250');
+            expect(handle.classList.contains('dragging')).toBe(false);
+            expect(document.querySelector('.resize-drag-shield').classList.contains('active')).toBe(false);
+        });
+
+        it('measures right-edge drags from the container right edge', () => {
+            const handle = document.createElement('div');
+            setupResizeHandle({
+                handle,
+                container: makeContainer(),
+                edge: 'right',
+                minWidth: 280,
+                maxWidth: 700,
+                storageKey: 'canvas_width',
+                cssVar: '--canvas-width'
+            });
+
+            handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 200 }));
+            expect(document.documentElement.style.getPropertyValue('--canvas-width')).toBe('700px');
+            document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 500 }));
+            expect(document.documentElement.style.getPropertyValue('--canvas-width')).toBe('500px');
+            document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            expect(localStorage.getItem('canvas_width')).toBe('500');
+        });
     });
 });
