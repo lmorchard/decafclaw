@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { parentConvIdOf } from '../lib/conversation-store.js';
+import { getConvFromUrl } from '../lib/conversation-url.js';
 import { STATUS_LABELS, STATUS_TITLE_LABELS } from '../lib/constants.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 import { showToast } from '../lib/toast.js';
@@ -11,6 +12,11 @@ import './vault-sidebar.js';
 import './files-sidebar.js';
 import './schedules-sidebar.js';
 import './tags-sidebar.js';
+
+/** Per-conversation sidebar collapse state: `sidebar-collapsed:<conv_id>` */
+const COLLAPSE_STORAGE_PREFIX = 'sidebar-collapsed:';
+/** Pre-per-conversation global key, migrated to the open conversation. */
+const LEGACY_COLLAPSE_STORAGE_KEY = 'sidebar-collapsed';
 
 export class ConversationSidebar extends LitElement {
   static properties = {
@@ -74,7 +80,12 @@ export class ConversationSidebar extends LitElement {
     this._availableModes = [];
     this._isBusy = false;
     this._isReadOnly = false;
-    this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+    this._collapsed = false;
+    // Read the URL's conversation before the store delivers one, so a
+    // reload of a collapsed conversation does not flash the expanded
+    // sidebar while the WebSocket connects.
+    const urlConvId = getConvFromUrl();
+    if (urlConvId) this.#applyCollapsed(urlConvId);
     /** @type {Set<string>} session ids the user collapsed (#1115 follow-up) */
     this._collapsedSessions = new Set();
     /** @type {Set<string>} session ids the user expanded (#1262) */
@@ -128,6 +139,9 @@ export class ConversationSidebar extends LitElement {
       if (newId !== this._activeId) {
         this._contextInspectorOpen = false;
         this._shellApprovalOpen = false;
+        // Collapse is per conversation: each tab reflects the conversation
+        // it is showing instead of one global width for the whole browser.
+        this.#applyCollapsed(newId);
         // Selecting a conversation auto-expands its session group (#1115
         // follow-up): the user may have collapsed it earlier, but clicking
         // into that session's conversation signals interest again. Reads
@@ -315,9 +329,29 @@ export class ConversationSidebar extends LitElement {
     this.closeMobile();
   }
 
+  /** Load the stored collapse state for a conversation. */
+  #applyCollapsed(convId) {
+    this._collapsed = convId ? this.#readCollapsed(convId) : false;
+  }
+
+  /** @param {string} convId */
+  #readCollapsed(convId) {
+    const key = `${COLLAPSE_STORAGE_PREFIX}${convId}`;
+    const stored = localStorage.getItem(key);
+    if (stored !== null) return stored === 'true';
+    const legacy = localStorage.getItem(LEGACY_COLLAPSE_STORAGE_KEY);
+    if (legacy === null) return false;
+    // One-time upgrade: the old global preference applies to the
+    // conversation open when it was read.
+    localStorage.setItem(key, legacy);
+    localStorage.removeItem(LEGACY_COLLAPSE_STORAGE_KEY);
+    return legacy === 'true';
+  }
+
   #toggleCollapse() {
     this._collapsed = !this._collapsed;
-    localStorage.setItem('sidebar-collapsed', String(this._collapsed));
+    const convId = this._activeId || this.store?.currentConvId || getConvFromUrl();
+    if (convId) localStorage.setItem(`${COLLAPSE_STORAGE_PREFIX}${convId}`, String(this._collapsed));
   }
 
   #handleNew() {

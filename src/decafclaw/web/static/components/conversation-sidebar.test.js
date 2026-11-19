@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { showToast } from '../lib/toast.js';
 import './conversation-sidebar.js';
 
@@ -1048,5 +1048,84 @@ describe('conversation-sidebar row actions', () => {
     expect(actions.querySelector('.new-conv-btn')).toBeTruthy();
     expect(actions.querySelector('.wiki-new-folder-btn')).toBeTruthy();
     expect(actions.previousElementSibling.querySelector('.vault-action-btns')).toBeNull();
+  });
+});
+
+describe('conversation-sidebar collapse state', () => {
+  let sidebar;
+
+  beforeEach(() => localStorage.clear());
+
+  afterEach(() => {
+    sidebar?.remove();
+    localStorage.clear();
+  });
+
+  async function mount(storeOverrides = {}) {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'c1',
+      conversations: [{ conv_id: 'c1', title: 'One' }, { conv_id: 'c2', title: 'Two' }],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 0,
+      contextLimit: 0,
+      activeModel: 'm',
+      availableModels: ['m'],
+      defaultModel: 'm',
+      activeMode: 'default',
+      availableModes: [{ name: 'default', description: 'Standard' }],
+      selectConversation: vi.fn(),
+      setModel: vi.fn(),
+      setMode: vi.fn(),
+      ...storeOverrides,
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    await sidebar.updateComplete;
+    return { sidebar, store };
+  }
+
+  it('stores collapse per conversation and restores it when switching back', async () => {
+    const { sidebar, store } = await mount();
+    expect(sidebar._collapsed).toBe(false);
+
+    sidebar.querySelector('.collapse-btn').click();
+    await sidebar.updateComplete;
+    expect(sidebar._collapsed).toBe(true);
+    expect(localStorage.getItem('sidebar-collapsed:c1')).toBe('true');
+    expect(localStorage.getItem('sidebar-collapsed')).toBeNull();
+
+    store.currentConvId = 'c2';
+    store.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+    expect(sidebar._collapsed).toBe(false);
+    expect(sidebar.hasAttribute('collapsed')).toBe(false);
+
+    store.currentConvId = 'c1';
+    store.dispatchEvent(new Event('change'));
+    await sidebar.updateComplete;
+    expect(sidebar._collapsed).toBe(true);
+    expect(sidebar.hasAttribute('collapsed')).toBe(true);
+  });
+
+  it('restores the stored state when a conversation is opened in a fresh tab', async () => {
+    localStorage.setItem('sidebar-collapsed:c1', 'true');
+
+    const { sidebar } = await mount();
+    expect(sidebar._collapsed).toBe(true);
+    expect(sidebar.querySelector('.collapse-btn')?.title).toBe('Expand sidebar');
+  });
+
+  it('migrates the old global collapse preference to the open conversation', async () => {
+    localStorage.setItem('sidebar-collapsed', 'true');
+
+    const { sidebar } = await mount();
+    expect(sidebar._collapsed).toBe(true);
+    expect(localStorage.getItem('sidebar-collapsed:c1')).toBe('true');
+    expect(localStorage.getItem('sidebar-collapsed')).toBeNull();
   });
 });
