@@ -509,6 +509,7 @@ async def test_poll_confirmation_manager_ignores_always_when_disallowed():
     from decafclaw.mattermost import MattermostClient
 
     client = MattermostClient.__new__(MattermostClient)
+    client._pending_confirm_posts = {}
     client.bot_user_id = "bot-1"
     client._http = MagicMock()
     client.edit_message = AsyncMock()
@@ -554,6 +555,7 @@ async def test_poll_confirmation_manager_indefinite_timeout_resolves():
     from decafclaw.mattermost import MattermostClient
 
     client = MattermostClient.__new__(MattermostClient)
+    client._pending_confirm_posts = {}
     client.bot_user_id = "bot-1"
     client._http = MagicMock()
     client.edit_message = AsyncMock()
@@ -596,6 +598,7 @@ async def test_poll_confirmation_manager_resolves_memo_emoji_with_rule():
     from decafclaw.mattermost import MattermostClient
 
     client = MattermostClient.__new__(MattermostClient)
+    client._pending_confirm_posts = {}
     client.bot_user_id = "bot-1"
     client._http = MagicMock()
     client.edit_message = AsyncMock()
@@ -640,6 +643,7 @@ async def test_poll_confirmation_manager_stops_when_confirmation_cleared():
     from decafclaw.mattermost import MattermostClient
 
     client = MattermostClient.__new__(MattermostClient)
+    client._pending_confirm_posts = {}
     client.bot_user_id = "bot-1"
     client._http = MagicMock()
     client.edit_message = AsyncMock()
@@ -672,6 +676,71 @@ async def test_poll_confirmation_manager_stops_when_confirmation_cleared():
     )
 
     manager.respond_to_confirmation.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_poll_confirmation_manager_wrench_flags_missing_tool():
+    """The wrench reaction denies a shell command and flags a missing native tool (#1559)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from decafclaw.mattermost import MattermostClient
+
+    client = MattermostClient.__new__(MattermostClient)
+    client._pending_confirm_posts = {}
+    client.bot_user_id = "bot-1"
+    client._http = MagicMock()
+    client.edit_message = AsyncMock()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = [{"emoji_name": "wrench", "user_id": "user-1"}]
+    mock_resp.raise_for_status = MagicMock()
+    client._http.get = AsyncMock(return_value=mock_resp)
+
+    manager = MagicMock()
+    manager.respond_to_confirmation = AsyncMock()
+
+    await client._poll_confirmation_manager(
+        post_id="p1",
+        manager=manager,
+        conv_id="c1",
+        confirmation_id="conf-1",
+        action_type="run_shell_command",
+        timeout=1,
+        poll_interval=0.01,
+    )
+
+    manager.respond_to_confirmation.assert_called_once_with(
+        "c1",
+        "conf-1",
+        approved=False,
+        always=False,
+        add_pattern=False,
+        data={"flag_missing_tool": True},
+    )
+    # The post-id bookkeeping used for reply-feedback is cleared after polling.
+    assert client._pending_confirm_posts == {}
+
+
+def test_pending_shell_confirmation_only_matches_shell_actions():
+    """Only a pending shell confirmation claims thread replies as feedback (#1559)."""
+    from unittest.mock import MagicMock
+
+    from decafclaw.confirmations import ConfirmationAction
+    from decafclaw.mattermost import MattermostClient
+
+    manager = MagicMock()
+    state = MagicMock()
+    manager.get_state.return_value = state
+
+    state.pending_confirmation = MagicMock(action_type=ConfirmationAction.RUN_SHELL_COMMAND)
+    assert MattermostClient._pending_shell_confirmation(manager, "c1") is state.pending_confirmation
+
+    state.pending_confirmation = MagicMock(action_type=ConfirmationAction.ACTIVATE_SKILL)
+    assert MattermostClient._pending_shell_confirmation(manager, "c1") is None
+
+    state.pending_confirmation = None
+    assert MattermostClient._pending_shell_confirmation(manager, "c1") is None
 
 
 # -- Workspace file serving --------------------------------------------------

@@ -231,9 +231,10 @@ def test_shell_definition_exposes_optional_cwd():
     params = shell_def["function"]["parameters"]
 
     assert params["properties"]["cwd"]["type"] == "string"
+    assert params["properties"]["purpose"]["type"] == "string"
     assert params["required"] == ["command"]
     # cwd is ordered first in properties to bias models to set working dir before command (#1467)
-    assert list(params["properties"].keys()) == ["cwd", "command"]
+    assert list(params["properties"].keys()) == ["cwd", "command", "purpose"]
 
 
 # -- rejection of cd chaining (#1467) -------------------------------------------

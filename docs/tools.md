@@ -206,6 +206,29 @@ Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.
 
 Use `cwd` instead of `cd <path> && <command>`: chained commands bypass atomic allow-pattern matching and force manual confirmation, while a single invocation in a subdirectory (worktree, nested repo, subproject) matches patterns normally. Commands starting with `cd ... &&` or standalone `cd` are rejected fail-fast (#1467) with guidance to set `cwd` instead, and `cwd` is positioned first in the tool schema to encourage setting the working directory before generating the command string. The security monitor still enforces the **workspace root** as the boundary — `cwd` moves the starting point, not the authorized area. The effective directory is passed to the aux-LLM judge and shown in the web and Mattermost confirmation cards when it differs from the workspace root. The auto-background handoff path (`#1136`) runs the job in the same `cwd`.
 
+### Purpose and denial feedback (#1559)
+
+`shell` and `shell_background_start` take an optional `purpose`: a short statement of what the agent is trying to accomplish. The purpose is **untrusted metadata**, not a permission grant — Tier 1 blocks and sensitive-command confirmations are unaffected no matter how benign the stated purpose is. It feeds three places:
+
+- **Aux auto-approval judge.** The prompt includes `Stated Purpose` and instructs the judge to treat a command that contradicts its purpose as high risk. It also carries a **native tool index** (`workspace_read`, `workspace_search`, `workspace_edit`, `web_fetch`, `vault_search`, …): when a native tool cleanly covers the purpose, the judge declines auto-approval and names that tool in `feedback` instead of approving a raw `grep`/`cat`/`sed`/`curl`.
+- **Tier 2 classifier.** `evaluate_command_llm(purpose=...)` shows the stated purpose to the security classifier and asks it to flag command/purpose conflicts as high risk.
+- **Human confirmation.** The web card and the Mattermost post show the purpose next to the command, collapsed to one bounded line (mention-neutralized in Mattermost) so agent-supplied text cannot inject prompt lines or forge card content.
+
+A denial may carry `feedback` — the judge's safer-alternative advice, or the human's. The tool result becomes `[error: command denied: <reason>. Feedback: <feedback>]`, so the agent can self-correct in the same turn. The standing guidance in `AGENT.md` tells it to treat denial feedback as guidance, not a failure.
+
+Feedback collection by transport:
+- **Web UI:** the confirmation card has an optional feedback field. `Deny` sends it as `feedback` on `confirm_response`.
+- **Mattermost:** a reply that **starts a thread on a top-level confirmation card** is treated as a denial carrying the reply text as feedback (the turn is parked at the prompt, so no other interpretation applies). Mattermost links replies by thread root, so a card posted inside an existing thread cannot distinguish a reply to it from any other message there; those keep normal routing. The `🔧` reaction and the buttons still work everywhere.
+
+### Capability gaps from shell review (#1559, #1482 data contract)
+
+When a command exists only because no native tool covers the operation, the review pipeline records it in `workspace/improvement_inbox.jsonl`:
+
+- The aux judge returns an optional `tool_gap: {proposed_tool, rationale}`; a decline carrying one appends an item with `trigger: "shell_tool_review"`, `subsystem: "tools"`, `severity: "low"`.
+- A human can flag it while denying: the web card's **"Log as a missing native tool"** checkbox, or the Mattermost `🔧` reaction.
+
+Writes are fail-open: an inbox failure never changes the command's outcome. The `improvement-inbox` contrib skill reads the same file.
+
 ### Auto-backgrounding on a foreground time budget (#1136)
 
 By default `shell` runs the command with a blocking call and a hard timeout (`shell.max_runtime_sec`, default 30s — the command's **total runtime limit**). An opt-in **foreground waiting budget** (`shell.foreground_wait_budget_sec`, default `None` = disabled) changes that: the command is started through the same managed runner as background jobs and awaited up to the budget.

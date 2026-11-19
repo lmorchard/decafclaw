@@ -59,6 +59,10 @@ class MattermostClient:
         self.user_rate_limit_ms = config.mattermost.user_rate_limit_ms
         self.channel_blocklist = set(config.mattermost.channel_blocklist)
         self._connected_event = asyncio.Event()
+        # conv_id -> confirmation post id, while a manager confirmation poll is
+        # live. A thread reply to that post is treated as denial feedback
+        # (#1559) instead of a new request.
+        self._pending_confirm_posts: dict[str, str] = {}
         self._http = httpx.AsyncClient(
             base_url=self.url + "/api/v4",
             headers={
@@ -338,6 +342,27 @@ class MattermostClient:
 
         senders = set(m["sender_name"] for m in msgs)
         log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
+
+        # -- Denial feedback via a reply to the confirmation card (#1559) --
+        # The turn is parked at the confirmation prompt, so a reply that opens
+        # a thread on the card has no other meaning: treat it as a denial
+        # carrying the reply text as feedback for the agent. A reply to a card
+        # inside an existing thread is indistinguishable from any other
+        # message there and keeps normal routing.
+        reply_conv, pending = self._pending_shell_confirmation_for_reply(manager, msgs)
+        if pending is not None and reply_conv:
+            await manager.respond_to_confirmation(
+                reply_conv,
+                pending.confirmation_id,
+                approved=False,
+                feedback=combined_text.strip(),
+            )
+            await self.send(
+                channel_id,
+                "\U0001f6ab Denied with your feedback; the agent will see it.",
+                root_id=root_id,
+            )
+            return
 
         # -- /update / !update side-effect command (#981): human-only, no agent turn
         trimmed_cmd = combined_text.strip()
@@ -637,6 +662,7 @@ class MattermostClient:
                     decline_reason=decline_reason,
                     suggested_rule=suggested_rule,
                     cwd=action_data.get("cwd", ""),
+                    purpose=action_data.get("purpose", ""),
                 )
 
                 # Start emoji polling routed through the manager
@@ -852,6 +878,7 @@ class MattermostClient:
                     decline_reason=action_data.get("decline_reason", ""),
                     suggested_rule=action_data.get("suggested_rule", ""),
                     cwd=action_data.get("cwd", ""),
+                    purpose=action_data.get("purpose", ""),
                 )
                 if confirm_post_id and manager:
                     asyncio.create_task(
@@ -961,6 +988,42 @@ class MattermostClient:
 
     # -- Confirmation polling (manager-based) ----------------------------------
 
+    @staticmethod
+    def _pending_shell_confirmation(manager, conv_id):
+        """Return the pending shell confirmation for ``conv_id``, if any."""
+        get_state = getattr(manager, "get_state", None)
+        if get_state is None:
+            return None
+        state = get_state(conv_id)
+        pending = getattr(state, "pending_confirmation", None)
+        if pending is None:
+            return None
+        action = getattr(pending.action_type, "value", pending.action_type)
+        return pending if action == "run_shell_command" else None
+
+    def _pending_shell_confirmation_for_reply(self, manager, msgs):
+        """Find a pending shell confirmation whose card started a reply thread (#1559).
+
+        Mattermost links replies to their thread root through ``root_id``;
+        posts carry no usable ``parent_id``. A reply to the card is therefore
+        identifiable only when the card is a top-level post, because the reply
+        then opens a thread rooted at the card. Replies to a card posted inside
+        an existing thread carry that thread's root like every other message,
+        so they keep normal routing — guessing there would hijack ordinary
+        messages.
+        """
+        if not self._pending_confirm_posts or not msgs:
+            return None, None
+        roots = {m.get("root_id", "") for m in msgs if m.get("root_id")}
+        if not roots:
+            return None, None
+        for conv_id, card_id in list(self._pending_confirm_posts.items()):
+            if card_id in roots:
+                pending = self._pending_shell_confirmation(manager, conv_id)
+                if pending is not None:
+                    return conv_id, pending
+        return None, None
+
     async def _poll_confirmation_manager(
         self,
         post_id,
@@ -975,7 +1038,9 @@ class MattermostClient:
     ):
         """Poll a post for reactions to resolve a confirmation via the manager."""
 
-        async def _resolve(approved, always=False, add_pattern=False, add_rule=False, rule="", label=""):
+        async def _resolve(
+            approved, always=False, add_pattern=False, add_rule=False, rule="", label="", flag_missing_tool=False
+        ):
             kwargs = {
                 "approved": approved,
                 "always": always,
@@ -984,6 +1049,8 @@ class MattermostClient:
             if add_rule or rule:
                 kwargs["add_rule"] = add_rule
                 kwargs["rule"] = rule
+            if flag_missing_tool:
+                kwargs["data"] = {"flag_missing_tool": True}
             await manager.respond_to_confirmation(
                 conv_id,
                 confirmation_id,
@@ -996,6 +1063,38 @@ class MattermostClient:
             except Exception as exc:
                 log.debug("confirmation result edit failed for post %s: %s", post_id, exc)
 
+        # A direct thread reply to this post is denial feedback (#1559).
+        self._pending_confirm_posts[conv_id] = post_id
+        try:
+            await self._poll_confirmation_reactions(
+                post_id,
+                manager,
+                conv_id,
+                confirmation_id,
+                action_type,
+                timeout,
+                poll_interval,
+                allow_always,
+                suggested_rule,
+                _resolve,
+            )
+        finally:
+            if self._pending_confirm_posts.get(conv_id) == post_id:
+                self._pending_confirm_posts.pop(conv_id, None)
+
+    async def _poll_confirmation_reactions(
+        self,
+        post_id,
+        manager,
+        conv_id,
+        confirmation_id,
+        action_type,
+        timeout,
+        poll_interval,
+        allow_always,
+        suggested_rule,
+        _resolve,
+    ):
         deadline = (time.monotonic() + timeout) if (timeout is not None and timeout > 0) else None
         while deadline is None or time.monotonic() < deadline:
             if not getattr(self, "_running", True):
@@ -1050,6 +1149,14 @@ class MattermostClient:
                     elif emoji in ("-1", "thumbsdown"):
                         log.info(f"Tool denied by {user_id}")
                         await _resolve(False, label="\U0001f44e denied")
+                        return
+                    elif emoji in ("wrench", "hammer_and_wrench") and action_type == "run_shell_command":
+                        log.info(f"Tool denied with missing-tool flag by {user_id}")
+                        await _resolve(
+                            False,
+                            flag_missing_tool=True,
+                            label="\U0001f527 denied + missing tool logged",
+                        )
                         return
             except Exception as e:
                 log.debug(f"Reaction poll error: {e}")

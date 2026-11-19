@@ -400,6 +400,7 @@ class CliConfirmResponse(TypedDict):
     add_pattern: bool
     add_rule: NotRequired[bool]
     rule: NotRequired[str]
+    feedback: NotRequired[str]
     data: NotRequired[dict[str, object]]
 
 

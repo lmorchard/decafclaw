@@ -218,6 +218,35 @@ async def test_request_confirmation_denied(manager):
 
 
 @pytest.mark.asyncio
+async def test_request_confirmation_carries_feedback(manager):
+    """A denial's feedback reaches the waiting loop (#1559)."""
+    conv_id = "conv-1"
+    manager._get_or_create(conv_id)
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "grep -rn TODO src/", "purpose": "Find TODOs"},
+        message="Allow shell command?",
+        timeout=2.0,
+    )
+
+    async def deny_with_feedback():
+        await asyncio.sleep(0.05)
+        await manager.respond_to_confirmation(
+            conv_id,
+            request.confirmation_id,
+            approved=False,
+            feedback="Use workspace_search instead.",
+        )
+
+    asyncio.create_task(deny_with_feedback())
+    response = await manager.request_confirmation(conv_id, request)
+
+    assert response.approved is False
+    assert response.feedback == "Use workspace_search instead."
+
+
+@pytest.mark.asyncio
 async def test_request_confirmation_timeout(manager):
     conv_id = "conv-1"
     manager._get_or_create(conv_id)

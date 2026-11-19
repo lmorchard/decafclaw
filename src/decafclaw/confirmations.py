@@ -84,6 +84,9 @@ class ConfirmationResponse:
     add_pattern: bool = False
     add_rule: bool = False
     rule: str = ""
+    # Human or reviewer denial feedback (#1559). A denial carrying feedback is
+    # surfaced to the agent in the tool result so it can self-correct.
+    feedback: str = ""
     data: dict = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -101,6 +104,8 @@ class ConfirmationResponse:
             msg.pop("add_rule")
         if not msg["rule"]:
             msg.pop("rule")
+        if not msg["feedback"]:
+            msg.pop("feedback")
         if not msg["data"]:
             msg.pop("data")
         return msg

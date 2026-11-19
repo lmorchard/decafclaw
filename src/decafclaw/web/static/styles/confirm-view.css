@@ -72,6 +72,38 @@
   word-break: break-all;
 }
 
+.confirm-purpose {
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--pico-color);
+  word-break: break-word;
+}
+
+.confirm-purpose-label {
+  font-weight: 600;
+  color: var(--pico-muted-color);
+}
+
+.confirm-feedback-box {
+  margin-top: 0.5rem;
+}
+
+.confirm-feedback-input {
+  width: 100%;
+  margin: 0 !important;
+  font-size: 0.85rem !important;
+  padding: 0.35rem 0.5rem !important;
+}
+
+.confirm-feedback-flag {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
 .confirm-decline-reason {
   margin-top: 0.5rem;
   padding: 0.35rem 0.5rem;

@@ -49,8 +49,8 @@ async def _request_via_manager(ctx: "Context", tool_name, command, message, time
 
     # Build action_data from the tool-specific parameters
     action_data: dict = {"command": command}
-    for key in ("suggested_pattern", "skill_name", "decline_reason", "suggested_rule"):
-        if key in extra_event_fields:
+    for key in ("suggested_pattern", "skill_name", "decline_reason", "suggested_rule", "purpose"):
+        if key in extra_event_fields and extra_event_fields[key]:
             action_data[key] = extra_event_fields[key]
     if "action_data" in extra_event_fields and isinstance(extra_event_fields["action_data"], dict):
         action_data.update(extra_event_fields["action_data"])
@@ -76,6 +76,10 @@ async def _request_via_manager(ctx: "Context", tool_name, command, message, time
     if response.add_rule:
         result["add_rule"] = True
         result["rule"] = response.rule
+    if response.feedback:
+        result["feedback"] = response.feedback
+    if response.data:
+        result["data"] = response.data
     return result
 
 

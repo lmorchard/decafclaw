@@ -61,6 +61,7 @@ class TestConfirmResponseDataForwarding:
             add_pattern=False,
             add_rule=False,
             rule="",
+            feedback="",
             data={"value": "tide pools"},
         )
 
@@ -86,6 +87,7 @@ class TestConfirmResponseDataForwarding:
             add_pattern=False,
             add_rule=False,
             rule="",
+            feedback="",
             data=None,
         )
 
@@ -112,6 +114,7 @@ class TestConfirmResponseDataForwarding:
             add_pattern=False,
             add_rule=False,
             rule="",
+            feedback="",
             data=None,
         )
 
@@ -139,5 +142,58 @@ class TestConfirmResponseDataForwarding:
             add_pattern=False,
             add_rule=True,
             rule="Auto-approve gh pr create in this repo",
+            feedback="",
+            data=None,
+        )
+
+
+class TestConfirmResponseFeedbackForwarding:
+    @pytest.mark.asyncio
+    async def test_denial_feedback_forwarded_to_manager(self, ws_send, index, ws_state):
+        """A denial's feedback text rides through to respond_to_confirmation (#1559)."""
+        msg = {
+            "type": "confirm_response",
+            "conv_id": "conv-1",
+            "confirmation_id": "cfm-fb",
+            "approved": False,
+            "feedback": "  Use workspace_read instead.  ",
+        }
+
+        await _handle_confirm_response(ws_send, index, "testuser", msg, ws_state)
+
+        ws_state["manager"].respond_to_confirmation.assert_awaited_once_with(
+            "conv-1",
+            "cfm-fb",
+            approved=False,
+            always=False,
+            add_pattern=False,
+            add_rule=False,
+            rule="",
+            feedback="Use workspace_read instead.",
+            data=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_string_feedback_is_dropped(self, ws_send, index, ws_state):
+        """Malformed feedback (non-string) is coerced to an empty string."""
+        msg = {
+            "type": "confirm_response",
+            "conv_id": "conv-1",
+            "confirmation_id": "cfm-bad-fb",
+            "approved": False,
+            "feedback": {"not": "a string"},
+        }
+
+        await _handle_confirm_response(ws_send, index, "testuser", msg, ws_state)
+
+        ws_state["manager"].respond_to_confirmation.assert_awaited_once_with(
+            "conv-1",
+            "cfm-bad-fb",
+            approved=False,
+            always=False,
+            add_pattern=False,
+            add_rule=False,
+            rule="",
+            feedback="",
             data=None,
         )

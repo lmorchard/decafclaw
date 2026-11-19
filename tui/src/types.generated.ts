@@ -282,6 +282,7 @@ export interface CliConfirmResponse {
   add_pattern: boolean;
   add_rule?: boolean;
   rule?: string;
+  feedback?: string;
   data?: Record<string, unknown>;
 }
 

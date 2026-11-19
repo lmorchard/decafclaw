@@ -20,7 +20,7 @@ export class ConfirmView extends LitElement {
     this.store = null;
     /** @type {Array} */
     this.confirms = [];
-    /** @type {Object<string,string>} Map of confirmation_id -> current text value */
+    /** @type {Object<string,string|boolean>} Map of confirmation_id key -> input value */
     this._inputValues = {};
     /** @type {any} */
     this._timer = null;
@@ -68,10 +68,26 @@ export class ConfirmView extends LitElement {
 
   /**
    * @param {string} confirmationId
-   * @param {string} value
+   * @param {string | boolean} value
    */
   #setInputValue(confirmationId, value) {
     this._inputValues = { ...this._inputValues, [confirmationId]: value };
+  }
+
+  /**
+   * Send a denial, attaching the optional feedback text and — for shell
+   * confirmations — an optional "this needs a native tool" flag (#1559).
+   * @param {object} c
+   * @param {string} confirmId
+   */
+  #denyConfirm(c, confirmId) {
+    const feedback = `${this._inputValues[`${confirmId}-feedback`] ?? ''}`.trim();
+    const extra = {};
+    if (feedback) extra.feedback = feedback;
+    if (c.tool === 'shell' && this._inputValues[`${confirmId}-flag`]) {
+      extra.data = { flag_missing_tool: true };
+    }
+    this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, false, extra);
   }
 
   /**
@@ -117,7 +133,7 @@ export class ConfirmView extends LitElement {
     }
 
     // Free-text input
-    const currentValue = this._inputValues[confirmId] || '';
+    const currentValue = `${this._inputValues[confirmId] ?? ''}`;
     const canSubmit = currentValue.trim().length > 0;
 
     /** @param {KeyboardEvent} e */
@@ -186,6 +202,7 @@ export class ConfirmView extends LitElement {
 
       const confirmId = c.confirmation_id || `${c.context_id}-${c.tool_call_id || c.tool}`;
       const ruleValue = this._inputValues[confirmId] !== undefined ? this._inputValues[confirmId] : (c.suggested_rule || '');
+      const feedbackValue = `${this._inputValues[`${confirmId}-feedback`] ?? ''}`;
 
       return html`
         <div class="confirm-card" role="dialog"
@@ -202,6 +219,11 @@ export class ConfirmView extends LitElement {
               })()}
             </div>
             <pre class="confirm-command">${c.command}</pre>
+            ${c.action_data?.purpose ? html`
+              <div class="confirm-purpose">
+                <span class="confirm-purpose-label">Purpose:</span> ${c.action_data.purpose}
+              </div>
+            ` : ''}
             ${c.action_data?.cwd ? html`
               <div class="confirm-cwd">
                 Working directory: <code>${c.action_data.cwd}</code>
@@ -224,12 +246,31 @@ export class ConfirmView extends LitElement {
                 />
               </div>
             ` : ''}
+            ${c.tool === 'shell' ? html`
+              <div class="confirm-feedback-box">
+                <input
+                  class="confirm-feedback-input"
+                  type="text"
+                  placeholder="Feedback or safer alternative (optional)…"
+                  .value=${feedbackValue}
+                  @input=${(e) => this.#setInputValue(`${confirmId}-feedback`, e.target.value)}
+                />
+                <label class="confirm-feedback-flag">
+                  <input
+                    type="checkbox"
+                    .checked=${Boolean(this._inputValues[`${confirmId}-flag`])}
+                    @change=${(e) => this.#setInputValue(`${confirmId}-flag`, e.target.checked)}
+                  />
+                  Log as a missing native tool
+                </label>
+              </div>
+            ` : ''}
           </div>
           <div class="confirm-buttons">
             <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, true)}>
               ${c.approve_label || 'Approve'}
             </button>
-            <button class="outline secondary" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, false)}>
+            <button class="outline secondary" @click=${() => this.#denyConfirm(c, confirmId)}>
               ${c.deny_label || 'Deny'}
             </button>
             ${!c.approve_label && c.suggested_rule ? html`

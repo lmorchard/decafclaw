@@ -1052,6 +1052,8 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
 
     raw_data = msg.get("data")
     data = raw_data if isinstance(raw_data, dict) else None
+    raw_feedback = msg.get("feedback", "")
+    feedback = raw_feedback.strip() if isinstance(raw_feedback, str) else ""
 
     if manager and conv_id and confirmation_id:
         await manager.respond_to_confirmation(
@@ -1062,6 +1064,7 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
             add_pattern=msg.get("add_pattern", False),
             add_rule=msg.get("add_rule", False),
             rule=msg.get("rule", ""),
+            feedback=feedback,
             data=data,
         )
     else:
@@ -1078,6 +1081,7 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
                 **({"add_pattern": True} if msg.get("add_pattern") else {}),
                 **({"add_rule": True} if msg.get("add_rule") else {}),
                 **({"rule": msg.get("rule", "")} if msg.get("rule") else {}),
+                **({"feedback": feedback} if feedback else {}),
             }
         )
 
