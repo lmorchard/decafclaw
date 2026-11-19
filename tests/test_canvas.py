@@ -868,6 +868,7 @@ async def test_mutations_keep_content_out_of_canvas_json(config, md_doc_registry
 async def test_canvas_new_tab_web_frame_lifecycle(config, emit_recorder):
     """web_frame creates a canvas tab with allowed origins and rejects untrusted origins."""
     from decafclaw.widgets import init_widgets
+
     init_widgets(config)
 
     # 1. Allowed origin (localhost)
