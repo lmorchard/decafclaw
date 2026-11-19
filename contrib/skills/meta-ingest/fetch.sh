@@ -40,7 +40,7 @@ rm -f "${EXPORT_DIR}"/*.md 2>/dev/null || true
 # `me-to-markdown export --help` for the full list.
 set +e
 if [ "$#" -gt 0 ]; then
-    me-to-markdown export --output-dir "$EXPORT_DIR" "$@"
+    me-to-markdown export --sync --output-dir "$EXPORT_DIR" "$@"
     RC=$?
     ADVANCE_TIMESTAMP=0
 else
@@ -50,7 +50,7 @@ else
     else
         SINCE_ARG="24h"
     fi
-    me-to-markdown export --output-dir "$EXPORT_DIR" --since "$SINCE_ARG"
+    me-to-markdown export --sync --output-dir "$EXPORT_DIR" --since "$SINCE_ARG"
     RC=$?
     ADVANCE_TIMESTAMP=1
 fi

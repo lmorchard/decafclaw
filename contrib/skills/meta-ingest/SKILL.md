@@ -2,6 +2,7 @@
 name: meta-ingest
 description: Fetch recent activity across all me-to-markdown sources (Mastodon, Linkding, GitHub, Spotify, YouTube, Pocket Casts), analyze each source in a child agent, and record insights to the vault
 effort: default
+auto-approve: true
 required-skills:
   - tabstack
 allowed-tools: shell($SKILL_DIR/fetch.sh), shell($SKILL_DIR/fetch.sh *), workspace_read, vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, tabstack_extract_markdown, current_time, delegate_tasks
