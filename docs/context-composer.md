@@ -170,13 +170,13 @@ served from cache, but it also never consumes context-window budget on later
 turns. Archiving it would extend the cached prefix slightly while replaying
 3–5K retrieved tokens forever and feeding them to compaction.
 
-Restart-time dedupe no longer has a retrieval row to scan. The surfaced vault
-paths ride as `working_memory.vault_paths` metadata on the archived user row;
-`get_already_retrieved_paths` reads both that and legacy `vault_retrieval`
-rows. `assemble_provider_history` strips the metadata before the provider
-request. Within one process, `ComposerState.injected_paths` is also persisted
-per turn through `PersistedTurnState`, so a fresh per-turn `ctx` keeps the
-suppression set.
+Under ephemeral working memory, deduplication follows prompt residency: pages
+and entries are deduplicated against active conversation history rather than
+suppressing future turns after eviction. That way, follow-up turns remain free
+to re-retrieve context if the user continues asking about the topic. The
+surfaced vault paths are recorded as `working_memory.vault_paths` metadata on
+the archived user row for turn auditing and Context Inspector inspection, and
+`assemble_provider_history` strips the metadata before the provider request.
 
 Not every injection is ephemeral. Explicit `@` references and pre-emptive
 discovery hints stay in `TAIL`/`EPILOGUE` because they are tied to the user's
@@ -285,17 +285,15 @@ Before each interactive turn, the default-on [`VaultRetrievalExtension`](extensi
 
 The retrieval text is ephemeral: it reaches the provider for that turn only and is never written to the archive or replayed (#1574). See [working memory](#working-memory-and-the-cache-boundary-1574).
 
-### Deduplication across turns (#1157)
+### Deduplication and prompt residency (#1157, #1574)
 
-Automatic proactive retrieval is deduplicated per conversation: a vault page that an earlier turn already surfaced is not surfaced again.
+Automatic proactive retrieval is deduplicated against pages resident in active conversation history:
 
-1. After injection, the extension records the injected vault file paths in `ComposerState.injected_paths`. The composer writes those paths as `working_memory.vault_paths` metadata on the archived user row.
-2. On each later turn, the composer rebuilds the already-retrieved set from archived history via `get_already_retrieved_paths`, which reads that metadata (and legacy `vault_retrieval` rows), and filters retrieval candidates (keyed on `file_path`) against it. Explicit references (`@[[Page]]`, handled by `VaultReferencesExtension`) continue to use `get_already_injected_pages` to track `vault_references` separately, so explicit mentions are not suppressed by earlier proactive retrievals.
-3. The live `ComposerState.injected_paths` set is still unioned in for in-flight injections within a turn, and it rides `PersistedTurnState` so a fresh per-turn `ctx` keeps it.
+1. When a page is resident in history (such as legacy `vault_retrieval` rows or explicit `@[[Page]]` references), `get_already_retrieved_paths` detects it and filters retrieval candidates against it to prevent duplicate content in the prompt.
+2. Within a single turn's composition, `ComposerState.injected_paths` suppresses duplicate candidates across multi-part queries.
+3. Because `<working_memory>` is ephemeral and evicted after each turn, prior-turn ephemeral blocks do not suppress subsequent turns. If the user asks a follow-up question on the same topic, the extension is free to re-retrieve the page into the new turn's working memory.
 
 Explicit `vault_search` tool results are not deduplicated — the agent asked for those, so they are delivered in full.
-
-Compaction resets the in-memory injected paths (`ComposerState.reset_for_compaction()`), and a compacted history replaces the archived turns, so pages can surface again after compaction.
 
 ### Configuration
 

@@ -5,10 +5,11 @@ context contribution. The extension is observed by the composer through the
 ``PRE_COMPOSE`` lifecycle hook, so notes reading, cursor progression, and
 formatting no longer live in ``context_composer.py``.
 
-Delta injection (#1111): only notes newer than the last surfaced note are
-injected, tracked by ``ComposerState.injection_cursors``. The composer
-snapshots that state before composing and restores it when composition fails,
-so an aborted turn re-surfaces what was never delivered.
+Under ephemeral working memory (#1574), notes are deduplicated against active
+conversation history (prompt-residency deduplication) rather than advancing a
+persistent cursor: notes already resident in history (e.g. legacy
+conversation_notes rows) are suppressed, while notes evicted with prior
+ephemeral blocks remain visible across turns.
 
 Yankable: disabling ``config.extensions.scratchpad_notes`` (or the legacy
 ``config.notes.enabled``) leaves the turn loop with no notes injections and no
@@ -19,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import replace
 from typing import Any
 
 from decafclaw.events import EventBus, TurnLifecycle
@@ -28,6 +28,18 @@ from decafclaw.notes import format_notes_for_context, read_notes
 from . import BaseExtension, ContextContribution, ContextSlot, provenance_excerpt, register_extension_type
 
 log = logging.getLogger(__name__)
+
+
+def _is_note_in_history(note: Any, history: list | None) -> bool:
+    """Check if a note is already resident in conversation history (#1574)."""
+    if not history:
+        return False
+    for msg in history:
+        if msg.get("role") == "conversation_notes":
+            content = str(msg.get("content") or "")
+            if note.text in content:
+                return True
+    return False
 
 
 def _notes_enabled(config: Any) -> bool:
@@ -63,16 +75,16 @@ class ScratchpadNotesExtension(BaseExtension):
         self,
         ctx: Any,
         _user_message: str = "",
-        _history: list | None = None,
+        history: list | None = None,
     ) -> ContextContribution | None:
         """Return unseen notes for the working-memory bundle; fail open."""
         try:
-            return await self._contribution(ctx)
+            return await self._contribution(ctx, history)
         except Exception as exc:  # fail-open collector
             log.warning("Scratchpad notes injection failed: %s", exc)
             return None
 
-    async def _contribution(self, ctx: Any) -> ContextContribution | None:
+    async def _contribution(self, ctx: Any, history: list | None = None) -> ContextContribution | None:
         config = getattr(ctx, "config", None) or self.config
         if not _notes_enabled(config):
             return None
@@ -87,15 +99,18 @@ class ScratchpadNotesExtension(BaseExtension):
         if not items:
             return None
 
-        from decafclaw.context_types import SourceEntry, select_unseen_items
+        from decafclaw.context_types import SourceEntry
 
-        cursors = ctx.composer.injection_cursors
-        new_items, notes_ts, notes_boundary = select_unseen_items(items, cursors.notes_ts, cursors.notes_boundary)
-        if not new_items:
-            return None
-        ctx.composer.injection_cursors = replace(cursors, notes_ts=notes_ts, notes_boundary=notes_boundary)
+        # Prompt-residency deduplication (#1574): only deduplicate notes that
+        # are actually resident in active conversation history (such as legacy
+        # archived conversation_notes rows). Ephemeral working-memory blocks evicted on
+        # prior turns do not suppress subsequent turns.
+        if history:
+            items = [item for item in items if not _is_note_in_history(item, history)]
+            if not items:
+                return None
 
-        text = format_notes_for_context(new_items)
+        text = format_notes_for_context(items)
         if not text:
             return None
         from decafclaw.util import estimate_tokens
@@ -106,13 +121,11 @@ class ScratchpadNotesExtension(BaseExtension):
             source_entry=SourceEntry(
                 source="notes",
                 tokens_estimated=estimate_tokens(text),
-                items_included=len(new_items),
+                items_included=len(items),
                 items_truncated=0,
             ),
             provenance={
-                "scratchpad": [
-                    {"timestamp": note.timestamp, "text": provenance_excerpt(note.text)} for note in new_items
-                ]
+                "scratchpad": [{"timestamp": note.timestamp, "text": provenance_excerpt(note.text)} for note in items]
             },
         )
 

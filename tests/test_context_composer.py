@@ -47,12 +47,12 @@ def _vault_guide(composer, config, mode):
     return contribution.messages[0]["content"], contribution.source_entry
 
 
-def _recent_journal(composer, context, config, mode):
+def _recent_journal(composer, context, config, mode, history=None):
     """Run RecentJournalExtension and return its legacy (messages, entry) shape."""
     from decafclaw.extensions.recent_journal import RecentJournalExtension
 
     context.composer.mode = mode
-    contribution = RecentJournalExtension({}, config)._contribute(context)
+    contribution = RecentJournalExtension({}, config)._contribute(context, history=history)
     if contribution is None:
         return [], None
     return contribution.messages, contribution.source_entry
@@ -2231,8 +2231,8 @@ class TestComposeRecentJournal:
         assert msgs[0]["role"] == "recent_journal"
         assert "just thinking about X" in msgs[0]["content"]
         assert entry is not None and entry.items_included == 1
-        # High-water mark advanced to the newest surfaced entry.
-        assert ctx.composer.injection_cursors.journal_ts == datetime(2026, 7, 23, 14, 30)
+        # Working memory is ephemeral; it does not advance persistent cursors (#1574).
+        assert ctx.composer.injection_cursors.journal_ts is None
 
     def test_provenance_lists_surfaced_entries(self, ctx, config):
         """Each injected journal entry contributes a capsule item (#1563)."""
@@ -2249,71 +2249,46 @@ class TestComposeRecentJournal:
         assert item["timestamp"] == "2026-07-23 14:30"
         assert "just thinking about X" in item["text"]
 
-    def test_second_turn_skips_when_no_new_entries(self, ctx, config):
+    def test_surfaces_entries_when_not_in_history(self, ctx, config):
+        """Under prompt-residency deduplication, ephemeral turns keep surfacing entries (#1574)."""
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "entry one")])
         composer = ContextComposer()
-        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
-            _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
-            # Same entries, later turn — nothing new since the mark.
-            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
-        assert msgs == []
-        assert entry is None
-
-    def test_second_turn_surfaces_only_new_entries(self, ctx, config):
-        now = datetime(2026, 7, 23, 15, 0)
-        _write_journal_file(config, now, [("14:30", "old entry")])
-        composer = ContextComposer()
-        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
-            _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
-        # A new entry lands; next turn should surface only it.
-        later = datetime(2026, 7, 23, 15, 5)
-        _write_journal_file(config, later, [("14:30", "old entry"), ("15:02", "brand new entry")])
-        with patch("decafclaw.extensions.recent_journal._now", return_value=later):
-            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
-        assert len(msgs) == 1
-        assert "brand new entry" in msgs[0]["content"]
-        assert "old entry" not in msgs[0]["content"]
-        assert entry.items_included == 1
-
-    def test_same_minute_entry_surfaces_on_later_turn(self, ctx, config):
-        """Journal headers have minute resolution; a later entry in the same
-        minute must still surface after the cursor carries into a fresh turn."""
-        from decafclaw.context import Context
-
-        now = datetime(2026, 7, 23, 14, 30, 20)
-        _write_journal_file(config, now, [("14:30", "first entry")])
-        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
-            _recent_journal(None, ctx, config, ComposerMode.INTERACTIVE)
-
-        # Next turn: fresh context carrying the persisted cursor.
-        next_ctx = Context(config=config, event_bus=ctx.event_bus)
-        next_ctx.composer.injection_cursors = ctx.composer.injection_cursors
-        later = datetime(2026, 7, 23, 14, 30, 50)
-        _write_journal_file(config, later, [("14:30", "first entry"), ("14:30", "second entry")])
-        with patch("decafclaw.extensions.recent_journal._now", return_value=later):
-            msgs, entry = _recent_journal(None, next_ctx, config, ComposerMode.INTERACTIVE)
-        assert len(msgs) == 1
-        assert "second entry" in msgs[0]["content"]
-        assert "first entry" not in msgs[0]["content"]
-
-    def test_compaction_resets_recent_journal_high_water_mark(self, ctx, config):
-        now = datetime(2026, 7, 23, 15, 0)
-        _write_journal_file(config, now, [("14:30", "entry one")])
-        composer = ContextComposer()
-        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
-            _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
-        assert ctx.composer.injection_cursors.journal_ts == datetime(2026, 7, 23, 14, 30)
-
-        # Compaction reset
-        ctx.composer.reset_for_compaction()
-        assert ctx.composer.injection_cursors.journal_ts is None
-
-        # Next turn re-surfaces full baseline
         with patch("decafclaw.extensions.recent_journal._now", return_value=now):
             msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE)
         assert len(msgs) == 1
         assert "entry one" in msgs[0]["content"]
+
+        # Turn 2: working memory was evicted, so history has no recent_journal.
+        # The entry must still surface so the model doesn't suffer amnesia.
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            msgs2, entry2 = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE, history=[])
+        assert len(msgs2) == 1
+        assert "entry one" in msgs2[0]["content"]
+
+    def test_deduplicates_entries_resident_in_history(self, ctx, config):
+        """Entries already resident in active conversation history are suppressed (#1574)."""
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "entry one")])
+        composer = ContextComposer()
+        history = [{"role": "recent_journal", "content": "Recent journal entries:\n\n## 2026-07-23 14:30\n\nentry one"}]
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE, history=history)
+        assert msgs == []
+        assert entry is None
+
+    def test_surfaces_only_new_entries_when_older_resident_in_history(self, ctx, config):
+        """When an older entry is resident in history, only newer entries surface (#1574)."""
+        now = datetime(2026, 7, 23, 15, 5)
+        _write_journal_file(config, now, [("14:30", "old entry"), ("15:02", "brand new entry")])
+        composer = ContextComposer()
+        history = [{"role": "recent_journal", "content": "Recent journal entries:\n\n## 2026-07-23 14:30\n\nold entry"}]
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            msgs, entry = _recent_journal(composer, ctx, config, ComposerMode.INTERACTIVE, history=history)
+        assert len(msgs) == 1
+        assert "brand new entry" in msgs[0]["content"]
+        assert "old entry" not in msgs[0]["content"]
+        assert entry.items_included == 1
 
     def test_skips_when_disabled(self, ctx, config):
         now = datetime(2026, 7, 23, 15, 0)
@@ -2369,8 +2344,8 @@ class TestComposeRecentJournal:
         # Newest survives; older bulky entries trimmed away.
         assert "newest keep-me" in msgs[0]["content"]
         assert entry.items_truncated > 0
-        # Mark still reflects the newest entry, not a trimmed one.
-        assert ctx.composer.injection_cursors.journal_ts == datetime(2026, 7, 23, 14, 45)
+        # Working memory is ephemeral; it does not advance persistent cursors (#1574).
+        assert ctx.composer.injection_cursors.journal_ts is None
 
 
 class TestComposeRecentJournalIntegration:
@@ -2395,7 +2370,7 @@ class TestComposeRecentJournalIntegration:
 
     @pytest.mark.asyncio
     async def test_recent_journal_is_working_memory_only(self, ctx, config):
-        """recent_journal reaches the current prompt but never replays (#1574)."""
+        """recent_journal reaches the prompt via working memory without polluting history (#1574)."""
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "retained journal fact")])
         history: list[dict] = []
@@ -2417,8 +2392,9 @@ class TestComposeRecentJournalIntegration:
         )
         assert [m for m in history if m.get("role") == "recent_journal"] == []
 
-        # Turn 2: the cursor already consumed the entry, and the turn-1 block
-        # does not replay, so the fact is absent from the new prompt.
+        # Turn 2: since working memory was ephemeral and history has no recent_journal,
+        # prompt-residency deduplication allows the entry to surface in working memory
+        # again so the model doesn't suffer amnesia (#1574).
         with (
             patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
             patch(
@@ -2429,7 +2405,26 @@ class TestComposeRecentJournalIntegration:
             res2 = await composer.compose(ctx, "turn 2", history, mode=ComposerMode.INTERACTIVE)
 
         outgoing = " ".join(str(m.get("content", "")) for m in res2.messages)
-        assert "retained journal fact" not in outgoing
+        assert "retained journal fact" in outgoing
+        assert [m for m in history if m.get("role") == "recent_journal"] == []
+
+        # If history contains an archived recent_journal message, it is deduplicated:
+        legacy_history = [
+            {
+                "role": "recent_journal",
+                "content": "Recent journal entries:\n\n## 2026-07-23 14:30\n\nretained journal fact",
+            },
+            {"role": "user", "content": "turn 3"},
+        ]
+        with (
+            patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
+            patch(
+                "decafclaw.extensions.vault_retrieval.retrieve_memory_context", new_callable=AsyncMock, return_value=[]
+            ),
+            patch("decafclaw.extensions.recent_journal._now", return_value=now),
+        ):
+            res3 = await composer.compose(ctx, "turn 3", legacy_history, mode=ComposerMode.INTERACTIVE)
+        assert not any("<recent_journal>" in str(m.get("content", "")) for m in res3.messages)
 
     @pytest.mark.asyncio
     async def test_cancelled_compose_rolls_back_cursors(self, ctx, config):

@@ -68,8 +68,8 @@ message's content in a tag named after its role and bundles all of them into
 one `<working_memory>` block at the end of the request. Nothing in that block
 is archived: the conversational prefix through the previous assistant turn
 stays byte-identical for the provider's prompt cache, compaction never
-summarizes consumed retrieval, and surfacing references for the UI or restart
-dedupe travel as metadata on the archived user row (see
+summarizes consumed retrieval, and surfacing references for the UI
+travel as metadata on the archived user row (see
 [working memory](context-composer.md#working-memory-and-the-cache-boundary-1574)).
 
 Token accounting and Context Inspector visibility come from the
@@ -345,11 +345,12 @@ returns no contribution, so the turn still composes.
 `src/decafclaw/extensions/vault_retrieval.py` owns proactive vault retrieval
 (#301, #1048, #1157, epic #1483 phase 4). It subscribes `PRE_COMPOSE`, embeds
 the user message, scores candidates by similarity, recency, and importance,
-suppresses pages the conversation already surfaced, trims to the turn's token
+suppresses pages resident in active history, trims to the turn's token
 budget, and returns a `WORKING_MEMORY` `ContextContribution` holding the
 `vault_retrieval` block plus a `memory` source entry. The block reaches the
 provider for that turn only; the surfaced paths travel as metadata on the
-archived user row so dedupe survives a restart without storing retrieval text.
+archived user row for auditing and Context Inspector display without suppressing
+future turns.
 
 Core computes fixed costs (system prompt, tools, history, response reserve)
 and publishes the remainder on `ComposerState.dynamic_token_budget` before

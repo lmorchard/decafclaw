@@ -412,11 +412,13 @@ def get_already_injected_pages(history: list) -> set[str]:
 
 
 def get_already_retrieved_paths(history: list) -> set[str]:
-    """Return vault paths already surfaced to the conversation (#1157).
+    """Return vault paths currently resident in conversation history (#1157, #1574).
 
-    Newer archives store the references as metadata on the user row because
-    the retrieval text itself is now ephemeral (#1574); older archives carry
-    ``vault_retrieval`` rows, which this still reads.
+    Under ephemeral working memory (#1574), only pages actually present in
+    history (such as legacy ``vault_retrieval`` rows) are deduplicated.
+    Ephemeral working-memory blocks evicted on prior turns do not suppress
+    subsequent turns, allowing the model to re-retrieve context if the user
+    continues asking about that topic (prompt-residency deduplication).
     """
     paths: set[str] = set()
     for msg in history:
@@ -424,9 +426,4 @@ def get_already_retrieved_paths(history: list) -> set[str]:
             legacy_paths = msg.get("file_paths")
             if isinstance(legacy_paths, (list, tuple)):
                 paths.update(p for p in legacy_paths if isinstance(p, str) and p)
-        metadata = msg.get("working_memory")
-        if isinstance(metadata, dict):
-            vault_paths = metadata.get("vault_paths")
-            if isinstance(vault_paths, (list, tuple)):
-                paths.update(p for p in vault_paths if isinstance(p, str) and p)
     return paths

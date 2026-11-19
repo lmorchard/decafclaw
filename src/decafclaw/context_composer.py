@@ -258,6 +258,7 @@ class ContextComposer:
         ctx.composer.last_memory_results = []
         ctx.composer.last_recalled_facts = []
         ctx.composer.last_provenance = {}
+        ctx.composer.injected_paths.clear()
 
         # -- PRE_COMPOSE lifecycle collector hooks (#1454, #1486, #1507, #1574) --
         # HEAD messages mount outside the archived history (see below); DELTA
@@ -405,9 +406,11 @@ class ContextComposer:
             messages.append({**working_memory_msg, "role": ROLE_REMAP["working_memory"]})
 
         # -- Provenance references on the archived user row (#1574) --
-        # The archive no longer carries retrieval text, so restart dedupe
-        # reads the surfaced paths from this metadata. The live prompt keeps
-        # the plain user message; assemble_provider_history strips the key.
+        # Stashes surfaced paths and source token estimates on the archived
+        # user row for turn auditing and Context Inspector inspection. Under
+        # prompt-residency deduplication (#1574), ephemeral blocks evicted on
+        # prior turns do not suppress future turns. The live prompt keeps the
+        # plain user message; assemble_provider_history strips the key.
         provenance_refs: dict = {}
         vault_paths = [r.get("file_path", "") for r in ctx.composer.last_memory_results if r.get("file_path")]
         if vault_paths:

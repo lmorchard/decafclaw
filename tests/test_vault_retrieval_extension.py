@@ -200,8 +200,8 @@ class TestContribution:
         assert contribution.messages == []
         assert contribution.source_entry.details["drop_reason"] == "already_injected"
 
-    async def test_history_metadata_dedupe_suppresses_restored_pages(self, ctx):
-        """A restart rebuilds dedupe from the archived user-row metadata (#1574)."""
+    async def test_history_metadata_does_not_suppress_subsequent_turns(self, ctx):
+        """Prior turns' working_memory metadata does not suppress subsequent turns (#1574)."""
         history = [
             {
                 "role": "user",
@@ -215,12 +215,13 @@ class TestContribution:
         ):
             contribution = await _hook(ctx, history=history)
 
-        assert contribution.messages == []
-        assert contribution.source_entry.details["drop_reason"] == "already_injected"
+        assert contribution is not None
+        assert len(contribution.messages) == 1
+        assert contribution.messages[0]["file_paths"] == ["pages/first.md"]
 
 
-def test_retrieved_paths_ignore_malformed_metadata():
-    """Corrupt archive metadata must not turn a string into one path per char."""
+def test_retrieved_paths_only_reads_resident_legacy_rows():
+    """get_already_retrieved_paths only tracks pages actually resident in history (#1574)."""
     from decafclaw.memory_context import get_already_retrieved_paths
 
     history = [
@@ -230,9 +231,10 @@ def test_retrieved_paths_ignore_malformed_metadata():
             "content": "y",
             "working_memory": {"vault_paths": ["pages/b.md", None, 3]},
         },
-        {"role": "vault_retrieval", "content": "z", "file_paths": "pages/c.md"},
+        {"role": "vault_retrieval", "content": "z", "file_paths": ["pages/c.md"]},
+        {"role": "vault_retrieval", "content": "w", "file_paths": "pages/d.md"},
     ]
-    assert get_already_retrieved_paths(history) == {"pages/b.md"}
+    assert get_already_retrieved_paths(history) == {"pages/c.md"}
 
 
 class TestRetrievalModes:
@@ -394,16 +396,41 @@ class TestComposerIntegration:
         # the conversation archive (#1574).
         assert any("<vault_retrieval>" in str(m.get("content", "")) for m in composed.messages)
         assert not any(m["role"] == "vault_retrieval" for m in composed.messages_to_archive)
-        # Paths survive as metadata on the archived user row for restart dedupe.
+        # Paths survive as metadata on the archived user row for provenance/auditing.
         user_rows = [m for m in composed.messages_to_archive if m.get("role") == "user"]
         assert user_rows[0]["working_memory"]["vault_paths"] == ["pages/first.md"]
         assert all("working_memory" not in m for m in composed.messages)
         from decafclaw.memory_context import get_already_retrieved_paths
 
-        assert get_already_retrieved_paths(composed.messages_to_archive) == {"pages/first.md"}
+        # Prompt-residency deduplication: messages_to_archive has no vault_retrieval rows,
+        # so get_already_retrieved_paths returns empty and does not suppress Turn 2.
+        assert get_already_retrieved_paths(composed.messages_to_archive) == set()
         assert any(s.source == "memory" and s.items_included == 1 for s in composed.sources)
         assert len(events) == 1
         assert events[0]["text"] == "formatted memory"
+
+    async def test_multiturn_followup_reretrieves_evicted_page(self, ctx):
+        """Turn 2 can re-retrieve a page evicted from Turn 1's working memory (#1574)."""
+        from decafclaw.context_composer import ContextComposer
+
+        composer = ContextComposer()
+        with (
+            patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[_candidate()]),
+            patch(FORMAT_PATCH, return_value="formatted memory"),
+        ):
+            turn1 = await composer.compose(ctx, "tell me about project", [], mode=ComposerMode.INTERACTIVE)
+            assert turn1.retrieved_context_text == "formatted memory"
+
+            # Turn 1 settles: archived messages contain user row + assistant reply
+            history = list(turn1.messages_to_archive)
+            history.append({"role": "assistant", "content": "Here is the summary."})
+
+            # Turn 2: follow-up question. Page is NOT suppressed by turn 1's working memory metadata.
+            turn2 = await ContextComposer().compose(
+                ctx, "explain more about that project", history, mode=ComposerMode.INTERACTIVE
+            )
+            assert turn2.retrieved_context_text == "formatted memory"
+            assert any("<vault_retrieval>" in str(m.get("content", "")) for m in turn2.messages)
 
     async def test_failed_compose_rolls_back_injected_paths(self, ctx):
         """A failed composition must not suppress a page that never reached the prompt."""
