@@ -4,12 +4,15 @@ import json
 import socket
 import threading
 
+import pytest
 import uvicorn
 from playwright.sync_api import sync_playwright
 
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.web.auth import create_token
+
+pytestmark = pytest.mark.browser
 
 
 def test_browser_file_editor_scroll_follow_and_overflow(config):

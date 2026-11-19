@@ -31,6 +31,8 @@ from decafclaw.web.auth import create_token
 from decafclaw.web.conversations import ConversationIndex
 from decafclaw.widgets import init_widgets
 
+pytestmark = pytest.mark.browser
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 STATIC_REL = pathlib.Path("src/decafclaw/web/static")
 

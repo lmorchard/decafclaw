@@ -178,7 +178,7 @@ Common Make targets (see `Makefile` for the complete list):
 | Purpose | Targets |
 | --- | --- |
 | Run | `run`, `dev`, `debug`, `run-pro`; worktree-only isolated server: `run-dev`, `stop-dev` |
-| Python | `lint`, `typecheck`, `fmt`, `fmt-check`, `test` |
+| Python | `lint`, `typecheck`, `fmt`, `fmt-check`, `test`, `test-browser` |
 | Full gate | `check` (composes its prerequisite targets) |
 | Web | `check-js`, `test-js`, `vendor`, `gen-api-client`, `check-browser-assets` |
 | TUI | `check-tui`, `test-tui` (separate from `check`) |

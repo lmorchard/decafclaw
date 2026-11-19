@@ -1028,5 +1028,7 @@ that all backend API routes are represented in the generated client and that no
 frontend files bypass the generated client with raw `fetch()` calls.
 Route tests cover defaults, coercions, authentication, ownership, and lifecycle storage.
 Before running `make test`, run `make install-js` and install the
-browser with `uv run playwright install chromium`. CI installs its system dependencies with
-`uv run playwright install --with-deps chromium`.
+browser with `uv run playwright install chromium`. Browser tests carry the
+`browser` marker; `make test-browser` runs just them. CI runs that marker in a
+separate `browser-test` job, which installs only the browser binary because the
+runner image already provides the Chromium runtime libraries.

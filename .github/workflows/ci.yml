@@ -36,14 +36,50 @@ jobs:
       - name: Check
         run: make check
 
-      - name: Install test browser
-        run: uv run playwright install --with-deps chromium
-
+      # Browser tests are marked `browser` and run in their own job below.
+      # `-m` on the command line replaces the addopts expression, so the
+      # default integration exclusion has to be repeated here.
       - name: Test
         # Parallelism is configured in pyproject.toml (addopts = "-n auto
         # --dist=worksteal"). `-v` is omitted because worker output
         # interleaves and the dots-style progress is more readable.
-        run: uv run pytest tests/ contrib/skills/
+        run: uv run pytest -m "not integration and not browser" tests/ contrib/skills/
+
+  # Browser tests run separately so the Python gate never waits on a browser
+  # install, and so a Chromium-only failure is visible as its own check.
+  # The runner image already ships every Chromium runtime library; the only
+  # packages `--with-deps` added were fonts, and fetching them from CI's apt
+  # mirror took ~6 minutes. Install the browser alone and cache it so a
+  # Playwright version bump does not re-download Chromium.
+  browser-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(uv run playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install Chromium
+        run: uv run playwright install chromium
+
+      - name: Test
+        run: uv run pytest -m "browser and not integration" tests/ contrib/skills/
 
   js-test:
     runs-on: ubuntu-latest
