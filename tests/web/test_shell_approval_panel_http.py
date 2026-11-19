@@ -242,6 +242,21 @@ async def test_conversation_shell_approval_promote_creates_and_appends_custom_pr
     assert created["rules"].count("Auto-approve cargo test") == 1
 
 
+@pytest.mark.asyncio
+async def test_conversation_shell_approval_promote_malformed_json_returns_400(
+    client, approval_config, manager, conv, app
+):
+    """A body that is not valid JSON must be a clean 400, not an unhandled 500."""
+    await _login(client, app)
+    resp = await client.post(
+        f"/api/conversations/{conv.conv_id}/shell-approval/promote",
+        content=b"{not valid json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+    assert "invalid JSON body" in resp.json()["error"]
+
+
 # ---------------------------------------------------------------------------
 # Rules-replace endpoint (#1267) — bulk-edit draft save path
 # ---------------------------------------------------------------------------

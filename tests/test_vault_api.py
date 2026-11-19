@@ -465,6 +465,18 @@ async def test_vault_write_path_traversal(client):
     assert resp.status_code != 200
 
 
+@pytest.mark.asyncio
+async def test_vault_write_malformed_json_returns_400(client):
+    """A body that is not valid JSON must be a clean 400, not an unhandled 500."""
+    resp = await client.put(
+        "/api/vault/agent/pages/BadJson",
+        content=b"{not valid json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+    assert "invalid JSON body" in resp.json()["error"]
+
+
 # -- vault_create --------------------------------------------------------------
 
 
@@ -525,6 +537,18 @@ async def test_vault_create_rejects_absolute(client):
         json={"name": "/etc/passwd"},
     )
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_vault_create_malformed_json_returns_400(client):
+    """A body that is not valid JSON must be a clean 400, not an unhandled 500."""
+    resp = await client.post(
+        "/api/vault",
+        content=b"{not valid json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+    assert "invalid JSON body" in resp.json()["error"]
 
 
 # -- vault_rename --------------------------------------------------------------
@@ -614,6 +638,18 @@ async def test_vault_create_folder_duplicate(client, http_config):
         json={"folder": "agent/pages/existing"},
     )
     assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_vault_create_folder_malformed_json_returns_400(client):
+    """A body that is not valid JSON must be a clean 400, not an unhandled 500."""
+    resp = await client.post(
+        "/api/vault/folders",
+        content=b"{not valid json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+    assert "invalid JSON body" in resp.json()["error"]
 
 
 # -- vault_delete --------------------------------------------------------------
