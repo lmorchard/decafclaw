@@ -254,7 +254,9 @@ async def _tool_heartbeat(ctx, tool_name, tool_call_id, started, interval=None, 
         now = time.monotonic()
         native_progress = ctx.tools.last_status_at > last_check
         last_check = now
-        if native_progress:
+        # A paused watchdog means the tool waits on a human, not on work;
+        # "still running" would misdescribe the state.
+        if native_progress or ctx.confirmation_active.is_set():
             continue
         elapsed = max(0, round(time.monotonic() - started))
         await ctx.publish(

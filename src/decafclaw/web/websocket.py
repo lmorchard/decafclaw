@@ -71,9 +71,9 @@ def _legacy_tool_name(action_type: str) -> str:
 def _project_tool_end(event: dict, conv_id: str) -> SrvToolEnd:
     """Project a bus tool_end event into the WebSocket payload shape.
 
-    Fields are included selectively: display_short_text and widget only
-    appear when the upstream event set them, to keep the socket messages
-    compact.
+    Fields are included selectively: display_short_text, widget, and the
+    outcome tags (is_error/timed_out/timeout_sec) only appear when the
+    upstream event set them, to keep the socket messages compact.
     """
     payload: SrvToolEnd = {
         "type": WSMessageType.TOOL_END,

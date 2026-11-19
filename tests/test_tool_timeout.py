@@ -399,6 +399,33 @@ async def test_heartbeat_quiet_when_tool_reports_progress(ctx):
     assert len(statuses) == 1
 
 
+@pytest.mark.asyncio
+async def test_heartbeat_quiet_during_confirmation(ctx):
+    """A paused watchdog (awaiting a human) produces no progress heartbeats."""
+    statuses: list[dict] = []
+
+    async def _capture(ev):
+        if ev.get("type") == "tool_status":
+            statuses.append(ev)
+
+    ctx.event_bus.subscribe(_capture)
+
+    ticks = 0
+
+    async def fake_sleep(_seconds):
+        nonlocal ticks
+        ticks += 1
+        if ticks == 1:
+            ctx.confirmation_active.set()
+        elif ticks >= 3:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await _tool_heartbeat(ctx, "prompt_tool", "tc-confirm", time.monotonic(), interval=1.0, sleep=fake_sleep)
+
+    assert statuses == []
+
+
 def test_confirmation_gated_tools_have_timeout_none():
     """Regression guard for #969: confirmation-gated tools opt out of the
     generic 180s watchdog via explicit timeout: None so user deliberation
