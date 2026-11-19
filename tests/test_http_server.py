@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.mattermost_ui import build_confirm_buttons, get_token_registry
+from decafclaw.web.auth import create_token
 
 
 @pytest.fixture
@@ -36,6 +37,18 @@ def app(http_config, bus):
 async def client(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+@pytest.fixture
+async def authed_client(app, http_config):
+    """Client with a valid session cookie (workspace routes require auth)."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        token = create_token(http_config, "testuser")
+        resp = await c.post("/api/auth/login", json={"token": token})
+        assert resp.status_code == 200
+        c.cookies = resp.cookies
         yield c
 
 
@@ -658,6 +671,43 @@ async def test_poll_confirmation_manager_stops_when_confirmation_cleared():
     )
 
     manager.respond_to_confirmation.assert_not_called()
+
+
+# -- Workspace file serving --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_serve_workspace_file_sibling_prefix_returns_403(authed_client, http_config):
+    """A sibling directory sharing the workspace's name prefix must not be served.
+
+    String-prefix containment (``str.startswith``) accepted ``workspace-evil``
+    when the workspace is ``workspace``, so a crafted path could read files
+    outside the sandbox (#1293). The dots are percent-encoded because httpx
+    normalizes literal ``../`` segments away before the request reaches the
+    app; a real client (curl --path-as-is) sends them raw, and uvicorn decodes
+    ``%2e`` identically.
+    """
+    workspace = http_config.workspace_path
+    workspace.mkdir(parents=True, exist_ok=True)
+    evil = http_config.agent_path / "workspace-evil"
+    evil.mkdir(parents=True, exist_ok=True)
+    (evil / "secret.txt").write_text("shh")
+
+    resp = await authed_client.get("/api/workspace/%2e%2e/workspace-evil/secret.txt")
+    assert resp.status_code == 403
+    assert resp.json() == {"error": "path outside workspace"}
+
+
+@pytest.mark.asyncio
+async def test_serve_workspace_file_inside_workspace_still_serves(authed_client, http_config):
+    """The containment fix must not over-block: files inside the workspace serve."""
+    workspace = http_config.workspace_path
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "note.md").write_text("hello")
+
+    resp = await authed_client.get("/api/workspace/note.md")
+    assert resp.status_code == 200
+    assert resp.content == b"hello"
 
 
 # -- Static asset caching --------------------------------------------------

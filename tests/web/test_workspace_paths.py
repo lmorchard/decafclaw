@@ -22,6 +22,20 @@ def test_resolve_safe_blocks_absolute(tmp_path):
     assert resolve_safe(tmp_path, "/etc/passwd") is None
 
 
+def test_resolve_safe_blocks_sibling_prefix(tmp_path):
+    """A sibling directory sharing the root's name prefix must not resolve.
+
+    String-prefix containment (``str.startswith``) accepts ``workspace-evil``
+    when the root is ``workspace``; ``relative_to`` does not (#1293).
+    """
+    root = tmp_path / "workspace"
+    root.mkdir()
+    evil = tmp_path / "workspace-evil"
+    evil.mkdir()
+    (evil / "secret.txt").write_text("shh")
+    assert resolve_safe(root, "../workspace-evil/secret.txt") is None
+
+
 def test_is_secret_env_file():
     assert is_secret("config/.env") is True
 

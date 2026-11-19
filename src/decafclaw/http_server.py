@@ -1866,8 +1866,10 @@ async def serve_workspace_file(request: Request, username: str):
     if is_secret(file_path):
         return JSONResponse({"error": "secret path"}, status_code=403)
     workspace = config.workspace_path.resolve()
-    resolved = (workspace / file_path).resolve()
-    if not str(resolved).startswith(str(workspace)):
+    # resolve_safe uses relative_to, not string prefix: a sibling directory
+    # sharing the workspace's name prefix (workspace-evil) must not pass.
+    resolved = resolve_safe(workspace, file_path)
+    if resolved is None:
         return JSONResponse({"error": "path outside workspace"}, status_code=403)
     if not resolved.is_file():
         # Stored paths from before make migrate-sessions (#1112) point at
