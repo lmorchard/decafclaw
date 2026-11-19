@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './chat-view.js';
-import { STORAGE_KEY, PREFERENCE_EVENT } from '../lib/recalled-facts-preference.js';
+import { STORAGE_KEY, PREFERENCE_EVENT } from '../lib/context-provenance-preference.js';
 
 /**
  * Tests for #1090: transcript scroll following and resize behavior.
@@ -168,21 +168,22 @@ describe('chat-view scroll following on resize (#1090)', () => {
   });
 });
 
-describe('chat-view recalled facts preference (#1514)', () => {
+describe('chat-view context provenance preference (#1563)', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     localStorage.clear();
   });
 
-  function storeWithFacts() {
+  function storeWithProvenance(provenance) {
     return Object.assign(new EventTarget(), {
       currentConvId: 'conv-1',
       currentMessages: [
         { role: 'user', content: 'hello' },
-        { role: 'assistant', content: 'hi', recalled_facts: ['User prefers espresso.'] },
+        { role: 'assistant', content: 'hi', provenance },
       ],
       streamingText: '',
       streamingThinking: '',
+      streamingProvenance: {},
       isBusy: false,
       toolStatus: null,
       pendingConfirms: [],
@@ -190,7 +191,7 @@ describe('chat-view recalled facts preference (#1514)', () => {
     });
   }
 
-  async function mount(store = storeWithFacts()) {
+  async function mount(store = storeWithProvenance({ facts: [{ fact: 'User prefers espresso.' }] })) {
     const el = /** @type {any} */ (document.createElement('chat-view'));
     el.store = store;
     document.body.appendChild(el);
@@ -203,34 +204,53 @@ describe('chat-view recalled facts preference (#1514)', () => {
     return /** @type {any} */ ([...el.querySelectorAll('chat-message')][1]);
   }
 
-  it('passes recalled facts to assistant messages by default', async () => {
+  it('passes provenance to assistant messages by default', async () => {
     const el = await mount();
-    expect(assistantMessage(el).recalledFacts).toEqual(['User prefers espresso.']);
+    expect(assistantMessage(el).provenance).toEqual({ facts: [{ fact: 'User prefers espresso.' }] });
   });
 
-  it('hides recalled facts when the stored preference is off', async () => {
+  it('derives a facts capsule from legacy recalled_facts history rows', async () => {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'conv-1',
+      currentMessages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi', recalled_facts: ['User prefers espresso.'] },
+      ],
+      streamingText: '',
+      streamingThinking: '',
+      streamingProvenance: {},
+      isBusy: false,
+      toolStatus: null,
+      pendingConfirms: [],
+      hasMore: false,
+    });
+    const el = await mount(store);
+    expect(assistantMessage(el).provenance).toEqual({ facts: [{ fact: 'User prefers espresso.' }] });
+  });
+
+  it('hides provenance when the stored preference is off', async () => {
     localStorage.setItem(STORAGE_KEY, 'false');
     const el = await mount();
-    expect(assistantMessage(el).recalledFacts).toEqual([]);
+    expect(assistantMessage(el).provenance).toEqual({});
   });
 
   it('reacts to a preference change without a reload', async () => {
     const el = await mount();
-    expect(assistantMessage(el).recalledFacts).toHaveLength(1);
+    expect(assistantMessage(el).provenance.facts).toHaveLength(1);
 
     document.dispatchEvent(new CustomEvent(PREFERENCE_EVENT, { detail: { enabled: false } }));
     await el.updateComplete;
 
-    expect(assistantMessage(el).recalledFacts).toEqual([]);
+    expect(assistantMessage(el).provenance).toEqual({});
   });
 
-  it('renders recalled facts on the streaming message when streamingRecalledFacts is present (#1538)', async () => {
+  it('renders streaming provenance before text arrives (#1563)', async () => {
     const store = Object.assign(new EventTarget(), {
       currentConvId: 'conv-1',
       currentMessages: [{ role: 'user', content: 'hello' }],
       streamingText: '',
       streamingThinking: '',
-      streamingRecalledFacts: ['User prefers espresso.'],
+      streamingProvenance: { journals: [{ timestamp: '2026-11-19 09:00', text: 'Thinking.' }] },
       isBusy: true,
       toolStatus: null,
       pendingConfirms: [],
@@ -238,22 +258,21 @@ describe('chat-view recalled facts preference (#1514)', () => {
     });
     const el = await mount(store);
 
-    // The streaming message should be mounted even before text arrives, carrying recalled facts
     const messages = [...el.querySelectorAll('chat-message')];
     expect(messages).toHaveLength(2);
     const streamingMsg = messages[1];
     expect(streamingMsg.streaming).toBe(true);
-    expect(streamingMsg.recalledFacts).toEqual(['User prefers espresso.']);
+    expect(streamingMsg.provenance).toEqual({ journals: [{ timestamp: '2026-11-19 09:00', text: 'Thinking.' }] });
   });
 
-  it('hides streaming recalled facts when preference is disabled (#1538)', async () => {
+  it('hides streaming provenance when preference is disabled (#1563)', async () => {
     localStorage.setItem(STORAGE_KEY, 'false');
     const store = Object.assign(new EventTarget(), {
       currentConvId: 'conv-1',
       currentMessages: [{ role: 'user', content: 'hello' }],
       streamingText: 'some text',
       streamingThinking: '',
-      streamingRecalledFacts: ['User prefers espresso.'],
+      streamingProvenance: { facts: [{ fact: 'User prefers espresso.' }] },
       isBusy: true,
       toolStatus: null,
       pendingConfirms: [],
@@ -262,6 +281,6 @@ describe('chat-view recalled facts preference (#1514)', () => {
     const el = await mount(store);
 
     const streamingMsg = [...el.querySelectorAll('chat-message')][1];
-    expect(streamingMsg.recalledFacts).toEqual([]);
+    expect(streamingMsg.provenance).toEqual({});
   });
 });

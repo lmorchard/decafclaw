@@ -6,7 +6,7 @@ from decafclaw.agent import TurnRunner
 from decafclaw.context import Context, TurnLifecycle
 from decafclaw.context_composer import ContextComposer
 from decafclaw.events import EventBus
-from decafclaw.extensions import BaseExtension, ExtensionManager
+from decafclaw.extensions import BaseExtension, ContextContribution, ContextSlot, ExtensionManager
 
 
 @pytest.mark.asyncio
@@ -90,6 +90,49 @@ async def test_recalled_facts_attach_to_archived_assistant_row(ctx, config, monk
         "User prefers espresso.",
         "User is in Pacific time.",
     ]
+
+
+@pytest.mark.asyncio
+async def test_provenance_attaches_to_archived_assistant_row(ctx, config, monkeypatch):
+    """The delivered assistant row carries structured provenance and legacy facts (#1563)."""
+
+    async def mock_call_llm(ctx, config, messages, tools, **kwargs):
+        return {"content": "Here is your answer.", "usage": {}}
+
+    monkeypatch.setattr("decafclaw.agent._call_llm_with_events", mock_call_llm)
+
+    async def structured_hook(context, user_msg):
+        return ContextContribution(
+            slot=ContextSlot.DELTA,
+            messages=[{"role": "conversation_notes", "content": "[Conversation notes]"}],
+            provenance={"scratchpad": [{"timestamp": "2026-11-19T10:00:00Z", "text": "Ship capsules."}]},
+        )
+
+    async def legacy_hook(context, user_msg):
+        return ["User prefers espresso."]
+
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, structured_hook)
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, legacy_hook)
+
+    runner = TurnRunner(
+        ctx=ctx,
+        config=config,
+        history=[],
+        user_message="What should I drink?",
+        archive_text="",
+        attachments=None,
+    )
+    await runner.run()
+
+    from decafclaw.archive import read_archive
+
+    archived = read_archive(config, ctx.conv_id)
+    assistant_rows = [m for m in archived if m.get("role") == "assistant"]
+    assert assistant_rows
+    assert assistant_rows[-1]["provenance"] == {
+        "scratchpad": [{"timestamp": "2026-11-19T10:00:00Z", "text": "Ship capsules."}],
+        "facts": [{"fact": "User prefers espresso."}],
+    }
 
 
 @pytest.mark.asyncio

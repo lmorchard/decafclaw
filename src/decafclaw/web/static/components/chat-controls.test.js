@@ -230,21 +230,4 @@ describe('chat-controls', () => {
     const { el } = await mount({ availableModes: [] });
     expect(el.querySelector('button.shell-approval-open-btn')).toBeTruthy();
   });
-
-  it('toggles the recalled facts preference from the control bar (#1514)', async () => {
-    const { STORAGE_KEY } = await import('../lib/recalled-facts-preference.js');
-    localStorage.removeItem(STORAGE_KEY);
-    const { el } = await mount();
-
-    const button = el.querySelector('button.recalled-facts-pref-btn');
-    expect(button).toBeTruthy();
-    expect(button.closest('.actions-control')).toBeTruthy();
-    expect(button.getAttribute('aria-pressed')).toBe('true');
-
-    button.click();
-    await el.updateComplete;
-
-    expect(button.getAttribute('aria-pressed')).toBe('false');
-    expect(localStorage.getItem(STORAGE_KEY)).toBe('false');
-  });
 });

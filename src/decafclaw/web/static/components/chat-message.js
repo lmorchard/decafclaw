@@ -9,7 +9,7 @@ export class ChatMessage extends LitElement {
     role: { type: String },
     content: { type: String },
     thinking: { type: String },
-    recalledFacts: { type: Array, attribute: false },
+    provenance: { type: Object, attribute: false },
     streaming: { type: Boolean },
     tool: { type: String },
     command: { type: String },
@@ -33,8 +33,8 @@ export class ChatMessage extends LitElement {
     this.role = 'user';
     this.content = '';
     this.thinking = '';
-    /** @type {string[]} */
-    this.recalledFacts = [];
+    /** @type {Record<string, object[]>} */
+    this.provenance = {};
     this.streaming = false;
     this.tool = '';
     this.command = '';
@@ -156,20 +156,8 @@ export class ChatMessage extends LitElement {
       return html`<tool-message .tool=${this.tool || 'reflection'} .content=${this.content} .icon=${'\u{1f441}'}></tool-message>`;
     }
 
-    if (this.role === 'vault_retrieval') {
-      return html`<tool-message .tool=${'vault_retrieval'} .content=${this.content} .icon=${'\u{1f9e0}'}></tool-message>`;
-    }
-
     if (this.role === 'vault_references') {
       return html`<tool-message .tool=${'vault_references'} .content=${this.content} .icon=${'\u{1f4d6}'}></tool-message>`;
-    }
-
-    if (this.role === 'conversation_notes') {
-      return html`<tool-message .tool=${'conversation_notes'} .content=${this.content} .icon=${'📝'}></tool-message>`;
-    }
-
-    if (this.role === 'recent_journal') {
-      return html`<tool-message .tool=${'recent_journal'} .content=${this.content} .icon=${'📓'}></tool-message>`;
     }
 
     if (this.role === 'workspace_references') {
@@ -201,7 +189,7 @@ export class ChatMessage extends LitElement {
       return html`<assistant-message
         .content=${this.content}
         .thinking=${this.thinking}
-        .recalledFacts=${this.recalledFacts}
+        .provenance=${this.provenance}
         .streaming=${this.streaming}
         .usage=${this.usage}
         .timestamp=${this.timestamp}

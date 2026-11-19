@@ -25,7 +25,7 @@ from decafclaw.events import EventBus, TurnLifecycle
 from decafclaw.skills.vault.tools import format_recent_journal_for_context, read_recent_journal_entries
 from decafclaw.util import estimate_tokens
 
-from . import BaseExtension, ContextContribution, ContextSlot, register_extension_type
+from . import BaseExtension, ContextContribution, ContextSlot, provenance_excerpt, register_extension_type
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +97,15 @@ class RecentJournalExtension(BaseExtension):
                 items_included=len(entries),
                 items_truncated=truncated,
             ),
+            provenance={
+                "journals": [
+                    {
+                        "timestamp": entry.timestamp.strftime("%Y-%m-%d %H:%M"),
+                        "text": provenance_excerpt(entry.text),
+                    }
+                    for entry in entries
+                ]
+            },
         )
 
 

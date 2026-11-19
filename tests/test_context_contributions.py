@@ -150,6 +150,12 @@ async def test_legacy_string_results_coerce_to_tail_envelope(ctx, config, no_tai
 
     # The UI discloses the atomic facts, not the rendered envelope (#1514).
     assert composed.recalled_facts == ["Coffee preference: espresso", "Timezone: Pacific"]
+    assert composed.provenance == {
+        "facts": [
+            {"fact": "Coffee preference: espresso"},
+            {"fact": "Timezone: Pacific"},
+        ]
+    }
 
 
 @pytest.mark.asyncio
@@ -172,6 +178,90 @@ async def test_recalled_facts_match_the_trimmed_envelope(ctx, config, no_tail_no
     assert "Fact two" not in recalled[0]["content"]
 
     assert composed.recalled_facts == ["Fact one fits inside the ceiling"]
+    assert composed.provenance == {"facts": [{"fact": "Fact one fits inside the ceiling"}]}
+
+
+@pytest.mark.asyncio
+async def test_contribution_provenance_reaches_the_turn(ctx, config, no_tail_notes):
+    """Structured contributions merge their provenance items into the turn (#1563)."""
+    first = ContextContribution(
+        slot=ContextSlot.DELTA,
+        messages=[{"role": "conversation_notes", "content": "NOTES-MARKER"}],
+        provenance={"scratchpad": [{"text": "Ship capsules."}]},
+    )
+    second = ContextContribution(
+        slot=ContextSlot.TAIL,
+        messages=[{"role": "vault_retrieval", "content": "VAULT-MARKER"}],
+        provenance={"vault": [{"page": "agent/pages/decafclaw.md", "score": 0.82}]},
+    )
+
+    async def hook(context, user_msg):
+        return [first, second]
+
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, hook)
+    composed = await _compose(ctx)
+
+    assert composed.provenance == {
+        "scratchpad": [{"text": "Ship capsules."}],
+        "vault": [{"page": "agent/pages/decafclaw.md", "score": 0.82}],
+    }
+    assert ctx.composer.last_provenance == composed.provenance
+    assert "NOTES-MARKER" in _archived_text(composed.messages_to_archive)
+    assert "VAULT-MARKER" in _archived_text(composed.messages_to_archive)
+
+
+@pytest.mark.asyncio
+async def test_malformed_provenance_is_dropped_fail_open(ctx, config, no_tail_notes):
+    """A bad provenance payload is logged and skipped without failing the turn (#1563)."""
+
+    async def hook(context, user_msg):
+        return [
+            ContextContribution(
+                ContextSlot.TAIL,
+                [{"role": "user", "content": "GOOD-MARKER"}],
+                provenance={
+                    "facts": [{"fact": "kept"}, "dropped-string"],
+                    "bad": "not-a-list",
+                    3: [{"nope": True}],
+                },
+            ),
+            ContextContribution(
+                ContextSlot.TAIL,
+                [{"role": "user", "content": "SECOND-MARKER"}],
+                provenance=["not-a-dict"],  # type: ignore[arg-type]
+            ),
+        ]
+
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, hook)
+    composed = await _compose(ctx)
+
+    assert composed.provenance == {"facts": [{"fact": "kept"}]}
+    assert _index(composed.messages, "GOOD-MARKER") < _index(composed.messages, "SECOND-MARKER")
+
+
+@pytest.mark.asyncio
+async def test_provenance_is_refilled_each_turn(ctx, config, no_tail_notes):
+    """A later turn without contributions does not replay the prior payload (#1563)."""
+    calls = {"n": 0}
+
+    async def hook(context, user_msg):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            return None
+        return ContextContribution(
+            ContextSlot.DELTA,
+            [{"role": "conversation_notes", "content": "ONE"}],
+            provenance={"scratchpad": [{"text": "one"}]},
+        )
+
+    ctx.add_interceptor(TurnLifecycle.PRE_COMPOSE, hook)
+    composer = ContextComposer(state=ctx.composer)
+
+    first = await composer.compose(ctx=ctx, user_message="FIRST", history=[])
+    assert first.provenance == {"scratchpad": [{"text": "one"}]}
+
+    second = await composer.compose(ctx=ctx, user_message="SECOND", history=list(first.messages_to_archive))
+    assert second.provenance == {}
 
 
 @pytest.mark.asyncio

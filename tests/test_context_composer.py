@@ -2234,6 +2234,21 @@ class TestComposeRecentJournal:
         # High-water mark advanced to the newest surfaced entry.
         assert ctx.composer.injection_cursors.journal_ts == datetime(2026, 7, 23, 14, 30)
 
+    def test_provenance_lists_surfaced_entries(self, ctx, config):
+        """Each injected journal entry contributes a capsule item (#1563)."""
+        from decafclaw.extensions.recent_journal import RecentJournalExtension
+
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "just thinking about X")])
+        with patch("decafclaw.extensions.recent_journal._now", return_value=now):
+            contribution = RecentJournalExtension({}, config)._contribute(ctx)
+
+        assert contribution is not None
+        assert contribution.provenance is not None
+        [item] = contribution.provenance["journals"]
+        assert item["timestamp"] == "2026-07-23 14:30"
+        assert "just thinking about X" in item["text"]
+
     def test_second_turn_skips_when_no_new_entries(self, ctx, config):
         now = datetime(2026, 7, 23, 15, 0)
         _write_journal_file(config, now, [("14:30", "entry one")])

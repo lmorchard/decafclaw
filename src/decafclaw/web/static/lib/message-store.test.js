@@ -293,53 +293,73 @@ it.each(['not json', undefined, '{}'])('renders shell results with unavailable a
     expect(store.currentMessages[0].content).toBe('output');
 });
 
-describe('streaming recalled facts (#1538)', () => {
-    it('records recalled facts during streaming and attaches them on completion', () => {
+describe('streaming turn provenance (#1563)', () => {
+    it('records provenance during streaming and attaches it on completion', () => {
         const store = new MessageStore(() => {});
         store.handleMessage({
-            type: MESSAGE_TYPES.RECALLED_FACTS,
+            type: MESSAGE_TYPES.TURN_PROVENANCE,
             conv_id: '1',
-            facts: ['User prefers espresso.', 'Homelab uses Qdrant.'],
+            provenance: {
+                facts: [{ fact: 'User prefers espresso.' }],
+                scratchpad: [{ timestamp: 't1', text: 'Ship capsules.' }],
+            },
         }, '1');
 
-        expect(store.streamingRecalledFacts).toEqual([
-            'User prefers espresso.',
-            'Homelab uses Qdrant.',
-        ]);
+        expect(store.streamingProvenance).toEqual({
+            facts: [{ fact: 'User prefers espresso.' }],
+            scratchpad: [{ timestamp: 't1', text: 'Ship capsules.' }],
+        });
 
-        // Message completes without explicit recalled_facts field (falls back to streaming facts)
+        // Message completes without an explicit provenance field (falls back to streaming).
         store.handleMessage({
             type: MESSAGE_TYPES.MESSAGE_COMPLETE,
             conv_id: '1',
             text: 'Here is your coffee.',
         }, '1');
 
-        expect(store.streamingRecalledFacts).toEqual([]);
+        expect(store.streamingProvenance).toEqual({});
         expect(store.currentMessages).toHaveLength(1);
-        expect(store.currentMessages[0].recalled_facts).toEqual([
-            'User prefers espresso.',
-            'Homelab uses Qdrant.',
-        ]);
+        expect(store.currentMessages[0].provenance).toEqual({
+            facts: [{ fact: 'User prefers espresso.' }],
+            scratchpad: [{ timestamp: 't1', text: 'Ship capsules.' }],
+        });
     });
 
-    it('clears streaming recalled facts on clear() and clearStreamingText()', () => {
+    it('prefers the completion frame provenance over the streaming snapshot', () => {
         const store = new MessageStore(() => {});
         store.handleMessage({
-            type: MESSAGE_TYPES.RECALLED_FACTS,
+            type: MESSAGE_TYPES.TURN_PROVENANCE,
             conv_id: '1',
-            facts: ['Fact A'],
+            provenance: { facts: [{ fact: 'stale' }] },
         }, '1');
-        expect(store.streamingRecalledFacts).toEqual(['Fact A']);
+        store.handleMessage({
+            type: MESSAGE_TYPES.MESSAGE_COMPLETE,
+            conv_id: '1',
+            text: 'Done.',
+            provenance: { vault: [{ page: 'a.md', score: 0.9 }] },
+        }, '1');
+
+        expect(store.currentMessages[0].provenance).toEqual({ vault: [{ page: 'a.md', score: 0.9 }] });
+    });
+
+    it('clears streaming provenance on clear() and clearStreamingText()', () => {
+        const store = new MessageStore(() => {});
+        store.handleMessage({
+            type: MESSAGE_TYPES.TURN_PROVENANCE,
+            conv_id: '1',
+            provenance: { facts: [{ fact: 'Fact A' }] },
+        }, '1');
+        expect(store.streamingProvenance).toEqual({ facts: [{ fact: 'Fact A' }] });
 
         store.clearStreamingText();
-        expect(store.streamingRecalledFacts).toEqual([]);
+        expect(store.streamingProvenance).toEqual({});
 
         store.handleMessage({
-            type: MESSAGE_TYPES.RECALLED_FACTS,
+            type: MESSAGE_TYPES.TURN_PROVENANCE,
             conv_id: '1',
-            facts: ['Fact B'],
+            provenance: { facts: [{ fact: 'Fact B' }] },
         }, '1');
         store.clear();
-        expect(store.streamingRecalledFacts).toEqual([]);
+        expect(store.streamingProvenance).toEqual({});
     });
 });

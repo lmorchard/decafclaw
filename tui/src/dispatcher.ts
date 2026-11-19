@@ -208,7 +208,7 @@ export function dispatch(s: State, m: ServerMessage): State {
       return s;
     case "vault_changed":
       return s;
-    case "recalled_facts":
+    case "turn_provenance":
       return s;
 
     default: {
