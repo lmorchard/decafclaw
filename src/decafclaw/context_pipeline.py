@@ -46,7 +46,7 @@ def compose_system_prompt(config) -> tuple[str, SourceEntry]:
 
 async def compose_pre_compose_hooks(
     ctx: "Context", config: Any, user_message: str, history: list
-) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry], list[str]]:
+) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry], list[str], dict[str, list[dict]]]:
     """Run PRE_COMPOSE lifecycle collector hooks concurrently.
 
     Hooks may return structured ``ContextContribution`` objects (or lists
@@ -56,15 +56,16 @@ async def compose_pre_compose_hooks(
     ceiling, exactly as before (#1454, #1486). Structured contributions
     carry their own messages and are not subject to that legacy ceiling.
 
-    Returns ``(head, delta, tail, epilogue, sources, recalled_facts)``.
-    ``recalled_facts`` is the atomic fact list mounted in the legacy
-    envelope, after the token-ceiling trim, so the web UI shows exactly
-    what the model received (#1514). Fails open: a raising or slow hook is
-    logged and the turn still composes.
+    Returns ``(head, delta, tail, epilogue, sources, recalled_facts,
+    provenance)``. ``recalled_facts`` is the atomic fact list mounted in the
+    legacy envelope, after the token-ceiling trim, so the web UI shows exactly
+    what the model received (#1514). ``provenance`` merges the structured
+    contributions' capsule items plus the trimmed legacy facts (#1563).
+    Fails open: a raising or slow hook is logged and the turn still composes.
     """
     hooks = ctx.get_interceptors(TurnLifecycle.PRE_COMPOSE)
     if not hooks:
-        return [], [], [], [], [], []
+        return [], [], [], [], [], [], {}
 
     lifecycle_cfg = getattr(config, "lifecycle", None)
     default_timeout = getattr(lifecycle_cfg, "pre_compose_timeout", 0.3)
@@ -116,7 +117,7 @@ async def compose_pre_compose_hooks(
         done, pending = await asyncio.wait(tasks, timeout=outer_timeout)
     except Exception as e:
         log.warning("PRE_COMPOSE gathering failed: %s", e)
-        return [], [], [], [], [], []
+        return [], [], [], [], [], [], {}
     if pending:
         # Keep what finished inside the bound and drop only the slow hooks.
         # Discarding completed contributions would silently lose context
@@ -146,12 +147,14 @@ async def compose_pre_compose_hooks(
     sources: list[SourceEntry] = []
     fact_texts: list[str] = []
     recalled_facts: list[str] = []
+    provenance: dict[str, list[dict]] = {}
 
     for r in results:
         if r is None:
             continue
         if isinstance(r, ContextContribution):
             mount_context_contribution(r, head, delta, tail, epilogue, sources)
+            merge_provenance(r.provenance, provenance)
         elif isinstance(r, str):
             if r.strip():
                 fact_texts.append(r.strip())
@@ -159,6 +162,7 @@ async def compose_pre_compose_hooks(
             for item in r:
                 if isinstance(item, ContextContribution):
                     mount_context_contribution(item, head, delta, tail, epilogue, sources)
+                    merge_provenance(item.provenance, provenance)
                 elif isinstance(item, str):
                     if item.strip():
                         fact_texts.append(item.strip())
@@ -184,8 +188,36 @@ async def compose_pre_compose_hooks(
                 items_included=len(fact_texts),
             )
         )
+        if recalled_facts:
+            provenance.setdefault("facts", []).extend({"fact": fact} for fact in recalled_facts)
 
-    return head, delta, tail, epilogue, sources, recalled_facts
+    return head, delta, tail, epilogue, sources, recalled_facts, provenance
+
+
+def merge_provenance(contribution: dict[str, list[dict]] | None, into: dict[str, list[dict]]) -> None:
+    """Merge one contribution's provenance items into the turn's payload.
+
+    Fail open per entry: a non-dict provenance, a non-string key, or a value
+    that is not a list of dicts is logged and skipped so one malformed
+    extension cannot break the turn or the capsule row (#1563).
+    """
+    if contribution is None:
+        return
+    if not isinstance(contribution, dict):
+        log.warning("PRE_COMPOSE contribution provenance is %s; ignoring", type(contribution).__name__)
+        return
+    for key, items in contribution.items():
+        if not isinstance(key, str) or not key:
+            log.warning("PRE_COMPOSE contribution provenance has invalid key %r; ignoring", key)
+            continue
+        if not isinstance(items, (list, tuple)):
+            log.warning("PRE_COMPOSE contribution provenance %r is not a list; ignoring", key)
+            continue
+        clean = [item for item in items if isinstance(item, dict)]
+        if len(clean) != len(items):
+            log.warning("PRE_COMPOSE contribution provenance %r has non-dict items; dropping them", key)
+        if clean:
+            into.setdefault(key, []).extend(clean)
 
 
 def mount_context_contribution(

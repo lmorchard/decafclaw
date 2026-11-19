@@ -130,7 +130,7 @@ export interface SrvMessageComplete {
   usage?: Record<string, unknown>;
   context_usage?: number;
   context_limit?: number;
-  recalled_facts?: string[];
+  provenance?: Record<string, unknown>;
 }
 
 export interface SrvModeChanged {
@@ -164,12 +164,6 @@ export interface SrvNotificationRead {
   type: "notification_read";
   ids: string[];
   unread_count: number;
-}
-
-export interface SrvRecalledFacts {
-  type: "recalled_facts";
-  conv_id: string;
-  facts: string[];
 }
 
 export interface SrvRecoveryDecision {
@@ -249,6 +243,12 @@ export interface SrvTurnComplete {
   type: "turn_complete";
   conv_id: string;
   reason?: string;
+}
+
+export interface SrvTurnProvenance {
+  type: "turn_provenance";
+  conv_id: string;
+  provenance: Record<string, unknown>;
 }
 
 export interface SrvTurnStart {
@@ -355,7 +355,6 @@ export type ServerMessage =
   | SrvModelsAvailable
   | SrvNotificationCreated
   | SrvNotificationRead
-  | SrvRecalledFacts
   | SrvRecoveryDecision
   | SrvReflectionResult
   | SrvShellApproval
@@ -366,6 +365,7 @@ export type ServerMessage =
   | SrvToolStart
   | SrvToolStatus
   | SrvTurnComplete
+  | SrvTurnProvenance
   | SrvTurnStart
   | SrvUserMessage
   | SrvVaultChanged;

@@ -782,8 +782,8 @@ class TurnRunner:
         self.ctx.messages = self.messages
         self.retrieved_context_text = self.composed.retrieved_context_text
 
-        if self.composed.recalled_facts:
-            await self.ctx.publish("recalled_facts", facts=list(self.composed.recalled_facts))
+        if self.composed.provenance:
+            await self.ctx.publish("turn_provenance", provenance=dict(self.composed.provenance))
 
         for msg in self.composed.messages_to_archive:
             if self.ctx.task_mode is TaskMode.BACKGROUND_WAKE and msg.get("role") == "user":
@@ -1278,7 +1278,7 @@ class TurnRunner:
             archive_messages = verdict.archive_messages
 
         final_msg = assistant_message(response, content)
-        self._attach_recalled_facts(final_msg)
+        self._attach_turn_provenance(final_msg)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         for msg in archive_messages:
@@ -1293,17 +1293,22 @@ class TurnRunner:
         )
         return _Final(result=self._extract_workspace_media(content, thinking=response.get("thinking")))
 
-    def _attach_recalled_facts(self, msg: dict) -> dict:
-        """Attach this turn's recalled memory facts to a delivered assistant row.
+    def _attach_turn_provenance(self, msg: dict) -> dict:
+        """Attach this turn's passive context provenance to a delivered assistant row.
 
-        The composer keeps the atomic fact list from the latest PRE_COMPOSE
-        pass; the archive row carries it so ``conv_history`` can show the same
-        disclosure as the live ``message_complete`` frame (#1514). Turns with
-        no recalled facts add nothing, so history stays uncluttered.
+        The composer keeps the provenance payload from the latest PRE_COMPOSE
+        pass; the archive row carries it so ``conv_history`` can render the
+        same capsule row as the live ``turn_provenance`` frame (#1563). The
+        legacy atomic fact list stays alongside it for older rows and
+        transports (#1514). Turns with no provenance add nothing, so history
+        stays uncluttered.
         """
         facts = list(self.composed.recalled_facts) if self.composed is not None else []
         if facts:
             msg["recalled_facts"] = facts
+        provenance = dict(self.composed.provenance) if self.composed is not None else {}
+        if provenance:
+            msg["provenance"] = provenance
         return msg
 
     async def _run_grace_turn(self) -> "ToolResult | None":
@@ -1365,7 +1370,7 @@ class TurnRunner:
             log.warning("Grace-turn LLM call returned empty content — falling back to notice")
             return None
         final_msg = assistant_message(response, content)
-        self._attach_recalled_facts(final_msg)
+        self._attach_turn_provenance(final_msg)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(
@@ -1479,7 +1484,7 @@ class TurnRunner:
         else:
             delivered = note
         final_msg = {"role": "assistant", "content": note}
-        self._attach_recalled_facts(final_msg)
+        self._attach_turn_provenance(final_msg)
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(

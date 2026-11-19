@@ -24,7 +24,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import './chat-input.js';
-import { STORAGE_KEY } from '../lib/recalled-facts-preference.js';
+import { STORAGE_KEY } from '../lib/context-provenance-preference.js';
 
 /** The command source named by criterion C1. */
 const COMMANDS = [
@@ -864,26 +864,26 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     expect(el.querySelector('.conversation-menu')).toBeNull();
   });
 
-  it('persists and broadcasts the recalled facts preference (#1514)', async () => {
+  it('persists and broadcasts the context provenance preference (#1563)', async () => {
     localStorage.removeItem(STORAGE_KEY);
     const el = await mount();
     const menu = await openMenu(el);
 
-    const toggle = /** @type {HTMLInputElement} */ (menu.querySelector('#conversation-menu-recalled-facts'));
+    const toggle = /** @type {HTMLInputElement} */ (menu.querySelector('#conversation-menu-context-provenance'));
     expect(toggle).toBeTruthy();
     expect(menu.querySelector('.conversation-menu-toggle').textContent).toContain(
-      'Show recalled facts in conversation',
+      'Show context capsules',
     );
     expect(toggle.checked).toBe(true);
 
     const handler = vi.fn();
-    document.addEventListener('recalled-facts-preference-changed', handler);
+    document.addEventListener('context-provenance-preference-changed', handler);
 
     toggle.checked = false;
     toggle.dispatchEvent(new Event('change', { bubbles: true }));
     await el.updateComplete;
 
-    document.removeEventListener('recalled-facts-preference-changed', handler);
+    document.removeEventListener('context-provenance-preference-changed', handler);
     expect(localStorage.getItem(STORAGE_KEY)).toBe('false');
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][0].detail).toEqual({ enabled: false });

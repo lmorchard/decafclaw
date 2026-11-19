@@ -25,7 +25,7 @@ from typing import Any
 from decafclaw.events import EventBus, TurnLifecycle
 from decafclaw.notes import format_notes_for_context, read_notes
 
-from . import BaseExtension, ContextContribution, ContextSlot, register_extension_type
+from . import BaseExtension, ContextContribution, ContextSlot, provenance_excerpt, register_extension_type
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +109,11 @@ class ScratchpadNotesExtension(BaseExtension):
                 items_included=len(new_items),
                 items_truncated=0,
             ),
+            provenance={
+                "scratchpad": [
+                    {"timestamp": note.timestamp, "text": provenance_excerpt(note.text)} for note in new_items
+                ]
+            },
         )
 
 

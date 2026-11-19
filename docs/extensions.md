@@ -67,12 +67,20 @@ list. A contribution without one still mounts its messages, but adds no
 source row and no estimated tokens. Malformed contributions and unsupported
 returns are logged and skipped.
 
+A contribution may also set `provenance`, a map from source key to a list of
+JSON-ready item dicts. The composer merges those items into the turn's
+provenance payload, which the web UI renders as capsule rows under the
+assistant message (#1563). In-tree keys are `facts`, `journals`, `vault`, and
+`scratchpad`; unknown keys render as generic capsules. Keep items small
+(excerpts, not full bodies) — the full injection is already archived. A bad
+provenance entry is logged and dropped without failing the turn.
+
 Legacy `str` / `list[str]` returns are coerced to one `ContextContribution`
 in the `TAIL` slot containing the bounded `<recalled_facts>` envelope: the
 configured timeout and `lifecycle.pre_compose_token_ceiling` still apply, so
 existing extensions (including `mem0`) need no changes. The composer also
-exposes the envelope's atomic fact lines (after any ceiling trim) on the turn,
-which the web UI renders as a collapsed recalled-facts disclosure (#1514).
+exposes the envelope's atomic fact lines (after any ceiling trim) on the turn
+as the `facts` provenance capsule (#1514, #1563).
 Structured
 contributions carry their own messages and are not truncated by that legacy
 ceiling. Hooks run with a per-hook bound: core uses

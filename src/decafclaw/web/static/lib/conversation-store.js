@@ -17,6 +17,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {string} role
  * @property {string} [content]
  * @property {string} [thinking]
+ * @property {object} [provenance]
  * @property {string[]} [recalled_facts]
  * @property {string} [timestamp]
  * @property {string} [tool]
@@ -210,8 +211,8 @@ export class ConversationStore extends EventTarget {
   get streamingText() { return this.#messageStore.streamingText; }
   /** @returns {string} */
   get streamingThinking() { return this.#messageStore.streamingThinking; }
-  /** @returns {string[]} */
-  get streamingRecalledFacts() { return this.#messageStore.streamingRecalledFacts; }
+  /** @returns {Record<string, object[]>} */
+  get streamingProvenance() { return this.#messageStore.streamingProvenance; }
   /** @returns {boolean} */
   get isBusy() { return this.#busy; }
   /** @returns {boolean} */

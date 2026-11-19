@@ -3,8 +3,9 @@ import './chat-message.js';
 import './confirm-view.js';
 import {
   PREFERENCE_EVENT,
-  loadShowRecalledFacts,
-} from '../lib/recalled-facts-preference.js';
+  loadShowContextProvenance,
+} from '../lib/context-provenance-preference.js';
+import { provenanceHasItems } from './turn-provenance-row.js';
 
 export class ChatView extends LitElement {
   static properties = {
@@ -18,8 +19,8 @@ export class ChatView extends LitElement {
     _convId: { type: String, state: true },
     _showScrollBtn: { type: Boolean, state: true },
     _hasMore: { type: Boolean, state: true },
-    _showRecalledFacts: { type: Boolean, state: true },
-    _streamingRecalledFacts: { type: Array, state: true },
+    _showContextProvenance: { type: Boolean, state: true },
+    _streamingProvenance: { type: Object, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -30,7 +31,7 @@ export class ChatView extends LitElement {
     this._messages = [];
     this._streamingText = '';
     this._streamingThinking = '';
-    this._streamingRecalledFacts = [];
+    this._streamingProvenance = {};
     this._busy = false;
     this._toolStatus = null;
     this._showScrollBtn = false;
@@ -41,7 +42,7 @@ export class ChatView extends LitElement {
     this._loadingMore = false;
     this._savedScrollHeight = 0;
     this._resizeObserver = null;
-    this._showRecalledFacts = loadShowRecalledFacts();
+    this._showContextProvenance = loadShowContextProvenance();
   }
 
   connectedCallback() {
@@ -59,7 +60,7 @@ export class ChatView extends LitElement {
       this._messages = this.store?.currentMessages || [];
       this._streamingText = this.store?.streamingText || '';
       this._streamingThinking = this.store?.streamingThinking || '';
-      this._streamingRecalledFacts = this.store?.streamingRecalledFacts || [];
+      this._streamingProvenance = this.store?.streamingProvenance || {};
       this._busy = this.store?.isBusy || false;
       this._toolStatus = this.store?.toolStatus;
       this._pendingConfirms = [...(this.store?.pendingConfirms || [])];
@@ -109,10 +110,10 @@ export class ChatView extends LitElement {
       });
       this._resizeObserver.observe(this);
     }
-    this._onRecalledFactsPreference = (e) => {
-      this._showRecalledFacts = Boolean(e.detail?.enabled);
+    this._onContextProvenancePreference = (e) => {
+      this._showContextProvenance = Boolean(e.detail?.enabled);
     };
-    document.addEventListener(PREFERENCE_EVENT, this._onRecalledFactsPreference);
+    document.addEventListener(PREFERENCE_EVENT, this._onContextProvenancePreference);
   }
 
   disconnectedCallback() {
@@ -120,7 +121,7 @@ export class ChatView extends LitElement {
     this.store?.removeEventListener('change', this._onStoreChange);
     this._resizeObserver?.disconnect();
     this._resizeObserver = null;
-    document.removeEventListener(PREFERENCE_EVENT, this._onRecalledFactsPreference);
+    document.removeEventListener(PREFERENCE_EVENT, this._onContextProvenancePreference);
   }
 
   updated(changedProps) {
@@ -155,6 +156,22 @@ export class ChatView extends LitElement {
     this.store?.loadMoreHistory();
   }
 
+  /**
+   * Provenance for one message, honoring the visibility preference.
+   * Legacy rows archived before #1563 carry only `recalled_facts`; derive the
+   * facts capsule from them so history reloads keep their disclosure.
+   * @param {import('../lib/conversation-store.js').ChatMessage} m
+   * @returns {Record<string, object[]>}
+   */
+  #provenanceFor(m) {
+    if (!this._showContextProvenance) return {};
+    const provenance = (m.provenance && typeof m.provenance === 'object') ? m.provenance : {};
+    if (provenanceHasItems(provenance)) return provenance;
+    const facts = Array.isArray(m.recalled_facts) ? m.recalled_facts : [];
+    if (!facts.length) return {};
+    return { facts: facts.map((fact) => ({ fact })) };
+  }
+
   render() {
     if (!this._convId) {
       return html`<div class="empty-state">Select or create a conversation to start chatting.</div>`;
@@ -181,7 +198,7 @@ export class ChatView extends LitElement {
           .role=${m.role}
           .content=${m.content || ''}
           .thinking=${m.thinking || ''}
-          .recalledFacts=${this._showRecalledFacts ? (m.recalled_facts || []) : []}
+          .provenance=${this.#provenanceFor(m)}
           .tool=${m.tool || ''}
           .command=${m.command || ''}
           .display_short_text=${m.display_short_text || ''}
@@ -199,23 +216,25 @@ export class ChatView extends LitElement {
       `)}
 
       ${(() => {
-        const hasStreamingFacts = Boolean(this._showRecalledFacts && this._streamingRecalledFacts?.length);
-        const isStreaming = Boolean(this._streamingText || this._streamingThinking || hasStreamingFacts);
+        const streamingProvenance = this._showContextProvenance ? this._streamingProvenance : {};
+        const hasStreamingProvenance = provenanceHasItems(streamingProvenance);
+        const isStreaming = Boolean(this._streamingText || this._streamingThinking || hasStreamingProvenance);
         if (!isStreaming) return '';
         return html`
           <chat-message
             .role=${'assistant'}
             .content=${this._streamingText || ''}
             .thinking=${this._streamingThinking || ''}
-            .recalledFacts=${this._showRecalledFacts ? this._streamingRecalledFacts : []}
+            .provenance=${streamingProvenance}
             .streaming=${true}
           ></chat-message>
         `;
       })()}
 
       ${(() => {
-        const hasStreamingFacts = Boolean(this._showRecalledFacts && this._streamingRecalledFacts?.length);
-        const isStreaming = Boolean(this._streamingText || this._streamingThinking || hasStreamingFacts);
+        const streamingProvenance = this._showContextProvenance ? this._streamingProvenance : {};
+        const hasStreamingProvenance = provenanceHasItems(streamingProvenance);
+        const isStreaming = Boolean(this._streamingText || this._streamingThinking || hasStreamingProvenance);
         if (this._busy && !isStreaming && !this._toolStatus) {
           return html`
             <div class="thinking-indicator">

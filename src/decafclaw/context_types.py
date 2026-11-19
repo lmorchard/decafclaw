@@ -66,6 +66,11 @@ class ComposedContext:
     # Atomic facts from legacy PRE_COMPOSE string hook results, surfaced to
     # the web UI as the turn's recalled-memory disclosure (#1514).
     recalled_facts: list[str] = field(default_factory=list)
+    # Passive context provenance contributed by PRE_COMPOSE extensions (#1563).
+    # Keyed by source (facts, journals, vault, scratchpad); each value is a
+    # list of JSON-ready item dicts the web UI renders in the turn's capsule
+    # row.
+    provenance: dict[str, list[dict]] = field(default_factory=dict)
 
 
 # -- Per-conversation state ---------------------------------------------------
@@ -138,6 +143,10 @@ class ComposerState:
     # for the turn's message_complete payload (#1514). Refilled per compose;
     # a disabled extension cannot leak the previous turn's facts.
     last_recalled_facts: list[str] = field(default_factory=list)
+    # Passive context provenance from the latest compose() call (#1563),
+    # refilled per compose so a disabled extension cannot leak the previous
+    # turn's capsules into the UI.
+    last_provenance: dict[str, list[dict]] = field(default_factory=dict)
     last_prompt_tokens_actual: int = 0
     last_completion_tokens_actual: int = 0
     last_cached_prompt_tokens_actual: int = 0  # prompt tokens served from provider cache (#480)

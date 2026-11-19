@@ -2,36 +2,6 @@ import { describe, it, expect } from 'vitest';
 import './chat-message.js';
 
 describe('chat-message role rendering', () => {
-  it('renders conversation_notes as a tool message', async () => {
-    const el = document.createElement('chat-message');
-    el.role = 'conversation_notes';
-    el.content = 'note body';
-    document.body.append(el);
-    await el.updateComplete;
-
-    const toolMsg = el.querySelector('tool-message');
-    expect(toolMsg).not.toBeNull();
-    expect(toolMsg?.tool).toBe('conversation_notes');
-    expect(toolMsg?.icon).toBe('📝');
-    expect(el.querySelector('user-message')).toBeNull();
-    el.remove();
-  });
-
-  it('renders recent_journal as a tool message', async () => {
-    const el = document.createElement('chat-message');
-    el.role = 'recent_journal';
-    el.content = 'journal entry';
-    document.body.append(el);
-    await el.updateComplete;
-
-    const toolMsg = el.querySelector('tool-message');
-    expect(toolMsg).not.toBeNull();
-    expect(toolMsg?.tool).toBe('recent_journal');
-    expect(toolMsg?.icon).toBe('📓');
-    expect(el.querySelector('user-message')).toBeNull();
-    el.remove();
-  });
-
   it('renders workspace_references as a tool message', async () => {
     const el = document.createElement('chat-message');
     el.role = 'workspace_references';
@@ -62,17 +32,17 @@ describe('chat-message role rendering', () => {
     el.remove();
   });
 
-  it('forwards recalled facts to the assistant message (#1514)', async () => {
+  it('forwards provenance to the assistant message (#1563)', async () => {
     const el = document.createElement('chat-message');
     el.role = 'assistant';
     el.content = 'Answer';
-    el.recalledFacts = ['User prefers espresso.'];
+    el.provenance = { facts: [{ fact: 'User prefers espresso.' }] };
     document.body.append(el);
     await el.updateComplete;
 
     const assistant = el.querySelector('assistant-message');
     expect(assistant).not.toBeNull();
-    expect(assistant?.recalledFacts).toEqual(['User prefers espresso.']);
+    expect(assistant?.provenance).toEqual({ facts: [{ fact: 'User prefers espresso.' }] });
     el.remove();
   });
 

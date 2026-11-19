@@ -54,7 +54,7 @@ from decafclaw.memory_context import (
 )
 from decafclaw.util import estimate_tokens
 
-from . import BaseExtension, ContextContribution, ContextSlot, register_extension_type
+from . import BaseExtension, ContextContribution, ContextSlot, provenance_excerpt, register_extension_type
 
 log = logging.getLogger(__name__)
 
@@ -310,6 +310,16 @@ class VaultRetrievalExtension(BaseExtension):
                     else "fixed",
                 },
             ),
+            provenance={
+                "vault": [
+                    {
+                        "page": r.get("file_path", ""),
+                        "score": round(r.get("composite_score", 0.0), 3),
+                        "excerpt": provenance_excerpt(r.get("summary") or r.get("entry_text", "")),
+                    }
+                    for r in results
+                ]
+            },
         )
 
     @staticmethod

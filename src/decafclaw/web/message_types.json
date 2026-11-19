@@ -70,7 +70,7 @@
     "message_complete": {
       "direction": "server_to_client",
       "description": "Final form of an assistant message after streaming completed (or when replayed from history). `context_usage` is the context meter's value: the post-compaction estimate when this turn compacted and no later LLM call recorded usage, else the turn's last LLM prompt size (#1005, #1054).",
-      "fields": {"conv_id": "string", "text": "string", "thinking": "string?", "role": "string?", "final": "boolean?", "usage": "object?", "context_usage": "number?", "context_limit": "number?", "recalled_facts": "array of string?"}
+      "fields": {"conv_id": "string", "text": "string", "thinking": "string?", "role": "string?", "final": "boolean?", "usage": "object?", "context_usage": "number?", "context_limit": "number?", "provenance": "object?"}
     },
     "model_changed": {
       "direction": "server_to_client",
@@ -102,11 +102,6 @@
       "description": "Output of the post-turn reflection step for a conversation.",
       "fields": {"conv_id": "string", "passed": "boolean", "critique": "string", "retry_number": "number", "raw_response": "string", "error": "string"}
     },
-    "recalled_facts": {
-      "direction": "server_to_client",
-      "description": "Recalled memory facts injected into the active turn prompt, emitted as soon as prompt composition settles.",
-      "fields": {"conv_id": "string", "facts": "array of string"}
-    },
     "recovery_decision": {
       "direction": "server_to_client",
       "description": "Bounded recovery policy outcome after a recoverable LLM failure: retry / continue / stop, with phase and retry-budget state (#1144).",
@@ -136,6 +131,11 @@
       "direction": "server_to_client",
       "description": "An agent turn has started; clients should clear any draft and show in-flight UI.",
       "fields": {"conv_id": "string"}
+    },
+    "turn_provenance": {
+      "direction": "server_to_client",
+      "description": "Passive context provenance for the active turn (recalled facts, journal entries, vault pages, scratchpad notes), emitted when prompt composition settles so the UI can mount capsule rows before token streaming starts (#1563).",
+      "fields": {"conv_id": "string", "provenance": "object"}
     },
     "user_message": {
       "direction": "server_to_client",

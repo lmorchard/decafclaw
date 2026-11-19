@@ -39,12 +39,12 @@ from decafclaw.web.message_types import (
     SrvConvSelected,
     SrvMessageComplete,
     SrvModeChanged,
-    SrvRecalledFacts,
     SrvStickyClear,
     SrvStickySet,
     SrvStreamState,
     SrvToolEnd,
     SrvTurnComplete,
+    SrvTurnProvenance,
     WSMessageType,
     WSSendCallable,
 )
@@ -289,8 +289,14 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         "skill_hint",
         "context_status",
         # The legacy PRE_COMPOSE envelope is prompt plumbing; the assistant
-        # row's recalled_facts list renders the user-facing disclosure (#1514).
+        # row's provenance capsules render the user-facing disclosure (#1514,
+        # #1563).
         "recalled_facts",
+        # Passive PRE_COMPOSE hydration is prompt plumbing too: the assistant
+        # row's provenance capsule row carries its summary and items (#1563).
+        "recent_journal",
+        "conversation_notes",
+        "vault_retrieval",
     }
 
     # Read archive once and reuse for history, token estimation, and model scan
@@ -1261,15 +1267,15 @@ def _subscribe_to_conv(state, conv_id):
                     }
                 )
 
-        elif event_type == "recalled_facts":
-            facts = event.get("facts") or event.get("recalled_facts") or []
-            if facts:
-                facts_payload: SrvRecalledFacts = {
-                    "type": WSMessageType.RECALLED_FACTS,
+        elif event_type == "turn_provenance":
+            provenance = event.get("provenance") or {}
+            if isinstance(provenance, dict) and provenance:
+                provenance_payload: SrvTurnProvenance = {
+                    "type": WSMessageType.TURN_PROVENANCE,
                     "conv_id": event_conv_id,
-                    "facts": list(facts),
+                    "provenance": provenance,
                 }
-                await ws_send(facts_payload)
+                await ws_send(provenance_payload)
 
         elif event_type == "confirmation_request":
             # Flush any pending streamed text or thinking
@@ -1352,8 +1358,8 @@ def _subscribe_to_conv(state, conv_id):
                 msg_complete["context_usage"] = event["context_usage"]
             if "context_limit" in event:
                 msg_complete["context_limit"] = event["context_limit"]
-            if event.get("recalled_facts"):
-                msg_complete["recalled_facts"] = event["recalled_facts"]
+            if event.get("provenance"):
+                msg_complete["provenance"] = event["provenance"]
             await ws_send(msg_complete)
 
         elif event_type == "turn_start":

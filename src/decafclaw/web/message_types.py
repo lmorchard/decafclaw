@@ -32,7 +32,6 @@ class WSMessageType(StrEnum):
     MODELS_AVAILABLE = "models_available"
     NOTIFICATION_CREATED = "notification_created"
     NOTIFICATION_READ = "notification_read"
-    RECALLED_FACTS = "recalled_facts"
     RECOVERY_DECISION = "recovery_decision"
     REFLECTION_RESULT = "reflection_result"
     SHELL_APPROVAL = "shell_approval"
@@ -43,6 +42,7 @@ class WSMessageType(StrEnum):
     TOOL_START = "tool_start"
     TOOL_STATUS = "tool_status"
     TURN_COMPLETE = "turn_complete"
+    TURN_PROVENANCE = "turn_provenance"
     TURN_START = "turn_start"
     USER_MESSAGE = "user_message"
     VAULT_CHANGED = "vault_changed"
@@ -81,7 +81,6 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.MODELS_AVAILABLE,
         WSMessageType.NOTIFICATION_CREATED,
         WSMessageType.NOTIFICATION_READ,
-        WSMessageType.RECALLED_FACTS,
         WSMessageType.RECOVERY_DECISION,
         WSMessageType.REFLECTION_RESULT,
         WSMessageType.SHELL_APPROVAL,
@@ -92,6 +91,7 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.TOOL_START,
         WSMessageType.TOOL_STATUS,
         WSMessageType.TURN_COMPLETE,
+        WSMessageType.TURN_PROVENANCE,
         WSMessageType.TURN_START,
         WSMessageType.USER_MESSAGE,
         WSMessageType.VAULT_CHANGED,
@@ -248,7 +248,7 @@ class SrvMessageComplete(TypedDict):
     usage: NotRequired[dict[str, object]]
     context_usage: NotRequired[int]
     context_limit: NotRequired[int]
-    recalled_facts: NotRequired[list[str]]
+    provenance: NotRequired[dict[str, object]]
 
 
 class SrvModeChanged(TypedDict):
@@ -282,12 +282,6 @@ class SrvNotificationRead(TypedDict):
     type: Literal[WSMessageType.NOTIFICATION_READ]
     ids: list[str]
     unread_count: int
-
-
-class SrvRecalledFacts(TypedDict):
-    type: Literal[WSMessageType.RECALLED_FACTS]
-    conv_id: str
-    facts: list[str]
 
 
 class SrvRecoveryDecision(TypedDict):
@@ -367,6 +361,12 @@ class SrvTurnComplete(TypedDict):
     type: Literal[WSMessageType.TURN_COMPLETE]
     conv_id: str
     reason: NotRequired[str]
+
+
+class SrvTurnProvenance(TypedDict):
+    type: Literal[WSMessageType.TURN_PROVENANCE]
+    conv_id: str
+    provenance: dict[str, object]
 
 
 class SrvTurnStart(TypedDict):
@@ -475,7 +475,6 @@ ServerMessage = (
     | SrvModelsAvailable
     | SrvNotificationCreated
     | SrvNotificationRead
-    | SrvRecalledFacts
     | SrvRecoveryDecision
     | SrvReflectionResult
     | SrvShellApproval
@@ -486,6 +485,7 @@ ServerMessage = (
     | SrvToolStart
     | SrvToolStatus
     | SrvTurnComplete
+    | SrvTurnProvenance
     | SrvTurnStart
     | SrvUserMessage
     | SrvVaultChanged

@@ -134,10 +134,11 @@ Legacy text coerces to one `TAIL` `ContextContribution` holding the bounded
 `<recalled_facts>` envelope, so the configured timeout and token ceiling are
 unchanged. Structured contributions carry their own messages and skip that
 legacy ceiling. Any contribution `source_entry` lands in the turn's
-`sources`. The atomic fact lines that survive the envelope's token ceiling
-also land on `ComposedContext.recalled_facts`, which the web UI renders as the
-turn's recalled-memory disclosure (#1514); a list trimmed by the ceiling
-contains only what the model received.
+`sources`. A contribution may also set `provenance` (source key → item dicts);
+the composer merges those into `ComposedContext.provenance`, and legacy fact
+lines that survive the envelope's token ceiling land there as the `facts`
+capsule. The web UI renders the merged payload as the turn's capsule row
+(#1563); a list trimmed by the ceiling contains only what the model received.
 
 ### Token budget
 

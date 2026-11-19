@@ -44,12 +44,28 @@ class ContextContribution:
 
     ``messages`` are normal chat messages. ``source_entry`` is optional
     telemetry for the Context Inspector; when present the composer appends it
-    to the turn's ``sources`` list.
+    to the turn's ``sources`` list. ``provenance`` maps a source key to the
+    JSON-ready items that source injected, for the turn's provenance capsule
+    row (#1563). Keys must be strings and values lists of dicts; malformed
+    entries are logged and dropped.
     """
 
     slot: ContextSlot
     messages: list[dict] = field(default_factory=list)
     source_entry: "SourceEntry | None" = None
+    provenance: dict[str, list[dict]] | None = None
+
+
+def provenance_excerpt(text: object, limit: int = 400) -> str:
+    """Collapse whitespace and bound one provenance snippet for the UI.
+
+    Extensions send capsule items alongside the full prompt injection; the
+    popover only needs enough to identify what was ingested (#1563).
+    """
+    collapsed = " ".join(str(text or "").split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 1].rstrip() + "…"
 
 
 @dataclass(frozen=True)

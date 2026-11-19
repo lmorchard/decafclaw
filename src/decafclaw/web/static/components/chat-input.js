@@ -3,10 +3,10 @@ import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { uploadFile } from '../lib/upload-client.js';
 import {
   PREFERENCE_EVENT,
-  broadcastShowRecalledFacts,
-  loadShowRecalledFacts,
-  storeShowRecalledFacts,
-} from '../lib/recalled-facts-preference.js';
+  broadcastShowContextProvenance,
+  loadShowContextProvenance,
+  storeShowContextProvenance,
+} from '../lib/context-provenance-preference.js';
 import './model-picker.js';
 
 /** @typedef {import('../lib/api-client/index.js').AutocompleteResponse['results'][number]} Completion */
@@ -83,7 +83,7 @@ export class ChatInput extends LitElement {
     _historyIndex: { type: Number, state: true },
     _draft: { type: String, state: true },
     _conversationMenuOpen: { type: Boolean, state: true },
-    _showRecalledFacts: { type: Boolean, state: true },
+    _showContextProvenance: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -117,7 +117,7 @@ export class ChatInput extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('click', this.#onDocClick);
-    document.removeEventListener(PREFERENCE_EVENT, this._onRecalledFactsPreference);
+    document.removeEventListener(PREFERENCE_EVENT, this._onContextProvenancePreference);
     if (this._fetchTimeout) {
       clearTimeout(this._fetchTimeout);
       this._fetchTimeout = null;
@@ -127,7 +127,7 @@ export class ChatInput extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     document.addEventListener('click', this.#onDocClick);
-    document.addEventListener(PREFERENCE_EVENT, this._onRecalledFactsPreference);
+    document.addEventListener(PREFERENCE_EVENT, this._onContextProvenancePreference);
   }
 
   #onDocClick = (/** @type {MouseEvent} */ e) => {
@@ -184,9 +184,9 @@ export class ChatInput extends LitElement {
     this._lastFetchedQuery = '';
     this._fetchTimeout = null;
     this._conversationMenuOpen = false;
-    this._showRecalledFacts = loadShowRecalledFacts();
-    this._onRecalledFactsPreference = (e) => {
-      this._showRecalledFacts = Boolean(e.detail?.enabled);
+    this._showContextProvenance = loadShowContextProvenance();
+    this._onContextProvenancePreference = (e) => {
+      this._showContextProvenance = Boolean(e.detail?.enabled);
     };
   }
 
@@ -375,12 +375,12 @@ export class ChatInput extends LitElement {
     }
   }
 
-  /** Persist and broadcast the recalled-facts disclosure preference (#1514). */
-  #handleRecalledFactsChange(/** @type {Event} */ e) {
+  /** Persist and broadcast the context provenance visibility preference (#1563). */
+  #handleContextProvenanceChange(/** @type {Event} */ e) {
     const enabled = Boolean(/** @type {HTMLInputElement} */ (e.target).checked);
-    this._showRecalledFacts = enabled;
-    storeShowRecalledFacts(enabled);
-    broadcastShowRecalledFacts(enabled);
+    this._showContextProvenance = enabled;
+    storeShowContextProvenance(enabled);
+    broadcastShowContextProvenance(enabled);
   }
 
   /** Context item: summon the context inspector. */
@@ -803,15 +803,15 @@ export class ChatInput extends LitElement {
             </div>
           ` : nothing}
           <div class="conversation-menu-settings">
-            <span class="conversation-menu-field-label">Memory</span>
-            <label class="conversation-menu-toggle" for="conversation-menu-recalled-facts">
+            <span class="conversation-menu-field-label">Context</span>
+            <label class="conversation-menu-toggle" for="conversation-menu-context-provenance">
               <input
                 type="checkbox"
-                id="conversation-menu-recalled-facts"
-                .checked=${this._showRecalledFacts}
-                @change=${this.#handleRecalledFactsChange}
+                id="conversation-menu-context-provenance"
+                .checked=${this._showContextProvenance}
+                @change=${this.#handleContextProvenanceChange}
               >
-              <span>Show recalled facts in conversation</span>
+              <span>Show context capsules</span>
             </label>
           </div>
         </div>

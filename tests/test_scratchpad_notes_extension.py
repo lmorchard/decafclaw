@@ -42,6 +42,11 @@ class TestContribution:
         assert contribution.source_entry is not None
         assert contribution.source_entry.source == "notes"
         assert contribution.source_entry.items_included == 2
+        assert contribution.provenance is not None
+        assert [item["text"] for item in contribution.provenance["scratchpad"]] == [
+            "user prefers concise replies",
+            "decided to use vertex provider",
+        ]
 
     async def test_cursor_advances_and_second_call_is_empty(self, ctx):
         append_note(ctx.config, ctx.conv_id, "note 1", now="2026-01-01T00:00:00Z")

@@ -251,6 +251,7 @@ class ContextComposer:
         ctx.composer.last_retrieved_context_text = ""
         ctx.composer.last_memory_results = []
         ctx.composer.last_recalled_facts = []
+        ctx.composer.last_provenance = {}
 
         # -- PRE_COMPOSE lifecycle collector hooks (#1454, #1486, #1507) --
         # HEAD messages mount outside the archived history (see below); DELTA
@@ -263,6 +264,7 @@ class ContextComposer:
             epilogue_msgs,
             hook_sources,
             recalled_facts,
+            provenance,
         ) = await compose_pre_compose_hooks(
             ctx,
             config,
@@ -270,6 +272,7 @@ class ContextComposer:
             history,
         )
         ctx.composer.last_recalled_facts = list(recalled_facts)
+        ctx.composer.last_provenance = provenance
         for hm in (*delta_msgs, *tail_hook_msgs):
             to_archive.append(hm)
         sources.extend(hook_sources)
@@ -403,6 +406,7 @@ class ContextComposer:
             retrieved_context_text=ctx.composer.last_retrieved_context_text,
             memory_results=list(ctx.composer.last_memory_results),
             recalled_facts=list(ctx.composer.last_recalled_facts),
+            provenance=dict(ctx.composer.last_provenance),
         )
 
     def _compose_tools(self, ctx) -> tuple[list[dict], list[dict], str | None, str | None, SourceEntry]:
@@ -447,5 +451,5 @@ class ContextComposer:
         config: Any,
         user_message: str,
         history: list,
-    ) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry], list[str]]:
+    ) -> tuple[list[dict], list[dict], list[dict], list[dict], list[SourceEntry], list[str], dict[str, list[dict]]]:
         return await compose_pre_compose_hooks(ctx, config, user_message, history)

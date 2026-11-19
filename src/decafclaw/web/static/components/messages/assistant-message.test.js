@@ -89,22 +89,24 @@ describe('assistant-message thinking block (#154)', () => {
     expect(block.querySelector('summary .thought-spinner')).toBeNull();
   });
 
-  it('renders the recalled facts disclosure above the response (#1514)', async () => {
+  it('renders the provenance capsule row above the response (#1563)', async () => {
     const msg = await mount({
       content: 'Final answer',
-      recalledFacts: ['User prefers espresso.', 'User is in Pacific time.'],
+      provenance: { facts: [{ fact: 'User prefers espresso.' }, { fact: 'User is in Pacific time.' }] },
     });
 
-    const facts = msg.querySelector('chat-recalled-facts');
-    expect(facts).toBeTruthy();
-    expect(facts.facts).toEqual(['User prefers espresso.', 'User is in Pacific time.']);
+    const row = msg.querySelector('turn-provenance-row');
+    expect(row).toBeTruthy();
+    expect(row.provenance.facts).toHaveLength(2);
 
     const content = msg.querySelector('.content');
-    expect(facts.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(row.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('renders no recalled facts disclosure for an empty list (#1514)', async () => {
-    const msg = await mount({ content: 'Answer', recalledFacts: [] });
-    expect(msg.querySelector('chat-recalled-facts')).toBeNull();
+  it('renders no provenance row for an empty payload (#1563)', async () => {
+    const msg = await mount({ content: 'Answer', provenance: {} });
+    const row = /** @type {any} */ (msg.querySelector('turn-provenance-row'));
+    await row.updateComplete;
+    expect(row.querySelector('.turn-provenance')).toBeNull();
   });
 });

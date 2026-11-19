@@ -181,7 +181,7 @@ Final form of an assistant message after streaming completed (or when replayed f
 - `usage` — object?
 - `context_usage` — number?
 - `context_limit` — number?
-- `recalled_facts` — array of string?
+- `provenance` — object?
 
 ### `mode_changed`
 
@@ -230,15 +230,6 @@ A notification was marked read (push from notification subsystem).
 
 - `ids` — array of string
 - `unread_count` — number
-
-### `recalled_facts`
-
-Recalled memory facts injected into the active turn prompt, emitted as soon as prompt composition settles.
-
-**Fields:**
-
-- `conv_id` — string
-- `facts` — array of string
 
 ### `recovery_decision`
 
@@ -348,6 +339,15 @@ An agent turn finished (success, error, or cancellation). `reason` names the set
 
 - `conv_id` — string
 - `reason` — string?
+
+### `turn_provenance`
+
+Passive context provenance for the active turn (recalled facts, journal entries, vault pages, scratchpad notes), emitted when prompt composition settles so the UI can mount capsule rows before token streaming starts (#1563).
+
+**Fields:**
+
+- `conv_id` — string
+- `provenance` — object
 
 ### `turn_start`
 

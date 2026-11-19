@@ -14,8 +14,8 @@ export class MessageStore {
   #streamingText = '';
   /** @type {string} */
   #streamingThinking = '';
-  /** @type {string[]} */
-  #streamingRecalledFacts = [];
+  /** @type {Record<string, object[]>} */
+  #streamingProvenance = {};
   /** @type {boolean} */
   #hasMore = false;
   /** @type {() => void} */
@@ -34,8 +34,8 @@ export class MessageStore {
   get streamingText() { return this.#streamingText; }
   /** @returns {string} */
   get streamingThinking() { return this.#streamingThinking; }
-  /** @returns {string[]} */
-  get streamingRecalledFacts() { return this.#streamingRecalledFacts; }
+  /** @returns {Record<string, object[]>} */
+  get streamingProvenance() { return this.#streamingProvenance; }
   /** @returns {boolean} */
   get hasMore() { return this.#hasMore; }
 
@@ -46,14 +46,10 @@ export class MessageStore {
     this.#currentMessages = [];
     this.#streamingText = '';
     this.#streamingThinking = '';
-    this.#streamingRecalledFacts = [];
+    this.#streamingProvenance = {};
     this.#hasMore = false;
   }
 
-  /** Reset streaming recalled facts (e.g. on new turn start). */
-  clearStreamingRecalledFacts() {
-    this.#streamingRecalledFacts = [];
-  }
   /** @param {ChatMessage} msg */
   pushMessage(msg) {
     this.#currentMessages.push(msg);
@@ -143,7 +139,7 @@ export class MessageStore {
   clearStreamingText() {
     this.#streamingText = '';
     this.#streamingThinking = '';
-    this.#streamingRecalledFacts = [];
+    this.#streamingProvenance = {};
   }
 
   /** Replace the live buffers with the server's accumulated segment,
@@ -200,9 +196,11 @@ export class MessageStore {
         }
         return true;
 
-      case MESSAGE_TYPES.RECALLED_FACTS:
+      case MESSAGE_TYPES.TURN_PROVENANCE:
         if (msg.conv_id === currentConvId) {
-          this.#streamingRecalledFacts = Array.isArray(msg.facts) ? [...msg.facts] : [];
+          this.#streamingProvenance = msg.provenance && typeof msg.provenance === 'object'
+            ? { ...msg.provenance }
+            : {};
         }
         return true;
 
@@ -212,13 +210,13 @@ export class MessageStore {
             role: msg.role || 'assistant',
             content: msg.text,
             thinking: msg.thinking || this.#streamingThinking || '',
-            recalled_facts: msg.recalled_facts || (this.#streamingRecalledFacts.length ? [...this.#streamingRecalledFacts] : []),
+            provenance: msg.provenance || { ...this.#streamingProvenance },
             timestamp: new Date().toISOString(),
             usage: msg.usage || null,
           });
           this.#streamingText = '';
           this.#streamingThinking = '';
-          this.#streamingRecalledFacts = [];
+          this.#streamingProvenance = {};
         }
         return true;
 

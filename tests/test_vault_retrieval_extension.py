@@ -90,6 +90,18 @@ class TestContribution:
         assert entry.items_included == 1
         assert entry.details["mode"] == RetrievalMode.ALWAYS
         assert entry.details["injection_skipped"] is False
+        assert contribution.provenance == {
+            "vault": [
+                {
+                    "page": "pages/first.md",
+                    "score": round(
+                        entry.details["top_score"],
+                        3,
+                    ),
+                    "excerpt": "some memory",
+                }
+            ]
+        }
 
     async def test_no_candidates_yields_skipped_entry(self, ctx):
         with patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[]):
