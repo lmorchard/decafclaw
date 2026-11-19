@@ -389,6 +389,28 @@ class TestComposerIntegration:
         assert len(events) == 1
         assert events[0]["text"] == "formatted memory"
 
+    async def test_failed_compose_rolls_back_injected_paths(self, ctx):
+        """A failed composition must not suppress a page that never reached the prompt."""
+        from decafclaw.context_composer import ContextComposer
+
+        with (
+            patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[_candidate()]),
+            patch(FORMAT_PATCH, return_value="formatted memory"),
+            patch("decafclaw.context_composer.assemble_provider_history", side_effect=RuntimeError("assembly")),
+        ):
+            with pytest.raises(RuntimeError):
+                await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+
+        assert ctx.composer.injected_paths == set()
+
+        with (
+            patch(RETRIEVE_PATCH, new_callable=AsyncMock, return_value=[_candidate()]),
+            patch(FORMAT_PATCH, return_value="formatted memory"),
+        ):
+            composed = await ContextComposer().compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+
+        assert any("<vault_retrieval>" in str(m.get("content", "")) for m in composed.messages)
+
     async def test_disabled_extension_leaves_manual_tools_only(self, ctx):
         ctx.event_bus = EventBus()
         ctx.config.extensions["vault_retrieval"] = ExtensionConfig(enabled=False, type="vault_retrieval")

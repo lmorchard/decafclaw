@@ -128,12 +128,17 @@ class ContextComposer:
             # Injection helpers advance the cursors before the injected
             # messages reach history and the archive. If composition fails or
             # is cancelled after that, roll the cursors back so the next turn
-            # re-surfaces what was never delivered.
+            # re-surfaces what was never delivered. Proactive retrieval also
+            # records suppression paths before compose() returns, so restore
+            # that set too; otherwise a page that never reached the prompt is
+            # suppressed on later turns.
             cursors_before = ctx.composer.injection_cursors
+            injected_before = set(ctx.composer.injected_paths)
             try:
                 return await self._compose_impl(ctx, user_message, history, mode=mode, attachments=attachments)
             except BaseException:
                 ctx.composer.injection_cursors = cursors_before
+                ctx.composer.injected_paths = injected_before
                 raise
 
     async def _compose_impl(

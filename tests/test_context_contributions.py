@@ -45,6 +45,24 @@ def test_context_slots_and_contribution_contract():
     assert contribution.source_entry is None
 
 
+def test_working_memory_envelope_normalizes_tags():
+    """Odd message roles still produce valid, attributing sub-block tags."""
+    from decafclaw.context_pipeline import working_memory_envelope
+
+    envelope = working_memory_envelope(
+        [
+            {"role": "3rd-party source", "content": "A"},
+            {"role": "", "content": "B"},
+            {"role": "empty", "content": "   "},
+        ]
+    )
+    assert envelope is not None
+    assert envelope["content"] == (
+        "<working_memory>\n<_3rd-party_source>\nA\n</_3rd-party_source>\n<context>\nB\n</context>\n</working_memory>"
+    )
+    assert working_memory_envelope([{"role": "user", "content": "  "}]) is None
+
+
 @pytest.mark.asyncio
 async def test_slot_ordering_invariant(ctx, config, no_tail_notes):
     """HEAD precedes HISTORY, DELTA before TAIL, and working memory mounts last."""

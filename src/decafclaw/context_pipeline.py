@@ -327,6 +327,8 @@ def working_memory_envelope(messages: list[dict]) -> dict | None:
         if not content.strip():
             continue
         tag = _WORKING_MEMORY_TAG.sub("_", str(message.get("role") or "context")).strip("_") or "context"
+        if not (tag[0].isalpha() or tag[0] == "_"):
+            tag = f"_{tag}"
         blocks.append(f"<{tag}>\n{content}\n</{tag}>")
     if not blocks:
         return None

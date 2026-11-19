@@ -70,7 +70,7 @@ is archived: the conversational prefix through the previous assistant turn
 stays byte-identical for the provider's prompt cache, compaction never
 summarizes consumed retrieval, and surfacing references for the UI or restart
 dedupe travel as metadata on the archived user row (see
-[working memory](context-composer.md#working-memory-and-the-cache-boundary)).
+[working memory](context-composer.md#working-memory-and-the-cache-boundary-1574)).
 
 Token accounting and Context Inspector visibility come from the
 contribution's `source_entry`, which is appended to the turn's `sources`
