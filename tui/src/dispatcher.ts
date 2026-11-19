@@ -208,6 +208,8 @@ export function dispatch(s: State, m: ServerMessage): State {
       return s;
     case "vault_changed":
       return s;
+    case "recalled_facts":
+      return s;
 
     default: {
       // Forward-compat: surface unknown types as unchanged. The assertNever
