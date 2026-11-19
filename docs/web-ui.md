@@ -557,7 +557,10 @@ The standalone entry participates in the normal JavaScript type check and uses
 the same generated state contract as the embedded panel.
 
 **Resize:** drag handle on the left edge of `#canvas-main`. Width persists
-to `localStorage["canvas-width"]`.
+to `localStorage["canvas-width"]`. Sidebar, wiki, and canvas dividers share
+`setupResizeHandle` (`lib/utils.js`); it shows a full-viewport drag shield
+while dragging so pointer events keep reaching the parent when the pointer
+crosses an iframe widget.
 
 **Mobile:** full-screen overlay (`position: fixed; inset: 0; z-index: 100`).
 Mutually exclusive with the wiki overlay — most-recent-open wins. See

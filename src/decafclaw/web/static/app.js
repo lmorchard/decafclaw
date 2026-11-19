@@ -771,37 +771,18 @@ if (sidebar) {
 // Wiki drag resize
 const WIKI_MIN_WIDTH = 250;
 const WIKI_MAX_WIDTH_PCT = 0.7; // max 70% of layout
-
-const savedWikiWidth = localStorage.getItem('wiki-width');
-if (savedWikiWidth) document.documentElement.style.setProperty('--wiki-width', savedWikiWidth + 'px');
+const getSidebarWidth = () =>
+  parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 280;
 
 if (wikiResizeHandle) {
-  let wikiDragging = false;
-  wikiResizeHandle.addEventListener('mousedown', (e) => {
-    wikiDragging = true;
-    wikiResizeHandle.classList.add('dragging');
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    e.preventDefault();
-  });
-  document.addEventListener('mousemove', (e) => {
-    if (!wikiDragging) return;
-    if (!wikiMainEl || !chatLayout) return;
-    const layoutRect = chatLayout.getBoundingClientRect();
-    const sidebarWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 280;
-    const wikiLeft = layoutRect.left + sidebarWidth + 4; // 4px for sidebar handle
-    const maxWidth = (layoutRect.width - sidebarWidth) * WIKI_MAX_WIDTH_PCT;
-    const newWidth = Math.min(maxWidth, Math.max(WIKI_MIN_WIDTH, e.clientX - wikiLeft));
-    document.documentElement.style.setProperty('--wiki-width', newWidth + 'px');
-  });
-  document.addEventListener('mouseup', () => {
-    if (!wikiDragging) return;
-    wikiDragging = false;
-    wikiResizeHandle.classList.remove('dragging');
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-    const w = getComputedStyle(document.documentElement).getPropertyValue('--wiki-width').trim();
-    localStorage.setItem('wiki-width', String(parseInt(w)));
+  setupResizeHandle({
+    handle: wikiResizeHandle,
+    container: chatLayout,
+    minWidth: WIKI_MIN_WIDTH,
+    maxWidth: (rect) => (rect.width - getSidebarWidth()) * WIKI_MAX_WIDTH_PCT,
+    offset: () => getSidebarWidth() + 4, // 4px for the sidebar handle
+    storageKey: 'wiki-width',
+    cssVar: '--wiki-width',
   });
 }
 
@@ -821,43 +802,15 @@ if (sidebarResizeHandle) {
 // Canvas drag resize (right-side panel: handle is to the left of the panel,
 // so dragging left grows the canvas — compute from right edge of layout).
 const canvasResizeHandle = document.getElementById('canvas-resize-handle');
-const canvasMainEl = document.getElementById('canvas-main');
-
-const savedCanvasWidth = localStorage.getItem('canvas-width');
-if (savedCanvasWidth) document.documentElement.style.setProperty('--canvas-width', savedCanvasWidth + 'px');
-
-if (canvasResizeHandle && canvasMainEl) {
-  const CANVAS_MIN_WIDTH = 280;
-  const CANVAS_MAX_WIDTH_PCT = 0.7;
-  let canvasDragging = false;
-  canvasResizeHandle.addEventListener('mousedown', (e) => {
-    canvasDragging = true;
-    canvasResizeHandle.classList.add('dragging');
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    e.preventDefault();
-  });
-  document.addEventListener('mousemove', (e) => {
-    if (!canvasDragging) return;
-    if (!chatLayout) return;
-    const layoutRect = chatLayout.getBoundingClientRect();
-    const maxWidth = layoutRect.width * CANVAS_MAX_WIDTH_PCT;
-    const newWidth = Math.min(maxWidth, Math.max(CANVAS_MIN_WIDTH, layoutRect.right - e.clientX));
-    document.documentElement.style.setProperty('--canvas-width', newWidth + 'px');
-  });
-  document.addEventListener('mouseup', () => {
-    if (!canvasDragging) return;
-    canvasDragging = false;
-    canvasResizeHandle.classList.remove('dragging');
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-    // Persist only on real pixel values. parseInt() of the CSS var can
-    // yield NaN (var unset) or 45 (CSS default '45%'), neither of which
-    // is a valid pixel width to round-trip on next load.
-    const px = canvasMainEl.getBoundingClientRect().width;
-    if (Number.isFinite(px) && px >= CANVAS_MIN_WIDTH) {
-      localStorage.setItem('canvas-width', String(Math.round(px)));
-    }
+if (canvasResizeHandle) {
+  setupResizeHandle({
+    handle: canvasResizeHandle,
+    container: chatLayout,
+    edge: 'right',
+    minWidth: 280,
+    maxWidth: (rect) => rect.width * 0.7,
+    storageKey: 'canvas-width',
+    cssVar: '--canvas-width',
   });
 }
 
