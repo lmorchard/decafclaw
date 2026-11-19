@@ -7,6 +7,7 @@
 import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
+import { getConvFromUrl } from './lib/conversation-url.js';
 import { MESSAGE_TYPES, KNOWN_MESSAGE_TYPES } from './lib/message-types.js';
 import { SIDE_EFFECT_COMMANDS } from './lib/constants.js';
 import { load as loadBookmarks } from './lib/bookmarks-store.js';
@@ -639,18 +640,6 @@ store.addEventListener('change', () => {
     history.replaceState(null, '', '?' + params.toString());
   }
 });
-
-/** Read ?conv= (or #conv= fallback) on startup and select that conversation */
-function getConvFromUrl() {
-  const fromSearch = new URLSearchParams(location.search).get('conv');
-  if (fromSearch) return fromSearch;
-  if (location.hash) {
-    const raw = location.hash.replace(/^#/, '');
-    const hashParams = new URLSearchParams(raw);
-    return hashParams.get('conv') || null;
-  }
-  return null;
-}
 
 /** Read ?vault= on startup and open that vault page */
 function getWikiFromUrl() {

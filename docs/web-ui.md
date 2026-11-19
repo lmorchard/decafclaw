@@ -234,6 +234,14 @@ original hrefs on idle. Every favicon link is updated because a browser may
 otherwise prefer the untouched 16/32px PNGs. Statuses of other conversations
 are irrelevant to the favicon.
 
+**Sidebar collapse.** The desktop sidebar's collapsed/expanded state is
+per conversation, stored as `sidebar-collapsed:<conv_id>` in `localStorage`, so
+several tabs showing different conversations keep independent widths. The
+sidebar reads the conversation from `?conv=` before the store delivers one,
+which avoids flashing the expanded sidebar on reload. The older global
+`sidebar-collapsed` key is migrated to the conversation open when first read.
+Collapse stays desktop-only; the mobile drawer always opens full width.
+
 ### Vault editor
 
 WYSIWYG markdown editor for vault pages, accessible from the sidebar:
