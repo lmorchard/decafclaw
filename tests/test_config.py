@@ -80,6 +80,9 @@ class TestDefaults:
         # Ntfy push channel — opt-in, no topic means the adapter is not wired.
         assert c.notifications.channels.ntfy.enabled is False
         assert c.notifications.channels.ntfy.topic == ""
+        assert c.notifications.channels.ntfy.min_priority == "low"
+        assert c.notifications.channels.ntfy.default_priority == 1
+        assert c.notifications.channels.ntfy.confirmation_priority == 3
         assert c.notifications.channels.ntfy.notify_on_confirmation is True
         # Vault page channel — local audit trail, on by default (no
         # external delivery, no cost, useful out of the box).

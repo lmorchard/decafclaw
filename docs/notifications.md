@@ -320,10 +320,14 @@ Configured under `config.notifications.channels.ntfy`:
   unsubscribed.
 - `access_token: str` (default `""`, secret) — sent as
   `Authorization: Bearer` when set.
-- `min_priority: "low" | "normal" | "high"` (default `high`) — inbox
+- `min_priority: "low" | "normal" | "high"` (default `low`) — inbox
   records below the threshold are dropped.
 - `notify_on_confirmation: bool` (default `true`) — push pending tool
   confirmations.
+- `default_priority: int` (default `1`) — ntfy priority (1–5) for
+  general notifications (1 = min/lowest urgency, silent in drawer).
+- `confirmation_priority: int` (default `3`) — ntfy priority (1–5) for
+  tool approval confirmations (3 = default/medium urgency).
 
 **Startup guard:** `enabled`, a non-empty `topic`, and an `http(s)`
 `server_url`. Missing any piece → adapter not wired.
@@ -331,13 +335,14 @@ Configured under `config.notifications.channels.ntfy`:
 **Notification pushes.** `notification_created` records at or above
 `min_priority` become an ntfy JSON publish: `title` is the record
 title, `message` is the body (falling back to the title), `priority`
-maps low/normal/high to 2/3/4, and `tags` carries the record category.
+is `default_priority` (default 1, lowest urgency), and `tags` carries
+the record category.
 When the HTTP server is enabled, the record's `http(s)` link (or its
 `conv_id` mapped to `<web base>/?conv=<id>`) becomes the notification
 `click` target.
 
-**Confirmation pushes.** `confirmation_request` events become urgent
-(`priority: 5`) notifications with actions:
+**Confirmation pushes.** `confirmation_request` events become medium-urgency
+(`priority: 3` / `confirmation_priority`) notifications with actions:
 
 - **Approve** / **Deny** (`action=http`, `method=POST`, `clear=true`)
   → `POST {http callback base}/actions/confirm?token=<single-use token>`.

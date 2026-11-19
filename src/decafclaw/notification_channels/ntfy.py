@@ -3,9 +3,11 @@
 Subscribes to two event types:
 
 - ``notification_created`` — publishes inbox records at or above the
-  channel's ``min_priority`` to the configured ntfy topic.
+  channel's ``min_priority`` to the configured ntfy topic (default
+  priority 1, min/lowest urgency).
 - ``confirmation_request`` — when ``notify_on_confirmation`` is set,
-  publishes a pending tool confirmation as an urgent notification with
+  publishes a pending tool confirmation as a medium-urgency notification
+  (default priority 3, default) with
   ``Approve`` / ``Deny`` action buttons (``action=http``) and an
   ``Open Session`` link (``action=view``).
 
@@ -36,8 +38,9 @@ from . import meets_priority
 log = logging.getLogger(__name__)
 
 # ntfy's priority scale: 1=min 2=low 3=default 4=high 5=urgent.
-_PRIORITY = {"low": 2, "normal": 3, "high": 4}
-CONFIRMATION_PRIORITY = 5
+DEFAULT_NOTIFICATION_PRIORITY = 1
+CONFIRMATION_PRIORITY = 3
+_PRIORITY: dict[str, int] = {}
 REQUEST_TIMEOUT_SEC = 10.0
 
 
@@ -91,11 +94,13 @@ def _click_url(config: Any, record: NotificationRecord) -> str:
 def build_notification_payload(config: Any, record: NotificationRecord) -> dict:
     """Render a notification record as an ntfy JSON publish payload."""
     cfg = config.notifications.channels.ntfy
+    default_priority = getattr(cfg, "default_priority", DEFAULT_NOTIFICATION_PRIORITY)
+    priority = _PRIORITY.get(record.priority, default_priority)
     payload: dict[str, Any] = {
         "topic": cfg.topic.strip(),
         "title": record.title,
         "message": record.body or record.title or "Notification",
-        "priority": _PRIORITY.get(record.priority, 3),
+        "priority": priority,
     }
     if record.category:
         payload["tags"] = [record.category]
@@ -144,11 +149,12 @@ def build_confirmation_payload(config: Any, event: dict) -> dict:
     """
     cfg = config.notifications.channels.ntfy
     conv_id = event.get("conv_id", "")
+    conf_priority = getattr(cfg, "confirmation_priority", CONFIRMATION_PRIORITY)
     payload: dict[str, Any] = {
         "topic": cfg.topic.strip(),
         "title": _confirmation_title(config, event),
         "message": _confirmation_detail(event),
-        "priority": CONFIRMATION_PRIORITY,
+        "priority": conf_priority,
         "tags": ["warning"],
     }
 

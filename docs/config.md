@@ -351,8 +351,10 @@ Approve/Deny buttons. See
 | `server_url` | str | `https://ntfy.sh` | `NOTIFICATIONS_CHANNELS_NTFY_SERVER_URL` | |
 | `topic` | str | `""` | `NOTIFICATIONS_CHANNELS_NTFY_TOPIC` | |
 | `access_token` | str | `""` | `NOTIFICATIONS_CHANNELS_NTFY_ACCESS_TOKEN` | yes |
-| `min_priority` | str | `high` | `NOTIFICATIONS_CHANNELS_NTFY_MIN_PRIORITY` | |
+| `min_priority` | str | `low` | `NOTIFICATIONS_CHANNELS_NTFY_MIN_PRIORITY` | |
 | `notify_on_confirmation` | bool | `true` | `NOTIFICATIONS_CHANNELS_NTFY_NOTIFY_ON_CONFIRMATION` | |
+| `default_priority` | int | `1` | `NOTIFICATIONS_CHANNELS_NTFY_DEFAULT_PRIORITY` | |
+| `confirmation_priority` | int | `3` | `NOTIFICATIONS_CHANNELS_NTFY_CONFIRMATION_PRIORITY` | |
 
 The adapter is only wired at startup when `enabled` is `true`, `topic`
 is non-empty, and `server_url` is an absolute `http(s)://` URL.
