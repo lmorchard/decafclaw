@@ -719,11 +719,13 @@ class NtfyChannelConfig:
     # Topic name, appended to server_url for the publish endpoint.
     topic: str = ""
     access_token: str = field(default="", metadata={"secret": True})
-    min_priority: str = "high"  # "low" | "normal" | "high"
-    # Push pending tool confirmations as urgent notifications with
+    min_priority: str = "low"  # "low" | "normal" | "high"
+    # Push pending tool confirmations as medium-urgency notifications with
     # Approve/Deny action buttons. Independent of min_priority: a
     # confirmation is always worth a phone ping.
     notify_on_confirmation: bool = True
+    default_priority: int = 1  # ntfy priority scale 1-5 (1=min/lowest urgency)
+    confirmation_priority: int = 3  # ntfy priority scale 1-5 (3=default/medium urgency)
 
 
 @dataclass

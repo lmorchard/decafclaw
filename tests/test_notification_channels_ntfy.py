@@ -126,12 +126,18 @@ class TestNotificationPayload:
         assert payload["topic"] == "agent-alerts"
         assert payload["title"] == "Heartbeat completed"
         assert payload["message"] == "1 OK, 0 alerts"
-        assert payload["priority"] == 4  # high
+        assert payload["priority"] == 1  # lowest urgency (min)
         assert payload["tags"] == ["heartbeat"]
 
-    def test_low_priority_maps_to_2(self, config):
+    def test_all_priorities_map_to_lowest_urgency(self, config):
         _enable_ntfy(config)
-        assert build_notification_payload(config, _rec(priority="low"))["priority"] == 2
+        for pri in ("low", "normal", "high"):
+            assert build_notification_payload(config, _rec(priority=pri))["priority"] == 1
+
+    def test_custom_default_priority_override(self, config):
+        _enable_ntfy(config)
+        config.notifications.channels.ntfy.default_priority = 2
+        assert build_notification_payload(config, _rec())["priority"] == 2
 
     def test_empty_body_falls_back_to_title(self, config):
         _enable_ntfy(config)
@@ -176,7 +182,7 @@ class TestConfirmationPayload:
         _enable_http(config)
         payload = build_confirmation_payload(config, _confirm_event())
 
-        assert payload["priority"] == 5  # urgent
+        assert payload["priority"] == 3  # medium (default)
         assert payload["title"] == "[test-agent] Approval needed: Run shell command"
         assert payload["message"] == "rm -rf build"
         actions = payload["actions"]
@@ -186,6 +192,12 @@ class TestConfirmationPayload:
         assert actions[0]["clear"] is True
         assert actions[2]["url"] == "https://agent.example/?conv=conv-1"
         assert payload["click"] == "https://agent.example/?conv=conv-1"
+
+    def test_custom_confirmation_priority_override(self, config):
+        _enable_ntfy(config)
+        config.notifications.channels.ntfy.confirmation_priority = 4
+        payload = build_confirmation_payload(config, _confirm_event())
+        assert payload["priority"] == 4
 
     def test_action_tokens_bind_confirmation_and_action(self, config):
         _enable_ntfy(config)
