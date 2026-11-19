@@ -506,6 +506,24 @@ def _resolve_vault_page(config, page_name: str):
     return resolve_page(config, page_name)
 
 
+def validate_vault_page_name(name: str) -> str | None:
+    """Validate a vault page or folder name against path traversal.
+
+    Returns ``None`` when the name is safe, otherwise a single canonical
+    error message. Rejects absolute paths and any path component that is
+    exactly ``..`` (a real parent-directory hop). Names that merely *contain*
+    the substring ``..`` — such as ``foo..bar`` or ``...`` — are allowed,
+    since they resolve to an ordinary file name rather than a traversal.
+    """
+    if not isinstance(name, str) or not name:
+        return "invalid vault page name"
+    if name.startswith("/"):
+        return "invalid vault page name"
+    if any(part == ".." for part in name.split("/")):
+        return "invalid vault page name"
+    return None
+
+
 def _vault_source_type(config, filepath: Path) -> str:
     """Determine source type for a vault file."""
     from .skills.vault.tools import _source_type_for_path
@@ -2332,8 +2350,9 @@ async def vault_list(request: Request, username: str) -> JSONResponse:
 
     folder_param = request.query_params.get("folder", "").strip()
     if folder_param:
-        if ".." in folder_param or folder_param.startswith("/"):
-            return JSONResponse({"error": "invalid folder path"}, status_code=400)
+        error = validate_vault_page_name(folder_param)
+        if error:
+            return JSONResponse({"error": error}, status_code=400)
         target_dir = (vault / folder_param).resolve()
         if not target_dir.is_relative_to(vault.resolve()):
             return JSONResponse({"error": "path outside vault"}, status_code=403)
@@ -3128,8 +3147,9 @@ async def _vault_rename(
     if not isinstance(rename_to, str) or not rename_to.strip():
         return JSONResponse({"error": "rename_to must be a non-empty string"}, status_code=400)
     rename_to = rename_to.strip()
-    if ".." in rename_to or rename_to.startswith("/"):
-        return JSONResponse({"error": "invalid rename path"}, status_code=400)
+    error = validate_vault_page_name(rename_to)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     rename_path = Path(rename_to)
     if not rename_path.name:
         return JSONResponse({"error": "invalid rename path"}, status_code=400)
@@ -3188,8 +3208,9 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     page_name = request.path_params.get("page", "")
     if not page_name:
         return JSONResponse({"error": "page name required"}, status_code=400)
-    if ".." in page_name or page_name.startswith("/"):
-        return JSONResponse({"error": "invalid page path"}, status_code=400)
+    error = validate_vault_page_name(page_name)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     vault.mkdir(parents=True, exist_ok=True)
     target = (vault / f"{page_name}.md").resolve()
@@ -3329,8 +3350,9 @@ async def vault_create(request: Request, username: str) -> JSONResponse:
     name = name.strip()
     if not name:
         return JSONResponse({"error": "name (string) required"}, status_code=400)
-    if ".." in name or name.startswith("/"):
-        return JSONResponse({"error": "invalid page name"}, status_code=400)
+    error = validate_vault_page_name(name)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     vault.mkdir(parents=True, exist_ok=True)
     target = (vault / f"{name}.md").resolve()
@@ -3367,8 +3389,9 @@ async def vault_create_folder(request: Request, username: str) -> JSONResponse:
     folder = folder.strip()
     if not folder:
         return JSONResponse({"error": "folder (string) required"}, status_code=400)
-    if ".." in folder or folder.startswith("/"):
-        return JSONResponse({"error": "invalid folder path"}, status_code=400)
+    error = validate_vault_page_name(folder)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     target = (vault / folder).resolve()
     if not target.is_relative_to(vault.resolve()):
@@ -3388,8 +3411,9 @@ async def vault_delete(request: Request, username: str) -> JSONResponse:
     page_name = request.path_params.get("page", "")
     if not page_name:
         return JSONResponse({"error": "page name required"}, status_code=400)
-    if ".." in page_name or page_name.startswith("/"):
-        return JSONResponse({"error": "invalid page path"}, status_code=400)
+    error = validate_vault_page_name(page_name)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     target = (vault / f"{page_name}.md").resolve()
     if not target.is_relative_to(vault.resolve()):
