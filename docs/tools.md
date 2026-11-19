@@ -212,13 +212,13 @@ Use `cwd` instead of `cd <path> && <command>`: chained commands bypass atomic al
 
 - **Aux auto-approval judge.** The prompt includes `Stated Purpose` and instructs the judge to treat a command that contradicts its purpose as high risk. It also carries a **native tool index** (`workspace_read`, `workspace_search`, `workspace_edit`, `web_fetch`, `vault_search`, …): when a native tool cleanly covers the purpose, the judge declines auto-approval and names that tool in `feedback` instead of approving a raw `grep`/`cat`/`sed`/`curl`.
 - **Tier 2 classifier.** `evaluate_command_llm(purpose=...)` shows the stated purpose to the security classifier and asks it to flag command/purpose conflicts as high risk.
-- **Human confirmation.** The web card and the Mattermost post show the purpose next to the command.
+- **Human confirmation.** The web card and the Mattermost post show the purpose next to the command, collapsed to one bounded line (mention-neutralized in Mattermost) so agent-supplied text cannot inject prompt lines or forge card content.
 
 A denial may carry `feedback` — the judge's safer-alternative advice, or the human's. The tool result becomes `[error: command denied: <reason>. Feedback: <feedback>]`, so the agent can self-correct in the same turn. The standing guidance in `AGENT.md` tells it to treat denial feedback as guidance, not a failure.
 
 Feedback collection by transport:
 - **Web UI:** the confirmation card has an optional feedback field. `Deny` sends it as `feedback` on `confirm_response`.
-- **Mattermost:** a direct **thread reply to the confirmation card** is treated as a denial carrying the reply text as feedback (the turn is parked at the prompt, so no other interpretation applies). A top-level reply elsewhere in the thread keeps normal routing.
+- **Mattermost:** a reply that **starts a thread on a top-level confirmation card** is treated as a denial carrying the reply text as feedback (the turn is parked at the prompt, so no other interpretation applies). Mattermost links replies by thread root, so a card posted inside an existing thread cannot distinguish a reply to it from any other message there; those keep normal routing. The `🔧` reaction and the buttons still work everywhere.
 
 ### Capability gaps from shell review (#1559, #1482 data contract)
 

@@ -266,5 +266,6 @@ describe('shell purpose and denial feedback (#1559)', () => {
     }]);
 
     expect(el.querySelector('.confirm-feedback-flag')).toBeNull();
+    expect(el.querySelector('.confirm-feedback-input')).toBeNull();
   });
 });

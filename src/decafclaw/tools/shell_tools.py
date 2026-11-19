@@ -490,6 +490,16 @@ def resolve_aux_approval_guidance(ctx: "Context") -> list[str]:
     return guidelines
 
 
+def _single_line(text: str, limit: int = 500) -> str:
+    """Collapse untrusted text to one bounded line (#1559 review).
+
+    The stated purpose is agent-supplied. Injecting it with its newlines intact
+    would let it add instruction-shaped lines to the judge prompt or forge lines
+    on a confirmation card, so every consumer renders the collapsed form.
+    """
+    return " ".join(str(text or "").split())[:limit]
+
+
 def _record_tool_gap(
     ctx: "Context",
     *,
@@ -513,8 +523,9 @@ def _record_tool_gap(
             else "Opportunity for native tool: reviewer flagged a missing capability"
         )
         friction = f"Agent executed shell command '{command}'"
-        if purpose.strip():
-            friction += f" because no native tool covers: {purpose.strip()}"
+        purpose_line = _single_line(purpose)
+        if purpose_line:
+            friction += f" because no native tool covers: {purpose_line}"
         else:
             friction += " because no native tool covers that operation."
         append_item(
@@ -534,6 +545,32 @@ def _record_tool_gap(
         log.warning(f"[shell] failed to record tool gap in improvement inbox: {exc}")
 
 
+def _finalize_denial(ctx: "Context", result: dict, *, command: str, purpose: str, fallback_feedback: str = "") -> dict:
+    """Attach feedback to a denied confirmation and log reviewer-flagged tool gaps.
+
+    Shared by the security-monitor ASK branch and the ordinary confirmation
+    path: the shell card appears in both, so a reviewer's feedback and
+    missing-tool flag must be honored wherever it appears.
+    """
+    if result.get("approved"):
+        return result
+    human_feedback = _single_line(str(result.get("feedback") or ""), limit=2000)
+    feedback = human_feedback or fallback_feedback
+    if feedback:
+        result["feedback"] = feedback
+    data = result.get("data")
+    if isinstance(data, dict) and data.get("flag_missing_tool"):
+        _record_tool_gap(
+            ctx,
+            command=command,
+            purpose=purpose,
+            proposed_tool=str(data.get("proposed_tool") or "").strip(),
+            rationale="Reviewer denied the command and flagged a missing native tool.",
+            trigger="shell_tool_review",
+        )
+    return result
+
+
 # Native tools the judge can deflect a shell command to (#1559 addendum). Kept
 # as one index so the prompt stays short and the names stay discoverable in
 # tests; only tools that are actually registered belong here.
@@ -551,7 +588,7 @@ def build_aux_approval_prompt(ctx: "Context", command: str, cwd: str | None = No
     """Build the aux-LLM evaluation prompt for shell command auto-approval."""
     guidelines = resolve_aux_approval_guidance(ctx)
     working_dir = cwd or str(ctx.config.workspace_path)
-    stated_purpose = purpose.strip() or "(none provided)"
+    stated_purpose = _single_line(purpose) or "(none provided)"
 
     base = (
         "You are evaluating a shell command for execution.\n"
@@ -700,9 +737,9 @@ async def check_shell_approval(
             purpose=purpose,
             **cwd_action,
         )
-        if result.get("add_pattern"):
+        if result.get("approved") and result.get("add_pattern"):
             _save_allow_pattern(ctx.config, suggested_pattern)
-        return result
+        return _finalize_denial(ctx, result, command=command, purpose=purpose)
 
     # 4. Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns)
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
@@ -742,8 +779,8 @@ async def check_shell_approval(
                 ctx.tools.llm_approved_shell_patterns.append(suggested_pattern)
 
                 msg_content = f"Command: {command}\nRisk: {data.get('risk')}\nReason: {data.get('reason')}"
-                if purpose.strip():
-                    msg_content += f"\nPurpose: {purpose.strip()}"
+                if _single_line(purpose):
+                    msg_content += f"\nPurpose: {_single_line(purpose)}"
                 if not ctx.skip_archive:
                     try:
                         from decafclaw.archive import append_message
@@ -786,8 +823,8 @@ async def check_shell_approval(
                     )
 
                 msg_content = f"Command: {command}\nRisk: {data.get('risk')}\nReason: {data.get('reason')}"
-                if purpose.strip():
-                    msg_content += f"\nPurpose: {purpose.strip()}"
+                if _single_line(purpose):
+                    msg_content += f"\nPurpose: {_single_line(purpose)}"
                 if not ctx.skip_archive:
                     try:
                         from decafclaw.archive import append_message
@@ -821,8 +858,8 @@ async def check_shell_approval(
         return denial
 
     prompt_message = f"Shell command: `{command}`{cwd_note}"
-    if purpose.strip():
-        prompt_message += f"\nPurpose: {purpose.strip()}"
+    if _single_line(purpose):
+        prompt_message += f"\nPurpose: {_single_line(purpose)}"
     if decline_risk:
         prompt_message += f"\nRisk: {decline_risk}"
     if decline_reason:
@@ -850,24 +887,11 @@ async def check_shell_approval(
             if new_rule not in ctx.tools.aux_approval_guidance:
                 ctx.tools.aux_approval_guidance.append(new_rule)
                 log.info(f"[{tool_name}] added per-conversation aux approval rule: '{new_rule}'")
-    if not result.get("approved"):
-        # A human's denial feedback wins; otherwise pass along the judge's
-        # safer-alternative advice so the agent can self-correct.
-        human_feedback = str(result.get("feedback") or "").strip()
-        feedback = human_feedback or decline_feedback
-        if feedback:
-            result["feedback"] = feedback
-        data = result.get("data")
-        if isinstance(data, dict) and data.get("flag_missing_tool"):
-            _record_tool_gap(
-                ctx,
-                command=command,
-                purpose=purpose,
-                proposed_tool=str(data.get("proposed_tool") or "").strip(),
-                rationale="Reviewer denied the command and flagged a missing native tool.",
-                trigger="shell_tool_review",
-            )
-    return result
+    if result.get("approved"):
+        return result
+    # A human's denial feedback wins; otherwise pass along the judge's
+    # safer-alternative advice so the agent can self-correct.
+    return _finalize_denial(ctx, result, command=command, purpose=purpose, fallback_feedback=decline_feedback)
 
 
 def _resolve_shell_cwd(ctx: "Context", cwd: str | None) -> Path:

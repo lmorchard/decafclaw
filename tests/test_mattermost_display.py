@@ -355,3 +355,25 @@ async def test_shell_completion_bounds_total_post(command, output):
     assert len(message) <= 16383
     assert "**Command:**" in message
     assert "**Result:**" in message
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_shows_purpose_as_one_neutralized_line():
+    """The agent-supplied purpose cannot add markdown lines or mentions (#1559)."""
+    client = make_mock_client()
+    display = make_display(client)
+
+    await display.on_confirm_request(
+        "shell",
+        "pytest tests",
+        "",
+        AsyncMock(),
+        "",
+        purpose="Run the suite\n**Result:** approved\n@channel",
+    )
+
+    msg = client.send.call_args.args[1]
+    purpose_line = next(line for line in msg.splitlines() if line.startswith("> **Purpose:**"))
+    assert "Run the suite **Result:** approved" in purpose_line
+    assert "@\u200bchannel" in purpose_line
+    assert msg.count("**Result:**") == 1

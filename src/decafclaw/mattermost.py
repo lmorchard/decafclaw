@@ -250,7 +250,6 @@ class MattermostClient:
                 "channel_id": channel_id,
                 "post_id": post.get("id", ""),
                 "root_id": post.get("root_id", ""),
-                "parent_id": post.get("parent_id", ""),
                 "user_id": post.get("user_id", ""),
                 "sender_name": data.get("sender_name", ""),
                 "channel_type": channel_type,
@@ -345,19 +344,18 @@ class MattermostClient:
         log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
 
         # -- Denial feedback via a reply to the confirmation card (#1559) --
-        # The turn is parked at the confirmation prompt, so a direct reply to
-        # the card has no other meaning: treat it as a denial carrying the
-        # reply text as feedback for the agent. Messages that reply elsewhere
-        # in the thread keep their normal routing.
-        pending = self._pending_shell_confirmation(manager, conv_id)
-        card_id = self._pending_confirm_posts.get(conv_id, "")
-        if pending is not None and card_id and any(m.get("parent_id") == card_id for m in msgs):
-            feedback = combined_text.strip()
+        # The turn is parked at the confirmation prompt, so a reply that opens
+        # a thread on the card has no other meaning: treat it as a denial
+        # carrying the reply text as feedback for the agent. A reply to a card
+        # inside an existing thread is indistinguishable from any other
+        # message there and keeps normal routing.
+        reply_conv, pending = self._pending_shell_confirmation_for_reply(manager, msgs)
+        if pending is not None and reply_conv:
             await manager.respond_to_confirmation(
-                conv_id,
+                reply_conv,
                 pending.confirmation_id,
                 approved=False,
-                feedback=feedback,
+                feedback=combined_text.strip(),
             )
             await self.send(
                 channel_id,
@@ -1002,6 +1000,29 @@ class MattermostClient:
             return None
         action = getattr(pending.action_type, "value", pending.action_type)
         return pending if action == "run_shell_command" else None
+
+    def _pending_shell_confirmation_for_reply(self, manager, msgs):
+        """Find a pending shell confirmation whose card started a reply thread (#1559).
+
+        Mattermost links replies to their thread root through ``root_id``;
+        posts carry no usable ``parent_id``. A reply to the card is therefore
+        identifiable only when the card is a top-level post, because the reply
+        then opens a thread rooted at the card. Replies to a card posted inside
+        an existing thread carry that thread's root like every other message,
+        so they keep normal routing — guessing there would hijack ordinary
+        messages.
+        """
+        if not self._pending_confirm_posts or not msgs:
+            return None, None
+        roots = {m.get("root_id", "") for m in msgs if m.get("root_id")}
+        if not roots:
+            return None, None
+        for conv_id, card_id in list(self._pending_confirm_posts.items()):
+            if card_id in roots:
+                pending = self._pending_shell_confirmation(manager, conv_id)
+                if pending is not None:
+                    return conv_id, pending
+        return None, None
 
     async def _poll_confirmation_manager(
         self,

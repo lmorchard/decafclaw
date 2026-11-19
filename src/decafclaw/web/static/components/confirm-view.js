@@ -246,15 +246,15 @@ export class ConfirmView extends LitElement {
                 />
               </div>
             ` : ''}
-            <div class="confirm-feedback-box">
-              <input
-                class="confirm-feedback-input"
-                type="text"
-                placeholder="Feedback or safer alternative (optional)…"
-                .value=${feedbackValue}
-                @input=${(e) => this.#setInputValue(`${confirmId}-feedback`, e.target.value)}
-              />
-              ${c.tool === 'shell' ? html`
+            ${c.tool === 'shell' ? html`
+              <div class="confirm-feedback-box">
+                <input
+                  class="confirm-feedback-input"
+                  type="text"
+                  placeholder="Feedback or safer alternative (optional)…"
+                  .value=${feedbackValue}
+                  @input=${(e) => this.#setInputValue(`${confirmId}-feedback`, e.target.value)}
+                />
                 <label class="confirm-feedback-flag">
                   <input
                     type="checkbox"
@@ -263,8 +263,8 @@ export class ConfirmView extends LitElement {
                   />
                   Log as a missing native tool
                 </label>
-              ` : ''}
-            </div>
+              </div>
+            ` : ''}
           </div>
           <div class="confirm-buttons">
             <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, true)}>

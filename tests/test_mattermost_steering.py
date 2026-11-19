@@ -100,7 +100,7 @@ async def test_reply_to_confirmation_card_denies_with_feedback(config):
     manager.send_message = AsyncMock()
 
     msgs = _msgs()
-    msgs[0].update({"text": "use workspace_search instead", "parent_id": "card1"})
+    msgs[0].update({"text": "use workspace_search instead", "root_id": "card1"})
     app_ctx = SimpleNamespace(config=config, event_bus=EventBus())
 
     await client._process_conversation("conv1", "ch1", msgs, app_ctx, {}, manager)
@@ -122,8 +122,9 @@ async def test_reply_elsewhere_keeps_normal_routing(config):
     manager.respond_to_confirmation = AsyncMock()
     manager.send_message = AsyncMock()
 
+    # A plain top-level message (no root) while a confirmation pends is not
+    # feedback — only a reply thread rooted at the card is.
     msgs = _msgs()
-    msgs[0]["parent_id"] = "some-other-post"
     app_ctx = SimpleNamespace(config=config, event_bus=EventBus())
 
     await client._process_conversation("conv1", "ch1", msgs, app_ctx, {}, manager)
