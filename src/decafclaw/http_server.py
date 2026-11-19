@@ -672,6 +672,24 @@ async def _read_json_object(request: Request) -> dict:
     return body if isinstance(body, dict) else {}
 
 
+async def _read_json_body(request: Request) -> dict | None:
+    """Read and parse a JSON object body, returning ``None`` when it is not one.
+
+    ``request.json()`` raises an unhandled ``JSONDecodeError`` (a 500) on a
+    malformed body. Endpoints that must answer a clean 400 for bad input call
+    this helper and check the result: ``None`` means the body was malformed JSON
+    or not a JSON object, so they should return ``400 invalid JSON body``.
+
+    Distinct from :func:`_read_json_object`, which returns ``{}`` for a missing
+    or malformed body because the confirm callbacks treat an empty POST as valid.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
 async def handle_confirm(request: Request) -> Response:
     """Handle interactive button/link callbacks for tool confirmation."""
     config = request.app.state.config
@@ -3066,8 +3084,8 @@ async def post_conversation_shell_promote(request: Request, id: str) -> JSONResp
         return JSONResponse({"error": "invalid conv_id"}, status_code=400)
     if not _user_owns_conv(config, conv_id, username):
         return JSONResponse({"error": "not found"}, status_code=404)
-    body = await request.json()
-    if not isinstance(body, dict):
+    body = await _read_json_body(request)
+    if body is None:
         return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     rule_text = str(body.get("rule") or "").strip()
     preset_name = str(body.get("preset") or "").strip()
@@ -3216,7 +3234,9 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     target = (vault / f"{page_name}.md").resolve()
     if not target.is_relative_to(vault.resolve()):
         return JSONResponse({"error": "path outside vault directory"}, status_code=403)
-    body = await request.json()
+    body = await _read_json_body(request)
+    if body is None:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
 
     rename_to = body.get("rename_to")
     if rename_to is not None:
@@ -3343,7 +3363,9 @@ async def vault_create(request: Request, username: str) -> JSONResponse:
     """Create a new vault page."""
     config = request.app.state.config
     event_bus = request.app.state.event_bus
-    body = await request.json()
+    body = await _read_json_body(request)
+    if body is None:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     name = body.get("name")
     if not name or not isinstance(name, str):
         return JSONResponse({"error": "name (string) required"}, status_code=400)
@@ -3382,7 +3404,9 @@ async def vault_create_folder(request: Request, username: str) -> JSONResponse:
     """Create a new empty folder in the vault."""
     config = request.app.state.config
     event_bus = request.app.state.event_bus
-    body = await request.json()
+    body = await _read_json_body(request)
+    if body is None:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
     folder = body.get("folder")
     if not folder or not isinstance(folder, str):
         return JSONResponse({"error": "folder (string) required"}, status_code=400)
