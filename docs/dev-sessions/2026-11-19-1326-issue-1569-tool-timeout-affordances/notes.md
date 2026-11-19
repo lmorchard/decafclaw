@@ -34,3 +34,18 @@
   → 56 passed. `make test-js` → 821 passed.
 - `make check` fails check-message-types on a dirty tree by design (it
   regenerates then `git diff --exit-code`); rerun after committing.
+
+## Live verification (2026-11-19)
+
+- Ran the real web UI against `decafclaw.testing.ephemeral_server` with the
+  scripted provider, twice.
+- Timeout scenario (`TOOL_TIMEOUT_SEC=3`, scripted `wait(seconds=10)`): server
+  logged `[watchdog] Tool 'wait' timed out after 3s`; the chat row rendered
+  `⚠️ wait [Timed Out (3s)]` with the amber border and the error text
+  auto-expanded. Reload kept the badge (archive tags) after fixing
+  `message-store.#mergeToolMessages`, which had rebuilt the tool row without
+  copying `is_error`/`timed_out`/`timeout_sec`.
+- Heartbeat scenario (`wait(seconds=18)`): the in-flight row showed
+  `wait: still running (15s)`; the completed call rendered as a normal
+  success row with no badge.
+- Cleaned up both servers and temp data homes; tabs closed.
