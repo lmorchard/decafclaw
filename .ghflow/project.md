@@ -1,6 +1,6 @@
 ---
 ghflow_project_facts: 1
-written: 2026-11-14
+written: 2026-11-19
 sources:
   - AGENTS.md 930bed5be4fc8cfe267d5bb23bd3818d78fc94e4
   - CLAUDE.md 930bed5be4fc8cfe267d5bb23bd3818d78fc94e4
@@ -17,6 +17,10 @@ worktree:
     - .env
   setup:
     - uv sync
+  generated:
+    - openapi.json
+    - openapi.yaml
+    - src/decafclaw/web/static/lib/api-client/
 ---
 # decafclaw project facts
 
