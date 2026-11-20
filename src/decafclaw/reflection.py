@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .llm import call_llm
+from .model_catalog import effective_judge_model
 
 if TYPE_CHECKING:
     from .config import Config
@@ -296,64 +297,22 @@ async def evaluate_response(
 
         messages = [{"role": "user", "content": prompt}]
 
-        # Judge-model resolution, highest first:
-        #   1. verifier_model, when it is a model_configs key   -> named config
-        #   2. reflection.model, when it is a model_configs key -> named config
-        #   3. reflection.model as a legacy raw name            -> resolved()
-        #   4. default_model                                    -> named config
-        #   5. nothing set                                      -> resolved()
-        # Only rungs 1, 2 and 4 route through a named model config. Any
-        # explicitly set reflection.model outranks default_model, whether or
-        # not it names one (#752): before that fix, rung 3 was unreachable on
-        # every config with a default_model set.
-        # Note rung 3 is NOT a branch of its own — it shares the terminal else
-        # with rung 5, so it sits lexically *below* rung 4. What ranks it above
-        # rung 4 is the `and not rc_model` guard on the default_model branch.
-        # Drop that guard and #752 comes back; branch order alone will not
-        # preserve this.
-        # The `in config.model_configs` half of the verifier branch is
-        # load-bearing, not defensive: an unknown name handed to the provider
-        # layer only logs a warning and falls through to the default provider,
-        # which would silently look like the judge honoured the setting (#591).
-        from .model_catalog import effective_default_model, effective_reflection_model, effective_verifier_model
-
-        # #1212: reflection-judge / verifier pointers from the admin sidecar,
-        # empty meaning "inherit" (fall through to the config-level fields).
-        judge_name = effective_reflection_model(config)
-        verifier_name = effective_verifier_model(config)
-        rc_model = judge_name
-        if verifier_name and verifier_name in config.model_configs:
-            response = await call_llm(config, messages, model_name=verifier_name)
-        elif rc_model and rc_model in config.model_configs:
-            response = await call_llm(config, messages, model_name=rc_model)
-        elif not rc_model:
-            # Effective default (catalog pointer → default_model) when no
-            # reflection-specific model is set.
-            fallback = effective_default_model(config)
-            if fallback:
-                response = await call_llm(config, messages, model_name=fallback)
-            else:
-                rc = config.reflection.resolved(config)
-                response = await call_llm(
-                    config,
-                    messages,
-                    llm_url=rc.url,
-                    llm_model=rc.model,
-                    llm_api_key=rc.api_key,
-                )
+        # Judge-model resolution is owned by effective_judge_model (#1360):
+        # selectable verifier -> selectable reflection model -> effective
+        # default (only when no reflection model is set) -> the legacy
+        # url/model/api_key from ReflectionConfig.resolved. A non-empty
+        # model_name routes through a named model_configs entry; otherwise
+        # the legacy override fields apply.
+        target = effective_judge_model(config)
+        if target.model_name:
+            response = await call_llm(config, messages, model_name=target.model_name)
         else:
-            # Reached two ways: reflection.model is set but is not a
-            # model_configs key — a legacy raw model name, which outranks
-            # default_model, because moving the judge off the author's model is
-            # the whole point of setting it (#752) — or nothing above resolved
-            # and resolved() supplies the llm-group fallback.
-            rc = config.reflection.resolved(config)
             response = await call_llm(
                 config,
                 messages,
-                llm_url=rc.url,
-                llm_model=rc.model,
-                llm_api_key=rc.api_key,
+                llm_url=target.llm_url,
+                llm_model=target.llm_model,
+                llm_api_key=target.llm_api_key,
             )
 
         raw = response.get("content", "")

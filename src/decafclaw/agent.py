@@ -31,7 +31,7 @@ from .config_types import LoopBreakerConfig
 from .context import TaskMode, TurnLifecycle
 from .context_cleanup import clear_old_tool_results
 from .context_composer import ContextComposer
-from .context_types import ComposerMode
+from .context_types import TASK_MODE_TRAITS, UNWATCHED_TASK_MODES, ComposerMode
 from .conversation_paths import approval_state_path
 from .iteration_budget import IterationBudget
 from .llm import call_llm
@@ -56,20 +56,6 @@ from .tool_definitions import build_tool_list, reconcile_mcp_tools, refresh_dyna
 from .tool_execution import execute_tool_calls
 
 _tracer = get_tracer(__name__)
-
-_TASK_MODE_TO_COMPOSER: dict[TaskMode, ComposerMode] = {
-    TaskMode.HEARTBEAT: ComposerMode.HEARTBEAT,
-    TaskMode.SCHEDULED: ComposerMode.SCHEDULED,
-}
-
-# Task modes (KIND_TASK_MODE in conversation_manager.py) that run on a
-# synthetic conv_id no transport ever subscribed to, so nothing renders their
-# `text_before_tools` events live — the turn's `ToolResult.text` is the only
-# channel by which its work reaches anyone. Read by `_finalize_with_note`.
-# `background_wake` is deliberately EXCLUDED: a wake turn runs on the user's
-# real conversation, which does have a live subscriber. `INTERACTIVE` is
-# likewise excluded. See docs/loop-breaker.md.
-_UNWATCHED_TASK_MODES = frozenset({TaskMode.HEARTBEAT, TaskMode.SCHEDULED, TaskMode.CHILD_AGENT})
 
 # Max bounded partial-text continuations allowed in one agent turn before the
 # recovery policy settles the turn as failed (#1144). Each continuation persists
@@ -160,9 +146,7 @@ def _composer_mode_for(ctx: "Context") -> ComposerMode:
     everything else (interactive, background wake) is INTERACTIVE."""
     if ctx.is_child:
         return ComposerMode.CHILD_AGENT
-    if ctx.task_mode in _TASK_MODE_TO_COMPOSER:
-        return _TASK_MODE_TO_COMPOSER[ctx.task_mode]
-    return ComposerMode.INTERACTIVE
+    return TASK_MODE_TRAITS[ctx.task_mode].composer_mode
 
 
 async def _maybe_compact(ctx: "Context", config, history, prompt_tokens, lowered: int | None = None) -> None:
@@ -1438,7 +1422,7 @@ class TurnRunner:
           delegate.py's `run_child_turn` / workflow `subagent`) is its *only*
           channel for the child's work;
         - heartbeat and scheduled turns (`ctx.task_mode`, see
-          `_UNWATCHED_TASK_MODES`) — they run on synthetic conv_ids no
+          `UNWATCHED_TASK_MODES`) — they run on synthetic conv_ids no
           transport subscribed to, yet their `ToolResult.text` is parsed
           (heartbeat.py) and shown to the user afterwards
           (heartbeat_tools.py, schedules.py).
@@ -1478,7 +1462,7 @@ class TurnRunner:
         where a reader looks first.
         """
         note = note.strip()
-        if self.ctx.is_child or self.ctx.task_mode in _UNWATCHED_TASK_MODES:
+        if self.ctx.is_child or self.ctx.task_mode in UNWATCHED_TASK_MODES:
             accumulated = "\n\n".join(self.accumulated_text_parts)
             delivered = note + "\n\n" + accumulated if accumulated else note
         else:

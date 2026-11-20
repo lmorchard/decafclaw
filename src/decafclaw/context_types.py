@@ -87,7 +87,7 @@ class TaskModeTraits:
     - ``watched`` means a transport subscriber renders the turn's live
       progress (``text_before_tools``). Heartbeat, scheduled, and child turns
       run on synthetic conversation ids no transport ever subscribed to, so
-      only their final tool text reaches anyone (``agent._UNWATCHED_TASK_MODES``).
+      only their final tool text reaches anyone (``UNWATCHED_TASK_MODES``).
       A wake turn runs on the user's real conversation, which does have a
       live subscriber.
     """
