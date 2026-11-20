@@ -2,6 +2,10 @@
 
 Split out of ``context_composer.py`` so the orchestrator module holds the turn
 pipeline rather than every dataclass and threshold helper.
+
+It also owns the canonical turn-mode classification (#1355): ``ComposerMode``,
+``TaskMode``, the per-mode traits table, and the derived skip/unattended/
+unwatched partitions.
 """
 
 from __future__ import annotations
@@ -32,6 +36,89 @@ class ComposerMode(enum.Enum):
     HEARTBEAT = "heartbeat"
     SCHEDULED = "scheduled"
     CHILD_AGENT = "child_agent"
+
+    @property
+    def is_skip(self) -> bool:
+        """True when this mode skips interactive-only context sources.
+
+        Use ``SKIP_MODES`` (or this property) instead of re-declaring
+        ``{HEARTBEAT, SCHEDULED, CHILD_AGENT}`` at a call site (#1355).
+        """
+        return self in SKIP_MODES
+
+
+class TaskMode(enum.Enum):
+    """Runtime classification of a turn for unattended/interactive behavior.
+
+    Distinct from ``TurnKind`` (the *origin* of a turn): USER and WORKFLOW
+    turns are ``INTERACTIVE``; each task kind maps to its mode via
+    ``TurnKind.task_mode_for()`` (conversation_manager.py). The values are the
+    wire strings used at transport boundaries (inbox JSONL) — internally,
+    always use members. Free-form strings are only parsed at the boundary (see
+    ``conversation_manager.parse_task_mode``). See #1381.
+    """
+
+    INTERACTIVE = ""  # attended user / workflow turns
+    HEARTBEAT = "heartbeat"
+    SCHEDULED = "scheduled"
+    CHILD_AGENT = "child_agent"
+    BACKGROUND_WAKE = "background_wake"
+
+
+@dataclass(frozen=True)
+class TaskModeTraits:
+    """What one ``TaskMode`` means for context selection and authorization.
+
+    This table is the single source of the mode/skip classification (#1355).
+    Two earlier duplicates carried subtly different membership because they
+    answer different questions:
+
+    - ``composer_mode`` drives context injection. Any mode whose composer
+      mode is not ``INTERACTIVE`` skips interactive-only sources: memory
+      retrieval, vault wiki injection, notes/journal deltas, mentions, preempt
+      hints, and resolved-error pruning. See ``SKIP_MODES``.
+    - ``unattended`` means no human can answer a confirmation prompt, so
+      ``Context.is_unattended`` treats the turn as unsupervised. This is NOT
+      the complement of the skip set, and the difference is deliberate:
+      ``CHILD_AGENT`` skips context but inherits the parent's
+      ``request_confirmation``, so a child of an interactive turn still has
+      someone who can answer. ``BACKGROUND_WAKE`` keeps interactive context but
+      fires autonomously on the user's conversation, where nobody is watching.
+    - ``watched`` means a transport subscriber renders the turn's live
+      progress (``text_before_tools``). Heartbeat, scheduled, and child turns
+      run on synthetic conversation ids no transport ever subscribed to, so
+      only their final tool text reaches anyone (``agent._UNWATCHED_TASK_MODES``).
+      A wake turn runs on the user's real conversation, which does have a
+      live subscriber.
+    """
+
+    composer_mode: ComposerMode
+    unattended: bool = False
+    watched: bool = True
+
+
+TASK_MODE_TRAITS: dict[TaskMode, TaskModeTraits] = {
+    TaskMode.INTERACTIVE: TaskModeTraits(ComposerMode.INTERACTIVE),
+    TaskMode.HEARTBEAT: TaskModeTraits(ComposerMode.HEARTBEAT, unattended=True, watched=False),
+    TaskMode.SCHEDULED: TaskModeTraits(ComposerMode.SCHEDULED, unattended=True, watched=False),
+    TaskMode.CHILD_AGENT: TaskModeTraits(ComposerMode.CHILD_AGENT, watched=False),
+    TaskMode.BACKGROUND_WAKE: TaskModeTraits(ComposerMode.INTERACTIVE, unattended=True),
+}
+
+#: Composer modes that skip interactive-only context sources (#1355).
+SKIP_MODES: frozenset[ComposerMode] = frozenset(mode for mode in ComposerMode if mode is not ComposerMode.INTERACTIVE)
+
+#: TaskMode forms of the same partitions, derived from ``TASK_MODE_TRAITS``
+#: so a new mode cannot land in only some of them.
+SKIP_TASK_MODES: frozenset[TaskMode] = frozenset(
+    mode for mode, traits in TASK_MODE_TRAITS.items() if traits.composer_mode in SKIP_MODES
+)
+UNATTENDED_TASK_MODES: frozenset[TaskMode] = frozenset(
+    mode for mode, traits in TASK_MODE_TRAITS.items() if traits.unattended
+)
+UNWATCHED_TASK_MODES: frozenset[TaskMode] = frozenset(
+    mode for mode, traits in TASK_MODE_TRAITS.items() if not traits.watched
+)
 
 
 # -- Diagnostics --------------------------------------------------------------

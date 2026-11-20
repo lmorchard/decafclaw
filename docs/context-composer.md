@@ -249,9 +249,20 @@ The composer is mode-aware via `ComposerMode`:
 | `SCHEDULED` | No | No | No | Full | Scheduled tasks (set via `TaskMode.SCHEDULED`) |
 | `CHILD_AGENT` | No | No | No | Full | `delegate_task` sub-agents (set via `ctx.is_child`) |
 
-`TaskMode` (`context.py`) is the internal enum for `ctx.task_mode`; the inbox
-JSONL is the only boundary that stores its wire string, parsed back by
-`conversation_manager.parse_task_mode()`.
+`TaskMode` (`context_types.py`, re-exported by `context.py`) is the internal
+enum for `ctx.task_mode`; the inbox JSONL is the only boundary that stores its
+wire string, parsed back by `conversation_manager.parse_task_mode()`.
+`TurnKind.task_mode_for()` is the single turn-origin → `TaskMode` mapping.
+
+The skip/unattended/watched classification lives in `context_types.TASK_MODE_TRAITS`
+(#1355), one row per `TaskMode`. `ComposerMode.is_skip` / `SKIP_MODES` is the
+composer-level form: every non-`INTERACTIVE` mode skips memory, wiki, notes,
+journal, mentions, preempt hints, and resolved-error pruning. The
+authorization partitions are deliberately not the complement of the skip set:
+`CHILD_AGENT` skips context but inherits the parent's `request_confirmation`,
+so it stays attended; `BACKGROUND_WAKE` keeps interactive context but has no
+human watching. `agent._UNWATCHED_TASK_MODES` is a third partition — turns
+that run on a synthetic conversation id with no live subscriber.
 
 `skip_vault_retrieval` on the context is an independent flag — it skips vault retrieval without affecting vault references or the composer mode.
 
