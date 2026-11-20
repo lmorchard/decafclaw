@@ -455,6 +455,74 @@ def effective_default_model(config: "Config") -> str:
     return config.default_model
 
 
+def effective_active_model(config: "Config", active_model: str = "") -> str:
+    """Conversation-model ladder (#1360): the active conversation model, else
+    the effective default model.
+
+    The active name is returned verbatim — validating it is the turn
+    resolver's job (:func:`effective_turn_model`), and background callers
+    pass the name only to reach a provider, which falls back on its own.
+    Empty string means "nothing selected"; callers fall through to
+    ``config.llm.model``.
+    """
+    return active_model or effective_default_model(config)
+
+
+def effective_turn_model(config: "Config", active_model: str = "") -> str:
+    """Turn-model ladder (#1360), highest first:
+
+    1. ``active_model`` when it names a ``model_configs`` key.
+    2. :func:`effective_default_model` (sidecar pointer → ``config.json``).
+    3. Empty string; the caller's LLM call falls through to
+       ``config.llm.model``.
+
+    An ``active_model`` that names no key never leaks through — a stale
+    schedule/skill/delegate model name resolves to the default, and the
+    caller warns (#729).
+    """
+    if active_model and active_model in config.model_configs:
+        return active_model
+    return effective_default_model(config)
+
+
+def effective_aux_model(config: "Config", active_model: str = "") -> str:
+    """Auxiliary/background model ladder (#1360), highest first:
+
+    1. ``config.auxiliary_model``.
+    2. The active conversation model.
+    3. The effective default model.
+    4. Empty string; callers fall through to ``config.llm.model``.
+
+    This is the chain ``Context.aux_llm`` rode before this resolver
+    existed. ``auxiliary_model`` is not validated against ``model_configs``
+    because the legacy LLM path tolerates raw names.
+    """
+    return config.auxiliary_model or effective_active_model(config, active_model)
+
+
+def effective_context_window(config: "Config", model_name: str = "") -> int:
+    """Context-window ladder (#1360), highest first:
+
+    1. The named model's configured ``context_window_size``, when positive
+       (``model_name`` empty means ``config.default_model``).
+    2. ``config.llm.context_window_size``, when positive.
+    3. ``config.compaction.max_tokens`` — the conservative proxy.
+
+    Configured values only: discovery of a provider-reported window is an
+    async enrichment (``llm.ensure_model_context_window``) that writes the
+    model config and then reads this ladder.
+    """
+    name = model_name or config.default_model
+    if name and name in config.model_configs:
+        window = config.model_configs[name].context_window_size
+        if window and window > 0:
+            return window
+    window = config.llm.context_window_size
+    if window and window > 0:
+        return window
+    return config.compaction.max_tokens
+
+
 def effective_aux_approval_model(config: "Config", active_model: str = "") -> str:
     """Shell auto-approval judge model, resolution order (#1213):
 
@@ -484,7 +552,7 @@ def effective_aux_approval_model(config: "Config", active_model: str = "") -> st
     # Legacy fallback: the exact chain Context.aux_llm used before the
     # dedicated pointer existed, so installs with auxiliary_model set keep
     # their cheap judge until a user picks a dedicated one (#1213 review).
-    return config.auxiliary_model or active_model or effective_default_model(config)
+    return effective_aux_model(config, active_model)
 
 
 def effective_condense_model(config: "Config", active_model: str = "") -> str:
@@ -513,7 +581,7 @@ def effective_condense_model(config: "Config", active_model: str = "") -> str:
         return seed
     if seed:
         log.warning("shell.condense_model %r is not a model_configs key; treating as unset", seed)
-    return active_model or effective_default_model(config)
+    return effective_active_model(config, active_model)
 
 
 def effective_reflection_model(config: "Config") -> str:
@@ -551,6 +619,59 @@ def effective_verifier_model(config: "Config") -> str:
     if pointer and pointer in config.model_configs:
         return pointer
     return config.reflection.verifier_model
+
+
+@dataclass(frozen=True)
+class JudgeModel:
+    """Resolved reflection-judge target (#1360).
+
+    A non-empty ``model_name`` routes the judge through a named
+    ``model_configs`` entry (``call_llm(model_name=...)``). An empty one
+    means the legacy ``llm_url``/``llm_model``/``llm_api_key`` override
+    fields from ``ReflectionConfig.resolved``. The key never appears in
+    ``repr``.
+    """
+
+    model_name: str = ""
+    llm_url: str = ""
+    llm_model: str = ""
+    llm_api_key: str = field(default="", repr=False, metadata={"secret": True})
+
+
+def effective_judge_model(config: "Config") -> JudgeModel:
+    """Reflection-judge ladder (#1360), highest first:
+
+    1. :func:`effective_verifier_model` when it names a ``model_configs``
+       key -> that named config.
+    2. :func:`effective_reflection_model` when it names a key -> that named
+       config.
+    3. The effective default model when the reflection model is empty ->
+       that name (the pre-#1360 ladder passed it through unchecked).
+    4. ``config.reflection.resolved(config)``'s legacy url/model/api_key.
+
+    Only rungs 1-3 in that order route through a named model config. An
+    explicitly set reflection model outranks the default model whether or
+    not it names a key (#752): rung 4, not rung 3, is reached when it is
+    set but unroutable. The ``in config.model_configs`` halves of rungs 1-2
+    are load-bearing, not defensive — an unknown name handed to the
+    provider layer only logs and falls through to its default, which would
+    silently look like the setting was honoured (#591).
+    """
+    verifier_name = effective_verifier_model(config)
+    if verifier_name and verifier_name in config.model_configs:
+        return JudgeModel(model_name=verifier_name)
+
+    judge_name = effective_reflection_model(config)
+    if judge_name and judge_name in config.model_configs:
+        return JudgeModel(model_name=judge_name)
+
+    if not judge_name:
+        fallback = effective_default_model(config)
+        if fallback:
+            return JudgeModel(model_name=fallback)
+
+    rc = config.reflection.resolved(config)
+    return JudgeModel(llm_url=rc.url, llm_model=rc.model, llm_api_key=rc.api_key)
 
 
 # ---------------------------------------------------------------------------

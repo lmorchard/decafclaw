@@ -807,6 +807,142 @@ class TestEvaluateResponse:
         assert mock_call.call_args.kwargs == {"model_name": "judge"}
 
 
+class TestJudgeResolverParity:
+    """#1360: the centralized judge resolver describes the same route today's
+    reflection ladder takes, so 8.4a can swap the caller without a behavior
+    change. Each case pins the expected ``call_llm`` kwargs and asserts both
+    sides produce exactly them."""
+
+    @staticmethod
+    def _config(tmp_path, *, model_configs, default_model, reflection):
+        return Config(
+            agent=AgentConfig(data_home=str(tmp_path), id="test"),
+            llm=LlmConfig(url="http://test/v1/chat/completions", model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat", url="http://test/v1", api_key="test-key")},
+            model_configs=model_configs,
+            default_model=default_model,
+            reflection=reflection,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "case",
+        [
+            # 1. verifier key wins over everything, even a non-key reflection model.
+            {
+                "keys": ["author", "judge"],
+                "default": "author",
+                "reflection": {"model": "cheap-judge-model", "verifier_model": "judge"},
+                "expected": {"model_name": "judge"},
+            },
+            # 2. reflection model naming a key.
+            {
+                "keys": ["author", "judge"],
+                "default": "author",
+                "reflection": {"model": "judge", "verifier_model": ""},
+                "expected": {"model_name": "judge"},
+            },
+            # 3. no reflection model -> the default model.
+            {
+                "keys": ["author", "judge"],
+                "default": "author",
+                "reflection": {"model": "", "verifier_model": ""},
+                "expected": {"model_name": "author"},
+            },
+            # 4. non-key reflection model beats the default (#752).
+            {
+                "keys": ["author", "judge"],
+                "default": "author",
+                "reflection": {"model": "cheap-judge-model", "verifier_model": ""},
+                "expected": {
+                    "llm_url": "http://test/v1/chat/completions",
+                    "llm_model": "cheap-judge-model",
+                    "llm_api_key": "test-key",
+                },
+            },
+            # 5. unroutable verifier is skipped (#591).
+            {
+                "keys": ["author"],
+                "default": "author",
+                "reflection": {"model": "", "verifier_model": "no-such-model"},
+                "expected": {"model_name": "author"},
+            },
+            # 6. nothing set -> the legacy llm group via resolved().
+            {
+                "keys": [],
+                "default": "",
+                "reflection": {"model": "", "verifier_model": ""},
+                "expected": {
+                    "llm_url": "http://test/v1/chat/completions",
+                    "llm_model": "legacy-model",
+                    "llm_api_key": "test-key",
+                },
+            },
+        ],
+    )
+    async def test_resolver_matches_reflection_route(self, tmp_path, case):
+        from decafclaw.model_catalog import effective_judge_model
+
+        config = self._config(
+            tmp_path,
+            model_configs={key: ModelConfig(provider="p", model=key) for key in case["keys"]},
+            default_model=case["default"],
+            reflection=ReflectionConfig(enabled=True, **case["reflection"]),
+        )
+
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+            await evaluate_response(config, "hello", "Hi!", "")
+        assert mock_call.call_count == 1
+        assert mock_call.call_args.kwargs == case["expected"]
+
+        target = effective_judge_model(config)
+        routed = (
+            {"model_name": target.model_name}
+            if target.model_name
+            else {
+                "llm_url": target.llm_url,
+                "llm_model": target.llm_model,
+                "llm_api_key": target.llm_api_key,
+            }
+        )
+        assert routed == case["expected"]
+
+    @pytest.mark.asyncio
+    async def test_resolver_keeps_reflection_endpoint_and_key(self, tmp_path):
+        """Legacy routing carries reflection.url/api_key, not config.llm's."""
+        from decafclaw.model_catalog import effective_judge_model
+
+        config = self._config(
+            tmp_path,
+            model_configs={"author": ModelConfig(provider="p", model="author-model")},
+            default_model="author",
+            reflection=ReflectionConfig(
+                enabled=True,
+                url="http://judge/v1/chat/completions",
+                model="cheap-judge-model",
+                api_key="judge-key",
+                verifier_model="",
+            ),
+        )
+        target = effective_judge_model(config)
+        assert target.model_name == ""
+        assert (target.llm_url, target.llm_model, target.llm_api_key) == (
+            "http://judge/v1/chat/completions",
+            "cheap-judge-model",
+            "judge-key",
+        )
+
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call:
+            await evaluate_response(config, "hello", "Hi!", "")
+        assert mock_call.call_args.kwargs == {
+            "llm_url": "http://judge/v1/chat/completions",
+            "llm_model": "cheap-judge-model",
+            "llm_api_key": "judge-key",
+        }
+
+
 class TestReflectionPromptStructure:
     """Assert the bundled REFLECTION.md wraps each dynamic input in its tag."""
 

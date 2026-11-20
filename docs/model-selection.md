@@ -301,6 +301,43 @@ This is a suggestion, not automatic — you stay in control.
 
 At the start of each agent turn, the active model is resolved through the provider registry. The resolved provider + model are used for that turn's LLM calls, without affecting subsystem models (reflection and embeddings still use their own configured models or fall back to the default). Background operations like compaction and scoring use the `auxiliary_model` if configured, falling back to the active model or default model if not.
 
+## Model-resolution ladders (#1360)
+
+Each model pointer resolves through one named function in
+`src/decafclaw/model_catalog.py`, so every chain has a single definition and
+a single set of tests:
+
+| Resolver | Ladder (highest first) |
+|---|---|
+| `effective_default_model` | sidecar `default_model` pointer → `config.json`'s `default_model` → `""` |
+| `effective_turn_model` | active conversation model, when it names a `model_configs` key → effective default → `""` (caller uses `config.llm`) |
+| `effective_active_model` | active conversation model, verbatim → effective default |
+| `effective_aux_model` | `auxiliary_model` → active conversation model → effective default → `""` |
+| `effective_aux_approval_model` | sidecar `aux_approval_model` → `shell.aux_approval_model` → `effective_aux_model` |
+| `effective_condense_model` | sidecar `condense_model` → `shell.condense_model` → `effective_active_model` |
+| `effective_reflection_model` | sidecar `reflection_model` → `reflection.model` |
+| `effective_verifier_model` | sidecar `verifier_model` → `reflection.verifier_model` |
+| `effective_judge_model` | selectable verifier → selectable reflection model → effective default (only when no reflection model is set) → legacy `reflection.resolved()` url/model/api_key |
+| `effective_context_window` | named model's `context_window_size` → `llm.context_window_size` → `compaction.max_tokens` |
+
+`effective_judge_model` returns a `JudgeModel`: a non-empty `model_name`
+routes the judge through that named config; otherwise the legacy
+`llm_url` / `llm_model` / `llm_api_key` fields apply (the key is excluded
+from `repr`). A reflection model that names no key still outranks the
+default and routes through the legacy fields (#752), and a verifier that
+names no key is skipped rather than handed to the provider layer (#591).
+
+Reflection, the agent turn, and the aux/background call sites adopt these
+resolvers in follow-up work (#1361–#1363). Until then their local ladders
+must match the table, and `tests/test_reflection.py` asserts that parity.
+
+Context-window discovery is an async enrichment, not a second ladder:
+`llm.ensure_model_context_window` learns an unconfigured window from the
+provider (negatively cached until the next config reload), writes it onto the
+model config, then reads `effective_context_window`.
+`context_diagnostics.get_context_window_size` reads the same definition
+without the provider call.
+
 ## Migration from effort levels
 
 The old effort system (`fast`/`default`/`strong`, `set_effort` tool, `!think-harder` commands) has been replaced. If your `config.json` has an `llm` section but no `providers`/`model_configs`, the system auto-generates a "default" openai-compat provider and model config from the old values.

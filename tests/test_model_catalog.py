@@ -927,3 +927,303 @@ def test_verifier_resolution_inherit_by_default(config):
     from decafclaw.model_catalog import effective_verifier_model
 
     assert effective_verifier_model(config) == ""
+
+
+# ---------------------------------------------------------------------------
+# Centralized resolution ladders (#1360)
+#
+# One definition per pointer: turn (active), auxiliary, judge, verifier, and
+# context window. Callers adopt these in 8.4; the ladders below are the whole
+# contract, so each test walks the full fallback chain rather than one rung.
+# ---------------------------------------------------------------------------
+
+
+def _two_key_config(config):
+    """Two selectable hand configs plus a legacy llm group (no sidecar)."""
+    config.providers = {"local": ProviderConfig(type="openai-compat", url="http://x/v1")}
+    config.model_configs["hand-model"] = ModelConfig(provider="local", model="hand")
+    config.model_configs["other-model"] = ModelConfig(provider="local", model="other")
+    config.default_model = "other-model"
+    return config
+
+
+def test_turn_model_resolution_chain(config):
+    """Turn ladder: selectable active model → effective default → "" (legacy llm)."""
+    from decafclaw.model_catalog import effective_turn_model
+
+    _two_key_config(config)
+
+    # Active model that names a model_configs key outranks the default.
+    assert effective_turn_model(config, "hand-model") == "hand-model"
+
+    # No active model → the effective default (config.json here).
+    assert effective_turn_model(config, "") == "other-model"
+
+    # An unknown active name never leaks through: the default takes over.
+    assert effective_turn_model(config, "not-a-key") == "other-model"
+
+    # Nothing configured at all → empty string, meaning "use config.llm".
+    config.default_model = ""
+    assert effective_turn_model(config, "") == ""
+
+
+def test_active_model_resolution_chain(config):
+    """Conversation-model ladder: active name (even unroutable) → effective default."""
+    from decafclaw.model_catalog import effective_active_model
+
+    _two_key_config(config)
+
+    # Raw active name passes through unvalidated — callers downstream decide.
+    assert effective_active_model(config, "raw-name") == "raw-name"
+    assert effective_active_model(config, "") == "other-model"
+
+    config.default_model = ""
+    assert effective_active_model(config, "") == ""
+
+
+def test_aux_model_resolution_chain(config):
+    """Aux ladder: auxiliary_model → conversation model → effective default."""
+    from decafclaw.model_catalog import effective_aux_model
+
+    _two_key_config(config)
+
+    # auxiliary_model outranks the conversation model, exactly as aux_llm().
+    config.auxiliary_model = "hand-model"
+    assert effective_aux_model(config, "raw-active") == "hand-model"
+
+    # Without auxiliary_model, the conversation model is next.
+    config.auxiliary_model = ""
+    assert effective_aux_model(config, "raw-active") == "raw-active"
+
+    # Without either, the effective default.
+    assert effective_aux_model(config, "") == "other-model"
+
+    # Nothing anywhere → empty string, meaning "use config.llm".
+    config.default_model = ""
+    assert effective_aux_model(config, "") == ""
+
+
+def test_judge_model_verifier_key_wins(config):
+    """Judge ladder rung 1: a verifier naming a model_configs key routes the judge."""
+    from decafclaw.model_catalog import effective_judge_model
+
+    _two_key_config(config)
+    config.reflection.model = "hand-model"
+    config.reflection.verifier_model = "other-model"
+
+    target = effective_judge_model(config)
+    assert target.model_name == "other-model"
+    assert target.llm_url == ""
+    assert target.llm_model == ""
+    assert target.llm_api_key == ""
+
+
+def test_judge_model_reflection_key_beats_default(config):
+    """Judge ladder rung 2: a reflection model naming a key beats the default."""
+    from decafclaw.model_catalog import effective_judge_model
+
+    _two_key_config(config)
+    config.reflection.model = "hand-model"
+
+    target = effective_judge_model(config)
+    assert target.model_name == "hand-model"
+    assert target.llm_model == ""
+
+
+def test_judge_model_falls_back_to_default(config):
+    """Judge ladder rung 3: no reflection model → the effective default."""
+    from decafclaw.model_catalog import effective_judge_model
+
+    _two_key_config(config)
+    config.reflection.model = ""
+
+    target = effective_judge_model(config)
+    assert target.model_name == "other-model"
+    assert target.llm_model == ""
+
+
+def test_judge_model_sidecar_pointer_outranks_seed(config):
+    """Judge ladder rung 2 through the #1212 pointer, not just the seed."""
+    import asyncio
+
+    from decafclaw.model_catalog import effective_judge_model, set_reflection_model
+
+    _config_with_models(config)
+    config.reflection.model = "hand-model"
+    asyncio.run(set_reflection_model(config, "local/on"))
+
+    assert effective_judge_model(config).model_name == "local/on"
+
+
+def test_judge_model_non_key_reflection_beats_default(config):
+    """#752 guard: an unroutable reflection.model outranks the default and
+    routes through the legacy resolved() fields, never through default_model."""
+    from decafclaw.model_catalog import effective_judge_model
+
+    _two_key_config(config)
+    config.llm.url = "http://legacy/v1/chat/completions"
+    config.llm.model = "legacy-model"
+    config.llm.api_key = "legacy-key"
+    config.reflection.model = "cheap-judge-model"
+
+    target = effective_judge_model(config)
+    assert target.model_name == ""
+    assert target.llm_url == "http://legacy/v1/chat/completions"
+    assert target.llm_model == "cheap-judge-model"
+    assert target.llm_api_key == "legacy-key"
+
+
+def test_judge_model_legacy_fields_follow_reflection_resolved(config):
+    """Judge ladder rung 4: reflection.url/model/api_key win over config.llm
+    when they are set, because the resolver returns resolved() fields."""
+    from decafclaw.model_catalog import effective_judge_model
+
+    _two_key_config(config)
+    config.llm.url = "http://legacy/v1/chat/completions"
+    config.llm.api_key = "legacy-key"
+    config.reflection.url = "http://judge/v1/chat/completions"
+    config.reflection.model = "cheap-judge-model"
+    config.reflection.api_key = "judge-key"
+
+    target = effective_judge_model(config)
+    assert target.model_name == ""
+    assert target.llm_url == "http://judge/v1/chat/completions"
+    assert target.llm_model == "cheap-judge-model"
+    assert target.llm_api_key == "judge-key"
+
+
+def test_judge_model_nothing_set_uses_llm_group(config):
+    """Judge ladder rung 4 with empty reflection fields: resolved() supplies
+    the llm group, and the target never claims a named model."""
+    from decafclaw.model_catalog import effective_judge_model
+
+    config.llm.url = "http://legacy/v1/chat/completions"
+    config.llm.model = "legacy-model"
+    config.llm.api_key = "legacy-key"
+    config.default_model = ""
+
+    target = effective_judge_model(config)
+    assert target.model_name == ""
+    assert target.llm_url == "http://legacy/v1/chat/completions"
+    assert target.llm_model == "legacy-model"
+    assert target.llm_api_key == "legacy-key"
+
+
+def test_judge_model_unknown_verifier_falls_back(config):
+    """An unroutable verifier is skipped, not passed through (#591)."""
+    from decafclaw.model_catalog import effective_judge_model
+
+    _two_key_config(config)
+    config.reflection.verifier_model = "no-such-model"
+    config.reflection.model = ""
+
+    assert effective_judge_model(config).model_name == "other-model"
+
+
+def test_judge_model_does_not_leak_api_key_in_repr(config):
+    """The target carries the judge's key only as a field; repr stays clean."""
+    from decafclaw.model_catalog import effective_judge_model
+
+    config.reflection.model = "cheap-judge-model"
+    config.reflection.api_key = "judge-key"
+    config.default_model = ""
+
+    target = effective_judge_model(config)
+    assert target.llm_api_key == "judge-key"
+    assert "judge-key" not in repr(target)
+
+
+def test_verifier_pointer_only_accepts_selectable_keys(config):
+    """Verifier ladder: selectable sidecar pointer → seed (raw or empty)."""
+    import asyncio
+
+    from decafclaw.model_catalog import effective_verifier_model, save_catalog, set_verifier_model
+
+    _config_with_models(config)
+    config.reflection.verifier_model = "hand-model"
+    assert effective_verifier_model(config) == "hand-model"
+
+    # A pointer at a disabled or vanished model falls back to the seed.
+    asyncio.run(set_verifier_model(config, "not-a-key"))
+    assert effective_verifier_model(config) == "hand-model"
+
+    save_catalog(
+        config,
+        catalog_from_dict(
+            {
+                "providers": {
+                    "local": {
+                        "models": [
+                            {"id": "on", "enabled": True},
+                            {"id": "off", "enabled": False},
+                        ]
+                    }
+                },
+                "verifier_model": "local/on",
+            }
+        ),
+    )
+    apply_catalog(config, load_catalog(config))
+    assert effective_verifier_model(config) == "local/on"
+
+
+def test_context_window_resolution_chain(config):
+    """Window ladder: the named model's window → llm window → compaction cap."""
+    from decafclaw.model_catalog import effective_context_window
+
+    config.model_configs["measured"] = ModelConfig(provider="p", model="m", context_window_size=64000)
+    config.model_configs["unmeasured"] = ModelConfig(provider="p", model="m")
+    config.default_model = "measured"
+
+    # 1. A named model with a configured window wins outright.
+    assert effective_context_window(config, "measured") == 64000
+    # An empty name means "the default model".
+    assert effective_context_window(config, "") == 64000
+
+    # 2. An unmeasured named model falls through to the llm group.
+    config.llm.context_window_size = 200000
+    assert effective_context_window(config, "unmeasured") == 200000
+    # An unknown name never resolves through a model config.
+    assert effective_context_window(config, "no-such-model") == 200000
+
+    # 3. No window anywhere → the conservative compaction cap.
+    config.llm.context_window_size = 0
+    config.compaction.max_tokens = 100000
+    assert effective_context_window(config, "unmeasured") == 100000
+    config.default_model = "unmeasured"
+    assert effective_context_window(config, "") == 100000
+
+
+def test_context_window_sync_caller_uses_resolver(config):
+    """The sync (configured-only) resolver and the definition agree."""
+    from decafclaw.context_diagnostics import get_context_window_size
+    from decafclaw.model_catalog import effective_context_window
+
+    config.model_configs["measured"] = ModelConfig(provider="p", model="m", context_window_size=64000)
+    config.default_model = "measured"
+
+    class _Ctx:
+        active_model = "measured"
+
+    assert get_context_window_size(config, _Ctx()) == effective_context_window(config, "measured") == 64000
+
+    # Empty active model → the default model, exactly as before.
+    _Ctx.active_model = ""
+    assert get_context_window_size(config, _Ctx()) == effective_context_window(config) == 64000
+
+
+@pytest.mark.asyncio
+async def test_context_window_async_caller_uses_resolver(config):
+    """The async (auto-detect) resolver shares the definition's fallback ladder."""
+    from decafclaw.llm import ensure_model_context_window
+    from decafclaw.model_catalog import effective_context_window
+
+    config.model_configs["unmeasured"] = ModelConfig(provider="local", model="m")
+    config.default_model = "unmeasured"
+    config.llm.context_window_size = 0
+    config.compaction.max_tokens = 12345
+
+    # No provider info available (no registry entry) → the same cap the
+    # sync definition returns.
+    assert await ensure_model_context_window(config, "unmeasured") == 12345
+    assert effective_context_window(config, "unmeasured") == 12345
