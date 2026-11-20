@@ -18,8 +18,8 @@ it('shows a shell command and its output together when expanded', async () => {
 
 it('offers Dissect on a failing tool call and opens the returned fork (#1570)', async () => {
     const host = document.createElement('chat-view');
-    const dissectConversation = vi.fn(async () => 'web-user-child');
-    /** @type {any} */ (host).store = { dissectConversation };
+    const forkConversation = vi.fn(async () => 'web-user-child');
+    /** @type {any} */ (host).store = { forkConversation };
     document.body.append(host);
     const el = document.createElement('tool-message');
     el.tool = 'shell';
@@ -33,7 +33,7 @@ it('offers Dissect on a failing tool call and opens the returned fork (#1570)', 
     el.querySelector('.tool-dissect-btn').click();
 
     await vi.waitFor(() => expect(tab.location.replace).toHaveBeenCalled());
-    expect(dissectConversation).toHaveBeenCalledWith('call-1');
+    expect(forkConversation).toHaveBeenCalledWith({ toolCallId: 'call-1', template: 'dissect' });
     expect(tab.location.replace).toHaveBeenCalledWith(`${location.pathname}?conv=web-user-child`);
     open.mockRestore();
     host.remove();

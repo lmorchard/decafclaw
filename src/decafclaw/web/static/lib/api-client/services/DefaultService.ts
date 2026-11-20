@@ -15,9 +15,9 @@ import type { ConfigWriteResponse } from '../models/ConfigWriteResponse';
 import type { ContextDiagnosticsResponse } from '../models/ContextDiagnosticsResponse';
 import type { ContextRawResponse } from '../models/ContextRawResponse';
 import type { ConversationCreateResponse } from '../models/ConversationCreateResponse';
-import type { ConversationDissectResponse } from '../models/ConversationDissectResponse';
 import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
 import type { ConversationFolderResponse } from '../models/ConversationFolderResponse';
+import type { ConversationForkResponse } from '../models/ConversationForkResponse';
 import type { ConversationLifecycleResponse } from '../models/ConversationLifecycleResponse';
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
@@ -437,23 +437,24 @@ export class DefaultService {
         });
     }
     /**
-     * Dissect Conversation
-     * Fork a conversation into a seeded dissection conversation (#1570).
+     * Fork Conversation
+     * Fork a conversation into a seeded top-level conversation (#1570).
      * @param id
      * @param requestBody
-     * @returns ConversationDissectResponse Successful Response
+     * @returns ConversationForkResponse Successful Response
      * @throws ApiError
      */
-    public static dissectConversationApiConversationsIdDissectPost(
+    public static forkConversationApiConversationsIdForkPost(
         id: string,
         requestBody: {
             tool_call_id?: string;
             instruction?: string;
+            template?: string;
         },
-    ): CancelablePromise<ConversationDissectResponse> {
+    ): CancelablePromise<ConversationForkResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/conversations/{id}/dissect',
+            url: '/api/conversations/{id}/fork',
             path: {
                 'id': id,
             },

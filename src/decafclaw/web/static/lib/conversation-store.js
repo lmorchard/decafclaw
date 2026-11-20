@@ -564,26 +564,28 @@ export class ConversationStore extends EventTarget {
   }
 
   /**
-   * Fork the current conversation into a seeded dissection conversation
-   * (#1570). Used by the errored-tool-card button; the server also appends a
-   * notice card and starts the child turn.
-   * @param {string} [toolCallId]
-   * @param {string} [instruction]
+   * Fork the current conversation into a seeded top-level conversation
+   * (#1570). General forks branch the recent exchange; the `dissect`
+   * template carries a failing tool call and its exact error. Used by the
+   * errored-tool-card button; the server also appends a notice card and
+   * starts the child turn.
+   * @param {{toolCallId?: string, instruction?: string, template?: string}} [options]
    * @returns {Promise<string|null>} new conversation id, or null on failure
    */
-  async dissectConversation(toolCallId = '', instruction = '') {
+  async forkConversation({ toolCallId = '', instruction = '', template = 'general' } = {}) {
     if (!this.#currentConvId || parentConvIdOf(this.#currentConvId)) return null;
     try {
-      const conv = await DefaultService.dissectConversationApiConversationsIdDissectPost(
+      const conv = await DefaultService.forkConversationApiConversationsIdForkPost(
         this.#currentConvId,
         {
+          template,
           ...(toolCallId ? { tool_call_id: toolCallId } : {}),
           ...(instruction ? { instruction } : {}),
         },
       );
       return conv?.conv_id || null;
     } catch (err) {
-      if (!(err instanceof ApiError)) console.error('Failed to dissect conversation:', err);
+      if (!(err instanceof ApiError)) console.error('Failed to fork conversation:', err);
       return null;
     }
   }
@@ -912,7 +914,7 @@ export class ConversationStore extends EventTarget {
           }, this.#currentConvId);
         }
       }
-      if (msg.type === MESSAGE_TYPES.DISSECT_NOTICE && msg.conv_id === this.#currentConvId) {
+      if (msg.type === MESSAGE_TYPES.FORK_NOTICE && msg.conv_id === this.#currentConvId) {
         // The new fork is a separate session in the sidebar; refetch so its
         // row appears without a page reload.
         this.listSessions(this.#currentFolder);

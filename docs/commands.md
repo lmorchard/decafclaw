@@ -78,10 +78,11 @@ Some commands are handled by the server before skill dispatch. They run no agent
 
 | Command | What it does |
 |---|---|
-| `/dissect [instruction]` (`!dissect`) | Fork the last failure into a seeded dissection conversation; see [dissection conversations](conversations.md#dissection-conversations) |
+| `/fork [instruction]` (`/branch`, `!fork`, `!branch`) | Fork the conversation into a new clean context window; see [forked conversations](conversations.md#forked-conversations) |
+| `/dissect [instruction]` (`!dissect`) | Fork the last failure into a seeded dissection conversation; see [dissection template](conversations.md#dissection-template) |
 | `/retitle` (`!retitle`) | Regenerate the conversation title |
 | `/terminal [cwd]` | Spawn a PTY in a canvas tab (web only) |
 | `/update` (`!update`) | Self-update DecafClaw |
 | `/restart` (`!restart`) | Restart the service, optionally on idle |
 
-These share the command prefix but are not SKILL.md commands and do not appear in the skill catalog. `/dissect` accepts free-form text after the command as the investigation focus.
+These share the command prefix but are not SKILL.md commands and do not appear in the skill catalog. `/fork` and `/dissect` accept free-form text after the command as the branch instruction or investigation focus.

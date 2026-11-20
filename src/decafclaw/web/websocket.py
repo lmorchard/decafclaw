@@ -590,13 +590,18 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         await _handle_restart_command(ws_send, conv_id, text, username, state)
         return
 
-    # -- /dissect side-effect command (#1570): fork the failure into a new
-    # conversation with NO parent agent turn. The parent stays clean; the
-    # child starts working immediately.
-    if (text.startswith("/dissect") and (text == "/dissect" or text[8:9].isspace())) or (
-        text.startswith("!dissect") and (text == "!dissect" or text[8:9].isspace())
-    ):
-        await _handle_dissect_command(ws_send, conv_id, username, text, state)
+    # -- /fork and /branch side-effect commands (#1570): branch the conversation
+    # into a new clean context window with NO parent agent turn. The parent
+    # stays clean; the child starts working immediately.
+    fork_instruction = _command_argument(text, "/fork", "!fork", "/branch", "!branch")
+    if fork_instruction is not None:
+        await _handle_fork_command(ws_send, conv_id, username, fork_instruction, state, template="general")
+        return
+
+    # -- /dissect side-effect command (#1570): a failure-focused fork preset.
+    dissect_instruction = _command_argument(text, "/dissect", "!dissect")
+    if dissect_instruction is not None:
+        await _handle_fork_command(ws_send, conv_id, username, dissect_instruction, state, template="dissect")
         return
 
     # -- Command dispatch (centralized in commands.py) --
@@ -804,37 +809,54 @@ async def _handle_retitle_command(ws_send: WSSendCallable, index, conv_id: str, 
         )
 
 
-async def _handle_dissect_command(ws_send: WSSendCallable, conv_id: str, username: str, text: str, state: dict) -> None:
-    """`/dissect [instruction]`: fork the failure into a new conversation (#1570).
+def _command_argument(text: str, *names: str) -> str | None:
+    """Return the argument after one of ``names``, or None if no match."""
+    for name in names:
+        if text == name:
+            return ""
+        if text.startswith(name) and text[len(name) : len(name) + 1].isspace():
+            return text[len(name) :].strip()
+    return None
+
+
+async def _handle_fork_command(
+    ws_send: WSSendCallable,
+    conv_id: str,
+    username: str,
+    instruction: str,
+    state: dict,
+    *,
+    template: str,
+) -> None:
+    """`/fork`, `/branch`, or `/dissect`: start a child fork (#1570).
 
     No parent agent turn and no parent user echo. The child conversation is
     seeded from the archive and starts its first turn; the parent receives a
-    ``dissect_notice`` card linking to it. The child id is returned in that
-    card, so the client can open it in a new tab.
+    ``fork_notice`` card linking to it. A ``dissect`` request without a failure
+    in the latest exchange falls back to a general fork.
     """
-    from .dissection import DissectionError, create_dissection, resolve_conversation_model
+    from .forking import ForkError, create_fork, resolve_conversation_model
 
     config = state["config"]
     manager = state.get("manager")
-    parts = text.split(None, 1)
-    instruction = parts[1].strip() if len(parts) > 1 else ""
     if not manager:
         await ws_send({"type": WSMessageType.ERROR, "message": "Chat service unavailable", "conv_id": conv_id})
         return
 
-    # Subscribe before creating so the notice emitted by create_dissection
-    # reaches this socket even if select_conv was missed (deep link/reconnect).
+    # Subscribe before creating so the notice emitted by create_fork reaches
+    # this socket even if select_conv was missed (deep link/reconnect).
     _subscribe_to_conv(state, conv_id)
     try:
-        await create_dissection(
+        await create_fork(
             config,
             conv_id,
             username,
             manager=manager,
+            template=template,
             instruction=instruction[:4000],
             model=resolve_conversation_model(config, conv_id, manager),
         )
-    except DissectionError as exc:
+    except ForkError as exc:
         await ws_send({"type": WSMessageType.ERROR, "message": str(exc), "conv_id": conv_id})
 
 
@@ -1481,14 +1503,15 @@ def _subscribe_to_conv(state, conv_id):
                 }
             )
 
-        elif event_type == "dissect_notice":
+        elif event_type == "fork_notice":
             await ws_send(
                 {
-                    "type": WSMessageType.DISSECT_NOTICE,
+                    "type": WSMessageType.FORK_NOTICE,
                     "conv_id": event_conv_id,
                     "fork_conv_id": event.get("fork_conv_id", ""),
                     "fork_title": event.get("fork_title", ""),
                     "source_conv_id": event.get("source_conv_id", ""),
+                    "template": event.get("template", "general"),
                     "tool": event.get("tool", ""),
                     "had_error": event.get("had_error", False),
                 }

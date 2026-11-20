@@ -25,8 +25,8 @@ class WSMessageType(StrEnum):
     CONV_RENAMED = "conv_renamed"
     CONV_SELECTED = "conv_selected"
     CONVERSATION_STATUS = "conversation_status"
-    DISSECT_NOTICE = "dissect_notice"
     ERROR = "error"
+    FORK_NOTICE = "fork_notice"
     MESSAGE_COMPLETE = "message_complete"
     MODE_CHANGED = "mode_changed"
     MODEL_CHANGED = "model_changed"
@@ -75,8 +75,8 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.CONV_RENAMED,
         WSMessageType.CONV_SELECTED,
         WSMessageType.CONVERSATION_STATUS,
-        WSMessageType.DISSECT_NOTICE,
         WSMessageType.ERROR,
+        WSMessageType.FORK_NOTICE,
         WSMessageType.MESSAGE_COMPLETE,
         WSMessageType.MODE_CHANGED,
         WSMessageType.MODEL_CHANGED,
@@ -234,20 +234,21 @@ class SrvConversationStatus(TypedDict):
     status: str
 
 
-class SrvDissectNotice(TypedDict):
-    type: Literal[WSMessageType.DISSECT_NOTICE]
-    conv_id: str
-    fork_conv_id: str
-    fork_title: str
-    source_conv_id: str
-    tool: NotRequired[str]
-    had_error: NotRequired[bool]
-
-
 class SrvError(TypedDict):
     type: Literal[WSMessageType.ERROR]
     message: str
     conv_id: NotRequired[str]
+
+
+class SrvForkNotice(TypedDict):
+    type: Literal[WSMessageType.FORK_NOTICE]
+    conv_id: str
+    fork_conv_id: str
+    fork_title: str
+    source_conv_id: str
+    template: str
+    tool: NotRequired[str]
+    had_error: NotRequired[bool]
 
 
 class SrvMessageComplete(TypedDict):
@@ -483,8 +484,8 @@ ServerMessage = (
     | SrvConvRenamed
     | SrvConvSelected
     | SrvConversationStatus
-    | SrvDissectNotice
     | SrvError
+    | SrvForkNotice
     | SrvMessageComplete
     | SrvModeChanged
     | SrvModelChanged

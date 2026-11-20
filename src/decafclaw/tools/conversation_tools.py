@@ -150,9 +150,19 @@ async def tool_conversation_compact(ctx: "Context") -> str | ToolResult:
         return "No compaction needed (not enough turns to compact)."
 
 
-async def tool_conversation_fork(ctx: "Context", instruction: str = "", tool_call_id: str = "") -> str | ToolResult:
-    """Fork this conversation into an isolated dissection conversation (#1570)."""
-    log.info("[tool:conversation_fork] source=%s tool_call_id=%s", ctx.conv_id, tool_call_id)
+async def tool_conversation_fork(
+    ctx: "Context",
+    instruction: str = "",
+    tool_call_id: str = "",
+    template: str = "general",
+) -> str | ToolResult:
+    """Fork this conversation into a clean context window (#1570)."""
+    log.info(
+        "[tool:conversation_fork] source=%s template=%s tool_call_id=%s",
+        ctx.conv_id,
+        template,
+        tool_call_id,
+    )
     if not ctx.conv_id:
         return ToolResult(text="[error: no source conversation to fork]")
     if ctx.manager is None:
@@ -161,27 +171,34 @@ async def tool_conversation_fork(ctx: "Context", instruction: str = "", tool_cal
         return ToolResult(
             text="[error: conversation_fork is only available in the web UI; there is no tab to open elsewhere]"
         )
-    from ..web.dissection import DissectionError, create_dissection
+    from ..web.forking import ForkError, create_fork
 
     try:
-        result = await create_dissection(
+        result = await create_fork(
             ctx.config,
             ctx.conv_id,
             ctx.user_id or ctx.config.agent.user_id,
             manager=ctx.manager,
+            template=template,
             focus_tool_call_id=tool_call_id,
             instruction=instruction,
             model=ctx.active_model,
         )
-    except DissectionError as exc:
+    except ForkError as exc:
         return ToolResult(text=f"[error: {exc}]")
     conv_id = result["conv_id"]
+    kind = "Dissection conversation" if result["template"] == "dissect" else "Fork"
     return ToolResult(
         text=(
-            f"Dissection conversation started: “{result['title']}” (conv_id: {conv_id}). "
+            f"{kind} started: “{result['title']}” (conv_id: {conv_id}). "
             f"Open it in a new tab with ?conv={conv_id}. The parent conversation is unchanged."
         ),
-        data={"conv_id": conv_id, "title": result["title"], "forked_from": result["forked_from"]},
+        data={
+            "conv_id": conv_id,
+            "title": result["title"],
+            "forked_from": result["forked_from"],
+            "template": result["template"],
+        },
     )
 
 
@@ -253,28 +270,46 @@ CONVERSATION_TOOL_DEFINITIONS = [
         "function": {
             "name": "conversation_fork",
             "description": (
-                "Fork this conversation into a fresh, isolated conversation that "
-                "investigates a failure without polluting the current context. "
-                "Copies the triggering prompt, the failing tool call and arguments, "
-                "and the exact error into the new conversation, primes it to debug, "
-                "and starts its first turn immediately. Use this when a tool error, "
-                "timeout, or bug needs source reading, diffs, tests, or a PR — work "
-                "that would otherwise fill this conversation's context. Only "
-                "available in the web UI. The parent conversation is unchanged "
-                "except for a small link notice."
+                "Fork this conversation into a fresh conversation with a clean "
+                "context window. Use this when the user asks to fork, branch, "
+                "or split off part of the discussion — to explore a "
+                "meta-concern, alternative approach, or design idea without "
+                "derailing the current thread — or to investigate a tool "
+                "failure: pass template='dissect' (tool_call_id is optional and "
+                "defaults to a failure in the latest exchange). The fork copies "
+                "a bounded slice of the "
+                "recent exchange plus the instruction, starts its first turn "
+                "immediately, and appears in the sidebar so the user can open "
+                "and keep prompting it. Only available in the "
+                "web UI. The parent conversation is unchanged except for a "
+                "small link notice."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "instruction": {
                         "type": "string",
-                        "description": "Optional focus for the investigation, e.g. 'find why shell_exec timed out'.",
+                        "description": (
+                            "What the fork should explore or do, e.g. 'compare two "
+                            "API shapes for the upload flow' or 'find why shell_exec "
+                            "timed out'."
+                        ),
                     },
                     "tool_call_id": {
                         "type": "string",
                         "description": (
-                            "Optional id of the failing tool call to copy. Defaults to "
-                            "the most recent tool error, or the latest exchange."
+                            "Optional id of a failing tool call to carry into the "
+                            "fork. With template='dissect', omit it to use a failure "
+                            "from the latest exchange."
+                        ),
+                    },
+                    "template": {
+                        "type": "string",
+                        "enum": ["general", "dissect"],
+                        "description": (
+                            "Fork preset: 'general' (default) branches for "
+                            "exploration; 'dissect' adds the failing tool call, "
+                            "arguments, and exact error."
                         ),
                     },
                 },

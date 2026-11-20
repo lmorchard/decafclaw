@@ -158,19 +158,6 @@ Activity status of a conversation changed (busy, waiting, finished, or idle).
 - `conv_id` — string
 - `status` — string
 
-### `dissect_notice`
-
-A dissection conversation was created from this one (#1570). Render a link card that opens the fork in a new tab; the same record is archived under role `dissect_notice` for reload.
-
-**Fields:**
-
-- `conv_id` — string
-- `fork_conv_id` — string
-- `fork_title` — string
-- `source_conv_id` — string
-- `tool` — string?
-- `had_error` — boolean?
-
 ### `error`
 
 Generic error surfaced to the client (bad request, unknown conversation, internal error).
@@ -179,6 +166,20 @@ Generic error surfaced to the client (bad request, unknown conversation, interna
 
 - `message` — string
 - `conv_id` — string?
+
+### `fork_notice`
+
+A fork was created from this conversation (#1570). Render a link card that opens the new conversation in a new tab; `template` distinguishes a general fork from a failure dissection. The same record is archived under role `fork_notice` for reload.
+
+**Fields:**
+
+- `conv_id` — string
+- `fork_conv_id` — string
+- `fork_title` — string
+- `source_conv_id` — string
+- `template` — string
+- `tool` — string?
+- `had_error` — boolean?
 
 ### `message_complete`
 

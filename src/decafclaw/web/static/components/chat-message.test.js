@@ -156,3 +156,46 @@ describe('chat-message tool failure tags (#1569)', () => {
     el.remove();
   });
 });
+
+describe('chat-message fork notices (#1570)', () => {
+  it('renders a general fork as a link to the new conversation', async () => {
+    const el = document.createElement('chat-message');
+    el.role = 'fork_notice';
+    el.record = {
+      fork_conv_id: 'web-user-child',
+      fork_title: 'Fork: Upload design',
+      template: 'general',
+    };
+    document.body.append(el);
+    await el.updateComplete;
+
+    const banner = el.querySelector('.chat-event.fork-notice');
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain('Forked into');
+    const link = banner?.querySelector('a.fork-open');
+    expect(link?.getAttribute('href')).toBe('?conv=web-user-child');
+    expect(link?.textContent).toContain('“Fork: Upload design”');
+    expect(link?.getAttribute('target')).toBe('_blank');
+    el.remove();
+  });
+
+  it('renders a dissection fork as a failure link', async () => {
+    const el = document.createElement('chat-message');
+    el.role = 'fork_notice';
+    el.record = {
+      fork_conv_id: 'web-user-child',
+      fork_title: 'Dissect: Flaky test',
+      template: 'dissect',
+      tool: 'shell',
+    };
+    document.body.append(el);
+    await el.updateComplete;
+
+    const banner = el.querySelector('.chat-event.fork-notice.fork-dissect');
+    expect(banner).not.toBeNull();
+    expect(banner?.textContent).toContain('Dissection started');
+    expect(banner?.textContent).toContain('shell failure');
+    expect(banner?.querySelector('a.fork-open')?.getAttribute('href')).toBe('?conv=web-user-child');
+    el.remove();
+  });
+});

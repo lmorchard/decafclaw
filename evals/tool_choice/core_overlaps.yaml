@@ -179,6 +179,18 @@
 
 # -- conversation_fork vs conversation_search / conversation_compact (#1570) --
 
+- name: conv-fork-general-design-branch
+  scenario: "Branch this into a new conversation so we can compare two API designs without derailing the outline we're writing here."
+  expected: conversation_fork
+  near_miss: [conversation_compact, conversation_search, delegate_task]
+  notes: |
+    Forking is the general primitive: it starts a persistent, user-openable
+    conversation seeded with recent context. The user wants a design
+    comparison kept out of this thread. conversation_search only reads
+    history, compact shrinks this conversation's own history, and
+    delegate_task's child is a lifecycle-managed subagent, not a fork the
+    user can open and keep prompting.
+
 - name: conv-fork-vs-search-isolate-failure
   scenario: "That shell command just timed out. Fork the investigation into a new conversation so this draft stays clean, then dig into why the timeout happens."
   expected: conversation_fork
@@ -186,9 +198,10 @@
   notes: |
     The user asks to move work elsewhere ("fork", "new conversation",
     "this draft stays clean") because the debugging output would pollute
-    the current context. conversation_fork copies the failing call and
-    starts a separate web conversation; conversation_search only reads
-    history and compact shrinks this conversation's own history.
+    the current context. conversation_fork with the dissect template copies
+    the failing call and starts a separate web conversation;
+    conversation_search only reads history and compact shrinks this
+    conversation's own history.
 
 - name: conv-fork-vs-compact-long-debugging
   scenario: "This timeout is going to need a lot of source reading and test runs. Spawn a separate conversation to chase it down and leave me a link here."
@@ -196,10 +209,10 @@
   near_miss: [conversation_compact, delegate_task]
   notes: |
     A persistent, user-openable conversation that starts with the failure
-    is conversation_fork. conversation_compact would destroy the current
-    context instead of isolating the investigation, and delegate_task's
-    child is a lifecycle-managed subagent, not a fork the user can open
-    and keep prompting.
+    is conversation_fork (dissect template). conversation_compact would
+    destroy the current context instead of isolating the investigation, and
+    delegate_task's child is a lifecycle-managed subagent, not a fork the
+    user can open and keep prompting.
 
 # -- vault_journal_append vs notes_append ------------------------------------
 

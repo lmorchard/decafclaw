@@ -583,11 +583,11 @@
         }
       }
     },
-    "/api/conversations/{id}/dissect": {
+    "/api/conversations/{id}/fork": {
       "post": {
-        "summary": "Dissect Conversation",
-        "description": "Fork a conversation into a seeded dissection conversation (#1570).",
-        "operationId": "dissect_conversation_api_conversations__id__dissect_post",
+        "summary": "Fork Conversation",
+        "description": "Fork a conversation into a seeded top-level conversation (#1570).",
+        "operationId": "fork_conversation_api_conversations__id__fork_post",
         "parameters": [
           {
             "name": "id",
@@ -605,7 +605,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ConversationDissectResponse"
+                  "$ref": "#/components/schemas/ConversationForkResponse"
                 }
               }
             }
@@ -636,9 +636,14 @@
                     "default": "",
                     "title": "Instruction",
                     "type": "string"
+                  },
+                  "template": {
+                    "default": "general",
+                    "title": "Template",
+                    "type": "string"
                   }
                 },
-                "title": "ConversationDissectRequest",
+                "title": "ConversationForkRequest",
                 "type": "object"
               }
             }
@@ -4729,39 +4734,6 @@
         ],
         "title": "ConversationCreateResponse"
       },
-      "ConversationDissectResponse": {
-        "properties": {
-          "conv_id": {
-            "type": "string",
-            "title": "Conv Id"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "title": "Updated At"
-          },
-          "forked_from": {
-            "type": "string",
-            "title": "Forked From"
-          }
-        },
-        "type": "object",
-        "required": [
-          "conv_id",
-          "title",
-          "created_at",
-          "updated_at",
-          "forked_from"
-        ],
-        "title": "ConversationDissectResponse"
-      },
       "ConversationFolderCreateResponse": {
         "properties": {
           "ok": {
@@ -4812,6 +4784,44 @@
           "ok"
         ],
         "title": "ConversationFolderResponse"
+      },
+      "ConversationForkResponse": {
+        "properties": {
+          "conv_id": {
+            "type": "string",
+            "title": "Conv Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "forked_from": {
+            "type": "string",
+            "title": "Forked From"
+          },
+          "template": {
+            "type": "string",
+            "title": "Template"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conv_id",
+          "title",
+          "created_at",
+          "updated_at",
+          "forked_from",
+          "template"
+        ],
+        "title": "ConversationForkResponse"
       },
       "ConversationLifecycleResponse": {
         "properties": {

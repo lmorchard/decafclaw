@@ -114,20 +114,21 @@ export interface SrvConversationStatus {
   status: string;
 }
 
-export interface SrvDissectNotice {
-  type: "dissect_notice";
-  conv_id: string;
-  fork_conv_id: string;
-  fork_title: string;
-  source_conv_id: string;
-  tool?: string;
-  had_error?: boolean;
-}
-
 export interface SrvError {
   type: "error";
   message: string;
   conv_id?: string;
+}
+
+export interface SrvForkNotice {
+  type: "fork_notice";
+  conv_id: string;
+  fork_conv_id: string;
+  fork_title: string;
+  source_conv_id: string;
+  template: string;
+  tool?: string;
+  had_error?: boolean;
 }
 
 export interface SrvMessageComplete {
@@ -361,8 +362,8 @@ export type ServerMessage =
   | SrvConvRenamed
   | SrvConvSelected
   | SrvConversationStatus
-  | SrvDissectNotice
   | SrvError
+  | SrvForkNotice
   | SrvMessageComplete
   | SrvModeChanged
   | SrvModelChanged

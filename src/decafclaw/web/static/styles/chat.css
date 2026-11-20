@@ -151,11 +151,15 @@ chat-message .chat-event.background-event pre.stderr {
   color: var(--pico-del-color, #c0392b);
 }
 
-chat-message .chat-event.dissect-notice {
+chat-message .chat-event.fork-notice {
   border-left-color: var(--pico-primary, #4a7bd0);
 }
 
-chat-message .chat-event.dissect-notice .dissect-open {
+chat-message .chat-event.fork-notice.fork-dissect {
+  border-left-color: var(--pico-del-color, #c0392b);
+}
+
+chat-message .chat-event.fork-notice .fork-open {
   margin-left: auto;
   font-size: 0.75rem;
   white-space: nowrap;

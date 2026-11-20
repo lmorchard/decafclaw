@@ -854,17 +854,17 @@ var DefaultService = class {
     });
   }
   /**
-   * Dissect Conversation
-   * Fork a conversation into a seeded dissection conversation (#1570).
+   * Fork Conversation
+   * Fork a conversation into a seeded top-level conversation (#1570).
    * @param id
    * @param requestBody
-   * @returns ConversationDissectResponse Successful Response
+   * @returns ConversationForkResponse Successful Response
    * @throws ApiError
    */
-  static dissectConversationApiConversationsIdDissectPost(id, requestBody) {
+  static forkConversationApiConversationsIdForkPost(id, requestBody) {
     return request2(OpenAPI, {
       method: "POST",
-      url: "/api/conversations/{id}/dissect",
+      url: "/api/conversations/{id}/fork",
       path: {
         "id": id
       },

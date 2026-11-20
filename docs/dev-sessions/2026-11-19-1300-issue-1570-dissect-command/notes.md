@@ -25,3 +25,12 @@
   `[error` results and opens the returned tab synchronously.
 - Limits: Mattermost has no `/dissect` link/tab path; this delivery is web-only
   and the tool refuses non-web transports.
+- Refactor: inverted the hierarchy so `/fork` (`/branch`) and
+  `conversation_fork` are the general primitive. `fork.py` slices the last one
+  or two typed exchanges and builds a code-agnostic brief; `dissect.py` is the
+  failure preset layered on it. `web/forking.py` owns both templates, the
+  `fork_notice` parent record, and `POST /api/conversations/{id}/fork`.
+  `/dissect` and the tool-card button call the same fork API with
+  `template="dissect"`. Empty `tool_call_id` now only inspects the immediate
+  latest turn, so older errors cannot hijack a new fork; a dissect request with
+  no latest error falls back to a general fork.

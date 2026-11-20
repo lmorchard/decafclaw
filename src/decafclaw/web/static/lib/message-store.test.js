@@ -169,24 +169,26 @@ describe('MessageStore', () => {
             expect(store.currentMessages[2].role).toBe('background_event');
         });
 
-        it('renders a live dissect notice as a link record (#1570)', () => {
+        it('renders a live fork notice as a link record (#1570)', () => {
             const store = new MessageStore(() => {});
             store.handleMessage({
-                type: MESSAGE_TYPES.DISSECT_NOTICE,
+                type: MESSAGE_TYPES.FORK_NOTICE,
                 conv_id: '1',
                 fork_conv_id: 'web-user-child',
-                fork_title: 'Dissect: shell failure',
+                fork_title: 'Fork: Upload design',
                 source_conv_id: 'web-user-parent',
-                tool: 'shell',
-                had_error: true,
+                template: 'general',
+                tool: '',
+                had_error: false,
             }, '1');
 
-            expect(store.currentMessages[0].role).toBe('dissect_notice');
+            expect(store.currentMessages[0].role).toBe('fork_notice');
             expect(store.currentMessages[0].record.fork_conv_id).toBe('web-user-child');
-            expect(store.currentMessages[0].record.fork_title).toBe('Dissect: shell failure');
+            expect(store.currentMessages[0].record.fork_title).toBe('Fork: Upload design');
+            expect(store.currentMessages[0].record.template).toBe('general');
         });
 
-        it('restores an archived dissect notice from CONV_HISTORY (#1570)', () => {
+        it('restores an archived fork notice from CONV_HISTORY (#1570)', () => {
             const store = new MessageStore(() => {});
             store.handleMessage({
                 type: MESSAGE_TYPES.CONV_HISTORY,
@@ -195,12 +197,13 @@ describe('MessageStore', () => {
                 messages: [
                     { role: 'user', content: 'hello', timestamp: 't1' },
                     {
-                        role: 'dissect_notice',
+                        role: 'fork_notice',
                         content: 'Dissected shell into a fork',
                         data: {
                             fork_conv_id: 'web-user-child',
                             fork_title: 'Dissect: shell failure',
                             source_conv_id: 'web-user-parent',
+                            template: 'dissect',
                             tool: 'shell',
                             had_error: true,
                         },
@@ -209,9 +212,10 @@ describe('MessageStore', () => {
                 ],
             }, '1');
 
-            const notice = store.currentMessages.find(m => m.role === 'dissect_notice');
+            const notice = store.currentMessages.find(m => m.role === 'fork_notice');
             expect(notice).toBeDefined();
             expect(notice.record.fork_conv_id).toBe('web-user-child');
+            expect(notice.record.template).toBe('dissect');
             expect(notice.record.tool).toBe('shell');
         });
 

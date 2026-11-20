@@ -43,6 +43,10 @@ export const SIDE_EFFECT_COMMANDS = Object.freeze({
   BANG_RETITLE: '!retitle',
   UPDATE: '/update',
   BANG_UPDATE: '!update',
+  FORK: '/fork',
+  BANG_FORK: '!fork',
+  BRANCH: '/branch',
+  BANG_BRANCH: '!branch',
   DISSECT: '/dissect',
   BANG_DISSECT: '!dissect',
 });

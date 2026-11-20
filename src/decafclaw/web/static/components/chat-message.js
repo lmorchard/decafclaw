@@ -105,19 +105,31 @@ export class ChatMessage extends LitElement {
       return html`<tool-message .tool=${this.content} .content=${''} .icon=${'\u{2699}\u{fe0f}'}></tool-message>`;
     }
 
-    if (this.role === 'dissect_notice') {
+    if (this.role === 'fork_notice') {
       const rec = this.record || {};
       const forkId = rec.fork_conv_id || '';
-      const forkTitle = rec.fork_title || 'dissection conversation';
-      const subject = rec.tool ? `${rec.tool} failure` : 'this conversation';
+      const forkTitle = rec.fork_title || 'new conversation';
+      const href = `?conv=${encodeURIComponent(forkId)}`;
+      if (rec.template === 'dissect') {
+        const subject = rec.tool ? `${rec.tool} failure` : 'this conversation';
+        return html`
+          <div class="chat-event fork-notice fork-dissect">
+            <span class="icon">🔬</span>
+            <span class="title">Dissection started</span>
+            <span class="detail">${subject} — “${forkTitle}”</span>
+            ${forkId ? html`
+              <a class="fork-open" href=${href} target="_blank" rel="noopener" title="Open dissection">↗</a>
+            ` : ''}
+          </div>
+        `;
+      }
       return html`
-        <div class="chat-event dissect-notice">
-          <span class="icon">🔬</span>
-          <span class="title">Dissection started</span>
-          <span class="detail">${subject} — “${forkTitle}”</span>
+        <div class="chat-event fork-notice">
+          <span class="icon">🌿</span>
+          <span class="title">Forked into</span>
           ${forkId ? html`
-            <a class="dissect-open" href="?conv=${encodeURIComponent(forkId)}" target="_blank" rel="noopener">Open dissection ↗</a>
-          ` : ''}
+            <a class="fork-open" href=${href} target="_blank" rel="noopener">“${forkTitle}” ↗</a>
+          ` : html`<span class="detail">“${forkTitle}”</span>`}
         </div>
       `;
     }

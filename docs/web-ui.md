@@ -96,14 +96,10 @@ never grabs focus mid-turn. The policy lives in `static/lib/chat-focus.js`;
 fires on *every* WebSocket message, so a looser condition there steals focus
 on each streamed chunk.
 
-**Dissect a failure (#1570).** An errored tool card shows a **🔬 Dissect**
-button in its header. Clicking it forks the failure into a new conversation —
-triggering prompt, failing call/arguments, and exact error — opens that
-conversation in a new tab, and leaves a `dissect_notice` card (**Open
-dissection ↗**) in this transcript. You can also type `/dissect [instruction]`
-or let the agent call `conversation_fork`. The parent conversation runs no
-agent turn and keeps its context; see
-[dissection conversations](conversations.md#dissection-conversations).
+**Fork a conversation (#1570).** `/fork [instruction]` (alias `/branch`) starts a new top-level conversation with a bounded slice of the recent exchange plus the instruction. The parent gets a **Forked into “…” ↗** card and runs no agent turn. Use it for meta-concerns, alternative approaches, or design ideas without derailing the current context.
+
+**Dissect a failure (#1570).** An errored tool card shows a **🔬 Dissect** button in its header. Clicking it calls the fork API with that `tool_call_id` and the `dissect` template — triggering prompt, failing call/arguments, and exact error — opens the new conversation in a new tab, and leaves a **Dissection started ↗** card in this transcript. You can also type `/dissect [instruction]` or let the agent call `conversation_fork` with `template="dissect"`. If `/dissect` lands on a latest exchange with no failure, it falls back to a general fork. The parent conversation keeps its context; see
+[forked conversations](conversations.md#forked-conversations).
 
 ### Side Questions (Explanation Only)
 

@@ -1271,17 +1271,19 @@ class ConversationCreateResponse(TypedDict):
     model: NotRequired[str]
 
 
-class ConversationDissectRequest(BaseModel):
+class ConversationForkRequest(BaseModel):
     tool_call_id: str = ""
     instruction: str = ""
+    template: str = "general"
 
 
-class ConversationDissectResponse(TypedDict):
+class ConversationForkResponse(TypedDict):
     conv_id: str
     title: str
     created_at: str
     updated_at: str
     forked_from: str
+    template: str
 
 
 class ConversationLifecycleResponse(BaseModel):
@@ -1325,8 +1327,8 @@ async def create_conversation(request: Request) -> JSONResponse:
     return JSONResponse(result, status_code=201)
 
 
-async def dissect_conversation(request: Request, id: str) -> JSONResponse:
-    """Fork a conversation into a seeded dissection conversation (#1570)."""
+async def fork_conversation(request: Request, id: str) -> JSONResponse:
+    """Fork a conversation into a seeded top-level conversation (#1570)."""
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -1345,20 +1347,22 @@ async def dissect_conversation(request: Request, id: str) -> JSONResponse:
         return JSONResponse({"error": "chat service unavailable"}, status_code=503)
     tool_call_id = str(body.get("tool_call_id", "") or "").strip()
     instruction = str(body.get("instruction", "") or "").strip()[:4000]
+    template = str(body.get("template", "general") or "general").strip()
 
-    from .web.dissection import DissectionError, create_dissection, resolve_conversation_model
+    from .web.forking import ForkError, create_fork, resolve_conversation_model
 
     try:
-        result = await create_dissection(
+        result = await create_fork(
             config,
             conv_id,
             username,
             manager=manager,
+            template=template,
             focus_tool_call_id=tool_call_id,
             instruction=instruction,
             model=resolve_conversation_model(config, conv_id, manager),
         )
-    except DissectionError as exc:
+    except ForkError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     return JSONResponse(result, status_code=201)
 
@@ -4759,16 +4763,16 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         ),
         APIRoute("/api/conversations/{id}", get_conversation, methods=["GET"]),
         APIRoute(
-            "/api/conversations/{id}/dissect",
-            dissect_conversation,
+            "/api/conversations/{id}/fork",
+            fork_conversation,
             methods=["POST"],
             status_code=201,
-            response_model=ConversationDissectResponse,
+            response_model=ConversationForkResponse,
             openapi_extra={
                 "requestBody": {
                     "required": True,
                     "content": {
-                        "application/json": {"schema": ConversationDissectRequest.model_json_schema()},
+                        "application/json": {"schema": ConversationForkRequest.model_json_schema()},
                     },
                 }
             },

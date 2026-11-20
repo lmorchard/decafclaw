@@ -180,27 +180,33 @@ Place a `COMPACTION.md` file at `data/{agent_id}/COMPACTION.md` to customize the
 
 - **`conversation_compact`** — manually trigger compaction without waiting for the token budget to be exceeded
 - **`conversation_search`** — search past conversations by stemmed word overlap plus substring, ranked by relevance (across all archived conversations, not just the current one). Stemming means plural/inflected queries match — `"embedding providers"` finds `"embedding provider"`.
-- **`conversation_fork`** — fork the current web conversation into a seeded dissection conversation (see below).
+- **`conversation_fork`** — fork the current web conversation into a new top-level conversation with a clean context window (see below).
 
-### Dissection conversations
+### Forked conversations
 
-A dissection conversation isolates debugging work — source reading, diffs, test output, a PR — from a conversation whose context should stay clean (#1570).
+A fork is a normal top-level web conversation that starts with a bounded slice of the parent's recent exchange plus a branch instruction. Use it to explore a meta-concern, alternative approach, or design idea without derailing the parent session (#1570).
 
-Trigger it three ways:
+Trigger it four ways:
 
-- Type `/dissect [instruction]` in the web chat (also `!dissect`). It runs as a server-side side-effect: no parent agent turn and no parent user echo.
-- Click **🔬 Dissect** on an errored tool card. The request targets that exact `tool_call_id` and opens the new tab.
-- Let the agent call `conversation_fork` when it decides a failure needs deep investigation. This tool is web-only because there must be a tab to open.
+- Type `/fork [instruction]` in the web chat (alias `/branch`; also `!fork` / `!branch`). It runs as a server-side side-effect: no parent agent turn and no parent user echo.
+- Type `/dissect [instruction]` for a tool failure. This is the specialized preset described below.
+- Click **🔬 Dissect** on an errored tool card. The request targets that exact `tool_call_id` with the `dissect` template and opens the new tab.
+- Let the agent call `conversation_fork` with an `instruction`, optionally `tool_call_id` and `template="general"|"dissect"`. This tool is web-only because there must be a tab to open.
 
-All three paths share `web/dissection.py` + `dissect.py`. The fork:
+The general path lives in `web/forking.py` + `fork.py`; the failure template lives in `dissect.py`. Every fork:
 
 1. Creates a normal top-level web conversation, recorded with `forked_from` in `web_conversations.json` (it is *not* a delegated `--child-` conversation, which would be read-only).
-2. Scans the parent archive for the last tool result starting with `[error`, or the named call. It copies the triggering user prompt, the assistant turn, the failing call's name and arguments, and the exact error (bounded to keep the brief reasonable). With no failure it copies the latest exchange.
-3. Appends the parent's active model and starts the child's first turn immediately with the brief. The brief tells the child to activate the relevant skills (`project`, `postmortem`), to use a worktree, and that the parent archive is available through `conversation_search` under the source conv id.
-4. Appends a `dissect_notice` archive record to the parent (`data` carries the fork id/title/tool) and emits the same record live. The web UI renders a card with an **Open dissection ↗** link; the record survives reload.
-5. Leaves the parent transcript otherwise untouched.
+2. Anchors the context. An explicit `tool_call_id` may point at any recorded call. With no id, only the **immediate latest turn/exchange** is inspected for a tool error — an older failure never hijacks a new fork. If the latest exchange has no error, it is a conversational branch.
+3. Renders the template's brief. The **general** brief copies the last one or two typed user/assistant exchanges plus the instruction, and makes no assumptions about code, worktrees, PRs, or debugging skills. The **dissect** brief copies the triggering prompt, the failing call's name and arguments, and the exact error (bounded), and primes `project`/`postmortem` plus a worktree.
+4. Appends the parent's active model and starts the child's first turn immediately with the brief. The parent archive remains available through `conversation_search` under the source conv id.
+5. Appends a `fork_notice` archive record to the parent (`data` carries the fork id/title/template/tool) and emits the same record live. The web UI renders **Forked into “…” ↗** for general forks and **Dissection started ↗** for failure dissections; the record survives reload.
+6. Leaves the parent transcript otherwise untouched.
 
-REST: `POST /api/conversations/{id}/dissect` with `{tool_call_id?, instruction?}` returns `201 {conv_id, title, created_at, updated_at, forked_from}`. It requires ownership of the source conversation.
+### Dissection template
+
+`template="dissect"` is a preset layered on the fork primitive for tool failures. It isolates debugging work — source reading, diffs, test output, a PR — from a conversation whose context should stay clean. If `/dissect` or a dissect request lands on a latest exchange with no failure, it falls back to a general fork: the child gets the general brief, the title starts with `Fork:`, and the parent notice says the conversation was forked.
+
+REST: `POST /api/conversations/{id}/fork` with `{instruction?, tool_call_id?, template?}` returns `201 {conv_id, title, created_at, updated_at, forked_from, template}`. It requires ownership of the source conversation.
 
 ## Web UI conversations
 

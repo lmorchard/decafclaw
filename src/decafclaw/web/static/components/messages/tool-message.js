@@ -27,7 +27,7 @@ export class ToolMessage extends LitElement {
     /** Watchdog limit in seconds, for the Timed Out pill (#1569) */
     timeoutSec: { type: Number, attribute: false },
     _expanded: { type: Boolean, state: true },
-    _dissecting: { type: Boolean, state: true },
+    _forking: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -52,7 +52,7 @@ export class ToolMessage extends LitElement {
     /** @type {number|null} */
     this.timeoutSec = null;
     this._expanded = false;
-    this._dissecting = false;
+    this._forking = false;
     // Tracks whether we've auto-expanded for this widget yet, so user
     // collapse choices aren't overridden on re-render.
     this._autoExpanded = false;
@@ -88,14 +88,17 @@ export class ToolMessage extends LitElement {
    */
   async #dissect(ev) {
     ev.stopPropagation();
-    if (this._dissecting) return;
+    if (this._forking) return;
     const host = /** @type {any} */ (this.closest('chat-view'));
     const store = host?.store;
-    if (!store?.dissectConversation) return;
-    this._dissecting = true;
+    if (!store?.forkConversation) return;
+    this._forking = true;
     const tab = window.open('', '_blank');
     try {
-      const convId = await store.dissectConversation(this.toolCallId || '');
+      const convId = await store.forkConversation({
+        toolCallId: this.toolCallId || '',
+        template: 'dissect',
+      });
       if (convId && tab) {
         tab.location.replace(`${location.pathname}?conv=${encodeURIComponent(convId)}`);
       } else {
@@ -105,7 +108,7 @@ export class ToolMessage extends LitElement {
       tab?.close();
       console.error('Failed to dissect tool failure:', err);
     } finally {
-      this._dissecting = false;
+      this._forking = false;
     }
   }
 
@@ -152,9 +155,9 @@ export class ToolMessage extends LitElement {
             <button
               class="tool-dissect-btn"
               title="Investigate this failure in a new conversation without polluting this one"
-              ?disabled=${this._dissecting}
+              ?disabled=${this._forking}
               @click=${this.#dissect}
-            >${this._dissecting ? 'Dissecting…' : '🔬 Dissect'}</button>
+            >${this._forking ? 'Dissecting…' : '🔬 Dissect'}</button>
           ` : nothing}
           ${expandable ? html`
             ${hasHistory ? html`<span class="status-history-badge">${this.statusHistory.length}</span>` : nothing}

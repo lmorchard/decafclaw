@@ -165,7 +165,7 @@ Always-activated skill for the unified knowledge base. See [Vault](vault.md).
 |------|--------------|
 | `conversation_search` | Search past conversation archives (stemmed word overlap + substring; optional `days` filter) |
 | `conversation_compact` | Manually trigger conversation compaction |
-| `conversation_fork` | Fork the current web conversation into a seeded dissection conversation that investigates a failure in isolation (`instruction`, optional `tool_call_id`) |
+| `conversation_fork` | Fork the current web conversation into a new top-level conversation with recent context and an instruction; `template="dissect"` adds the failing tool call, arguments, and exact error (`instruction`, optional `tool_call_id`, optional `template`) |
 
 ## Checklist (`tools/checklist_tools.py`)
 
