@@ -345,7 +345,7 @@ An agent turn finished (success, error, or cancellation). `reason` names the set
 
 ### `turn_provenance`
 
-Passive context provenance for the active turn (recalled facts, journal entries, vault pages, scratchpad notes), emitted when prompt composition settles so the UI can mount capsule rows before token streaming starts (#1563).
+Passive context provenance for the active turn (recalled facts, journal entries, vault pages, scratchpad notes), emitted when prompt composition settles. The client holds the capsules until the assistant message starts streaming, then attaches them to that message (#1563).
 
 **Fields:**
 

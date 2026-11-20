@@ -244,11 +244,29 @@ describe('chat-view context provenance preference (#1563)', () => {
     expect(assistantMessage(el).provenance).toEqual({});
   });
 
-  it('renders streaming provenance before text arrives (#1563)', async () => {
+  it('does not mount an empty assistant bubble just to show provenance (#1539 follow-up)', async () => {
     const store = Object.assign(new EventTarget(), {
       currentConvId: 'conv-1',
       currentMessages: [{ role: 'user', content: 'hello' }],
       streamingText: '',
+      streamingThinking: '',
+      streamingProvenance: { journals: [{ timestamp: '2026-11-19 09:00', text: 'Thinking.' }] },
+      isBusy: true,
+      toolStatus: null,
+      pendingConfirms: [],
+      hasMore: false,
+    });
+    const el = await mount(store);
+
+    expect([...el.querySelectorAll('chat-message')]).toHaveLength(1);
+    expect(el.querySelector('.thinking-indicator')).toBeTruthy();
+  });
+
+  it('renders streaming provenance once text starts streaming (#1563)', async () => {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'conv-1',
+      currentMessages: [{ role: 'user', content: 'hello' }],
+      streamingText: 'Espresso it is.',
       streamingThinking: '',
       streamingProvenance: { journals: [{ timestamp: '2026-11-19 09:00', text: 'Thinking.' }] },
       isBusy: true,

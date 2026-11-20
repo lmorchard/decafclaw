@@ -134,7 +134,7 @@
     },
     "turn_provenance": {
       "direction": "server_to_client",
-      "description": "Passive context provenance for the active turn (recalled facts, journal entries, vault pages, scratchpad notes), emitted when prompt composition settles so the UI can mount capsule rows before token streaming starts (#1563).",
+      "description": "Passive context provenance for the active turn (recalled facts, journal entries, vault pages, scratchpad notes), emitted when prompt composition settles. The client holds the capsules until the assistant message starts streaming, then attaches them to that message (#1563).",
       "fields": {"conv_id": "string", "provenance": "object"}
     },
     "user_message": {

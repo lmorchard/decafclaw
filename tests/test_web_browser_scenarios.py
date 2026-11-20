@@ -1904,6 +1904,47 @@ def test_browser_shell_command_and_result(built_static, chromium, config):
         assert page.locator("#shell-test-view hello").count() == 0
 
 
+def test_browser_streaming_provenance_waits_for_content(built_static, chromium, config):
+    """Capsules ride the assistant message once it streams, not an empty bubble (#1539 follow-up)."""
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        page.evaluate("""async () => {
+            await import('/static/components/chat-view.js');
+            const store = Object.assign(new EventTarget(), {
+                currentConvId: '1',
+                currentMessages: [{ role: 'user', content: 'What should I drink?' }],
+                streamingText: '',
+                streamingThinking: '',
+                streamingProvenance: { facts: [{ fact: 'User prefers espresso.' }] },
+                isBusy: true,
+                toolStatus: null,
+                pendingConfirms: [],
+                hasMore: false,
+            });
+            const view = document.createElement('chat-view');
+            view.id = 'streaming-provenance-view';
+            view.store = store;
+            document.body.append(view);
+            await view.updateComplete;
+            window.__streamingStore = store;
+        }""")
+        view = page.locator("#streaming-provenance-view")
+        view.locator(".thinking-indicator").wait_for(state="attached")
+        assert view.locator("chat-message").count() == 1
+        assert view.locator("turn-provenance-row button.turn-provenance-capsule").count() == 0
+
+        page.evaluate("""async () => {
+            window.__streamingStore.streamingText = 'Espresso.';
+            window.__streamingStore.dispatchEvent(new Event('change'));
+            const view = document.querySelector('#streaming-provenance-view');
+            await view.updateComplete;
+            await view.updateComplete;
+        }""")
+        capsule = view.locator("chat-message turn-provenance-row button.turn-provenance-capsule")
+        capsule.wait_for(state="attached")
+        assert "1 fact" in (capsule.text_content() or "")
+
+
 def test_browser_turn_provenance_capsules(built_static, chromium, config):
     """The assistant turn renders provenance capsules and expands one at a time (#1563)."""
     with browser_scenario(built_static, chromium, config) as scenario:

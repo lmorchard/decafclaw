@@ -219,26 +219,22 @@ export class ChatView extends LitElement {
       `)}
 
       ${(() => {
-        const streamingProvenance = this._showContextProvenance ? this._streamingProvenance : {};
-        const hasStreamingProvenance = provenanceHasItems(streamingProvenance);
-        const isStreaming = Boolean(this._streamingText || this._streamingThinking || hasStreamingProvenance);
-        if (!isStreaming) return '';
-        return html`
-          <chat-message
-            .role=${'assistant'}
-            .content=${this._streamingText || ''}
-            .thinking=${this._streamingThinking || ''}
-            .provenance=${streamingProvenance}
-            .streaming=${true}
-          ></chat-message>
-        `;
-      })()}
-
-      ${(() => {
-        const streamingProvenance = this._showContextProvenance ? this._streamingProvenance : {};
-        const hasStreamingProvenance = provenanceHasItems(streamingProvenance);
-        const isStreaming = Boolean(this._streamingText || this._streamingThinking || hasStreamingProvenance);
-        if (this._busy && !isStreaming && !this._toolStatus) {
+        // Provenance alone is not content. Mounting the streaming assistant
+        // message before any text or thinking arrives leaves an empty bubble
+        // holding only a capsule row, so hold it back until streaming starts.
+        const hasStream = Boolean(this._streamingText || this._streamingThinking);
+        if (hasStream) {
+          return html`
+            <chat-message
+              .role=${'assistant'}
+              .content=${this._streamingText || ''}
+              .thinking=${this._streamingThinking || ''}
+              .provenance=${this._showContextProvenance ? this._streamingProvenance : {}}
+              .streaming=${true}
+            ></chat-message>
+          `;
+        }
+        if (this._busy && !this._toolStatus) {
           return html`
             <div class="thinking-indicator">
               <span></span><span></span><span></span>
