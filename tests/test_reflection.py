@@ -942,6 +942,48 @@ class TestJudgeResolverParity:
             "llm_api_key": "judge-key",
         }
 
+    @pytest.mark.asyncio
+    async def test_reflection_routes_through_the_resolver(self, tmp_path):
+        """#1361: evaluate_response SHALL dispatch on effective_judge_model,
+        not a local copy of the ladder. Patching the resolver to return a
+        sentinel target must drive the call_llm kwargs; a reverted local
+        ladder would ignore the patch and route from config instead."""
+        from decafclaw.model_catalog import JudgeModel
+
+        config = self._config(
+            tmp_path,
+            model_configs={"author": ModelConfig(provider="p", model="author-model")},
+            default_model="author",
+            reflection=ReflectionConfig(enabled=True),
+        )
+
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+        sentinel_named = JudgeModel(model_name="sentinel-judge")
+        with (
+            patch("decafclaw.reflection.effective_judge_model", return_value=sentinel_named),
+            patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call,
+        ):
+            await evaluate_response(config, "hello", "Hi!", "")
+        assert mock_call.call_count == 1
+        assert mock_call.call_args.kwargs == {"model_name": "sentinel-judge"}
+
+        sentinel_legacy = JudgeModel(
+            llm_url="http://sentinel/v1/chat/completions",
+            llm_model="sentinel-model",
+            llm_api_key="sentinel-key",
+        )
+        with (
+            patch("decafclaw.reflection.effective_judge_model", return_value=sentinel_legacy),
+            patch("decafclaw.reflection.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_call,
+        ):
+            await evaluate_response(config, "hello", "Hi!", "")
+        assert mock_call.call_count == 1
+        assert mock_call.call_args.kwargs == {
+            "llm_url": "http://sentinel/v1/chat/completions",
+            "llm_model": "sentinel-model",
+            "llm_api_key": "sentinel-key",
+        }
+
 
 class TestReflectionPromptStructure:
     """Assert the bundled REFLECTION.md wraps each dynamic input in its tag."""

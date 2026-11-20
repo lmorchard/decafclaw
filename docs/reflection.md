@@ -83,6 +83,8 @@ Reflection is a default-on core [extension](extensions.md#reflection-default-on)
 
 The judge can use a separate model from the main LLM. Empty `url`/`model`/`api_key` fall back to the `llm` group values via `config.reflection.resolved(config)`. This lets you run an expensive model for the agent and a cheap/fast one as the judge.
 
+The ladder below is implemented by `effective_judge_model` in `src/decafclaw/model_catalog.py` (#1360), so the resolution order has one definition instead of a local copy in `reflection.py`.
+
 #### `verifier_model` — the shared verifier convention
 
 `reflection.verifier_model` names a key in [`model_configs`](config.md#model_configs), and it is the setting to reach for when what you want is *a judge that isn't the author*. Cost is a side benefit; the point is independence. Left at its default (`""`), nothing changes.
