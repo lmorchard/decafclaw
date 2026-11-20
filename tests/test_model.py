@@ -224,6 +224,40 @@ def test_empty_active_model_does_not_warn(ctx, caplog):
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
+def test_resolve_model_override_routes_through_the_resolver(ctx, caplog):
+    """#1362: _resolve_model_override SHALL dispatch on effective_turn_model,
+    not a local copy of the ladder. Patching the resolver to return a
+    sentinel must drive the override dict and the turn log line; a reverted
+    local ladder would ignore the patch and route from config instead."""
+    from unittest.mock import patch
+
+    from decafclaw.agent import _resolve_model_override
+
+    config = _config_with_models(ctx.config)
+    ctx.active_model = ""
+
+    with (
+        patch("decafclaw.agent.effective_turn_model", return_value="sentinel-model"),
+        caplog.at_level(logging.INFO, logger="decafclaw.agent"),
+    ):
+        override = _resolve_model_override(ctx, config)
+
+    assert override == {"model_name": "sentinel-model"}
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert infos == ["Agent turn: model=sentinel-model (default)"]
+
+    caplog.clear()
+    with (
+        patch("decafclaw.agent.effective_turn_model", return_value=""),
+        caplog.at_level(logging.INFO, logger="decafclaw.agent"),
+    ):
+        override = _resolve_model_override(ctx, config)
+
+    assert override == {}
+    infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert infos == [f"Agent turn: model={config.llm.model} (legacy config.llm)"]
+
+
 def test_no_bundled_schedule_declares_a_stale_model():
     """Bundled SCHEDULE.md files must not name a model.
 
