@@ -1,28 +1,54 @@
 """Tests for web/workspace_paths.py permission + kind helpers."""
 
+import pytest
+
 from decafclaw.web.workspace_paths import (
+    PathContainmentError,
     detect_kind,
     is_readonly,
     is_secret,
-    resolve_safe,
+    resolve_contained,
 )
 
 
-def test_resolve_safe_allows_paths_under_root(tmp_path):
+def test_resolve_contained_allows_paths_under_root(tmp_path):
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "f.txt").write_text("x")
-    assert resolve_safe(tmp_path, "sub/f.txt") == (tmp_path / "sub" / "f.txt").resolve()
+    assert resolve_contained(tmp_path, "sub/f.txt", label="workspace") == (tmp_path / "sub" / "f.txt").resolve()
 
 
-def test_resolve_safe_blocks_parent_escape(tmp_path):
-    assert resolve_safe(tmp_path, "../etc/passwd") is None
+def test_resolve_contained_allows_root_itself(tmp_path):
+    assert resolve_contained(tmp_path, "", label="workspace") == tmp_path.resolve()
 
 
-def test_resolve_safe_blocks_absolute(tmp_path):
-    assert resolve_safe(tmp_path, "/etc/passwd") is None
+def test_resolve_contained_blocks_parent_escape(tmp_path):
+    with pytest.raises(PathContainmentError, match="outside workspace"):
+        resolve_contained(tmp_path, "../etc/passwd", label="workspace")
 
 
-def test_resolve_safe_blocks_sibling_prefix(tmp_path):
+def test_resolve_contained_blocks_absolute(tmp_path):
+    with pytest.raises(PathContainmentError, match="outside workspace"):
+        resolve_contained(tmp_path, "/etc/passwd", label="workspace")
+
+
+def test_resolve_contained_blocks_dotdot_traversal(tmp_path):
+    (tmp_path / "notes").mkdir()
+    with pytest.raises(PathContainmentError):
+        resolve_contained(tmp_path, "notes/../../etc/passwd", label="workspace")
+
+
+def test_resolve_contained_blocks_symlink_escape(tmp_path):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    evil = tmp_path / "elsewhere"
+    evil.mkdir()
+    (evil / "secret.txt").write_text("shh")
+    (root / "link").symlink_to(evil, target_is_directory=True)
+    with pytest.raises(PathContainmentError):
+        resolve_contained(root, "link/secret.txt", label="workspace")
+
+
+def test_resolve_contained_blocks_sibling_prefix(tmp_path):
     """A sibling directory sharing the root's name prefix must not resolve.
 
     String-prefix containment (``str.startswith``) accepts ``workspace-evil``
@@ -33,7 +59,14 @@ def test_resolve_safe_blocks_sibling_prefix(tmp_path):
     evil = tmp_path / "workspace-evil"
     evil.mkdir()
     (evil / "secret.txt").write_text("shh")
-    assert resolve_safe(root, "../workspace-evil/secret.txt") is None
+    with pytest.raises(PathContainmentError):
+        resolve_contained(root, "../workspace-evil/secret.txt", label="workspace")
+
+
+def test_resolve_contained_error_names_label_and_path(tmp_path):
+    with pytest.raises(PathContainmentError) as excinfo:
+        resolve_contained(tmp_path, "../outside.txt", label="the workspace")
+    assert str(excinfo.value) == "path '../outside.txt' is outside the workspace"
 
 
 def test_is_secret_env_file():

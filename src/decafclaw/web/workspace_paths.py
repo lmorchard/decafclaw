@@ -1,10 +1,12 @@
-"""Permission + kind helpers for the workspace REST endpoints.
+"""Path containment plus permission and kind helpers for workspace paths.
 
-These helpers live in the web layer (separate from tools/workspace_tools.py)
-because the web UI applies a stricter permission model than the agent's
-workspace tools: certain files are hidden from direct editing in the Files
-tab even when the agent can write them (e.g. conversation archives,
-embedding databases, secret-looking files).
+The permission flags live here because the web UI applies a stricter model
+than the agent's workspace tools: certain files are hidden from direct
+editing in the Files tab even when the agent can write them (e.g.
+conversation archives, embedding databases, secret-looking files).
+
+``resolve_contained`` is the single root-containment rule: callers pass the
+root they are sandboxed to and get one labeled error when a path escapes.
 
 Patterns here are intentionally conservative; the frontend uses the flags
 to gray out / hide entries, and the PUT/DELETE handlers refuse to mutate
@@ -64,21 +66,24 @@ IMAGE_EXTENSIONS = frozenset(
 )
 
 
-def resolve_safe(root: Path, rel: str) -> Path | None:
-    """Resolve ``rel`` against ``root`` and guard against escapes.
+class PathContainmentError(ValueError):
+    """A path resolved outside the root it is meant to stay within."""
 
-    Returns the resolved absolute path if it lies inside ``root`` after
-    symlink resolution; otherwise ``None``. An empty ``rel`` returns the
-    resolved ``root`` itself (useful for listing the top level).
+
+def resolve_contained(root: Path, path: str | Path, *, label: str) -> Path:
+    """Resolve ``path`` under ``root``, rejecting escapes.
+
+    The root and the candidate are fully resolved, so ``..`` traversal and
+    symlinks cannot leave the root; a sibling directory whose name shares
+    the root's prefix does not pass either. ``label`` names the root in the
+    error message (for example ``"the workspace"``).
+
+    Raises :class:`PathContainmentError` when the candidate escapes.
     """
-    resolved_root = root.resolve()
-    if not rel:
-        return resolved_root
-    candidate = (resolved_root / rel).resolve()
-    try:
-        candidate.relative_to(resolved_root)
-    except ValueError:
-        return None
+    resolved_root = Path(root).resolve()
+    candidate = (resolved_root / path).resolve()
+    if not candidate.is_relative_to(resolved_root):
+        raise PathContainmentError(f"path '{path}' is outside {label}")
     return candidate
 
 

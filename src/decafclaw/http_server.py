@@ -52,10 +52,11 @@ from .tags import collect_all_tags
 from .web.bookmarks import KINDS_BY_TARGET, BookmarkStore, validate_bookmark_path
 from .web.workspace_paths import (
     IMAGE_EXTENSIONS,
+    PathContainmentError,
     detect_kind,
     is_readonly,
     is_secret,
-    resolve_safe,
+    resolve_contained,
 )
 
 log = logging.getLogger(__name__)
@@ -1995,10 +1996,11 @@ async def serve_workspace_file(request: Request, username: str):
     if is_secret(file_path):
         return JSONResponse({"error": "secret path"}, status_code=403)
     workspace = config.workspace_path.resolve()
-    # resolve_safe uses relative_to, not string prefix: a sibling directory
+    # Containment uses relative_to, not string prefix: a sibling directory
     # sharing the workspace's name prefix (workspace-evil) must not pass.
-    resolved = resolve_safe(workspace, file_path)
-    if resolved is None:
+    try:
+        resolved = resolve_contained(workspace, file_path, label="workspace")
+    except PathContainmentError:
         return JSONResponse({"error": "path outside workspace"}, status_code=403)
     if not resolved.is_file():
         # Stored paths from before make migrate-sessions (#1112) point at
@@ -2039,8 +2041,11 @@ async def workspace_list(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"folder": "", "folders": [], "files": []})
 
     folder_param = request.query_params.get("folder", "").strip()
-    target_dir = resolve_safe(workspace, folder_param)
-    if target_dir is None or not target_dir.is_dir():
+    try:
+        target_dir = resolve_contained(workspace, folder_param, label="workspace")
+    except PathContainmentError:
+        return JSONResponse({"error": "folder not found"}, status_code=404)
+    if not target_dir.is_dir():
         return JSONResponse({"error": "folder not found"}, status_code=404)
 
     workspace_resolved = workspace.resolve()
@@ -2081,8 +2086,11 @@ async def workspace_read_json(request: Request, username: str) -> JSONResponse:
     if is_secret(file_path):
         return JSONResponse({"error": "secret path"}, status_code=403)
     workspace = config.workspace_path
-    resolved = resolve_safe(workspace, file_path)
-    if resolved is None or not resolved.is_file():
+    try:
+        resolved = resolve_contained(workspace, file_path, label="workspace")
+    except PathContainmentError:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if not resolved.is_file():
         return JSONResponse({"error": "not found"}, status_code=404)
     kind = detect_kind(resolved)
     if kind != "text":
@@ -2123,8 +2131,9 @@ async def _workspace_rename(
         return JSONResponse({"error": "secret path"}, status_code=403)
     if is_readonly(old_rel) or is_readonly(rename_to):
         return JSONResponse({"error": "readonly path"}, status_code=403)
-    new_file = resolve_safe(workspace, rename_to)
-    if new_file is None:
+    try:
+        new_file = resolve_contained(workspace, rename_to, label="workspace")
+    except PathContainmentError:
         return JSONResponse({"error": "not found"}, status_code=404)
     if not old_file.is_file():
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -2157,8 +2166,9 @@ async def workspace_write(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"error": "path required"}, status_code=400)
     workspace = config.workspace_path
     workspace.mkdir(parents=True, exist_ok=True)
-    resolved = resolve_safe(workspace, file_path)
-    if resolved is None:
+    try:
+        resolved = resolve_contained(workspace, file_path, label="workspace")
+    except PathContainmentError:
         return JSONResponse({"error": "not found"}, status_code=404)
 
     rename_to = request.query_params.get("rename_to")
@@ -2212,8 +2222,11 @@ async def workspace_delete(request: Request, username: str) -> JSONResponse:
     if is_readonly(file_path):
         return JSONResponse({"error": "readonly path"}, status_code=403)
     workspace = config.workspace_path
-    resolved = resolve_safe(workspace, file_path)
-    if resolved is None or not resolved.exists():
+    try:
+        resolved = resolve_contained(workspace, file_path, label="workspace")
+    except PathContainmentError:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if not resolved.exists():
         return JSONResponse({"error": "not found"}, status_code=404)
 
     if resolved.is_dir():
@@ -2260,8 +2273,9 @@ async def workspace_create(request: Request, username: str) -> JSONResponse:
 
     workspace = config.workspace_path
     workspace.mkdir(parents=True, exist_ok=True)
-    resolved = resolve_safe(workspace, rel_path)
-    if resolved is None:
+    try:
+        resolved = resolve_contained(workspace, rel_path, label="workspace")
+    except PathContainmentError:
         return JSONResponse({"error": "not found"}, status_code=404)
 
     if is_secret(rel_path):
@@ -2357,10 +2371,8 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
                             continue
                         fpath = Path(dirpath) / fname
                         try:
-                            f_resolved = fpath.resolve()
+                            f_resolved = resolve_contained(vault_resolved, fpath.resolve(), label="vault")
                             if not f_resolved.is_file():
-                                continue
-                            if not f_resolved.is_relative_to(vault_resolved):
                                 continue
                             rel = f_resolved.relative_to(vault_resolved)
                             if any(part.startswith(".") for part in rel.parts):
@@ -2465,8 +2477,9 @@ async def vault_list(request: Request, username: str) -> JSONResponse:
         error = validate_vault_page_name(folder_param)
         if error:
             return JSONResponse({"error": error}, status_code=400)
-        target_dir = (vault / folder_param).resolve()
-        if not target_dir.is_relative_to(vault.resolve()):
+        try:
+            target_dir = resolve_contained(vault, folder_param, label="vault")
+        except PathContainmentError:
             return JSONResponse({"error": "path outside vault"}, status_code=403)
         if not target_dir.is_dir():
             return JSONResponse({"error": "folder not found"}, status_code=404)
@@ -2477,7 +2490,9 @@ async def vault_list(request: Request, username: str) -> JSONResponse:
     pages = []
     for child in target_dir.iterdir():
         if child.is_file() and child.suffix == ".md":
-            if not child.resolve().is_relative_to(vault_resolved):
+            try:
+                resolve_contained(vault_resolved, child, label="vault")
+            except PathContainmentError:
                 continue
             stat = child.stat()
             rel = child.relative_to(vault_resolved)
@@ -2521,7 +2536,9 @@ async def vault_recent(request: Request, username: str) -> JSONResponse:
 
     vault_resolved = _vault_root(config).resolve()
     agent_resolved = agent_dir.resolve()
-    if not agent_resolved.is_relative_to(vault_resolved):
+    try:
+        resolve_contained(vault_resolved, agent_resolved, label="vault")
+    except PathContainmentError:
         log.warning("vault_agent_dir is outside vault_root, skipping recent changes")
         return JSONResponse({"pages": []})
     limit = config.vault.recent_changes_limit
@@ -2535,7 +2552,9 @@ async def vault_recent(request: Request, username: str) -> JSONResponse:
     for md_file in agent_resolved.rglob("*.md"):
         if not md_file.is_file():
             continue
-        if not md_file.resolve().is_relative_to(agent_resolved):
+        try:
+            resolve_contained(agent_resolved, md_file, label="the agent vault folder")
+        except PathContainmentError:
             continue
         # Skip hidden directories (.obsidian, .git, .trash, etc.)
         if any(part.startswith(".") for part in md_file.relative_to(agent_resolved).parts[:-1]):
@@ -3267,8 +3286,9 @@ async def _vault_rename(
         return JSONResponse({"error": "invalid rename path"}, status_code=400)
     if rename_path.suffix.lower() == ".md":
         rename_path = rename_path.with_suffix("")
-    new_file = (vault / f"{rename_path}.md").resolve()
-    if not new_file.is_relative_to(vault.resolve()):
+    try:
+        new_file = resolve_contained(vault, f"{rename_path}.md", label="vault")
+    except PathContainmentError:
         return JSONResponse({"error": "path outside vault directory"}, status_code=403)
     if not old_file.exists():
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -3325,8 +3345,9 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     vault.mkdir(parents=True, exist_ok=True)
-    target = (vault / f"{page_name}.md").resolve()
-    if not target.is_relative_to(vault.resolve()):
+    try:
+        target = resolve_contained(vault, f"{page_name}.md", label="vault")
+    except PathContainmentError:
         return JSONResponse({"error": "path outside vault directory"}, status_code=403)
     body = await _read_json_body(request)
     if body is None:
@@ -3468,8 +3489,9 @@ async def vault_create(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
     vault.mkdir(parents=True, exist_ok=True)
-    target = (vault / f"{name}.md").resolve()
-    if not target.is_relative_to(vault.resolve()):
+    try:
+        target = resolve_contained(vault, f"{name}.md", label="vault")
+    except PathContainmentError:
         return JSONResponse({"error": "path outside vault directory"}, status_code=403)
     if target.exists():
         return JSONResponse({"error": "page already exists"}, status_code=409)
@@ -3508,8 +3530,9 @@ async def vault_create_folder(request: Request, username: str) -> JSONResponse:
     if error:
         return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
-    target = (vault / folder).resolve()
-    if not target.is_relative_to(vault.resolve()):
+    try:
+        target = resolve_contained(vault, folder, label="vault")
+    except PathContainmentError:
         return JSONResponse({"error": "path outside vault directory"}, status_code=403)
     if target.exists():
         return JSONResponse({"error": "folder already exists"}, status_code=409)
@@ -3530,8 +3553,9 @@ async def vault_delete(request: Request, username: str) -> JSONResponse:
     if error:
         return JSONResponse({"error": error}, status_code=400)
     vault = _vault_root(config)
-    target = (vault / f"{page_name}.md").resolve()
-    if not target.is_relative_to(vault.resolve()):
+    try:
+        target = resolve_contained(vault, f"{page_name}.md", label="vault")
+    except PathContainmentError:
         return JSONResponse({"error": "path outside vault directory"}, status_code=403)
     if not target.exists():
         return JSONResponse({"error": "not found"}, status_code=404)
