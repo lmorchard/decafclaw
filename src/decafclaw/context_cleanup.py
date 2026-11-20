@@ -35,10 +35,8 @@ _SUPERSEDED_READ_STUB = "[tool output superseded by a later successful read]"
 _FILE_READ_TOOLS = frozenset({"workspace_read", "admin_read"})
 
 # Non-interactive turn kinds skip resolved-error pruning, mirroring the mode
-# gate memory retrieval uses (see ComposerMode and
-# context_composer.py:``skip_modes``). The size-based clear below still runs
-# in every mode — only this pass is mode-gated.
-_PRUNE_SKIP_MODES = frozenset({ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT})
+# gate memory retrieval uses (see ``ComposerMode.is_skip``). The size-based
+# clear below still runs in every mode — only this pass is mode-gated.
 
 
 @dataclass
@@ -342,7 +340,7 @@ def clear_old_tool_results(history: list[dict], config, mode: ComposerMode = Com
     # even when it's small (under ``min_size_bytes``) or recent (inside the
     # protected window). Skipped in non-interactive modes, like memory
     # retrieval; the size/age clear is unaffected by ``mode``.
-    if cfg.prune_resolved_errors and mode not in _PRUNE_SKIP_MODES:
+    if cfg.prune_resolved_errors and not mode.is_skip:
         _prune_resolved_errors(history, cfg, tool_names_by_call_id, stats)
 
     # Defensive guard: a misconfigured ``min_turn_age`` <= 0 would index
@@ -402,7 +400,7 @@ def clear_old_tool_results(history: list[dict], config, mode: ComposerMode = Com
     # stubbed with a reference to the newer observation. Independent of the
     # size/age gate — stale-by-supersession reads are worth retiring even when
     # small. Same mode gate as the error pass.
-    if cfg.prune_superseded_reads and mode not in _PRUNE_SKIP_MODES:
+    if cfg.prune_superseded_reads and not mode.is_skip:
         _prune_superseded_reads(history, cfg, tool_names_by_call_id, _build_tool_args_index(history), stats)
 
     return stats
