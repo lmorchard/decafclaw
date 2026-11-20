@@ -9,6 +9,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal, overload
 
 from decafclaw.conversation_paths import iter_conversation_archives
 
@@ -60,6 +61,20 @@ def is_status_token(content: str) -> bool:
     if "\n" in stripped:
         return False
     return bool(STATUS_TOKEN_RE.match(stripped))
+
+
+@overload
+def extract_activity(
+    path: Path,
+    include_workspace_files: Literal[False] = False,
+) -> tuple[str, list[str]]: ...
+
+
+@overload
+def extract_activity(
+    path: Path,
+    include_workspace_files: Literal[True],
+) -> tuple[str, list[str], list[str]]: ...
 
 
 def extract_activity(
