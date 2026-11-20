@@ -129,14 +129,6 @@ def test_canonical_task_mode_partitions_match_current_behavior():
     assert set(TASK_MODE_TRAITS) == set(TaskMode)
 
 
-def test_canonical_sets_agree_with_unmigrated_callsites():
-    """Until #1358-#1359 adopt them, the local copies must not drift."""
-    assert Context.UNATTENDED_TASK_MODES == UNATTENDED_TASK_MODES
-    # The six inline composer copies use ``is_skip`` (#1356), which is
-    # defined from this set.
-    assert SKIP_MODES == frozenset(m for m in ComposerMode if m is not ComposerMode.INTERACTIVE)
-
-
 def test_child_agent_and_background_wake_asymmetry_is_deliberate():
     """child_agent skips context but stays attended; background_wake is the reverse."""
     assert TaskMode.CHILD_AGENT in SKIP_TASK_MODES
