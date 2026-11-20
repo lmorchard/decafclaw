@@ -263,16 +263,16 @@ class Context:
 
     def llm(self) -> BoundLlmClient:
         """Return an LLM client configured with the primary model ID."""
-        from .model_catalog import effective_default_model
+        from .model_catalog import effective_active_model
 
-        model_name = self.active_model or effective_default_model(self.config)
+        model_name = effective_active_model(self.config, self.active_model)
         return BoundLlmClient(self.config, model_name)
 
     def aux_llm(self) -> BoundLlmClient:
         """Return an LLM client configured with the auxiliary model ID, or fallback to primary."""
-        from .model_catalog import effective_default_model
+        from .model_catalog import effective_aux_model
 
-        model_name = self.config.auxiliary_model or self.active_model or effective_default_model(self.config)
+        model_name = effective_aux_model(self.config, self.active_model)
         return BoundLlmClient(self.config, model_name)
 
     def aux_approval_llm(self) -> BoundLlmClient:
