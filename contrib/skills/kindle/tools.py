@@ -29,6 +29,7 @@ _skill_config: "SkillConfig | None" = None
 @dataclass
 class SkillConfig:
     enabled: bool = field(default=False, metadata={"env_alias": "KINDLE_ENABLED"})
+    cdp_url: str = field(default="", metadata={"env_alias": "KINDLE_CDP_URL"})
     cookies_path: str = field(default="", metadata={"env_alias": "KINDLE_COOKIES_PATH"})
     amazon_domain: str = field(default="amazon.com", metadata={"env_alias": "KINDLE_AMAZON_DOMAIN"})
     vault_subfolder: str = field(
@@ -386,15 +387,55 @@ def _notebook_url(domain: str, asin: str | None = None) -> str:
     return f"{base}?asin={asin}&contentLimitState=&"
 
 
-async def _fetch_books_list_html(session: AsyncSession, domain: str) -> str:
-    response = await session.get(_notebook_url(domain))
+def _check_auth_response(url: str, html: str = "") -> None:
+    """Raise RuntimeError if response indicates an expired session or sign-in redirect."""
+    url_lower = url.lower()
+    if "/ap/signin" in url_lower or "openid.assoc_handle" in url_lower or "signin" in url_lower:
+        raise RuntimeError(f"Kindle session expired or not authenticated: redirected to Amazon sign-in ({url})")
+    if html and ('id="ap_signin_form"' in html or 'name="signIn"' in html):
+        raise RuntimeError("Kindle session expired or not authenticated: received Amazon sign-in page")
+
+
+async def _fetch_cdp_html(cdp_url: str, url: str, wait_selector: str, timeout_ms: int = 15000) -> str:
+    """Fetch HTML for a URL using Playwright over Chrome DevTools Protocol."""
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.connect_over_cdp(cdp_url)
+        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        page = await context.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            _check_auth_response(page.url, "")
+            await page.wait_for_selector(wait_selector, timeout=timeout_ms)
+            html = await page.content()
+            _check_auth_response(page.url, html)
+            return html
+        finally:
+            await page.close()
+
+
+async def _fetch_books_list_html(session: AsyncSession | None, domain: str, cdp_url: str = "") -> str:
+    url = _notebook_url(domain)
+    if cdp_url:
+        return await _fetch_cdp_html(cdp_url, url, wait_selector=".kp-notebook-library-each-book")
+    if session is None:
+        raise ValueError("Neither session nor cdp_url provided for _fetch_books_list_html")
+    response = await session.get(url)
     response.raise_for_status()
+    _check_auth_response(response.url, response.text)
     return response.text
 
 
-async def _fetch_book_highlights_html(session: AsyncSession, asin: str, domain: str) -> str:
-    response = await session.get(_notebook_url(domain, asin))
+async def _fetch_book_highlights_html(session: AsyncSession | None, asin: str, domain: str, cdp_url: str = "") -> str:
+    url = _notebook_url(domain, asin)
+    if cdp_url:
+        return await _fetch_cdp_html(cdp_url, url, wait_selector="#kp-notebook-annotations")
+    if session is None:
+        raise ValueError("Neither session nor cdp_url provided for _fetch_book_highlights_html")
+    response = await session.get(url)
     response.raise_for_status()
+    _check_auth_response(response.url, response.text)
     return response.text
 
 
@@ -425,11 +466,28 @@ def highlight_to_dict(h: HighlightEntry) -> dict:
 async def kindle_list_books(ctx) -> ToolResult:
     """List books with highlights from read.amazon.com/notebook.
 
-    Reads cookies from the configured path; uses curl_cffi with Chrome
-    impersonation. Returns one entry per book (asin, title, author, cover_url).
+    Uses Playwright over CDP if cdp_url is configured; otherwise reads cookies
+    from the configured path and uses curl_cffi with Chrome impersonation.
+    Returns one entry per book (asin, title, author, cover_url).
     """
     if _skill_config is None:
         return ToolResult(text="[error: kindle skill not initialized]")
+
+    if _skill_config.cdp_url:
+        try:
+            html = await _fetch_books_list_html(None, _skill_config.amazon_domain, cdp_url=_skill_config.cdp_url)
+        except Exception as exc:  # noqa: BLE001 — network boundary
+            return ToolResult(text=f"[error: failed to fetch books list via CDP: {exc}]")
+        books = _parse_books_list(html)
+        summary = f"Found {len(books)} book(s) with highlights."
+        return ToolResult(
+            text=summary,
+            data={
+                "books": [book_to_dict(b) for b in books],
+                "source": "cdp",
+            },
+        )
+
     cookies_path = _resolve_cookies_path(_config, _skill_config)
     try:
         jar = _load_cookie_jar(cookies_path)
@@ -454,6 +512,7 @@ async def kindle_list_books(ctx) -> ToolResult:
         data={
             "books": [book_to_dict(b) for b in books],
             "cookies_age_days": int(age_days),
+            "source": "cookies",
         },
     )
 
@@ -462,6 +521,20 @@ async def kindle_fetch_highlights(ctx, asin: str) -> ToolResult:
     """Fetch all highlights for a single book by ASIN."""
     if _skill_config is None:
         return ToolResult(text="[error: kindle skill not initialized]")
+
+    if _skill_config.cdp_url:
+        try:
+            html = await _fetch_book_highlights_html(
+                None, asin, _skill_config.amazon_domain, cdp_url=_skill_config.cdp_url
+            )
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(text=f"[error: failed to fetch highlights for {asin} via CDP: {exc}]")
+        entries = _parse_highlights(html)
+        return ToolResult(
+            text=f"Found {len(entries)} highlight(s) for {asin}.",
+            data={"highlights": [highlight_to_dict(h) for h in entries], "asin": asin, "source": "cdp"},
+        )
+
     cookies_path = _resolve_cookies_path(_config, _skill_config)
     try:
         jar = _load_cookie_jar(cookies_path)
@@ -475,7 +548,7 @@ async def kindle_fetch_highlights(ctx, asin: str) -> ToolResult:
     entries = _parse_highlights(html)
     return ToolResult(
         text=f"Found {len(entries)} highlight(s) for {asin}.",
-        data={"highlights": [highlight_to_dict(h) for h in entries], "asin": asin},
+        data={"highlights": [highlight_to_dict(h) for h in entries], "asin": asin, "source": "cookies"},
     )
 
 

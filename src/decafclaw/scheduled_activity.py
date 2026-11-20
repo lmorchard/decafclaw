@@ -67,6 +67,7 @@ def is_status_token(content: str) -> bool:
 def extract_activity(
     path: Path,
     include_workspace_files: Literal[False] = False,
+    include_errors: Literal[False] = False,
 ) -> tuple[str, list[str]]: ...
 
 
@@ -74,17 +75,36 @@ def extract_activity(
 def extract_activity(
     path: Path,
     include_workspace_files: Literal[True],
+    include_errors: Literal[False] = False,
 ) -> tuple[str, list[str], list[str]]: ...
+
+
+@overload
+def extract_activity(
+    path: Path,
+    include_workspace_files: bool,
+    include_errors: Literal[True],
+) -> tuple[str, list[str], list[str], bool, list[str]]: ...
+
+
+@overload
+def extract_activity(
+    path: Path,
+    include_workspace_files: bool = False,
+    include_errors: bool = False,
+) -> tuple[str, list[str]] | tuple[str, list[str], list[str]] | tuple[str, list[str], list[str], bool, list[str]]: ...
 
 
 def extract_activity(
     path: Path,
     include_workspace_files: bool = False,
-) -> tuple[str, list[str]] | tuple[str, list[str], list[str]]:
-    """Read a conversation JSONL; return (final_assistant_text, vault_pages_touched[, workspace_files_touched])."""
+    include_errors: bool = False,
+) -> tuple[str, list[str]] | tuple[str, list[str], list[str]] | tuple[str, list[str], list[str], bool, list[str]]:
+    """Read a conversation JSONL; return (final_assistant_text, vault_pages_touched[, workspace_files_touched][, has_error, errors])."""
     final_text = ""
     vault_touched: list[str] = []
     workspace_touched: list[str] = []
+    errors: list[str] = []
     try:
         with path.open() as fh:
             for line in fh:
@@ -95,34 +115,56 @@ def extract_activity(
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if rec.get("role") != "assistant":
-                    continue
-                content = rec.get("content") or ""
-                if content and not is_status_token(content):
-                    final_text = content
-                for call in rec.get("tool_calls") or []:
-                    fn = (call.get("function") or {}).get("name")
-                    if fn in VAULT_WRITE_TOOLS:
-                        try:
-                            args = json.loads((call.get("function") or {}).get("arguments") or "{}")
-                        except json.JSONDecodeError:
-                            continue
-                        page = args.get("page")
-                        if page:
-                            vault_touched.append(page)
-                    elif fn in WORKSPACE_WRITE_TOOLS:
-                        try:
-                            args = json.loads((call.get("function") or {}).get("arguments") or "{}")
-                        except json.JSONDecodeError:
-                            continue
-                        ws_path = args.get("path")
-                        if ws_path:
-                            workspace_touched.append(ws_path)
+                role = rec.get("role")
+                if role == "tool":
+                    tool_content = str(rec.get("content") or "")
+                    if "[error:" in tool_content:
+                        err_line = next(
+                            (line_item.strip() for line_item in tool_content.splitlines() if "[error:" in line_item),
+                            tool_content.strip(),
+                        )
+                        errors.append(err_line[:200])
+                elif role == "assistant":
+                    content = rec.get("content") or ""
+                    if content and not is_status_token(content):
+                        final_text = content
+                    if content.startswith("[error:"):
+                        errors.append(content.strip()[:200])
+                    for call in rec.get("tool_calls") or []:
+                        fn = (call.get("function") or {}).get("name")
+                        if fn in VAULT_WRITE_TOOLS:
+                            try:
+                                args = json.loads((call.get("function") or {}).get("arguments") or "{}")
+                            except json.JSONDecodeError:
+                                continue
+                            page = args.get("page")
+                            if page:
+                                vault_touched.append(page)
+                        elif fn in WORKSPACE_WRITE_TOOLS:
+                            try:
+                                args = json.loads((call.get("function") or {}).get("arguments") or "{}")
+                            except json.JSONDecodeError:
+                                continue
+                            ws_path = args.get("path")
+                            if ws_path:
+                                workspace_touched.append(ws_path)
+                        elif fn == "send_notification":
+                            try:
+                                args = json.loads((call.get("function") or {}).get("arguments") or "{}")
+                                if args.get("priority") in ("high", "urgent"):
+                                    err_msg = args.get("message") or args.get("title") or "High-priority alert"
+                                    errors.append(err_msg[:200])
+                            except json.JSONDecodeError:
+                                pass
     except OSError as exc:
         log.debug("Failed to read %s: %s", path, exc)
     # Deduplicate while preserving insertion order
     vault_touched = list(dict.fromkeys(vault_touched))
     workspace_touched = list(dict.fromkeys(workspace_touched))
+    errors = list(dict.fromkeys(errors))
+    has_error = bool(errors)
+    if include_errors:
+        return final_text, vault_touched, workspace_touched, has_error, errors
     if include_workspace_files:
         return final_text, vault_touched, workspace_touched
     return final_text, vault_touched
@@ -143,6 +185,8 @@ def collect_scheduled_activity(
       - final_message: str
       - vault_pages_touched: list[str]
       - workspace_files_touched: list[str]
+      - has_error: bool
+      - errors: list[str]
     """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     out: list[dict] = []
@@ -160,7 +204,9 @@ def collect_scheduled_activity(
             continue
         if ts < cutoff:
             continue
-        final, touched_vault, touched_workspace = extract_activity(path, include_workspace_files=True)
+        final, touched_vault, touched_workspace, has_error, errors = extract_activity(
+            path, include_workspace_files=True, include_errors=True
+        )
         out.append(
             {
                 "skill_name": name,
@@ -169,6 +215,8 @@ def collect_scheduled_activity(
                 "final_message": final,
                 "vault_pages_touched": touched_vault,
                 "workspace_files_touched": touched_workspace,
+                "has_error": has_error,
+                "errors": errors,
             }
         )
     return out

@@ -9,7 +9,7 @@ A bundled scheduled skill (`newsletter`) runs daily at 7am (cron `0 7 * * *`). I
 1. Lists scheduled-task conversations from the last 24 hours by iterating conversation archives (`iter_conversation_archives`) and keeping those whose `conv_id` starts with `schedule-` — this naturally excludes interactive (`web-*`), heartbeat, and child-agent conversations, which use different `conv_id` prefixes. Newsletter's own runs (`schedule-newsletter-*`) are explicitly excluded to avoid self-reference. Includes both `vault_pages_touched` and `workspace_files_touched`.
 2. Lists vault pages added or modified in the same window.
 3. Composes a conversational narrative in SOUL voice organized into priority tiers:
-   - **Tier 1 (On the Bench / Action Required):** Unreviewed blog/weeknotes drafts, tasks needing review, with direct `!blog-workbench` triggers.
+   - **Tier 1 (On the Bench / Action Required):** Unreviewed blog/weeknotes drafts, failed tasks or expired service sessions (e.g. Kindle auth), with direct action triggers and links.
    - **Tier 2 (Creative & Generative):** Ambient vibes seedlings, blog idea digests, creative sketches.
    - **Tier 3 (Ingestion & Signal):** Synthesized takeaways from Mastodon, Linkding, YouTube, and podcasts.
    - **Tier 4 (Background Loom):** Dream consolidation, memory absorption, vault gardening.

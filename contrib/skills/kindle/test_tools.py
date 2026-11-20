@@ -523,11 +523,12 @@ def test_upsert_empty_metadata_summary():
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_session(html: str):
+def _make_mock_session(html: str, url: str = "https://read.amazon.com/notebook"):
     """Return a mock AsyncSession-like context manager that yields a session whose
-    .get() returns a response with .text=<html> and a no-op .raise_for_status()."""
+    .get() returns a response with .text=<html>, .url=url, and a no-op .raise_for_status()."""
     response = MagicMock()
     response.text = html
+    response.url = url
     response.raise_for_status = MagicMock()
     session = MagicMock()
     session.get = AsyncMock(return_value=response)
@@ -673,6 +674,108 @@ async def test_kindle_fetch_highlights_http_error(ctx, tmp_path, monkeypatch):
     result = await kindle_tools.kindle_fetch_highlights(ctx, asin="B078VWDNKT")
 
     assert result.text.startswith("[error: failed to fetch highlights for B078VWDNKT")
+
+
+@pytest.mark.asyncio
+async def test_kindle_list_books_cdp_happy_path(ctx, monkeypatch):
+    """kindle_list_books uses Playwright CDP when cdp_url is set."""
+    fixture_html = _FIXTURE_PATH.read_text()
+    skill_config = SkillConfig(cdp_url="http://test-cdp:9222")
+    init(ctx.config, skill_config)
+
+    mock_cdp = AsyncMock(return_value=fixture_html)
+    monkeypatch.setattr(kindle_tools, "_fetch_cdp_html", mock_cdp)
+
+    result = await kindle_tools.kindle_list_books(ctx)
+
+    assert result.data is not None
+    assert result.data["source"] == "cdp"
+    assert len(result.data["books"]) >= 4
+    assert mock_cdp.await_count == 1
+    call_args = mock_cdp.await_args
+    assert call_args is not None
+    assert call_args.args[0] == "http://test-cdp:9222"
+    assert "notebook" in call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_kindle_fetch_highlights_cdp_happy_path(ctx, monkeypatch):
+    """kindle_fetch_highlights uses Playwright CDP when cdp_url is set."""
+    fixture_html = _FIXTURE_PATH.read_text()
+    skill_config = SkillConfig(cdp_url="http://test-cdp:9222")
+    init(ctx.config, skill_config)
+
+    mock_cdp = AsyncMock(return_value=fixture_html)
+    monkeypatch.setattr(kindle_tools, "_fetch_cdp_html", mock_cdp)
+
+    result = await kindle_tools.kindle_fetch_highlights(ctx, asin="B078VWDNKT")
+
+    assert result.data is not None
+    assert result.data["source"] == "cdp"
+    assert result.data["asin"] == "B078VWDNKT"
+    assert len(result.data["highlights"]) > 0
+    assert mock_cdp.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_kindle_list_books_detects_signin_redirect(ctx, tmp_path, monkeypatch):
+    """kindle_list_books raises an explicit auth error if Amazon redirects to sign-in."""
+    cookies_file = tmp_path / "kindle.cookies.txt"
+    fixture_cookies = _THIS_DIR / "fixtures" / "cookies.txt"
+    cookies_file.write_text(fixture_cookies.read_text())
+
+    skill_config = SkillConfig(cookies_path=str(cookies_file))
+    init(ctx.config, skill_config)
+
+    # Return a 200 response with sign-in URL
+    signin_url = "https://www.amazon.com/ap/signin?openid.pape.max_auth_age=3600"
+    monkeypatch.setattr(
+        kindle_tools,
+        "_make_session",
+        lambda jar, ua: _make_mock_session("<html>Sign in</html>", url=signin_url),
+    )
+
+    result = await kindle_tools.kindle_list_books(ctx)
+
+    assert result.text.startswith("[error: failed to fetch books list: Kindle session expired")
+    assert "redirected to Amazon sign-in" in result.text
+
+
+@pytest.mark.asyncio
+async def test_kindle_fetch_highlights_detects_signin_redirect(ctx, tmp_path, monkeypatch):
+    """kindle_fetch_highlights raises an explicit auth error if Amazon redirects to sign-in."""
+    cookies_file = tmp_path / "kindle.cookies.txt"
+    fixture_cookies = _THIS_DIR / "fixtures" / "cookies.txt"
+    cookies_file.write_text(fixture_cookies.read_text())
+
+    skill_config = SkillConfig(cookies_path=str(cookies_file))
+    init(ctx.config, skill_config)
+
+    signin_url = "https://www.amazon.com/ap/signin?openid.pape.max_auth_age=3600"
+    monkeypatch.setattr(
+        kindle_tools,
+        "_make_session",
+        lambda jar, ua: _make_mock_session("<html>Sign in</html>", url=signin_url),
+    )
+
+    result = await kindle_tools.kindle_fetch_highlights(ctx, asin="B078VWDNKT")
+
+    assert result.text.startswith("[error: failed to fetch highlights for B078VWDNKT: Kindle session expired")
+    assert "redirected to Amazon sign-in" in result.text
+
+
+@pytest.mark.asyncio
+async def test_kindle_list_books_cdp_failure(ctx, monkeypatch):
+    """kindle_list_books returns an error when CDP connection or navigation fails."""
+    skill_config = SkillConfig(cdp_url="http://nonexistent-host:9222")
+    init(ctx.config, skill_config)
+
+    mock_cdp = AsyncMock(side_effect=RuntimeError("connection refused"))
+    monkeypatch.setattr(kindle_tools, "_fetch_cdp_html", mock_cdp)
+
+    result = await kindle_tools.kindle_list_books(ctx)
+
+    assert result.text.startswith("[error: failed to fetch books list via CDP: connection refused]")
 
 
 @pytest.mark.asyncio

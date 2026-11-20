@@ -31,5 +31,5 @@ Argument: `$ARGUMENTS`
 ## Notes about behavior
 
 - The `kindle_sync_all` tool short-circuits with `kindle skill disabled; skipping` when the scheduled run hits it with `skills.kindle.enabled = False`. That gate doesn't apply to user-invoked runs — you should sync regardless.
-- If a fetch fails with a 401/403 or returns 0 books unexpectedly, the cookies have probably expired or the deployed host's IP isn't authenticated. Surface a message telling me to re-export `cookies.txt` from a logged-in browser session and place it at the configured path.
+- If a fetch fails with an authentication error (e.g. redirected to Amazon sign-in), the session has expired. If CDP is configured (`cdp_url`), surface a message telling me to log back in on the homelab browser (`https://myriad-docker:13081`). Otherwise tell me to re-export `cookies.txt` from a logged-in browser session and place it at the configured path.
 - Per-book pages at `agent/pages/kindle/*.md` are fully agent-owned. **Do not** manually edit them — they're overwritten on every sync. Cross-links and prose summaries belong on a separate hand-curated page (e.g., `agent/pages/<book>-notes.md` that wiki-links to the agent page).
