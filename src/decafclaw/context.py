@@ -6,31 +6,12 @@ import asyncio
 import copy
 import time
 from dataclasses import dataclass, field, replace
-from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
 
-from .context_types import ComposerState
+from .context_types import ComposerState, TaskMode
 from .events import TurnLifecycle
 from .llm import call_llm, call_llm_streaming
-
-
-class TaskMode(Enum):
-    """Runtime classification of a turn for unattended/interactive behavior.
-
-    Distinct from ``TurnKind`` (the *origin* of a turn): USER and WORKFLOW
-    turns are ``INTERACTIVE``; each task kind maps to its mode via
-    ``KIND_TASK_MODE`` (conversation_manager.py). The values are the wire
-    strings used at transport boundaries (inbox JSONL) — internally, always
-    use members. Free-form strings are only parsed at the boundary (see
-    ``conversation_manager.parse_task_mode``). See #1381.
-    """
-
-    INTERACTIVE = ""  # attended user / workflow turns
-    HEARTBEAT = "heartbeat"
-    SCHEDULED = "scheduled"
-    CHILD_AGENT = "child_agent"
-    BACKGROUND_WAKE = "background_wake"
 
 
 @dataclass
@@ -237,12 +218,13 @@ class Context:
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.active_model: str = ""  # named model config from config.model_configs
         self.active_mode: str = "default"  # active session mode (e.g. default, dev, research, admin)
-        # From KIND_TASK_MODE (conversation_manager.py): one of the TaskMode
-        # members, or INTERACTIVE for an attended user/workflow turn. Keep
-        # UNATTENDED_TASK_MODES below complete — `is_unattended` reads it as an
-        # authorization input, so a stale enumeration invites the
-        # misclassification bug that `task_mode is not INTERACTIVE` would be
-        # (see #685).
+        # From TurnKind.task_mode_for() (conversation_manager.py): one of the
+        # TaskMode members, or INTERACTIVE for an attended user/workflow turn.
+        # The canonical partitions are derived from context_types'
+        # TASK_MODE_TRAITS (#1355). Keep UNATTENDED_TASK_MODES below complete —
+        # `is_unattended` reads it as an authorization input, so a stale
+        # enumeration invites the misclassification bug that
+        # `task_mode is not INTERACTIVE` would be (see #685).
         self.task_mode: TaskMode = TaskMode.INTERACTIVE
         self.request_confirmation: Any = None  # set by ConversationManager
         self.confirmation_active: asyncio.Event = asyncio.Event()

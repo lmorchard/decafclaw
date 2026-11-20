@@ -139,6 +139,18 @@ class TurnKind(Enum):
     WAKE = "wake"
     WORKFLOW = "workflow"
 
+    @classmethod
+    def task_mode_for(cls, kind: "TurnKind") -> TaskMode:
+        """The single ``TurnKind`` → ``TaskMode`` mapping (#1355).
+
+        Task kinds take their mode from ``KIND_TASK_MODE``; attended kinds
+        (``USER``, ``WORKFLOW``) are ``TaskMode.INTERACTIVE``. Callers may
+        still pass an explicit ``task_mode`` to ``enqueue_turn`` to override
+        the default. The mode's skip/unattended/watched classification lives
+        in ``context_types.TASK_MODE_TRAITS``.
+        """
+        return KIND_TASK_MODE.get(kind, TaskMode.INTERACTIVE)
+
 
 # Kinds that use Context.for_task (sensible skip defaults for background work).
 TASK_KINDS = {
