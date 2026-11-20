@@ -237,6 +237,17 @@ class Context:
         self._parent_ctx: Any = None
         self._interceptors: dict[TurnLifecycle, list[Callable]] = {}
 
+    def key(self, fallback: str = "unknown") -> str:
+        """Canonical conversation key.
+
+        Single source of truth for the ``conv_id or channel_id`` chain: the
+        thread ``conv_id`` when set, else the top-level ``channel_id``, else
+        ``fallback`` for contexts that carry neither (some scheduled/heartbeat
+        paths). Callers needing a different sentinel (e.g. the notes subsystem's
+        ``"default"``) pass it via ``fallback`` rather than re-deriving the chain.
+        """
+        return self.conv_id or self.channel_id or fallback
+
     def add_interceptor(self, phase: TurnLifecycle, hook: Callable) -> None:
         """Register a hook for a lifecycle phase."""
         if phase not in self._interceptors:
