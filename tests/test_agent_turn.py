@@ -11,12 +11,11 @@ from decafclaw.agent import (
     _archive,
     _call_llm_with_events,
     _check_cancelled,
-    _conv_id,
     _handle_widget_input_pause,
     run_agent_turn,
 )
 from decafclaw.config_types import ReflectionConfig
-from decafclaw.context import TaskMode
+from decafclaw.context import Context, TaskMode
 from decafclaw.media import EndTurnConfirm, ToolResult, WidgetInputPause
 from decafclaw.reflection import ReflectionResult
 from decafclaw.tool_definitions import build_tool_list, refresh_dynamic_tools
@@ -30,22 +29,21 @@ pytestmark = pytest.mark.usefixtures("no_tail_notes")
 
 def test_conv_id_from_conv_id(ctx):
     ctx.conv_id = "my-conv"
-    assert _conv_id(ctx) == "my-conv"
+    assert ctx.key() == "my-conv"
 
 
 def test_conv_id_falls_back_to_channel_id(ctx):
     ctx.conv_id = None
     ctx.channel_id = "my-channel"
-    assert _conv_id(ctx) == "my-channel"
+    assert ctx.key() == "my-channel"
 
 
 def test_conv_id_falls_back_to_unknown(config):
     """Context with neither conv_id nor channel_id returns 'unknown'."""
-    from decafclaw.context import Context
     from decafclaw.events import EventBus
 
     bare_ctx = Context(config=config, event_bus=EventBus())
-    assert _conv_id(bare_ctx) == "unknown"
+    assert bare_ctx.key() == "unknown"
 
 
 def test_archive_skipped_when_flag_set(ctx, config):

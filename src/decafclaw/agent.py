@@ -127,18 +127,13 @@ def _is_context_length_exceeded(exc: Exception) -> bool:
     return False
 
 
-def _conv_id(ctx: "Context") -> str:
-    """Get conversation ID from context."""
-    return ctx.conv_id or ctx.channel_id or "unknown"
-
-
 def _archive(ctx: "Context", msg) -> None:
     """Archive a message, logging errors but never raising."""
     if ctx.skip_archive:
         return
     wrote = False
     try:
-        append_message(ctx.config, _conv_id(ctx), msg)
+        append_message(ctx.config, ctx.key(), msg)
         wrote = True
     except (OSError, TypeError, ValueError) as e:
         log.error(f"Archive write failed: {e}", exc_info=True)
@@ -152,7 +147,7 @@ def _archive(ctx: "Context", msg) -> None:
     # think the partial is durable.
     if wrote and msg.get("role") == "assistant" and ctx.manager is not None:
         try:
-            ctx.manager.note_assistant_archived(_conv_id(ctx), has_content=bool(msg.get("content")))
+            ctx.manager.note_assistant_archived(ctx.key(), has_content=bool(msg.get("content")))
         except Exception as exc:
             log.debug("note_assistant_archived failed: %s", exc)
 
@@ -275,7 +270,7 @@ def _note_cancel_observed(ctx: "Context") -> None:
     if ctx.manager is None:
         return
     try:
-        ctx.manager.note_cancel_observed_by_agent(_conv_id(ctx))
+        ctx.manager.note_cancel_observed_by_agent(ctx.key())
     except Exception as exc:
         log.debug("note_cancel_observed_by_agent failed: %s", exc)
 
