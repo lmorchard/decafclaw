@@ -230,3 +230,56 @@ def test_collect_scheduled_activity(config, monkeypatch):
     assert len(all_recent) == 2
     skill_names = {r["skill_name"] for r in all_recent}
     assert skill_names == {"dream", "garden"}
+
+
+def test_extract_activity_errors(tmp_path):
+    archive_file = tmp_path / "conv.jsonl"
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "kindle_list_books",
+                        "arguments": "{}",
+                    }
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "content": "[error: failed to fetch books list: Kindle session expired: redirected to Amazon sign-in]",
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "send_notification",
+                        "arguments": json.dumps(
+                            {
+                                "title": "Scheduled task alert: kindle",
+                                "message": "Kindle auth failed",
+                                "priority": "high",
+                            }
+                        ),
+                    }
+                }
+            ],
+        },
+        {"role": "assistant", "content": "Sync failed due to expired session."},
+    ]
+    with archive_file.open("w", encoding="utf-8") as f:
+        for m in messages:
+            f.write(json.dumps(m) + "\n")
+
+    final, touched_vault, touched_ws, has_error, errors = extract_activity(
+        archive_file, include_workspace_files=True, include_errors=True
+    )
+    assert final == "Sync failed due to expired session."
+    assert has_error is True
+    assert len(errors) == 2
+    assert any("Kindle session expired" in e for e in errors)
+    assert any("Kindle auth failed" in e for e in errors)

@@ -43,7 +43,8 @@ Argument: $ARGUMENTS
      - Include the post title, slug, date, word count, and a direct action trigger:
        > **Draft ready for review:** *Title* (`YYYY-MM-DD-slug`)
        > 👉 Run `!blog-workbench <slug>` to start the dev server and open the live canvas preview.
-     - *Blocked or Failed Tasks:* Tasks that encountered critical roadblocks or explicitly asked for human intervention.
+     - *Blocked or Failed Tasks (`has_error: true`):* If any scheduled task encountered an error or alert (e.g. `kindle` sync failed due to an expired session or network error), prominently surface it under `## On the Bench` with the specific error and direct resolution steps/links:
+       - For Kindle authentication failures: include a direct link to re-authenticate on the homelab browser: `👉 [Open Agent Browser (https://myriad-docker:13081)](https://myriad-docker:13081) to log into Kindle Notebook`.
      - If there are no Tier 1 items in the window, omit `## On the Bench` and begin with Tier 2.
    - **Tier 2: Creative & Generative Work:**
      - Seedling pages sparked by `ambient-vibes` (`[[agent/pages/seeds/...]]`), daily brainstorm digests from `blog-ideas`, design proposals, or creative writing sketches. Unpack the core idea or insight rather than just naming files.
