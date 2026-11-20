@@ -129,9 +129,7 @@ def test_canonical_task_mode_partitions_match_current_behavior():
 def test_canonical_sets_agree_with_unmigrated_callsites():
     """Until #1357-#1359 adopt them, the local copies must not drift."""
     from decafclaw.agent import _UNWATCHED_TASK_MODES
-    from decafclaw.context_cleanup import _PRUNE_SKIP_MODES
 
-    assert _PRUNE_SKIP_MODES == SKIP_MODES
     assert _UNWATCHED_TASK_MODES == UNWATCHED_TASK_MODES
     assert Context.UNATTENDED_TASK_MODES == UNATTENDED_TASK_MODES
     # The six inline composer copies use ``is_skip`` (#1356), which is
