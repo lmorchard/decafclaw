@@ -269,6 +269,8 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
         if mc.context_window_size and mc.context_window_size > 0:
             return mc.context_window_size
 
-    if config.llm.context_window_size and config.llm.context_window_size > 0:
-        return config.llm.context_window_size
-    return config.compaction.max_tokens
+    # Shared ladder (#1360): configured model window → legacy llm window →
+    # compaction cap. Detection above only populates the first rung.
+    from ..model_catalog import effective_context_window  # deferred: llm pkg import cycle
+
+    return effective_context_window(config, model_name or "")

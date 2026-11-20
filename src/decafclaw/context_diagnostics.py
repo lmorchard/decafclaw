@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from .context_types import ComposedContext, ComposerState, effective_compaction_threshold
+from .model_catalog import effective_context_window
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -25,24 +26,15 @@ def get_effective_compaction_threshold(config, ctx: "Context | None" = None, *, 
 
 
 def get_context_window_size(config, ctx: Any = None) -> int:
-    """Return the effective context window size.
+    """Return the effective context window size (#1360).
 
-    Prefers the explicit context_window_size if set on active model config,
-    or config.llm.context_window_size, otherwise falls back
-    to compaction_max_tokens as a conservative proxy.
-
-    Used by compose() for dynamic budget allocation.
+    Configured values only — the definition lives in
+    :func:`decafclaw.model_catalog.effective_context_window`. Used by
+    compose() for dynamic budget allocation; the async
+    ``llm.ensure_model_context_window`` learns an unconfigured window from
+    the provider first, then reads the same ladder.
     """
-    model_name = getattr(ctx, "active_model", "") or getattr(config, "default_model", "")
-    if model_name and model_name in config.model_configs:
-        mc = config.model_configs[model_name]
-        if mc.context_window_size and mc.context_window_size > 0:
-            return mc.context_window_size
-
-    window = config.llm.context_window_size
-    if window and window > 0:
-        return window
-    return config.compaction.max_tokens
+    return effective_context_window(config, getattr(ctx, "active_model", ""))
 
 
 def build_context_status(total_tokens: int, context_window: int, message_count: int) -> str | None:
