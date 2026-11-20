@@ -46,6 +46,7 @@ from .loop_breaker import (
     summarize_error,
 )
 from .media import EndTurnConfirm, TerminationReason, ToolResult, WidgetInputPause, extract_workspace_media
+from .model_catalog import effective_turn_model
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .recovery import RECOVERY_CONTINUE, RECOVERY_STOP, RecoveryState, decide_recovery_retry
 from .reminders import reminder_message
@@ -127,18 +128,13 @@ def _is_context_length_exceeded(exc: Exception) -> bool:
     return False
 
 
-def _conv_id(ctx: "Context") -> str:
-    """Get conversation ID from context."""
-    return ctx.conv_id or ctx.channel_id or "unknown"
-
-
 def _archive(ctx: "Context", msg) -> None:
     """Archive a message, logging errors but never raising."""
     if ctx.skip_archive:
         return
     wrote = False
     try:
-        append_message(ctx.config, _conv_id(ctx), msg)
+        append_message(ctx.config, ctx.key(), msg)
         wrote = True
     except (OSError, TypeError, ValueError) as e:
         log.error(f"Archive write failed: {e}", exc_info=True)
@@ -152,7 +148,7 @@ def _archive(ctx: "Context", msg) -> None:
     # think the partial is durable.
     if wrote and msg.get("role") == "assistant" and ctx.manager is not None:
         try:
-            ctx.manager.note_assistant_archived(_conv_id(ctx), has_content=bool(msg.get("content")))
+            ctx.manager.note_assistant_archived(ctx.key(), has_content=bool(msg.get("content")))
         except Exception as exc:
             log.debug("note_assistant_archived failed: %s", exc)
 
@@ -275,7 +271,7 @@ def _note_cancel_observed(ctx: "Context") -> None:
     if ctx.manager is None:
         return
     try:
-        ctx.manager.note_cancel_observed_by_agent(_conv_id(ctx))
+        ctx.manager.note_cancel_observed_by_agent(ctx.key())
     except Exception as exc:
         log.debug("note_cancel_observed_by_agent failed: %s", exc)
 
@@ -561,41 +557,41 @@ async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
 def _resolve_model_override(ctx: "Context", config) -> dict[str, str]:
     """Turn ``ctx.active_model`` into LLM config overrides.
 
-    An ``active_model`` that isn't a key in ``config.model_configs`` warns
-    rather than silently falling back. Model names reach here from several
-    unvalidated sources — a schedule's ``model:`` frontmatter, a forked
-    skill's ``model:``, ``delegate_task``'s ``model`` argument — and a
-    stale one is otherwise indistinguishable from no selection at all
-    (#729: bundled ``dream``/``garden`` carried ``model: strong``, a
-    leftover from the removed effort system, and ran on the default model
-    for months without a single log line saying so).
+    The ladder is :func:`model_catalog.effective_turn_model` (#1360): the
+    active model when it names a ``model_configs`` key, else the effective
+    default; an empty result means the LLM call falls through to
+    ``config.llm.model``.
+
+    An ``active_model`` that names no key warns rather than silently
+    falling back. Model names reach here from several unvalidated sources —
+    a schedule's ``model:`` frontmatter, a forked skill's ``model:``,
+    ``delegate_task``'s ``model`` argument — and a stale one is otherwise
+    indistinguishable from no selection at all (#729: bundled ``dream``/
+    ``garden`` carried ``model: strong``, a leftover from the removed effort
+    system, and ran on the default model for months without a single log
+    line saying so).
     """
-    from .model_catalog import effective_default_model  # deferred: llm pkg import cycle
+    name = effective_turn_model(config, ctx.active_model)
 
-    model_override: dict[str, str] = {}
-    if ctx.active_model and ctx.active_model in config.model_configs:
-        model_override = {"model_name": ctx.active_model}
-        log.info("Agent turn: model=%s", ctx.active_model)
-        return model_override
-
-    if ctx.active_model:
+    if ctx.active_model and ctx.active_model not in config.model_configs:
         known = ", ".join(sorted(config.model_configs)) or "(none configured)"
-        fallback = effective_default_model(config) or config.llm.model
         log.warning(
             "Unknown model %r requested — falling back to %s. Configured model_configs: %s",
             ctx.active_model,
-            fallback,
+            name or config.llm.model,
             known,
         )
 
-    default_name = effective_default_model(config)
-    if default_name:
-        model_override = {"model_name": default_name}
-        log.info("Agent turn: model=%s (default)", default_name)
-    else:
+    if not name:
         log.info("Agent turn: model=%s (legacy config.llm)", config.llm.model)
+        return {}
 
-    return model_override
+    if ctx.active_model and ctx.active_model in config.model_configs:
+        log.info("Agent turn: model=%s", name)
+    else:
+        log.info("Agent turn: model=%s (default)", name)
+
+    return {"model_name": name}
 
 
 class IterationOutcome:

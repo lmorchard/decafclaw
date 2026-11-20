@@ -59,17 +59,12 @@ INTERRUPTIBLE_TOOLS = frozenset({"wait"})
 # and the helpers should change together if they change at all.
 
 
-def _conv_id(ctx: "Context") -> str:
-    """Get conversation ID from context."""
-    return ctx.conv_id or ctx.channel_id or "unknown"
-
-
 def _archive(ctx: "Context", msg) -> None:
     """Archive a message, logging errors but never raising."""
     if ctx.skip_archive:
         return
     try:
-        append_message(ctx.config, _conv_id(ctx), msg)
+        append_message(ctx.config, ctx.key(), msg)
     except Exception as e:
         log.error(f"Archive write failed: {e}")
 
@@ -110,7 +105,7 @@ async def process_tool_media(ctx: "Context", result: ToolResult) -> list[str]:
         result.media.clear()
         return []
 
-    conv_id = ctx.conv_id or ctx.channel_id or "unknown"
+    conv_id = ctx.key()
     file_ids = []
 
     for item in result.media:

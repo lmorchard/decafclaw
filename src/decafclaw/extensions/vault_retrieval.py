@@ -150,7 +150,7 @@ class VaultRetrievalExtension(BaseExtension):
         from decafclaw.context_types import ComposerMode
 
         mode = getattr(getattr(ctx, "composer", None), "mode", ComposerMode.INTERACTIVE)
-        if getattr(ctx, "skip_vault_retrieval", False) or mode is not ComposerMode.INTERACTIVE:
+        if getattr(ctx, "skip_vault_retrieval", False) or mode.is_skip:
             return None
 
         retrieval_mode = resolve_retrieval_mode(config, self._option(config, "mode", RetrievalMode.ALWAYS))

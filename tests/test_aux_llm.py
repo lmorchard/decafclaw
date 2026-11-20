@@ -36,6 +36,28 @@ async def test_aux_llm_fallback():
     assert client.model_name == "active"
 
 
+@pytest.mark.asyncio
+async def test_llm_resolves_through_centralized_resolver(monkeypatch):
+    """#1363: Context.llm delegates to the centralized active-model ladder."""
+    from decafclaw import model_catalog
+
+    monkeypatch.setattr(model_catalog, "effective_active_model", lambda cfg, active: "resolved")
+
+    ctx = Context(config=Config(), event_bus=None)
+    assert ctx.llm().model_name == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_aux_llm_resolves_through_centralized_resolver(monkeypatch):
+    """#1363: Context.aux_llm delegates to the centralized aux-model ladder."""
+    from decafclaw import model_catalog
+
+    monkeypatch.setattr(model_catalog, "effective_aux_model", lambda cfg, active: "resolved")
+
+    ctx = Context(config=Config(), event_bus=None)
+    assert ctx.aux_llm().model_name == "resolved"
+
+
 class _FakeCatalog:
     """Minimal stand-in for the loaded sidecar catalog."""
 
