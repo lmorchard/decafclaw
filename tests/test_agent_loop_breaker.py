@@ -483,7 +483,7 @@ async def test_loop_break_note_comes_first_for_unwatched_turns(ctx):
 async def test_loop_break_delivers_only_the_note_for_a_background_wake(ctx):
     """A wake turn fires on the user's real conversation, which DOES have a
     live subscriber — so it stays on the note-only branch. This is the
-    boundary of `_UNWATCHED_TASK_MODES`."""
+    boundary of `UNWATCHED_TASK_MODES`."""
     ctx.task_mode = TaskMode.BACKGROUND_WAKE
     ctx.config.llm.streaming = False
     ctx.config.agent.max_tool_iterations = 50

@@ -216,7 +216,7 @@ turn live:
     so the reflection judge doesn't give the parent a second chance to see it
     either.
   - a **heartbeat or scheduled turn** (`ctx.task_mode`, checked against
-    `agent.py`'s `_UNWATCHED_TASK_MODES`). These run on synthetic conv_ids no
+    `context_types.UNWATCHED_TASK_MODES`). These run on synthetic conv_ids no
     transport subscribed to, so nothing renders their `text_before_tools` —
     yet their `ToolResult.text` *is* parsed (`heartbeat.py`) and displayed to
     the user afterwards (`tools/heartbeat_tools.py`, `schedules.py`). The original gate tested
@@ -330,7 +330,8 @@ rest, which doesn't correspond to any real intent.
   LLM imports
 - `src/decafclaw/agent.py` — `TurnRunner._handle_tool_calls` wiring
   (`_extract_call_signatures`, nudge/redirect injection, `_finalize_loop_break`,
-  `_finalize_with_note`, `_UNWATCHED_TASK_MODES`)
+  `_finalize_with_note`); the unwatched set is
+  `context_types.UNWATCHED_TASK_MODES`
 - `src/decafclaw/config_types.py` — `LoopBreakerConfig`
 - `src/decafclaw/prompts/AGENT.md` — the diagnosis / acknowledgement /
   phantom-call prompt guardrails

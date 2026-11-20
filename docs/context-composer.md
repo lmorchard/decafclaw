@@ -261,7 +261,7 @@ journal, mentions, preempt hints, and resolved-error pruning. The
 authorization partitions are deliberately not the complement of the skip set:
 `CHILD_AGENT` skips context but inherits the parent's `request_confirmation`,
 so it stays attended; `BACKGROUND_WAKE` keeps interactive context but has no
-human watching. `agent._UNWATCHED_TASK_MODES` is a third partition — turns
+human watching. `context_types.UNWATCHED_TASK_MODES` is a third partition — turns
 that run on a synthetic conversation id with no live subscriber.
 
 `skip_vault_retrieval` on the context is an independent flag — it skips vault retrieval without affecting vault references or the composer mode.
