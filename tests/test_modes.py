@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from decafclaw.config import Config
 from decafclaw.context import Context, TaskMode
 from decafclaw.context_types import (
@@ -11,6 +13,7 @@ from decafclaw.context_types import (
     ComposerMode,
 )
 from decafclaw.conversation_manager import TASK_KINDS, TurnKind
+from decafclaw.events import EventBus
 from decafclaw.modes import DEFAULT_MODES, SessionMode, get_all_modes, resolve_active_mode
 
 
@@ -152,6 +155,30 @@ def test_task_mode_traits_map_to_composer_modes():
         traits = TASK_MODE_TRAITS[mode]
         assert traits.composer_mode in ComposerMode
         assert (mode in SKIP_TASK_MODES) is (traits.composer_mode in SKIP_MODES)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        (TaskMode.INTERACTIVE, ComposerMode.INTERACTIVE),
+        (TaskMode.HEARTBEAT, ComposerMode.HEARTBEAT),
+        (TaskMode.SCHEDULED, ComposerMode.SCHEDULED),
+        (TaskMode.CHILD_AGENT, ComposerMode.CHILD_AGENT),
+        # A wake turn reuses the user's interactive conversation.
+        (TaskMode.BACKGROUND_WAKE, ComposerMode.INTERACTIVE),
+    ],
+)
+def test_composer_mode_for_reads_the_canonical_classification(config, mode, expected):
+    from decafclaw.agent import _composer_mode_for
+
+    ctx = Context(config=config, event_bus=EventBus())
+    ctx.task_mode = mode
+    assert _composer_mode_for(ctx) is expected
+
+    # A child context is a child whatever task mode it carries: the compaction
+    # memory sweep runs as a child with SCHEDULED (compaction.py).
+    ctx.is_child = True
+    assert _composer_mode_for(ctx) is ComposerMode.CHILD_AGENT
 
 
 def test_turn_kind_task_mode_for_mapping():
