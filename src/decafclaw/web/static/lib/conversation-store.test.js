@@ -1662,3 +1662,83 @@ describe('current conversation title (#1503)', () => {
     expect(store.currentConversationTitle).toBe('Retitled');
   });
 });
+
+describe('conversation fork transport (#1581)', () => {
+  /** @type {FakeWS} */
+  let ws;
+  /** @type {import('vitest').Mock} */
+  let fetchMock;
+  /** @type {import('vitest').Mock} */
+  let log;
+  const forked = {
+    conv_id: 'web-testuser-forked1',
+    title: 'Fork of Original (turn 2)',
+    created_at: 'then',
+    updated_at: 'now',
+    folder: 'Work',
+  };
+
+  beforeEach(() => {
+    ws = new FakeWS();
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it('posts the anchor timestamp, inserts, selects, and refreshes the fork folder', async () => {
+    const store = makeStore(ws);
+    store.selectConversation('web-testuser-source1');
+    ws.sent = [];
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(forked), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    fetchMock.mockResolvedValueOnce(new Response(
+      JSON.stringify({ folder: 'Work', sessions: [] }),
+      { headers: { 'Content-Type': 'application/json' } },
+    ));
+
+    const result = await store.forkConversation('2026-11-20T03:31:22.123456');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/conversations/web-testuser-source1/fork');
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      message_timestamp: '2026-11-20T03:31:22.123456',
+    });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/sessions?folder=Work');
+    expect(result).toEqual(forked);
+    expect(store.conversations[0]).toEqual(forked);
+    expect(store.currentConvId).toBe(forked.conv_id);
+    expect(ws.sent.map(m => m.type)).toEqual([MESSAGE_TYPES.SELECT_CONV, MESSAGE_TYPES.LOAD_HISTORY, MESSAGE_TYPES.LIST_COMMANDS]);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('does nothing without a selection or an anchor', async () => {
+    const store = makeStore(ws);
+    expect(await store.forkConversation('t1')).toBeNull();
+    store.selectConversation('web-testuser-source1');
+    expect(await store.forkConversation('')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses read-only delegated children', async () => {
+    const store = makeStore(ws);
+    store.selectConversation('web-testuser-source1--child-abcd1234');
+    expect(await store.forkConversation('t1')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves the current conversation on failure', async () => {
+    const store = makeStore(ws);
+    store.selectConversation('web-testuser-source1');
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'message not found' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    expect(await store.forkConversation('nope')).toBeNull();
+    expect(store.currentConvId).toBe('web-testuser-source1');
+    expect(store.conversations).toEqual([]);
+    expect(log).not.toHaveBeenCalled();
+  });
+});

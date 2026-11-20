@@ -66,6 +66,7 @@ import { uploadFile } from './upload-client.js';
 import { MessageStore } from './message-store.js';
 import { ToolStatusStore } from './tool-status-store.js';
 import { WebSocketClient } from './websocket-client.js';
+import { showToast } from './toast.js';
 
 /**
  * Parent conversation id for delegated children (`{root}--child-{hex}`,
@@ -533,6 +534,38 @@ export class ConversationStore extends EventTarget {
     } catch (err) {
       if (err instanceof ApiError) return;
       console.error('Failed to create conversation:', err);
+    }
+  }
+
+  /**
+   * Fork the selected conversation up to the message with `timestamp` (#1581).
+   * Creates an independent conversation seeded with the sliced history, then
+   * switches to it. Read-only child conversations cannot be forked from the
+   * transcript view — the button is hidden for them too.
+   * @param {string} timestamp
+   * @returns {Promise<ConversationMeta|null>}
+   */
+  async forkConversation(timestamp) {
+    const sourceConvId = this.#currentConvId;
+    if (!sourceConvId || !timestamp) return null;
+    if (parentConvIdOf(sourceConvId)) return null;
+    try {
+      const conv = await DefaultService.forkConversationApiConversationsIdForkPost(
+        sourceConvId, { message_timestamp: timestamp },
+      );
+      this.#conversations.unshift(conv);
+      this.selectConversation(conv.conv_id);
+      // The fork inherits the source folder; refresh that listing rather than
+      // the store's folder, which can be stale for a deep-linked conversation.
+      await this.listSessions(conv.folder ?? this.#currentFolder);
+      return conv;
+    } catch (err) {
+      if (err instanceof ApiError) {
+        showToast(`Could not branch conversation: ${err.body?.error || err.status}`);
+        return null;
+      }
+      console.error('Failed to fork conversation:', err);
+      return null;
     }
   }
 

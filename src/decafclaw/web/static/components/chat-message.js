@@ -1,4 +1,4 @@
-import { LitElement, html } from 'lit';
+import { LitElement, html, nothing } from 'lit';
 import './messages/user-message.js';
 import './messages/assistant-message.js';
 import './messages/tool-message.js';
@@ -193,17 +193,49 @@ export class ChatMessage extends LitElement {
     }
 
     if (this.role === 'assistant') {
-      return html`<assistant-message
-        .content=${this.content}
-        .thinking=${this.thinking}
-        .provenance=${this.provenance}
-        .streaming=${this.streaming}
-        .usage=${this.usage}
-        .timestamp=${this.timestamp}
-      ></assistant-message>`;
+      return html`<div class="message-row assistant-row">
+        <assistant-message
+          .content=${this.content}
+          .thinking=${this.thinking}
+          .provenance=${this.provenance}
+          .streaming=${this.streaming}
+          .usage=${this.usage}
+          .timestamp=${this.timestamp}
+        ></assistant-message>
+        ${this.#branchButton()}
+      </div>`;
     }
 
-    return html`<user-message .content=${this.content} .timestamp=${this.timestamp} .attachments=${this.attachments}></user-message>`;
+    return html`<div class="message-row user-row">
+      <user-message .content=${this.content} .timestamp=${this.timestamp} .attachments=${this.attachments}></user-message>
+      ${this.#branchButton()}
+    </div>`;
+  }
+
+  /**
+   * "Branch from here" (#1581): fork the conversation at this message. Only
+   * user and assistant rows anchor a fork; tool rows and event banners are
+   * part of a turn, not a boundary. The store is reached through the
+   * chat-view ancestor (same pattern as widget responses) so this component
+   * stays prop-free.
+   * @returns {unknown}
+   */
+  #branchButton() {
+    if (this.role !== 'user' && this.role !== 'assistant') return nothing;
+    if (!this.timestamp) return nothing;
+    return html`
+      <button
+        class="branch-btn"
+        type="button"
+        title="Branch a new conversation from this message"
+        @click=${(ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const host = /** @type {any} */ (this.closest('chat-view'));
+          host?.store?.forkConversation?.(this.timestamp);
+        }}
+      >\u2442 Branch</button>
+    `;
   }
 }
 

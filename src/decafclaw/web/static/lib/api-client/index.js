@@ -815,6 +815,33 @@ var DefaultService = class {
     });
   }
   /**
+   * Fork Conversation
+   * Fork a conversation up to one message (#1581).
+   *
+   * Body: ``{"message_index": N}`` (raw archive index, inclusive) or
+   * ``{"message_timestamp": "..."}``. The slice ends at the nearest complete
+   * turn boundary at or before the anchor. The new conversation inherits the
+   * source's folder and current model, and the source is left untouched.
+   * @param id
+   * @param requestBody
+   * @returns ConversationForkResponse Successful Response
+   * @throws ApiError
+   */
+  static forkConversationApiConversationsIdForkPost(id, requestBody) {
+    return request2(OpenAPI, {
+      method: "POST",
+      url: "/api/conversations/{id}/fork",
+      path: {
+        "id": id
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
    * Wrapper
    * @returns any Successful Response
    * @throws ApiError

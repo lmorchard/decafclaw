@@ -68,6 +68,16 @@ the conversation settings menu persists visibility in `localStorage`
 `decafclaw-show-recalled-facts` value is read once for migration) and updates
 open transcripts immediately.
 
+**Branch a conversation from a message (#1581).** Hovering a user or
+assistant message reveals a `⑂ Branch` button in the gutter opposite the
+bubble (touch devices show it faintly without hover). Clicking it creates a
+new conversation seeded with the source transcript up to that message and
+switches to it. The fork inherits the source's folder and active model and is
+otherwise independent; the source conversation is untouched. Tool rows and
+event banners offer no branch anchor. The slice always ends on a complete
+turn, so branching from a tool exchange starts the fork at the preceding user
+message — see [conversations](conversations.md#forking-from-a-message-1581).
+
 **Command autocomplete.** Typing `/` or `!` at the start of a line in the
 composer opens a suggestion menu listing every user-invokable skill command
 plus every MCP prompt (`mcp__<server>__<prompt>`), each with its

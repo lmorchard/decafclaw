@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import './chat-message.js';
 
 describe('chat-message role rendering', () => {
@@ -154,5 +154,57 @@ describe('chat-message tool failure tags (#1569)', () => {
     expect(toolMsg.timedOut).toBe(true);
     expect(toolMsg.timeoutSec).toBe(180);
     el.remove();
+  });
+});
+
+describe('chat-message branch affordance (#1581)', () => {
+  function mount(role, chatView, props = {}) {
+    const el = document.createElement('chat-message');
+    el.role = role;
+    el.content = 'hello';
+    Object.assign(el, props);
+    chatView.append(el);
+    return el;
+  }
+
+  it('branches from the message timestamp via the chat-view store', async () => {
+    const store = { forkConversation: vi.fn() };
+    const host = document.createElement('chat-view');
+    host.store = store;
+    document.body.append(host);
+    const el = mount('assistant', host, { timestamp: '2026-11-20T03:31:22.123456' });
+    await el.updateComplete;
+
+    const button = el.querySelector('button.branch-btn');
+    expect(button).not.toBeNull();
+    expect(button.textContent).toContain('Branch');
+    button.click();
+    expect(store.forkConversation).toHaveBeenCalledWith('2026-11-20T03:31:22.123456');
+    host.remove();
+  });
+
+  it('renders only for user and assistant rows', async () => {
+    const host = document.createElement('chat-view');
+    host.store = { forkConversation: vi.fn() };
+    document.body.append(host);
+    const user = mount('user', host, { timestamp: 't1' });
+    const tool = mount('tool', host, { timestamp: 't1' });
+    const compaction = mount('compaction', host, { timestamp: 't1' });
+    await Promise.all([user.updateComplete, tool.updateComplete, compaction.updateComplete]);
+
+    expect(user.querySelector('button.branch-btn')).not.toBeNull();
+    expect(tool.querySelector('button.branch-btn')).toBeNull();
+    expect(compaction.querySelector('button.branch-btn')).toBeNull();
+    host.remove();
+  });
+
+  it('omits the button when the message has no archive timestamp', async () => {
+    const host = document.createElement('chat-view');
+    host.store = { forkConversation: vi.fn() };
+    document.body.append(host);
+    const el = mount('assistant', host);
+    await el.updateComplete;
+    expect(el.querySelector('button.branch-btn')).toBeNull();
+    host.remove();
   });
 });

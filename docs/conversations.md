@@ -25,6 +25,38 @@ Each line is a JSON object with `role`, `content`, optional `tool_calls`/`tool_c
 
 When DecafClaw restarts, it reads the archive for any conversation that receives a new message. The full history is replayed into memory, so the agent picks up where it left off.
 
+### Forking from a message (#1581)
+
+`POST /api/conversations/{id}/fork` copies a conversation's archive up to one
+message into a new, independent conversation. This is time-travel snapshot
+branching: the fork is an ordinary conversation with no lineage graph and no
+split view, so it compacts, renames, and archives like any other.
+
+The body names the anchor as either `message_index` (0-based raw archive
+index, inclusive) or `message_timestamp` (the archive timestamp). The web UI
+sends the timestamp because rendered rows are merged display rows that do not
+map 1:1 onto raw archive lines.
+
+The slice ends at the nearest complete turn boundary at or before the anchor:
+an assistant message carrying `tool_calls`, or a `tool` result, is not a safe
+ending — the fork would start with an unanswered tool call — so it drops that
+partial turn and ends at the preceding user message or plain assistant
+message. Metadata records (`model`, `mode`, compaction notices) inside the
+slice are copied with the messages, so the fork keeps the source's active
+model and mode. `compacted.jsonl` is not copied: the fork replays the sliced
+raw transcript as its working history.
+
+Attachment files referenced by the sliced user messages are copied into the
+fork's own uploads directory and their recorded paths rewritten, so the fork
+stays self-contained even if the source conversation is later deleted. A file
+that cannot be resolved keeps its original path instead of failing the fork.
+
+The new archive is written atomically. The source archive is never modified.
+The fork inherits the source's folder, and its title is
+`Fork of {title} (turn {N})`, marked as a custom title so background
+auto-titling leaves it alone. Unarchived in-flight assistant text is not part
+of the copy; only archived messages are.
+
 ### Cancelled turns
 
 When a user cancels an in-progress agent turn (Ctrl+C in the TUI, the cancel button in the web UI), `ConversationManager` persists:
