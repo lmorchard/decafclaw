@@ -54,7 +54,7 @@ class VaultGuideExtension(BaseExtension):
 
         config = getattr(ctx, "config", None) or self.config
         mode = getattr(getattr(ctx, "composer", None), "mode", ComposerMode.INTERACTIVE)
-        if not config.vault_guide.enabled or mode is not ComposerMode.INTERACTIVE:
+        if not config.vault_guide.enabled or mode.is_skip:
             return None
 
         rel_path = config.vault_guide.path
