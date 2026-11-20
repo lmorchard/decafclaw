@@ -1,7 +1,7 @@
 from dataclasses import replace
 
 from decafclaw.config import Config
-from decafclaw.context import Context, TaskMode
+from decafclaw.context import TaskMode
 from decafclaw.context_types import (
     SKIP_MODES,
     SKIP_TASK_MODES,
@@ -127,13 +127,12 @@ def test_canonical_task_mode_partitions_match_current_behavior():
 
 
 def test_canonical_sets_agree_with_unmigrated_callsites():
-    """Until #1356-#1359 adopt them, the local copies must not drift."""
+    """Until #1356-#1358 adopt them, the local copies must not drift."""
     from decafclaw.agent import _UNWATCHED_TASK_MODES
     from decafclaw.context_cleanup import _PRUNE_SKIP_MODES
 
     assert _PRUNE_SKIP_MODES == SKIP_MODES
     assert _UNWATCHED_TASK_MODES == UNWATCHED_TASK_MODES
-    assert Context.UNATTENDED_TASK_MODES == UNATTENDED_TASK_MODES
     # The six inline composer copies all test ``mode is not INTERACTIVE``.
     assert SKIP_MODES == frozenset(m for m in ComposerMode if m is not ComposerMode.INTERACTIVE)
 

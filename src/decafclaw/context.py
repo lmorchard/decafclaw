@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 from uuid import uuid4
 
-from .context_types import ComposerState, TaskMode
+from .context_types import UNATTENDED_TASK_MODES, ComposerState, TaskMode
 from .events import TurnLifecycle
 from .llm import call_llm, call_llm_streaming
 
@@ -221,10 +221,10 @@ class Context:
         # From TurnKind.task_mode_for() (conversation_manager.py): one of the
         # TaskMode members, or INTERACTIVE for an attended user/workflow turn.
         # The canonical partitions are derived from context_types'
-        # TASK_MODE_TRAITS (#1355). Keep UNATTENDED_TASK_MODES below complete —
-        # `is_unattended` reads it as an authorization input, so a stale
-        # enumeration invites the misclassification bug that
-        # `task_mode is not INTERACTIVE` would be (see #685).
+        # TASK_MODE_TRAITS (#1355). `is_unattended` reads the UNATTENDED_TASK_MODES
+        # partition as an authorization input, so it stays derived from the traits
+        # rather than re-enumerated: a stale enumeration invites the misclassification
+        # bug that `task_mode is not INTERACTIVE` would be (see #685).
         self.task_mode: TaskMode = TaskMode.INTERACTIVE
         self.request_confirmation: Any = None  # set by ConversationManager
         self.confirmation_active: asyncio.Event = asyncio.Event()
@@ -278,17 +278,19 @@ class Context:
         model_name = effective_aux_approval_model(self.config, self.active_model)
         return BoundLlmClient(self.config, model_name)
 
-    # Turn kinds where no human can answer a confirmation prompt: it is emitted
-    # only to subscribers of an ephemeral conv_id, so it would block for confirmation
-    # timeout (or indefinitely) and is then synthesized into a denial. Deliberately NOT
-    # `task_mode is not TaskMode.INTERACTIVE` — child_agent inherits the parent's
-    # request_confirmation, so a child of an interactive turn does have someone who can answer.
-    UNATTENDED_TASK_MODES = frozenset({TaskMode.HEARTBEAT, TaskMode.SCHEDULED, TaskMode.BACKGROUND_WAKE})
-
     @property
     def is_unattended(self) -> bool:
-        """True when a confirmation prompt on this turn cannot reach a human."""
-        return self.task_mode in self.UNATTENDED_TASK_MODES or self.parent_is_unattended
+        """True when a confirmation prompt on this turn cannot reach a human.
+
+        Reads the canonical ``UNATTENDED_TASK_MODES`` partition from context_types
+        (#1355): turn kinds where a confirmation prompt is emitted only to subscribers
+        of an ephemeral conv_id, so it would block for the confirmation timeout (or
+        indefinitely) and is then synthesized into a denial. Deliberately NOT
+        ``task_mode is not TaskMode.INTERACTIVE`` — child_agent inherits the parent's
+        request_confirmation, so a child of an interactive turn does have someone who
+        can answer.
+        """
+        return self.task_mode in UNATTENDED_TASK_MODES or self.parent_is_unattended
 
     @classmethod
     def for_task(
