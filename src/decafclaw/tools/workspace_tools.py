@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from ..media import ToolResult, WidgetRequest
 from ..util import find_fuzzy_matches
+from ..web.workspace_paths import PathContainmentError, resolve_contained
 from ..workspace_index import invalidate_workspace_file_cache
 from .file_locks import file_lock
 from .workspace_outlines import (
@@ -168,19 +169,6 @@ def _redundant_prefix_note(path: str) -> str:
     )
 
 
-def _resolve_safe(config, path_str: str) -> Path | None:
-    """Resolve a path within the workspace, rejecting escapes.
-
-    Uses Path.is_relative_to for containment check (not string prefix),
-    which correctly handles cases like '/tmp/ws' vs '/tmp/ws2/...'.
-    """
-    workspace = config.workspace_path.resolve()
-    target = (workspace / path_str).resolve()
-    if not target.is_relative_to(workspace):
-        return None
-    return target
-
-
 def _content_version(content: str) -> str:
     """Content version token for read/compare flows (#1126).
 
@@ -202,9 +190,10 @@ def tool_workspace_read(
 ) -> str | ToolResult:
     """Read a file from the agent's workspace, optionally a line range or section."""
     log.info(f"[tool:workspace_read] {path}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     try:
         content = resolved.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -338,9 +327,10 @@ def tool_workspace_read(
 def tool_workspace_outline(ctx: "Context", path: str, section: str | None = None) -> ToolResult:
     """Show a structural outline of a workspace file or retrieve a specific section."""
     log.info(f"[tool:workspace_outline] {path} section={section!r}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     try:
         content = resolved.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -497,9 +487,10 @@ def tool_workspace_preview_markdown(ctx: "Context", path: str) -> ToolResult:
     config = ctx.config
     if not any(path.lower().endswith(ext) for ext in _MARKDOWN_EXTS):
         return ToolResult(text=f"[error: workspace_preview_markdown requires a .md or .markdown file; got '{path}']")
-    safe = _resolve_safe(config, path)
-    if safe is None:
-        return ToolResult(text=f"[error: invalid path '{path}']")
+    try:
+        safe = resolve_contained(config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     if not safe.exists() or not safe.is_file():
         return ToolResult(text=f"[error: file not found: '{path}']")
     # Read line-by-line up to MAX_READ_LINES + 1 so memory/time scale with
@@ -541,9 +532,10 @@ def tool_workspace_preview_markdown(ctx: "Context", path: str) -> ToolResult:
 def tool_workspace_write(ctx: "Context", path: str, content: str) -> str | ToolResult:
     """Write content to a file in the agent's workspace."""
     log.info(f"[tool:workspace_write] {path}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
@@ -559,9 +551,10 @@ def tool_workspace_write(ctx: "Context", path: str, content: str) -> str | ToolR
 def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
     """List files and directories in the agent's workspace."""
     log.info(f"[tool:workspace_list] {path}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     if not resolved.exists():
         return ToolResult(text=f"[error: path not found: {path}]")
     if not resolved.is_dir():
@@ -624,9 +617,10 @@ def tool_file_share(ctx: "Context", path: str, message: str = "") -> "ToolResult
     import mimetypes
 
     log.info(f"[tool:file_share] {path}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     if not resolved.exists():
         return ToolResult(text=f"[error: file not found: {path}]")
     if resolved.is_dir():
@@ -653,12 +647,14 @@ def tool_file_share(ctx: "Context", path: str, message: str = "") -> "ToolResult
 def tool_workspace_move(ctx: "Context", path: str, destination: str) -> str | ToolResult:
     """Move or rename a file within the workspace."""
     log.info(f"[tool:workspace_move] {path} -> {destination}")
-    resolved_src = _resolve_safe(ctx.config, path)
-    if resolved_src is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
-    resolved_dst = _resolve_safe(ctx.config, destination)
-    if resolved_dst is None:
-        return ToolResult(text=f"[error: destination '{destination}' is outside the workspace]")
+    try:
+        resolved_src = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
+    try:
+        resolved_dst = resolve_contained(ctx.config.workspace_path, destination, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved_src, resolved_dst):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
@@ -678,9 +674,10 @@ def tool_workspace_move(ctx: "Context", path: str, destination: str) -> str | To
 def tool_workspace_mkdir(ctx: "Context", path: str) -> str | ToolResult:
     """Create an empty directory (and parents) in the workspace."""
     log.info(f"[tool:workspace_mkdir] {path}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     try:
         if resolved.exists():
             return f"Directory {path} already exists"
@@ -696,12 +693,14 @@ def tool_workspace_copy(ctx: "Context", source: str, destination: str) -> str | 
     import shutil
 
     log.info(f"[tool:workspace_copy] {source} -> {destination}")
-    resolved_src = _resolve_safe(ctx.config, source)
-    if resolved_src is None:
-        return ToolResult(text=f"[error: source path '{source}' is outside the workspace]")
-    resolved_dst = _resolve_safe(ctx.config, destination)
-    if resolved_dst is None:
-        return ToolResult(text=f"[error: destination '{destination}' is outside the workspace]")
+    try:
+        resolved_src = resolve_contained(ctx.config.workspace_path, source, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
+    try:
+        resolved_dst = resolve_contained(ctx.config.workspace_path, destination, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved_src, resolved_dst):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
@@ -725,9 +724,10 @@ def tool_workspace_delete(ctx: "Context", path: str, recursive: bool = False) ->
     import shutil
 
     log.info(f"[tool:workspace_delete] {path} recursive={recursive}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
@@ -793,9 +793,10 @@ def tool_workspace_edit(
 ) -> str | ToolResult:
     """Edit a file by replacing exact text matches."""
     log.info(f"[tool:workspace_edit] {path}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
@@ -883,9 +884,10 @@ def tool_workspace_edit(
 def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: str) -> str | ToolResult:
     """Insert text at a specific line number in a workspace file."""
     log.info(f"[tool:workspace_insert] {path} at line {line_number}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
@@ -920,9 +922,10 @@ def tool_workspace_replace_lines(
 ) -> str | ToolResult:
     """Replace a range of lines in a workspace file."""
     log.info(f"[tool:workspace_replace_lines] {path} lines {start_line}-{end_line}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
@@ -957,9 +960,10 @@ def tool_workspace_replace_lines(
 def tool_workspace_append(ctx: "Context", path: str, content: str) -> str | ToolResult:
     """Append content to a file in the agent's workspace."""
     log.info(f"[tool:workspace_append] {path}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
         if _is_cancelled(ctx):
             return ToolResult(text="[tool interrupted: agent turn cancelled]")
@@ -981,12 +985,14 @@ def tool_workspace_append(ctx: "Context", path: str, content: str) -> str | Tool
 def tool_workspace_diff(ctx: "Context", path1: str, path2: str, context_lines: int = 3) -> str | ToolResult:
     """Show a unified diff between two workspace files."""
     log.info(f"[tool:workspace_diff] {path1} vs {path2}")
-    resolved1 = _resolve_safe(ctx.config, path1)
-    if resolved1 is None:
-        return ToolResult(text=f"[error: path '{path1}' is outside the workspace]")
-    resolved2 = _resolve_safe(ctx.config, path2)
-    if resolved2 is None:
-        return ToolResult(text=f"[error: path '{path2}' is outside the workspace]")
+    try:
+        resolved1 = resolve_contained(ctx.config.workspace_path, path1, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
+    try:
+        resolved2 = resolve_contained(ctx.config.workspace_path, path2, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     try:
         lines1 = resolved1.read_text().splitlines(keepends=True)
     except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
@@ -1040,9 +1046,10 @@ def tool_workspace_search(
 ) -> str | ToolResult:
     """Search for a regex pattern across workspace files."""
     log.info(f"[tool:workspace_search] pattern={pattern!r} path={path} glob={glob}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     if not resolved.exists():
         return ToolResult(text=f"[error: path not found: {path}]")
 
@@ -1133,9 +1140,10 @@ def tool_workspace_search(
 def tool_workspace_glob(ctx: "Context", pattern: str, path: str = ".") -> str | ToolResult:
     """Find files by glob pattern in the workspace."""
     log.info(f"[tool:workspace_glob] pattern={pattern!r} path={path}")
-    resolved = _resolve_safe(ctx.config, path)
-    if resolved is None:
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
     if not resolved.exists():
         return ToolResult(text=f"[error: path not found: {path}]")
     if not resolved.is_dir():
