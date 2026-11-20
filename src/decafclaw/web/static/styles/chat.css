@@ -190,7 +190,7 @@ chat-message .message-row {
 
 chat-message button.branch-btn {
   position: absolute;
-  top: 0;
+  bottom: 0;
   width: auto;
   padding: 0.05rem 0.45rem;
   margin: 0;
