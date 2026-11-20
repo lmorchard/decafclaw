@@ -327,9 +327,11 @@ from `repr`). A reflection model that names no key still outranks the
 default and routes through the legacy fields (#752), and a verifier that
 names no key is skipped rather than handed to the provider layer (#591).
 
-Reflection, the agent turn, and the aux/background call sites adopt these
-resolvers in follow-up work (#1361–#1363). Until then their local ladders
-must match the table, and `tests/test_reflection.py` asserts that parity.
+The agent turn routes its model through `effective_turn_model` (#1362);
+`tests/test_model.py` pins that route to the resolver. Reflection and the
+aux/background call sites adopt their resolvers in follow-up work (#1361,
+#1363); until then their local ladders must match the table, and
+`tests/test_reflection.py` asserts that parity.
 
 Context-window discovery is an async enrichment, not a second ladder:
 `llm.ensure_model_context_window` learns an unconfigured window from the

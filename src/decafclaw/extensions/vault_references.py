@@ -48,7 +48,7 @@ class VaultReferencesExtension(BaseExtension):
 
         config = getattr(ctx, "config", None) or self.config
         mode = getattr(getattr(ctx, "composer", None), "mode", ComposerMode.INTERACTIVE)
-        if mode is not ComposerMode.INTERACTIVE:
+        if mode.is_skip:
             return None
 
         vault_dir = config.vault_root

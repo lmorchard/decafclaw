@@ -32,6 +32,30 @@ def test_context_accepts_custom_id(config, bus):
     assert ctx.context_id == "custom-123"
 
 
+def test_key_resolves_consistently(ctx):
+    """Context.key() is the single canonical conversation key (#1364).
+
+    The thread ``conv_id`` wins when set, else the top-level ``channel_id``,
+    else the fallback sentinel. Callers needing a different sentinel pass it
+    explicitly rather than re-deriving the ``conv_id or channel_id`` chain.
+    """
+    # Both set: conv_id (thread) wins.
+    ctx.conv_id = "my-conv"
+    ctx.channel_id = "my-channel"
+    assert ctx.key() == "my-conv"
+
+    # conv_id empty: falls back to channel_id.
+    ctx.conv_id = ""
+    assert ctx.key() == "my-channel"
+
+    # Neither set: canonical sentinel is "unknown".
+    ctx.channel_id = ""
+    assert ctx.key() == "unknown"
+
+    # A caller needing a different sentinel passes it explicitly.
+    assert ctx.key(fallback="default") == "default"
+
+
 def test_fork_creates_child_with_new_id(ctx):
     child = ctx.fork()
     assert child.context_id != ctx.context_id

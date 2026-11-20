@@ -127,12 +127,10 @@ def test_canonical_task_mode_partitions_match_current_behavior():
 
 
 def test_canonical_sets_agree_with_unmigrated_callsites():
-    """Until #1356-#1359 adopt them, the local copies must not drift."""
-    from decafclaw.context_cleanup import _PRUNE_SKIP_MODES
-
-    assert _PRUNE_SKIP_MODES == SKIP_MODES
+    """Until #1358-#1359 adopt them, the local copies must not drift."""
     assert Context.UNATTENDED_TASK_MODES == UNATTENDED_TASK_MODES
-    # The six inline composer copies all test ``mode is not INTERACTIVE``.
+    # The six inline composer copies use ``is_skip`` (#1356), which is
+    # defined from this set.
     assert SKIP_MODES == frozenset(m for m in ComposerMode if m is not ComposerMode.INTERACTIVE)
 
 

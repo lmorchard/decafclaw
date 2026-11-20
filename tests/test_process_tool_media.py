@@ -15,6 +15,10 @@ class _FakeCtx:
     channel_id: str = ""
     media_handler: object = None
 
+    def key(self, fallback: str = "unknown") -> str:
+        """Mirror ``Context.key()`` for the media path."""
+        return self.conv_id or self.channel_id or fallback
+
 
 def _make_handler(workspace_ref=None, file_id=None, saved_filename=None):
     handler = AsyncMock()

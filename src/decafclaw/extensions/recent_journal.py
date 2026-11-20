@@ -75,7 +75,7 @@ class RecentJournalExtension(BaseExtension):
         config = getattr(ctx, "config", None) or self.config
         mode = getattr(getattr(ctx, "composer", None), "mode", ComposerMode.INTERACTIVE)
         cfg = config.recent_journal
-        if not cfg.enabled or mode is not ComposerMode.INTERACTIVE:
+        if not cfg.enabled or mode.is_skip:
             return None
 
         entries = read_recent_journal_entries(

@@ -92,7 +92,7 @@ async def _run_memory_sweep(ctx: "Context", old_messages: list[dict]) -> None:
     from .skills.vault.tools import TOOLS as VAULT_TOOLS
 
     config = ctx.config
-    conv_id = ctx.conv_id or ctx.channel_id or "unknown"
+    conv_id = ctx.key()
     log.info(f"Memory sweep starting for {conv_id} ({len(old_messages)} messages)")
 
     try:
@@ -635,7 +635,7 @@ async def compact_history(ctx: "Context", history: list) -> bool:
     Returns True if compaction was performed, False if skipped.
     """
     config = ctx.config
-    conv_id = ctx.conv_id or ctx.channel_id or "unknown"
+    conv_id = ctx.key()
 
     # Load and validate archive
     archive = read_archive(config, conv_id)

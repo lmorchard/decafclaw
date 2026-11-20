@@ -49,13 +49,11 @@ def _notes_enabled(config: Any) -> bool:
 
 def _is_interactive(ctx: Any) -> bool:
     """Only interactive turns surface scratchpad notes (#299)."""
-    from decafclaw.context_types import ComposerMode
-
     mode = getattr(getattr(ctx, "composer", None), "mode", None)
     if mode is None:
         # Direct hook calls (and older callers) default to the interactive path.
         return True
-    return mode is ComposerMode.INTERACTIVE
+    return not mode.is_skip
 
 
 class ScratchpadNotesExtension(BaseExtension):

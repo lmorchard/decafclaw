@@ -50,7 +50,7 @@ class MentionsExtension(BaseExtension):
 
         config = getattr(ctx, "config", None) or self.config
         mode = getattr(getattr(ctx, "composer", None), "mode", ComposerMode.INTERACTIVE)
-        if mode is not ComposerMode.INTERACTIVE:
+        if mode.is_skip:
             return None
 
         mentions = parse_bare_mentions(user_message)
@@ -110,13 +110,16 @@ class MentionsExtension(BaseExtension):
 
     @staticmethod
     def _file_reference(config: Any, ref: dict, already_injected: set[str]) -> dict | None:
-        from decafclaw.web.workspace_paths import detect_kind, is_secret, resolve_safe
+        from decafclaw.web.workspace_paths import PathContainmentError, detect_kind, is_secret, resolve_contained
 
         rel_path = ref["path"]
         if rel_path in already_injected:
             return None
 
-        resolved = resolve_safe(config.workspace_path, rel_path)
+        try:
+            resolved = resolve_contained(config.workspace_path, rel_path, label="the workspace")
+        except PathContainmentError:
+            resolved = None
         if not resolved or not resolved.is_file() or detect_kind(resolved) != "text":
             text = f"[Workspace file '{rel_path}' not found or not readable as text]"
         elif is_secret(rel_path):

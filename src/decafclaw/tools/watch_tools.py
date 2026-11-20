@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 from ..file_watches import WATCH_EVENTS, FileWatchManager, display_watch_path
 from ..media import ToolResult, WidgetRequest
 from ..secret_policy import is_refused
+from ..web.workspace_paths import PathContainmentError, resolve_contained
 from .schedule_tools import _is_disallowed_task_mode
-from .workspace_tools import _resolve_safe
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -30,7 +30,10 @@ def _resolve_watch_path(ctx: "Context", path: str):
     """
     if not path or not str(path).strip():
         return None, ToolResult(text="[error: path is required]", data={"error": "missing_path"})
-    target = _resolve_safe(ctx.config, str(path).strip())
+    try:
+        target = resolve_contained(ctx.config.workspace_path, str(path).strip(), label="the workspace")
+    except PathContainmentError:
+        target = None
     if target is None:
         return None, ToolResult(
             text="[error: path must stay inside the workspace]",
