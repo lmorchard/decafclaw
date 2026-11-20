@@ -54,10 +54,12 @@ retrieval, and scratchpad notes — renders as a compact capsule row directly
 under the `assistant` label, separate from tool calls (which are deliberate
 agent actions). Each capsule shows its source icon and item count; clicking
 expands the exact snippets, page paths, scores, or note timestamps that source
-injected. The live `turn_provenance` frame mounts the row as soon as prompt
-composition settles, before token streaming starts; the final
-`message_complete` frame and the archived assistant row carry the same
-`provenance` map, so a reload renders identical capsules. The passive prompt
+injected. The live `turn_provenance` frame carries the same map; the client
+attaches the capsules to the streaming assistant message once text or
+thinking starts streaming, rather than mounting an empty assistant bubble
+before the first token; the final `message_complete` frame and the archived
+assistant row carry the same `provenance` map, so a reload renders identical
+capsules. The passive prompt
 rows (`recalled_facts`, `recent_journal`, `conversation_notes`,
 `vault_retrieval`) are hidden from the transcript; since #1574 they do not
 enter the archive at all and reach the provider only inside that turn's
