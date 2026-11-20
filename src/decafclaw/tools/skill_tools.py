@@ -20,6 +20,7 @@ from ..skills import (
     is_discoverable_skill_dir,
     validate_skill_md,
 )
+from ..web.workspace_paths import PathContainmentError, resolve_contained
 from .confirmation import request_confirmation
 
 if TYPE_CHECKING:
@@ -1090,10 +1091,10 @@ async def _request_skill_confirmation(ctx: "Context", skill_name: str) -> tuple[
 def tool_skill_validate(ctx: "Context", path: str) -> ToolResult:
     """Pre-flight validate a single workspace skill directory."""
     log.info(f"[tool:skill_validate] {path}")
-    workspace = ctx.config.workspace_path.resolve()
-    target = (workspace / path).resolve()
-    if not target.is_relative_to(workspace):
-        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        target = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+    except PathContainmentError as exc:
+        return ToolResult(text=f"[error: {exc}]")
 
     skill_dir = target.parent if target.name == "SKILL.md" else target
     if not skill_dir.is_dir():

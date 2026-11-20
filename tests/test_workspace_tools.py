@@ -9,7 +9,6 @@ from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.tools.workspace_tools import (
     MAX_READ_LINES,
     _content_version,
-    _resolve_safe,
     tool_file_share,
     tool_workspace_append,
     tool_workspace_copy,
@@ -33,34 +32,6 @@ from decafclaw.tools.workspace_tools import (
 def _text(result):
     """Extract text from str or ToolResult."""
     return result.text if isinstance(result, ToolResult) else result
-
-
-def test_resolve_safe_normal(config):
-    result = _resolve_safe(config, "test.txt")
-    assert result is not None
-    assert str(config.workspace_path) in str(result)
-
-
-def test_resolve_safe_rejects_escape(config):
-    result = _resolve_safe(config, "../../etc/passwd")
-    assert result is None
-
-
-def test_resolve_safe_rejects_absolute(config):
-    result = _resolve_safe(config, "/etc/passwd")
-    assert result is None
-
-
-def test_resolve_safe_rejects_prefix_attack(config, tmp_data):
-    """Workspace '/tmp/ws' should not allow access to '/tmp/ws2/...'."""
-    # Create a sibling directory whose name starts with the workspace path
-    sibling = tmp_data / config.agent.id / "workspace2"
-    sibling.mkdir(parents=True, exist_ok=True)
-    (sibling / "secret.txt").write_text("secret")
-    # The attack: workspace is '.../workspace', try to reach '.../workspace2'
-    # by using a relative path that resolves to the sibling
-    result = _resolve_safe(config, "../workspace2/secret.txt")
-    assert result is None
 
 
 def test_write_and_read(ctx):

@@ -26,6 +26,7 @@ from ..secret_policy import (
     redact_text,
     refusal_message,
 )
+from ..web.workspace_paths import PathContainmentError, resolve_contained
 from .confirmation import request_confirmation
 from .file_locks import file_lock
 
@@ -98,9 +99,10 @@ def _resolve_admin_path(config, path_str: str, *, allow_root: bool = False) -> t
             return agent_dir, None
         return None, f"[error: path '{path_str}' refers to the agent directory root, not a file]"
 
-    target = (agent_dir / cleaned).resolve()
-    if not target.is_relative_to(agent_dir):
-        return None, f"[error: path '{path_str}' is outside the agent directory]"
+    try:
+        target = resolve_contained(agent_dir, cleaned, label="the agent directory")
+    except PathContainmentError as exc:
+        return None, f"[error: {exc}]"
 
     if target == agent_dir and not allow_root:
         return None, f"[error: path '{path_str}' refers to the agent directory root, not a file]"
