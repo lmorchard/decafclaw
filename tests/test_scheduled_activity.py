@@ -82,6 +82,55 @@ def test_extract_activity(tmp_path):
     assert touched == ["agent/pages/Topic A", "agent/pages/Topic B"]
 
 
+def test_extract_activity_workspace_files(tmp_path):
+    archive_file = tmp_path / "archive_ws.jsonl"
+    messages = [
+        {"role": "user", "content": "Compose weeknotes"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "workspace_write",
+                        "arguments": json.dumps(
+                            {"path": "blog.lmorchard.com/content/posts/2026/2026-11-19-w47/index.md", "content": "..."}
+                        ),
+                    }
+                },
+                {
+                    "function": {
+                        "name": "workspace_edit",
+                        "arguments": json.dumps(
+                            {
+                                "path": "blog.lmorchard.com/content/posts/2026/2026-11-19-w47/index.md",
+                                "old_text": "a",
+                                "new_text": "b",
+                            }
+                        ),
+                    }
+                },
+                {
+                    "function": {
+                        "name": "vault_write",
+                        "arguments": json.dumps({"page": "agent/journal/2026-11-19", "content": "entry"}),
+                    }
+                },
+            ],
+        },
+        {"role": "assistant", "content": "Drafted weeknotes for week 47."},
+    ]
+    with archive_file.open("w", encoding="utf-8") as f:
+        for m in messages:
+            f.write(json.dumps(m) + "\n")
+
+    final, touched_vault, touched_ws = extract_activity(archive_file, include_workspace_files=True)
+    assert final == "Drafted weeknotes for week 47."
+    assert touched_vault == ["agent/journal/2026-11-19"]
+    # Workspace files should be deduplicated
+    assert touched_ws == ["blog.lmorchard.com/content/posts/2026/2026-11-19-w47/index.md"]
+
+
 def test_collect_scheduled_activity(config, monkeypatch):
     # Set up fixed reference time
     ref_time = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
@@ -162,6 +211,7 @@ def test_collect_scheduled_activity(config, monkeypatch):
     assert run["conv_id"] == conv_dream_recent
     assert run["final_message"] == "Dreamed of electric sheep"
     assert run["vault_pages_touched"] == ["agent/pages/Sheep"]
+    assert run["workspace_files_touched"] == []
 
     # Test dream with wide window (20 days)
     all_dream_runs = collect_scheduled_activity(config, hours=20 * 24, skill_name="dream")

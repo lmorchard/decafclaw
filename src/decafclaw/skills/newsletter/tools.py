@@ -319,7 +319,7 @@ async def newsletter_list_scheduled_activity(ctx, hours: int | None = None, wind
     (24h) is used.
 
     Returns one entry per scheduled-task conversation (excluding newsletter's own),
-    with skill_name, conv_id, started_at, final_message, and vault_pages_touched.
+    with skill_name, conv_id, started_at, final_message, vault_pages_touched, and workspace_files_touched.
     """
     try:
         resolved_hours, display = _resolve_hours(window, hours)
@@ -645,7 +645,7 @@ TOOL_DEFINITIONS = [
             "description": (
                 "List scheduled-task conversations within a time window (excludes "
                 "newsletter's own runs). Returns skill_name, conv_id, started_at, "
-                "final_message, and vault_pages_touched per conversation."
+                "final_message, vault_pages_touched, and workspace_files_touched per conversation."
             ),
             "parameters": {
                 "type": "object",

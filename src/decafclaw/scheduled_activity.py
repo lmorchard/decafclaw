@@ -9,6 +9,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal, overload
 
 from decafclaw.conversation_paths import iter_conversation_archives
 
@@ -16,6 +17,13 @@ log = logging.getLogger(__name__)
 
 CONV_ID_RE = re.compile(r"^schedule-(.+)-(\d{8}-\d{6})$")
 VAULT_WRITE_TOOLS = {"vault_write"}
+WORKSPACE_WRITE_TOOLS = {
+    "workspace_write",
+    "workspace_edit",
+    "workspace_append",
+    "workspace_replace_lines",
+    "workspace_insert",
+}
 STATUS_TOKEN_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,40}$")
 
 
@@ -55,10 +63,28 @@ def is_status_token(content: str) -> bool:
     return bool(STATUS_TOKEN_RE.match(stripped))
 
 
-def extract_activity(path: Path) -> tuple[str, list[str]]:
-    """Read a conversation JSONL; return (final_assistant_text, vault_pages_touched)."""
+@overload
+def extract_activity(
+    path: Path,
+    include_workspace_files: Literal[False] = False,
+) -> tuple[str, list[str]]: ...
+
+
+@overload
+def extract_activity(
+    path: Path,
+    include_workspace_files: Literal[True],
+) -> tuple[str, list[str], list[str]]: ...
+
+
+def extract_activity(
+    path: Path,
+    include_workspace_files: bool = False,
+) -> tuple[str, list[str]] | tuple[str, list[str], list[str]]:
+    """Read a conversation JSONL; return (final_assistant_text, vault_pages_touched[, workspace_files_touched])."""
     final_text = ""
-    touched: list[str] = []
+    vault_touched: list[str] = []
+    workspace_touched: list[str] = []
     try:
         with path.open() as fh:
             for line in fh:
@@ -83,13 +109,23 @@ def extract_activity(path: Path) -> tuple[str, list[str]]:
                             continue
                         page = args.get("page")
                         if page:
-                            touched.append(page)
+                            vault_touched.append(page)
+                    elif fn in WORKSPACE_WRITE_TOOLS:
+                        try:
+                            args = json.loads((call.get("function") or {}).get("arguments") or "{}")
+                        except json.JSONDecodeError:
+                            continue
+                        ws_path = args.get("path")
+                        if ws_path:
+                            workspace_touched.append(ws_path)
     except OSError as exc:
         log.debug("Failed to read %s: %s", path, exc)
-    # Deduplicate while preserving insertion order (the same page may be
-    # written multiple times in one run if the skill updates it iteratively).
-    touched = list(dict.fromkeys(touched))
-    return final_text, touched
+    # Deduplicate while preserving insertion order
+    vault_touched = list(dict.fromkeys(vault_touched))
+    workspace_touched = list(dict.fromkeys(workspace_touched))
+    if include_workspace_files:
+        return final_text, vault_touched, workspace_touched
+    return final_text, vault_touched
 
 
 def collect_scheduled_activity(
@@ -106,6 +142,7 @@ def collect_scheduled_activity(
       - started_at: str (ISO 8601 UTC)
       - final_message: str
       - vault_pages_touched: list[str]
+      - workspace_files_touched: list[str]
     """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     out: list[dict] = []
@@ -123,14 +160,15 @@ def collect_scheduled_activity(
             continue
         if ts < cutoff:
             continue
-        final, touched = extract_activity(path)
+        final, touched_vault, touched_workspace = extract_activity(path, include_workspace_files=True)
         out.append(
             {
                 "skill_name": name,
                 "conv_id": conv_id,
                 "started_at": ts.isoformat(),
                 "final_message": final,
-                "vault_pages_touched": touched,
+                "vault_pages_touched": touched_vault,
+                "workspace_files_touched": touched_workspace,
             }
         )
     return out
