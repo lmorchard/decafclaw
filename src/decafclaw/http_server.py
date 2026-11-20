@@ -1271,6 +1271,22 @@ class ConversationCreateResponse(TypedDict):
     model: NotRequired[str]
 
 
+class ConversationForkRequest(BaseModel):
+    # One of these anchors the fork. The web UI sends the timestamp because
+    # rendered rows are merged and do not map 1:1 onto raw archive lines.
+    message_index: int | None = None
+    message_timestamp: str = ""
+
+
+class ConversationForkResponse(TypedDict):
+    conv_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    folder: NotRequired[str]
+    model: NotRequired[str]
+
+
 class ConversationLifecycleResponse(BaseModel):
     ok: Literal[True]
 
@@ -1309,6 +1325,61 @@ async def create_conversation(request: Request) -> JSONResponse:
         result["folder"] = folder
     if model_name:
         result["model"] = model_name
+    return JSONResponse(result, status_code=201)
+
+
+async def fork_conversation(request: Request, id: str) -> JSONResponse:
+    """Fork a conversation up to one message (#1581).
+
+    Body: ``{"message_index": N}`` (raw archive index, inclusive) or
+    ``{"message_timestamp": "..."}``. The slice ends at the nearest complete
+    turn boundary at or before the anchor. The new conversation inherits the
+    source's folder and current model, and the source is left untouched.
+    """
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    from .web import conversation_fork
+    from .web.conversation_folders import ConversationFolderIndex
+    from .web.conversations import ConversationIndex, can_read_conversation
+
+    index = ConversationIndex(config)
+    if not can_read_conversation(config, index, id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid json body"}, status_code=400)
+    message_index = body.get("message_index")
+    if message_index is not None and (isinstance(message_index, bool) or not isinstance(message_index, int)):
+        return JSONResponse({"error": "message_index must be an integer"}, status_code=400)
+    message_timestamp = body.get("message_timestamp", "")
+    if not isinstance(message_timestamp, str):
+        return JSONResponse({"error": "message_timestamp must be a string"}, status_code=400)
+    if message_index is None and not message_timestamp:
+        return JSONResponse({"error": "message_index or message_timestamp is required"}, status_code=400)
+    folder_index = ConversationFolderIndex(config, username)
+    source_folder = await folder_index.get_folder(id)
+    try:
+        conv, model = conversation_fork.fork_conversation(
+            config,
+            index,
+            username,
+            id,
+            message_index=message_index,
+            message_timestamp=message_timestamp,
+        )
+    except conversation_fork.ForkError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if source_folder and await folder_index.folder_exists(source_folder):
+        await folder_index.set_folder(conv.conv_id, source_folder)
+    result = conv.to_dict()
+    result["folder"] = source_folder
+    if model:
+        result["model"] = model
     return JSONResponse(result, status_code=201)
 
 
@@ -4702,6 +4773,21 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                     "required": True,
                     "content": {
                         "application/json": {"schema": ConversationCreateRequest.model_json_schema()},
+                    },
+                }
+            },
+        ),
+        APIRoute(
+            "/api/conversations/{id}/fork",
+            fork_conversation,
+            methods=["POST"],
+            status_code=201,
+            response_model=ConversationForkResponse,
+            openapi_extra={
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {"schema": ConversationForkRequest.model_json_schema()},
                     },
                 }
             },

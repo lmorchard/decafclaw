@@ -294,6 +294,57 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/conversations/{id}/fork:
+    post:
+      summary: Fork Conversation
+      description: 'Fork a conversation up to one message (#1581).
+
+
+        Body: ``{"message_index": N}`` (raw archive index, inclusive) or
+
+        ``{"message_timestamp": "..."}``. The slice ends at the nearest complete
+
+        turn boundary at or before the anchor. The new conversation inherits the
+
+        source''s folder and current model, and the source is left untouched.'
+      operationId: fork_conversation_api_conversations__id__fork_post
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationForkResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                message_index:
+                  anyOf:
+                  - type: integer
+                  - type: 'null'
+                  title: Message Index
+                message_timestamp:
+                  default: ''
+                  title: Message Timestamp
+                  type: string
+              title: ConversationForkRequest
+              type: object
   /api/conversations/{id}:
     get:
       summary: Wrapper
@@ -2920,6 +2971,33 @@ components:
       required:
       - ok
       title: ConversationFolderResponse
+    ConversationForkResponse:
+      properties:
+        conv_id:
+          type: string
+          title: Conv Id
+        title:
+          type: string
+          title: Title
+        created_at:
+          type: string
+          title: Created At
+        updated_at:
+          type: string
+          title: Updated At
+        folder:
+          type: string
+          title: Folder
+        model:
+          type: string
+          title: Model
+      type: object
+      required:
+      - conv_id
+      - title
+      - created_at
+      - updated_at
+      title: ConversationForkResponse
     ConversationLifecycleResponse:
       properties:
         ok:

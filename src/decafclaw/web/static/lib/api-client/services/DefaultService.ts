@@ -17,6 +17,7 @@ import type { ContextRawResponse } from '../models/ContextRawResponse';
 import type { ConversationCreateResponse } from '../models/ConversationCreateResponse';
 import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
 import type { ConversationFolderResponse } from '../models/ConversationFolderResponse';
+import type { ConversationForkResponse } from '../models/ConversationForkResponse';
 import type { ConversationLifecycleResponse } from '../models/ConversationLifecycleResponse';
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
@@ -338,6 +339,39 @@ export class DefaultService {
             path: {
                 'session_id': sessionId,
             },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Fork Conversation
+     * Fork a conversation up to one message (#1581).
+     *
+     * Body: ``{"message_index": N}`` (raw archive index, inclusive) or
+     * ``{"message_timestamp": "..."}``. The slice ends at the nearest complete
+     * turn boundary at or before the anchor. The new conversation inherits the
+     * source's folder and current model, and the source is left untouched.
+     * @param id
+     * @param requestBody
+     * @returns ConversationForkResponse Successful Response
+     * @throws ApiError
+     */
+    public static forkConversationApiConversationsIdForkPost(
+        id: string,
+        requestBody: {
+            message_index?: (number | null);
+            message_timestamp?: string;
+        },
+    ): CancelablePromise<ConversationForkResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/conversations/{id}/fork',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 422: `Validation Error`,
             },

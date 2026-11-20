@@ -30,6 +30,7 @@ export type { ConversationCreateResponse } from './models/ConversationCreateResp
 export type { ConversationFolderCreateResponse } from './models/ConversationFolderCreateResponse';
 export type { ConversationFolderEntry } from './models/ConversationFolderEntry';
 export type { ConversationFolderResponse } from './models/ConversationFolderResponse';
+export type { ConversationForkResponse } from './models/ConversationForkResponse';
 export type { ConversationLifecycleResponse } from './models/ConversationLifecycleResponse';
 export type { ConversationListingItem } from './models/ConversationListingItem';
 export type { ConversationListingResponse } from './models/ConversationListingResponse';

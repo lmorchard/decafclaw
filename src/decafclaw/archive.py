@@ -38,14 +38,13 @@ def _compacted_path(config, conv_id: str) -> Path:
     return sidecar_path(config, conv_id, "compacted.jsonl")
 
 
-def write_compacted_history(config, conv_id: str, messages: list[dict]):
-    """Write compacted working history to a sidecar file (archive is unchanged)."""
-    path = _compacted_path(config, conv_id)
+def _write_jsonl_atomic(path: Path, messages: list[dict]):
+    """Write a complete JSONL file atomically, stamping missing timestamps."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Write atomically: stage to a temp file in the same directory, then
-    # os.replace() into place, so a mid-write failure (e.g. disk full) can
-    # never leave a truncated sidecar that restore_history() could load.
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".compacted.", suffix=".tmp")
+    # Stage to a temp file in the same directory, then os.replace() into
+    # place, so a mid-write failure (e.g. disk full) can never leave a
+    # truncated file that a reader could load.
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
             for msg in messages:
@@ -57,6 +56,20 @@ def write_compacted_history(config, conv_id: str, messages: list[dict]):
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
         raise
+
+
+def write_compacted_history(config, conv_id: str, messages: list[dict]):
+    """Write compacted working history to a sidecar file (archive is unchanged)."""
+    _write_jsonl_atomic(_compacted_path(config, conv_id), messages)
+
+
+def write_archive(config, conv_id: str, messages: list[dict]):
+    """Write a complete conversation archive (#1581 conversation fork).
+
+    Used to seed a new conversation with a sliced history. The caller owns
+    the slice; this only guarantees an atomic write body.
+    """
+    _write_jsonl_atomic(archive_path(config, conv_id), messages)
 
 
 def _read_jsonl(path: Path) -> list[dict]:

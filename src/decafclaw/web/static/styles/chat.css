@@ -181,6 +181,41 @@ chat-message .message.tool {
   font-size: 0.85rem;
 }
 
+/* Branch affordance (#1581): appears on hover in the gutter opposite the
+   bubble, so it never covers message text. Touch devices keep it faintly
+   visible because they have no hover state. */
+chat-message .message-row {
+  position: relative;
+}
+
+chat-message button.branch-btn {
+  position: absolute;
+  top: 0;
+  width: auto;
+  padding: 0.05rem 0.45rem;
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--pico-muted-color);
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+chat-message .assistant-row button.branch-btn { right: 0; }
+chat-message .user-row button.branch-btn { left: 0; }
+
+chat-message:hover button.branch-btn,
+chat-message button.branch-btn:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  chat-message button.branch-btn { opacity: 0.55; }
+}
+
 /* Loud failure affordances (#1569): a timed-out or errored tool must not read
    as a normal gray pill. */
 chat-message .message.tool.tool-error {
