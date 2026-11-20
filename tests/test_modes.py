@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from decafclaw.config import Config
-from decafclaw.context import TaskMode
+from decafclaw.context import Context, TaskMode
 from decafclaw.context_types import (
     SKIP_MODES,
     SKIP_TASK_MODES,
