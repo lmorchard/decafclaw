@@ -6,9 +6,14 @@ The newsletter is a periodic narrative recap of autonomous agent activity — wo
 
 A bundled scheduled skill (`newsletter`) runs daily at 7am (cron `0 7 * * *`). It:
 
-1. Lists scheduled-task conversations from the last 24 hours by iterating conversation archives (`iter_conversation_archives`) and keeping those whose `conv_id` starts with `schedule-` — this naturally excludes interactive (`web-*`), heartbeat, and child-agent conversations, which use different `conv_id` prefixes. Newsletter's own runs (`schedule-newsletter-*`) are explicitly excluded to avoid self-reference.
+1. Lists scheduled-task conversations from the last 24 hours by iterating conversation archives (`iter_conversation_archives`) and keeping those whose `conv_id` starts with `schedule-` — this naturally excludes interactive (`web-*`), heartbeat, and child-agent conversations, which use different `conv_id` prefixes. Newsletter's own runs (`schedule-newsletter-*`) are explicitly excluded to avoid self-reference. Includes both `vault_pages_touched` and `workspace_files_touched`.
 2. Lists vault pages added or modified in the same window.
-3. Composes a conversational narrative in SOUL voice using those two inputs.
+3. Composes a conversational narrative in SOUL voice organized into priority tiers:
+   - **Tier 1 (On the Bench / Action Required):** Unreviewed blog/weeknotes drafts, tasks needing review, with direct `!blog-workbench` triggers.
+   - **Tier 2 (Creative & Generative):** Ambient vibes seedlings, blog idea digests, creative sketches.
+   - **Tier 3 (Ingestion & Signal):** Synthesized takeaways from Mastodon, Linkding, YouTube, and podcasts.
+   - **Tier 4 (Background Loom):** Dream consolidation, memory absorption, vault gardening.
+   - **Tier 5 (Ledger & Stats):** Explicit vault page changes list and summary stats.
 4. Writes a local archive to `workspace/newsletter/archive/YYYY-MM-DD.md`.
 5. Delivers to each enabled channel: email and/or a dated vault page at `{vault_root}/agent/journal/newsletters/YYYY-MM-DD.md`.
 6. Advances `workspace/newsletter/last_run.json`.

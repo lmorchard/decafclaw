@@ -30,13 +30,29 @@ Argument: $ARGUMENTS
 
 ## How to compose
 
-1. Call `newsletter_list_scheduled_activity` to see what my scheduled tasks did. If you parsed a window spec out of the argument (i.e. anything other than the `send` token), pass it as `window`. Otherwise omit `window` for the 24-hour default. Each entry gives you the skill name, when it ran, what it reported at the end, and which vault pages it wrote. Skip entries with empty final messages — they didn't have anything coherent to say.
+1. Call `newsletter_list_scheduled_activity` to see what my scheduled tasks did. If you parsed a window spec out of the argument (i.e. anything other than the `send` token), pass it as `window`. Otherwise omit `window` for the 24-hour default. Each entry gives you the skill name, when it ran, what it reported at the end, which vault pages it touched, and which workspace files it wrote (`workspace_files_touched`). Skip entries with empty final messages — they didn't have anything coherent to say.
 
 2. Call `newsletter_list_vault_changes` with the same `window` value (or omitted if you didn't have one). Use this to enrich the narrative ("while gardening, I noticed X and rewrote [[Some Page]]") and to surface interesting activity the scheduled reports didn't themselves mention. **If needed, use `vault_read` on these changed pages to pull out specific technical details, quotes, and facts.**
 
 3. Call `newsletter_list_recent_memories` with the same `window` value (or omitted). If Mem0 is active, it returns newly crystallized facts and observations absorbed into semantic working memory during the window. Weave interesting learned facts into the narrative, or highlight them in a dedicated memory digest subsection. If Mem0 is disabled or returns 0 memories, skip mention of it.
 
-4. Group related entries into a flowing narrative, but **dive deep into the actual content**. Don't just say "I researched X" — include specific technical details, facts, or interesting quotes you found during the ingestion or run.
+4. **Assemble following the Priority Hierarchy.** Structure the newsletter into clear tiers so high-leverage, human-actionable items lead the edition:
+   - **Tier 1: On the Bench / Action Required (Top of the Edition):**
+     Lead with anything requiring human review, decisions, or action.
+     - *Drafts ready for review:* If a scheduled task (like `weeknotes-composer` or `blog-develop`) produced or updated a blog post bundle under `blog.lmorchard.com/content/posts/` or files in `drafts/`, feature it under a top-level `## On the Bench` section.
+     - Include the post title, slug, date, word count, and a direct action trigger:
+       > **Draft ready for review:** *Title* (`YYYY-MM-DD-slug`)
+       > 👉 Run `!blog-workbench <slug>` to start the dev server and open the live canvas preview.
+     - *Blocked or Failed Tasks:* Tasks that encountered critical roadblocks or explicitly asked for human intervention.
+     - If there are no Tier 1 items in the window, omit `## On the Bench` and begin with Tier 2.
+   - **Tier 2: Creative & Generative Work:**
+     - Seedling pages sparked by `ambient-vibes` (`[[agent/pages/seeds/...]]`), daily brainstorm digests from `blog-ideas`, design proposals, or creative writing sketches. Unpack the core idea or insight rather than just naming files.
+   - **Tier 3: Ingestion & External Signal:**
+     - Curated signal from external feeds: Mastodon discussions, Linkding bookmarks, YouTube transcripts, podcast notes, and Kindle highlights. Focus on counter-intuitive claims, rich quotes, and synthesized themes.
+   - **Tier 4: The Background Loom (Housekeeping):**
+     - Dream consolidation sweeps, semantic memory crystallizations, vault gardening sweeps, and routine operational syncs. Keep this section crisp and matter-of-fact.
+   - **Tier 5: Ledger (Vault Changes & Summary Stats):**
+     - Conclude with the explicit `## Vault Changes` section listing every vault page touched during the window, followed by the summary stats line.
 
 5. Apply the SOUL voice — conversational, curious, reflective. Use first person. **Use bullet points where they help surface rich details** (e.g., listing specific findings, decisions, or summaries of articles). Do not smooth over the details for a quick read; unpack them so the user can genuinely learn what you learned.
 
