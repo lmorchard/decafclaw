@@ -562,6 +562,9 @@ ws.addEventListener('message', (e) => {
   if (msg?.type === MESSAGE_TYPES.ERROR && msg?.message) {
     showToast(msg.message);
   }
+  if (msg?.type === MESSAGE_TYPES.SWITCH_CONVERSATION && msg?.title) {
+    showToast(`Switched to ${msg.title}`);
+  }
   // Fan out turn-complete as a window event so sidebars can silently refresh
   // (e.g. files-sidebar auto-refetches so agent-written files appear).
   if (msg?.type === MESSAGE_TYPES.TURN_COMPLETE) {

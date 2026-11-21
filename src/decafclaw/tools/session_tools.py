@@ -15,6 +15,7 @@ Sends are session-scoped: the target must be the sender's session root
 import logging
 from typing import TYPE_CHECKING
 
+from ..events import emit_for_ctx
 from ..media import ToolResult
 from ..session_messaging import deliver_session_message, is_child_conv_id, parent_conv_id_of
 
@@ -27,6 +28,34 @@ log = logging.getLogger(__name__)
 def _resolve_conv_id(ctx: "Context") -> str:
     """Match the notes_tools fallback chain so the sender id is stable."""
     return ctx.conv_id or ctx.channel_id or ""
+
+
+async def _emit_switch_event(
+    ctx: "Context",
+    sender_conv_id: str,
+    target_conv_id: str,
+    title: str,
+    reason: str,
+) -> None:
+    event_payload = {
+        "type": "switch_conversation",
+        "conv_id": sender_conv_id,
+        "target_conv_id": target_conv_id,
+        "title": title,
+        "reason": reason,
+    }
+    emit = emit_for_ctx(ctx)
+    if emit:
+        try:
+            await emit(sender_conv_id, event_payload)
+        except Exception as exc:
+            log.warning("Failed to emit switch_conversation event: %s", exc)
+    elif ctx.event_bus:
+        try:
+            context_id = getattr(ctx, "context_id", "")
+            await ctx.event_bus.publish({**event_payload, "context_id": context_id})
+        except Exception as exc:
+            log.warning("Failed to publish switch_conversation to event bus: %s", exc)
 
 
 async def tool_session_send(ctx: "Context", target_conv_id: str, text: str) -> ToolResult:
@@ -128,7 +157,12 @@ async def tool_session_list(ctx: "Context", limit: int = 10, include_archived: b
     results_data = []
     for c in selected:
         is_home = c.conv_id.endswith("-home")
-        tag = " [Home/Lobby]" if is_home else ""
+        tags = []
+        if is_home:
+            tags.append("Home/Lobby")
+        if c.archived:
+            tags.append("Archived")
+        tag = f" [{' / '.join(tags)}]" if tags else ""
         lines.append(f"- `{c.conv_id}`: **{c.title}**{tag} (updated {c.updated_at[:16].replace('T', ' ')})")
         results_data.append(
             {
@@ -136,12 +170,13 @@ async def tool_session_list(ctx: "Context", limit: int = 10, include_archived: b
                 "title": c.title,
                 "updated_at": c.updated_at,
                 "is_home": is_home,
+                "archived": c.archived,
             }
         )
     return ToolResult(text="\n".join(lines), data={"sessions": results_data})
 
 
-async def tool_session_search(ctx: "Context", query: str, limit: int = 5) -> ToolResult:
+async def tool_session_search(ctx: "Context", query: str, limit: int = 5, include_archived: bool = False) -> ToolResult:
     """Search conversation sessions by title."""
     from ..preempt_search import tokenize
     from ..web.conversations import ConversationIndex
@@ -151,7 +186,7 @@ async def tool_session_search(ctx: "Context", query: str, limit: int = 5) -> Too
 
     username = _resolve_username(ctx)
     index = ConversationIndex(ctx.config)
-    convs = index.list_for_user(username, include_archived=True)
+    convs = index.list_for_user(username, include_archived=include_archived)
     if not convs:
         return ToolResult(text=f"No conversation sessions found matching '{query}'", data={"matches": []})
 
@@ -181,7 +216,12 @@ async def tool_session_search(ctx: "Context", query: str, limit: int = 5) -> Too
     results_data = []
     for _score, c in top:
         is_home = c.conv_id.endswith("-home")
-        tag = " [Home/Lobby]" if is_home else ""
+        tags = []
+        if is_home:
+            tags.append("Home/Lobby")
+        if c.archived:
+            tags.append("Archived")
+        tag = f" [{' / '.join(tags)}]" if tags else ""
         lines.append(f"- `{c.conv_id}`: **{c.title}**{tag} (updated {c.updated_at[:16].replace('T', ' ')})")
         results_data.append(
             {
@@ -189,6 +229,7 @@ async def tool_session_search(ctx: "Context", query: str, limit: int = 5) -> Too
                 "title": c.title,
                 "updated_at": c.updated_at,
                 "is_home": is_home,
+                "archived": c.archived,
             }
         )
     return ToolResult(text="\n".join(lines), data={"matches": results_data})
@@ -216,19 +257,8 @@ async def tool_session_switch(ctx: "Context", conv_id: str, reason: str = "") ->
         target_title = meta.title
 
     sender_conv_id = _resolve_conv_id(ctx)
-    if ctx.event_bus and sender_conv_id:
-        try:
-            await ctx.event_bus.publish(
-                {
-                    "type": "switch_conversation",
-                    "conv_id": sender_conv_id,
-                    "target_conv_id": target_conv_id,
-                    "title": target_title,
-                    "reason": reason,
-                }
-            )
-        except Exception as exc:
-            log.warning("Failed to publish switch_conversation event: %s", exc)
+    if sender_conv_id:
+        await _emit_switch_event(ctx, sender_conv_id, target_conv_id, target_title, reason)
 
     msg = f"Switching client to session '{target_title}' (`{target_conv_id}`)."
     if reason:
@@ -258,19 +288,14 @@ async def tool_session_create(ctx: "Context", title: str = "", initial_topic: st
     new_conv = index.create(username, title=conv_title)
 
     sender_conv_id = _resolve_conv_id(ctx)
-    if ctx.event_bus and sender_conv_id:
-        try:
-            await ctx.event_bus.publish(
-                {
-                    "type": "switch_conversation",
-                    "conv_id": sender_conv_id,
-                    "target_conv_id": new_conv.conv_id,
-                    "title": new_conv.title,
-                    "reason": f"Created new session: {conv_title}",
-                }
-            )
-        except Exception as exc:
-            log.warning("Failed to publish switch_conversation event: %s", exc)
+    if sender_conv_id:
+        await _emit_switch_event(
+            ctx,
+            sender_conv_id,
+            new_conv.conv_id,
+            new_conv.title,
+            f"Created new session: {conv_title}",
+        )
 
     return ToolResult(
         text=f"Created and switched client to new session '{new_conv.title}' (`{new_conv.conv_id}`).",
@@ -378,6 +403,10 @@ SESSION_TOOL_DEFINITIONS = [
                     "limit": {
                         "type": "integer",
                         "description": "Maximum number of matching sessions to return (default 5).",
+                    },
+                    "include_archived": {
+                        "type": "boolean",
+                        "description": "Whether to include archived sessions (default false).",
                     },
                 },
                 "required": ["query"],

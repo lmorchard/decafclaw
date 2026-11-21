@@ -1,19 +1,20 @@
 # Dependency Install Policy
 
-Supply-chain policy for the two npm projects in this repo —
-`src/decafclaw/web/static/` (web UI vendor bundle) and `tui/` (terminal UI).
+Supply-chain policy for the npm projects in this repo —
+`src/decafclaw/web/static/` (web UI vendor bundle), `tui/` (terminal UI), and
+`contrib/android/` (Expo/React Native phone client).
 Adopted in #930; the lockfiles from #706/#716 remain the ground truth for
 transitive versions. The Python side (uv) is out of scope.
 
 ## Pinning rule
 
-Direct external dependencies are **exact-pinned** in both `package.json`
+Direct external dependencies are **exact-pinned** in all `package.json`
 files. `^` and `~` ranges are forbidden: a range is how an unreviewed version
 enters the lockfile, and update PRs are the review point.
 
 - `scripts/check_npm_policy.py` rejects any `^`/`~` specifier in
   `dependencies`, `devDependencies`, `optionalDependencies`, or
-  `peerDependencies` of either project. Non-semver references (`file:`,
+  `peerDependencies` of any project. Non-semver references (`file:`,
   `git+`, `npm:` aliases) are legitimate internal references and remain valid.
 - The check runs as `make check-npm-policy`, composed into `make check` — so
   CI gates it through the make target (the `lint-and-test` job), never a
