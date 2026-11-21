@@ -68,6 +68,28 @@ class TestSessionTools:
         assert "No sessions found" in search_empty.text
 
     @pytest.mark.asyncio
+    async def test_session_search_archived_filtering(self, session_ctx):
+        index = ConversationIndex(session_ctx.config)
+        active = index.create("lmorchard", title="Active Vocal Transceiver")
+        archived = index.create("lmorchard", title="Archived Vocal Prototype")
+        index.archive(archived.conv_id)
+
+        # By default, excludes archived
+        default_res = await tool_session_search(session_ctx, "vocal")
+        assert "Active Vocal Transceiver" in default_res.text
+        assert "Archived Vocal Prototype" not in default_res.text
+        assert default_res.data is not None and len(default_res.data["matches"]) == 1
+        assert default_res.data["matches"][0]["conv_id"] == active.conv_id
+        assert default_res.data["matches"][0]["archived"] is False
+
+        # With include_archived=True, includes both and tags archived
+        all_res = await tool_session_search(session_ctx, "vocal", include_archived=True)
+        assert "Active Vocal Transceiver" in all_res.text
+        assert "Archived Vocal Prototype" in all_res.text
+        assert "[Archived]" in all_res.text
+        assert all_res.data is not None and len(all_res.data["matches"]) == 2
+
+    @pytest.mark.asyncio
     async def test_session_switch_and_event(self, session_ctx):
         index = ConversationIndex(session_ctx.config)
         target = index.create("lmorchard", title="Target Session")

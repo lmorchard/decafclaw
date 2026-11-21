@@ -157,7 +157,12 @@ async def tool_session_list(ctx: "Context", limit: int = 10, include_archived: b
     results_data = []
     for c in selected:
         is_home = c.conv_id.endswith("-home")
-        tag = " [Home/Lobby]" if is_home else ""
+        tags = []
+        if is_home:
+            tags.append("Home/Lobby")
+        if c.archived:
+            tags.append("Archived")
+        tag = f" [{' / '.join(tags)}]" if tags else ""
         lines.append(f"- `{c.conv_id}`: **{c.title}**{tag} (updated {c.updated_at[:16].replace('T', ' ')})")
         results_data.append(
             {
@@ -165,12 +170,13 @@ async def tool_session_list(ctx: "Context", limit: int = 10, include_archived: b
                 "title": c.title,
                 "updated_at": c.updated_at,
                 "is_home": is_home,
+                "archived": c.archived,
             }
         )
     return ToolResult(text="\n".join(lines), data={"sessions": results_data})
 
 
-async def tool_session_search(ctx: "Context", query: str, limit: int = 5) -> ToolResult:
+async def tool_session_search(ctx: "Context", query: str, limit: int = 5, include_archived: bool = False) -> ToolResult:
     """Search conversation sessions by title."""
     from ..preempt_search import tokenize
     from ..web.conversations import ConversationIndex
@@ -180,7 +186,7 @@ async def tool_session_search(ctx: "Context", query: str, limit: int = 5) -> Too
 
     username = _resolve_username(ctx)
     index = ConversationIndex(ctx.config)
-    convs = index.list_for_user(username, include_archived=True)
+    convs = index.list_for_user(username, include_archived=include_archived)
     if not convs:
         return ToolResult(text=f"No conversation sessions found matching '{query}'", data={"matches": []})
 
@@ -210,7 +216,12 @@ async def tool_session_search(ctx: "Context", query: str, limit: int = 5) -> Too
     results_data = []
     for _score, c in top:
         is_home = c.conv_id.endswith("-home")
-        tag = " [Home/Lobby]" if is_home else ""
+        tags = []
+        if is_home:
+            tags.append("Home/Lobby")
+        if c.archived:
+            tags.append("Archived")
+        tag = f" [{' / '.join(tags)}]" if tags else ""
         lines.append(f"- `{c.conv_id}`: **{c.title}**{tag} (updated {c.updated_at[:16].replace('T', ' ')})")
         results_data.append(
             {
@@ -218,6 +229,7 @@ async def tool_session_search(ctx: "Context", query: str, limit: int = 5) -> Too
                 "title": c.title,
                 "updated_at": c.updated_at,
                 "is_home": is_home,
+                "archived": c.archived,
             }
         )
     return ToolResult(text="\n".join(lines), data={"matches": results_data})
@@ -391,6 +403,10 @@ SESSION_TOOL_DEFINITIONS = [
                     "limit": {
                         "type": "integer",
                         "description": "Maximum number of matching sessions to return (default 5).",
+                    },
+                    "include_archived": {
+                        "type": "boolean",
+                        "description": "Whether to include archived sessions (default false).",
                     },
                 },
                 "required": ["query"],
