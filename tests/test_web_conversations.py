@@ -1751,3 +1751,12 @@ async def test_list_sessions_route(authed_client, http_config):
 async def test_sessions_routes_require_auth(unauthed_client):
     assert (await unauthed_client.get("/api/sessions")).status_code == 401
     assert (await unauthed_client.get("/api/sessions/some-session/conversations")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_get_home_conversation_route(authed_client):
+    resp = await authed_client.get("/api/conversations/home")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["conv_id"] == "web-testuser-home"
+    assert data["title"] == "Lobby"

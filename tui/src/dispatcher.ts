@@ -210,6 +210,9 @@ export function dispatch(s: State, m: ServerMessage): State {
       return s;
     case "turn_provenance":
       return s;
+    case "switch_conversation":
+      // #1609 — client redirection; the TUI does not switch conversations via wire event yet
+      return s;
 
     default: {
       // Forward-compat: surface unknown types as unchanged. The assertNever

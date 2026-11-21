@@ -167,6 +167,11 @@
       "description": "Narrative about an LLM auto-approval of a shell command.",
       "fields": {"conv_id": "string", "command": "string", "risk": "string", "reason": "string", "approved": "boolean"}
     },
+    "switch_conversation": {
+      "direction": "server_to_client",
+      "description": "Instructs the client (web UI, voice companion, mobile app) to redirect its active conversation view to another conversation.",
+      "fields": {"conv_id": "string", "target_conv_id": "string", "title": "string", "reason": "string"}
+    },
 
     "cancel_turn": {
       "direction": "client_to_server",

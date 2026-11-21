@@ -42,6 +42,7 @@ from decafclaw.web.message_types import (
     SrvStickyClear,
     SrvStickySet,
     SrvStreamState,
+    SrvSwitchConversation,
     SrvToolEnd,
     SrvTurnComplete,
     SrvTurnProvenance,
@@ -1251,6 +1252,17 @@ def _subscribe_to_conv(state, conv_id):
                     "conv_id": event_conv_id,
                 }
                 await ws_send(sticky_clear_payload)
+
+        elif event_type == "switch_conversation":
+            if event_conv_id == conv_id:
+                switch_payload: SrvSwitchConversation = {
+                    "type": WSMessageType.SWITCH_CONVERSATION,
+                    "conv_id": event_conv_id,
+                    "target_conv_id": str(event.get("target_conv_id") or ""),
+                    "title": str(event.get("title") or ""),
+                    "reason": str(event.get("reason") or ""),
+                }
+                await ws_send(switch_payload)
 
         elif event_type == "turn_provenance":
             provenance = event.get("provenance") or {}
