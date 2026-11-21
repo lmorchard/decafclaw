@@ -21,7 +21,6 @@ pipeline unchanged. False negatives cost a judge call or a prompt; false
 positives would silently run something unsafe, so the rules are conservative.
 """
 
-import os
 import re
 import shlex
 from pathlib import Path
@@ -63,20 +62,19 @@ _READ_ONLY_VERBS = frozenset(
     }
 )
 
+# A silent read-only tier must not run programs chosen by repository config.
+# `git status` runs `core.fsmonitor`, `git diff`/`log -p`/`show` run
+# `diff.*.textconv`, `git fetch`/`ls-remote` run `--upload-pack` or transport
+# helpers, and `gpg.program` runs for signature output. Those subcommands stay
+# out of this set; they fall through to the judge, which can still allow them.
 _GIT_READ_ONLY_SUBCOMMANDS = frozenset(
     {
-        "status",
-        "log",
-        "diff",
-        "show",
-        "fetch",
         "blame",
         "describe",
         "rev-parse",
         "rev-list",
         "ls-files",
         "ls-tree",
-        "ls-remote",
         "cat-file",
         "shortlog",
         "grep",
@@ -85,31 +83,89 @@ _GIT_READ_ONLY_SUBCOMMANDS = frozenset(
         "for-each-ref",
         "name-rev",
         "show-ref",
-        "diff-tree",
         "reflog",
     }
 )
 
-_GIT_WRITE_OR_EXEC_FLAGS = (
+# Flags that make an otherwise-safe git subcommand execute a configured
+# program, write a file, or read from an unexpected repository.
+_GIT_EXEC_FLAGS = (
     "--output",
     "--exec-path",
     "--git-dir",
     "--work-tree",
     "--textconv",
     "--ext-diff",
+    "--show-signature",
+    "--open-files-in-pager",
+    "--filters",
+    "--upload-pack",
+    "--remerge-diff",
+    "--batch-command",
+)
+
+# `git log` is safe while it produces no patch: `--stat` does not run
+# textconv (verified), but patch output does. Reject every diff-producing,
+# signature-verifying, or line-log mode.
+_GIT_LOG_UNSAFE_FLAGS = (
+    "-p",
+    "--patch",
+    "-u",
+    "--unified",
+    "-U",
+    "--cc",
+    "-m",
+    "-c",
+    "--combined",
+    "-L",
+    "--line-log",
+    "--submodule",
+    "--remerge-diff",
+    "--show-signature",
+    "--ext-diff",
+    "--textconv",
+    "--diff-merges",
+    "--full-diff",
+    "--word-diff",
+    "--color-words",
+    "--binary",
+    "--function-context",
 )
 
 _GIT_TAG_WRITE_FLAGS = frozenset(
     {"-d", "--delete", "-a", "--annotate", "-s", "--sign", "-f", "--force", "-m", "--message"}
 )
 
+_GIT_BRANCH_WRITE_PREFIXES = (
+    "-d",
+    "-D",
+    "-m",
+    "-M",
+    "-c",
+    "-C",
+    "-f",
+    "-u",
+    "-e",
+    "--delete",
+    "--move",
+    "--copy",
+    "--force",
+    "--set-upstream-to",
+    "--unset-upstream",
+    "--track",
+    "--no-track",
+    "--edit-description",
+    "--create-reflog",
+    "--no-create-reflog",
+)
+
 _GIT_CONFIG_READ_ACTIONS = frozenset({"--get", "--get-all", "--list", "-l", "get"})
 
 _GH_GROUPS = frozenset({"issue", "pr", "run", "repo", "release", "label", "search", "auth", "workflow", "api"})
 _GH_READ_ACTIONS = frozenset({"list", "view", "diff", "checks", "status", "search"})
-_GH_API_WRITE_FLAGS = frozenset({"-f", "--field", "--raw-field", "--input"})
+_GH_API_WRITE_FLAGS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
 
-_CURL_WRITE_SHORT_FLAGS = frozenset("oODcTdFKX")
+_CURL_WRITE_SHORT_FLAGS = frozenset("oODcTdFKXnE")
 _CURL_WRITE_LONG_FLAGS = (
     "--output",
     "--output-dir",
@@ -135,6 +191,22 @@ _CURL_WRITE_LONG_FLAGS = (
     "--etag-save",
     "--hsts",
     "--alt-svc",
+    # Sends ~/.netrc credentials to the URL; a silent HEAD must not.
+    "--netrc",
+    "--netrc-optional",
+    "--sslkeylogfile",
+    "--ssl-keylogfile",
+    # Read a local credential/material file and send it (or load code).
+    "--cert",
+    "--key",
+    "--cacert",
+    "--capath",
+    "--crlfile",
+    "--netrc-file",
+    "--proxy-cert",
+    "--proxy-key",
+    "--proxy-cacert",
+    "--engine",
 )
 
 _FIND_EXEC_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fls"})
@@ -278,26 +350,56 @@ def _paths_contained(args: list[str], cwd: Path, workspace: Path) -> bool:
     return True
 
 
+def _short_flag_present(args: list[str], letters: str) -> bool:
+    """True when a short-option cluster contains any of ``letters``."""
+    for token in args:
+        if token.startswith("-") and not token.startswith("--") and len(token) > 1:
+            if any(letter in token[1:] for letter in letters):
+                return True
+    return False
+
+
+def _git_log_read_only(args: list[str]) -> bool:
+    """`git log` is safe only while it produces no patch and verifies nothing."""
+    for token in args:
+        if any(token.startswith(flag) for flag in _GIT_LOG_UNSAFE_FLAGS if flag.startswith("--")):
+            return False
+        if token in ("-p", "-u", "-m", "-c", "--cc", "--combined", "-W", "--function-context"):
+            return False
+        if token.startswith(("-p", "-u", "-m", "-U", "-L")):
+            return False
+        if "%G" in token:
+            return False
+    return True
+
+
 def _git_read_only(args: list[str]) -> bool:
     if not args:
         return False
-    if any(token == "-c" or token.startswith(_GIT_WRITE_OR_EXEC_FLAGS) for token in args):
+    if any(token == "-c" or token.startswith(_GIT_EXEC_FLAGS) for token in args):
         return False
     subcommand, rest = args[0], args[1:]
+    if subcommand == "log":
+        return _git_log_read_only(rest)
     if subcommand in _GIT_READ_ONLY_SUBCOMMANDS:
         if subcommand == "reflog":
             return not rest or rest[0] == "show" or rest[0].startswith("-")
+        if subcommand == "describe":
+            return not any(token == "--dirty" or token.startswith("--dirty=") for token in rest)
         return True
     if subcommand == "branch":
+        if any(token.startswith(_GIT_BRANCH_WRITE_PREFIXES) for token in rest):
+            return False
         return all(token.startswith("-") for token in rest)
     if subcommand == "remote":
-        return not rest or all(token.startswith("-") for token in rest) or rest[0] in ("show", "get-url")
+        # Listing only: `remote show`/`get-url` contact or interpret a remote.
+        return not rest or all(token.startswith("-") for token in rest)
     if subcommand == "tag":
         if any(token in _GIT_TAG_WRITE_FLAGS for token in rest):
             return False
         return not rest or any(token in ("-l", "--list") for token in rest)
     if subcommand == "stash":
-        return bool(rest) and rest[0] in ("list", "show")
+        return bool(rest) and rest[0] == "list"
     if subcommand == "worktree":
         return bool(rest) and rest[0] == "list"
     if subcommand == "config":
@@ -316,18 +418,28 @@ def _gh_read_only(args: list[str]) -> bool:
     group, rest = args[0], args[1:]
     if group == "api":
         tail = args[1:]
-        for index, token in enumerate(tail):
+        index = 0
+        while index < len(tail):
+            token = tail[index]
             if token in ("-X", "--method"):
-                if index + 2 >= len(args) or args[index + 2].upper() != "GET":
+                if index + 1 >= len(tail) or tail[index + 1].upper() != "GET":
                     return False
-        if any(
-            token in _GH_API_WRITE_FLAGS
-            or token.startswith("--field=")
-            or token.startswith("--raw-field=")
-            or token.startswith("--input=")
-            for token in tail
-        ):
-            return False
+                index += 2
+                continue
+            if token.startswith("--method="):
+                if token.split("=", 1)[1].upper() != "GET":
+                    return False
+            elif token.startswith("-X"):
+                if token[2:].upper() != "GET":
+                    return False
+            if (
+                token in _GH_API_WRITE_FLAGS
+                or token.startswith("--field=")
+                or token.startswith("--raw-field=")
+                or token.startswith("--input=")
+            ):
+                return False
+            index += 1
         return True
     if group not in _GH_GROUPS or not rest:
         return False
@@ -372,7 +484,11 @@ def _jq_read_only(args: list[str]) -> bool:
 
 def _find_read_only(args: list[str], verb: str) -> bool:
     if verb == "fd":
-        return not any(token in _FD_EXEC_FLAGS for token in args)
+        return not (
+            any(token in _FD_EXEC_FLAGS for token in args) or _short_flag_present(args, "L") or "--follow" in args
+        )
+    if any(token in ("-L", "-follow") for token in args):
+        return False
     for token in args:
         if token in _FIND_EXEC_FLAGS:
             return False
@@ -382,10 +498,20 @@ def _find_read_only(args: list[str], verb: str) -> bool:
 
 
 def _rg_read_only(args: list[str]) -> bool:
-    return not any(token.split("=", 1)[0] in _RG_EXEC_FLAGS for token in args)
+    return not (
+        any(token.split("=", 1)[0] in _RG_EXEC_FLAGS for token in args)
+        or _short_flag_present(args, "L")
+        or "--follow" in args
+    )
 
 
 def _sort_or_tree_read_only(args: list[str], verb: str) -> bool:
+    if verb == "tree":
+        if _short_flag_present(args, "l") or "--follow-links" in args:
+            return False
+    else:
+        if _short_flag_present(args, "T") or any(token.split("=", 1)[0] == "--temporary-directory" for token in args):
+            return False
     flags = _TREE_WRITE_FLAGS if verb == "tree" else _SORT_WRITE_FLAGS
     for token in args:
         name = token.split("=", 1)[0]
@@ -405,7 +531,12 @@ def _is_read_only_segment(segment: str, cwd: Path, workspace: Path) -> bool:
         return False
     if _ENV_ASSIGN_RE.match(tokens[0]):
         return False
-    verb = os.path.basename(tokens[0])
+    # Only trust verbs resolved from PATH. A path-qualified binary can be an
+    # agent-written script (`./tools/ls`) or an outside executable posing as a
+    # read-only verb.
+    if "/" in tokens[0] or "\\" in tokens[0]:
+        return False
+    verb = tokens[0]
     args = tokens[1:]
     if verb not in _READ_ONLY_VERBS:
         return False
@@ -421,11 +552,29 @@ def _is_read_only_segment(segment: str, cwd: Path, workspace: Path) -> bool:
         return False
     if verb == "jq" and not _jq_read_only(args):
         return False
+    if verb == "grep" and (_short_flag_present(args, "R") or "--dereference-recursive" in args):
+        return False
+    if verb in ("du", "file", "stat", "ls") and (_short_flag_present(args, "L") or "--dereference" in args):
+        return False
+    if verb == "diff" and (_short_flag_present(args, "r") or "--recursive" in args):
+        return False
     if verb in ("sort", "tree") and not _sort_or_tree_read_only(args, verb):
         return False
     if verb == "uniq" and sum(1 for token in args if not token.startswith("-")) > 1:
         return False
     if verb == "file" and any(token in ("-C", "--compile") for token in args):
+        return False
+    # File-list indirection: the list file is contained, but the paths inside
+    # it are not checked. `find`/`du`/`wc` could reach outside; `file` reads
+    # the listed targets.
+    if verb in ("find", "du", "wc") and any(
+        token == "--files0-from" or token.startswith("--files0-from=") for token in args
+    ):
+        return False
+    if verb == "file" and (
+        _short_flag_present(args, "f")
+        or any(token == "--files-from" or token.startswith("--files-from=") for token in args)
+    ):
         return False
     return _paths_contained(args, cwd, workspace)
 

@@ -25,7 +25,24 @@
 - New tests: `tests/test_activity.py`, `tests/test_shell_readonly.py`, `tests/test_shell_approval_activity.py`, `tests/test_approval_report.py`.
 - Existing judge tests moved to mutating commands and seeded activity where they exercise the judge tier; read-only commands now intentionally bypass it.
 - `make check`: pass (lint, typecheck, fmt, generated types, browser assets).
-- `make test`: 6269 passed, 2 skipped at baseline 6149 before the change. Two timing-sensitive tests flaked only under parallel load and passed in isolation (`test_pin_sticky_emit_timeout_does_not_block_reader`, `test_above_budget_returns_job_handle_same_process`).
+- `make test`: 6396 passed, 2 skipped at the final head; baseline before the change was 6149 passed, 2 skipped. Two timing-sensitive tests flaked only under parallel load and passed in isolation (`test_pin_sticky_emit_timeout_does_not_block_reader`, `test_above_budget_returns_job_handle_same_process`).
+
+## Adversarial review findings (fixed)
+
+Confirmed by execution in scratch repos:
+
+- `git grep --open-files-in-pager='cmd'` executed `cmd`.
+- `git cat-file --filters` executed a configured clean filter.
+- `git fetch --upload-pack='cmd'` executed `cmd`.
+- `git status` executed `core.fsmonitor`; `git diff` and `git log -p` executed `diff.*.textconv`.
+- `grep -R`, `rg -L`, and `diff -r` read through symlinks outside the workspace.
+- `curl --netrc` sent `~/.netrc` credentials.
+- `gh api -XPOST`, `--method=POST`, and `-F` bypassed the read-only tier.
+- Path-qualified fake verbs (`./ls`, `/tmp/evil/ls`) were trusted by basename.
+
+Fixes: bare PATH verbs only; drop `git status/diff/show/fetch/ls-remote` and patch-producing `git log` from the silent tier (they still reach the judge); block the explicit exec/verify flags; block symlink-follow and file-list-indirection flags; block curl credential flags and `@file`; parse `gh api` method forms.
+
+Residual, documented risks: a silent read-only command still counts toward establishing activity; `git config --get` can print global config values.
 
 ## Not done
 
