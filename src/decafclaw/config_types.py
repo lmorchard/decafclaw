@@ -262,6 +262,12 @@ class ShellConfig:
     aux_approval_guidance: str = ""
     aux_approval_presets: dict[str, str] = field(default_factory=dict)
     active_aux_approval_presets: list[str] = field(default_factory=list)
+    # How many recent shell calls define a conversation's established activity
+    # (#1641). A command is "in direction" only when every domain it touches
+    # appeared in this window. 0 or a negative value disables the window (all
+    # history counts), which re-creates the stale-direction failure the window
+    # exists to avoid; lower it to make drift prompt sooner.
+    activity_window: int = 50
 
 
 @dataclass
