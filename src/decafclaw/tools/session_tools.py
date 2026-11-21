@@ -15,6 +15,7 @@ Sends are session-scoped: the target must be the sender's session root
 import logging
 from typing import TYPE_CHECKING
 
+from ..events import emit_for_ctx
 from ..media import ToolResult
 from ..session_messaging import deliver_session_message, is_child_conv_id, parent_conv_id_of
 
@@ -27,6 +28,34 @@ log = logging.getLogger(__name__)
 def _resolve_conv_id(ctx: "Context") -> str:
     """Match the notes_tools fallback chain so the sender id is stable."""
     return ctx.conv_id or ctx.channel_id or ""
+
+
+async def _emit_switch_event(
+    ctx: "Context",
+    sender_conv_id: str,
+    target_conv_id: str,
+    title: str,
+    reason: str,
+) -> None:
+    event_payload = {
+        "type": "switch_conversation",
+        "conv_id": sender_conv_id,
+        "target_conv_id": target_conv_id,
+        "title": title,
+        "reason": reason,
+    }
+    emit = emit_for_ctx(ctx)
+    if emit:
+        try:
+            await emit(sender_conv_id, event_payload)
+        except Exception as exc:
+            log.warning("Failed to emit switch_conversation event: %s", exc)
+    elif ctx.event_bus:
+        try:
+            context_id = getattr(ctx, "context_id", "")
+            await ctx.event_bus.publish({**event_payload, "context_id": context_id})
+        except Exception as exc:
+            log.warning("Failed to publish switch_conversation to event bus: %s", exc)
 
 
 async def tool_session_send(ctx: "Context", target_conv_id: str, text: str) -> ToolResult:
@@ -216,19 +245,8 @@ async def tool_session_switch(ctx: "Context", conv_id: str, reason: str = "") ->
         target_title = meta.title
 
     sender_conv_id = _resolve_conv_id(ctx)
-    if ctx.event_bus and sender_conv_id:
-        try:
-            await ctx.event_bus.publish(
-                {
-                    "type": "switch_conversation",
-                    "conv_id": sender_conv_id,
-                    "target_conv_id": target_conv_id,
-                    "title": target_title,
-                    "reason": reason,
-                }
-            )
-        except Exception as exc:
-            log.warning("Failed to publish switch_conversation event: %s", exc)
+    if sender_conv_id:
+        await _emit_switch_event(ctx, sender_conv_id, target_conv_id, target_title, reason)
 
     msg = f"Switching client to session '{target_title}' (`{target_conv_id}`)."
     if reason:
@@ -258,19 +276,14 @@ async def tool_session_create(ctx: "Context", title: str = "", initial_topic: st
     new_conv = index.create(username, title=conv_title)
 
     sender_conv_id = _resolve_conv_id(ctx)
-    if ctx.event_bus and sender_conv_id:
-        try:
-            await ctx.event_bus.publish(
-                {
-                    "type": "switch_conversation",
-                    "conv_id": sender_conv_id,
-                    "target_conv_id": new_conv.conv_id,
-                    "title": new_conv.title,
-                    "reason": f"Created new session: {conv_title}",
-                }
-            )
-        except Exception as exc:
-            log.warning("Failed to publish switch_conversation event: %s", exc)
+    if sender_conv_id:
+        await _emit_switch_event(
+            ctx,
+            sender_conv_id,
+            new_conv.conv_id,
+            new_conv.title,
+            f"Created new session: {conv_title}",
+        )
 
     return ToolResult(
         text=f"Created and switched client to new session '{new_conv.title}' (`{new_conv.conv_id}`).",
