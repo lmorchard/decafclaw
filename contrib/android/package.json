@@ -23,7 +23,11 @@
   },
   "scripts": {
     "start": "expo start",
+    "start:dev": "APP_VARIANT=development expo start",
     "android": "expo run:android",
+    "android:dev": "APP_VARIANT=development npx expo prebuild -p android --clean --no-install && APP_VARIANT=development ./run-android.sh",
+    "android:dev:install": "APP_VARIANT=development npx expo prebuild -p android --clean --no-install && APP_VARIANT=development ./run-android.sh --no-bundler",
+    "android:prod": "APP_VARIANT=production npx expo prebuild -p android --clean --no-install && APP_VARIANT=production ./run-android.sh --variant release --no-bundler",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",

@@ -68,7 +68,22 @@ The Settings sheet stores the DecafClaw connection in `AsyncStorage`. The app sh
 
 Saving either value reconnects the socket and starts a fresh conversation on the new server. Hosts are normalized to `http://`/`https://` and trailing slashes are stripped.
 
-Android cleartext HTTP is enabled through `expo-build-properties` in `app.json` so the default plain-`http` host also works in release builds. Use `https://` when the server is reachable outside a trusted network.
+Android cleartext HTTP is enabled through `expo-build-properties` in `app.json` (shared by both variants via `app.config.js`) so the default plain-`http` host also works in release builds. Use `https://` when the server is reachable outside a trusted network.
+
+---
+
+## Two Installations
+
+The app builds as two side-by-side applications, with separate data and tokens:
+
+| Variant | Package | Build | Metro | Use |
+| --- | --- | --- | --- | --- |
+| Production | `com.lmorchard.decafclawvoice` | `npm run android:prod` | no | Daily driver |
+| Development | `com.lmorchard.decafclawvoice.dev` | `npm run android:dev` (or `android:dev:install` + `start:dev`) | yes | Fast Refresh / debugging |
+
+Both are signed with the local debug keystore. That's fine for self-install; if you later move production to a real release key, uninstall it first (signature changes) and re-enter settings.
+
+Variant switching regenerates the ignored `android/` folder with `expo prebuild --clean`; already-installed APKs are unaffected. `app.config.js` selects the name/package from `APP_VARIANT`.
 
 ---
 
@@ -77,7 +92,8 @@ Android cleartext HTTP is enabled through `expo-build-properties` in `app.json` 
 ```
 contrib/android/
 ├── App.tsx                     # Coordinator: transcript, settings, batching, speech tracking
-├── app.json                    # Expo config, permissions, build plugins
+├── app.json                    # Base Expo config, permissions, build plugins
+├── app.config.js               # Per-variant name/package (production vs development)
 ├── run-android.sh              # Local build launcher with Java 17 & Android SDK env
 ├── eslint.config.js            # Expo flat ESLint config
 ├── vitest.config.mts           # Unit test config
@@ -117,14 +133,18 @@ npx tsc --noEmit
 npm run lint
 npm test
 
-# Start the Metro bundler (live fast-refresh over Wi-Fi)
-npx expo start
+# Install the production release (bundled JS, no Metro)
+npm run android:prod
 
-# Regenerate the ignored native folder after changing app.json plugins
+# Install the development debug app (launches Metro; Ctrl-C stops the bundler)
+npm run android:dev
+
+# Or install dev without starting Metro, then run the bundler separately
+npm run android:dev:install
+npm run start:dev
+
+# Regenerate the ignored native folder after changing config plugins
 npx expo prebuild --platform android --clean --no-install
-
-# Recompile and install the debug APK onto Pixel over wireless adb
-./run-android.sh
 
 # Restart app remotely over adb
 export PATH=$HOME/Library/Android/sdk/platform-tools:$PATH

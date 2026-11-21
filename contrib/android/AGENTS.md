@@ -14,7 +14,8 @@ This document guides autonomous coding agents (Claude Code, OpenCode, Aider, etc
 ### Build Toolchain Invariants
 * **Java**: System default Java on `mordecai` is JDK 27, but **Gradle 9.4 requires JDK 17**. Homebrew's `openjdk@17` is installed at `/opt/homebrew/opt/openjdk@17`.
 * **Android SDK**: Located at `$HOME/Library/Android/sdk` (`platform-tools`, `platforms;android-35`, `build-tools;35.0.0`).
-* **Build Launcher**: **ALWAYS use `./run-android.sh`** to compile native builds. It automatically exports `JAVA_HOME`, `ANDROID_HOME`, and sets up the correct PATH before calling `npx expo run:android`. Never run bare `gradlew` or `npx expo run:android` without these environment variables.
+* **Build Launcher**: **ALWAYS use `./run-android.sh`** (directly or through the npm scripts) to compile native builds. It automatically exports `JAVA_HOME`, `ANDROID_HOME`, and sets up the correct PATH before calling `npx expo run:android`. Never run bare `gradlew` or `npx expo run:android` without these environment variables.
+* **Two variants**: `app.config.js` switches on `APP_VARIANT`. `development` is `com.lmorchard.decafclawvoice.dev` (debug + Metro); anything else is `com.lmorchard.decafclawvoice` (production release). Use `npm run android:dev` / `npm run android:dev:install` + `npm run start:dev`, and `npm run android:prod`. Variant switches run `expo prebuild --clean`, regenerating the ignored `android/` folder; installed APKs stay put. Both currently use the debug keystore (self-install only).
 
 ---
 
@@ -48,6 +49,7 @@ This document guides autonomous coding agents (Claude Code, OpenCode, Aider, etc
 Keep modules small and single-purpose. Do not dump features into `App.tsx`:
 
 * **`App.tsx`**: Top-level coordinator. Wires hooks (`useDecafClawWebSocket`, `useVoiceRecognition`), manages `messages[]` transcript, maintains `settingsRef`, loads/saves preferences (host, token, voice, pitch, rate, TTS, stars, barge-in, lobby) via `AsyncStorage`, batches streamed text, tracks TTS utterances, handles server barge-in (cancel + suppress TTS until the next turn), clears state on conversation switches, and floats the Home/Web buttons above the footer once `convId` exists.
+* **`app.config.js`**: Reads `app.json` and selects the app name/package for `APP_VARIANT` (`development` → `.dev`).
 * **`src/types.ts`**: TypeScript definitions (`ChatMessage`, `VoiceItem`).
 * **`src/config.ts`**: Default host (`DEFAULT_HOST`); `DEFAULT_TOKEN` must stay empty. The session token is entered in Settings and stored in `AsyncStorage` (`@decafclaw_host`, `@decafclaw_token`, `@decafclaw_conv_id`, `@decafclaw_conv_title`, `@decafclaw_lobby_conv_id`, `@decafclaw_barge_in`).
 * **`src/utils/speech.ts`**: `cleanMarkdownForSpeech()` prose normalizer and `formatVoiceLabel()` Google model formatter.
@@ -83,7 +85,7 @@ Before completing any task, execute these verification gates:
    ```
    All three must exit 0. The utility tests cover markdown normalization, voice labels, and host normalization.
 2. **Native Config Changes**:
-   `app.json` uses config plugins (`expo-build-properties` enables Android cleartext so the default `http://` host works in release builds). After changing plugins, regenerate the ignored native folder:
+   `app.json`/`app.config.js` use config plugins (`expo-build-properties` enables Android cleartext so the default `http://` host works in release builds). After changing plugins or variants, regenerate the ignored native folder:
    ```bash
    npx expo prebuild --platform android --clean --no-install
    ```
@@ -98,6 +100,7 @@ Before completing any task, execute these verification gates:
    ```bash
    adb shell am force-stop com.lmorchard.decafclawvoice
    adb shell am start -n com.lmorchard.decafclawvoice/.MainActivity
+   # Development build: com.lmorchard.decafclawvoice.dev
    sleep 2
    adb logcat -d -t 150 | grep -iE 'ReactNativeJS|FATAL|UnsatisfiedLinkError|com.lmorchard.decafclawvoice'
    ```
