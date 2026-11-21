@@ -117,8 +117,9 @@ describe('chat-view scroll following on resize (#1090)', () => {
     expect(el._showScrollBtn).toBe(true);
   });
 
-  it('displays streaming thinking block with active spinner during streaming thought deltas (#154)', async () => {
+  it('mounts streaming thinking as its own transcript widget (#1627)', async () => {
     const store = createFakeStore({
+      currentMessages: [],
       isBusy: true,
       streamingText: '',
       streamingThinking: 'Reasoning through the problem...',
@@ -129,23 +130,49 @@ describe('chat-view scroll following on resize (#1090)', () => {
     await el.updateComplete;
     await el.updateComplete;
     const messages = /** @type {any[]} */ ([...el.querySelectorAll('chat-message')]);
-    const streamingMsg = messages.find((m) => m.streaming);
-    expect(streamingMsg).toBeTruthy();
-    expect(streamingMsg.thinking).toBe('Reasoning through the problem...');
-    await streamingMsg.updateComplete;
-    const assistant = streamingMsg.querySelector('assistant-message');
-    expect(assistant).toBeTruthy();
-    await assistant.updateComplete;
-    expect(assistant.querySelector('.thought-block')).toBeTruthy();
-    expect(assistant.querySelector('.thought-spinner')).toBeTruthy();
+    expect(messages).toHaveLength(1);
+    const thinkingMsg = messages[0];
+    expect(thinkingMsg.role).toBe('thinking');
+    expect(thinkingMsg.content).toBe('Reasoning through the problem...');
+    expect(thinkingMsg.streaming).toBe(true);
+    await thinkingMsg.updateComplete;
+    const thinking = thinkingMsg.querySelector('thinking-message');
+    expect(thinking).toBeTruthy();
+    await thinking.updateComplete;
+    expect(thinking.querySelector('.thought-block')).toBeTruthy();
+    expect(thinking.querySelector('.thought-spinner')).toBeTruthy();
     expect(el.querySelector('.thinking-indicator')).toBeNull();
   });
 
-  it('does not filter out completed assistant message with thinking even if content is empty (#154 finding 1)', async () => {
+  it('streams thinking and answer as separate widgets (#1627)', async () => {
+    const store = createFakeStore({
+      currentMessages: [],
+      isBusy: true,
+      streamingText: 'The answer is 42.',
+      streamingThinking: 'Reasoning through the problem...',
+    });
+    const el = /** @type {any} */ (document.createElement('chat-view'));
+    document.body.appendChild(el);
+    el.store = store;
+    await el.updateComplete;
+    await el.updateComplete;
+
+    const messages = /** @type {any[]} */ ([...el.querySelectorAll('chat-message')]);
+    expect(messages.map((m) => m.role)).toEqual(['thinking', 'assistant']);
+    expect(messages[0].content).toBe('Reasoning through the problem...');
+    expect(messages[1].content).toBe('The answer is 42.');
+    await messages[1].updateComplete;
+    const assistant = messages[1].querySelector('assistant-message');
+    await assistant.updateComplete;
+    expect(assistant.querySelector('.thought-block')).toBeNull();
+  });
+
+  it('renders archived thinking as a standalone widget (#1627)', async () => {
     const store = createFakeStore({
       currentMessages: [
         { role: 'user', content: 'hello' },
-        { role: 'assistant', content: '', thinking: 'Internal thought with no content' },
+        { role: 'thinking', content: 'Internal thought with no content', timestamp: 't1' },
+        { role: 'assistant', content: '', timestamp: 't1' },
       ],
     });
     const el = /** @type {any} */ (document.createElement('chat-view'));
@@ -156,15 +183,14 @@ describe('chat-view scroll following on resize (#1090)', () => {
 
     const messages = /** @type {any[]} */ ([...el.querySelectorAll('chat-message')]);
     expect(messages).toHaveLength(2);
-    const assistantMsg = messages[1];
-    expect(assistantMsg.role).toBe('assistant');
-    expect(assistantMsg.thinking).toBe('Internal thought with no content');
+    expect(messages[1].role).toBe('thinking');
+    expect(messages[1].content).toBe('Internal thought with no content');
 
-    await assistantMsg.updateComplete;
-    const assistant = assistantMsg.querySelector('assistant-message');
-    expect(assistant).toBeTruthy();
-    await assistant.updateComplete;
-    expect(assistant.querySelector('.thought-block')).toBeTruthy();
+    await messages[1].updateComplete;
+    const thinking = messages[1].querySelector('thinking-message');
+    expect(thinking).toBeTruthy();
+    await thinking.updateComplete;
+    expect(thinking.querySelector('.thought-block')).toBeTruthy();
   });
 });
 

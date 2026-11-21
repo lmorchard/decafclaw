@@ -48,6 +48,17 @@ switching away shows everything streamed before the switch. `turn_complete`
 and the final `message_complete` clear the buffers, so a finished turn leaves
 no stale streaming block (#1439).
 
+**Thinking transcript rows (#1627).** Reasoning renders as its own
+`thinking` transcript row with a collapsible "Thought process" block, separate
+from the assistant reply. Streaming mounts the same two elements: the thought
+block (open while thinking arrives) and the answer bubble. On history reload
+the client splits an archived assistant row's `thinking` into a standalone row
+before merging tool calls into tool rows, so a thinking-only iteration that
+ends in tool calls survives switching away and back. Context capsules ride the
+thinking row when a turn has thinking, otherwise the assistant row. The wire
+format is unchanged: `message_complete.thinking` and archived
+`assistant.thinking` still carry the text.
+
 **Turn provenance capsules (#1563).** Passive context a turn ingests during
 `PRE_COMPOSE` — recalled memory facts, recent journal entries, proactive vault
 retrieval, and scratchpad notes — renders as a compact capsule row directly

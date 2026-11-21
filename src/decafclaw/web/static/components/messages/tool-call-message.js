@@ -12,8 +12,6 @@ export class ToolCallMessage extends LitElement {
     variant: { type: String },
     /** Summary text for live tool_call, or pre-call assistant text content */
     content: { type: String },
-    /** Thinking/reasoning text from assistant message */
-    thinking: { type: String },
     toolCalls: { type: Array, attribute: false },
     /** Array of {text, timestamp} status history entries */
     statusHistory: { type: Array, attribute: false },
@@ -26,7 +24,6 @@ export class ToolCallMessage extends LitElement {
     super();
     this.variant = 'tool_call';
     this.content = '';
-    this.thinking = '';
     this.toolCalls = null;
     /** @type {Array<{text: string, timestamp: string}>|null} */
     this.statusHistory = null;
@@ -68,23 +65,12 @@ export class ToolCallMessage extends LitElement {
     }
 
     // History: assistant message that contained tool calls
-    const hasThinking = Boolean(this.thinking && this.thinking.trim());
     const toolNames = (this.toolCalls || []).map(tc => tc.function?.name || 'tool').join(', ');
     return html`
-      ${(this.content || hasThinking) ? html`
+      ${this.content ? html`
         <div class="message assistant">
           <div class="role">assistant</div>
-          ${hasThinking ? html`
-            <details class="thought-block">
-              <summary>Thought process</summary>
-              <div class="thought-body">
-                ${unsafeHTML(renderMarkdown(this.thinking))}
-              </div>
-            </details>
-          ` : nothing}
-          ${this.content ? html`
-            <div class="content">${unsafeHTML(renderMarkdown(this.content))}</div>
-          ` : nothing}
+          <div class="content">${unsafeHTML(renderMarkdown(this.content))}</div>
         </div>
       ` : nothing}
       <div class="message tool">

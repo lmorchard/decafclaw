@@ -167,7 +167,10 @@ export class MessageStore {
             }
             return m;
           });
-          this.#currentMessages = [...this.#mergeToolMessages(newMsgs), ...this.#currentMessages];
+          /** @type {ChatMessage[]} */
+          const split = [];
+          for (const m of newMsgs) split.push(...this.#splitThinking(m));
+          this.#currentMessages = [...this.#mergeToolMessages(split), ...this.#currentMessages];
           this.#hasMore = msg.has_more;
         }
         return true;
@@ -193,14 +196,19 @@ export class MessageStore {
 
       case MESSAGE_TYPES.MESSAGE_COMPLETE:
         if (msg.conv_id === currentConvId) {
-          this.#currentMessages.push({
+          const thinking = msg.thinking || this.#streamingThinking || '';
+          /** @type {ChatMessage} */
+          const complete = {
             role: msg.role || 'assistant',
             content: msg.text,
-            thinking: msg.thinking || this.#streamingThinking || '',
             provenance: msg.provenance || { ...this.#streamingProvenance },
             timestamp: new Date().toISOString(),
             usage: msg.usage || null,
-          });
+          };
+          if (thinking) complete.thinking = thinking;
+          for (const row of this.#splitThinking(complete)) {
+            this.#currentMessages.push(row);
+          }
           this.#streamingText = '';
           this.#streamingThinking = '';
           this.#streamingProvenance = {};
@@ -305,6 +313,30 @@ export class MessageStore {
       default:
         return false;
     }
+  }
+
+  /**
+   * Render thinking as its own transcript row (#1627). The assistant row keeps
+   * its text, tool calls, and usage; the thought row takes provenance so the
+   * first element of a turn still shows the context capsules.
+   * @param {ChatMessage} msg
+   * @returns {ChatMessage[]}
+   */
+  #splitThinking(msg) {
+    if (msg.role !== 'assistant' || !(msg.thinking || '').trim()) return [msg];
+    /** @type {ChatMessage} */
+    const thought = {
+      role: 'thinking',
+      content: msg.thinking,
+      timestamp: msg.timestamp,
+    };
+    if (msg.provenance) thought.provenance = msg.provenance;
+    if (msg.recalled_facts) thought.recalled_facts = msg.recalled_facts;
+    const rest = { ...msg };
+    delete rest.thinking;
+    delete rest.provenance;
+    delete rest.recalled_facts;
+    return [thought, rest];
   }
 
   /**

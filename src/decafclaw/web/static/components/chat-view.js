@@ -183,6 +183,8 @@ export class ChatView extends LitElement {
       ` : nothing}
 
       ${this._messages.filter(m => {
+        // Thinking renders as its own transcript row (#1627).
+        if (m.role === 'thinking') return (m.content || '').trim().length > 0;
         // Suppress empty assistant bubbles — happens when the LLM returns
         // 0 output tokens with no tool calls (rare; Anthropic and Gemini
         // both occasionally do this on confusing input). The agent loop
@@ -191,13 +193,11 @@ export class ChatView extends LitElement {
         if (m.role !== 'assistant') return true;
         const hasContent = (m.content || '').trim().length > 0;
         const hasToolCalls = Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
-        const hasThinking = (m.thinking || '').trim().length > 0;
-        return hasContent || hasToolCalls || hasThinking;
+        return hasContent || hasToolCalls;
       }).map(m => html`
         <chat-message
           .role=${m.role}
           .content=${m.content || ''}
-          .thinking=${m.thinking || ''}
           .provenance=${this.#provenanceFor(m)}
           .tool=${m.tool || ''}
           .command=${m.command || ''}
@@ -219,19 +219,29 @@ export class ChatView extends LitElement {
       `)}
 
       ${(() => {
-        // Provenance alone is not content. Mounting the streaming assistant
-        // message before any text or thinking arrives leaves an empty bubble
-        // holding only a capsule row, so hold it back until streaming starts.
-        const hasStream = Boolean(this._streamingText || this._streamingThinking);
-        if (hasStream) {
+        // Thinking and answer stream as separate transcript widgets (#1627).
+        // Provenance rides the first element of the turn.
+        const streamingProvenance = this._showContextProvenance ? this._streamingProvenance : {};
+        const hasThinking = Boolean(this._streamingThinking);
+        const hasText = Boolean(this._streamingText);
+        if (hasThinking || hasText) {
           return html`
-            <chat-message
-              .role=${'assistant'}
-              .content=${this._streamingText || ''}
-              .thinking=${this._streamingThinking || ''}
-              .provenance=${this._showContextProvenance ? this._streamingProvenance : {}}
-              .streaming=${true}
-            ></chat-message>
+            ${hasThinking ? html`
+              <chat-message
+                .role=${'thinking'}
+                .content=${this._streamingThinking}
+                .provenance=${streamingProvenance}
+                .streaming=${!hasText}
+              ></chat-message>
+            ` : ''}
+            ${hasText ? html`
+              <chat-message
+                .role=${'assistant'}
+                .content=${this._streamingText}
+                .provenance=${hasThinking ? {} : streamingProvenance}
+                .streaming=${true}
+              ></chat-message>
+            ` : ''}
           `;
         }
         if (this._busy && !this._toolStatus) {
