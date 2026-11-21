@@ -1,4 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
+import { DefaultService } from '../lib/api-client/index.js';
 import { parentConvIdOf } from '../lib/conversation-store.js';
 import { getConvFromUrl } from '../lib/conversation-url.js';
 import { STATUS_LABELS, STATUS_TITLE_LABELS } from '../lib/constants.js';
@@ -356,13 +357,9 @@ export class ConversationSidebar extends LitElement {
 
   async #handleHome() {
     try {
-      const resp = await fetch('/api/conversations/home');
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.conv_id) {
-          this.store?.selectConversation(data.conv_id);
-          return;
-        }
+      const data = await DefaultService.getHomeConversationApiConversationsHomeGet();
+      if (data?.conv_id) {
+        this.store?.selectConversation(data.conv_id);
       }
     } catch (e) {
       console.warn('Failed to fetch home conversation', e);
