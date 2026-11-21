@@ -17,7 +17,7 @@ export function Header() {
     >
       <View style={styles.titleContainer}>
         <Text style={styles.title}>DecafClaw</Text>
-        <Text style={styles.subtitle}>Pocket Transceiver</Text>
+        <Text style={styles.subtitle}>Pocket Transceiver • v0.1</Text>
       </View>
     </View>
   );
