@@ -9,7 +9,6 @@ import '../turn-provenance-row.js';
 export class AssistantMessage extends LitElement {
   static properties = {
     content: { type: String },
-    thinking: { type: String },
     provenance: { type: Object, attribute: false },
     streaming: { type: Boolean },
     usage: { type: Object, attribute: false },
@@ -22,7 +21,6 @@ export class AssistantMessage extends LitElement {
     super();
     this.content = '';
     this.streaming = false;
-    this.thinking = '';
     /** @type {Record<string, object[]>} */
     this.provenance = {};
     /** @type {object|null} */
@@ -88,22 +86,10 @@ export class AssistantMessage extends LitElement {
   }
 
   render() {
-    const hasThinking = Boolean(this.thinking && this.thinking.trim());
     return html`
       <div class="message assistant">
         <div class="role">assistant</div>
         <turn-provenance-row .provenance=${this.provenance || {}}></turn-provenance-row>
-        ${hasThinking ? html`
-          <details class="thought-block" ?open=${this.streaming && !this.content}>
-            <summary>
-              Thought process
-              ${this.streaming && !this.content ? html`<span class="thought-spinner"></span>` : nothing}
-            </summary>
-            <div class="thought-body">
-              ${unsafeHTML(renderMarkdown(this.thinking))}
-            </div>
-          </details>
-        ` : nothing}
         <div class="content">
           ${unsafeHTML(renderMarkdown(this.content))}
           ${this.streaming ? html`<span class="streaming-indicator"></span>` : nothing}

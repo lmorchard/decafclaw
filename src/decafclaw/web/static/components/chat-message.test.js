@@ -120,19 +120,37 @@ describe('chat-message role rendering', () => {
     el.remove();
   });
 
-  it('forwards thinking to tool-call-message when assistant message has tool_calls', async () => {
+  it('renders thinking rows as their own transcript widget (#1627)', async () => {
+    const el = document.createElement('chat-message');
+    el.role = 'thinking';
+    el.content = 'Reasoning before tool';
+    el.provenance = { facts: [{ fact: 'User prefers espresso.' }] };
+    el.streaming = true;
+    document.body.append(el);
+    await el.updateComplete;
+
+    const thinking = el.querySelector('thinking-message');
+    expect(thinking).not.toBeNull();
+    expect(thinking?.content).toBe('Reasoning before tool');
+    expect(thinking?.provenance).toEqual({ facts: [{ fact: 'User prefers espresso.' }] });
+    expect(thinking?.streaming).toBe(true);
+    expect(el.querySelector('assistant-message')).toBeNull();
+    expect(el.querySelector('tool-call-message')).toBeNull();
+    el.remove();
+  });
+
+  it('renders assistant tool-call history without owning thinking (#1627)', async () => {
     const el = document.createElement('chat-message');
     el.role = 'assistant';
     el.content = 'Calling tool...';
-    el.thinking = 'Reasoning before tool';
     el.toolCalls = [{ function: { name: 'shell' } }];
     document.body.append(el);
     await el.updateComplete;
 
     const toolCallMsg = el.querySelector('tool-call-message');
     expect(toolCallMsg).not.toBeNull();
-    expect(toolCallMsg.thinking).toBe('Reasoning before tool');
-    expect(toolCallMsg.content).toBe('Calling tool...');
+    expect(toolCallMsg?.content).toBe('Calling tool...');
+    expect(toolCallMsg?.thinking).toBeUndefined();
     el.remove();
   });
 });

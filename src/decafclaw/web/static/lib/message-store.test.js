@@ -127,7 +127,7 @@ describe('MessageStore', () => {
             expect(store.currentMessages[0].content).toBe('part1 part2');
         });
 
-        it('handles CHUNK with thinking and records thinking on MESSAGE_COMPLETE', () => {
+        it('splits thinking from the assistant message on MESSAGE_COMPLETE (#1627)', () => {
             const store = new MessageStore(() => {});
             store.handleMessage({ type: MESSAGE_TYPES.CHUNK, conv_id: '1', thinking: 'think 1 ' }, '1');
             store.handleMessage({ type: MESSAGE_TYPES.CHUNK, conv_id: '1', thinking: 'think 2', text: 'answer' }, '1');
@@ -137,9 +137,59 @@ describe('MessageStore', () => {
             store.handleMessage({ type: MESSAGE_TYPES.MESSAGE_COMPLETE, conv_id: '1', role: 'assistant', text: 'answer' }, '1');
             expect(store.streamingThinking).toBe('');
             expect(store.streamingText).toBe('');
-            expect(store.currentMessages.length).toBe(1);
-            expect(store.currentMessages[0].content).toBe('answer');
-            expect(store.currentMessages[0].thinking).toBe('think 1 think 2');
+            expect(store.currentMessages.map(m => m.role)).toEqual(['thinking', 'assistant']);
+            expect(store.currentMessages[0].content).toBe('think 1 think 2');
+            expect(store.currentMessages[1].content).toBe('answer');
+            expect(store.currentMessages[1]).not.toHaveProperty('thinking');
+        });
+
+        it('keeps a thinking-only tool-call segment on reload (#1627)', () => {
+            const store = new MessageStore(() => {});
+            store.handleMessage({
+                type: MESSAGE_TYPES.CONV_HISTORY,
+                conv_id: '1',
+                has_more: false,
+                messages: [
+                    {
+                        role: 'assistant',
+                        content: '',
+                        thinking: 'Need to inspect the directory first.',
+                        tool_calls: [{ id: 'tc1', function: { name: 'workspace_list' } }],
+                        timestamp: 't1',
+                    },
+                    { role: 'tool', tool_call_id: 'tc1', content: 'a.txt', timestamp: 't2' },
+                ],
+            }, '1');
+
+            expect(store.currentMessages.map(m => m.role)).toEqual(['thinking', 'tool']);
+            expect(store.currentMessages[0].content).toBe('Need to inspect the directory first.');
+            expect(store.currentMessages[0].timestamp).toBe('t1');
+            expect(store.currentMessages[1].tool).toBe('workspace_list');
+            expect(store.currentMessages[1].content).toBe('a.txt');
+        });
+
+        it('splits thinking out of a plain assistant history row (#1627)', () => {
+            const store = new MessageStore(() => {});
+            store.handleMessage({
+                type: MESSAGE_TYPES.CONV_HISTORY,
+                conv_id: '1',
+                has_more: false,
+                messages: [
+                    {
+                        role: 'assistant',
+                        content: 'Here is the answer.',
+                        thinking: 'Consider the options.',
+                        provenance: { facts: [{ fact: 'User prefers espresso.' }] },
+                        timestamp: 't1',
+                    },
+                ],
+            }, '1');
+
+            expect(store.currentMessages.map(m => m.role)).toEqual(['thinking', 'assistant']);
+            expect(store.currentMessages[0].content).toBe('Consider the options.');
+            expect(store.currentMessages[0].provenance).toEqual({ facts: [{ fact: 'User prefers espresso.' }] });
+            expect(store.currentMessages[1].content).toBe('Here is the answer.');
+            expect(store.currentMessages[1].provenance).toBeUndefined();
         });
 
         it('handles USER_MESSAGE and dedups', () => {

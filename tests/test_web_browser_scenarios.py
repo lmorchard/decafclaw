@@ -1979,6 +1979,58 @@ def test_browser_shell_command_and_result(built_static, chromium, config):
         assert page.locator("#shell-test-view hello").count() == 0
 
 
+def test_browser_thinking_survives_history_reload(built_static, chromium, config):
+    """A thinking-only tool-call iteration keeps its thought row after reload (#1627)."""
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        page.evaluate("""async () => {
+            const { MessageStore } = await import('/static/lib/message-store.js');
+            const { MESSAGE_TYPES } = await import('/static/lib/message-types.js');
+            await import('/static/components/chat-view.js');
+            window.__thinkingStore = new MessageStore(() => {});
+            window.__mountThinkingView = async () => {
+                document.querySelector('#thinking-test-view')?.remove();
+                const view = document.createElement('chat-view');
+                view.id = 'thinking-test-view';
+                view._convId = '1';
+                view._messages = window.__thinkingStore.currentMessages;
+                document.body.append(view);
+                await view.updateComplete;
+            };
+            window.__loadThinkingHistory = () => {
+                window.__thinkingStore.handleMessage({ type: MESSAGE_TYPES.CONV_HISTORY, conv_id: '1', messages: [
+                    { role: 'user', content: 'List the files.' },
+                    { role: 'assistant', content: '', thinking: 'I should inspect the directory first.', tool_calls: [
+                        { id: 'tc1', function: { name: 'workspace_list', arguments: '{}' } },
+                    ], timestamp: 't1' },
+                    { role: 'tool', tool_call_id: 'tc1', content: 'a.txt', timestamp: 't2' },
+                    { role: 'assistant', content: 'One file: a.txt.', timestamp: 't3' },
+                ] }, '1');
+            };
+            window.__loadThinkingHistory();
+            await window.__mountThinkingView();
+        }""")
+        view = page.locator("#thinking-test-view")
+        view.locator("thinking-message .thought-block summary").wait_for()
+        assert "I should inspect the directory first." in (
+            view.locator("thinking-message .thought-body").text_content() or ""
+        )
+
+        # Simulate switching away and back: clear the store, reload history, remount.
+        page.evaluate("""async () => {
+            window.__thinkingStore.clear();
+            window.__loadThinkingHistory();
+            await window.__mountThinkingView();
+        }""")
+        view = page.locator("#thinking-test-view")
+        view.locator("thinking-message .thought-block summary").wait_for()
+        assert view.locator("thinking-message").count() == 1
+        assert "I should inspect the directory first." in (
+            view.locator("thinking-message .thought-body").text_content() or ""
+        )
+        assert view.locator("assistant-message").count() == 1
+
+
 def test_browser_streaming_provenance_waits_for_content(built_static, chromium, config):
     """Capsules ride the assistant message once it streams, not an empty bubble (#1539 follow-up)."""
     with browser_scenario(built_static, chromium, config) as scenario:

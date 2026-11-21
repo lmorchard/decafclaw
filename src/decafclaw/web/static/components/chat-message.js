@@ -3,12 +3,12 @@ import './messages/user-message.js';
 import './messages/assistant-message.js';
 import './messages/tool-message.js';
 import './messages/tool-call-message.js';
+import './messages/thinking-message.js';
 
 export class ChatMessage extends LitElement {
   static properties = {
     role: { type: String },
     content: { type: String },
-    thinking: { type: String },
     provenance: { type: Object, attribute: false },
     streaming: { type: Boolean },
     tool: { type: String },
@@ -35,7 +35,6 @@ export class ChatMessage extends LitElement {
     super();
     this.role = 'user';
     this.content = '';
-    this.thinking = '';
     /** @type {Record<string, object[]>} */
     this.provenance = {};
     this.streaming = false;
@@ -183,11 +182,18 @@ export class ChatMessage extends LitElement {
       return html`<tool-message .tool=${this.tool} .command=${this.command} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response} .isError=${this.isError} .timedOut=${this.timedOut} .timeoutSec=${this.timeoutSec}></tool-message>`;
     }
 
+    if (this.role === 'thinking') {
+      return html`<thinking-message
+        .content=${this.content}
+        .provenance=${this.provenance}
+        .streaming=${this.streaming}
+      ></thinking-message>`;
+    }
+
     if (this.role === 'assistant' && this.toolCalls?.length) {
       return html`<tool-call-message
         variant="tool_calls_history"
         .content=${this.content || ''}
-        .thinking=${this.thinking || ''}
         .toolCalls=${this.toolCalls}
       ></tool-call-message>`;
     }
@@ -196,7 +202,6 @@ export class ChatMessage extends LitElement {
       return html`<div class="message-row assistant-row">
         <assistant-message
           .content=${this.content}
-          .thinking=${this.thinking}
           .provenance=${this.provenance}
           .streaming=${this.streaming}
           .usage=${this.usage}
