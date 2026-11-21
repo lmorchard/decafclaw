@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface UseWebSocketOptions {
   host: string;
   token: string;
+  customLobbyConvId?: string;
   onChunk: (text: string) => void;
   onTurnComplete: () => void;
   onError: (message: string) => void;
   onHistoryRecovered: (text: string) => void;
+  onConversationSwitched?: (convId: string, title: string) => void;
 }
 
 interface ServerMessage {
@@ -16,6 +19,9 @@ interface ServerMessage {
   tool?: string;
   message?: string;
   conv_id?: string;
+  target_conv_id?: string;
+  title?: string;
+  reason?: string;
   messages?: unknown[];
 }
 
@@ -29,6 +35,7 @@ const RECONNECT_MAX_MS = 10_000;
 const TURN_TIMEOUT_MS = 45_000;
 const HISTORY_LIMIT = 8;
 const AUTH_FAILURE_CLOSE_CODE = 4001;
+const STORAGE_KEY_CONV_ID = '@decafclaw_conv_id';
 
 interface RNWebSocketOptions {
   headers: Record<string, string>;
@@ -72,7 +79,7 @@ function lastAssistantText(messages: unknown[]): string {
 }
 
 export function useDecafClawWebSocket(options: UseWebSocketOptions) {
-  const { host, token } = options;
+  const { host, token, customLobbyConvId } = options;
 
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState('Connecting...');
@@ -246,6 +253,22 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
         }
         case 'conv_selected':
           return;
+        case 'switch_conversation': {
+          const targetConvId =
+            typeof event.target_conv_id === 'string' ? event.target_conv_id : '';
+          const title = typeof event.title === 'string' ? event.title : '';
+          if (targetConvId) {
+            convIdRef.current = targetConvId;
+            setConversationId(targetConvId);
+            AsyncStorage.setItem(STORAGE_KEY_CONV_ID, targetConvId).catch(() => {});
+            if (wsRef.current) {
+              sendRaw(wsRef.current, { type: 'select_conv', conv_id: targetConvId });
+            }
+            setStatus(`Switched: ${title || targetConvId}`);
+            callbacks.onConversationSwitched?.(targetConvId, title);
+          }
+          return;
+        }
         default:
           return;
       }
@@ -420,6 +443,21 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     return () => subscription.remove();
   }, [connect]);
 
+  useEffect(() => {
+    AsyncStorage.getItem(STORAGE_KEY_CONV_ID)
+      .then((saved) => {
+        if (saved && saved.trim() && !convIdRef.current) {
+          const trimmed = saved.trim();
+          convIdRef.current = trimmed;
+          setConversationId(trimmed);
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            sendRaw(wsRef.current, { type: 'select_conv', conv_id: trimmed });
+          }
+        }
+      })
+      .catch(() => {});
+  }, [sendRaw]);
+
   const manualReconnect = useCallback(() => {
     authFailedRef.current = false;
     retryCountRef.current = 0;
@@ -432,6 +470,51 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     }
     if (!convPromiseRef.current) {
       convPromiseRef.current = (async () => {
+        // 1. Try restoring from AsyncStorage
+        try {
+          const saved = await AsyncStorage.getItem(STORAGE_KEY_CONV_ID);
+          if (saved && saved.trim()) {
+            const trimmed = saved.trim();
+            convIdRef.current = trimmed;
+            setConversationId(trimmed);
+            return trimmed;
+          }
+        } catch {
+          // Fall through
+        }
+
+        // 2. Custom lobby if configured
+        if (customLobbyConvId && customLobbyConvId.trim()) {
+          const custom = customLobbyConvId.trim();
+          convIdRef.current = custom;
+          setConversationId(custom);
+          await AsyncStorage.setItem(STORAGE_KEY_CONV_ID, custom).catch(() => {});
+          return custom;
+        }
+
+        // 3. Resolve Home Lobby from server
+        try {
+          const homeResp = await fetch(`${host}/api/conversations/home`, {
+            headers: {
+              Cookie: `decafclaw_session=${token}`,
+            },
+          });
+          if (homeResp.ok) {
+            const homeData = (await homeResp.json()) as { conv_id?: unknown };
+            if (typeof homeData.conv_id === 'string' && homeData.conv_id) {
+              const homeId = homeData.conv_id;
+              convIdRef.current = homeId;
+              setConversationId(homeId);
+              await AsyncStorage.setItem(STORAGE_KEY_CONV_ID, homeId).catch(() => {});
+              announceVoiceRef.current = true;
+              return homeId;
+            }
+          }
+        } catch {
+          // Fall through to session creation
+        }
+
+        // 4. Fallback: create fresh session
         const resp = await fetch(`${host}/api/conversations`, {
           method: 'POST',
           headers: {
@@ -449,6 +532,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
         }
         convIdRef.current = data.conv_id;
         setConversationId(data.conv_id);
+        await AsyncStorage.setItem(STORAGE_KEY_CONV_ID, data.conv_id).catch(() => {});
         announceVoiceRef.current = true;
         return data.conv_id;
       })().finally(() => {
@@ -456,7 +540,48 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
       });
     }
     return convPromiseRef.current;
-  }, [host, token]);
+  }, [customLobbyConvId, host, token]);
+
+  const cancelTurn = useCallback(() => {
+    const convId = convIdRef.current;
+    const ws = wsRef.current;
+    if (ws && convId && turnsInFlightRef.current > 0) {
+      sendRaw(ws, { type: 'cancel_turn', conv_id: convId });
+      turnsInFlightRef.current = 0;
+      clearTimeoutRef(watchdogRef);
+      setStatus('Cancelled');
+    }
+  }, [sendRaw]);
+
+  const returnToHome = useCallback(async () => {
+    let targetId = customLobbyConvId?.trim();
+    if (!targetId) {
+      try {
+        const resp = await fetch(`${host}/api/conversations/home`, {
+          headers: { Cookie: `decafclaw_session=${token}` },
+        });
+        if (resp.ok) {
+          const data = (await resp.json()) as { conv_id?: unknown };
+          if (typeof data.conv_id === 'string' && data.conv_id) {
+            targetId = data.conv_id;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch home conversation:', err);
+      }
+    }
+    if (targetId) {
+      convIdRef.current = targetId;
+      setConversationId(targetId);
+      await AsyncStorage.setItem(STORAGE_KEY_CONV_ID, targetId).catch(() => {});
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        sendRaw(ws, { type: 'select_conv', conv_id: targetId });
+      }
+      setStatus('Lobby');
+      callbacksRef.current.onConversationSwitched?.(targetId, 'Lobby');
+    }
+  }, [customLobbyConvId, host, sendRaw, token]);
 
   const sendTurn = useCallback(
     async (text: string) => {
@@ -501,5 +626,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     convId: conversationId,
     manualReconnect,
     sendTurn,
+    cancelTurn,
+    returnToHome,
   };
 }

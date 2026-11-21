@@ -243,6 +243,18 @@ export class DefaultService {
         });
     }
     /**
+     * Get Home Conversation
+     * GET /api/conversations/home — get or lazily create the user's Home/Lobby conversation.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static getHomeConversationApiConversationsHomeGet(): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/conversations/home',
+        });
+    }
+    /**
      * List Archived Conversations
      * List archived conversations, optionally filtered by folder.
      * @param folder

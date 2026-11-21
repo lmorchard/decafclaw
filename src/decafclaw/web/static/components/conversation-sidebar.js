@@ -354,6 +354,21 @@ export class ConversationSidebar extends LitElement {
     if (convId) localStorage.setItem(`${COLLAPSE_STORAGE_PREFIX}${convId}`, String(this._collapsed));
   }
 
+  async #handleHome() {
+    try {
+      const resp = await fetch('/api/conversations/home');
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.conv_id) {
+          this.store?.selectConversation(data.conv_id);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to fetch home conversation', e);
+    }
+  }
+
   #handleNew() {
     // Create in current folder (only in active section)
     const folder = this._chatSection === '' ? this._chatFolder : '';
@@ -1127,6 +1142,7 @@ export class ConversationSidebar extends LitElement {
       </div>
       ${this._sidebarTab === 'conversations' && this._chatSection === '' ? html`
         <div class="vault-action-btns">
+          <button class="home-lobby-btn outline" @click=${() => this.#handleHome()} title="Home Lobby" aria-label="Home Lobby">⌂ Lobby</button>
           <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)" aria-label="New chat">+ Chat</button>
           <button class="wiki-new-folder-btn outline" @click=${() => this.#createChatFolder()} aria-label="New chat folder">+ Folder</button>
         </div>

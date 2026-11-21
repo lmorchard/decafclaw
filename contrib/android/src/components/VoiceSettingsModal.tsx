@@ -17,14 +17,18 @@ interface VoiceSettingsModalProps {
   visible: boolean;
   host: string;
   token: string;
+  lobbyConvId: string;
   ttsEnabled: boolean;
+  bargeInEnabled: boolean;
   voices: VoiceItem[];
   selectedVoice: string;
   pitch: number;
   rate: number;
   starredVoices: string[];
   onSaveConnection: (host: string, token: string) => void;
+  onSaveLobby: (val: string) => void;
   onToggleTts: () => void;
+  onToggleBargeIn: () => void;
   onSelectVoice: (id: string) => void;
   onPreviewVoice: (id: string) => void;
   onToggleStarVoice: (id: string) => void;
@@ -37,14 +41,18 @@ export function VoiceSettingsModal({
   visible,
   host,
   token,
+  lobbyConvId,
   ttsEnabled,
+  bargeInEnabled,
   voices,
   selectedVoice,
   pitch,
   rate,
   starredVoices,
   onSaveConnection,
+  onSaveLobby,
   onToggleTts,
+  onToggleBargeIn,
   onSelectVoice,
   onPreviewVoice,
   onToggleStarVoice,
@@ -56,6 +64,7 @@ export function VoiceSettingsModal({
 
   const [draftHost, setDraftHost] = useState(host);
   const [draftToken, setDraftToken] = useState(token);
+  const [draftLobby, setDraftLobby] = useState(lobbyConvId);
   const [showToken, setShowToken] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -75,6 +84,7 @@ export function VoiceSettingsModal({
     }
     setFormError('');
     onSaveConnection(normalized, draftToken.trim());
+    onSaveLobby(draftLobby.trim());
   };
 
   const renderVoiceItem = (v: VoiceItem) => {
@@ -209,6 +219,20 @@ export function VoiceSettingsModal({
                 </TouchableOpacity>
               </View>
 
+              <Text style={styles.inputLabel}>Lobby / Default Session</Text>
+              <TextInput
+                style={styles.textInput}
+                value={draftLobby}
+                onChangeText={setDraftLobby}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder="web-username-home (auto)"
+                placeholderTextColor="#71717a"
+              />
+              <Text style={styles.inputHint}>
+                Target conversation when launching or returning Home. Leave blank for per-user default.
+              </Text>
+
               {formError ? <Text style={styles.formError}>{formError}</Text> : null}
 
               <TouchableOpacity
@@ -234,6 +258,30 @@ export function VoiceSettingsModal({
                 >
                   <Text style={styles.ttsPillText}>
                     {ttsEnabled ? '🔊 Active' : '🔇 Muted'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* 2. Server Barge-In Toggle Card */}
+            <View style={styles.cardSection}>
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={styles.toggleTitle}>Server Barge-In</Text>
+                  <Text style={styles.toggleSubtitle}>
+                    Cancel in-flight agent turn and tools when interrupting
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={onToggleBargeIn}
+                  style={[
+                    styles.ttsTogglePill,
+                    bargeInEnabled ? styles.bargeInActive : styles.ttsPillMuted,
+                  ]}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.ttsPillText}>
+                    {bargeInEnabled ? '⚡ Cancel Turn' : '🔇 Mute Only'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -391,6 +439,11 @@ const styles = StyleSheet.create({
     marginTop: 14,
     marginBottom: 6,
   },
+  inputHint: {
+    color: '#71717a',
+    fontSize: 11,
+    marginTop: 4,
+  },
   textInput: {
     backgroundColor: '#18181b',
     color: '#f4f4f5',
@@ -453,6 +506,10 @@ const styles = StyleSheet.create({
   ttsPillMuted: {
     backgroundColor: '#3f3f46',
     borderColor: '#71717a',
+  },
+  bargeInActive: {
+    backgroundColor: '#431407',
+    borderColor: '#f97316',
   },
   ttsPillText: {
     color: '#f4f4f5',

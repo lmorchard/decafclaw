@@ -32,6 +32,8 @@ const STORAGE_KEYS = {
   RATE: '@decafclaw_voice_rate',
   TTS_ENABLED: '@decafclaw_voice_tts_enabled',
   STARRED: '@decafclaw_starred_voices',
+  BARGE_IN: '@decafclaw_barge_in',
+  LOBBY_CONV_ID: '@decafclaw_lobby_conv_id',
 };
 
 const CHUNK_FLUSH_MS = 50;
@@ -49,6 +51,8 @@ function TransceiverScreen() {
 
   // TTS Output & Settings State
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [bargeInEnabled, setBargeInEnabled] = useState(true);
+  const [lobbyConvId, setLobbyConvId] = useState('');
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [voices, setVoices] = useState<VoiceItem[]>([]);
   const [selectedVoice, setSelectedVoice] = useState<string>('en-us-x-sfg-local');
@@ -100,16 +104,27 @@ function TransceiverScreen() {
   useEffect(() => {
     async function loadPreferencesAndVoices() {
       try {
-        const [savedHost, savedToken, savedVoice, savedPitch, savedRate, savedTts, savedStarred] =
-          await Promise.all([
-            AsyncStorage.getItem(STORAGE_KEYS.HOST),
-            AsyncStorage.getItem(STORAGE_KEYS.TOKEN),
-            AsyncStorage.getItem(STORAGE_KEYS.VOICE),
-            AsyncStorage.getItem(STORAGE_KEYS.PITCH),
-            AsyncStorage.getItem(STORAGE_KEYS.RATE),
-            AsyncStorage.getItem(STORAGE_KEYS.TTS_ENABLED),
-            AsyncStorage.getItem(STORAGE_KEYS.STARRED),
-          ]);
+        const [
+          savedHost,
+          savedToken,
+          savedVoice,
+          savedPitch,
+          savedRate,
+          savedTts,
+          savedStarred,
+          savedBargeIn,
+          savedLobby,
+        ] = await Promise.all([
+          AsyncStorage.getItem(STORAGE_KEYS.HOST),
+          AsyncStorage.getItem(STORAGE_KEYS.TOKEN),
+          AsyncStorage.getItem(STORAGE_KEYS.VOICE),
+          AsyncStorage.getItem(STORAGE_KEYS.PITCH),
+          AsyncStorage.getItem(STORAGE_KEYS.RATE),
+          AsyncStorage.getItem(STORAGE_KEYS.TTS_ENABLED),
+          AsyncStorage.getItem(STORAGE_KEYS.STARRED),
+          AsyncStorage.getItem(STORAGE_KEYS.BARGE_IN),
+          AsyncStorage.getItem(STORAGE_KEYS.LOBBY_CONV_ID),
+        ]);
 
         const normalizedHost = savedHost ? normalizeHost(savedHost) : null;
         if (normalizedHost) setHost(normalizedHost);
@@ -120,6 +135,8 @@ function TransceiverScreen() {
         if (Number.isFinite(savedPitchNum)) setPitch(savedPitchNum);
         if (Number.isFinite(savedRateNum)) setRate(savedRateNum);
         if (savedTts !== null) setTtsEnabled(savedTts === 'true');
+        if (savedBargeIn !== null) setBargeInEnabled(savedBargeIn === 'true');
+        if (savedLobby && savedLobby.trim()) setLobbyConvId(savedLobby.trim());
         if (savedStarred) {
           try {
             const parsed: unknown = JSON.parse(savedStarred);
@@ -192,6 +209,19 @@ function TransceiverScreen() {
       AsyncStorage.setItem(STORAGE_KEYS.TTS_ENABLED, next.toString()).catch(() => {});
       return next;
     });
+  }, []);
+
+  const handleToggleBargeIn = useCallback(() => {
+    setBargeInEnabled((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem(STORAGE_KEYS.BARGE_IN, String(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const handleSaveLobby = useCallback((val: string) => {
+    setLobbyConvId(val);
+    AsyncStorage.setItem(STORAGE_KEYS.LOBBY_CONV_ID, val).catch(() => {});
   }, []);
 
   const handleToggleStarVoice = useCallback((id: string) => {
@@ -366,9 +396,18 @@ function TransceiverScreen() {
   );
 
   // Hook: WebSocket Gateway to DecafClaw
-  const { connected, status, convId, manualReconnect, sendTurn } = useDecafClawWebSocket({
+  const {
+    connected,
+    status,
+    convId,
+    manualReconnect,
+    sendTurn,
+    cancelTurn,
+    returnToHome,
+  } = useDecafClawWebSocket({
     host,
     token,
+    customLobbyConvId: lobbyConvId,
     onChunk: handleChunk,
     onTurnComplete: handleTurnComplete,
     onError: handleError,
@@ -436,11 +475,18 @@ function TransceiverScreen() {
     [nextId, requestScroll, sendTurn]
   );
 
+  const handleInterruption = useCallback(() => {
+    stopSpeaking();
+    if (bargeInEnabled) {
+      cancelTurn();
+    }
+  }, [bargeInEnabled, cancelTurn, stopSpeaking]);
+
   // Hook: On-Device Speech Recognition (Pixel Tensor TPU)
   const { recognizing, isStarting, longListening, transcript, toggleListening, startLongListening } =
     useVoiceRecognition({
       onFinalResult: handleFinalSpeechResult,
-      onInterrupted: stopSpeaking, // Barge-in interruption
+      onInterrupted: handleInterruption,
     });
 
   useEffect(() => {
@@ -469,16 +515,29 @@ function TransceiverScreen() {
         />
 
         {convId ? (
-          <TouchableOpacity
-            style={styles.webFab}
-            onPress={handleOpenWebUi}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Open conversation in web browser"
-            accessibilityHint="Opens this conversation in your browser"
-          >
-            <Text style={styles.webFabIcon}>↗</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              style={styles.homeFab}
+              onPress={returnToHome}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Return to home lobby"
+              accessibilityHint="Switches active session to the home lobby"
+            >
+              <Text style={styles.homeFabIcon}>⌂</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.webFab}
+              onPress={handleOpenWebUi}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Open conversation in web browser"
+              accessibilityHint="Opens this conversation in your browser"
+            >
+              <Text style={styles.webFabIcon}>↗</Text>
+            </TouchableOpacity>
+          </>
         ) : null}
       </View>
 
@@ -503,14 +562,18 @@ function TransceiverScreen() {
         visible={settingsVisible}
         host={host}
         token={token}
+        lobbyConvId={lobbyConvId}
         ttsEnabled={ttsEnabled}
+        bargeInEnabled={bargeInEnabled}
         voices={voices}
         selectedVoice={selectedVoice}
         pitch={pitch}
         rate={rate}
         starredVoices={starredVoices}
         onSaveConnection={handleSaveConnection}
+        onSaveLobby={handleSaveLobby}
         onToggleTts={handleToggleTts}
+        onToggleBargeIn={handleToggleBargeIn}
         onSelectVoice={handleSelectVoice}
         onPreviewVoice={previewVoice}
         onToggleStarVoice={handleToggleStarVoice}
@@ -537,6 +600,30 @@ const styles = StyleSheet.create({
   },
   transcriptArea: {
     flex: 1,
+  },
+  homeFab: {
+    position: 'absolute',
+    left: 20,
+    bottom: 14,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#27272a',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+  },
+  homeFabIcon: {
+    color: '#38bdf8',
+    fontSize: 26,
+    fontWeight: '700',
+    lineHeight: 28,
   },
   webFab: {
     position: 'absolute',
