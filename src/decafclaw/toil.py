@@ -429,7 +429,8 @@ def classify_sequence(calls: Sequence[ToolCall]) -> str | None:
 @dataclass
 class _Bucket:
     sequence: tuple[str, ...]
-    occurrences: dict[str, tuple[ToolCall, ...]]
+    kinds: dict[str, str]
+    samples: dict[str, tuple[ToolCall, ...]]
 
 
 def mine_sequences(
@@ -447,29 +448,26 @@ def mine_sequences(
                 end = start + length
                 if end > len(calls):
                     break
-                sequence = tuple(call.signature for call in calls[start:end])
+                window = tuple(calls[start:end])
+                kind = classify_sequence(window)
+                if kind is None:
+                    continue
+                sequence = tuple(call.signature for call in window)
                 bucket = buckets.get(sequence)
                 if bucket is None:
-                    bucket = _Bucket(sequence, {})
+                    bucket = _Bucket(sequence, {}, {})
                     buckets[sequence] = bucket
-                bucket.occurrences.setdefault(conv_id, tuple(calls[start:end]))
+                if conv_id not in bucket.kinds:
+                    bucket.kinds[conv_id] = kind
+                    bucket.samples[conv_id] = window
 
     candidates: list[ToilCandidate] = []
     for bucket in buckets.values():
-        kinds_by_conversation: dict[str, str] = {}
-        for conv_id, calls in bucket.occurrences.items():
-            kind = classify_sequence(calls)
-            if kind is not None:
-                kinds_by_conversation[conv_id] = kind
-        if not kinds_by_conversation:
-            continue
-        kind = next(name for name in TOIL_KINDS if name in kinds_by_conversation.values())
-        conversation_ids = tuple(
-            sorted(conv_id for conv_id, found_kind in kinds_by_conversation.items() if found_kind == kind)
-        )
+        kind = next(name for name in TOIL_KINDS if name in bucket.kinds.values())
+        conversation_ids = tuple(sorted(conv_id for conv_id, found in bucket.kinds.items() if found == kind))
         if len(conversation_ids) < min_strikes:
             continue
-        sample = bucket.occurrences[conversation_ids[0]]
+        sample = bucket.samples[conversation_ids[0]]
         candidates.append(
             ToilCandidate(
                 sequence=bucket.sequence,
