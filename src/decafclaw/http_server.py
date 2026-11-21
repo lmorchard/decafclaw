@@ -3882,6 +3882,7 @@ class CanvasNewTabRequest(BaseModel):
     widget_type: str
     data: dict[str, object]
     label: str | None = None
+    background: bool = False
 
 
 class CanvasTabRequest(BaseModel):
@@ -4026,6 +4027,7 @@ async def post_canvas_new_tab(request: Request, conv_id: str) -> JSONResponse:
     widget_type = body.get("widget_type", "")
     data = body.get("data") or {}
     label = body.get("label")
+    background = bool(body.get("background", False))
     emit = manager.emit if manager else None
     result = await canvas_mod.new_tab(
         config,
@@ -4035,6 +4037,7 @@ async def post_canvas_new_tab(request: Request, conv_id: str) -> JSONResponse:
         label=label,
         emit=emit,
         enforce_agent_createable=False,
+        background=background,
     )
     if not result.ok:
         return JSONResponse({"error": result.error}, status_code=400)

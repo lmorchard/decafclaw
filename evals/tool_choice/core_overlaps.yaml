@@ -253,6 +253,16 @@
     file. canvas_read is a reasonable first step (to list kept
     artifacts) but the call that reopens the view is canvas_new_tab.
 
+- name: canvas-background-prepare-without-interrupting
+  scenario: "I'm reading the plan on the canvas. Create a second summary document in a new canvas tab now with the headline 'Summary' and a one-line body, but don't switch me away from the plan I'm reading."
+  expected: canvas_new_tab
+  near_miss: [canvas_update, workspace_write]
+  notes: |
+    #1024: preparing content without changing the current view is still
+    canvas_new_tab (with background=true), not canvas_update — which can
+    only replace an existing tab — and not workspace_write, which would
+    save a file instead of staging it on the canvas.
+
 # -- tabstack_automate vs tabstack_research ----------------------------------
 
 - name: tabstack-automate-vs-research-form-fill

@@ -29,6 +29,7 @@ The conversation's canvas state changed; client should re-render the canvas pane
 - `active_tab` — string | null
 - `tab` — object | null
 - `closed_tab_id` — string?
+- `background` — boolean?
 
 ### `chunk`
 

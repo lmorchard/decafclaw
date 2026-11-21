@@ -2079,6 +2079,7 @@ export class DefaultService {
             widget_type: string;
             data: Record<string, JsonValue>;
             label?: (string | null);
+            background?: boolean;
         },
     ): CancelablePromise<CanvasNewTabResponse>;
     public static postCanvasNewTabApiCanvasConvIdNewTabPost(
@@ -2087,6 +2088,7 @@ export class DefaultService {
             widget_type: string;
             data: Record<string, JsonValue>;
             label?: (string | null);
+            background?: boolean;
         },
         discardResponse: true,
     ): CancelablePromise<void>;
@@ -2096,6 +2098,7 @@ export class DefaultService {
             widget_type: string;
             data: Record<string, JsonValue>;
             label?: (string | null);
+            background?: boolean;
         },
         discardResponse = false,
     ): CancelablePromise<CanvasNewTabResponse | void> {

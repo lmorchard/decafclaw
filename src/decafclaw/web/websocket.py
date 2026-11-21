@@ -98,6 +98,28 @@ def _project_tool_end(event: dict, conv_id: str) -> SrvToolEnd:
     return payload
 
 
+def _project_canvas_update(event: dict, conv_id: str) -> SrvCanvasUpdate:
+    """Project a bus canvas_update event into the /ws/chat payload.
+
+    Both production (inline branch) and tests (forwarder) use this so optional
+    fields cannot drift out of one projection.
+    """
+    out: SrvCanvasUpdate = {
+        "type": WSMessageType.CANVAS_UPDATE,
+        "conv_id": conv_id,
+        "kind": event.get("kind", "update"),
+        "active_tab": event.get("active_tab"),
+        "tab": event.get("tab"),
+    }
+    # Phase 4 field for kind=close_tab
+    if "closed_tab_id" in event:
+        out["closed_tab_id"] = event["closed_tab_id"]
+    # #1024: background creation keeps the reader's view client-side
+    if "background" in event:
+        out["background"] = event["background"]
+    return out
+
+
 def _make_canvas_update_forwarder(state, conv_id):
     """Build a coroutine that forwards canvas_update events to ws_send.
 
@@ -111,17 +133,7 @@ def _make_canvas_update_forwarder(state, conv_id):
             return
         if event.get("conv_id") != conv_id:
             return
-        out: SrvCanvasUpdate = {
-            "type": WSMessageType.CANVAS_UPDATE,
-            "conv_id": conv_id,
-            "kind": event.get("kind", "update"),
-            "active_tab": event.get("active_tab"),
-            "tab": event.get("tab"),
-        }
-        # Phase 4 field for kind=close_tab
-        if "closed_tab_id" in event:
-            out["closed_tab_id"] = event["closed_tab_id"]
-        await ws_send(out)
+        await ws_send(_project_canvas_update(event, conv_id))
 
     return _forward
 
@@ -1220,16 +1232,7 @@ def _subscribe_to_conv(state, conv_id):
 
         elif event_type == "canvas_update":
             if event_conv_id == conv_id:
-                payload: SrvCanvasUpdate = {
-                    "type": WSMessageType.CANVAS_UPDATE,
-                    "conv_id": event_conv_id,
-                    "kind": event.get("kind", "update"),
-                    "active_tab": event.get("active_tab"),
-                    "tab": event.get("tab"),
-                }
-                if "closed_tab_id" in event:
-                    payload["closed_tab_id"] = event["closed_tab_id"]
-                await ws_send(payload)
+                await ws_send(_project_canvas_update(event, event_conv_id))
 
         elif event_type == "sticky_set":
             if event_conv_id == conv_id:

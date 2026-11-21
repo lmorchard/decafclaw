@@ -10,7 +10,7 @@
     "canvas_update": {
       "direction": "server_to_client",
       "description": "The conversation's canvas state changed; client should re-render the canvas panel.",
-      "fields": {"conv_id": "string", "kind": "string", "active_tab": "string | null", "tab": "object | null", "closed_tab_id": "string?"}
+      "fields": {"conv_id": "string", "kind": "string", "active_tab": "string | null", "tab": "object | null", "closed_tab_id": "string?", "background": "boolean?"}
     },
     "chunk": {
       "direction": "server_to_client",

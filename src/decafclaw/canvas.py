@@ -283,6 +283,21 @@ def _derive_label(widget_type: str, data: dict) -> str:
     return _humanize(widget_type)
 
 
+def _resolve_active_after_create(tabs: list, previous_active: str | None, tab_id: str, background: bool) -> str:
+    """Choose active_tab after appending a tab.
+
+    Foreground creation selects the new tab. Background creation keeps a
+    still-valid previous selection; an empty (or stale-selection) canvas gets
+    the new tab as its valid initial selection, so opening the panel shows the
+    prepared content.
+    """
+    if not background:
+        return tab_id
+    if previous_active is not None and any(t.get("id") == previous_active for t in tabs):
+        return previous_active
+    return tab_id
+
+
 def _validate_widget_for_canvas(widget_type: str, data: dict) -> str | None:
     """Return an error message string, or None if validation passes."""
     registry = get_widget_registry()
@@ -307,6 +322,7 @@ async def _emit_canvas_update(
     active_tab: str | None,
     tab: dict | None = None,
     closed_tab_id: str | None = None,
+    background: bool | None = None,
 ) -> None:
     """Publish a canvas_update event for subscribed clients. Fail-open."""
     if emit is None:
@@ -319,6 +335,8 @@ async def _emit_canvas_update(
     }
     if closed_tab_id is not None:
         payload["closed_tab_id"] = closed_tab_id
+    if background is not None:
+        payload["background"] = background
     try:
         await emit(conv_id, payload)
     except Exception:
@@ -389,8 +407,13 @@ async def new_tab(
     emit: EmitFn | None = None,
     enforce_agent_creatable: bool = True,
     enforce_agent_createable: bool | None = None,
+    background: bool = False,
 ) -> CanvasOpResult:
-    """Append a new tab and make it active. Returns the new tab_id.
+    """Append a new tab, optionally without changing the current view.
+
+    Foreground (default) makes the new tab active. ``background`` keeps the
+    existing valid selection (or adopts the new tab when the canvas was empty)
+    so the caller's current view is not interrupted.
 
     `enforce_agent_creatable` gates the `agent_creatable` widget-descriptor
     check and defaults to on. Trusted, human-only callers (the `/terminal`
@@ -414,6 +437,7 @@ async def new_tab(
         except ValueError as e:
             return CanvasOpResult(ok=False, error=str(e))
     state = read_canvas_state(config, conv_id)
+    previous_active = state.get("active_tab")
     next_n = state.get("next_tab_id", 1)
     tab_id = f"canvas_{next_n}"
     final_label = label or _derive_label(widget_type, data)
@@ -433,11 +457,18 @@ async def new_tab(
     else:
         new_tab_dict["data"] = data
     state["tabs"].append(new_tab_dict)
-    state["active_tab"] = tab_id
+    state["active_tab"] = _resolve_active_after_create(state["tabs"], previous_active, tab_id, background)
     state["next_tab_id"] = next_n + 1
     if not write_canvas_state(config, conv_id, state):
         return CanvasOpResult(ok=False, error="failed to write canvas state to disk")
-    await _emit_canvas_update(emit, conv_id, "new_tab", active_tab=tab_id, tab={**new_tab_dict, "data": data})
+    await _emit_canvas_update(
+        emit,
+        conv_id,
+        "new_tab",
+        active_tab=state["active_tab"],
+        tab={**new_tab_dict, "data": data},
+        background=background,
+    )
     return CanvasOpResult(ok=True, text="tab created", tab_id=tab_id)
 
 
@@ -447,8 +478,12 @@ async def reopen_artifact(
     artifact_id: str,
     label: str | None = None,
     emit: EmitFn | None = None,
+    background: bool = False,
 ) -> CanvasOpResult:
     """Open a new tab viewing an existing artifact. Content is not copied.
+
+    ``background`` keeps the current selection and dismissal state, like
+    :func:`new_tab`.
 
     The new tab gets a fresh handle, so a tab-locked URL for the closed tab
     still selects nothing. Only this conversation's artifact store is
@@ -458,6 +493,7 @@ async def reopen_artifact(
     if artifact is None:
         return CanvasOpResult(ok=False, error=f"artifact '{artifact_id}' not found")
     state = read_canvas_state(config, conv_id)
+    previous_active = state.get("active_tab")
     next_n = state.get("next_tab_id", 1)
     tab_id = f"canvas_{next_n}"
     widget_type = artifact.get("widget_type", "")
@@ -469,7 +505,7 @@ async def reopen_artifact(
         "artifact_id": artifact_id,
     }
     state["tabs"].append(new_tab_dict)
-    state["active_tab"] = tab_id
+    state["active_tab"] = _resolve_active_after_create(state["tabs"], previous_active, tab_id, background)
     state["next_tab_id"] = next_n + 1
     if not write_canvas_state(config, conv_id, state):
         return CanvasOpResult(ok=False, error="failed to write canvas state to disk")
@@ -477,8 +513,9 @@ async def reopen_artifact(
         emit,
         conv_id,
         "new_tab",
-        active_tab=tab_id,
+        active_tab=state["active_tab"],
         tab={**new_tab_dict, "data": dict(artifact.get("data") or {})},
+        background=background,
     )
     return CanvasOpResult(ok=True, text=f"artifact {artifact_id} opened as tab {tab_id}", tab_id=tab_id)
 

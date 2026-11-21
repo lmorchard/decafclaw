@@ -14,6 +14,7 @@ export interface SrvCanvasUpdate {
   active_tab: string | null;
   tab: Record<string, unknown> | null;
   closed_tab_id?: string;
+  background?: boolean;
 }
 
 export interface SrvChunk {
