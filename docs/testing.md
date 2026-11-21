@@ -11,6 +11,16 @@ call...")` instead of silently hitting a real provider. Opt out only for
 tests that intentionally run real provider code with HTTP mocked below
 the guard (`@pytest.mark.live_llm`).
 
+## OTel global-provider guard (`tests/conftest.py`)
+
+By default, every test runs with a teardown check that fails if the test
+set OpenTelemetry's global tracer provider (#1424). `opentelemetry-api`
+has no public reset for that global: once set, it leaks to every later
+test in the worker (the one-shot guard blocks re-setting and captured
+proxy tracers cache their first resolution). Tests that need spans must
+instead monkeypatch the app's import-time-captured tracers to a test-local
+provider — see `memory_exporter` in `tests/test_telemetry_otlp.py`.
+
 ## Scripted provider (`decafclaw.testing`)
 
 A test-only in-memory `Provider` that replays queued assistant responses

@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 from opentelemetry import trace
+from opentelemetry.trace import ProxyTracerProvider
 
 
 @pytest.fixture
@@ -111,17 +112,23 @@ def guard_chat_completions(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
-def reset_otlp_singletons():
-    yield
-    trace._TRACER_PROVIDER = None
-    if hasattr(trace._TRACER_PROVIDER_SET_ONCE, "__bool__"):
-        # Actually it's an object `_SetOnce` in newer opentelemetry.
-        pass
+def guard_otel_global_provider(request):
+    """Fail a test that sets OpenTelemetry's global tracer provider.
 
-    # In opentelemetry-api 1.x, there is no _TRACER_PROVIDER_SET_ONCE boolean.
-    # It might be in opentelemetry.util._once.Once
-    if hasattr(trace, "_TRACER_PROVIDER_SET_ONCE"):
-        trace._TRACER_PROVIDER_SET_ONCE._done = False
+    opentelemetry-api has no public reset for the global provider (#1424):
+    once set, it leaks to every later test in the worker — the one-shot guard
+    blocks re-setting and captured proxy tracers cache their first resolution.
+    Tests that need spans must monkeypatch the app's captured tracers instead
+    (see ``memory_exporter`` in tests/test_telemetry_otlp.py). Assumes the
+    OTEL_PYTHON_TRACER_PROVIDER env var is unset, as in .env and CI.
+    """
+    yield
+    if not isinstance(trace.get_tracer_provider(), ProxyTracerProvider):
+        pytest.fail(
+            f"{request.node.nodeid} set OpenTelemetry's global tracer provider. "
+            "There is no public reset (#1424); monkeypatch the app's captured "
+            "tracers (memory_exporter in tests/test_telemetry_otlp.py) instead."
+        )
 
 
 def check_asyncio_loop_leak(request) -> None:
