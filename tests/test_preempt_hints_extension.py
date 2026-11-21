@@ -2,7 +2,7 @@
 
 Verifies the extension's slot placement (directly after the user message),
 hint formatting, archived replay, disable behavior, and fail-open isolation.
-Helper-level matching tests remain in ``test_context_composer.py``.
+Helper-level matching tests live in ``test_context_composer_retrieval.py``.
 """
 
 from pathlib import Path
