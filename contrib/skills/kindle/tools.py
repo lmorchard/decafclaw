@@ -396,23 +396,50 @@ def _check_auth_response(url: str, html: str = "") -> None:
         raise RuntimeError("Kindle session expired or not authenticated: received Amazon sign-in page")
 
 
-async def _fetch_cdp_html(cdp_url: str, url: str, wait_selector: str, timeout_ms: int = 15000) -> str:
+async def _fetch_cdp_html(
+    cdp_url: str,
+    url: str,
+    wait_selector: str,
+    timeout_ms: int = 45000,
+    max_retries: int = 2,
+) -> str:
     """Fetch HTML for a URL using Playwright over Chrome DevTools Protocol."""
     from playwright.async_api import async_playwright
 
-    async with async_playwright() as p:
-        browser = await p.chromium.connect_over_cdp(cdp_url)
-        context = browser.contexts[0] if browser.contexts else await browser.new_context()
-        page = await context.new_page()
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-            _check_auth_response(page.url, "")
-            await page.wait_for_selector(wait_selector, timeout=timeout_ms)
-            html = await page.content()
-            _check_auth_response(page.url, html)
-            return html
-        finally:
-            await page.close()
+            async with async_playwright() as p:
+                browser = await p.chromium.connect_over_cdp(cdp_url, timeout=15000)
+                try:
+                    context = browser.contexts[0] if browser.contexts else await browser.new_context()
+                    page = await context.new_page()
+                    try:
+                        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        _check_auth_response(page.url, "")
+                        await page.wait_for_selector(wait_selector, timeout=timeout_ms)
+                        html = await page.content()
+                        _check_auth_response(page.url, html)
+                        return html
+                    finally:
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
+                finally:
+                    try:
+                        await browser.close()
+                    except Exception:
+                        pass
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2)
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+    raise RuntimeError(f"Failed to fetch {url} via CDP")
 
 
 async def _fetch_books_list_html(session: AsyncSession | None, domain: str, cdp_url: str = "") -> str:
