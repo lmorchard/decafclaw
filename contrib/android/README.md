@@ -38,7 +38,9 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
    - Normalizes Markdown syntax (code fences, wiki links, links, headers, lists, tables, HTML, emphasis) into speakable English.
    - A `■` button in the footer stops playback without opening the mic.
 4. **Unified Push-to-Talk & Controls**:
-   - Bottom button acts as connection monitor and push-to-talk (`Tap to Speak` / `Listening... Tap to Stop` / `Disconnected · Tap to Connect`).
+   - A tap starts one-shot listening; the engine auto-sends when you pause (`Listening... Tap to Stop`).
+   - A long press (~450ms) gives a 40ms vibrate and starts a continuous session that keeps listening across silences (`Listening... Tap to Finish`). Finalized segments accumulate; tapping again stops the engine and sends the whole monologue as one turn.
+   - On Android 13+ the continuous session uses the segmented on-device recognizer; if the engine ends unexpectedly, it restarts up to 3 times into the same buffer.
    - A status glyph inside the button shows state at a glance: green connected, amber connecting/thinking/tooling, red offline/error, `♪` speaking, white listening.
    - Hamburger menu (`☰`) opens Settings: DecafClaw host/token, TTS toggle, pitch/speed, starred voices, and inline audition `▶` buttons.
 

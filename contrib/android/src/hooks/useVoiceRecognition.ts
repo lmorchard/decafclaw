@@ -10,14 +10,76 @@ interface UseVoiceRecognitionOptions {
   onInterrupted?: () => void;
 }
 
+type ListeningMode = 'single' | 'long' | null;
+
+const LONG_SESSION_MAX_RESTARTS = 3;
+const RESTART_DELAY_MS = 250;
+const FINISH_FALLBACK_MS = 1500;
+
+function joinTranscript(base: string, next: string): string {
+  const head = base.trim();
+  const tail = next.trim();
+  if (!head) return tail;
+  if (!tail) return head;
+  return `${head} ${tail}`;
+}
+
+function clearTimer(ref: { current: ReturnType<typeof setTimeout> | null }) {
+  if (ref.current) {
+    clearTimeout(ref.current);
+    ref.current = null;
+  }
+}
+
 export function useVoiceRecognition({
   onFinalResult,
   onInterrupted,
 }: UseVoiceRecognitionOptions) {
   const [recognizing, setRecognizing] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [longListening, setLongListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const hasPermissionRef = useRef(false);
+
+  const modeRef = useRef<ListeningMode>(null);
+  const segmentBufferRef = useRef('');
+  const stopRequestedRef = useRef(false);
+  const failedRef = useRef(false);
+  const finishedRef = useRef(false);
+  const restartCountRef = useRef(0);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const callbacksRef = useRef({ onFinalResult, onInterrupted });
+  useEffect(() => {
+    callbacksRef.current = { onFinalResult, onInterrupted };
+  });
+
+  const resetSession = useCallback(() => {
+    clearTimer(restartTimerRef);
+    clearTimer(finishTimerRef);
+    modeRef.current = null;
+    segmentBufferRef.current = '';
+    stopRequestedRef.current = false;
+    failedRef.current = false;
+    restartCountRef.current = 0;
+    setLongListening(false);
+    setIsStarting(false);
+    setRecognizing(false);
+    setTranscript('');
+  }, []);
+
+  const finalizeLongSession = useCallback(() => {
+    if (finishedRef.current) {
+      return;
+    }
+    finishedRef.current = true;
+    const text = segmentBufferRef.current.trim();
+    resetSession();
+    if (text) {
+      callbacksRef.current.onFinalResult(text);
+    }
+  }, [resetSession]);
 
   // Read the current permission state without showing a dialog at launch.
   useEffect(() => {
@@ -36,12 +98,22 @@ export function useVoiceRecognition({
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      clearTimer(restartTimerRef);
+      clearTimer(finishTimerRef);
+      ExpoSpeechRecognitionModule.abort();
+    };
+  }, []);
+
   useSpeechRecognitionEvent('start', () => {
+    clearTimer(restartTimerRef);
     setIsStarting(false);
     setRecognizing(true);
   });
 
   useSpeechRecognitionEvent('audiostart', () => {
+    clearTimer(restartTimerRef);
     setIsStarting(false);
     setRecognizing(true);
     // Subtle haptic tick confirming mic buffer is actively capturing
@@ -49,20 +121,88 @@ export function useVoiceRecognition({
   });
 
   useSpeechRecognitionEvent('end', () => {
-    setIsStarting(false);
-    setRecognizing(false);
+    if (finishedRef.current) {
+      return;
+    }
+    if (modeRef.current === 'long') {
+      if (stopRequestedRef.current || failedRef.current) {
+        finalizeLongSession();
+        return;
+      }
+      if (restartCountRef.current >= LONG_SESSION_MAX_RESTARTS) {
+        finalizeLongSession();
+        return;
+      }
+
+      // A segmented session can still end on its own (engine timeout).
+      // Keep the session alive and accumulate into the same buffer.
+      restartCountRef.current += 1;
+      clearTimer(restartTimerRef);
+      restartTimerRef.current = setTimeout(() => {
+        restartTimerRef.current = null;
+        if (modeRef.current !== 'long' || stopRequestedRef.current) {
+          return;
+        }
+        ExpoSpeechRecognitionModule.start({
+          lang: 'en-US',
+          interimResults: true,
+          continuous: true,
+          requiresOnDeviceRecognition: true,
+          addsPunctuation: true,
+        });
+      }, RESTART_DELAY_MS);
+      return;
+    }
+
+    resetSession();
   });
 
   useSpeechRecognitionEvent('result', (event) => {
+    if (finishedRef.current) {
+      return;
+    }
     const current = event.results[0]?.transcript || '';
-    setTranscript(current);
 
+    if (modeRef.current === 'long') {
+      if (event.isFinal) {
+        if (current.trim()) {
+          segmentBufferRef.current = joinTranscript(segmentBufferRef.current, current);
+          restartCountRef.current = 0;
+        }
+        setTranscript(segmentBufferRef.current);
+      } else {
+        setTranscript(joinTranscript(segmentBufferRef.current, current));
+      }
+      return;
+    }
+
+    setTranscript(current);
     if (event.isFinal && current.trim().length > 0) {
-      onFinalResult(current.trim());
+      callbacksRef.current.onFinalResult(current.trim());
     }
   });
 
   useSpeechRecognitionEvent('error', (event) => {
+    if (finishedRef.current) {
+      return;
+    }
+    if (event.error === 'client' || event.error === 'aborted') {
+      // Teardown noise from stopListening()/abort(); the end handler cleans up.
+      return;
+    }
+    if (modeRef.current === 'long') {
+      if (stopRequestedRef.current) {
+        return;
+      }
+      if (event.error === 'no-speech' || event.error === 'speech-timeout') {
+        // The end handler restarts a long session.
+        return;
+      }
+      failedRef.current = true;
+      console.warn('Speech recognition error:', event.error, event.message);
+      return;
+    }
+
     if (event.error !== 'no-speech') {
       console.warn('Speech recognition error:', event.error, event.message);
     }
@@ -70,49 +210,100 @@ export function useVoiceRecognition({
     setRecognizing(false);
   });
 
+  const ensurePermission = useCallback(async () => {
+    if (hasPermissionRef.current) {
+      return true;
+    }
+    try {
+      const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      hasPermissionRef.current = granted;
+    } catch (err) {
+      console.warn('Failed to request speech permissions:', err);
+    }
+    return hasPermissionRef.current;
+  }, []);
+
+  const startSession = useCallback(
+    async (long: boolean) => {
+      if (!(await ensurePermission())) {
+        setIsStarting(false);
+        return;
+      }
+
+      modeRef.current = long ? 'long' : 'single';
+      segmentBufferRef.current = '';
+      stopRequestedRef.current = false;
+      failedRef.current = false;
+      finishedRef.current = false;
+      restartCountRef.current = 0;
+      clearTimer(restartTimerRef);
+      clearTimer(finishTimerRef);
+
+      setTranscript('');
+      setLongListening(long);
+      setIsStarting(true);
+
+      ExpoSpeechRecognitionModule.start({
+        lang: 'en-US',
+        interimResults: true,
+        continuous: long,
+        requiresOnDeviceRecognition: true, // Forces Pixel Tensor on-device STT
+        addsPunctuation: true,
+      });
+    },
+    [ensurePermission]
+  );
+
+  const startLongListening = useCallback(async () => {
+    if (recognizing || isStarting) {
+      return;
+    }
+    callbacksRef.current.onInterrupted?.();
+    // Distinct tactile confirmation that the monologue session is armed.
+    Vibration.vibrate(40);
+    await startSession(true);
+  }, [recognizing, isStarting, startSession]);
+
   const toggleListening = useCallback(async () => {
+    if (isStarting) {
+      if (modeRef.current === 'long') {
+        finalizeLongSession();
+      }
+      resetSession();
+      ExpoSpeechRecognitionModule.abort();
+      return;
+    }
+
     if (recognizing) {
-      // Finalize the current utterance; the final result dispatches the turn.
+      if (modeRef.current === 'long') {
+        if (restartTimerRef.current) {
+          finalizeLongSession();
+          return;
+        }
+        if (stopRequestedRef.current) {
+          return;
+        }
+        stopRequestedRef.current = true;
+        ExpoSpeechRecognitionModule.stop();
+        finishTimerRef.current = setTimeout(() => {
+          finishTimerRef.current = null;
+          ExpoSpeechRecognitionModule.abort();
+          finalizeLongSession();
+        }, FINISH_FALLBACK_MS);
+        return;
+      }
+
+      // One-shot session: finalize the current utterance and send it.
       setRecognizing(false);
       ExpoSpeechRecognitionModule.stop();
       return;
     }
 
-    if (isStarting) {
-      // The engine has not produced audio yet; cancel instead of finalizing.
-      setIsStarting(false);
-      ExpoSpeechRecognitionModule.abort();
-      return;
-    }
-
-    onInterrupted?.();
-
+    callbacksRef.current.onInterrupted?.();
     // Immediate tactile response
     Vibration.vibrate(20);
-    setIsStarting(true);
-    setTranscript('');
-
-    if (!hasPermissionRef.current) {
-      try {
-        const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-        hasPermissionRef.current = granted;
-      } catch (err) {
-        console.warn('Failed to request speech permissions:', err);
-      }
-      if (!hasPermissionRef.current) {
-        setIsStarting(false);
-        return;
-      }
-    }
-
-    ExpoSpeechRecognitionModule.start({
-      lang: 'en-US',
-      interimResults: true,
-      continuous: false,
-      requiresOnDeviceRecognition: true, // Forces Pixel Tensor on-device STT
-      addsPunctuation: true,
-    });
-  }, [recognizing, isStarting, onInterrupted]);
+    await startSession(false);
+  }, [finalizeLongSession, isStarting, recognizing, resetSession, startSession]);
 
   const clearTranscript = useCallback(() => {
     setTranscript('');
@@ -121,8 +312,10 @@ export function useVoiceRecognition({
   return {
     recognizing: recognizing || isStarting,
     isStarting,
+    longListening,
     transcript,
     toggleListening,
+    startLongListening,
     clearTranscript,
   };
 }

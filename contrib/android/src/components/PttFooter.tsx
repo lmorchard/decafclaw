@@ -7,8 +7,10 @@ interface PttFooterProps {
   status: string;
   recognizing: boolean;
   isStarting?: boolean;
+  longListening: boolean;
   speaking: boolean;
   onToggleListening: () => void;
+  onStartLongListening: () => void;
   onReconnect: () => void;
   onStopSpeaking: () => void;
   onOpenSettings: () => void;
@@ -76,8 +78,10 @@ export function PttFooter({
   status,
   recognizing,
   isStarting,
+  longListening,
   speaking,
   onToggleListening,
+  onStartLongListening,
   onReconnect,
   onStopSpeaking,
   onOpenSettings,
@@ -107,9 +111,15 @@ export function PttFooter({
       return 'Opening Mic...';
     }
     if (recognizing) {
-      return 'Listening... Tap to Stop';
+      return longListening ? 'Listening... Tap to Finish' : 'Listening... Tap to Stop';
     }
     return 'Tap to Speak';
+  };
+
+  const handleLongPress = () => {
+    if (connected && !recognizing && !isStarting) {
+      onStartLongListening();
+    }
   };
 
   const getMainButtonStyle = () => {
@@ -142,9 +152,12 @@ export function PttFooter({
         <TouchableOpacity
           style={[styles.mainButton, getMainButtonStyle()]}
           onPress={handleMainButtonPress}
+          onLongPress={handleLongPress}
+          delayLongPress={450}
           activeOpacity={0.8}
           accessibilityRole="button"
           accessibilityLabel={`${buttonText}. ${status}`}
+          accessibilityHint="Tap to talk. Long press to keep listening until you tap to finish."
         >
           <View style={styles.mainButtonContent}>
             <View style={styles.statusBadge}>

@@ -419,10 +419,11 @@ function TransceiverScreen() {
   );
 
   // Hook: On-Device Speech Recognition (Pixel Tensor TPU)
-  const { recognizing, isStarting, transcript, toggleListening } = useVoiceRecognition({
-    onFinalResult: handleFinalSpeechResult,
-    onInterrupted: stopSpeaking, // Barge-in interruption
-  });
+  const { recognizing, isStarting, longListening, transcript, toggleListening, startLongListening } =
+    useVoiceRecognition({
+      onFinalResult: handleFinalSpeechResult,
+      onInterrupted: stopSpeaking, // Barge-in interruption
+    });
 
   useEffect(() => {
     return () => {
@@ -453,8 +454,10 @@ function TransceiverScreen() {
         status={status}
         recognizing={recognizing}
         isStarting={isStarting}
+        longListening={longListening}
         speaking={speaking}
         onToggleListening={toggleListening}
+        onStartLongListening={startLongListening}
         onReconnect={manualReconnect}
         onStopSpeaking={stopSpeaking}
         onOpenSettings={() => setSettingsVisible(true)}
