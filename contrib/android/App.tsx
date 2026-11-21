@@ -414,6 +414,7 @@ function TransceiverScreen() {
     connected,
     status,
     convId,
+    convTitle,
     manualReconnect,
     sendTurn,
     cancelTurn,
@@ -524,7 +525,7 @@ function TransceiverScreen() {
       <StatusBar style="light" />
 
       {/* Clean Minimal Header */}
-      <Header />
+      <Header sessionTitle={convTitle} />
 
       {/* Persistent IM Transcript */}
       <View style={styles.transcriptArea}>

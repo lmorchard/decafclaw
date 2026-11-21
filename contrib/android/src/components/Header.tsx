@@ -2,7 +2,11 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-export function Header() {
+interface HeaderProps {
+  sessionTitle?: string | null;
+}
+
+export function Header({ sessionTitle }: HeaderProps) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -17,7 +21,9 @@ export function Header() {
     >
       <View style={styles.titleContainer}>
         <Text style={styles.title}>DecafClaw</Text>
-        <Text style={styles.subtitle}>Pocket Transceiver • v0.1</Text>
+        <Text style={styles.subtitle} numberOfLines={1} ellipsizeMode="tail">
+          {sessionTitle || 'No session'}
+        </Text>
       </View>
     </View>
   );
@@ -34,9 +40,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 8,
+    flex: 1,
+    justifyContent: 'center',
   },
   title: {
     color: '#f4f4f5',
@@ -48,5 +53,6 @@ const styles = StyleSheet.create({
     color: '#a1a1aa',
     fontSize: 12,
     fontWeight: '500',
+    marginTop: 2,
   },
 });
