@@ -1,13 +1,12 @@
 import asyncio
-from unittest.mock import AsyncMock, patch
 
 import pytest
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import NonRecordingSpan
 
-from decafclaw.agent import IterationOutcome, TurnRunner
+from decafclaw.agent import TurnRunner
 from decafclaw.config import Config
 from decafclaw.context import Context
 from decafclaw.context_composer import ContextComposer
@@ -16,15 +15,28 @@ from decafclaw.tool_execution import execute_single_tool
 
 
 @pytest.fixture
-def memory_exporter():
+def memory_exporter(monkeypatch):
+    """Route the app's import-time tracers to an in-memory span exporter.
+
+    The app captures its OpenTelemetry tracers at import time, before any
+    provider exists, and opentelemetry-api has no public reset for the global
+    provider (#1424). Instead of mutating (and privately resetting) the
+    global, swap each captured tracer for one from a test-local provider;
+    monkeypatch restores the originals on teardown.
+    """
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     processor = SimpleSpanProcessor(exporter)
     provider.add_span_processor(processor)
-    trace.set_tracer_provider(provider)
+    tracer = provider.get_tracer("decafclaw.test")
+
+    monkeypatch.setattr("decafclaw.agent._tracer", tracer)
+    monkeypatch.setattr("decafclaw.tool_execution._tracer", tracer)
+    monkeypatch.setattr("decafclaw.llm._tracer", tracer)
+    monkeypatch.setattr(ContextComposer, "_tracer", tracer)
+
     yield exporter
     exporter.clear()
-    trace._TRACER_PROVIDER = None
 
 
 @pytest.mark.asyncio
@@ -80,23 +92,20 @@ async def test_llm_client_emits_span(memory_exporter):
 
 
 @pytest.mark.asyncio
-async def test_no_otlp_exporter_configured(monkeypatch):
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    processor = SimpleSpanProcessor(exporter)
-    provider.add_span_processor(processor)
-    trace.set_tracer_provider(provider)
+async def test_no_otlp_exporter_configured():
+    """Without an OTLP endpoint, compose runs and its spans record nowhere.
 
-    config = Config()
+    No test sets a global tracer provider (#1424), so the composer's
+    import-time tracer resolves to no-op: spans are created but never
+    exported.
+    """
+    config = Config()  # otlp_endpoint unset
     ctx = Context(config=config, event_bus=None)
-    composer = ContextComposer()
-
-    trace._TRACER_PROVIDER = None
 
     try:
-        await composer.compose(ctx, "test_prompt", [])
+        await ContextComposer().compose(ctx, "test_prompt", [])
     except Exception:
         pass
 
-    spans = exporter.get_finished_spans()
-    assert len(spans) == 0
+    span = ContextComposer._tracer.start_span("probe")
+    assert isinstance(span, NonRecordingSpan)
