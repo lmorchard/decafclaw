@@ -495,3 +495,61 @@ chat-message .tool-result-raw pre {
 .diff-unified pre {
   overflow-x: auto;
 }
+
+/* web_fetch_result widget (#1625) — compact fetch outcome card. */
+.web-fetch-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.5rem;
+  background: var(--pico-card-background-color);
+  font-size: 0.85rem;
+}
+.web-fetch-result__headline {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.web-fetch-result__status {
+  flex-shrink: 0;
+  font-family: var(--pico-font-family-monospace, monospace);
+  font-weight: 600;
+}
+.web-fetch-result__status--ok { color: var(--pico-ins-color, #2e7d32); }
+.web-fetch-result__status--redirect { color: var(--pico-mark-color, #8a6d00); }
+.web-fetch-result__status--error { color: var(--pico-del-color, #c62828); }
+.web-fetch-result__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.web-fetch-result__url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--pico-font-family-monospace, monospace);
+  font-size: 0.8rem;
+  color: var(--pico-muted-color);
+}
+.web-fetch-result__facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--pico-muted-color);
+}
+.web-fetch-result__sep { opacity: 0.6; }
+.web-fetch-result__fact--warn { color: var(--pico-mark-color, #8a6d00); }
+.web-fetch-result__redirect {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

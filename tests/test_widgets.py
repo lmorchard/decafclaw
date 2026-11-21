@@ -482,6 +482,49 @@ def test_bundled_code_block_is_registered(fake_config):
     assert not bad
 
 
+def test_bundled_web_fetch_result_is_registered(fake_config):
+    """Fresh registry scan finds the bundled web_fetch_result widget (#1625)."""
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("web_fetch_result")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert desc.modes == ["inline"]
+    assert desc.accepts_input is False
+
+    # Minimal shape: status + url.
+    ok, err = reg.validate("web_fetch_result", {"status": 200, "url": "https://example.com/"})
+    assert ok is True, err
+    # Full shape with every optional field.
+    ok, err = reg.validate(
+        "web_fetch_result",
+        {
+            "status": 301,
+            "status_text": "Moved Permanently",
+            "url": "http://example.com/",
+            "final_url": "https://example.com/",
+            "content_type": "text/html",
+            "bytes": 48213,
+            "elapsed_ms": 412,
+            "truncated": True,
+            "title": "Example Domain",
+        },
+    )
+    assert ok is True, err
+    # Missing required fields.
+    bad, _ = reg.validate("web_fetch_result", {"url": "https://example.com/"})
+    assert not bad
+    bad, _ = reg.validate("web_fetch_result", {"status": 200})
+    assert not bad
+    # Status must be a real HTTP code in range.
+    bad, _ = reg.validate("web_fetch_result", {"status": 42, "url": "https://example.com/"})
+    assert not bad
+    # additionalProperties: false — the response body is deliberately not
+    # part of this widget's shape, so a `body` key must be rejected.
+    bad, err = reg.validate("web_fetch_result", {"status": 200, "url": "https://e.com", "body": "<html></html>"})
+    assert not bad
+    assert "body" in err
+
+
 # ---------------- normalizer config threading + map widget ----------------
 
 

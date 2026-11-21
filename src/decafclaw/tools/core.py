@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import httpx
@@ -16,60 +17,106 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-# HTTP content-type prefixes that carry code or markup, mapped to the
-# code_block widget's language label. Prose content types (text/plain and
-# anything unmapped) stay widget-less so the LLM-facing text contract is the
-# only surface for human-readable prose.
-_CODE_CONTENT_TYPE_LANGUAGES: tuple[tuple[str, str], ...] = (
-    ("text/html", "html"),
-    ("application/xhtml+xml", "html"),
-    ("text/xml", "xml"),
-    ("application/xml", "xml"),
-    ("text/javascript", "javascript"),
-    ("application/javascript", "javascript"),
-    ("application/x-javascript", "javascript"),
-    ("text/css", "css"),
-    ("application/json", "json"),
-    ("text/json", "json"),
-)
+# Body cap for one fetch. Also the point past which the widget reports
+# truncation, so the card and the LLM-facing text agree on what happened.
+_MAX_BODY_CHARS = 50000
+
+# Title extraction reads at most this much of an HTML head — enough for any
+# sane document, and cheap on a 10 MB page.
+_TITLE_SCAN_CHARS = 200_000
 
 
-def _code_language_for_content_type(content_type: str) -> str | None:
-    """Return the code_block language label for a content type, or None.
+def _media_type(content_type: str) -> str:
+    """Return the bare media type from a Content-Type header value."""
+    return (content_type or "").split(";", 1)[0].strip().lower()
 
-    Accepts the full header value (``type/subtype; charset=...``) and matches
-    on the media type alone so parameters do not defeat the lookup.
+
+def _format_bytes(n: int) -> str:
+    """Humanize a byte count for display."""
+    if n < 1024:
+        return f"{n} B"
+    kb = n / 1024
+    if kb < 1024:
+        return f"{kb:.1f} KB"
+    return f"{kb / 1024:.1f} MB"
+
+
+def _html_title(text: str, media_type: str) -> str | None:
+    """Extract an HTML document title, or None.
+
+    Best-effort and never fatal: a page with malformed markup still fetches,
+    it just has no title to show. bs4 is imported lazily so the ~200ms parser
+    cost isn't paid at module import for every agent start.
     """
-    normalized = (content_type or "").split(";", 1)[0].strip().lower()
-    if not normalized:
+    if media_type not in ("text/html", "application/xhtml+xml"):
         return None
-    for prefix, language in _CODE_CONTENT_TYPE_LANGUAGES:
-        if normalized.startswith(prefix):
-            return language
-    return None
+    try:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(text[:_TITLE_SCAN_CHARS], "html.parser")
+        title = soup.title.get_text(strip=True) if soup.title else ""
+        return title or None
+    except Exception as e:  # noqa: BLE001 — a title is a nicety, never a failure
+        log.debug("web_fetch could not extract a title: %s", e)
+        return None
+
+
+def _short_outcome(data: dict) -> str:
+    """One-line outcome summary for the collapsed tool row (#1625)."""
+    parts = [f"{data['status']} {data.get('status_text') or ''}".strip()]
+    if data.get("content_type"):
+        parts.append(data["content_type"])
+    parts.append(_format_bytes(data.get("bytes", 0)))
+    parts.append(f"{data.get('elapsed_ms', 0)} ms")
+    summary = " · ".join(parts)
+    if data.get("truncated"):
+        summary += " · truncated"
+    return summary
 
 
 async def tool_web_fetch(ctx: "Context", url: str) -> str | ToolResult:
     """Fetch a URL and return the raw response body as text."""
     log.info(f"[tool:web_fetch] {url}")
+    started = time.monotonic()
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
             resp = await client.get(url)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         resp.raise_for_status()
-        text = resp.text
-        if len(text) > 50000:
-            text = text[:50000] + "\n\n[truncated at 50000 chars]"
-        widget = None
-        language = _code_language_for_content_type(resp.headers.get("content-type", ""))
-        if language and text.strip():
-            widget = WidgetRequest(
-                widget_type="code_block",
-                data={"code": text, "language": language, "filename": url},
-                target="inline",
-            )
-        return ToolResult(text=text, widget=widget)
     except httpx.HTTPError as e:
+        # Failures stay text-only: the tool row already renders an Error badge
+        # and auto-expands this text, so a widget would only add noise.
         return ToolResult(text=f"[error: {e}]")
+
+    text = resp.text
+    truncated = len(text) > _MAX_BODY_CHARS
+    if truncated:
+        text = text[:_MAX_BODY_CHARS] + f"\n\n[truncated at {_MAX_BODY_CHARS} chars]"
+
+    content_type = resp.headers.get("content-type", "")
+    media_type = _media_type(content_type)
+    # The body is the LLM-facing contract; the widget carries only the outcome
+    # metadata so a 50 KB page isn't duplicated into the archived payload. The
+    # web UI reveals the raw text through the tool row's own "Show raw result"
+    # disclosure (#1625).
+    data: dict = {
+        "status": resp.status_code,
+        "status_text": resp.reason_phrase,
+        "url": url,
+        "content_type": media_type or None,
+        "bytes": len(resp.content),
+        "elapsed_ms": elapsed_ms,
+        "truncated": truncated,
+    }
+    if str(resp.url) != url:
+        data["final_url"] = str(resp.url)
+    title = _html_title(text, media_type)
+    if title:
+        data["title"] = title
+    data = {k: v for k, v in data.items() if v is not None}
+
+    widget = WidgetRequest(widget_type="web_fetch_result", data=data, target="inline")
+    return ToolResult(text=text, widget=widget, display_short_text=_short_outcome(data))
 
 
 def tool_debug_context(ctx: "Context") -> str | ToolResult:
