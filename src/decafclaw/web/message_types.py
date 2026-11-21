@@ -88,6 +88,7 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.STICKY_CLEAR,
         WSMessageType.STICKY_SET,
         WSMessageType.STREAM_STATE,
+        WSMessageType.SWITCH_CONVERSATION,
         WSMessageType.TOOL_END,
         WSMessageType.TOOL_START,
         WSMessageType.TOOL_STATUS,

@@ -214,6 +214,14 @@ export interface SrvStreamState {
   thinking: string;
 }
 
+export interface SrvSwitchConversation {
+  type: "switch_conversation";
+  conv_id: string;
+  target_conv_id: string;
+  title: string;
+  reason: string;
+}
+
 export interface SrvToolEnd {
   type: "tool_end";
   conv_id: string;
@@ -365,6 +373,7 @@ export type ServerMessage =
   | SrvStickyClear
   | SrvStickySet
   | SrvStreamState
+  | SrvSwitchConversation
   | SrvToolEnd
   | SrvToolStart
   | SrvToolStatus
