@@ -159,6 +159,17 @@ The sidebar lists conversations organized into folders:
 - **Virtual folders**: Archived (preserving folder structure) and System (heartbeat, scheduled, delegated)
 - Folder structure is per-user metadata — archive files stay in place
 
+**Session search (#1451).** The Chats tab has a search box above the listing.
+Typing a phrase debounces 200 ms, then queries `GET /api/conversations/search`,
+which scores the user's session titles and message content — not just titles.
+Results replace the folder/session listing until the query is cleared (the ×
+button or Escape), and each row shows the session title, a two-line excerpt
+around the match, whether the excerpt came from the user or the assistant, the
+updated time, and an Archived badge when applicable. Clicking or pressing Enter
+on a result opens that conversation. Archived sessions are included by default
+so older threads stay findable; system and other users' sessions are never
+searched.
+
 The create actions sit at the bottom of the sidebar list, below the scrollable
 conversation/page list: **+ Chat / + Folder** on the Chats tab (top level only)
 and **+ Page / + Folder** on the Vault tab's browse view (#1524).
@@ -737,6 +748,7 @@ socket with no reconnect logic at all, so it is not covered by this.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/conversations?folder=` | List conversations + subfolders in a folder |
+| `GET` | `/api/conversations/search?q=&limit=&include_archived=` | Search session titles and message content (default includes archived) |
 | `GET` | `/api/sessions?folder=` | List sessions (root + delegated subagents) for the sidebar hierarchy |
 | `GET` | `/api/sessions/{session_id}/conversations` | List one session's conversations (a subagent id resolves to its parent session) |
 | `GET` | `/api/conversations/archived?folder=` | List archived conversations by folder |

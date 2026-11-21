@@ -1,5 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
-import { DefaultService } from '../lib/api-client/index.js';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { parentConvIdOf } from '../lib/conversation-store.js';
 import { getConvFromUrl } from '../lib/conversation-url.js';
 import { STATUS_LABELS, STATUS_TITLE_LABELS } from '../lib/constants.js';
@@ -51,6 +51,10 @@ export class ConversationSidebar extends LitElement {
     _movePickerFolders: { type: Array, state: true },
     _movePickerLoading: { type: Boolean, state: true },
     _dropTarget: { type: String, state: true },
+    _searchQuery: { type: String, state: true },
+    _searchMatches: { type: Array, state: true },
+    _searchPending: { type: Boolean, state: true },
+    _searchError: { type: String, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -109,6 +113,16 @@ export class ConversationSidebar extends LitElement {
     this._movePickerTrigger = null;
     /** @type {string} root conv id being dragged, '' when no drag is active */
     this._draggingConvId = '';
+    /** @type {string} current sidebar session-search query (#1451) */
+    this._searchQuery = '';
+    /** @type {Array<import('../lib/api-client/index.js').ConversationSearchMatch>} */
+    this._searchMatches = [];
+    this._searchPending = false;
+    this._searchError = '';
+    /** @type {ReturnType<typeof setTimeout>|null} debounce timer for search */
+    this._searchTimer = null;
+    /** @type {number} newest search request; stale responses are dropped */
+    this._searchSeq = 0;
   }
 
   openMobile() {
@@ -483,6 +497,161 @@ export class ConversationSidebar extends LitElement {
     }
 
     return html`<div class="vault-breadcrumbs">${crumbs}</div>`;
+  }
+
+  /** Search input above the conversation list (#1451). */
+  #renderSearchBox() {
+    const hasQuery = Boolean(this._searchQuery.trim());
+    return html`
+      <div class="conv-search">
+        <input
+          class="conv-search-input"
+          type="search"
+          placeholder="Search sessions…"
+          aria-label="Search sessions"
+          .value=${this._searchQuery}
+          aria-busy=${this._searchPending ? 'true' : 'false'}
+          @input=${this.#handleSearchInput}
+          @keydown=${this.#handleSearchKeydown}
+        />
+        ${hasQuery ? html`
+          <button
+            type="button"
+            class="conv-search-clear dc-icon-btn"
+            title="Clear search"
+            aria-label="Clear search"
+            @click=${() => { this.#clearSearch(); this.#focusSearchInput(); }}
+          >×</button>
+        ` : nothing}
+      </div>
+    `;
+  }
+
+  /** @param {InputEvent} e */
+  #handleSearchInput(e) {
+    const query = /** @type {HTMLInputElement} */ (e.target).value;
+    this._searchQuery = query;
+    // Any in-flight request now answers an older query; drop its result.
+    this._searchSeq++;
+    if (this._searchTimer) {
+      clearTimeout(this._searchTimer);
+      this._searchTimer = null;
+    }
+    if (!query.trim()) {
+      // Invalidate an in-flight request so it cannot repopulate the cleared box.
+      this._searchSeq++;
+      this._searchMatches = [];
+      this._searchPending = false;
+      this._searchError = '';
+      return;
+    }
+    this._searchPending = true;
+    this._searchTimer = setTimeout(() => {
+      this._searchTimer = null;
+      void this.#runSearch(query);
+    }, 200);
+  }
+
+  /** @param {KeyboardEvent} e */
+  #handleSearchKeydown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      this.#clearSearch();
+      this.#focusSearchInput();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (this._searchTimer) {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = null;
+      }
+      void this.#runSearch(this._searchQuery);
+    }
+  }
+
+  /** @param {string} query */
+  async #runSearch(query) {
+    if (!query.trim()) return;
+    const seq = ++this._searchSeq;
+    this._searchPending = true;
+    this._searchError = '';
+    try {
+      const data = await DefaultService.searchConversationsApiConversationsSearchGet(query, 20, true);
+      if (seq !== this._searchSeq) return;
+      this._searchMatches = data.matches || [];
+    } catch (err) {
+      if (seq !== this._searchSeq) return;
+      this._searchMatches = [];
+      this._searchError = 'Search failed';
+      console.error('Session search failed:', err instanceof ApiError ? err.body?.error : err);
+    } finally {
+      if (seq === this._searchSeq) this._searchPending = false;
+    }
+  }
+
+  #clearSearch() {
+    if (this._searchTimer) {
+      clearTimeout(this._searchTimer);
+      this._searchTimer = null;
+    }
+    this._searchSeq++;
+    this._searchQuery = '';
+    this._searchMatches = [];
+    this._searchPending = false;
+    this._searchError = '';
+  }
+
+  #focusSearchInput() {
+    /** @type {HTMLInputElement|null} */ (this.querySelector('.conv-search-input'))?.focus();
+  }
+
+  /** @param {string} convId @param {string} title */
+  #selectSearchResult(convId, title) {
+    this.store?.selectConversation(convId, title);
+    this.#clearSearch();
+    this.closeMobile();
+  }
+
+  #renderSearchResults() {
+    if (this._searchError) {
+      return html`<p class="conv-search-status" role="alert">${this._searchError}</p>`;
+    }
+    if (this._searchPending && this._searchMatches.length === 0) {
+      return html`<p class="conv-search-status">Searching…</p>`;
+    }
+    if (this._searchMatches.length === 0) {
+      return html`<p class="conv-search-status">No matching sessions</p>`;
+    }
+    return html`
+      <div class="conv-search-results" role="list" aria-label="Session search results">
+        ${this._searchMatches.map((m) => html`
+          <div
+            class="conv-item conv-search-result${m.conv_id === this._activeId ? ' active' : ''}"
+            role="listitem"
+            tabindex="0"
+            aria-label=${`Open conversation ${m.title}`}
+            @click=${(/** @type {MouseEvent} */ e) => {
+              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+              this.#selectSearchResult(m.conv_id, m.title);
+            }}
+            @keydown=${activateOnEnterOrSpace(() => this.#selectSearchResult(m.conv_id, m.title))}
+            title=${m.title}
+          >
+            <div class="conv-search-body">
+              <div class="conv-search-heading">
+                <span class="conv-title">${m.title}</span>
+                ${m.archived ? html`<span class="conv-type-badge">Archived</span>` : nothing}
+              </div>
+              ${m.snippet ? html`<span class="conv-search-snippet">${m.snippet}</span>` : nothing}
+              <span class="conv-search-meta">
+                ${m.matched_role ? `matched ${m.matched_role} message · ` : ''}${(m.updated_at || '').slice(0, 16).replace('T', ' ')}
+              </span>
+            </div>
+          </div>
+        `)}
+      </div>
+    `;
   }
 
   /** @param {string} convId */
@@ -1081,6 +1250,8 @@ export class ConversationSidebar extends LitElement {
         @wiki-open=${(e) => this.#handleWikiOpen(e)}
       ></tags-sidebar>
       <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
+        ${this.#renderSearchBox()}
+        ${this._searchQuery.trim() ? this.#renderSearchResults() : html`
         ${this.#renderChatBreadcrumbs()}
         ${this._chatFolders.map(f => {
           const isVirtual = ('virtual' in f && f.virtual) || f.path === '_archived' || f.path === '_system' || this._chatSection !== '';
@@ -1136,8 +1307,9 @@ export class ConversationSidebar extends LitElement {
               }))
             : this.#renderSessionGroups()
         }
+        `}
       </div>
-      ${this._sidebarTab === 'conversations' && this._chatSection === '' ? html`
+      ${this._sidebarTab === 'conversations' && this._chatSection === '' && !this._searchQuery.trim() ? html`
         <div class="vault-action-btns">
           <button class="home-lobby-btn outline" @click=${() => this.#handleHome()} title="Home Lobby" aria-label="Home Lobby">⌂ Lobby</button>
           <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)" aria-label="New chat">+ Chat</button>

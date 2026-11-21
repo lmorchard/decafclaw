@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DefaultService } from '../lib/api-client/index.js';
 import { showToast } from '../lib/toast.js';
 import './conversation-sidebar.js';
 
@@ -1127,5 +1128,149 @@ describe('conversation-sidebar collapse state', () => {
     expect(sidebar._collapsed).toBe(true);
     expect(localStorage.getItem('sidebar-collapsed:c1')).toBe('true');
     expect(localStorage.getItem('sidebar-collapsed')).toBeNull();
+  });
+});
+
+describe('conversation-sidebar session search (#1451)', () => {
+  let sidebar;
+
+  afterEach(() => {
+    sidebar?.remove();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  async function mount() {
+    const store = Object.assign(new EventTarget(), {
+      currentConvId: 'c1',
+      conversations: [{ conv_id: 'c1', title: 'Trip planning' }, { conv_id: 'c2', title: 'Coding' }],
+      folders: [],
+      archivedConversations: [],
+      archivedFolders: [],
+      systemConversations: [],
+      systemFolders: [],
+      contextUsage: 0,
+      contextLimit: 0,
+      activeModel: '',
+      availableModels: [],
+      modelGroups: [],
+      defaultModel: '',
+      activeMode: 'default',
+      availableModes: [],
+      selectConversation: vi.fn(),
+      listConversations: vi.fn(),
+      listSessions: vi.fn(),
+      listArchivedConversations: vi.fn(),
+      listSystemConversations: vi.fn(),
+    });
+    sidebar = /** @type {any} */ (document.createElement('conversation-sidebar'));
+    document.body.append(sidebar);
+    sidebar.store = store;
+    await sidebar.updateComplete;
+    return { sidebar, store };
+  }
+
+  function type(input, value) {
+    input.value = value;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  const match = {
+    conv_id: 'web-testuser-c9',
+    title: 'Homelab Edge Routing',
+    updated_at: '2026-11-20T12:00:00+00:00',
+    snippet: '…fails on CORS headers; allowlist the origin…',
+    matched_role: 'user',
+    archived: false,
+  };
+
+  it('debounces the query, shows content snippets, and replaces the listing', async () => {
+    vi.useFakeTimers();
+    const request = vi
+      .spyOn(DefaultService, 'searchConversationsApiConversationsSearchGet')
+      .mockResolvedValue({ query: 'cors', matches: [match] });
+    const { sidebar } = await mount();
+    const input = sidebar.querySelector('.conv-search-input');
+
+    type(input, 'cors');
+    await sidebar.updateComplete;
+    expect(request).not.toHaveBeenCalled();
+    expect(sidebar.querySelector('.conv-search-status')?.textContent).toContain('Searching');
+
+    await vi.advanceTimersByTimeAsync(200);
+    await sidebar.updateComplete;
+
+    expect(request).toHaveBeenCalledWith('cors', 20, true);
+    expect(sidebar.querySelector('.conv-search-snippet')?.textContent).toContain('CORS headers');
+    expect(sidebar.querySelector('.conv-search-meta')?.textContent).toContain('matched user message');
+    // The normal folder/session listing is replaced while a query is active.
+    expect(sidebar.querySelector('.conv-session')).toBeNull();
+  });
+
+  it('selects a result, clears the query, and restores the listing', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(DefaultService, 'searchConversationsApiConversationsSearchGet').mockResolvedValue({
+      query: 'cors',
+      matches: [match],
+    });
+    const { sidebar, store } = await mount();
+    type(sidebar.querySelector('.conv-search-input'), 'cors');
+    await vi.advanceTimersByTimeAsync(200);
+    await sidebar.updateComplete;
+
+    sidebar.querySelector('.conv-search-result').click();
+    await sidebar.updateComplete;
+
+    expect(store.selectConversation).toHaveBeenCalledWith(match.conv_id, match.title);
+    expect(sidebar._searchQuery).toBe('');
+    expect(sidebar.querySelector('.conv-search-results')).toBeNull();
+    expect(sidebar.querySelector('.conv-search-input').value).toBe('');
+  });
+
+  it('shows a no-match message and clears on Escape', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(DefaultService, 'searchConversationsApiConversationsSearchGet').mockResolvedValue({
+      query: 'zzz',
+      matches: [],
+    });
+    const { sidebar } = await mount();
+    const input = sidebar.querySelector('.conv-search-input');
+    type(input, 'zzz');
+    await vi.advanceTimersByTimeAsync(200);
+    await sidebar.updateComplete;
+    expect(sidebar.querySelector('.conv-search-status')?.textContent).toContain('No matching sessions');
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sidebar.updateComplete;
+    expect(sidebar._searchQuery).toBe('');
+    expect(sidebar.querySelector('.conv-search-results')).toBeNull();
+  });
+
+  it('drops a slow response for a query the user already replaced', async () => {
+    vi.useFakeTimers();
+    /** @type {Array<(value: any) => void>} */
+    const pending = [];
+    vi.spyOn(DefaultService, 'searchConversationsApiConversationsSearchGet').mockImplementation(
+      () => new Promise((resolve) => pending.push(resolve)),
+    );
+    const { sidebar } = await mount();
+    const input = sidebar.querySelector('.conv-search-input');
+
+    type(input, 'first');
+    await vi.advanceTimersByTimeAsync(200);
+    type(input, 'second');
+    await vi.advanceTimersByTimeAsync(200);
+    expect(pending).toHaveLength(2);
+
+    pending[1]({ query: 'second', matches: [match] });
+    await vi.advanceTimersByTimeAsync(0);
+    await sidebar.updateComplete;
+    expect(sidebar.querySelector('.conv-search-snippet')?.textContent).toContain('CORS headers');
+
+    pending[0]({ query: 'first', matches: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    await sidebar.updateComplete;
+    expect(sidebar.querySelector('.conv-search-snippet')?.textContent).toContain('CORS headers');
+    expect(sidebar.querySelector('.conv-search-status')).toBeNull();
   });
 });

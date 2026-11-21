@@ -35,6 +35,8 @@ export type { ConversationLifecycleResponse } from './models/ConversationLifecyc
 export type { ConversationListingItem } from './models/ConversationListingItem';
 export type { ConversationListingResponse } from './models/ConversationListingResponse';
 export type { ConversationPatchResponse } from './models/ConversationPatchResponse';
+export type { ConversationSearchMatch } from './models/ConversationSearchMatch';
+export type { ConversationSearchResponse } from './models/ConversationSearchResponse';
 export type { ConversationShellApprovalCondenseResponse } from './models/ConversationShellApprovalCondenseResponse';
 export { ConversationShellApprovalPresetItem } from './models/ConversationShellApprovalPresetItem';
 export type { ConversationShellApprovalResponse } from './models/ConversationShellApprovalResponse';

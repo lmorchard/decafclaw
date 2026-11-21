@@ -733,6 +733,66 @@ async def test_list_convs_with_folder(authed_client, folder_index):
 
 
 @pytest.mark.asyncio
+async def test_search_convs_matches_message_content(authed_client, http_config):
+    """Search finds a session by a message detail the title never mentions."""
+    index = ConversationIndex(http_config)
+    target = index.create("testuser", "Homelab Edge Routing")
+    decoy = index.create("testuser", "VLAN Notes")
+    append_message(
+        http_config,
+        target.conv_id,
+        {"role": "user", "content": "The weather widget fails on CORS headers; allowlist the origin."},
+    )
+    append_message(http_config, decoy.conv_id, {"role": "user", "content": "VLAN trunks need tagging."})
+
+    resp = await authed_client.get("/api/conversations/search", params={"q": "CORS headers"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["query"] == "CORS headers"
+    assert [m["conv_id"] for m in data["matches"]] == [target.conv_id]
+    match = data["matches"][0]
+    assert match["title"] == "Homelab Edge Routing"
+    assert match["matched_role"] == "user"
+    assert "CORS headers" in match["snippet"]
+    assert match["archived"] is False
+
+
+@pytest.mark.asyncio
+async def test_search_convs_archived_default_and_other_users(authed_client, http_config):
+    """Archived sessions are findable by default; other users' archives are not."""
+    index = ConversationIndex(http_config)
+    archived = index.create("testuser", "Old Debug Thread")
+    index.archive(archived.conv_id)
+    foreign = index.create("someone-else", "Private Trip")
+    append_message(http_config, archived.conv_id, {"role": "user", "content": "Shoulder season pricing notes."})
+    append_message(http_config, foreign.conv_id, {"role": "user", "content": "Shoulder season pricing notes."})
+
+    default = await authed_client.get("/api/conversations/search", params={"q": "shoulder season pricing"})
+    assert default.status_code == 200
+    matches = default.json()["matches"]
+    assert [m["conv_id"] for m in matches] == [archived.conv_id]
+    assert matches[0]["archived"] is True
+
+    active_only = await authed_client.get(
+        "/api/conversations/search",
+        params={"q": "shoulder season pricing", "include_archived": False},
+    )
+    assert active_only.status_code == 200
+    assert active_only.json()["matches"] == []
+
+
+@pytest.mark.asyncio
+async def test_search_convs_empty_query_and_auth(unauthed_client, authed_client):
+    empty = await authed_client.get("/api/conversations/search", params={"q": "  "})
+    assert empty.status_code == 200
+    assert empty.json() == {"query": "  ", "matches": []}
+
+    denied = await unauthed_client.get("/api/conversations/search", params={"q": "anything"})
+    assert denied.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_list_archived_convs(authed_client, http_config):
     """Archived conversations appear in /archived endpoint."""
     r = await authed_client.post("/api/conversations", json={"title": "To archive"})
