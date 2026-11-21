@@ -25,11 +25,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The two npm projects in the repo. The check reads both, so tui/ is covered
-# even though `make check` does not otherwise gate it.
+# The npm projects in the repo. The check reads all of them, so tui/ is
+# covered even though `make check` does not otherwise gate it.
 DEFAULT_PROJECTS = (
     REPO_ROOT / "src" / "decafclaw" / "web" / "static" / "package.json",
     REPO_ROOT / "tui" / "package.json",
+    REPO_ROOT / "contrib" / "android" / "package.json",
 )
 
 DEP_FIELDS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")

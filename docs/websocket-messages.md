@@ -297,6 +297,17 @@ Accumulated text and thinking for the current unarchived assistant segment, sent
 - `text` — string
 - `thinking` — string
 
+### `switch_conversation`
+
+Instructs the client (web UI, voice companion, mobile app) to redirect its active conversation view to another conversation.
+
+**Fields:**
+
+- `conv_id` — string
+- `target_conv_id` — string
+- `title` — string
+- `reason` — string
+
 ### `tool_end`
 
 Final result of a tool call. Replaces the in-flight tool_status with terminal state. `is_error` and `timed_out` are structured outcome tags so clients render failures without parsing result_text; `timeout_sec` is the watchdog limit that fired.

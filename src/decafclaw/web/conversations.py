@@ -310,6 +310,27 @@ class ConversationIndex:
         log.info(f"Created web conversation {conv.conv_id} for {user_id}")
         return conv
 
+    def get_or_create_home(self, user_id: str) -> ConversationMeta:
+        """Get or lazily initialize the canonical Home / Lobby conversation for user_id."""
+        home_id = f"web-{user_id}-home"
+        existing = self.get(home_id)
+        if existing:
+            return existing
+        now = datetime.now(timezone.utc).isoformat()
+        conv = ConversationMeta(
+            conv_id=home_id,
+            user_id=user_id,
+            title="Lobby",
+            created_at=now,
+            updated_at=now,
+            custom_title=True,
+        )
+        data = self._load()
+        data.append(asdict(conv))
+        self._save(data)
+        log.info(f"Created home conversation {home_id} for {user_id}")
+        return conv
+
     def get(self, conv_id: str) -> ConversationMeta | None:
         """Get conversation metadata by ID."""
         data = self._load()

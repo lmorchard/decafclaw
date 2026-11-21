@@ -1,0 +1,169 @@
+# DecafClaw Voice Transceiver (Android)
+
+A lightweight, low-latency mobile voice transceiver app for [DecafClaw](https://github.com/lmorchard/decafclaw), built with Expo SDK 58 and React Native. Lives in the DecafClaw monorepo at `contrib/android/`.
+
+Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 Pro**, using on-device Tensor TPU speech recognition and local Android speech synthesis.
+
+---
+
+## Architecture & Flow
+
+```
+[ User Speaks ]
+      │ (Acoustic audio)
+      ▼
+[ Pixel Tensor TPU ] ──(expo-speech-recognition / on-device STT)
+      │
+      ▼ (Text string + punctuation)
+[ WebSocket /ws/chat ] ──(Cookie: decafclaw_session=...)──► [ DecafClaw Server ]
+                                                                   │
+                                                           (Streamed Tokens)
+                                                                   ▼
+[ Phone Speaker ] ◄──(expo-speech / Native TTS) ◄── [ Sentence Chunk Pipeline ]
+                      (0.90x pitch, 1.10x rate)      (Markdown normalizer)
+```
+
+1. **On-Device STT (Tensor TPU)**:
+   - Uses `expo-speech-recognition` with `requiresOnDeviceRecognition: true`.
+   - Runs locally on the phone's Tensor hardware with instant punctuation and zero server audio compute load.
+   - Microphone permission is checked at launch and requested on the first tap, not at startup.
+   - Android's `SpeechRecognizer` beeps on start/stop when it uses the default mic. The app always starts in continuous mode (custom `EXTRA_AUDIO_SOURCE`), which suppresses those beeps; tap mode aborts on its first final result to keep one-shot behavior. One-shot sessions are bounded to 15s.
+2. **WebSocket Gateway**:
+   - Streams directly to DecafClaw's `/ws/chat` endpoint with token session auth.
+   - Exponential backoff reconnect, foreground wake recovery (`AppState`), and a 45s inactivity watchdog that reconnects and reloads the turn from conversation history.
+   - No application-level keepalive: RN's `WebSocket.ping()` sends an empty binary frame on Android, which DecafClaw's `receive_text()` rejects by closing the socket. The server's protocol ping/pong keeps the connection alive.
+   - Turns spoken while the socket is down are queued and flushed on reconnect.
+   - Server `error` events render as transcript errors instead of hanging on "Thinking...". A `4001` close reports an auth failure and stops reconnecting.
+   - Starting to listen cancels the in-flight turn via `cancel_turn` when Server Barge-In is enabled; local TTS stays suppressed until the next turn.
+   - The active conversation ID and title persist (`@decafclaw_conv_id`, `@decafclaw_conv_title`) and are restored on launch. With none saved, the app resolves the user's Home Lobby from `/api/conversations/home`.
+   - Server `switch_conversation` events (session tools, Home) update the active conversation and title, then clear the local transcript. The title also refreshes from the server's `conv_selected` response on restore/reconnect, and from `conv_renamed` when auto-titling renames the active session.
+3. **Pipelined Native Speech (TTS)**:
+   - Speaks each complete sentence as soon as its boundary arrives, using Android's native Google Speech engine via `expo-speech`.
+   - Normalizes Markdown syntax (code fences, wiki links, links, headers, lists, tables, HTML, emphasis) into speakable English.
+   - A `■` button in the footer stops playback without opening the mic.
+4. **Unified Push-to-Talk & Controls**:
+   - A tap starts one-shot listening; the engine auto-sends when you pause (`Listening... Tap to Stop`).
+   - A long press (~450ms) gives a 40ms vibrate and starts a continuous session that keeps listening across silences (`Listening... Tap to Finish`). Finalized segments accumulate; tapping again stops the engine and sends the whole monologue as one turn.
+   - On Android 13+ the continuous session uses the segmented on-device recognizer; if the engine ends unexpectedly, it restarts up to 3 times into the same buffer.
+   - A status glyph inside the button shows state at a glance: green connected, amber connecting/thinking/tooling, red offline/error, `♪` speaking, white listening.
+   - The title bar shows the active session title (or `No session` before one exists), so agent-driven switches are visible without a chat UI.
+   - A floating `⌂` button on the left returns to the Home Lobby; the `↗` button on the right opens the current conversation in the web UI (`/?conv=<conv_id>`). The browser keeps its own login; the web client re-selects the linked conversation after sign-in.
+   - The active conversation survives app restarts; the transcript itself stays session-local, so use the web link for history.
+   - Hamburger menu (`☰`) opens Settings: DecafClaw host/token, Home Lobby override, server barge-in toggle, TTS toggle, pitch/speed, starred voices, and inline audition `▶` buttons.
+
+---
+
+## Configuration
+
+The Settings sheet stores the DecafClaw connection in `AsyncStorage`. The app ships with no default token — enter one in Settings; never commit a session token:
+
+| Setting | Key | Default |
+| --- | --- | --- |
+| Host URL | `@decafclaw_host` | `http://decafclaw:18880` |
+| Session token | `@decafclaw_token` | empty; enter it in Settings (never commit one) |
+| Active conversation | `@decafclaw_conv_id` | restored on launch; cleared when host/token changes |
+| Active session title | `@decafclaw_conv_title` | restored on launch; refreshed via `conv_selected` |
+| Home Lobby override | `@decafclaw_lobby_conv_id` | blank (server `web-<user>-home`) |
+| Server barge-in | `@decafclaw_barge_in` | `true` |
+
+Saving either value reconnects the socket and starts a fresh conversation on the new server. Hosts are normalized to `http://`/`https://` and trailing slashes are stripped.
+
+Android cleartext HTTP is enabled through `expo-build-properties` in `app.json` (shared by both variants via `app.config.js`) so the default plain-`http` host also works in release builds. Use `https://` when the server is reachable outside a trusted network.
+
+---
+
+## Two Installations
+
+The app builds as two side-by-side applications, with separate data and tokens:
+
+| Variant | Package | Build | Metro | Use |
+| --- | --- | --- | --- | --- |
+| Production | `com.lmorchard.decafclawvoice` | `npm run android:prod` | no | Daily driver |
+| Development | `com.lmorchard.decafclawvoice.dev` | `npm run android:dev` (or `android:dev:install` + `start:dev`) | yes | Fast Refresh / debugging |
+
+Both are signed with the local debug keystore. That's fine for self-install; if you later move production to a real release key, uninstall it first (signature changes) and re-enter settings.
+
+Variant switching regenerates the ignored `android/` folder with `expo prebuild --clean`; already-installed APKs are unaffected. `app.config.js` selects the name/package from `APP_VARIANT`.
+
+---
+
+## Project Structure
+
+```
+contrib/android/
+├── App.tsx                     # Coordinator: transcript, settings, batching, speech tracking
+├── app.json                    # Base Expo config, permissions, build plugins
+├── app.config.js               # Per-variant name/package (production vs development)
+├── run-android.sh              # Local build launcher with Java 17 & Android SDK env
+├── eslint.config.js            # Expo flat ESLint config
+├── vitest.config.mts           # Unit test config
+├── src/
+│   ├── types.ts                # TypeScript contracts (ChatMessage, VoiceItem)
+│   ├── config.ts               # Default host; token is set in Settings
+│   ├── utils/
+│   │   ├── speech.ts           # Markdown normalizer & voice label formatter
+│   │   ├── speech.test.ts
+│   │   ├── connection.ts       # Host URL normalization & web deep links
+│   │   └── connection.test.ts
+│   ├── hooks/
+│   │   ├── useDecafClawWebSocket.ts # Socket lifecycle, queues, watchdog, history resync
+│   │   └── useVoiceRecognition.ts   # Tensor TPU STT hooks & permissions
+│   └── components/
+│       ├── Header.tsx          # Title bar with the active session title
+│       ├── TranscriptView.tsx  # Memoized in-memory chat transcript
+│       ├── PttFooter.tsx       # Speak/connect button with status glyph, TTS stop, settings
+│       └── VoiceSettingsModal.tsx # Connection, TTS, pitch, speed, starred voices
+```
+
+---
+
+## Local Development on Mordecai
+
+### Prerequisites
+- **Node.js**: v26+ (Homebrew)
+- **Java**: `openjdk@17` (`/opt/homebrew/opt/openjdk@17`)
+- **Android SDK**: `~/Library/Android/sdk` (`platform-tools`, `platforms;android-35`, `build-tools;35.0.0`)
+- **Device**: Pixel 10 Pro paired over wireless `adb` (`replicant26:37003`)
+
+### Common Commands
+
+```bash
+# Type check, lint, and unit tests
+npx tsc --noEmit
+npm run lint
+npm test
+
+# Install the production release (bundled JS, no Metro)
+npm run android:prod
+
+# Install the development debug app (launches Metro; Ctrl-C stops the bundler)
+npm run android:dev
+
+# Or install dev without starting Metro, then run the bundler separately
+npm run android:dev:install
+npm run start:dev
+
+# Regenerate the ignored native folder after changing config plugins
+npx expo prebuild --platform android --clean --no-install
+
+# Restart app remotely over adb
+export PATH=$HOME/Library/Android/sdk/platform-tools:$PATH
+adb shell am force-stop com.lmorchard.decafclawvoice
+adb shell am start -n com.lmorchard.decafclawvoice/.MainActivity
+
+# Inspect device logs / crashes
+adb logcat -d -t 100 | grep -iE 'ReactNativeJS|com.lmorchard.decafclawvoice|FATAL'
+```
+
+---
+
+## Key Invariants
+
+- **New Architecture Only**: React Native 0.88 / Expo SDK 58 runs the New Architecture (Bridgeless JSI) by default. Do NOT install legacy C++ modules like `expo-av` (which fails with JSI link errors).
+- **Socket Closure Safety**: Always read speech parameters and active options from mutable React refs (`settingsRef.current`) rather than callback closures to prevent WebSocket churn or stale voice profiles.
+- **Identity-Guarded Sockets**: Every handler checks `wsRef.current === ws`; a socket is detached before it is closed. This prevents a replaced socket's `close` event from scheduling a reconnect that kills the healthy one.
+- **Batched Streaming**: Assistant tokens are flushed into the transcript on a 50 ms timer, never per token. Transcript bubbles are memoized and scrolling is throttled.
+- **Conversation Switches**: Switching conversations or returning Home clears the local transcript, speech buffers, and in-flight turn state. The next turn starts fresh.
+- **Barge-In**: Starting to listen cancels the server turn (when enabled) and suppresses TTS until a new turn is sent.
+- **Session Identity**: The session title shown in the header is persisted and refreshed from `conv_selected`; a `switch_conversation` event updates both title and conversation and clears the transcript.
+- **Exact Pins**: All npm dependencies are exact-pinned. The monorepo's `make check-npm-policy` covers this `package.json` too.
