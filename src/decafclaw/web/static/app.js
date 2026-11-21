@@ -11,6 +11,7 @@ import { getConvFromUrl } from './lib/conversation-url.js';
 import { MESSAGE_TYPES, KNOWN_MESSAGE_TYPES } from './lib/message-types.js';
 import { SIDE_EFFECT_COMMANDS } from './lib/constants.js';
 import { load as loadBookmarks } from './lib/bookmarks-store.js';
+import { handleConversationLinkClick } from './lib/conversation-links.js';
 import { setupResizeHandle } from './lib/utils.js';
 import { shouldFocusChatInput } from './lib/chat-focus.js';
 import { applyPageTitle } from './lib/page-title.js';
@@ -443,15 +444,14 @@ function hideConfigPanel() {
   hideWikiView();
 }
 
-// Intercept clicks on .wiki-link elements anywhere in the document
+// Intercept clicks on conversation links to vault pages and workspace files so
+// they open in the current session's side panel. Modified clicks fall through
+// to the link href (new tab).
 document.addEventListener('click', (e) => {
-  const link = /** @type {HTMLElement} */ (e.target).closest('a.wiki-link');
-  if (!link) return;
-  // In #wiki-main, let wiki-page handle navigation
-  if (link.closest('#wiki-main')) return;
-  e.preventDefault();
-  const page = link.getAttribute('data-wiki-page');
-  if (page) showWikiPage(page);
+  handleConversationLinkClick(e, {
+    showWikiPage,
+    showFilePage: (path) => showFilePage({ path }),
+  });
 });
 
 // Open wiki page from sidebar wiki tab

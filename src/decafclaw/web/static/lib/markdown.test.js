@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { renderMarkdown } from './markdown.js';
 
+/** @param {string} html @returns {HTMLAnchorElement} */
+function parseAnchor(html) {
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    return /** @type {HTMLAnchorElement} */ (template.content.querySelector('a'));
+}
+
 describe('markdown', () => {
     it('returns empty string for empty input', () => {
         expect(renderMarkdown('')).toBe('');
@@ -19,10 +26,20 @@ describe('markdown', () => {
         expect(html).toContain('alt="alt"');
     });
 
-    it('rewrites workspace:// link URLs', () => {
-        const html = renderMarkdown('[link](workspace://path/to/file.txt)');
-        expect(html).toContain('href="/api/workspace/path/to/file.txt"');
-        expect(html).toContain('link</a>');
+    it('rewrites workspace:// link URLs and marks them for in-session opening', () => {
+        const link = parseAnchor(renderMarkdown('[link](workspace://path/to/file.txt)'));
+        expect(link.getAttribute('href')).toBe('/api/workspace/path/to/file.txt');
+        expect(link.classList.contains('workspace-link')).toBe(true);
+        expect(link.getAttribute('data-workspace-path')).toBe('path/to/file.txt');
+        expect(link.textContent).toBe('link');
+    });
+
+    it('marks vault:// links as wiki links for the in-session editor', () => {
+        const link = parseAnchor(renderMarkdown('[Notes](vault://Notes/My%20Page)'));
+        expect(link.getAttribute('href')).toBe('/vault/Notes/My%20Page');
+        expect(link.classList.contains('wiki-link')).toBe(true);
+        expect(link.getAttribute('data-wiki-page')).toBe('Notes/My Page');
+        expect(link.textContent).toBe('Notes');
     });
 
     it('handles [[wiki links]]', () => {
