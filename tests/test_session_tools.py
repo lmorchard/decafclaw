@@ -131,3 +131,46 @@ class TestSessionTools:
         assert events[0]["type"] == "switch_conversation"
         assert events[0]["title"] == "Kitchen Blinds Debug"
         assert events[0]["target_conv_id"].startswith("web-lmorchard-")
+
+    @pytest.mark.asyncio
+    async def test_session_switch_calls_manager_emit(self, session_ctx):
+        from unittest.mock import AsyncMock
+
+        mock_manager = AsyncMock()
+        session_ctx.manager = mock_manager
+        index = ConversationIndex(session_ctx.config)
+        target = index.create("lmorchard", title="Target Session")
+
+        res = await tool_session_switch(session_ctx, target.conv_id, reason="Testing emit")
+        assert "Switching client to session 'Target Session'" in res.text
+
+        mock_manager.emit.assert_awaited_once()
+        args = mock_manager.emit.await_args[0]
+        assert args[0] == session_ctx.conv_id
+        assert args[1]["type"] == "switch_conversation"
+        assert args[1]["target_conv_id"] == target.conv_id
+        assert args[1]["title"] == "Target Session"
+        assert args[1]["reason"] == "Testing emit"
+
+    @pytest.mark.asyncio
+    async def test_session_switch_no_duplicate_delivery(self, session_ctx):
+        from unittest.mock import AsyncMock
+
+        mock_manager = AsyncMock()
+        session_ctx.manager = mock_manager
+        index = ConversationIndex(session_ctx.config)
+        target = index.create("lmorchard", title="Single Delivery")
+
+        bus_events = []
+
+        async def _subscriber(event):
+            bus_events.append(event)
+
+        session_ctx.event_bus.subscribe(_subscriber)
+
+        await tool_session_switch(session_ctx, target.conv_id, reason="No dupes")
+
+        # Manager emit was called exactly once
+        assert mock_manager.emit.await_count == 1
+        # Event bus was bypassed because manager.emit handled delivery
+        assert len(bus_events) == 0
