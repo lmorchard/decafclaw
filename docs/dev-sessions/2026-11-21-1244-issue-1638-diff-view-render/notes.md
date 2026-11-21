@@ -62,3 +62,7 @@
   with no notice.
 - Not exercised: a real conversation turn through `dc-widget-host` in the full
   web app; the harness mounts the same widget element and data shape.
+- `tests/test_web_browser_scenarios.py::test_browser_diff_view_row_spacing`
+  caught an initial regression: a "No textual changes" branch suppressed rows
+  when `before === after`, which that scenario uses to test long-line wrapping.
+  Removed the branch; identical buffers now render as unchanged rows.

@@ -151,18 +151,16 @@ export class DiffViewWidget extends LitElement {
 
   /**
    * Build diff rows, collapsing long unchanged runs into gap rows.
-   * @returns {{rows: Array<{type: string, text?: string, count?: number}>, changed: boolean}}
+   * @returns {Array<{type: string, text?: string, count?: number}>}
    */
   _buildRows() {
     const { before = '', after = '' } = this.data || {};
     const parts = Diff.diffLines(before, after);
     const rows = [];
-    let changed = false;
 
     parts.forEach((part, index) => {
       const lines = partLines(part);
       if (part.added || part.removed) {
-        changed = true;
         const type = part.added ? 'added' : 'removed';
         for (const text of lines) rows.push({ type, text });
         return;
@@ -201,7 +199,7 @@ export class DiffViewWidget extends LitElement {
       }
     });
 
-    return { rows, changed };
+    return rows;
   }
 
   _renderHeader(label) {
@@ -274,28 +272,23 @@ export class DiffViewWidget extends LitElement {
 
   render() {
     const isCanvas = this.mode === 'canvas';
-    const { rows, changed } = this._buildRows();
+    const rows = this._buildRows();
+    const totalRows = rows.length;
+    const truncated = !isCanvas && totalRows > MAX_DIFF_RENDER_LINES;
+    const visibleRows = truncated ? rows.slice(0, MAX_DIFF_RENDER_LINES) : rows;
+    const content = this.viewMode === 'split'
+      ? this._renderSplit(visibleRows)
+      : this._renderUnified(visibleRows);
 
-    let content;
     /** @type {import('lit').TemplateResult | typeof nothing} */
     let notice = nothing;
-    if (!changed) {
-      content = html`<div class="diff-view-notice">No textual changes.</div>`;
-    } else {
-      const totalRows = rows.length;
-      const truncated = !isCanvas && totalRows > MAX_DIFF_RENDER_LINES;
-      const visibleRows = truncated ? rows.slice(0, MAX_DIFF_RENDER_LINES) : rows;
-      content = this.viewMode === 'split'
-        ? this._renderSplit(visibleRows)
-        : this._renderUnified(visibleRows);
-      if (truncated) {
-        notice = html`
-          <div class="diff-view-notice">
-            Showing first ${MAX_DIFF_RENDER_LINES} of ${totalRows} diff lines.
-            Open in Canvas for the full diff.
-          </div>
-        `;
-      }
+    if (truncated) {
+      notice = html`
+        <div class="diff-view-notice">
+          Showing first ${MAX_DIFF_RENDER_LINES} of ${totalRows} diff lines.
+          Open in Canvas for the full diff.
+        </div>
+      `;
     }
 
     if (isCanvas) {
