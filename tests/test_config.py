@@ -42,6 +42,9 @@ def _isolate_env(monkeypatch):
                 "VAULT_GUIDE_",
                 "WORKFLOW_",
                 "LOOP_BREAKER_",
+                "DEFAULT_MODEL",
+                "AUXILIARY_MODEL",
+                "MAX_TOOL_OUTPUT_",
             )
         ):
             monkeypatch.delenv(key, raising=False)
@@ -1131,3 +1134,89 @@ class TestToolOutputBounds:
         cfg = load_config()
         assert cfg.max_tool_output_lines == 2000
         assert cfg.max_tool_output_disk_bytes == 10 * 1024 * 1024
+
+
+class TestTopLevelScalarEnvAliases:
+    """Each top-level scalar resolves through its env alias (#1327):
+
+    env var > config.json > dataclass default, via the shared
+    ``_resolve_top_level_scalar`` path. One case per named scalar pins its
+    alias; the empty-env cases pin the "first non-empty wins" fall-through.
+    """
+
+    def test_default_model_env_alias(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"default_model": "from-json"}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("DEFAULT_MODEL", "from-env")
+        cfg = load_config()
+        assert cfg.default_model == "from-env"
+
+    def test_auxiliary_model_env_alias(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"auxiliary_model": "from-json"}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("AUXILIARY_MODEL", "from-env")
+        cfg = load_config()
+        assert cfg.auxiliary_model == "from-env"
+
+    def test_empty_env_falls_through_to_json(self, tmp_path, monkeypatch):
+        """Empty env vars fall through to config.json (first non-empty wins)."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(
+            json.dumps({"default_model": "from-json", "auxiliary_model": "aux-json"})
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("DEFAULT_MODEL", "")
+        monkeypatch.setenv("AUXILIARY_MODEL", "")
+        cfg = load_config()
+        assert cfg.default_model == "from-json"
+        assert cfg.auxiliary_model == "aux-json"
+
+    def test_extra_skill_paths_env_alias(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"extra_skill_paths": ["/from-json"]}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("EXTRA_SKILL_PATHS", "/a,/b")
+        cfg = load_config()
+        assert cfg.extra_skill_paths == ["/a", "/b"]
+
+    def test_skills_always_loaded_env_alias(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"skills_always_loaded": ["from-json"]}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("SKILLS_ALWAYS_LOADED", "alpha,beta")
+        cfg = load_config()
+        assert cfg.skills_always_loaded == ["alpha", "beta"]
+
+    def test_max_tool_output_bytes_env_alias(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"max_tool_output_bytes": 12345}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("MAX_TOOL_OUTPUT_BYTES", "999")
+        cfg = load_config()
+        assert cfg.max_tool_output_bytes == 999
+
+    def test_max_tool_output_lines_env_alias(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"max_tool_output_lines": 777}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("MAX_TOOL_OUTPUT_LINES", "42")
+        cfg = load_config()
+        assert cfg.max_tool_output_lines == 42
+
+    def test_max_tool_output_disk_bytes_env_alias(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"max_tool_output_disk_bytes": 999999}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("MAX_TOOL_OUTPUT_DISK_BYTES", "5000")
+        cfg = load_config()
+        assert cfg.max_tool_output_disk_bytes == 5000
