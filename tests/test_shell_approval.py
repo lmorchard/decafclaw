@@ -16,6 +16,28 @@ from decafclaw.tools.shell_tools import (
     tool_shell,
 )
 
+
+def _seed_activity(ctx, command: str = "touch prior-marker"):
+    """Seed a prior shell call so the command is in an established activity.
+
+    Direction gates the judge (#1641): a conversation's first command asks
+    without consulting the judge. Judge-behavior tests start mid-conversation.
+    """
+    ctx.history = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "prior-call",
+                    "type": "function",
+                    "function": {"name": "shell", "arguments": json.dumps({"command": command})},
+                }
+            ],
+        }
+    ]
+
+
 # -- pattern matching tests --
 
 
@@ -207,6 +229,7 @@ async def test_allowlist_bypasses_aux_llm(ctx):
 @pytest.mark.asyncio
 async def test_aux_llm_auto_approve(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
 
     mock_call = AsyncMock(return_value={"content": '{"auto_approve": true, "reason": "Looks safe", "risk": "low"}'})
     mock_aux_llm = MagicMock(return_value=mock_call)
@@ -216,7 +239,7 @@ async def test_aux_llm_auto_approve(ctx):
         "decafclaw.tools.shell_tools._execute_command",
         return_value="output",
     ) as mock_exec:
-        result = await tool_shell(ctx, "ls -la")
+        result = await tool_shell(ctx, "touch newfile")
         mock_exec.assert_called_once()
         assert result == "output"
         mock_aux_llm.assert_called_once()
@@ -225,18 +248,23 @@ async def test_aux_llm_auto_approve(ctx):
         # Verify per-session memory works (second call shouldn't invoke aux LLM)
         mock_call.reset_mock()
         mock_aux_llm.reset_mock()
-        result2 = await tool_shell(ctx, "ls -la")
+        result2 = await tool_shell(ctx, "touch newfile")
         assert result2 == "output"
         mock_aux_llm.assert_not_called()
-        mock_call.assert_not_called()
+        mock_call.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_aux_llm_deny_or_error_falls_through(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
 
-    # Case 1: Aux LLM denies
-    mock_call = AsyncMock(return_value={"content": '{"auto_approve": false, "reason": "Too risky", "risk": "high"}'})
+    # Case 1: Aux LLM denies with a concrete risk
+    mock_call = AsyncMock(
+        return_value={
+            "content": '{"auto_approve": false, "reason": "Too risky", "risk": "high", "risk_category": "irreversible"}'
+        }
+    )
     mock_aux_llm = MagicMock(return_value=mock_call)
     ctx.aux_approval_llm = mock_aux_llm
 
@@ -245,7 +273,7 @@ async def test_aux_llm_deny_or_error_falls_through(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        result = await tool_shell(ctx, "echo hello")
+        result = await tool_shell(ctx, "touch hello")
         mock_confirm.assert_awaited_once()
         assert "denied" in result.text
         mock_aux_llm.assert_called_once()
@@ -261,7 +289,7 @@ async def test_aux_llm_deny_or_error_falls_through(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        result = await tool_shell(ctx, "echo another")
+        result = await tool_shell(ctx, "touch another")
         mock_confirm.assert_awaited_once()
         assert "denied" in result.text
         mock_aux_llm.assert_called_once()
@@ -474,6 +502,7 @@ async def test_aux_llm_declined_passes_suggested_rule_and_applies_on_approval(ct
     and added to ctx.tools.aux_approval_guidance if user chooses add_rule (#982).
     """
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
 
     mock_call = AsyncMock(
         return_value={
@@ -482,6 +511,7 @@ async def test_aux_llm_declined_passes_suggested_rule_and_applies_on_approval(ct
                     "auto_approve": False,
                     "reason": "Modifies git remote state",
                     "risk": "medium",
+                    "risk_category": "irreversible",
                     "suggested_rule": "Auto-approve git push to origin topic branches",
                 }
             )
@@ -514,6 +544,7 @@ async def test_aux_llm_declined_passes_suggested_rule_and_applies_on_approval(ct
 async def test_add_rule_ignored_when_denied_or_no_suggested_rule(ctx):
     """If confirmation is denied or reviewer made no suggestion, add_rule is not applied."""
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
 
     # 1. Denied response with add_rule: True must not add rule
     mock_call = AsyncMock(
@@ -523,6 +554,7 @@ async def test_add_rule_ignored_when_denied_or_no_suggested_rule(ctx):
                     "auto_approve": False,
                     "reason": "Dangerous",
                     "risk": "high",
+                    "risk_category": "irreversible",
                     "suggested_rule": "Auto-approve danger",
                 }
             )
@@ -550,6 +582,7 @@ async def test_add_rule_ignored_when_denied_or_no_suggested_rule(ctx):
                     "auto_approve": False,
                     "reason": "Unknown",
                     "risk": "high",
+                    "risk_category": "irreversible",
                     "suggested_rule": None,
                 }
             )
@@ -596,6 +629,7 @@ async def test_ask_confirmation_message_includes_monitor_reason(ctx):
 async def test_aux_decline_confirmation_message_includes_risk_and_reason(ctx):
     """An aux-LLM decline puts its risk and reason in the confirmation message (#90)."""
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
 
     mock_call = AsyncMock(
         return_value={
@@ -604,6 +638,7 @@ async def test_aux_decline_confirmation_message_includes_risk_and_reason(ctx):
                     "auto_approve": False,
                     "reason": "Modifies git remote state",
                     "risk": "medium",
+                    "risk_category": "irreversible",
                 }
             )
         }
@@ -615,11 +650,11 @@ async def test_aux_decline_confirmation_message_includes_risk_and_reason(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        result = await check_shell_approval(ctx, "echo hello")
+        result = await check_shell_approval(ctx, "touch hello")
         assert result == {"approved": False}
         _, kwargs = mock_confirm.call_args
         message = kwargs["message"]
-        assert "Shell command: `echo hello`" in message
+        assert "Shell command: `touch hello`" in message
         assert "Risk: medium" in message
         assert "Reason: Modifies git remote state" in message
         # the decline reason still flows to the confirmation action data (#982)
@@ -630,20 +665,21 @@ async def test_aux_decline_confirmation_message_includes_risk_and_reason(ctx):
 async def test_no_reason_confirmation_message_unchanged(ctx):
     """No monitor ASK and no aux decision: the message stays exactly as before (#90).
 
-    Aux approval is disabled by default, so `echo hello` (tier-1 ALLOW, not
-    ambiguous) falls straight through to the plain prompt.
+    Aux approval is disabled by default, so a command in the established
+    activity falls straight through to the plain prompt.
     """
     assert ctx.config.shell.aux_approval_enabled is False
+    _seed_activity(ctx)
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        result = await check_shell_approval(ctx, "echo hello")
+        result = await check_shell_approval(ctx, "touch hello")
         assert result == {"approved": False}
         _, kwargs = mock_confirm.call_args
-        assert kwargs["message"] == "Shell command: `echo hello`"
+        assert kwargs["message"] == "Shell command: `touch hello`"
 
 
 @pytest.mark.asyncio
@@ -662,8 +698,13 @@ async def test_caller_message_takes_precedence(ctx):
 
     # Fallthrough path: aux declines, but the caller's message still wins
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     mock_call = AsyncMock(
-        return_value={"content": json.dumps({"auto_approve": False, "reason": "Too risky", "risk": "high"})}
+        return_value={
+            "content": json.dumps(
+                {"auto_approve": False, "reason": "Too risky", "risk": "high", "risk_category": "irreversible"}
+            )
+        }
     )
     ctx.aux_approval_llm = MagicMock(return_value=mock_call)
 
@@ -672,7 +713,7 @@ async def test_caller_message_takes_precedence(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        result = await check_shell_approval(ctx, "echo hello", message="Background process: `echo hello`")
+        result = await check_shell_approval(ctx, "touch hello", message="Background process: `touch hello`")
         assert result == {"approved": False}
         _, kwargs = mock_confirm.call_args
-        assert kwargs["message"] == "Background process: `echo hello`"
+        assert kwargs["message"] == "Background process: `touch hello`"

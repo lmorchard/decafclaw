@@ -21,6 +21,12 @@ def infer_outcome(result_text: str) -> str:
     return "success"
 
 
+def _bounded(value, limit: int = 500) -> str:
+    """Collapse and cap a field so one record cannot grow unbounded."""
+    text = " ".join(str(value or "").split())
+    return text[:limit]
+
+
 def sanitize_args(args: dict) -> dict:
     if not isinstance(args, dict):
         return args
@@ -96,6 +102,33 @@ class AuditLogSubscriber:
                         "result_length": len(result_text),
                         "duration_ms": event.get("duration_ms", 0),
                         "outcome": infer_outcome(result_text),
+                    }
+                )
+            elif event_type == "approval_decision":
+                self.append_record(
+                    {
+                        "event": "approval_decision",
+                        "conv_id": event.get("conv_id", ""),
+                        "command": _bounded(event.get("command", "")),
+                        "cwd": _bounded(event.get("cwd", "")),
+                        "decision": event.get("decision", ""),
+                        "tier": event.get("tier", ""),
+                        "reason": _bounded(event.get("reason", "")),
+                        "activity": event.get("activity", ""),
+                        "activity_established": event.get("activity_established"),
+                    }
+                )
+            elif event_type == "approval_human":
+                self.append_record(
+                    {
+                        "event": "approval_human",
+                        "conv_id": event.get("conv_id", ""),
+                        "command": _bounded(event.get("command", "")),
+                        "approved": event.get("approved", False),
+                        "latency_ms": event.get("latency_ms", 0),
+                        "tier": event.get("tier", ""),
+                        "activity": event.get("activity", ""),
+                        "activity_established": event.get("activity_established"),
                     }
                 )
             elif event_type == "skill_activated":

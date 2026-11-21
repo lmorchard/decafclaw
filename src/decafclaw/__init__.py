@@ -113,4 +113,10 @@ def main():
 
         raise SystemExit(toil_main(sys.argv[2:]))
 
+    # CLI subcommand: python -m decafclaw approvals report ...
+    if len(sys.argv) > 1 and sys.argv[1] == "approvals":
+        from .approval_report import main as approvals_main
+
+        raise SystemExit(approvals_main(sys.argv[2:]))
+
     start_app()

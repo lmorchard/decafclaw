@@ -446,10 +446,13 @@ Settings for shell command execution and pre-approval logic (see #473).
 | `aux_approval_guidance` | str | `""` | `SHELL_AUX_APPROVAL_GUIDANCE` |
 | `aux_approval_presets` | dict | `{}` | `SHELL_AUX_APPROVAL_PRESETS` |
 | `active_aux_approval_presets` | list[str] | `[]` | `SHELL_ACTIVE_AUX_APPROVAL_PRESETS` |
+| `activity_window` | int | `50` | `SHELL_ACTIVITY_WINDOW` |
 | `foreground_wait_budget_sec` | float \| None | `None` | `SHELL_FOREGROUND_WAIT_BUDGET_SEC` |
 | `max_runtime_sec` | float | `30.0` | `SHELL_MAX_RUNTIME_SEC` |
 
 When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxiliary LLM to screen unrecognized commands. If the aux LLM deems the command low-risk (e.g. `ls -la`, `git status`), it is auto-approved without prompting the user. If the aux LLM deems it risky or errors out, it falls through to standard interactive confirmation. Auto-approved patterns are temporarily cached per-conversation so repeated benign commands don't trigger redundant LLM calls.
+
+`activity_window` (#1641) is how many recent shell calls define a conversation's established activity. A command whose activity domain (derived from `cwd` and command tokens) appears in that window proceeds to the aux judge; a command that starts a new activity is confirmed once with the direction stated. The window is recomputed from conversation history, so compaction resets it naturally. `0` or a negative value disables the window (all history counts) and re-creates the stale-direction failure the window exists to avoid; lower values make drift prompt sooner. See [Tools — Direction-aware approval](tools.md#direction-aware-approval-1641).
 
 #### Foreground time budget (#1136)
 

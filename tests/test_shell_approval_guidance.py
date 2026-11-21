@@ -42,12 +42,35 @@ def _make_mock_ctx(tmp_path: Path):
     return ctx
 
 
+def _seed_activity(ctx, command: str = "touch prior-marker"):
+    """Seed a prior shell call so the command is in an established activity.
+
+    Direction gates the judge (#1641): a conversation's first command asks
+    without consulting the judge. Judge-behavior tests start mid-conversation.
+    """
+    ctx.history = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "prior-call",
+                    "type": "function",
+                    "function": {"name": "shell", "arguments": json.dumps({"command": command})},
+                }
+            ],
+        }
+    ]
+
+
 def test_build_prompt_default_strict(tmp_path: Path):
     ctx = _make_mock_ctx(tmp_path)
     prompt = build_aux_approval_prompt(ctx, "ls -la")
 
-    assert "Only auto-approve low risk read-only or harmless commands" in prompt
+    assert "Decline auto-approval only for a concrete risk" in prompt
+    assert "Native tools are advisory" in prompt
     assert "Additional Approval Guidelines:" not in prompt
+    assert '"risk_category"' in prompt
     assert '"suggested_rule": "<string or null>"' in prompt
     assert "If auto_approve is false, formulate a concise, natural-language exception rule in suggested_rule" in prompt
     assert "If auto_approve is true or no rule makes sense, set suggested_rule to null." in prompt
@@ -69,7 +92,7 @@ def test_build_prompt_builtin_developer_preset(tmp_path: Path):
     assert "pyright" in prompt
     assert "git fetch" in prompt
     assert "&&" in prompt
-    assert "unless explicitly permitted by the additional approval guidelines below" in prompt
+    assert "they do not override a concrete risk category" in prompt
 
 
 def test_build_prompt_builtin_github_preset(tmp_path: Path):
@@ -166,6 +189,7 @@ def test_build_prompt_session_scoped_guidance(tmp_path: Path):
 async def test_check_shell_approval_passes_guidance_to_aux_llm(tmp_path: Path, monkeypatch):
     ctx = _make_mock_ctx(tmp_path)
     ctx.config.shell.active_aux_approval_presets = ["developer"]
+    _seed_activity(ctx)
 
     # Security monitor allows command to proceed to aux approval
     async def mock_sec(*args, **kwargs):
@@ -577,6 +601,7 @@ async def test_check_shell_approval_feature_branch_push_with_developer_preset(tm
     ctx = _make_mock_ctx(tmp_path)
     ctx.config.shell.aux_approval_enabled = True
     ctx.config.shell.active_aux_approval_presets = ["developer"]
+    _seed_activity(ctx)
 
     mock_llm = AsyncMock(
         return_value={"content": '{"auto_approve": true, "risk": "low", "reason": "pushing to feature branch"}'}
@@ -616,6 +641,7 @@ async def test_exception_rule_added_on_approval_surfaces_in_subsequent_aux_evalu
 
     ctx = _make_mock_ctx(tmp_path)
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
 
     # 1. First command declined
     mock_llm_decline = AsyncMock(
@@ -624,6 +650,7 @@ async def test_exception_rule_added_on_approval_surfaces_in_subsequent_aux_evalu
                 {
                     "auto_approve": False,
                     "risk": "medium",
+                    "risk_category": "irreversible",
                     "reason": "Creating PR modifies remote state",
                     "suggested_rule": "Auto-approve gh pr create in this repository",
                 }
