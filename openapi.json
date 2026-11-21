@@ -271,6 +271,23 @@
         }
       }
     },
+    "/api/conversations/home": {
+      "get": {
+        "summary": "Get Home Conversation",
+        "description": "GET /api/conversations/home \u2014 get or lazily create the user's Home/Lobby conversation.",
+        "operationId": "get_home_conversation_api_conversations_home_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conversations/archived": {
       "get": {
         "summary": "List Archived Conversations",
