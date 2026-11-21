@@ -1,13 +1,42 @@
 import React from 'react';
-import { StyleSheet, Text, View, ScrollView } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, type ScrollViewInstance } from 'react-native';
 import { ChatMessage } from '../types';
 
 interface TranscriptViewProps {
   messages: ChatMessage[];
   transcript: string;
   recognizing: boolean;
-  scrollViewRef: React.RefObject<any>;
+  scrollViewRef: React.RefObject<ScrollViewInstance | null>;
 }
+
+const MessageBubble = React.memo(function MessageBubble({ message }: { message: ChatMessage }) {
+  if (message.role === 'user') {
+    return (
+      <View style={styles.userBubble}>
+        <Text style={styles.bubbleLabel}>You</Text>
+        <Text style={styles.userText}>{message.text}</Text>
+      </View>
+    );
+  }
+
+  if (message.role === 'error') {
+    return (
+      <View style={styles.errorBubble}>
+        <Text style={styles.bubbleLabel}>Error</Text>
+        <Text style={styles.errorText}>{message.text}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.agentBubble}>
+      <Text style={styles.bubbleLabel}>Caffeina</Text>
+      <Text style={styles.agentText}>
+        {message.text.length > 0 ? message.text : 'Thinking...'}
+      </Text>
+    </View>
+  );
+});
 
 export function TranscriptView({
   messages,
@@ -21,6 +50,7 @@ export function TranscriptView({
       style={styles.scrollArea}
       contentContainerStyle={styles.scrollContent}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
     >
       {messages.length === 0 && !transcript ? (
         <View style={styles.emptyContainer}>
@@ -29,25 +59,9 @@ export function TranscriptView({
         </View>
       ) : null}
 
-      {messages.map((item) => {
-        if (item.role === 'user') {
-          return (
-            <View key={item.id} style={styles.userBubble}>
-              <Text style={styles.bubbleLabel}>You</Text>
-              <Text style={styles.userText}>{item.text}</Text>
-            </View>
-          );
-        } else {
-          return (
-            <View key={item.id} style={styles.agentBubble}>
-              <Text style={styles.bubbleLabel}>Caffeina</Text>
-              <Text style={styles.agentText}>
-                {item.text.length > 0 ? item.text : 'Thinking...'}
-              </Text>
-            </View>
-          );
-        }
-      })}
+      {messages.map((item) => (
+        <MessageBubble key={item.id} message={item} />
+      ))}
 
       {/* Live speech interim feedback */}
       {transcript && recognizing ? (
@@ -102,6 +116,15 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: '#10b981',
   },
+  errorBubble: {
+    backgroundColor: '#1f1315',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#7f1d1d',
+    borderLeftWidth: 3,
+    borderLeftColor: '#ef4444',
+  },
   bubbleLabel: {
     color: '#a1a1aa',
     fontSize: 11,
@@ -124,5 +147,10 @@ const styles = StyleSheet.create({
     color: '#fafafa',
     fontSize: 16,
     lineHeight: 22,
+  },
+  errorText: {
+    color: '#fca5a5',
+    fontSize: 15,
+    lineHeight: 21,
   },
 });

@@ -1,6 +1,6 @@
 # Agent Runbook & Engineering Guidelines: decafclaw-voice
 
-This document guides autonomous coding agents (Claude Code, OpenCode, Aider, etc.) operating inside `~/devel/decafclaw-voice` on `mordecai`.
+This document guides autonomous coding agents (Claude Code, OpenCode, Aider, etc.) operating inside `~/devel/decafclaw/contrib/android` on `mordecai`.
 
 ---
 
@@ -28,11 +28,17 @@ This document guides autonomous coding agents (Claude Code, OpenCode, Aider, etc
 2. **WebSocket Closure Safety**:
    * DecafClaw's WebSocket (`/ws/chat`) stays open continuously across turns.
    * **Never pass state variables directly into WebSocket message callbacks**. Always read speech parameters (selected voice, pitch, rate, mute state) through a React ref (`settingsRef.current`). This prevents stale closure bugs and avoids closing/re-opening the socket on every setting change.
+   * Every socket handler must check `wsRef.current === ws` before touching state. Before replacing or closing a socket, null its handlers; otherwise the stale socket's `close` event schedules a reconnect that kills the healthy replacement.
+   * Never reconnect after unmount. The hook uses `stoppedRef` plus a nulled-handler close in the effect cleanup.
+   * Turns spoken while the socket is down are queued and flushed on `open`; they are not dropped.
+   * Host and token are user-configurable; changing either starts a fresh conversation on the new server.
 3. **Pipelined TTS & Markdown Normalization**:
-   * Token streams are sentence-buffered and split at boundaries (`[.?!]\s+|\n+`) so speech plays as sentences arrive.
-   * Never feed raw Markdown to `Speech.speak()`. Always run text through `cleanMarkdownForSpeech()` in `src/utils/speech.ts` to strip code fences, wiki links, asterisks, and bullet points.
+   * Token streams are sentence-buffered and every complete boundary (`[.?!]\n` followed by whitespace or end of buffer) is spoken as soon as it arrives.
+   * Never feed raw Markdown to `Speech.speak()`. Always run text through `cleanMarkdownForSpeech()` in `src/utils/speech.ts` to strip code fences, wiki links, asterisks, and list/table syntax.
+   * Streaming text is batched into the transcript every 50 ms; do not append per-token in `setMessages`.
 4. **Barge-In / Instant Mute**:
    * Whenever speech recognition begins or the user taps the speak button, immediately call `Speech.stop()` to silence ongoing assistant playback.
+   * The footer exposes a `■` stop button while TTS utterances are queued; keep the utterance counter in sync via `onDone`/`onStopped`/`onError`.
 
 ---
 
@@ -40,16 +46,19 @@ This document guides autonomous coding agents (Claude Code, OpenCode, Aider, etc
 
 Keep modules small and single-purpose. Do not dump features into `App.tsx`:
 
-* **`App.tsx`**: Top-level coordinator. Wires hooks (`useDecafClawWebSocket`, `useVoiceRecognition`), manages `messages[]` transcript, maintains `settingsRef`, loads/saves preferences via `AsyncStorage`.
+* **`App.tsx`**: Top-level coordinator. Wires hooks (`useDecafClawWebSocket`, `useVoiceRecognition`), manages `messages[]` transcript, maintains `settingsRef`, loads/saves preferences (host, token, voice, pitch, rate, TTS, stars) via `AsyncStorage`, batches streamed text, and tracks TTS utterances.
 * **`src/types.ts`**: TypeScript definitions (`ChatMessage`, `VoiceItem`).
-* **`src/config.ts`**: Endpoints (`DEFAULT_HOST`) and auth token (`DEFAULT_TOKEN`).
+* **`src/config.ts`**: Default host (`DEFAULT_HOST`) and token (`DEFAULT_TOKEN`). Runtime overrides live in the settings sheet and `AsyncStorage` (`@decafclaw_host`, `@decafclaw_token`).
 * **`src/utils/speech.ts`**: `cleanMarkdownForSpeech()` prose normalizer and `formatVoiceLabel()` Google model formatter.
-* **`src/hooks/useDecafClawWebSocket.ts`**: Socket lifecycle, auto-reconnect backoff, AppState foreground recovery, turn dispatching via REST conversation creation and WS `send` message.
+* **`src/utils/connection.ts`**: `normalizeHost()` for user-entered server addresses.
+* **`src/utils/*.test.ts`**: Vitest coverage for the pure utilities.
+* **`src/hooks/useDecafClawWebSocket.ts`**: Socket lifecycle, identity-guarded handlers, reconnect backoff, AppState foreground recovery, ping keepalive, turn watchdog, queued turns, error surfacing, history resync, and REST conversation creation.
 * **`src/hooks/useVoiceRecognition.ts`**: Android native `SpeechRecognizer` via `expo-speech-recognition` targeting the Pixel's offline Tensor TPU.
 * **`src/components/Header.tsx`**: Insets-safe minimal title bar.
-* **`src/components/TranscriptView.tsx`**: Scrollable IM-style conversation thread with auto-scroll ref.
-* **`src/components/PttFooter.tsx`**: Combined PTT / Connection status button (`Tap to Speak` / `Disconnected · Tap to Connect`) + hamburger menu button (`☰`).
-* **`src/components/VoiceSettingsModal.tsx`**: Bounded slide-up sheet with TTS toggle, pitch/speed controls, starred favorites section, and inline audition `▶` buttons.
+* **`src/components/TranscriptView.tsx`**: Memoized IM-style conversation thread with auto-scroll ref.
+* **`src/components/PttFooter.tsx`**: Combined PTT / connection status button, live status line, TTS stop button, and settings hamburger (`☰`).
+* **`src/components/VoiceSettingsModal.tsx`**: Slide-up sheet with DecafClaw host/token fields, TTS toggle, pitch/speed controls, starred favorites, and inline audition `▶` buttons.
+* **`eslint.config.js`**, **`vitest.config.mts`**: Lint and test configuration.
 
 ---
 
@@ -57,19 +66,27 @@ Keep modules small and single-purpose. Do not dump features into `App.tsx`:
 
 Before completing any task, execute these verification gates:
 
-1. **Type Check**:
+1. **Type Check, Lint, and Unit Tests**:
    ```bash
    export PATH=/opt/homebrew/bin:$PATH
    npx tsc --noEmit
+   npm run lint
+   npm test
    ```
-   Must exit with code 0 (zero errors).
-2. **Device Connection Verification**:
+   All three must exit 0. The utility tests cover markdown normalization, voice labels, and host normalization.
+2. **Native Config Changes**:
+   `app.json` uses config plugins (`expo-build-properties` enables Android cleartext so the default `http://` host works in release builds). After changing plugins, regenerate the ignored native folder:
+   ```bash
+   npx expo prebuild --platform android --clean --no-install
+   ```
+   Verify `android/app/src/main/AndroidManifest.xml` contains `android:usesCleartextTraffic="true"`.
+3. **Device Connection Verification**:
    ```bash
    export PATH=$HOME/Library/Android/sdk/platform-tools:/opt/homebrew/bin:$PATH
    adb devices
    ```
    Verify `replicant26:37003` is listed as `device`.
-3. **App Restart & Logcat Inspection**:
+4. **App Restart & Logcat Inspection**:
    ```bash
    adb shell am force-stop com.lmorchard.decafclawvoice
    adb shell am start -n com.lmorchard.decafclawvoice/.MainActivity

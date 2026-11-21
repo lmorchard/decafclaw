@@ -4,23 +4,31 @@
   "main": "index.ts",
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
-    "expo": "~58.0.26",
-    "expo-speech": "~58.0.4",
-    "expo-speech-recognition": "^58.0.1",
-    "expo-status-bar": "~58.0.5",
+    "expo": "58.0.26",
+    "expo-build-properties": "58.0.12",
+    "expo-speech": "58.0.4",
+    "expo-speech-recognition": "58.0.1",
+    "expo-status-bar": "58.0.5",
+    "expo-system-ui": "58.0.7",
     "react": "19.3.0",
     "react-native": "0.88.1",
-    "react-native-safe-area-context": "~5.11.1"
+    "react-native-safe-area-context": "5.11.1"
   },
   "devDependencies": {
-    "@types/react": "~19.3.0",
-    "typescript": "~6.0.3"
+    "@types/react": "19.3.0",
+    "eslint": "9.39.5",
+    "eslint-config-expo": "58.0.4",
+    "typescript": "6.0.3",
+    "vitest": "5.1.1"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run"
   },
   "private": true
 }

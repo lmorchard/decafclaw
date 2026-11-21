@@ -19,17 +19,21 @@ export function useVoiceRecognition({
   const [transcript, setTranscript] = useState('');
   const hasPermissionRef = useRef(false);
 
-  // Pre-check and request mic permission on mount to avoid latency on button press
+  // Read the current permission state without showing a dialog at launch.
   useEffect(() => {
-    async function preflightPermissions() {
-      try {
-        const res = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-        hasPermissionRef.current = res.granted;
-      } catch (err) {
-        console.warn('Failed to preflight speech permissions:', err);
-      }
-    }
-    preflightPermissions();
+    let cancelled = false;
+    ExpoSpeechRecognitionModule.getPermissionsAsync()
+      .then((res) => {
+        if (!cancelled) {
+          hasPermissionRef.current = res.granted;
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to read speech permissions:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useSpeechRecognitionEvent('start', () => {
@@ -41,9 +45,7 @@ export function useVoiceRecognition({
     setIsStarting(false);
     setRecognizing(true);
     // Subtle haptic tick confirming mic buffer is actively capturing
-    try {
-      Vibration.vibrate(15);
-    } catch (e) {}
+    Vibration.vibrate(15);
   });
 
   useSpeechRecognitionEvent('end', () => {
@@ -55,57 +57,61 @@ export function useVoiceRecognition({
     const current = event.results[0]?.transcript || '';
     setTranscript(current);
 
-    if (event.isFinal) {
-      if (current.trim().length > 0) {
-        onFinalResult(current.trim());
-      }
+    if (event.isFinal && current.trim().length > 0) {
+      onFinalResult(current.trim());
     }
   });
 
   useSpeechRecognitionEvent('error', (event) => {
-    console.error('Speech recognition error:', event.error, event.message);
+    if (event.error !== 'no-speech') {
+      console.warn('Speech recognition error:', event.error, event.message);
+    }
     setIsStarting(false);
     setRecognizing(false);
   });
 
   const toggleListening = useCallback(async () => {
-    if (onInterrupted) {
-      onInterrupted();
-    }
-
-    if (recognizing || isStarting) {
-      setIsStarting(false);
+    if (recognizing) {
+      // Finalize the current utterance; the final result dispatches the turn.
       setRecognizing(false);
       ExpoSpeechRecognitionModule.stop();
-    } else {
-      // Immediate tactile response
+      return;
+    }
+
+    if (isStarting) {
+      // The engine has not produced audio yet; cancel instead of finalizing.
+      setIsStarting(false);
+      ExpoSpeechRecognitionModule.abort();
+      return;
+    }
+
+    onInterrupted?.();
+
+    // Immediate tactile response
+    Vibration.vibrate(20);
+    setIsStarting(true);
+    setTranscript('');
+
+    if (!hasPermissionRef.current) {
       try {
-        Vibration.vibrate(20);
-      } catch (e) {}
-
-      setIsStarting(true);
-      setTranscript('');
-
-      // If permissions not yet verified, check now
-      if (!hasPermissionRef.current) {
         const { granted } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
         hasPermissionRef.current = granted;
-        if (!granted) {
-          console.warn('Microphone permission denied');
-          setIsStarting(false);
-          return;
-        }
+      } catch (err) {
+        console.warn('Failed to request speech permissions:', err);
       }
-
-      // Start recognition immediately without awaiting permission check
-      ExpoSpeechRecognitionModule.start({
-        lang: 'en-US',
-        interimResults: true,
-        continuous: false,
-        requiresOnDeviceRecognition: true, // Forces Pixel Tensor on-device STT
-        addsPunctuation: true,
-      });
+      if (!hasPermissionRef.current) {
+        setIsStarting(false);
+        return;
+      }
     }
+
+    ExpoSpeechRecognitionModule.start({
+      lang: 'en-US',
+      interimResults: true,
+      continuous: false,
+      requiresOnDeviceRecognition: true, // Forces Pixel Tensor on-device STT
+      addsPunctuation: true,
+    });
   }, [recognizing, isStarting, onInterrupted]);
 
   const clearTranscript = useCallback(() => {

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,19 +6,24 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
+  TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { VoiceItem } from '../types';
 import { formatVoiceLabel } from '../utils/speech';
+import { normalizeHost } from '../utils/connection';
 
 interface VoiceSettingsModalProps {
   visible: boolean;
+  host: string;
+  token: string;
   ttsEnabled: boolean;
   voices: VoiceItem[];
   selectedVoice: string;
   pitch: number;
   rate: number;
   starredVoices: string[];
+  onSaveConnection: (host: string, token: string) => void;
   onToggleTts: () => void;
   onSelectVoice: (id: string) => void;
   onPreviewVoice: (id: string) => void;
@@ -30,12 +35,15 @@ interface VoiceSettingsModalProps {
 
 export function VoiceSettingsModal({
   visible,
+  host,
+  token,
   ttsEnabled,
   voices,
   selectedVoice,
   pitch,
   rate,
   starredVoices,
+  onSaveConnection,
   onToggleTts,
   onSelectVoice,
   onPreviewVoice,
@@ -46,9 +54,28 @@ export function VoiceSettingsModal({
 }: VoiceSettingsModalProps) {
   const insets = useSafeAreaInsets();
 
+  const [draftHost, setDraftHost] = useState(host);
+  const [draftToken, setDraftToken] = useState(token);
+  const [showToken, setShowToken] = useState(false);
+  const [formError, setFormError] = useState('');
+
   const starredSet = new Set(starredVoices);
   const favoriteVoices = voices.filter((v) => starredSet.has(v.identifier));
   const otherVoices = voices.filter((v) => !starredSet.has(v.identifier));
+
+  const handleSaveConnection = () => {
+    const normalized = normalizeHost(draftHost);
+    if (!normalized) {
+      setFormError('Enter a valid http:// or https:// host.');
+      return;
+    }
+    if (!draftToken.trim()) {
+      setFormError('Enter the DecafClaw session token.');
+      return;
+    }
+    setFormError('');
+    onSaveConnection(normalized, draftToken.trim());
+  };
 
   const renderVoiceItem = (v: VoiceItem) => {
     const isSelected = selectedVoice === v.identifier;
@@ -128,7 +155,7 @@ export function VoiceSettingsModal({
         >
           {/* Pinned Modal Header */}
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Voice & Audio Settings</Text>
+            <Text style={styles.modalTitle}>Settings</Text>
             <TouchableOpacity onPress={onClose} style={styles.modalCloseButton}>
               <Text style={styles.modalCloseText}>Done</Text>
             </TouchableOpacity>
@@ -138,7 +165,61 @@ export function VoiceSettingsModal({
           <ScrollView
             style={styles.modalScroll}
             contentContainerStyle={{ paddingBottom: 30 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
           >
+            {/* 0. DecafClaw Connection */}
+            <View style={styles.cardSection}>
+              <Text style={styles.toggleTitle}>DecafClaw Connection</Text>
+              <Text style={styles.toggleSubtitle}>
+                Server address and session token. Saving reconnects the socket.
+              </Text>
+
+              <Text style={styles.inputLabel}>Host URL</Text>
+              <TextInput
+                style={styles.textInput}
+                value={draftHost}
+                onChangeText={setDraftHost}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                placeholder="http://decafclaw:18880"
+                placeholderTextColor="#71717a"
+                returnKeyType="next"
+              />
+
+              <Text style={styles.inputLabel}>Session token</Text>
+              <View style={styles.tokenRow}>
+                <TextInput
+                  style={[styles.textInput, styles.tokenInput]}
+                  value={draftToken}
+                  onChangeText={setDraftToken}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry={!showToken}
+                  placeholder="dfc_..."
+                  placeholderTextColor="#71717a"
+                />
+                <TouchableOpacity
+                  style={styles.showTokenButton}
+                  onPress={() => setShowToken((prev) => !prev)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.showTokenText}>{showToken ? 'Hide' : 'Show'}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {formError ? <Text style={styles.formError}>{formError}</Text> : null}
+
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={handleSaveConnection}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.saveButtonText}>Save & Reconnect</Text>
+              </TouchableOpacity>
+            </View>
+
             {/* 1. Spoken Responses Toggle Card */}
             <View style={styles.cardSection}>
               <View style={styles.toggleRow}>
@@ -301,6 +382,63 @@ const styles = StyleSheet.create({
     color: '#a1a1aa',
     fontSize: 12,
     marginTop: 2,
+  },
+  inputLabel: {
+    color: '#a1a1aa',
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginTop: 14,
+    marginBottom: 6,
+  },
+  textInput: {
+    backgroundColor: '#18181b',
+    color: '#f4f4f5',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: 'monospace',
+  },
+  tokenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tokenInput: {
+    flex: 1,
+  },
+  showTokenButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    backgroundColor: '#18181b',
+  },
+  showTokenText: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  formError: {
+    color: '#fca5a5',
+    fontSize: 12,
+    marginTop: 10,
+  },
+  saveButton: {
+    marginTop: 14,
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
   },
   ttsTogglePill: {
     paddingHorizontal: 12,

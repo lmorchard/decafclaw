@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, type ScrollViewInstance } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -8,6 +8,7 @@ import * as Speech from 'expo-speech';
 import { ChatMessage, VoiceItem } from './src/types';
 import { DEFAULT_HOST, DEFAULT_TOKEN } from './src/config';
 import { cleanMarkdownForSpeech } from './src/utils/speech';
+import { normalizeHost } from './src/utils/connection';
 import { useDecafClawWebSocket } from './src/hooks/useDecafClawWebSocket';
 import { useVoiceRecognition } from './src/hooks/useVoiceRecognition';
 import { Header } from './src/components/Header';
@@ -16,6 +17,8 @@ import { PttFooter } from './src/components/PttFooter';
 import { VoiceSettingsModal } from './src/components/VoiceSettingsModal';
 
 const STORAGE_KEYS = {
+  HOST: '@decafclaw_host',
+  TOKEN: '@decafclaw_token',
   VOICE: '@decafclaw_voice_id',
   PITCH: '@decafclaw_voice_pitch',
   RATE: '@decafclaw_voice_rate',
@@ -23,10 +26,17 @@ const STORAGE_KEYS = {
   STARRED: '@decafclaw_starred_voices',
 };
 
-function TransceiverScreen() {
-  const scrollViewRef = useRef<any>(null);
+const CHUNK_FLUSH_MS = 50;
+const SCROLL_THROTTLE_MS = 80;
 
-  // Chat Transcript State (Persists all turns)
+function TransceiverScreen() {
+  const scrollViewRef = useRef<ScrollViewInstance | null>(null);
+
+  // Connection settings
+  const [host, setHost] = useState(DEFAULT_HOST);
+  const [token, setToken] = useState(DEFAULT_TOKEN);
+
+  // Chat Transcript State (in memory for this session)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   // TTS Output & Settings State
@@ -37,8 +47,14 @@ function TransceiverScreen() {
   const [pitch, setPitch] = useState<number>(0.9); // Grounded workshop tone by default
   const [rate, setRate] = useState<number>(1.1);   // Brisk conversational tempo
   const [starredVoices, setStarredVoices] = useState<string[]>([]);
+  const [speaking, setSpeaking] = useState(false);
 
   const unspokenBufferRef = useRef<string>('');
+  const pendingTextRef = useRef<string>('');
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const speechPendingRef = useRef(0);
+  const idSeqRef = useRef(0);
 
   // Active settings ref — solves closure staleness across WebSocket events!
   const settingsRef = useRef({
@@ -57,12 +73,29 @@ function TransceiverScreen() {
     };
   }, [selectedVoice, pitch, rate, ttsEnabled]);
 
+  const nextId = useCallback((prefix: string) => {
+    idSeqRef.current += 1;
+    return `${prefix}-${Date.now()}-${idSeqRef.current}`;
+  }, []);
+
+  const requestScroll = useCallback(() => {
+    if (scrollTimerRef.current) {
+      return;
+    }
+    scrollTimerRef.current = setTimeout(() => {
+      scrollTimerRef.current = null;
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, SCROLL_THROTTLE_MS);
+  }, []);
+
   // Load saved preferences & available native voices on mount
   useEffect(() => {
     async function loadPreferencesAndVoices() {
       try {
-        const [savedVoice, savedPitch, savedRate, savedTts, savedStarred] =
+        const [savedHost, savedToken, savedVoice, savedPitch, savedRate, savedTts, savedStarred] =
           await Promise.all([
+            AsyncStorage.getItem(STORAGE_KEYS.HOST),
+            AsyncStorage.getItem(STORAGE_KEYS.TOKEN),
             AsyncStorage.getItem(STORAGE_KEYS.VOICE),
             AsyncStorage.getItem(STORAGE_KEYS.PITCH),
             AsyncStorage.getItem(STORAGE_KEYS.RATE),
@@ -70,13 +103,24 @@ function TransceiverScreen() {
             AsyncStorage.getItem(STORAGE_KEYS.STARRED),
           ]);
 
-        if (savedPitch) setPitch(parseFloat(savedPitch));
-        if (savedRate) setRate(parseFloat(savedRate));
+        const normalizedHost = savedHost ? normalizeHost(savedHost) : null;
+        if (normalizedHost) setHost(normalizedHost);
+        if (savedToken && savedToken.trim()) setToken(savedToken.trim());
+
+        const savedPitchNum = savedPitch ? parseFloat(savedPitch) : NaN;
+        const savedRateNum = savedRate ? parseFloat(savedRate) : NaN;
+        if (Number.isFinite(savedPitchNum)) setPitch(savedPitchNum);
+        if (Number.isFinite(savedRateNum)) setRate(savedRateNum);
         if (savedTts !== null) setTtsEnabled(savedTts === 'true');
         if (savedStarred) {
           try {
-            setStarredVoices(JSON.parse(savedStarred));
-          } catch (e) {}
+            const parsed: unknown = JSON.parse(savedStarred);
+            if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
+              setStarredVoices(parsed);
+            }
+          } catch {
+            // Ignore corrupt favorites; defaults are fine.
+          }
         }
 
         const available = await Speech.getAvailableVoicesAsync();
@@ -134,6 +178,8 @@ function TransceiverScreen() {
       const next = !prev;
       if (!next) {
         Speech.stop();
+        speechPendingRef.current = 0;
+        setSpeaking(false);
       }
       AsyncStorage.setItem(STORAGE_KEYS.TTS_ENABLED, next.toString()).catch(() => {});
       return next;
@@ -148,115 +194,243 @@ function TransceiverScreen() {
     });
   }, []);
 
-  // Speak sentence chunk using live settingsRef
-  const speakChunk = useCallback((rawText: string) => {
-    const { voice, pitch: p, rate: r, ttsEnabled: enabled } = settingsRef.current;
-    if (!enabled) return;
-
-    const clean = cleanMarkdownForSpeech(rawText);
-    if (clean.length === 0) return;
-
-    Speech.speak(clean, {
-      voice,
-      pitch: p,
-      rate: r,
-    });
+  const finishUtterance = useCallback(() => {
+    speechPendingRef.current = Math.max(0, speechPendingRef.current - 1);
+    if (speechPendingRef.current === 0) {
+      setSpeaking(false);
+    }
   }, []);
 
-  const previewVoice = useCallback((voiceId: string) => {
-    const { pitch: p, rate: r } = settingsRef.current;
+  const trackUtterance = useCallback(() => {
+    speechPendingRef.current += 1;
+    setSpeaking(true);
+    return {
+      onDone: finishUtterance,
+      onStopped: finishUtterance,
+      onError: finishUtterance,
+    };
+  }, [finishUtterance]);
+
+  const stopSpeaking = useCallback(() => {
     Speech.stop();
-    Speech.speak('Aye, testing this voice on the bench.', {
-      voice: voiceId,
-      pitch: p,
-      rate: r,
-    });
+    speechPendingRef.current = 0;
+    setSpeaking(false);
   }, []);
+
+  // Speak sentence chunk using live settingsRef
+  const speakChunk = useCallback(
+    (rawText: string) => {
+      const { voice, pitch: p, rate: r, ttsEnabled: enabled } = settingsRef.current;
+      if (!enabled) return;
+
+      const clean = cleanMarkdownForSpeech(rawText);
+      if (clean.length === 0) return;
+
+      Speech.speak(clean, {
+        voice,
+        pitch: p,
+        rate: r,
+        ...trackUtterance(),
+      });
+    },
+    [trackUtterance]
+  );
+
+  const previewVoice = useCallback(
+    (voiceId: string) => {
+      const { pitch: p, rate: r } = settingsRef.current;
+      Speech.stop();
+      speechPendingRef.current = 0;
+      Speech.speak('Aye, testing this voice on the bench.', {
+        voice: voiceId,
+        pitch: p,
+        rate: r,
+        ...trackUtterance(),
+      });
+    },
+    [trackUtterance]
+  );
+
+  const flushPendingText = useCallback(() => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    const text = pendingTextRef.current;
+    if (!text) return;
+    pendingTextRef.current = '';
+
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.role === 'assistant') {
+        return [...prev.slice(0, -1), { ...last, text: last.text + text }];
+      }
+      return [...prev, { id: nextId('agent'), role: 'assistant', text }];
+    });
+  }, [nextId]);
 
   // WebSocket Server Event Handlers
   const handleChunk = useCallback(
     (text: string) => {
       unspokenBufferRef.current += text;
+      pendingTextRef.current += text;
 
-      // Append streamed tokens to current assistant message
-      setMessages((prev) => {
-        if (prev.length === 0) return prev;
-        const last = prev[prev.length - 1];
-        if (last.role === 'assistant') {
-          return [...prev.slice(0, -1), { ...last, text: last.text + text }];
-        }
-        return prev;
-      });
-
-      // Pipeline speech at sentence boundaries (. ! ? \n)
-      const match = unspokenBufferRef.current.match(/^([\s\S]*?[.!?\n])\s+([\s\S]*)$/);
-      if (match) {
-        const sentence = match[1];
-        unspokenBufferRef.current = match[2];
-        speakChunk(sentence);
+      if (!flushTimerRef.current) {
+        flushTimerRef.current = setTimeout(() => {
+          flushTimerRef.current = null;
+          flushPendingText();
+        }, CHUNK_FLUSH_MS);
       }
 
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 50);
+      // Pipeline speech at sentence boundaries (. ! ? \n). Speak every complete
+      // sentence currently buffered instead of waiting for the next chunk.
+      for (;;) {
+        const match = unspokenBufferRef.current.match(
+          /^([\s\S]*?[.!?\n])(?:\s+|$)([\s\S]*)$/
+        );
+        if (!match) break;
+        unspokenBufferRef.current = match[2];
+        speakChunk(match[1]);
+        if (!unspokenBufferRef.current) break;
+      }
+
+      requestScroll();
     },
-    [speakChunk]
+    [flushPendingText, requestScroll, speakChunk]
   );
 
-  const handleToolStart = useCallback((_tool: string) => {}, []);
-  const handleToolEnd = useCallback((_tool: string) => {}, []);
-
   const handleTurnComplete = useCallback(() => {
+    flushPendingText();
     if (unspokenBufferRef.current.trim().length > 0) {
       speakChunk(unspokenBufferRef.current);
       unspokenBufferRef.current = '';
     }
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 50);
-  }, [speakChunk]);
+    requestScroll();
+  }, [flushPendingText, requestScroll, speakChunk]);
+
+  const handleError = useCallback(
+    (message: string) => {
+      flushPendingText();
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        const entry: ChatMessage = { id: nextId('error'), role: 'error', text: message };
+        if (last?.role === 'assistant' && last.text.trim().length === 0) {
+          return [...prev.slice(0, -1), entry];
+        }
+        return [...prev, entry];
+      });
+      requestScroll();
+    },
+    [flushPendingText, nextId, requestScroll]
+  );
+
+  const handleHistoryRecovered = useCallback(
+    (text: string) => {
+      setMessages((prev) => {
+        if (prev.some((m) => m.role === 'assistant' && m.text === text)) {
+          return prev;
+        }
+
+        let index = -1;
+        for (let i = prev.length - 1; i >= 0; i -= 1) {
+          if (prev[i].role === 'assistant') {
+            index = i;
+            break;
+          }
+        }
+
+        if (index === -1) {
+          return [...prev, { id: nextId('agent'), role: 'assistant', text }];
+        }
+
+        const target = prev[index];
+        if (target.text && !text.startsWith(target.text)) {
+          return prev;
+        }
+
+        const next = [...prev];
+        next[index] = { ...target, text };
+        return next;
+      });
+      requestScroll();
+    },
+    [nextId, requestScroll]
+  );
 
   // Hook: WebSocket Gateway to DecafClaw
   const { connected, status, manualReconnect, sendTurn } = useDecafClawWebSocket({
-    host: DEFAULT_HOST,
-    token: DEFAULT_TOKEN,
+    host,
+    token,
     onChunk: handleChunk,
-    onToolStart: handleToolStart,
-    onToolEnd: handleToolEnd,
     onTurnComplete: handleTurnComplete,
+    onError: handleError,
+    onHistoryRecovered: handleHistoryRecovered,
   });
+
+  const handleSaveConnection = useCallback(
+    (nextHost: string, nextToken: string) => {
+      const normalized = normalizeHost(nextHost) ?? host;
+      const trimmed = nextToken.trim() || token;
+      const changed = normalized !== host || trimmed !== token;
+
+      if (changed) {
+        setHost(normalized);
+        setToken(trimmed);
+        AsyncStorage.multiSet([
+          [STORAGE_KEYS.HOST, normalized],
+          [STORAGE_KEYS.TOKEN, trimmed],
+        ]).catch((err) => console.warn('Failed to save connection settings:', err));
+      }
+
+      setSettingsVisible(false);
+      if (!changed) {
+        manualReconnect();
+      }
+    },
+    [host, manualReconnect, token]
+  );
 
   // Handle final speech recognition result
   const handleFinalSpeechResult = useCallback(
     (spokenText: string) => {
       const userEntry: ChatMessage = {
-        id: `user-${Date.now()}`,
+        id: nextId('user'),
         role: 'user',
         text: spokenText,
       };
       const agentEntry: ChatMessage = {
-        id: `agent-${Date.now()}`,
+        id: nextId('agent'),
         role: 'assistant',
         text: '',
       };
 
       setMessages((prev) => [...prev, userEntry, agentEntry]);
       unspokenBufferRef.current = '';
-
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 50);
+      pendingTextRef.current = '';
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      requestScroll();
 
       sendTurn(spokenText);
     },
-    [sendTurn]
+    [nextId, requestScroll, sendTurn]
   );
 
   // Hook: On-Device Speech Recognition (Pixel Tensor TPU)
   const { recognizing, isStarting, transcript, toggleListening } = useVoiceRecognition({
     onFinalResult: handleFinalSpeechResult,
-    onInterrupted: () => Speech.stop(), // Barge-in interruption
+    onInterrupted: stopSpeaking, // Barge-in interruption
   });
+
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+      Speech.stop();
+    };
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -279,20 +453,26 @@ function TransceiverScreen() {
         status={status}
         recognizing={recognizing}
         isStarting={isStarting}
+        speaking={speaking}
         onToggleListening={toggleListening}
         onReconnect={manualReconnect}
+        onStopSpeaking={stopSpeaking}
         onOpenSettings={() => setSettingsVisible(true)}
       />
 
       {/* Slide-Up Voice Settings Sheet */}
       <VoiceSettingsModal
+        key={settingsVisible ? `open:${host}:${token}` : 'closed'}
         visible={settingsVisible}
+        host={host}
+        token={token}
         ttsEnabled={ttsEnabled}
         voices={voices}
         selectedVoice={selectedVoice}
         pitch={pitch}
         rate={rate}
         starredVoices={starredVoices}
+        onSaveConnection={handleSaveConnection}
         onToggleTts={handleToggleTts}
         onSelectVoice={handleSelectVoice}
         onPreviewVoice={previewVoice}
