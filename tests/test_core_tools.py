@@ -206,3 +206,12 @@ def test_debug_context_attaches_json_view_widget(ctx):
     assert result.widget.target == "inline"
     assert result.widget.data["value"]["messages"] == ctx.messages
     assert result.widget.data.get("expand_depth") == 1
+
+
+def test_debug_context_no_context_returns_toolresult(ctx):
+    """The no-context return is a ToolResult, not a bare string (#1335)."""
+    ctx.messages = None
+    result = tool_debug_context(ctx)
+
+    assert isinstance(result, ToolResult)
+    assert result.text == "[no context available]"
