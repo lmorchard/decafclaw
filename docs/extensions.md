@@ -477,11 +477,21 @@ Triage is deliberately separate from the runtime. The opt-in
 `contrib/skills/improvement-inbox` skill provides `improvement_inbox_list`,
 `improvement_inbox_show`, `improvement_inbox_summary`,
 `improvement_inbox_dismiss`, `improvement_inbox_clear`,
-`improvement_inbox_export`, and `improvement_retro`. Export appends pending
-records to `agent/pages/decafclaw/improvement-inbox.md` in the vault. The
-skill's `SCHEDULE.md` describes a nightly export sweep; like every contrib
-schedule, it stays disabled until the operator copies it into the admin
-schedules directory.
+`improvement_inbox_export`, `improvement_retro`, and `toil_audit`. Export
+appends pending records to `agent/pages/decafclaw/improvement-inbox.md` in the
+vault. The skill's `SCHEDULE.md` describes a nightly export sweep; like every
+contrib schedule, it stays disabled until the operator copies it into the
+admin schedules directory.
+
+## Procedural toil audit
+
+The scout only sees negative friction. [`decafclaw toil audit`](toil-audit.md)
+is the companion batched scan for invisible procedural toil: it mines
+conversation archives for repeated 2–5-call sequences, normalizes variable
+arguments, counts distinct conversations, and reports defensive shell
+pipelines, read-after-write verification, and discovery ceremony at three or
+more strikes. New candidates can be exported into the same
+`workspace/improvement_inbox.jsonl` inbox as `toil_strike_3` records.
 
 ## Scope
 

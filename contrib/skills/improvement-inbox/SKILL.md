@@ -1,6 +1,6 @@
 ---
 name: improvement-inbox
-description: Triage the improvement scout's silent JSONL inbox — list, inspect, summarize, dismiss, archive, export to the vault, and run whole-session retrospectives.
+description: Triage the improvement scout's silent JSONL inbox — list, inspect, summarize, dismiss, archive, export to the vault, run whole-session retrospectives, and audit procedural toil across conversations.
 ---
 
 # Improvement inbox
@@ -33,6 +33,13 @@ Inbox records use the statuses `pending`, `exported`, `dismissed`, and
   model; the tool has no model parameter) to scan the current (or a named)
   conversation's full history for subtler multi-turn friction and buffer any
   finding as a new pending item.
+- **`toil_audit`** — mine conversation archives for invisible procedural toil
+  (Three Strikes): repeated defensive shell pipelines, read-after-write
+  verification, and discovery/setup ceremony. Scans `days` of history
+  (default 7; `0` scans every archive) and reports sequences that reach
+  `min_strikes` distinct conversations (default 3). Pass `export: true` to
+  buffer new candidates as `toil_strike_3` items; re-runs skip sequences
+  already in the inbox.
 
 ## Working notes
 
