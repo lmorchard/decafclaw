@@ -181,14 +181,24 @@ async def test_judge_decline_with_risk_category_still_redirects(ctx):
 
 
 @pytest.mark.asyncio
-async def test_unattended_read_only_is_allowed_but_new_activity_is_denied(ctx):
+async def test_unattended_read_only_is_allowed_and_new_activity_defers(ctx):
+    """Read-only allows outright; a new activity defers rather than denies."""
     ctx.task_mode = TaskMode.HEARTBEAT
 
     assert await check_shell_approval(ctx, "ls -la") == {"approved": True}
 
-    denied = await check_shell_approval(ctx, "touch marker.txt")
+    # aux judge disabled: the deferral falls through to the existing
+    # unattended denial path, which explains itself as unattended rather than
+    # pretending a new activity was the reason.
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+    ) as confirm:
+        denied = await check_shell_approval(ctx, "touch marker.txt")
+
+    confirm.assert_not_awaited()
     assert denied["approved"] is False
-    assert "new activity" in denied["reason"]
+    assert "unattended" in denied["reason"]
 
 
 @pytest.mark.asyncio
@@ -244,3 +254,82 @@ async def test_human_approval_latency_is_measured(ctx):
     human = next(event for event in events if event["type"] == "approval_human")
     assert human["approved"] is True
     assert human["latency_ms"] >= 15
+
+
+@pytest.mark.asyncio
+async def test_read_only_tier_bypasses_the_security_monitor(ctx):
+    """`is_ambiguous_command` treats any `#` as ambiguous (#1641 review).
+
+    A read-only grep carrying an issue number must not spend a Tier 2 model
+    call, and must not be able to come back ASK and cost a human prompt — so
+    the read-only tier has to run before the security monitor.
+    """
+    ctx.config.shell.aux_approval_enabled = True
+    monitor = AsyncMock()
+    ctx.aux_approval_llm = MagicMock()
+    _seed_activity(ctx)
+
+    with (
+        patch("decafclaw.tools.shell_tools.evaluate_command_llm", monitor),
+        patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as confirm,
+    ):
+        result = await check_shell_approval(ctx, 'grep -rn "#1641" src/')
+
+    assert result == {"approved": True}
+    monitor.assert_not_awaited()
+    confirm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_read_only_tier_still_yields_to_an_allow_pattern(ctx):
+    """Reordering must not disturb the existing allow-pattern precedence."""
+    ctx.tools.preapproved_shell_patterns = ["python scripts/*"]
+    monitor = AsyncMock()
+
+    with patch("decafclaw.tools.shell_tools.evaluate_command_llm", monitor):
+        result = await check_shell_approval(ctx, "python scripts/build.py")
+
+    assert result == {"approved": True}
+    monitor.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unattended_new_activity_defers_to_the_judge(ctx):
+    """An unattended new activity must not hard-deny (#1641 review).
+
+    Scheduled work legitimately starts fresh activity every run. Denying with
+    no operator and no redirect is strictly worse than the judge decline this
+    tier replaced, so direction abstains and the judge keeps the last word.
+    """
+    ctx.task_mode = TaskMode.HEARTBEAT
+    ctx.config.shell.aux_approval_enabled = True
+    events: list[dict] = []
+    ctx.event_bus.subscribe(events.append)
+
+    async def allow(messages):
+        return {"content": json.dumps({"auto_approve": True, "reason": "safe", "risk": "low"})}
+
+    judge = MagicMock(return_value=allow)
+    ctx.aux_approval_llm = judge
+
+    # No history: a new activity, on an unattended turn.
+    result = await check_shell_approval(ctx, "touch marker.txt")
+
+    assert result == {"approved": True}
+    judge.assert_called_once()
+    defer = next(e for e in events if e["type"] == "approval_decision" and e["tier"] == "activity_new_unattended")
+    assert defer["decision"] == "defer"
+
+
+@pytest.mark.asyncio
+async def test_unattended_new_activity_still_respects_a_judge_risk_decline(ctx):
+    """Deferring to the judge does not mean the judge stops being able to refuse."""
+    ctx.task_mode = TaskMode.HEARTBEAT
+    ctx.config.shell.aux_approval_enabled = True
+    ctx.aux_approval_llm = MagicMock(return_value=_risk_judge())
+
+    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as confirm:
+        result = await check_shell_approval(ctx, "touch marker.txt")
+
+    confirm.assert_not_awaited()
+    assert result["approved"] is False

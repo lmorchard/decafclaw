@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from decafclaw.activity import UNKNOWN_ACTIVITY, derive_activity, derive_domains
 
 
@@ -191,6 +193,74 @@ def test_missing_history_is_not_established(config):
     ctx.history = None
     activity = derive_activity(ctx, "git status", _workspace(config, "decafclaw"))
     assert activity.established is False
+
+
+def test_window_zero_disables_direction(config):
+    """activity_window<=0 is the off switch: everything counts as established."""
+    ctx = _ctx(config)
+    ctx.history = None
+    ctx.config.shell.activity_window = 0
+    activity = derive_activity(ctx, "git status", _workspace(config, "lmorchard-homelab"))
+    assert activity.established is True
+    # The label is still reported for the judge prompt and the audit trail.
+    assert activity.domain == "homelab"
+
+
+def test_negative_window_disables_direction(config):
+    ctx = _ctx(config)
+    ctx.config.shell.activity_window = -1
+    assert derive_activity(ctx, "git status", _workspace(config, "blog-ssg")).established is True
+
+
+# -- bundled vocabulary attribution (#1641 review) ----------------------------
+#
+# The bundled `decafclaw` and `vault` patterns originally required a `/` before
+# the domain name. After the workspace prefix is stripped, the character before
+# the name is usually a space, so the agent's most common activity was
+# unattributable and 41.6% of commands fell into `unknown`.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd decafclaw && git status",
+        "pytest decafclaw/tests/test_activity.py",
+        "ls decafclaw",
+        "git -C decafclaw log --oneline -3",
+    ],
+)
+def test_bundled_decafclaw_pattern_matches_realistic_commands(config, command):
+    workspace = config.workspace_path
+    _workspace(config)
+    assert derive_domains(command, str(workspace), workspace) == ("decafclaw",)
+
+
+def test_bundled_vault_pattern_matches_after_whitespace(config):
+    workspace = config.workspace_path
+    _workspace(config)
+    assert derive_domains("ls vault/agent/pages", str(workspace), workspace) == ("vault",)
+
+
+def test_bundled_patterns_do_not_match_suffixed_names(config):
+    """Word boundaries must not turn `decafclaw2` or `myvault` into a domain."""
+    workspace = config.workspace_path
+    _workspace(config)
+    assert derive_domains("ls decafclaw2", str(workspace), workspace) == ()
+    assert derive_domains("ls myvault", str(workspace), workspace) == ()
+
+
+def test_established_named_domain_reaches_judge_not_prompt(config):
+    """End to end: a named domain established by history suppresses the prompt.
+
+    The original integration test only covered `unknown`, which is how the
+    broken `decafclaw` pattern slipped through.
+    """
+    ctx = _ctx(config)
+    cwd = _workspace(config, "decafclaw")
+    ctx.history = _history(_shell_call("call-0", "git log --oneline -3", cwd))
+    activity = derive_activity(ctx, "git status", cwd)
+    assert activity.domain == "decafclaw"
+    assert activity.established is True
 
 
 # -- external domain vocabulary (#1641 review) --------------------------------

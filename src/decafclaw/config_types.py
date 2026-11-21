@@ -264,9 +264,14 @@ class ShellConfig:
     active_aux_approval_presets: list[str] = field(default_factory=list)
     # How many recent shell calls define a conversation's established activity
     # (#1641). A command is "in direction" only when every domain it touches
-    # appeared in this window. 0 or a negative value disables the window (all
-    # history counts), which re-creates the stale-direction failure the window
-    # exists to avoid; lower it to make drift prompt sooner.
+    # appeared in this window. Lower it to make drift prompt sooner.
+    #
+    # 0 or a negative value DISABLES direction entirely: every command counts
+    # as established, so the new-activity tier never fires. This is the safe
+    # off switch — an unbounded window (all history counts) would re-create the
+    # stale-direction failure the window exists to avoid, and having "0" mean
+    # "unbounded" made the setting that looks like "off" the most dangerous
+    # value in the file.
     activity_window: int = 50
 
 

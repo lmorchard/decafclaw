@@ -1041,7 +1041,21 @@ async def check_shell_approval(
         )
         return {"approved": True}
 
-    # 3. Security monitor evaluation (Tier 1 sensitive patterns + Tier 2 LLM classification)
+    # 3. Deterministic read-only tier (#1641 Phase 1): a provably read-only
+    # command whose paths stay inside the workspace never reaches a model.
+    #
+    # This deliberately runs BEFORE the security monitor. The monitor's Tier 2
+    # classifier is soft and stateless: `is_ambiguous_command` treats any `#` as
+    # ambiguous, so `grep '#1641' src/` would spend a model call and could come
+    # back ASK — costing a human prompt in exactly the category this tier
+    # exists to silence. Tier 1's hard BLOCK above still wins, and allow
+    # patterns are unchanged; only the soft classifier is bypassed.
+    if is_read_only_command(command, cwd=shell_cwd, workspace=ctx.config.workspace_path):
+        log.info(f"[{tool_name}] auto-approved as read-only: {command}")
+        await _record_approval(ctx, command=command, cwd=cwd, decision="allow", tier="read_only", activity=activity)
+        return {"approved": True}
+
+    # 4. Security monitor evaluation (Tier 1 sensitive patterns + Tier 2 LLM classification)
     decision = await evaluate_command_llm(
         command,
         ctx=ctx,
@@ -1113,7 +1127,7 @@ async def check_shell_approval(
             _save_allow_pattern(ctx.config, suggested_pattern)
         return _finalize_denial(ctx, result, command=command, purpose=purpose)
 
-    # 4. Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns)
+    # 5. Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns)
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
         log.info(f"[{tool_name}] pre-approved by command: {command}")
         await _record_approval(
@@ -1121,34 +1135,20 @@ async def check_shell_approval(
         )
         return {"approved": True}
 
-    # 5. Deterministic read-only tier (#1641 Phase 1): a provably read-only
-    # command whose paths stay inside the workspace never reaches the model.
-    if is_read_only_command(command, cwd=shell_cwd, workspace=ctx.config.workspace_path):
-        log.info(f"[{tool_name}] auto-approved as read-only: {command}")
-        await _record_approval(ctx, command=command, cwd=cwd, decision="allow", tier="read_only", activity=activity)
-        return {"approved": True}
-
     # 6. Direction (#1641 Phase 3): a command that starts a new activity asks
     # once, with the direction stated. Drift is priced at one prompt, never
     # blocked; once the operator answers, the activity is established.
-    if not activity.established:
+    #
+    # Unattended turns have nobody to ask, but they must NOT hard-deny here:
+    # scheduled work legitimately starts fresh activity every run (a new
+    # newsletter, a new ingest target), and this tier's whole premise is that
+    # the command is plausible-but-unfamiliar, not risky. A deny would be
+    # strictly worse than the judge decline it replaced — that at least fed a
+    # redirect back to the agent. So on unattended turns direction abstains and
+    # the command proceeds to the judge, which keeps the last word on risk.
+    if not activity.established and not ctx.is_unattended:
         reason = activity.reason()
         suggested_pattern = _suggest_pattern(command)
-        if ctx.is_unattended:
-            log.warning(f"[{tool_name}] denied on unattended turn (new activity): {command}")
-            await _record_approval(
-                ctx,
-                command=command,
-                cwd=cwd,
-                decision="deny",
-                tier="activity_new_unattended",
-                reason=reason,
-                activity=activity,
-            )
-            return {
-                "approved": False,
-                "reason": f"unattended turn: new activity — {reason}",
-            }
         await _record_approval(
             ctx,
             command=command,
@@ -1184,6 +1184,19 @@ async def check_shell_approval(
             allow_rule_without_suggestion=True,
         )
         return _finalize_denial(ctx, result, command=command, purpose=purpose)
+    if not activity.established:
+        # Unattended: record that direction abstained so the audit trail shows
+        # the judge, not the operator, carried the decision.
+        log.info(f"[{tool_name}] new activity on unattended turn, deferring to judge: {command}")
+        await _record_approval(
+            ctx,
+            command=command,
+            cwd=cwd,
+            decision="defer",
+            tier="activity_new_unattended",
+            reason=activity.reason(),
+            activity=activity,
+        )
 
     decline_reason = ""
     decline_risk = ""

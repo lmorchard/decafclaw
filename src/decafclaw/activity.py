@@ -21,7 +21,8 @@ activity_window``). A domain is "established" when every domain the current
 command touches was seen in that window. Recomputing from ``ctx.history`` on
 each call means a compacted conversation automatically loses stale direction —
 there is no in-memory activity state to reset after compaction. Restarting the
-server loses nothing that the history does not also lose.
+server loses nothing that the history does not also lose. Setting the window to
+``0`` (or below) disables direction: every command counts as established.
 """
 
 import json
@@ -301,6 +302,25 @@ def prior_domains(
     return seen
 
 
+DEFAULT_ACTIVITY_WINDOW = 50
+
+
+def _activity_window(config) -> int:
+    """Resolve ``shell.activity_window`` defensively.
+
+    A hand-edited ``config.json`` can carry a string or null, and some callers
+    build a partial config. Anything non-integral falls back to the default
+    rather than raising in the middle of the approval pipeline.
+    """
+    try:
+        window = getattr(config.shell, "activity_window", DEFAULT_ACTIVITY_WINDOW)
+    except AttributeError:
+        return DEFAULT_ACTIVITY_WINDOW
+    if isinstance(window, bool) or not isinstance(window, int):
+        return DEFAULT_ACTIVITY_WINDOW
+    return window
+
+
 def derive_activity(ctx: "Context", command: str, cwd: str | None) -> Activity:
     """Derive the current command's activity from this conversation's history."""
     workspace = ctx.config.workspace_path
@@ -308,7 +328,7 @@ def derive_activity(ctx: "Context", command: str, cwd: str | None) -> Activity:
     domains = derive_domains(command, cwd, workspace, rules)
     current = set(domains) or {UNKNOWN_ACTIVITY}
     domain = domains[0] if domains else UNKNOWN_ACTIVITY
-    window = ctx.config.shell.activity_window
+    window = _activity_window(ctx.config)
     known = prior_domains(
         getattr(ctx, "history", None),
         workspace,
@@ -320,4 +340,9 @@ def derive_activity(ctx: "Context", command: str, cwd: str | None) -> Activity:
     )
     established = current.issubset(known)
     prior = tuple(sorted(known - current - {UNKNOWN_ACTIVITY}))
+    if window <= 0:
+        # Direction disabled (config_types.ShellConfig.activity_window): treat
+        # every command as in-direction so the new-activity tier never fires.
+        # `prior_domains` is still reported for the judge prompt and audit.
+        established = True
     return Activity(domain=domain, established=established, prior_domains=prior)
