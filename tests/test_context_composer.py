@@ -2552,3 +2552,16 @@ class TestPromptCachePrefixStability:
                 ctx, "turn 4", list(archived), mode=ComposerMode.INTERACTIVE
             )
         assert_prefix(res3, from_archive)
+
+
+class TestComputeFixedTokens:
+    def test_fixed_total_charges_mention_entries(self):
+        """Mention entries are fixed cost, not part of the dynamic pool (#1365)."""
+        composer = ContextComposer()
+        sources = [
+            SourceEntry(source="system_prompt", tokens_estimated=100, items_included=1),
+            SourceEntry(source="tools", tokens_estimated=50, items_included=2),
+            SourceEntry(source="user_message", tokens_estimated=10, items_included=1),
+            SourceEntry(source="mentions", tokens_estimated=700, items_included=1),
+        ]
+        assert composer._compute_fixed_tokens(sources, history_tokens=25) == 885

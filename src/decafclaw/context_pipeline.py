@@ -48,8 +48,41 @@ def compose_system_prompt(config) -> tuple[str, SourceEntry]:
     return text, entry
 
 
+def hook_consumes_dynamic_budget(hook: Any) -> bool:
+    """Whether a ``PRE_COMPOSE`` hook trims to ``dynamic_token_budget``.
+
+    Extensions opt in with ``BaseExtension.consumes_dynamic_budget``. The
+    composer runs those hooks after the fixed-cost phase publishes the budget
+    (#1365); every other hook is fixed-cost and runs first.
+    """
+    owner = getattr(hook, "__self__", None)
+    declared = getattr(owner, "consumes_dynamic_budget", None)
+    if declared is None:
+        declared = getattr(hook, "consumes_dynamic_budget", False)
+    return bool(declared)
+
+
+def compute_fixed_tokens(sources: list[SourceEntry], history_tokens: int) -> int:
+    """Token total reserved before the dynamic pool (#1365).
+
+    Call this after the fixed-cost ``PRE_COMPOSE`` wave. ``sources`` must hold
+    only fixed-cost entries at that point: the system prompt, tool
+    definitions, the current user message, and the fixed-slot contributions
+    already mounted (mentions, vault references, guide, hints, notes,
+    journal). Archived history arrives separately because it has no source
+    entry yet. Dynamic-pool contributions are excluded by construction: they
+    are not dispatched until this total is published as the budget.
+    """
+    return history_tokens + sum(entry.tokens_estimated for entry in sources)
+
+
 async def compose_pre_compose_hooks(
-    ctx: "Context", config: Any, user_message: str, history: list
+    ctx: "Context",
+    config: Any,
+    user_message: str,
+    history: list,
+    *,
+    budget_consumers: bool | None = None,
 ) -> tuple[
     list[dict],
     list[dict],
@@ -78,8 +111,16 @@ async def compose_pre_compose_hooks(
     (#1563). ``working_memory`` messages are transient this-turn discovery:
     the caller bundles them and never archives them (#1574).
     Fails open: a raising or slow hook is logged and the turn still composes.
+
+    ``budget_consumers`` selects the dispatch wave (#1365): ``False`` runs
+    only fixed-cost hooks, ``True`` only hooks whose extension declares
+    ``consumes_dynamic_budget``, and ``None`` runs every hook (one-shot
+    callers). The composer uses two waves so fixed-slot contributions are
+    charged in ``fixed_tokens`` before the dynamic budget is published.
     """
     hooks = ctx.get_interceptors(TurnLifecycle.PRE_COMPOSE)
+    if budget_consumers is not None:
+        hooks = [hook for hook in hooks if hook_consumes_dynamic_budget(hook) is budget_consumers]
     if not hooks:
         return [], [], [], [], [], [], [], {}
 
