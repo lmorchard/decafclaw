@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeHost } from './connection';
+import { conversationWebUrl, normalizeHost } from './connection';
 
 describe('normalizeHost', () => {
   it('keeps valid http(s) hosts', () => {
@@ -24,5 +24,28 @@ describe('normalizeHost', () => {
     expect(normalizeHost('ftp://example.com')).toBeNull();
     expect(normalizeHost('http://')).toBeNull();
     expect(normalizeHost('http://example.com/path?x=1')).toBeNull();
+  });
+});
+
+describe('conversationWebUrl', () => {
+  it('deep-links the conversation', () => {
+    expect(conversationWebUrl('http://decafclaw:18880', 'web-lmorchard-abc')).toBe(
+      'http://decafclaw:18880/?conv=web-lmorchard-abc'
+    );
+    expect(conversationWebUrl('http://decafclaw:18880/', 'web-lmorchard-abc')).toBe(
+      'http://decafclaw:18880/?conv=web-lmorchard-abc'
+    );
+  });
+
+  it('falls back to the web UI root without a conversation', () => {
+    expect(conversationWebUrl('http://decafclaw:18880', null)).toBe(
+      'http://decafclaw:18880/'
+    );
+  });
+
+  it('encodes the conversation id', () => {
+    expect(conversationWebUrl('https://example.com/base', 'a/b c')).toBe(
+      'https://example.com/base/?conv=a%2Fb%20c'
+    );
   });
 });

@@ -76,6 +76,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
 
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState('Connecting...');
+  const [conversationId, setConversationId] = useState<string | null>(null);
 
   const callbacksRef = useRef(options);
   useEffect(() => {
@@ -217,6 +218,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
               : 'DecafClaw returned an error.';
           if (message.toLowerCase().includes('conversation not found')) {
             convIdRef.current = null;
+            setConversationId(null);
             announceVoiceRef.current = true;
           }
           turnsInFlightRef.current = 0;
@@ -373,6 +375,9 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     turnsInFlightRef.current = 0;
     announceVoiceRef.current = true;
     historyRequestConvRef.current = null;
+    // Defer the state reset so the effect does not synchronously set state.
+    const timer = setTimeout(() => setConversationId(null), 0);
+    return () => clearTimeout(timer);
   }, [host, token]);
 
   // Connect on mount and whenever the connection target changes.
@@ -443,6 +448,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
           throw new Error('Session creation returned no conversation id');
         }
         convIdRef.current = data.conv_id;
+        setConversationId(data.conv_id);
         announceVoiceRef.current = true;
         return data.conv_id;
       })().finally(() => {
@@ -492,6 +498,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
   return {
     connected,
     status,
+    convId: conversationId,
     manualReconnect,
     sendTurn,
   };

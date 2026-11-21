@@ -19,3 +19,12 @@ export function normalizeHost(input: string): string | null {
   const path = (match[3] ?? '').replace(/\/+$/, '');
   return `${match[1].toLowerCase()}://${match[2]}${path}`;
 }
+
+/**
+ * Builds the web UI link for a conversation. The web client reads `?conv=`
+ * and re-selects the conversation after login.
+ */
+export function conversationWebUrl(host: string, convId: string | null): string {
+  const base = (normalizeHost(host) ?? host).replace(/\/+$/, '');
+  return convId ? `${base}/?conv=${encodeURIComponent(convId)}` : `${base}/`;
+}

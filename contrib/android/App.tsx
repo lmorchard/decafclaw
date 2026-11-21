@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { StyleSheet, View, type ScrollViewInstance } from 'react-native';
+import { Alert, Linking, StyleSheet, View, type ScrollViewInstance } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -8,7 +8,7 @@ import * as Speech from 'expo-speech';
 import { ChatMessage, VoiceItem } from './src/types';
 import { DEFAULT_HOST, DEFAULT_TOKEN } from './src/config';
 import { cleanMarkdownForSpeech } from './src/utils/speech';
-import { normalizeHost } from './src/utils/connection';
+import { conversationWebUrl, normalizeHost } from './src/utils/connection';
 import { useDecafClawWebSocket } from './src/hooks/useDecafClawWebSocket';
 import { useVoiceRecognition } from './src/hooks/useVoiceRecognition';
 import { Header } from './src/components/Header';
@@ -358,7 +358,7 @@ function TransceiverScreen() {
   );
 
   // Hook: WebSocket Gateway to DecafClaw
-  const { connected, status, manualReconnect, sendTurn } = useDecafClawWebSocket({
+  const { connected, status, convId, manualReconnect, sendTurn } = useDecafClawWebSocket({
     host,
     token,
     onChunk: handleChunk,
@@ -366,6 +366,16 @@ function TransceiverScreen() {
     onError: handleError,
     onHistoryRecovered: handleHistoryRecovered,
   });
+
+  const handleOpenWebUi = useCallback(() => {
+    const url = conversationWebUrl(host, convId);
+    Linking.openURL(url).catch((err) => {
+      Alert.alert(
+        'Could not open browser',
+        err instanceof Error ? err.message : String(err)
+      );
+    });
+  }, [convId, host]);
 
   const handleSaveConnection = useCallback(
     (nextHost: string, nextToken: string) => {
@@ -438,7 +448,7 @@ function TransceiverScreen() {
       <StatusBar style="light" />
 
       {/* Clean Minimal Header */}
-      <Header />
+      <Header onOpenWebUi={convId ? handleOpenWebUi : undefined} />
 
       {/* Persistent IM Transcript */}
       <TranscriptView
