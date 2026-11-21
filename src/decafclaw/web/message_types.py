@@ -38,6 +38,7 @@ class WSMessageType(StrEnum):
     STICKY_CLEAR = "sticky_clear"
     STICKY_SET = "sticky_set"
     STREAM_STATE = "stream_state"
+    SWITCH_CONVERSATION = "switch_conversation"
     TOOL_END = "tool_end"
     TOOL_START = "tool_start"
     TOOL_STATUS = "tool_status"
@@ -332,6 +333,14 @@ class SrvStreamState(TypedDict):
     thinking: str
 
 
+class SrvSwitchConversation(TypedDict):
+    type: Literal[WSMessageType.SWITCH_CONVERSATION]
+    conv_id: str
+    target_conv_id: str
+    title: str
+    reason: str
+
+
 class SrvToolEnd(TypedDict):
     type: Literal[WSMessageType.TOOL_END]
     conv_id: str
@@ -485,6 +494,7 @@ ServerMessage = (
     | SrvStickyClear
     | SrvStickySet
     | SrvStreamState
+    | SrvSwitchConversation
     | SrvToolEnd
     | SrvToolStart
     | SrvToolStatus

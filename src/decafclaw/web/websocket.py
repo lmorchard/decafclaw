@@ -1252,6 +1252,17 @@ def _subscribe_to_conv(state, conv_id):
                 }
                 await ws_send(sticky_clear_payload)
 
+        elif event_type == "switch_conversation":
+            if event_conv_id == conv_id:
+                switch_payload = {
+                    "type": WSMessageType.SWITCH_CONVERSATION,
+                    "conv_id": event_conv_id,
+                    "target_conv_id": event.get("target_conv_id", ""),
+                    "title": event.get("title", ""),
+                    "reason": event.get("reason", ""),
+                }
+                await ws_send(switch_payload)
+
         elif event_type == "turn_provenance":
             provenance = event.get("provenance") or {}
             if isinstance(provenance, dict) and provenance:
