@@ -27,6 +27,7 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
    - Uses `expo-speech-recognition` with `requiresOnDeviceRecognition: true`.
    - Runs locally on the phone's Tensor hardware with instant punctuation and zero server audio compute load.
    - Microphone permission is checked at launch and requested on the first tap, not at startup.
+   - Android's `SpeechRecognizer` beeps on start/stop when it uses the default mic. The app always starts in continuous mode (custom `EXTRA_AUDIO_SOURCE`), which suppresses those beeps; tap mode aborts on its first final result to keep one-shot behavior. One-shot sessions are bounded to 15s.
 2. **WebSocket Gateway**:
    - Streams directly to DecafClaw's `/ws/chat` endpoint with token session auth.
    - Exponential backoff reconnect, foreground wake recovery (`AppState`), and a 45s inactivity watchdog that reconnects and reloads the turn from conversation history.

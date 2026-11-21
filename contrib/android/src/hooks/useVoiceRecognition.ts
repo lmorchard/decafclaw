@@ -15,6 +15,7 @@ type ListeningMode = 'single' | 'long' | null;
 const LONG_SESSION_MAX_RESTARTS = 3;
 const RESTART_DELAY_MS = 250;
 const FINISH_FALLBACK_MS = 1500;
+const SINGLE_SESSION_MAX_MS = 15_000;
 
 function joinTranscript(base: string, next: string): string {
   const head = base.trim();
@@ -49,6 +50,7 @@ export function useVoiceRecognition({
   const restartCountRef = useRef(0);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const singleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const callbacksRef = useRef({ onFinalResult, onInterrupted });
   useEffect(() => {
@@ -58,6 +60,7 @@ export function useVoiceRecognition({
   const resetSession = useCallback(() => {
     clearTimer(restartTimerRef);
     clearTimer(finishTimerRef);
+    clearTimer(singleTimeoutRef);
     modeRef.current = null;
     segmentBufferRef.current = '';
     stopRequestedRef.current = false;
@@ -158,7 +161,7 @@ export function useVoiceRecognition({
   });
 
   useSpeechRecognitionEvent('result', (event) => {
-    if (finishedRef.current) {
+    if (finishedRef.current || modeRef.current === null) {
       return;
     }
     const current = event.results[0]?.transcript || '';
@@ -178,12 +181,16 @@ export function useVoiceRecognition({
 
     setTranscript(current);
     if (event.isFinal && current.trim().length > 0) {
+      // One-shot: send on the first final segment, then tear down the
+      // continuous recognizer so it doesn't keep listening.
+      modeRef.current = null;
       callbacksRef.current.onFinalResult(current.trim());
+      ExpoSpeechRecognitionModule.abort();
     }
   });
 
   useSpeechRecognitionEvent('error', (event) => {
-    if (finishedRef.current) {
+    if (finishedRef.current || modeRef.current === null) {
       return;
     }
     if (event.error === 'client' || event.error === 'aborted') {
@@ -238,6 +245,7 @@ export function useVoiceRecognition({
       restartCountRef.current = 0;
       clearTimer(restartTimerRef);
       clearTimer(finishTimerRef);
+      clearTimer(singleTimeoutRef);
 
       setTranscript('');
       setLongListening(long);
@@ -246,12 +254,28 @@ export function useVoiceRecognition({
       ExpoSpeechRecognitionModule.start({
         lang: 'en-US',
         interimResults: true,
-        continuous: long,
+        // Continuous mode routes audio through EXTRA_AUDIO_SOURCE on Android
+        // 13+, which suppresses the system start/stop beeps. One-shot mode
+        // aborts on its first final result to preserve tap-to-talk behavior.
+        continuous: true,
         requiresOnDeviceRecognition: true, // Forces Pixel Tensor on-device STT
         addsPunctuation: true,
       });
+
+      if (!long) {
+        // Continuous mode no longer auto-stops on silence. Bound the one-shot
+        // session so a forgotten tap doesn't leave the mic open forever.
+        singleTimeoutRef.current = setTimeout(() => {
+          singleTimeoutRef.current = null;
+          if (modeRef.current === 'single') {
+            modeRef.current = null;
+            ExpoSpeechRecognitionModule.abort();
+            resetSession();
+          }
+        }, SINGLE_SESSION_MAX_MS);
+      }
     },
-    [ensurePermission]
+    [ensurePermission, resetSession]
   );
 
   const startLongListening = useCallback(async () => {
