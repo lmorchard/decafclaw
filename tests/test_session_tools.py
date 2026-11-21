@@ -1,7 +1,10 @@
-"""Unit tests for session search, listing, switching, and home tools (#1609)."""
+"""Unit tests for session search, listing, switching, and home tools (#1609, #1630)."""
+
+import json
 
 import pytest
 
+from decafclaw.archive import append_message
 from decafclaw.events import EventBus
 from decafclaw.tools.session_tools import (
     tool_session_create,
@@ -11,6 +14,20 @@ from decafclaw.tools.session_tools import (
     tool_session_switch,
 )
 from decafclaw.web.conversations import ConversationIndex
+
+
+def _append(config, conv_id, role, content):
+    append_message(config, conv_id, {"role": role, "content": content})
+
+
+def _set_updated_at(config, conv_id, timestamp):
+    """Rewrite one index entry's updated_at so recency is deterministic."""
+    path = config.agent_path / "web_conversations.json"
+    data = json.loads(path.read_text())
+    for entry in data:
+        if entry["conv_id"] == conv_id:
+            entry["updated_at"] = timestamp
+    path.write_text(json.dumps(data, indent=2) + "\n")
 
 
 @pytest.fixture
@@ -88,6 +105,134 @@ class TestSessionTools:
         assert "Archived Vocal Prototype" in all_res.text
         assert "[Archived]" in all_res.text
         assert all_res.data is not None and len(all_res.data["matches"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_session_search_matches_user_message_content(self, session_ctx):
+        index = ConversationIndex(session_ctx.config)
+        target = index.create("lmorchard", title="Homelab Edge Routing")
+        decoy = index.create("lmorchard", title="Homelab VLAN Notes")
+        _append(
+            session_ctx.config,
+            target.conv_id,
+            "user",
+            "The weather widget fails on CORS headers; add an allowlist for the origin.",
+        )
+        _append(session_ctx.config, decoy.conv_id, "user", "VLAN trunks on the switch need tagging.")
+
+        res = await tool_session_search(session_ctx, "CORS headers")
+
+        assert res.data is not None
+        assert [m["conv_id"] for m in res.data["matches"]] == [target.conv_id]
+        match = res.data["matches"][0]
+        assert match["matched_role"] == "user"
+        assert "CORS headers" in match["snippet"]
+        assert 'matched user message: "The weather widget fails on CORS headers' in res.text
+
+    @pytest.mark.asyncio
+    async def test_session_search_prefers_user_over_assistant_content(self, session_ctx):
+        index = ConversationIndex(session_ctx.config)
+        user_session = index.create("lmorchard", title="Pricing Check")
+        assistant_session = index.create("lmorchard", title="Provider Comparison")
+        same_time = "2026-11-20T12:00:00+00:00"
+        _set_updated_at(session_ctx.config, user_session.conv_id, same_time)
+        _set_updated_at(session_ctx.config, assistant_session.conv_id, same_time)
+        _append(session_ctx.config, user_session.conv_id, "user", "Check DeepSeek pricing per million tokens.")
+        _append(
+            session_ctx.config,
+            assistant_session.conv_id,
+            "assistant",
+            "Check DeepSeek pricing per million tokens.",
+        )
+
+        res = await tool_session_search(session_ctx, "DeepSeek pricing")
+
+        assert res.data is not None
+        assert [m["conv_id"] for m in res.data["matches"]] == [
+            user_session.conv_id,
+            assistant_session.conv_id,
+        ]
+        assert res.data["matches"][0]["matched_role"] == "user"
+        assert res.data["matches"][1]["matched_role"] == "assistant"
+        assert "matched assistant message" in res.text
+
+    @pytest.mark.asyncio
+    async def test_session_search_recency_breaks_content_ties(self, session_ctx):
+        index = ConversationIndex(session_ctx.config)
+        older = index.create("lmorchard", title="Old Debate")
+        newer = index.create("lmorchard", title="New Debate")
+        _set_updated_at(session_ctx.config, older.conv_id, "2026-09-01T12:00:00+00:00")
+        _set_updated_at(session_ctx.config, newer.conv_id, "2026-11-20T12:00:00+00:00")
+        for conv in (older, newer):
+            _append(session_ctx.config, conv.conv_id, "user", "Which migrates faster, SQLite WAL or Postgres?")
+
+        res = await tool_session_search(session_ctx, "SQLite WAL")
+
+        assert res.data is not None
+        assert [m["conv_id"] for m in res.data["matches"]] == [newer.conv_id, older.conv_id]
+
+    @pytest.mark.asyncio
+    async def test_session_search_recency_does_not_outrank_stronger_match(self, session_ctx):
+        index = ConversationIndex(session_ctx.config)
+        stale_title = index.create("lmorchard", title="DeepSeek Pricing")
+        fresh_content = index.create("lmorchard", title="Misc Notes")
+        _set_updated_at(session_ctx.config, stale_title.conv_id, "2026-09-01T12:00:00+00:00")
+        _set_updated_at(session_ctx.config, fresh_content.conv_id, "2026-11-20T12:00:00+00:00")
+        _append(session_ctx.config, fresh_content.conv_id, "user", "DeepSeek pricing per million tokens.")
+
+        res = await tool_session_search(session_ctx, "DeepSeek Pricing")
+
+        assert res.data is not None
+        assert [m["conv_id"] for m in res.data["matches"]] == [
+            stale_title.conv_id,
+            fresh_content.conv_id,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_session_search_ignores_tool_and_metadata_content(self, session_ctx):
+        index = ConversationIndex(session_ctx.config)
+        conv = index.create("lmorchard", title="Build Log")
+        _append(session_ctx.config, conv.conv_id, "tool", "kubectl apply ingress traefik")
+        _append(session_ctx.config, conv.conv_id, "memory_context", "traefik ingress notes")
+
+        res = await tool_session_search(session_ctx, "traefik ingress")
+
+        assert res.data is not None and res.data["matches"] == []
+
+    @pytest.mark.asyncio
+    async def test_session_search_streams_past_corrupt_archive_line(self, session_ctx):
+        index = ConversationIndex(session_ctx.config)
+        conv = index.create("lmorchard", title="Recovered Thread")
+        _append(session_ctx.config, conv.conv_id, "user", "Recover the CORS debug notes.")
+        from decafclaw.archive import archive_path
+
+        with archive_path(session_ctx.config, conv.conv_id).open("a", encoding="utf-8") as f:
+            f.write("{not valid json\n")
+
+        res = await tool_session_search(session_ctx, "CORS debug")
+
+        assert res.data is not None
+        assert [m["conv_id"] for m in res.data["matches"]] == [conv.conv_id]
+
+    @pytest.mark.asyncio
+    async def test_session_search_title_only_match_has_no_snippet(self, session_ctx):
+        index = ConversationIndex(session_ctx.config)
+        index.create("lmorchard", title="Fungal Planet Short Story")
+
+        res = await tool_session_search(session_ctx, "fungal")
+
+        assert res.data is not None
+        assert res.data["matches"][0]["matched_role"] is None
+        assert res.data["matches"][0]["snippet"] is None
+
+    @pytest.mark.asyncio
+    async def test_session_search_does_not_scan_other_users_sessions(self, session_ctx):
+        index = ConversationIndex(session_ctx.config)
+        other = index.create("someone-else", title="Private Planned Trip")
+        _append(session_ctx.config, other.conv_id, "user", "Secret shoulder season pricing notes.")
+
+        res = await tool_session_search(session_ctx, "shoulder season pricing")
+
+        assert res.data is not None and res.data["matches"] == []
 
     @pytest.mark.asyncio
     async def test_session_switch_and_event(self, session_ctx):

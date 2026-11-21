@@ -166,6 +166,26 @@
     Specific known title → read directly. Searching when the page
     name is given is wasted indirection.
 
+# -- session_search vs conversation_search ------------------------------------
+
+- name: session-search-vs-conv-return-to-thread
+  scenario: "Take me back to the session where we were debugging the CORS headers on the weather widget."
+  expected: session_search
+  near_miss: [conversation_search]
+  notes: |
+    "Take me back to the session" is navigation: the user wants the client
+    switched, so session_search (then session_switch) is the first call.
+    conversation_search returns verbatim quotes and cannot move the client.
+
+- name: conv-search-vs-session-quote-error
+  scenario: "Find the exact error text I pasted when the weather widget's CORS check failed."
+  expected: conversation_search
+  near_miss: [session_search]
+  notes: |
+    "Exact error text I pasted" asks for a verbatim quote, not a session to
+    switch to. session_search can now match message content, but its purpose
+    remains navigation.
+
 # -- conversation_search vs conversation_compact -----------------------------
 
 - name: conv-search-vs-compact-find

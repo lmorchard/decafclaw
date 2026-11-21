@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -102,6 +103,26 @@ def read_archive(config, conv_id: str) -> list[dict]:
     if not path.exists():
         return []
     return _read_jsonl(path)
+
+
+def iter_archive_messages(config, conv_id: str) -> Iterator[dict]:
+    """Yield messages from a conversation archive, skipping corrupt lines.
+
+    Streams the JSONL file, so a caller that scans for matches does not hold
+    the whole archive in memory.
+    """
+    path = archive_path(config, conv_id)
+    if not path.exists():
+        return
+    with open(path, encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                log.warning("Skipping corrupt JSONL line %d in %s", lineno, path)
 
 
 def restore_history(config, conv_id: str) -> list[dict] | None:
