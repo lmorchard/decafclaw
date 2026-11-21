@@ -135,6 +135,21 @@ def _resolve_top_level_int(file_data: dict, key: str, env_name: str, default: in
         return default
 
 
+def _resolve_top_level_str(file_data: dict, key: str, env_name: str, default: str = "") -> str:
+    """Resolve a top-level string field: env var > config.json > default.
+
+    Top-level fields don't go through load_sub_config (no env prefix), so each
+    needs an explicit lookup — same pattern as EXTRA_SKILL_PATHS. An unset or
+    empty env var falls through to the config file value (first non-empty wins);
+    a null or absent file value resolves to ``default``.
+    """
+    raw = os.getenv(env_name)
+    if raw is None or raw == "":
+        val = file_data.get(key, default)
+        return val if isinstance(val, str) else default
+    return raw
+
+
 def _coerce(value: str, field_type) -> object:
     """Coerce a string value to the target field type."""
     origin = get_origin(field_type)
@@ -827,8 +842,9 @@ def load_config() -> Config:
     providers = _load_providers(file_data.get("providers", {}))
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
     modes = _load_modes(file_data.get("modes", {}))
-    default_model = file_data.get("default_model", "")
-    auxiliary_model = file_data.get("auxiliary_model", "")
+    # Model selectors (#1328): DECAFCLAW_* env var > config.json > "".
+    default_model = _resolve_top_level_str(file_data, "default_model", "DECAFCLAW_DEFAULT_MODEL")
+    auxiliary_model = _resolve_top_level_str(file_data, "auxiliary_model", "DECAFCLAW_AUXILIARY_MODEL")
 
     env_extra = os.getenv("EXTRA_SKILL_PATHS", "")
     if env_extra:

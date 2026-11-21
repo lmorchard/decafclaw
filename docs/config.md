@@ -548,9 +548,11 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 | `reasoning_effort` | str or null | `null` | OpenAI Responses only: reasoning effort; omitted/null uses model default |
 | `supports_vision` | bool or null | `null` | Tri-state vision capability (#1143): `false` turns every inbound image into an omission notice; `null`/true budgets normally |
 
-`default_model` (top-level string) sets which model config to use when none is explicitly selected.
+`default_model` (top-level string) sets which model config to use when none is explicitly selected. Env override: `DECAFCLAW_DEFAULT_MODEL`.
 
-`auxiliary_model` (top-level string) sets the model config to use for background operations like compaction or scoring, where speed or cost might be prioritized over reasoning capability. If unset, these operations fall back to the active conversation model or `default_model`.
+`auxiliary_model` (top-level string) sets the model config to use for background operations like compaction or scoring, where speed or cost might be prioritized over reasoning capability. If unset, these operations fall back to the active conversation model or `default_model`. Env override: `DECAFCLAW_AUXILIARY_MODEL`.
+
+Both resolve env var > config file > empty (first non-empty wins), like the other top-level scalars. An unset or empty env var falls through to the config file value; a non-empty one wins outright.
 
 **Migration:** If no `providers`/`model_configs` sections exist but the `llm` section is present, a "default" `openai-compat` provider and model config are auto-generated from the `llm` values.
 

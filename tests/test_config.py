@@ -42,6 +42,8 @@ def _isolate_env(monkeypatch):
                 "VAULT_GUIDE_",
                 "WORKFLOW_",
                 "LOOP_BREAKER_",
+                "DECAFCLAW_DEFAULT_MODEL",
+                "DECAFCLAW_AUXILIARY_MODEL",
             )
         ):
             monkeypatch.delenv(key, raising=False)
@@ -1036,6 +1038,59 @@ class TestDefaultModelInference:
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         cfg = load_config()
         assert cfg.default_model == "gemini-flash"
+
+
+class TestModelSelectorEnvOverride:
+    """Top-level model selectors (#1328): ``DECAFCLAW_*`` env var > config.json.
+
+    ``default_model`` and ``auxiliary_model`` had no env override at all, unlike
+    their sibling top-level scalars (``EXTRA_SKILL_PATHS``, ``MAX_TOOL_OUTPUT_*``).
+    These pin the wiring: a non-empty env var wins, an empty/unset one falls
+    through to config.json (the module's "first non-empty wins" contract).
+    """
+
+    def test_default_model_env_overrides_file(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"default_model": "from-file"}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("DECAFCLAW_DEFAULT_MODEL", "from-env")
+        cfg = load_config()
+        assert cfg.default_model == "from-env"
+
+    def test_auxiliary_model_env_overrides_file(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({"auxiliary_model": "from-file"}))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("DECAFCLAW_AUXILIARY_MODEL", "from-env")
+        cfg = load_config()
+        assert cfg.auxiliary_model == "from-env"
+
+    def test_empty_env_falls_through_to_file(self, tmp_path, monkeypatch):
+        """An empty env var is not a value — config.json wins (first non-empty)."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(
+            json.dumps({"default_model": "from-file", "auxiliary_model": "aux-file"})
+        )
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("DECAFCLAW_DEFAULT_MODEL", "")
+        monkeypatch.setenv("DECAFCLAW_AUXILIARY_MODEL", "")
+        cfg = load_config()
+        assert cfg.default_model == "from-file"
+        assert cfg.auxiliary_model == "aux-file"
+
+    def test_env_without_file(self, tmp_path, monkeypatch):
+        """Env var alone (no config.json) supplies the value."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("DECAFCLAW_DEFAULT_MODEL", "from-env")
+        monkeypatch.setenv("DECAFCLAW_AUXILIARY_MODEL", "aux-env")
+        cfg = load_config()
+        assert cfg.default_model == "from-env"
+        assert cfg.auxiliary_model == "aux-env"
 
 
 class TestConfirmationTimeoutConfig:
