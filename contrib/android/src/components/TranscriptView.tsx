@@ -6,6 +6,7 @@ interface TranscriptViewProps {
   messages: ChatMessage[];
   transcript: string;
   recognizing: boolean;
+  bottomInset?: number;
   scrollViewRef: React.RefObject<ScrollViewInstance | null>;
 }
 
@@ -42,13 +43,17 @@ export function TranscriptView({
   messages,
   transcript,
   recognizing,
+  bottomInset = 0,
   scrollViewRef,
 }: TranscriptViewProps) {
   return (
     <ScrollView
       ref={scrollViewRef}
       style={styles.scrollArea}
-      contentContainerStyle={styles.scrollContent}
+      contentContainerStyle={[
+        styles.scrollContent,
+        bottomInset > 0 ? { paddingBottom: 20 + bottomInset } : null,
+      ]}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"
     >

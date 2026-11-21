@@ -42,7 +42,7 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
    - A long press (~450ms) gives a 40ms vibrate and starts a continuous session that keeps listening across silences (`Listening... Tap to Finish`). Finalized segments accumulate; tapping again stops the engine and sends the whole monologue as one turn.
    - On Android 13+ the continuous session uses the segmented on-device recognizer; if the engine ends unexpectedly, it restarts up to 3 times into the same buffer.
    - A status glyph inside the button shows state at a glance: green connected, amber connecting/thinking/tooling, red offline/error, `♪` speaking, white listening.
-   - Once a conversation exists, the header `↗` opens it in the web UI (`/?conv=<conv_id>`). The browser keeps its own login; the web client re-selects the linked conversation after sign-in.
+   - Once a conversation exists, a floating `↗` button above the settings menu opens it in the web UI (`/?conv=<conv_id>`). The browser keeps its own login; the web client re-selects the linked conversation after sign-in.
    - Hamburger menu (`☰`) opens Settings: DecafClaw host/token, TTS toggle, pitch/speed, starred voices, and inline audition `▶` buttons.
 
 ---

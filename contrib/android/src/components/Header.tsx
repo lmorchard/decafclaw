@@ -1,12 +1,8 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-interface HeaderProps {
-  onOpenWebUi?: () => void;
-}
-
-export function Header({ onOpenWebUi }: HeaderProps) {
+export function Header() {
   const insets = useSafeAreaInsets();
 
   return (
@@ -23,20 +19,6 @@ export function Header({ onOpenWebUi }: HeaderProps) {
         <Text style={styles.title}>DecafClaw</Text>
         <Text style={styles.subtitle}>Pocket Transceiver • v0.1</Text>
       </View>
-
-      {onOpenWebUi ? (
-        <TouchableOpacity
-          style={styles.webButton}
-          onPress={onOpenWebUi}
-          activeOpacity={0.7}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel="Open conversation in web browser"
-          accessibilityHint="Opens this conversation in your browser"
-        >
-          <Text style={styles.webIcon}>↗</Text>
-        </TouchableOpacity>
-      ) : null}
     </View>
   );
 }
@@ -66,21 +48,5 @@ const styles = StyleSheet.create({
     color: '#a1a1aa',
     fontSize: 12,
     fontWeight: '500',
-  },
-  webButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#27272a',
-    borderWidth: 1,
-    borderColor: '#3f3f46',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  webIcon: {
-    color: '#a1a1aa',
-    fontSize: 20,
-    fontWeight: '700',
-    lineHeight: 22,
   },
 });

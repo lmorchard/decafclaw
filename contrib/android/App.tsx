@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Alert, Linking, StyleSheet, View, type ScrollViewInstance } from 'react-native';
+import {
+  Alert,
+  Linking,
+  StyleSheet,
+  TouchableOpacity,
+  Text,
+  View,
+  type ScrollViewInstance,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -448,15 +456,31 @@ function TransceiverScreen() {
       <StatusBar style="light" />
 
       {/* Clean Minimal Header */}
-      <Header onOpenWebUi={convId ? handleOpenWebUi : undefined} />
+      <Header />
 
       {/* Persistent IM Transcript */}
-      <TranscriptView
-        scrollViewRef={scrollViewRef}
-        messages={messages}
-        transcript={transcript}
-        recognizing={recognizing}
-      />
+      <View style={styles.transcriptArea}>
+        <TranscriptView
+          scrollViewRef={scrollViewRef}
+          messages={messages}
+          transcript={transcript}
+          recognizing={recognizing}
+          bottomInset={convId ? 76 : 0}
+        />
+
+        {convId ? (
+          <TouchableOpacity
+            style={styles.webFab}
+            onPress={handleOpenWebUi}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Open conversation in web browser"
+            accessibilityHint="Opens this conversation in your browser"
+          >
+            <Text style={styles.webFabIcon}>↗</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
 
       {/* Unified Bottom Control (PTT + Connection + Settings Hamburger) */}
       <PttFooter
@@ -510,5 +534,32 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#121214',
+  },
+  transcriptArea: {
+    flex: 1,
+  },
+  webFab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 14,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#27272a',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+  },
+  webFabIcon: {
+    color: '#f4f4f5',
+    fontSize: 24,
+    fontWeight: '700',
+    lineHeight: 26,
   },
 });
