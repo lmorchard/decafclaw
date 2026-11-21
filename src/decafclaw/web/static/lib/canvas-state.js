@@ -8,8 +8,9 @@
  *   { tabs, activeTabId, activeTab, visible, unreadDot }
  *
  * Dismiss persists per-conv in localStorage (canvas-dismissed.{convId});
- * cleared on new_tab / close_tab (when panel becomes empty) / clear /
- * resummon click. Survives reload, conv-switch, and update events.
+ * cleared on foreground new_tab / close_tab (when panel becomes empty) /
+ * clear / resummon click. Background new_tab preserves it. Survives reload,
+ * conv-switch, and update events.
  */
 
 import { ApiError, DefaultService } from './api-client/index.js';

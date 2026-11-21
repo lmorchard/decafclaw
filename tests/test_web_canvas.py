@@ -381,6 +381,30 @@ async def test_canvas_update_event_kind_new_tab():
 
 
 @pytest.mark.asyncio
+async def test_canvas_update_event_passes_background_flag():
+    """#1024: background creation must survive the bus→WS projection."""
+    sent = []
+
+    async def ws_send(payload):
+        sent.append(payload)
+
+    state = {"ws_send": ws_send, "config": None}
+    callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
+    await callback(
+        {
+            "type": "canvas_update",
+            "conv_id": "conv-x",
+            "kind": "new_tab",
+            "active_tab": "canvas_1",
+            "tab": {"id": "canvas_2", "label": "L", "widget_type": "markdown_document", "data": {"content": "x"}},
+            "background": True,
+        }
+    )
+    assert sent[0]["background"] is True
+    assert sent[0]["active_tab"] == "canvas_1"
+
+
+@pytest.mark.asyncio
 async def test_canvas_update_event_kind_close_tab():
     sent = []
 

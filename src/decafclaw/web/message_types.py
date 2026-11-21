@@ -132,6 +132,7 @@ class SrvCanvasUpdate(TypedDict):
     active_tab: str | None
     tab: dict[str, object] | None
     closed_tab_id: NotRequired[str]
+    background: NotRequired[bool]
 
 
 class SrvChunk(TypedDict):
