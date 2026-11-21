@@ -30,7 +30,7 @@ const MessageBubble = React.memo(function MessageBubble({ message }: { message: 
 
   return (
     <View style={styles.agentBubble}>
-      <Text style={styles.bubbleLabel}>Caffeina</Text>
+      <Text style={styles.bubbleLabel}>Assistant</Text>
       <Text style={styles.agentText}>
         {message.text.length > 0 ? message.text : 'Thinking...'}
       </Text>
