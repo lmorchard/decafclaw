@@ -32,6 +32,7 @@ This document guides autonomous coding agents (Claude Code, OpenCode, Aider, etc
    * Never reconnect after unmount. The hook uses `stoppedRef` plus a nulled-handler close in the effect cleanup.
    * Turns spoken while the socket is down are queued and flushed on `open`; they are not dropped.
    * Host and token are user-configurable; changing either starts a fresh conversation on the new server.
+   * **Never commit a session token.** `DEFAULT_TOKEN` stays empty; tokens live only in Settings/AsyncStorage.
 3. **Pipelined TTS & Markdown Normalization**:
    * Token streams are sentence-buffered and every complete boundary (`[.?!]\n` followed by whitespace or end of buffer) is spoken as soon as it arrives.
    * Never feed raw Markdown to `Speech.speak()`. Always run text through `cleanMarkdownForSpeech()` in `src/utils/speech.ts` to strip code fences, wiki links, asterisks, and list/table syntax.
@@ -48,7 +49,7 @@ Keep modules small and single-purpose. Do not dump features into `App.tsx`:
 
 * **`App.tsx`**: Top-level coordinator. Wires hooks (`useDecafClawWebSocket`, `useVoiceRecognition`), manages `messages[]` transcript, maintains `settingsRef`, loads/saves preferences (host, token, voice, pitch, rate, TTS, stars, barge-in, lobby) via `AsyncStorage`, batches streamed text, tracks TTS utterances, handles server barge-in (cancel + suppress TTS until the next turn), clears state on conversation switches, and floats the Home/Web buttons above the footer once `convId` exists.
 * **`src/types.ts`**: TypeScript definitions (`ChatMessage`, `VoiceItem`).
-* **`src/config.ts`**: Default host (`DEFAULT_HOST`) and token (`DEFAULT_TOKEN`). Runtime overrides live in the settings sheet and `AsyncStorage` (`@decafclaw_host`, `@decafclaw_token`, `@decafclaw_conv_id`, `@decafclaw_conv_title`, `@decafclaw_lobby_conv_id`, `@decafclaw_barge_in`).
+* **`src/config.ts`**: Default host (`DEFAULT_HOST`); `DEFAULT_TOKEN` must stay empty. The session token is entered in Settings and stored in `AsyncStorage` (`@decafclaw_host`, `@decafclaw_token`, `@decafclaw_conv_id`, `@decafclaw_conv_title`, `@decafclaw_lobby_conv_id`, `@decafclaw_barge_in`).
 * **`src/utils/speech.ts`**: `cleanMarkdownForSpeech()` prose normalizer and `formatVoiceLabel()` Google model formatter.
 * **`src/utils/connection.ts`**: `normalizeHost()` for user-entered server addresses and `conversationWebUrl()` for `/?conv=<conv_id>` deep links.
   * Never put the session token in the URL; the browser authenticates separately and re-selects the linked conversation after login.

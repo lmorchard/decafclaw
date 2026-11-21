@@ -54,12 +54,12 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
 
 ## Configuration
 
-The Settings sheet stores the DecafClaw connection in `AsyncStorage`:
+The Settings sheet stores the DecafClaw connection in `AsyncStorage`. The app ships with no default token — enter one in Settings; never commit a session token:
 
 | Setting | Key | Default |
 | --- | --- | --- |
 | Host URL | `@decafclaw_host` | `http://decafclaw:18880` |
-| Session token | `@decafclaw_token` | `DEFAULT_TOKEN` in `src/config.ts` |
+| Session token | `@decafclaw_token` | empty; enter it in Settings (never commit one) |
 | Active conversation | `@decafclaw_conv_id` | restored on launch; cleared when host/token changes |
 | Active session title | `@decafclaw_conv_title` | restored on launch; refreshed via `conv_selected` |
 | Home Lobby override | `@decafclaw_lobby_conv_id` | blank (server `web-<user>-home`) |
@@ -82,7 +82,7 @@ contrib/android/
 ├── vitest.config.mts           # Unit test config
 ├── src/
 │   ├── types.ts                # TypeScript contracts (ChatMessage, VoiceItem)
-│   ├── config.ts               # Default host/token
+│   ├── config.ts               # Default host; token is set in Settings
 │   ├── utils/
 │   │   ├── speech.ts           # Markdown normalizer & voice label formatter
 │   │   ├── speech.test.ts
