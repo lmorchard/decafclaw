@@ -52,11 +52,12 @@ Keep modules small and single-purpose. Do not dump features into `App.tsx`:
 * **`src/utils/speech.ts`**: `cleanMarkdownForSpeech()` prose normalizer and `formatVoiceLabel()` Google model formatter.
 * **`src/utils/connection.ts`**: `normalizeHost()` for user-entered server addresses.
 * **`src/utils/*.test.ts`**: Vitest coverage for the pure utilities.
-* **`src/hooks/useDecafClawWebSocket.ts`**: Socket lifecycle, identity-guarded handlers, reconnect backoff, AppState foreground recovery, ping keepalive, turn watchdog, queued turns, error surfacing, history resync, and REST conversation creation.
+* **`src/hooks/useDecafClawWebSocket.ts`**: Socket lifecycle, identity-guarded handlers, reconnect backoff, AppState foreground recovery, turn watchdog, queued turns, error surfacing, history resync, and REST conversation creation.
+  * **Do not call `WebSocket.ping()` on Android.** RN implements it by sending `ByteString.EMPTY` — an empty *binary* frame, not a protocol ping. DecafClaw's `receive_text()` raises `KeyError: 'text'` and closes the socket, producing a reconnect every ping interval. Rely on the server's protocol ping/pong and the inactivity watchdog.
 * **`src/hooks/useVoiceRecognition.ts`**: Android native `SpeechRecognizer` via `expo-speech-recognition` targeting the Pixel's offline Tensor TPU.
 * **`src/components/Header.tsx`**: Insets-safe minimal title bar.
 * **`src/components/TranscriptView.tsx`**: Memoized IM-style conversation thread with auto-scroll ref.
-* **`src/components/PttFooter.tsx`**: Combined PTT / connection status button, live status line, TTS stop button, and settings hamburger (`☰`).
+* **`src/components/PttFooter.tsx`**: Combined PTT / connection button with a status glyph (green connected, amber working, red offline/error, `♪` speaking), TTS stop button, and settings hamburger (`☰`).
 * **`src/components/VoiceSettingsModal.tsx`**: Slide-up sheet with DecafClaw host/token fields, TTS toggle, pitch/speed controls, starred favorites, and inline audition `▶` buttons.
 * **`eslint.config.js`**, **`vitest.config.mts`**: Lint and test configuration.
 

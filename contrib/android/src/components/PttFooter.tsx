@@ -14,6 +14,63 @@ interface PttFooterProps {
   onOpenSettings: () => void;
 }
 
+interface StatusVisual {
+  icon: string;
+  color: string;
+}
+
+function getStatusVisual(
+  connected: boolean,
+  status: string,
+  recognizing: boolean,
+  isStarting: boolean,
+  speaking: boolean
+): StatusVisual {
+  const lower = status.toLowerCase();
+
+  if (lower.includes('queued')) {
+    return { icon: '◌', color: '#fbbf24' };
+  }
+
+  if (!connected) {
+    if (
+      status.startsWith('Auth failed') ||
+      status.startsWith('Session failed') ||
+      status === 'Error'
+    ) {
+      return { icon: '!', color: '#fecaca' };
+    }
+    if (lower.includes('reconnect') || lower.includes('connecting')) {
+      return { icon: '◌', color: '#fbbf24' };
+    }
+    return { icon: '○', color: '#fecaca' };
+  }
+
+  if (isStarting) {
+    return { icon: '◌', color: '#fde68a' };
+  }
+  if (recognizing) {
+    return { icon: '●', color: '#ffffff' };
+  }
+  if (speaking) {
+    return { icon: '♪', color: '#7dd3fc' };
+  }
+  if (status === 'Error' || status === 'Session failed') {
+    return { icon: '!', color: '#fecaca' };
+  }
+  if (status.startsWith('Tool:')) {
+    return { icon: '⚙', color: '#fde68a' };
+  }
+  if (
+    status === 'Thinking...' ||
+    status === 'Dispatching turn...' ||
+    status === 'Awaiting reply...'
+  ) {
+    return { icon: '⋯', color: '#fde68a' };
+  }
+  return { icon: '●', color: '#22c55e' };
+}
+
 export function PttFooter({
   connected,
   status,
@@ -26,6 +83,13 @@ export function PttFooter({
   onOpenSettings,
 }: PttFooterProps) {
   const insets = useSafeAreaInsets();
+  const visual = getStatusVisual(
+    connected,
+    status,
+    recognizing,
+    Boolean(isStarting),
+    speaking
+  );
 
   const handleMainButtonPress = () => {
     if (connected) {
@@ -61,23 +125,18 @@ export function PttFooter({
     return styles.btnConnected;
   };
 
+  const buttonText = getMainButtonText();
+
   return (
     <View
       style={[
         styles.footer,
         {
           paddingBottom: Math.max(insets.bottom, 20) + 16,
-          paddingTop: 12,
+          paddingTop: 16,
         },
       ]}
     >
-      <View style={styles.statusRow}>
-        <Text style={styles.statusText} numberOfLines={1}>
-          {status}
-        </Text>
-        {speaking ? <Text style={styles.speakingText}>Speaking</Text> : null}
-      </View>
-
       <View style={styles.buttonRow}>
         {/* Unified PTT & Connection Button */}
         <TouchableOpacity
@@ -85,9 +144,23 @@ export function PttFooter({
           onPress={handleMainButtonPress}
           activeOpacity={0.8}
           accessibilityRole="button"
-          accessibilityLabel={getMainButtonText()}
+          accessibilityLabel={`${buttonText}. ${status}`}
         >
-          <Text style={styles.mainButtonText}>{getMainButtonText()}</Text>
+          <View style={styles.mainButtonContent}>
+            <View style={styles.statusBadge}>
+              <Text style={[styles.statusIcon, { color: visual.color }]}>
+                {visual.icon}
+              </Text>
+            </View>
+            <Text
+              style={styles.mainButtonText}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+            >
+              {buttonText}
+            </Text>
+          </View>
         </TouchableOpacity>
 
         {/* Stop TTS without opening the mic */}
@@ -126,25 +199,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#27272a',
   },
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-    paddingHorizontal: 4,
-    gap: 12,
-  },
-  statusText: {
-    flexShrink: 1,
-    color: '#a1a1aa',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  speakingText: {
-    color: '#38bdf8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
   buttonRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -161,6 +215,25 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
+  },
+  mainButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  statusBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statusIcon: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   btnConnected: {
     backgroundColor: '#2563eb',
@@ -180,8 +253,8 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
-    paddingHorizontal: 12,
     textAlign: 'center',
+    flexShrink: 1,
   },
   stopButton: {
     width: 60,

@@ -26,7 +26,6 @@ interface QueuedTurn {
 
 const RECONNECT_BASE_MS = 2_000;
 const RECONNECT_MAX_MS = 10_000;
-const PING_INTERVAL_MS = 25_000;
 const TURN_TIMEOUT_MS = 45_000;
 const HISTORY_LIMIT = 8;
 const AUTH_FAILURE_CLOSE_CODE = 4001;
@@ -50,13 +49,6 @@ function toWsUrl(host: string): string {
 function clearTimeoutRef(ref: { current: ReturnType<typeof setTimeout> | null }) {
   if (ref.current) {
     clearTimeout(ref.current);
-    ref.current = null;
-  }
-}
-
-function clearIntervalRef(ref: { current: ReturnType<typeof setInterval> | null }) {
-  if (ref.current) {
-    clearInterval(ref.current);
     ref.current = null;
   }
 }
@@ -92,7 +84,6 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
   const stoppedRef = useRef(false);
@@ -266,7 +257,6 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     }
 
     clearTimeoutRef(reconnectTimerRef);
-    clearIntervalRef(pingTimerRef);
     clearTimeoutRef(watchdogRef);
 
     // Detach handlers before closing so the replaced socket cannot schedule
@@ -311,12 +301,6 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
       setConnected(true);
       setStatus('Connected');
 
-      pingTimerRef.current = setInterval(() => {
-        if (wsRef.current === ws && ws.readyState === WebSocket.OPEN) {
-          ws.ping();
-        }
-      }, PING_INTERVAL_MS);
-
       const convId = convIdRef.current;
       if (convId) {
         sendRaw(ws, { type: 'select_conv', conv_id: convId });
@@ -355,8 +339,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
         return;
       }
       wsRef.current = null;
-      clearIntervalRef(pingTimerRef);
-      clearTimeoutRef(watchdogRef);
+        clearTimeoutRef(watchdogRef);
       setConnected(false);
 
       if (event.code === AUTH_FAILURE_CLOSE_CODE) {
@@ -401,8 +384,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
       clearTimeout(timer);
       stoppedRef.current = true;
       clearTimeoutRef(reconnectTimerRef);
-      clearIntervalRef(pingTimerRef);
-      clearTimeoutRef(watchdogRef);
+        clearTimeoutRef(watchdogRef);
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws) {

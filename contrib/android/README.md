@@ -29,7 +29,8 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
    - Microphone permission is checked at launch and requested on the first tap, not at startup.
 2. **WebSocket Gateway**:
    - Streams directly to DecafClaw's `/ws/chat` endpoint with token session auth.
-   - Exponential backoff reconnect, foreground wake recovery (`AppState`), a 25s ping keepalive, and a 45s turn watchdog that reconnects and reloads the turn from conversation history.
+   - Exponential backoff reconnect, foreground wake recovery (`AppState`), and a 45s inactivity watchdog that reconnects and reloads the turn from conversation history.
+   - No application-level keepalive: RN's `WebSocket.ping()` sends an empty binary frame on Android, which DecafClaw's `receive_text()` rejects by closing the socket. The server's protocol ping/pong keeps the connection alive.
    - Turns spoken while the socket is down are queued and flushed on reconnect.
    - Server `error` events render as transcript errors instead of hanging on "Thinking...". A `4001` close reports an auth failure and stops reconnecting.
 3. **Pipelined Native Speech (TTS)**:
@@ -38,7 +39,7 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
    - A `■` button in the footer stops playback without opening the mic.
 4. **Unified Push-to-Talk & Controls**:
    - Bottom button acts as connection monitor and push-to-talk (`Tap to Speak` / `Listening... Tap to Stop` / `Disconnected · Tap to Connect`).
-   - A live status line shows `Thinking...`, `Tool: ...`, `Queued — reconnecting...`, and auth errors.
+   - A status glyph inside the button shows state at a glance: green connected, amber connecting/thinking/tooling, red offline/error, `♪` speaking, white listening.
    - Hamburger menu (`☰`) opens Settings: DecafClaw host/token, TTS toggle, pitch/speed, starred voices, and inline audition `▶` buttons.
 
 ---
@@ -81,7 +82,7 @@ contrib/android/
 │   └── components/
 │       ├── Header.tsx          # Clean top bar with safe-area insets
 │       ├── TranscriptView.tsx  # Memoized in-memory chat transcript
-│       ├── PttFooter.tsx       # Speak/connect button, status line, TTS stop, settings
+│       ├── PttFooter.tsx       # Speak/connect button with status glyph, TTS stop, settings
 │       └── VoiceSettingsModal.tsx # Connection, TTS, pitch, speed, starred voices
 ```
 
