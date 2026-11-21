@@ -1741,4 +1741,25 @@ describe('conversation fork transport (#1581)', () => {
     expect(store.conversations).toEqual([]);
     expect(log).not.toHaveBeenCalled();
   });
+
+  it('switches conversation when receiving SWITCH_CONVERSATION from server', () => {
+    const store = makeStore(ws);
+    store.selectConversation('web-alice-c1');
+    expect(store.currentConvId).toBe('web-alice-c1');
+
+    ws.fireMessage({
+      type: MESSAGE_TYPES.SWITCH_CONVERSATION,
+      conv_id: 'web-alice-c1',
+      target_conv_id: 'web-alice-c2',
+      title: 'Target Conversation',
+      reason: 'Switching to c2',
+    });
+
+    expect(store.currentConvId).toBe('web-alice-c2');
+    expect(store.currentConversationTitle).toBe('Target Conversation');
+    expect(ws.sent).toContainEqual({
+      type: MESSAGE_TYPES.SELECT_CONV,
+      conv_id: 'web-alice-c2',
+    });
+  });
 });
