@@ -13,6 +13,8 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
   COMPACTION.md                     # Custom compaction prompt
   REFLECTION.md                     # Custom reflection judge prompt
   MEMORY_SWEEP.md                   # Pre-compaction memory sweep prompt
+  SHELL_APPROVAL.md                 # Shell auto-approval judge prompt override (#1641)
+  activity_domains.jsonl            # Shell activity domains, seeded from bundled examples (#1641)
   HEARTBEAT.md                      # Admin heartbeat tasks (auto-approves tools)
   config.json                       # Resolved configuration
   model_catalog.json                # Discovered models + enable flags + default/aux-approval pointers (#1211, #1213)

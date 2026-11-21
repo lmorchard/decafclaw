@@ -191,3 +191,65 @@ def test_missing_history_is_not_established(config):
     ctx.history = None
     activity = derive_activity(ctx, "git status", _workspace(config, "decafclaw"))
     assert activity.established is False
+
+
+# -- external domain vocabulary (#1641 review) --------------------------------
+
+
+def _write_domains(config, *lines: str):
+    path = config.agent_path / "activity_domains.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_agent_domain_file_replaces_bundled_vocabulary(config):
+    _write_domains(config, '{"domain": "garden", "pattern": "garden"}')
+    ctx = _ctx(config)
+    garden = _workspace(config, "garden")
+    assert derive_activity(ctx, "touch seed", garden).domain == "garden"
+    # The file is authoritative: the bundled decafclaw domain is gone.
+    decafclaw = _workspace(config, "decafclaw")
+    assert derive_activity(ctx, "touch x", decafclaw).domain == UNKNOWN_ACTIVITY
+
+
+def test_malformed_domain_lines_are_skipped(config):
+    _write_domains(
+        config,
+        "{ not json",
+        '{"domain": "garden", "pattern": "garden"}',
+        '{"domain": "", "pattern": "x"}',
+        '{"domain": "bad", "pattern": "[unclosed"}',
+    )
+    ctx = _ctx(config)
+    assert derive_activity(ctx, "touch seed", _workspace(config, "garden")).domain == "garden"
+
+
+def test_unusable_domain_file_falls_back_to_bundled(config):
+    _write_domains(config, "{ not json", '{"domain": "x", "pattern": "[bad"}')
+    ctx = _ctx(config)
+    activity = derive_activity(ctx, "touch x", _workspace(config, "decafclaw"))
+    assert activity.domain == "decafclaw"
+
+
+def test_domain_file_is_reread_each_call(config):
+    path = _write_domains(config, '{"domain": "garden", "pattern": "garden"}')
+    ctx = _ctx(config)
+    garden = _workspace(config, "garden")
+    assert derive_activity(ctx, "touch seed", garden).domain == "garden"
+
+    path.write_text('{"domain": "woodwork", "pattern": "garden"}\n', encoding="utf-8")
+    assert derive_activity(ctx, "touch seed", garden).domain == "woodwork"
+
+
+def test_ensure_activity_domains_file_seeds_once(config):
+    from decafclaw.activity import ensure_activity_domains_file
+
+    assert ensure_activity_domains_file(config) is True
+    path = config.agent_path / "activity_domains.jsonl"
+    seeded = path.read_text()
+    assert "homelab" in seeded
+
+    path.write_text('{"domain": "custom", "pattern": "custom"}\n', encoding="utf-8")
+    assert ensure_activity_domains_file(config) is False
+    assert path.read_text() == '{"domain": "custom", "pattern": "custom"}\n'

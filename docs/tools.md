@@ -246,6 +246,11 @@ The decision order is: Tier 1 block → scoped and persisted allow patterns → 
 
 The judge sees only in-direction commands and may decline only for a concrete `risk_category`: `data_loss`, `exfiltration`, `privilege_escalation`, `outside_workspace`, or `irreversible`. A decline without one of those categories is treated as an allow with advisory feedback. `suggested_rule` is phrased scoped to the activity so accepted rules do not re-learn per conversation.
 
+Both vocabularies are operator-editable without a restart:
+
+- **Activity domains** — `data/{agent_id}/activity_domains.jsonl`, one `{"domain": "...", "pattern": "<regex>"}` per line (case-insensitive). It is admin-managed, not workspace-writable, because it steers approval. On first start it is seeded from the bundled `src/decafclaw/activity_domains.jsonl` examples; an existing file is authoritative (edit it to add or remove domains). Malformed lines are logged and skipped; an unusable file falls back to the bundled defaults.
+- **Judge prompt** — bundled `src/decafclaw/prompts/SHELL_APPROVAL.md`, overridden per agent by `data/{agent_id}/SHELL_APPROVAL.md` (also admin-managed). The template uses `{{COMMAND}}`, `{{WORKING_DIR}}`, `{{STATED_PURPOSE}}`, `{{DIRECTION}}`, `{{NATIVE_TOOL_INDEX}}`, and `{{POLICY_BLOCK}}`; substitution is single-pass, so untrusted values are never expanded as placeholders.
+
 **Telemetry.** Every decision publishes `approval_decision` (`command`, `cwd`, `decision`, `tier`, `reason`, `activity`, `activity_established`, `conv_id`); every human prompt publishes `approval_human` (`command`, `approved`, `latency_ms`, `tier`, …). The audit-log subscriber writes both to `audit.jsonl` when `audit_log.enabled`. Summarize them with:
 
 ```sh

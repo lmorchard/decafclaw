@@ -71,6 +71,11 @@ def start_app(extra_provider_hook: Callable[[Any], None] | None = None) -> None:
     config.vault_agent_pages_dir.mkdir(parents=True, exist_ok=True)
     config.vault_agent_journal_dir.mkdir(parents=True, exist_ok=True)
 
+    # Seed the operator-editable shell activity vocabulary from bundled examples.
+    from .activity import ensure_activity_domains_file
+
+    ensure_activity_domains_file(config)
+
     # Assemble system prompt from markdown files (bundled + workspace overrides)
     from .prompts import load_system_prompt
     from .skills import build_skill_tool_owners

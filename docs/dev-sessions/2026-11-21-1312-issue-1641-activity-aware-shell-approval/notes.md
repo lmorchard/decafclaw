@@ -25,7 +25,7 @@
 - New tests: `tests/test_activity.py`, `tests/test_shell_readonly.py`, `tests/test_shell_approval_activity.py`, `tests/test_approval_report.py`.
 - Existing judge tests moved to mutating commands and seeded activity where they exercise the judge tier; read-only commands now intentionally bypass it.
 - `make check`: pass (lint, typecheck, fmt, generated types, browser assets).
-- `make test`: 6396 passed, 2 skipped at the final head; baseline before the change was 6149 passed, 2 skipped. Two timing-sensitive tests flaked only under parallel load and passed in isolation (`test_pin_sticky_emit_timeout_does_not_block_reader`, `test_above_budget_returns_job_handle_same_process`).
+- `make test`: 6409 passed, 2 skipped at the final head; baseline before the change was 6149 passed, 2 skipped. Two timing-sensitive tests flaked only under parallel load and passed in isolation (`test_pin_sticky_emit_timeout_does_not_block_reader`, `test_above_budget_returns_job_handle_same_process`).
 
 ## Adversarial review findings (fixed)
 
@@ -43,6 +43,13 @@ Confirmed by execution in scratch repos:
 Fixes: bare PATH verbs only; drop `git status/diff/show/fetch/ls-remote` and patch-producing `git log` from the silent tier (they still reach the judge); block the explicit exec/verify flags; block symlink-follow and file-list-indirection flags; block curl credential flags and `@file`; parse `gh api` method forms.
 
 Residual, documented risks: a silent read-only command still counts toward establishing activity; `git config --get` can print global config values.
+
+## Review follow-up (modularity)
+
+- Activity vocabulary moved out of `activity.py` into `data/{agent_id}/activity_domains.jsonl` (admin-managed JSONL, seeded from the bundled `src/decafclaw/activity_domains.jsonl` on first start, reread each call). Malformed lines skip; an unusable file falls back to bundled.
+- Judge prompt moved out of `shell_tools.py` into bundled `src/decafclaw/prompts/SHELL_APPROVAL.md` with per-agent `SHELL_APPROVAL.md` override and single-pass placeholder rendering (`shell_judge.py`). `build_aux_approval_prompt` is now a thin wrapper.
+- New admin files are listed in the Web UI config-file browser. Docs updated (`tools.md`, `data-layout.md`).
+- Kept the read-only classifier's hardcoded verb families: the reviewer accepted these as de facto standard operations. A pluggable per-command audit-module inventory remains a follow-up idea, not this PR.
 
 ## Not done
 

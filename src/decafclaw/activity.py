@@ -25,13 +25,17 @@ server loses nothing that the history does not also lose.
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
+
+log = logging.getLogger(__name__)
 
 UNKNOWN_ACTIVITY = "unknown"
 
@@ -44,19 +48,98 @@ _SHELL_TOOL_NAMES = frozenset({"shell", "shell_background_start"})
 # the same repo on every branch.
 _WORKTREE_SEGMENT_RE = re.compile(r"(?:^|/)(?:\.claude/)?worktrees/[^/]+/?")
 
-# Ordered: the first match names the primary activity. Paths are matched
-# case-insensitively; the decafclaw pattern requires a path segment so a bare
-# prose mention does not tag a command.
-_DOMAIN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("homelab", re.compile(r"lmorchard-homelab", re.IGNORECASE)),
-    ("blog", re.compile(r"blog\.lmorchard\.com|blog-ssg|content/posts", re.IGNORECASE)),
-    ("vault", re.compile(r"obsidian|(?:^|/)vault(?:/|$)|vault_", re.IGNORECASE)),
-    ("television", re.compile(r"television|\btv\b", re.IGNORECASE)),
-    ("me2md", re.compile(r"me-to-markdown", re.IGNORECASE)),
-    ("handwriting", re.compile(r"handwriting", re.IGNORECASE)),
-    ("weeknotes", re.compile(r"weeknotes", re.IGNORECASE)),
-    ("decafclaw", re.compile(r"(?:^|/)decafclaw(?:/|$)")),
-)
+ACTIVITY_DOMAINS_FILENAME = "activity_domains.jsonl"
+_BUNDLED_DOMAINS_PATH = Path(__file__).parent / ACTIVITY_DOMAINS_FILENAME
+
+
+@dataclass(frozen=True)
+class DomainRule:
+    """One activity domain: a label and the regex that attributes a path/text."""
+
+    domain: str
+    pattern: re.Pattern[str]
+
+
+def activity_domains_path(config) -> Path:
+    """Admin-managed domain vocabulary for this agent."""
+    return config.agent_path / ACTIVITY_DOMAINS_FILENAME
+
+
+def _read_domain_rules(path: Path) -> tuple[DomainRule, ...]:
+    """Parse one JSONL rule per line, skipping malformed entries.
+
+    The file is operator-edited, so a bad line must not disable direction for
+    the whole agent. Malformed lines are logged with their line number.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        log.warning("activity domains: cannot read %s: %s", path, exc)
+        return ()
+    rules: list[DomainRule] = []
+    for number, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            log.warning("activity domains: %s:%d is not JSON: %s", path, number, exc)
+            continue
+        if not isinstance(entry, dict):
+            log.warning("activity domains: %s:%d is not an object", path, number)
+            continue
+        domain = str(entry.get("domain") or "").strip()
+        pattern = str(entry.get("pattern") or "").strip()
+        if not domain or not pattern:
+            log.warning("activity domains: %s:%d needs non-empty domain and pattern", path, number)
+            continue
+        try:
+            compiled = re.compile(pattern, re.IGNORECASE)
+        except re.error as exc:
+            log.warning("activity domains: %s:%d has invalid regex: %s", path, number, exc)
+            continue
+        rules.append(DomainRule(domain=domain, pattern=compiled))
+    return tuple(rules)
+
+
+@lru_cache(maxsize=1)
+def _bundled_domain_rules() -> tuple[DomainRule, ...]:
+    return _read_domain_rules(_BUNDLED_DOMAINS_PATH)
+
+
+def load_domain_rules(config) -> tuple[DomainRule, ...]:
+    """Current domain vocabulary: the agent file when usable, else bundled.
+
+    Read on each call (the file is small) so edits apply without a restart. An
+    existing but unusable file falls back to the bundled examples rather than
+    silently disabling all attribution.
+    """
+    path = activity_domains_path(config)
+    if path.exists():
+        rules = _read_domain_rules(path)
+        if rules:
+            return rules
+        log.warning("activity domains: %s has no usable entries; using bundled defaults", path)
+    return _bundled_domain_rules()
+
+
+def ensure_activity_domains_file(config) -> bool:
+    """Seed the agent's domain file from the bundled examples on first start.
+
+    Returns True when the file was created. Never overwrites an existing file.
+    """
+    path = activity_domains_path(config)
+    if path.exists():
+        return False
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_BUNDLED_DOMAINS_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+        log.info("activity domains: seeded %s from bundled defaults", path)
+        return True
+    except OSError as exc:
+        log.warning("activity domains: could not seed %s: %s", path, exc)
+        return False
 
 
 @dataclass(frozen=True)
@@ -122,23 +205,30 @@ def _command_location(command: str, workspace: Path) -> str:
     return _normalize_location(text)
 
 
-def _match_domains(location: str) -> list[str]:
-    return [name for name, pattern in _DOMAIN_PATTERNS if pattern.search(location)]
+def _match_domains(location: str, rules: tuple[DomainRule, ...]) -> list[str]:
+    return [rule.domain for rule in rules if rule.pattern.search(location)]
 
 
-def derive_domains(command: str, cwd: str | None, workspace: Path) -> tuple[str, ...]:
+def derive_domains(
+    command: str,
+    cwd: str | None,
+    workspace: Path,
+    rules: tuple[DomainRule, ...] | None = None,
+) -> tuple[str, ...]:
     """Domains the command touches, cwd first and command text second.
 
     cwd names the primary activity — the work the command is actually being run
     against — and command tokens add any other project the command reaches for,
     so mentioning another repo counts as drift instead of hiding inside the
-    cwd's label.
+    cwd's label. ``rules=None`` uses the bundled examples (tests and callers
+    without a config); the approval path passes the agent's current file.
     """
+    active_rules = rules if rules is not None else _bundled_domain_rules()
     domains: list[str] = []
     location = _path_location(cwd, workspace)
     if location:
-        domains.extend(_match_domains(location))
-    for name in _match_domains(_command_location(command, workspace)):
+        domains.extend(_match_domains(location, active_rules))
+    for name in _match_domains(_command_location(command, workspace), active_rules):
         if name not in domains:
             domains.append(name)
     return tuple(domains)
@@ -168,6 +258,7 @@ def prior_domains(
     current_command: str,
     current_cwd: str | None,
     current_call_id: str = "",
+    rules: tuple[DomainRule, ...] | None = None,
 ) -> set[str]:
     """Domains from the most recent ``window`` shell calls before this one.
 
@@ -176,6 +267,7 @@ def prior_domains(
     precise exclusion; the command/cwd pair is the fallback for history that
     predates ids (tests and restored transcripts).
     """
+    active_rules = rules if rules is not None else _bundled_domain_rules()
     seen: set[str] = set()
     count = 0
     skipped_current = False
@@ -201,7 +293,7 @@ def prior_domains(
             elif not skipped_current and command == current_command and cwd_text.rstrip("/") == normalized_cwd:
                 skipped_current = True
                 continue
-            domains = derive_domains(command, cwd_text, workspace)
+            domains = derive_domains(command, cwd_text, workspace, active_rules)
             seen.update(domains or (UNKNOWN_ACTIVITY,))
             count += 1
             if window > 0 and count >= window:
@@ -212,7 +304,8 @@ def prior_domains(
 def derive_activity(ctx: "Context", command: str, cwd: str | None) -> Activity:
     """Derive the current command's activity from this conversation's history."""
     workspace = ctx.config.workspace_path
-    domains = derive_domains(command, cwd, workspace)
+    rules = load_domain_rules(ctx.config)
+    domains = derive_domains(command, cwd, workspace, rules)
     current = set(domains) or {UNKNOWN_ACTIVITY}
     domain = domains[0] if domains else UNKNOWN_ACTIVITY
     window = ctx.config.shell.activity_window
@@ -223,6 +316,7 @@ def derive_activity(ctx: "Context", command: str, cwd: str | None) -> Activity:
         current_command=command,
         current_cwd=cwd,
         current_call_id=ctx.tools.current_call_id,
+        rules=rules,
     )
     established = current.issubset(known)
     prior = tuple(sorted(known - current - {UNKNOWN_ACTIVITY}))
