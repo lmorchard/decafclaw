@@ -31,6 +31,81 @@ conversation-sidebar .conv-list {
   padding: 0.5rem;
 }
 
+/* Session search (#1451): a debounced query above the chat list replaces the
+   folder/session listing with ranked title + message-content matches. */
+conversation-sidebar .conv-search {
+  position: relative;
+  margin-bottom: 0.5rem;
+}
+
+conversation-sidebar .conv-search-input {
+  width: 100%;
+  margin: 0;
+  padding-right: 2rem;
+  font-size: 0.85rem;
+}
+
+/* The sidebar supplies its own labeled clear button; hide the browser's
+   duplicate cancel glyph so the right edge has one control. */
+conversation-sidebar .conv-search-input::-webkit-search-cancel-button,
+conversation-sidebar .conv-search-input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+conversation-sidebar .conv-search-clear {
+  position: absolute;
+  right: 0.3rem;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+conversation-sidebar .conv-search-status {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+}
+
+conversation-sidebar .conv-search-results {
+  display: flex;
+  flex-direction: column;
+}
+
+conversation-sidebar .conv-search-result {
+  align-items: flex-start;
+}
+
+conversation-sidebar .conv-search-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1;
+}
+
+conversation-sidebar .conv-search-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+conversation-sidebar .conv-search-snippet {
+  color: var(--pico-muted-color);
+  font-size: 0.8rem;
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+conversation-sidebar .conv-search-meta {
+  color: var(--pico-muted-color);
+  font-size: 0.72rem;
+}
+
 /* vault-sidebar / files-sidebar wrap their content in .conv-list. Make the
    custom elements layout-transparent so .conv-list is the direct flex child
    of conversation-sidebar and the existing flex:1 rule above applies. */

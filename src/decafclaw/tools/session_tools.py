@@ -14,37 +14,17 @@ Sends are session-scoped: the target must be the sender's session root
 
 import asyncio
 import logging
-import re
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from ..archive import iter_archive_messages
 from ..events import emit_for_ctx
 from ..media import ToolResult
-from ..preempt_search import tokenize
 from ..session_messaging import deliver_session_message, is_child_conv_id, parent_conv_id_of
+from ..web.conversation_search import search_sessions
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
-
-# session_search tiers: title matches stay authoritative, the user's own
-# phrasing outranks assistant text, and assistant matches still register so a
-# detail only the reply mentions is findable. Substring hits beat token overlap.
-_TITLE_SUBSTRING = 10
-_TITLE_TOKEN = 3
-_USER_SUBSTRING = 8
-_USER_TOKEN = 2
-_ASSISTANT_SUBSTRING = 4
-_ASSISTANT_TOKEN = 1
-# Recency is a bounded multiplier, not an additive score: it reorders sessions
-# with similar evidence without letting a fresh weak match outrank a strong one.
-_RECENCY_BOOST = 0.2
-_RECENCY_WINDOW_DAYS = 30
-_SNIPPET_RADIUS = 70
-_SNIPPET_MAX = 180
-_WHITESPACE_RE = re.compile(r"\s+")
 
 
 def _resolve_conv_id(ctx: "Context") -> str:
@@ -198,162 +178,30 @@ async def tool_session_list(ctx: "Context", limit: int = 10, include_archived: b
     return ToolResult(text="\n".join(lines), data={"sessions": results_data})
 
 
-def _text_score(
-    text_lower: str,
-    text_tokens: set[str],
-    query_lower: str,
-    query_tokens: set[str],
-    substring_weight: int,
-    token_weight: int,
-) -> int:
-    score = 0
-    if query_lower in text_lower:
-        score += substring_weight
-    score += len(query_tokens & text_tokens) * token_weight
-    return score
-
-
-def _recency_weight(updated_at: str, now: datetime) -> float:
-    """Multiplier from 1.0 to 1.2 for sessions updated within the window."""
-    try:
-        updated = datetime.fromisoformat(updated_at)
-    except (ValueError, TypeError):
-        return 1.0
-    if updated.tzinfo is None:
-        updated = updated.replace(tzinfo=timezone.utc)
-    age_days = max(0.0, (now - updated).total_seconds() / 86400)
-    if age_days >= _RECENCY_WINDOW_DAYS:
-        return 1.0
-    return 1.0 + _RECENCY_BOOST * (1.0 - age_days / _RECENCY_WINDOW_DAYS)
-
-
-def _matched_snippet(content: str, query_lower: str, query_tokens: set[str]) -> str | None:
-    """Extract a short excerpt around the first substring or token hit."""
-    lowered = content.lower()
-    index = lowered.find(query_lower) if query_lower else -1
-    match_len = len(query_lower)
-    if index < 0:
-        for token in sorted(query_tokens):
-            index = lowered.find(token)
-            if index >= 0:
-                match_len = len(token)
-                break
-    if index < 0:
-        return None
-
-    start = max(0, index - _SNIPPET_RADIUS)
-    end = min(len(content), index + match_len + _SNIPPET_RADIUS)
-    snippet = _WHITESPACE_RE.sub(" ", content[start:end]).strip()
-    if start > 0:
-        snippet = "…" + snippet
-    if end < len(content):
-        snippet += "…"
-    if len(snippet) > _SNIPPET_MAX:
-        snippet = snippet[:_SNIPPET_MAX].rstrip() + "…"
-    return snippet
-
-
-def _score_sessions(config, convs, query_lower: str, query_tokens: set[str], now: datetime):
-    """Score sessions against title and message text (sync; run in a thread)."""
-    scored = []
-    for c in convs:
-        title_lower = c.title.lower()
-        title_score = _text_score(
-            title_lower,
-            set(tokenize(title_lower)),
-            query_lower,
-            query_tokens,
-            _TITLE_SUBSTRING,
-            _TITLE_TOKEN,
-        )
-
-        # Only user and assistant text counts: tool output and metadata dumps
-        # would match incidental tokens without reflecting what was discussed.
-        best_user: tuple[int, str] | None = None
-        best_assistant: tuple[int, str] | None = None
-        for msg in iter_archive_messages(config, c.conv_id):
-            role = msg.get("role")
-            if role not in ("user", "assistant"):
-                continue
-            content = msg.get("content")
-            if not isinstance(content, str) or not content:
-                continue
-            content_lower = content.lower()
-            if role == "user":
-                score = _text_score(
-                    content_lower,
-                    set(tokenize(content_lower)),
-                    query_lower,
-                    query_tokens,
-                    _USER_SUBSTRING,
-                    _USER_TOKEN,
-                )
-                if score > 0 and (best_user is None or score > best_user[0]):
-                    best_user = (score, content)
-            else:
-                score = _text_score(
-                    content_lower,
-                    set(tokenize(content_lower)),
-                    query_lower,
-                    query_tokens,
-                    _ASSISTANT_SUBSTRING,
-                    _ASSISTANT_TOKEN,
-                )
-                if score > 0 and (best_assistant is None or score > best_assistant[0]):
-                    best_assistant = (score, content)
-
-        content_score = (best_user[0] if best_user else 0) + (best_assistant[0] if best_assistant else 0)
-        if title_score + content_score == 0:
-            continue
-
-        # Prefer the user's phrasing for the excerpt; fall back to the reply.
-        matched_role: str | None = None
-        snippet: str | None = None
-        if best_user is not None:
-            snippet = _matched_snippet(best_user[1], query_lower, query_tokens)
-            if snippet:
-                matched_role = "user"
-        if snippet is None and best_assistant is not None:
-            snippet = _matched_snippet(best_assistant[1], query_lower, query_tokens)
-            if snippet:
-                matched_role = "assistant"
-
-        final_score = (title_score + content_score) * _recency_weight(c.updated_at, now)
-        scored.append((final_score, c, matched_role, snippet))
-
-    scored.sort(key=lambda x: (x[0], x[1].updated_at), reverse=True)
-    return scored
-
-
 async def tool_session_search(ctx: "Context", query: str, limit: int = 5, include_archived: bool = False) -> ToolResult:
     """Search conversation sessions by title and message content."""
-    from ..web.conversations import ConversationIndex
-
     if not query or not query.strip():
         return ToolResult(text="[error: session_search requires a non-empty query]")
 
     username = _resolve_username(ctx)
-    index = ConversationIndex(ctx.config)
-    convs = index.list_for_user(username, include_archived=include_archived)
-    if not convs:
-        return ToolResult(text=f"No conversation sessions found matching '{query}'", data={"matches": []})
-
-    query_lower = query.lower().strip()
-    query_tokens = set(tokenize(query_lower))
-    now = datetime.now(timezone.utc)
-
-    # Archive reads are blocking file I/O; keep them off the event loop.
-    scored = await asyncio.to_thread(_score_sessions, ctx.config, convs, query_lower, query_tokens, now)
-
     limit = max(1, min(int(limit), 20))
-    top = scored[:limit]
+    # Archive reads are blocking file I/O; keep them off the event loop.
+    hits = await asyncio.to_thread(
+        search_sessions,
+        ctx.config,
+        username,
+        query,
+        limit=limit,
+        include_archived=include_archived,
+    )
 
-    if not top:
+    if not hits:
         return ToolResult(text=f"No sessions found matching '{query}'", data={"matches": []})
 
-    lines = [f"Found {len(top)} session(s) matching '{query}':"]
+    lines = [f"Found {len(hits)} session(s) matching '{query}':"]
     results_data = []
-    for _score, c, matched_role, snippet in top:
+    for hit in hits:
+        c = hit.meta
         is_home = c.conv_id.endswith("-home")
         tags = []
         if is_home:
@@ -362,8 +210,8 @@ async def tool_session_search(ctx: "Context", query: str, limit: int = 5, includ
             tags.append("Archived")
         tag = f" [{' / '.join(tags)}]" if tags else ""
         line = f"- `{c.conv_id}`: **{c.title}**{tag} (updated {c.updated_at[:16].replace('T', ' ')})"
-        if snippet and matched_role:
-            line += f' (matched {matched_role} message: "{snippet}")'
+        if hit.snippet and hit.matched_role:
+            line += f' (matched {hit.matched_role} message: "{hit.snippet}")'
         lines.append(line)
         results_data.append(
             {
@@ -372,8 +220,8 @@ async def tool_session_search(ctx: "Context", query: str, limit: int = 5, includ
                 "updated_at": c.updated_at,
                 "is_home": is_home,
                 "archived": c.archived,
-                "matched_role": matched_role,
-                "snippet": snippet,
+                "matched_role": hit.matched_role,
+                "snippet": hit.snippet,
             }
         )
     return ToolResult(text="\n".join(lines), data={"matches": results_data})

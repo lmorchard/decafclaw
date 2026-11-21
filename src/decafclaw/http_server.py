@@ -1020,6 +1020,20 @@ class SessionConversationsResponse(BaseModel):
     conversations: list[SessionConversationItem]
 
 
+class ConversationSearchMatch(BaseModel):
+    conv_id: str
+    title: str
+    updated_at: str = ""
+    snippet: str | None = None
+    matched_role: str | None = None
+    archived: bool = False
+
+
+class ConversationSearchResponse(BaseModel):
+    query: str
+    matches: list[ConversationSearchMatch]
+
+
 async def list_conversations(request: Request, folder: str = "") -> ConversationListingResponse | JSONResponse:
     """List conversations and subfolders for a specific folder.
 
@@ -1156,6 +1170,52 @@ async def list_system_conversations(
             "folder": folder_param,
             "folders": [],
             "conversations": filtered,
+        }
+    )
+
+
+async def search_conversations(
+    request: Request,
+    q: str = "",
+    limit: int = 20,
+    include_archived: bool = True,
+) -> ConversationSearchResponse | JSONResponse:
+    """Search the user's sessions by title and message content (#1451).
+
+    Query params:
+        q — search phrase; empty returns no matches
+        limit — maximum results (clamped by the search helper)
+        include_archived — include archived sessions (default true, so old
+            threads remain findable from the UI)
+    """
+    from .web.conversation_search import search_sessions
+
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    hits = await asyncio.to_thread(
+        search_sessions,
+        config,
+        username,
+        q,
+        limit=limit,
+        include_archived=include_archived,
+    )
+    return ConversationSearchResponse.model_validate(
+        {
+            "query": q,
+            "matches": [
+                {
+                    "conv_id": hit.meta.conv_id,
+                    "title": hit.meta.title,
+                    "updated_at": hit.meta.updated_at,
+                    "snippet": hit.snippet,
+                    "matched_role": hit.matched_role,
+                    "archived": hit.meta.archived,
+                }
+                for hit in hits
+            ],
         }
     )
 
@@ -4784,6 +4844,12 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/api/auth/me", auth_me, methods=["GET"]),
         APIRoute("/api/conversations", list_conversations, methods=["GET"], response_model=ConversationListingResponse),
         APIRoute("/api/conversations/home", get_home_conversation, methods=["GET"]),
+        APIRoute(
+            "/api/conversations/search",
+            search_conversations,
+            methods=["GET"],
+            response_model=ConversationSearchResponse,
+        ),
         APIRoute(
             "/api/conversations/archived",
             list_archived_conversations,

@@ -733,6 +733,35 @@ var DefaultService = class {
     });
   }
   /**
+   * Search Conversations
+   * Search the user's sessions by title and message content (#1451).
+   *
+   * Query params:
+   * q — search phrase; empty returns no matches
+   * limit — maximum results (clamped by the search helper)
+   * include_archived — include archived sessions (default true, so old
+   * threads remain findable from the UI)
+   * @param q
+   * @param limit
+   * @param includeArchived
+   * @returns ConversationSearchResponse Successful Response
+   * @throws ApiError
+   */
+  static searchConversationsApiConversationsSearchGet(q = "", limit = 20, includeArchived = true) {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/conversations/search",
+      query: {
+        "q": q,
+        "limit": limit,
+        "include_archived": includeArchived
+      },
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  /**
    * List Archived Conversations
    * List archived conversations, optionally filtered by folder.
    * @param folder

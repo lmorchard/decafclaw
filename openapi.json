@@ -288,6 +288,67 @@
         }
       }
     },
+    "/api/conversations/search": {
+      "get": {
+        "summary": "Search Conversations",
+        "description": "Search the user's sessions by title and message content (#1451).\n\nQuery params:\n    q \u2014 search phrase; empty returns no matches\n    limit \u2014 maximum results (clamped by the search helper)\n    include_archived \u2014 include archived sessions (default true, so old\n        threads remain findable from the UI)",
+        "operationId": "search_conversations_api_conversations_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Include Archived"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conversations/archived": {
       "get": {
         "summary": "List Archived Conversations",
@@ -4958,6 +5019,77 @@
           "updated_at"
         ],
         "title": "ConversationPatchResponse"
+      },
+      "ConversationSearchMatch": {
+        "properties": {
+          "conv_id": {
+            "type": "string",
+            "title": "Conv Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "default": ""
+          },
+          "snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snippet"
+          },
+          "matched_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched Role"
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "conv_id",
+          "title"
+        ],
+        "title": "ConversationSearchMatch"
+      },
+      "ConversationSearchResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationSearchMatch"
+            },
+            "type": "array",
+            "title": "Matches"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "matches"
+        ],
+        "title": "ConversationSearchResponse"
       },
       "ConversationShellApprovalCondenseResponse": {
         "properties": {
