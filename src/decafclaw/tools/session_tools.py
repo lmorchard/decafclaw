@@ -50,8 +50,7 @@ async def _emit_switch_event(
             await emit(sender_conv_id, event_payload)
         except Exception as exc:
             log.warning("Failed to emit switch_conversation event: %s", exc)
-
-    if ctx.event_bus:
+    elif ctx.event_bus:
         try:
             context_id = getattr(ctx, "context_id", "")
             await ctx.event_bus.publish({**event_payload, "context_id": context_id})
