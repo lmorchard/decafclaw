@@ -1329,6 +1329,19 @@ async def create_conversation(request: Request) -> JSONResponse:
     return JSONResponse(result, status_code=201)
 
 
+async def get_home_conversation(request: Request) -> JSONResponse:
+    """GET /api/conversations/home — get or lazily create the user's Home/Lobby conversation."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    config = request.app.state.config
+    from .web.conversations import ConversationIndex
+
+    index = ConversationIndex(config)
+    home_conv = index.get_or_create_home(username)
+    return JSONResponse(home_conv.to_dict())
+
+
 async def fork_conversation(request: Request, id: str) -> JSONResponse:
     """Fork a conversation up to one message (#1581).
 
@@ -4770,6 +4783,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/api/auth/logout", auth_logout, methods=["POST"], response_model=LogoutResponse),
         APIRoute("/api/auth/me", auth_me, methods=["GET"]),
         APIRoute("/api/conversations", list_conversations, methods=["GET"], response_model=ConversationListingResponse),
+        APIRoute("/api/conversations/home", get_home_conversation, methods=["GET"]),
         APIRoute(
             "/api/conversations/archived",
             list_archived_conversations,

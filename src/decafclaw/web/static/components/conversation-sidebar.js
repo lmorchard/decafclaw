@@ -1,4 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
+import { DefaultService } from '../lib/api-client/index.js';
 import { parentConvIdOf } from '../lib/conversation-store.js';
 import { getConvFromUrl } from '../lib/conversation-url.js';
 import { STATUS_LABELS, STATUS_TITLE_LABELS } from '../lib/constants.js';
@@ -352,6 +353,17 @@ export class ConversationSidebar extends LitElement {
     this._collapsed = !this._collapsed;
     const convId = this._activeId || this.store?.currentConvId || getConvFromUrl();
     if (convId) localStorage.setItem(`${COLLAPSE_STORAGE_PREFIX}${convId}`, String(this._collapsed));
+  }
+
+  async #handleHome() {
+    try {
+      const data = await DefaultService.getHomeConversationApiConversationsHomeGet();
+      if (data?.conv_id) {
+        this.store?.selectConversation(data.conv_id);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch home conversation', e);
+    }
   }
 
   #handleNew() {
@@ -1127,6 +1139,7 @@ export class ConversationSidebar extends LitElement {
       </div>
       ${this._sidebarTab === 'conversations' && this._chatSection === '' ? html`
         <div class="vault-action-btns">
+          <button class="home-lobby-btn outline" @click=${() => this.#handleHome()} title="Home Lobby" aria-label="Home Lobby">⌂ Lobby</button>
           <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)" aria-label="New chat">+ Chat</button>
           <button class="wiki-new-folder-btn outline" @click=${() => this.#createChatFolder()} aria-label="New chat folder">+ Folder</button>
         </div>
