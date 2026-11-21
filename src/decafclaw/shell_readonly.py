@@ -147,6 +147,9 @@ _TREE_WRITE_FLAGS = ("-o", "--output")
 _URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _ATTACHED_PATH_RE = re.compile(r"^-([A-Za-z]+)(.+)$")
+# `jq -n env` / `jq -n env.HOME` prints the process environment, which can
+# hold credentials. A field literally named `.env` is not the builtin.
+_JQ_ENV_RE = re.compile(r"(?:^|[^A-Za-z0-9_.])env(?:\.|$)", re.IGNORECASE)
 
 
 def _split_segments(command: str) -> list[str] | None:
@@ -337,6 +340,11 @@ def _curl_read_only(args: list[str]) -> bool:
     head_request = False
     urls: list[str] = []
     for token in args:
+        # `-H @file`, `-b @file`, and friends read a local file into the
+        # request. That can send workspace or system data outbound, so the
+        # read-only tier refuses @-prefixed values entirely.
+        if token.startswith("@") or "=@" in token:
+            return False
         if token in ("-I", "--head"):
             head_request = True
             continue
@@ -356,6 +364,10 @@ def _curl_read_only(args: list[str]) -> bool:
     if not head_request or not urls:
         return False
     return all(_URL_SCHEME_RE.match(url) for url in urls)
+
+
+def _jq_read_only(args: list[str]) -> bool:
+    return not any(_JQ_ENV_RE.search(token) for token in args if not token.startswith("-"))
 
 
 def _find_read_only(args: list[str], verb: str) -> bool:
@@ -406,6 +418,8 @@ def _is_read_only_segment(segment: str, cwd: Path, workspace: Path) -> bool:
     if verb in ("find", "fd") and not _find_read_only(args, verb):
         return False
     if verb == "rg" and not _rg_read_only(args):
+        return False
+    if verb == "jq" and not _jq_read_only(args):
         return False
     if verb in ("sort", "tree") and not _sort_or_tree_read_only(args, verb):
         return False

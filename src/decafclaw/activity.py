@@ -42,7 +42,7 @@ _SHELL_TOOL_NAMES = frozenset({"shell", "shell_background_start"})
 # A worktree is one repo, not one repo per branch (#1641 §4.2). Dropping the
 # `worktrees/<branch>` segment keeps a rule or activity label from re-learning
 # the same repo on every branch.
-_WORKTREE_SEGMENT_RE = re.compile(r"(?:\.claude/)?worktrees/[^/]+/?")
+_WORKTREE_SEGMENT_RE = re.compile(r"(?:^|/)(?:\.claude/)?worktrees/[^/]+/?")
 
 # Ordered: the first match names the primary activity. Paths are matched
 # case-insensitively; the decafclaw pattern requires a path segment so a bare
@@ -77,6 +77,11 @@ class Activity:
         """One-line explanation for a human confirmation card."""
         if self.established:
             return f"`{self.domain}` is an established activity in this conversation"
+        if self.domain == UNKNOWN_ACTIVITY:
+            if self.prior_domains:
+                prior = ", ".join(f"`{name}`" for name in self.prior_domains)
+                return f"first shell command outside the conversation's recent activity ({prior})"
+            return "first shell command in this conversation"
         if self.prior_domains:
             prior = ", ".join(f"`{name}`" for name in self.prior_domains)
             return f"first `{self.domain}` command in this conversation; recent activity: {prior}"
@@ -86,7 +91,7 @@ class Activity:
 def _normalize_location(text: str) -> str:
     """Collapse a path or command fragment into a matchable location string."""
     normalized = text.replace("\\", "/")
-    normalized = _WORKTREE_SEGMENT_RE.sub("", normalized)
+    normalized = _WORKTREE_SEGMENT_RE.sub("/", normalized)
     normalized = re.sub(r"/+", "/", normalized)
     while normalized.startswith("./"):
         normalized = normalized[2:]

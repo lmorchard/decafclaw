@@ -77,6 +77,22 @@ def test_path_outside_workspace_has_no_domain(config):
 # -- establishment ------------------------------------------------------------
 
 
+def test_unknown_activity_reason_is_readable(config):
+    ctx = _ctx(config)
+    workspace = str(config.workspace_path)
+    _workspace(config)
+    ctx.history = []
+    activity = derive_activity(ctx, "touch marker.txt", workspace)
+    assert "first shell command in this conversation" in activity.reason()
+
+
+def test_worktrees_normalization_needs_a_path_segment(config):
+    """`myworktrees/` is not a git worktree directory; the repo name survives."""
+    workspace = config.workspace_path
+    cwd = _workspace(config, "myworktrees/decafclaw")
+    assert derive_domains("ls", cwd, workspace) == ("decafclaw",)
+
+
 def test_first_command_is_not_established(config):
     ctx = _ctx(config)
     ctx.history = []
