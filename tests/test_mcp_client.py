@@ -15,7 +15,9 @@ from decafclaw.mcp_client import (
     MCPServerConfig,
     MCPServerState,
     MCPTimeoutError,
+    _namespace_tool,
     init_mcp,
+    parse_mcp_tool_name,
     shutdown_mcp,
 )
 from decafclaw.schedules import ScheduleTask, parse_schedule_file, run_schedule_task
@@ -37,6 +39,28 @@ def _make_mock_session(tools=None):
     session.list_tools = AsyncMock(return_value=tools_result)
     session.get_server_capabilities = MagicMock(return_value=MagicMock(resources=None, prompts=None))
     return session
+
+
+# -- parse_mcp_tool_name -------------------------------------------------------
+
+
+def test_parse_mcp_tool_name_well_formed():
+    """Parse inverts namespace: the server segment is the normalized form,
+    not the original MCP server name (callers needing it look up via the
+    registry)."""
+    namespaced = _namespace_tool("my-server", "get_data")
+    assert parse_mcp_tool_name(namespaced) == ("my_server", "get_data")
+
+
+def test_parse_mcp_tool_name_non_mcp():
+    assert parse_mcp_tool_name("think") is None
+    assert parse_mcp_tool_name("shell") is None
+
+
+def test_parse_mcp_tool_name_missing_tool():
+    assert parse_mcp_tool_name("mcp__") is None
+    assert parse_mcp_tool_name("mcp__server") is None
+    assert parse_mcp_tool_name("mcp____tool") is None
 
 
 @pytest.mark.asyncio

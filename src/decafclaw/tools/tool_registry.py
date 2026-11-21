@@ -6,6 +6,7 @@ import re
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from ..mcp_client import parse_mcp_tool_name
 from ..util import estimate_tokens
 
 if TYPE_CHECKING:
@@ -375,9 +376,9 @@ def _deferred_sort_key(tool_def: dict) -> tuple:
 
     source = tool_def.get("_source_skill", "")
     if not source and name.startswith("mcp__"):
-        parts = name.split("__", 2)
-        if len(parts) >= 3:
-            source = parts[1]
+        parsed = parse_mcp_tool_name(name)
+        if parsed is not None:
+            source = parsed[0]
 
     return (-priority_rank, source, name)
 
@@ -408,8 +409,8 @@ def build_deferred_list_text(
         name = td.get("function", {}).get("name", "")
 
         if name.startswith("mcp__"):
-            parts = name.split("__", 2)
-            server = parts[1] if len(parts) >= 3 else "unknown"
+            parsed = parse_mcp_tool_name(name)
+            server = parsed[0] if parsed is not None else "unknown"
             mcp_tools.setdefault(server, []).append(td)
         elif name in core_names:
             core_tools.append(td)
