@@ -713,11 +713,14 @@ export class ConversationStore extends EventTarget {
 
   // -- WebSocket-based actions (chat streaming) --------------------------------
 
-  /** @param {string} convId */
-  selectConversation(convId) {
+  /**
+   * @param {string} convId
+   * @param {string} [title]
+   */
+  selectConversation(convId, title = '') {
     this.#currentConvId = convId;
     // Never carry the previous conversation's name into the new tab title.
-    this.#currentConvTitle = this.getConversationTitle(convId);
+    this.#currentConvTitle = title || this.getConversationTitle(convId);
     if (this.#conversationStatuses.get(convId) === 'finished') {
       this.#setConversationStatus(convId, 'idle');
     }
@@ -1079,6 +1082,18 @@ export class ConversationStore extends EventTarget {
       case MESSAGE_TYPES.COMMAND_LIST:
         if (msg.commands) this.#commands = msg.commands;
         break;
+
+      case MESSAGE_TYPES.SWITCH_CONVERSATION: {
+        const targetId = msg.target_conv_id;
+        if (targetId && targetId !== this.#currentConvId) {
+          this.selectConversation(targetId, msg.title || '');
+          if (!this.#knowsConversation(targetId)) {
+            this.listConversations(this.#currentFolder);
+            this.#scheduleSessionsRefresh();
+          }
+        }
+        break;
+      }
 
       case MESSAGE_TYPES.ERROR:
         console.error('Server error:', msg.message);
