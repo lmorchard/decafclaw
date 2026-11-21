@@ -76,6 +76,10 @@ Post-#1625:
 
 - **`web_fetch_result`** — compact HTTP fetch outcome card; inline mode. Shows HTTP status code + reason phrase with tone coloring, page title (for HTML), target/redirect URLs, content type, formatted byte size, and duration. Emitted automatically by `web_fetch`. The raw body is deliberately excluded from the widget payload to prevent source dumps; it remains accessible via the tool row's raw result disclosure. See [web_fetch_result](#web_fetch_result-widget).
 
+Post-#1638:
+
+- **`diff_view`** — unified or side-by-side diff between two text blobs; inline + canvas modes. Data shape: `{before: string, after: string, filename?, language?, view?: "unified" | "split"}`. Inline collapses unchanged runs to three lines of context around each change and caps the preview at 500 rows; canvas renders every row in a scroll container. Emitted by `workspace_edit`, `workspace_diff`, and the admin file-editing tools.
+
 ## Adding a new widget
 
 Widgets are extensible by admins without changing DecafClaw's core. Each

@@ -467,6 +467,16 @@ chat-message .tool-result-raw pre {
 .diff-line.removed {
   background-color: rgba(248, 81, 73, 0.15);
 }
+.diff-line.gap {
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+.diff-view-notice {
+  padding: 0.5rem 0.75rem;
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
 .diff-line.empty {
   min-height: 1.25em;
 }
