@@ -96,3 +96,95 @@ Before completing any task, execute these verification gates:
    adb logcat -d -t 150 | grep -iE 'ReactNativeJS|FATAL|UnsatisfiedLinkError|com.lmorchard.decafclawvoice'
    ```
    Ensure no fatal crashes or link errors occur on launch.
+
+---
+
+## 5. On-Device Verification Recipes
+
+Use these when the change is visual, gesture-driven, or depends on what the phone actually sends. Static checks cannot cover those.
+
+### Stand up a testable session
+
+* Start Metro in CI mode when you only need it to serve bundles:
+  ```bash
+  CI=1 npx expo start --port 8081
+  ```
+  A debug APK launched without Metro dies with `Unable to load script`. Start Metro before launching, and force-stop/start the app after a rebuild.
+* Wire the port and rebuild/install without blocking on Metro:
+  ```bash
+  adb reverse tcp:8081 tcp:8081
+  ./run-android.sh --no-bundler
+  ```
+* Clear logs before a scenario, then read only the current run:
+  ```bash
+  adb logcat -c
+  adb shell am force-stop com.lmorchard.decafclawvoice
+  adb shell am start -n com.lmorchard.decafclawvoice/.MainActivity
+  sleep 5
+  adb logcat -d -t 300 | grep -iE 'ReactNativeJS|FATAL|AndroidRuntime'
+  ```
+
+### Screenshots and taps
+
+* Wake and dismiss the keyguard first; a fully black capture usually means the device is dozing:
+  ```bash
+  adb shell input keyevent KEYCODE_WAKEUP
+  adb shell wm dismiss-keyguard
+  ```
+* Prefer on-device capture for transient states. `adb exec-out screencap` can take seconds and miss the state:
+  ```bash
+  adb shell screencap -p /sdcard/shot.png
+  adb pull /sdcard/shot.png /tmp/shot.png
+  ```
+* `input tap` takes physical pixels (the PNG dimensions or `wm size`), not the size the image is displayed at.
+* Get exact bounds instead of eyeballing:
+  ```bash
+  adb shell uiautomator dump /sdcard/ui.xml
+  adb pull /sdcard/ui.xml /tmp/ui.xml
+  python3 - <<'EOF'
+  import xml.etree.ElementTree as ET
+  for n in ET.parse('/tmp/ui.xml').getroot().iter('node'):
+      text = n.get('text') or n.get('content-desc')
+      if text:
+          print(repr(text), n.get('clickable'), n.get('bounds'))
+  EOF
+  ```
+* Simulate a long-press with a same-point swipe longer than `delayLongPress`:
+  ```bash
+  adb shell input swipe X Y X Y 800
+  ```
+
+### Verify app-owned state
+
+* AsyncStorage lives in `RKStorage` (host/token/voice settings):
+  ```bash
+  adb shell run-as com.lmorchard.decafclawvoice cat databases/RKStorage > /tmp/rk.db
+  sqlite3 /tmp/rk.db \
+    "select key, value from catalystLocalStorage where key like '%decafclaw%' order by key;"
+  ```
+* Prove the running bundle contains an edit:
+  ```bash
+  curl -s 'http://localhost:8081/index.bundle?platform=android&dev=true&minify=false' \
+    | grep -c 'Assistant'
+  ```
+
+### Correlate with the server
+
+* WebSocket churn and turn delivery are in the daemon journal. The server logs each line twice; count distinct timestamps:
+  ```bash
+  ssh decafclaw 'journalctl --user -u decafclaw.service --since "-2 min" --no-pager \
+    | grep -E "WebSocket (connected|disconnected|error)"'
+  ```
+* Live sockets from the phone:
+  ```bash
+  ssh decafclaw 'ss -tnp | grep 100.89.1.96'   # phone Tailscale IP
+  ```
+  This is how the ~27s reconnect loop was found: a 25s client ping plus 2s backoff.
+
+### Read the native module when JS is surprising
+
+`node_modules` is the source of truth for platform behavior:
+* `react-native/ReactAndroid/.../WebSocketModule.kt` — `ping()` sends `ByteString.EMPTY`, an empty binary frame.
+* `expo-speech-recognition/android/.../ExpoSpeechService.kt` — continuous/segmented recognition and `stop()`/`abort()` semantics.
+
+`CI=1` Metro disables Fast Refresh. Use plain `npx expo start` for interactive development; stop a verification-only Metro when done.
