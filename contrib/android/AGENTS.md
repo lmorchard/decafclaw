@@ -32,6 +32,7 @@ This document guides autonomous coding agents (Claude Code, OpenCode, Aider, etc
    * Never reconnect after unmount. The hook uses `stoppedRef` plus a nulled-handler close in the effect cleanup.
    * Turns spoken while the socket is down are queued and flushed on `open`; they are not dropped.
    * Host and token are user-configurable; changing either starts a fresh conversation on the new server.
+   * **Never commit a session token.** `DEFAULT_TOKEN` stays empty; tokens live only in Settings/AsyncStorage.
 3. **Pipelined TTS & Markdown Normalization**:
    * Token streams are sentence-buffered and every complete boundary (`[.?!]\n` followed by whitespace or end of buffer) is spoken as soon as it arrives.
    * Never feed raw Markdown to `Speech.speak()`. Always run text through `cleanMarkdownForSpeech()` in `src/utils/speech.ts` to strip code fences, wiki links, asterisks, and list/table syntax.
@@ -48,18 +49,19 @@ Keep modules small and single-purpose. Do not dump features into `App.tsx`:
 
 * **`App.tsx`**: Top-level coordinator. Wires hooks (`useDecafClawWebSocket`, `useVoiceRecognition`), manages `messages[]` transcript, maintains `settingsRef`, loads/saves preferences (host, token, voice, pitch, rate, TTS, stars, barge-in, lobby) via `AsyncStorage`, batches streamed text, tracks TTS utterances, handles server barge-in (cancel + suppress TTS until the next turn), clears state on conversation switches, and floats the Home/Web buttons above the footer once `convId` exists.
 * **`src/types.ts`**: TypeScript definitions (`ChatMessage`, `VoiceItem`).
-* **`src/config.ts`**: Default host (`DEFAULT_HOST`) and token (`DEFAULT_TOKEN`). Runtime overrides live in the settings sheet and `AsyncStorage` (`@decafclaw_host`, `@decafclaw_token`, `@decafclaw_conv_id`, `@decafclaw_lobby_conv_id`, `@decafclaw_barge_in`).
+* **`src/config.ts`**: Default host (`DEFAULT_HOST`); `DEFAULT_TOKEN` must stay empty. The session token is entered in Settings and stored in `AsyncStorage` (`@decafclaw_host`, `@decafclaw_token`, `@decafclaw_conv_id`, `@decafclaw_conv_title`, `@decafclaw_lobby_conv_id`, `@decafclaw_barge_in`).
 * **`src/utils/speech.ts`**: `cleanMarkdownForSpeech()` prose normalizer and `formatVoiceLabel()` Google model formatter.
 * **`src/utils/connection.ts`**: `normalizeHost()` for user-entered server addresses and `conversationWebUrl()` for `/?conv=<conv_id>` deep links.
   * Never put the session token in the URL; the browser authenticates separately and re-selects the linked conversation after login.
 * **`src/utils/*.test.ts`**: Vitest coverage for the pure utilities.
-* **`src/hooks/useDecafClawWebSocket.ts`**: Socket lifecycle, identity-guarded handlers, reconnect backoff, AppState foreground recovery, turn watchdog, queued turns, error surfacing, history resync, REST conversation creation, `cancelTurn`, `returnToHome`, and conversation persistence/switch handling (`select_conv`, `switch_conversation`, `@decafclaw_conv_id`).
+* **`src/hooks/useDecafClawWebSocket.ts`**: Socket lifecycle, identity-guarded handlers, reconnect backoff, AppState foreground recovery, turn watchdog, queued turns, error surfacing, history resync, REST conversation creation, `cancelTurn`, `returnToHome`, and conversation persistence/switch handling (`select_conv`, `switch_conversation`, `@decafclaw_conv_id`, `@decafclaw_conv_title`). Returns both `convId` and `convTitle`.
   * Starting to listen cancels the in-flight server turn when Server Barge-In is enabled; TTS stays suppressed until the next turn is sent.
-  * A conversation switch or Home clears the local transcript, speech buffers, and in-flight turn state. `clearSavedConversation()` drops `@decafclaw_conv_id` when host/token changes.
+  * A conversation switch or Home clears the local transcript, speech buffers, and in-flight turn state, and updates the persisted session title. `clearSavedConversation()` drops both conversation keys when host/token changes.
+  * `conv_selected` is the authoritative title refresh on restore/reconnect; `switch_conversation` carries the target title for agent-driven switches; `conv_renamed` keeps auto-titled sessions current.
   * **Do not call `WebSocket.ping()` on Android.** RN implements it by sending `ByteString.EMPTY` — an empty *binary* frame, not a protocol ping. DecafClaw's `receive_text()` raises `KeyError: 'text'` and closes the socket, producing a reconnect every ping interval. Rely on the server's protocol ping/pong and the inactivity watchdog.
 * **`src/hooks/useVoiceRecognition.ts`**: Android native `SpeechRecognizer` via `expo-speech-recognition` targeting the Pixel's offline Tensor TPU. Exposes one-shot `toggleListening` (tap) and `startLongListening` (long-press, `continuous: true` on Android 13+) modes; long sessions accumulate finalized segments and send once on finish.
   * Continuous sessions restart up to 3 times on an unexpected engine `end`, keeping the accumulated buffer. `stop()` gets a 1.5s fallback that aborts and finalizes if no `end` arrives.
-* **`src/components/Header.tsx`**: Insets-safe minimal title bar.
+* **`src/components/Header.tsx`**: Insets-safe title bar; the subtitle is the active session title (or `No session`).
 * **`src/components/TranscriptView.tsx`**: Memoized IM-style conversation thread with auto-scroll ref.
 * **`src/components/PttFooter.tsx`**: Combined PTT / connection button with tap vs long-press handling, a status glyph (green connected, amber working, red offline/error, `♪` speaking), TTS stop button, and settings hamburger (`☰`).
 * **`src/components/VoiceSettingsModal.tsx`**: Slide-up sheet with DecafClaw host/token fields, Home Lobby override, server barge-in toggle, TTS toggle, pitch/speed controls, starred favorites, and inline audition `▶` buttons.

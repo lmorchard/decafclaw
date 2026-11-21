@@ -34,8 +34,8 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
    - Turns spoken while the socket is down are queued and flushed on reconnect.
    - Server `error` events render as transcript errors instead of hanging on "Thinking...". A `4001` close reports an auth failure and stops reconnecting.
    - Starting to listen cancels the in-flight turn via `cancel_turn` when Server Barge-In is enabled; local TTS stays suppressed until the next turn.
-   - The active conversation ID persists (`@decafclaw_conv_id`) and is restored on launch. With none saved, the app resolves the user's Home Lobby from `/api/conversations/home`.
-   - Server `switch_conversation` events (session tools, Home) update the active conversation and clear the local transcript.
+   - The active conversation ID and title persist (`@decafclaw_conv_id`, `@decafclaw_conv_title`) and are restored on launch. With none saved, the app resolves the user's Home Lobby from `/api/conversations/home`.
+   - Server `switch_conversation` events (session tools, Home) update the active conversation and title, then clear the local transcript. The title also refreshes from the server's `conv_selected` response on restore/reconnect, and from `conv_renamed` when auto-titling renames the active session.
 3. **Pipelined Native Speech (TTS)**:
    - Speaks each complete sentence as soon as its boundary arrives, using Android's native Google Speech engine via `expo-speech`.
    - Normalizes Markdown syntax (code fences, wiki links, links, headers, lists, tables, HTML, emphasis) into speakable English.
@@ -45,6 +45,7 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
    - A long press (~450ms) gives a 40ms vibrate and starts a continuous session that keeps listening across silences (`Listening... Tap to Finish`). Finalized segments accumulate; tapping again stops the engine and sends the whole monologue as one turn.
    - On Android 13+ the continuous session uses the segmented on-device recognizer; if the engine ends unexpectedly, it restarts up to 3 times into the same buffer.
    - A status glyph inside the button shows state at a glance: green connected, amber connecting/thinking/tooling, red offline/error, `♪` speaking, white listening.
+   - The title bar shows the active session title (or `No session` before one exists), so agent-driven switches are visible without a chat UI.
    - A floating `⌂` button on the left returns to the Home Lobby; the `↗` button on the right opens the current conversation in the web UI (`/?conv=<conv_id>`). The browser keeps its own login; the web client re-selects the linked conversation after sign-in.
    - The active conversation survives app restarts; the transcript itself stays session-local, so use the web link for history.
    - Hamburger menu (`☰`) opens Settings: DecafClaw host/token, Home Lobby override, server barge-in toggle, TTS toggle, pitch/speed, starred voices, and inline audition `▶` buttons.
@@ -53,13 +54,14 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
 
 ## Configuration
 
-The Settings sheet stores the DecafClaw connection in `AsyncStorage`:
+The Settings sheet stores the DecafClaw connection in `AsyncStorage`. The app ships with no default token — enter one in Settings; never commit a session token:
 
 | Setting | Key | Default |
 | --- | --- | --- |
 | Host URL | `@decafclaw_host` | `http://decafclaw:18880` |
-| Session token | `@decafclaw_token` | `DEFAULT_TOKEN` in `src/config.ts` |
+| Session token | `@decafclaw_token` | empty; enter it in Settings (never commit one) |
 | Active conversation | `@decafclaw_conv_id` | restored on launch; cleared when host/token changes |
+| Active session title | `@decafclaw_conv_title` | restored on launch; refreshed via `conv_selected` |
 | Home Lobby override | `@decafclaw_lobby_conv_id` | blank (server `web-<user>-home`) |
 | Server barge-in | `@decafclaw_barge_in` | `true` |
 
@@ -80,7 +82,7 @@ contrib/android/
 ├── vitest.config.mts           # Unit test config
 ├── src/
 │   ├── types.ts                # TypeScript contracts (ChatMessage, VoiceItem)
-│   ├── config.ts               # Default host/token
+│   ├── config.ts               # Default host; token is set in Settings
 │   ├── utils/
 │   │   ├── speech.ts           # Markdown normalizer & voice label formatter
 │   │   ├── speech.test.ts
@@ -90,7 +92,7 @@ contrib/android/
 │   │   ├── useDecafClawWebSocket.ts # Socket lifecycle, queues, watchdog, history resync
 │   │   └── useVoiceRecognition.ts   # Tensor TPU STT hooks & permissions
 │   └── components/
-│       ├── Header.tsx          # Clean top bar with safe-area insets
+│       ├── Header.tsx          # Title bar with the active session title
 │       ├── TranscriptView.tsx  # Memoized in-memory chat transcript
 │       ├── PttFooter.tsx       # Speak/connect button with status glyph, TTS stop, settings
 │       └── VoiceSettingsModal.tsx # Connection, TTS, pitch, speed, starred voices
@@ -142,4 +144,5 @@ adb logcat -d -t 100 | grep -iE 'ReactNativeJS|com.lmorchard.decafclawvoice|FATA
 - **Batched Streaming**: Assistant tokens are flushed into the transcript on a 50 ms timer, never per token. Transcript bubbles are memoized and scrolling is throttled.
 - **Conversation Switches**: Switching conversations or returning Home clears the local transcript, speech buffers, and in-flight turn state. The next turn starts fresh.
 - **Barge-In**: Starting to listen cancels the server turn (when enabled) and suppresses TTS until a new turn is sent.
+- **Session Identity**: The session title shown in the header is persisted and refreshed from `conv_selected`; a `switch_conversation` event updates both title and conversation and clears the transcript.
 - **Exact Pins**: All npm dependencies are exact-pinned. The monorepo's `make check-npm-policy` covers this `package.json` too.

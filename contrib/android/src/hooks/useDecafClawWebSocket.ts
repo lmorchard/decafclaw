@@ -36,6 +36,7 @@ const TURN_TIMEOUT_MS = 45_000;
 const HISTORY_LIMIT = 8;
 const AUTH_FAILURE_CLOSE_CODE = 4001;
 const STORAGE_KEY_CONV_ID = '@decafclaw_conv_id';
+const STORAGE_KEY_CONV_TITLE = '@decafclaw_conv_title';
 
 interface RNWebSocketOptions {
   headers: Record<string, string>;
@@ -84,6 +85,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState('Connecting...');
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationTitle, setConversationTitle] = useState<string | null>(null);
 
   const callbacksRef = useRef(options);
   useEffect(() => {
@@ -184,11 +186,35 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     [sendRaw]
   );
 
+  const persistConversation = useCallback((convId: string, title: string) => {
+    AsyncStorage.multiSet([
+      [STORAGE_KEY_CONV_ID, convId],
+      [STORAGE_KEY_CONV_TITLE, title || convId],
+    ]).catch(() => {});
+  }, []);
+
   const switchConversation = useCallback(
     (targetConvId: string, title: string) => {
+      const trimmedTitle = title.trim();
+      const alreadySelected = convIdRef.current === targetConvId;
+
       convIdRef.current = targetConvId;
       setConversationId(targetConvId);
-      AsyncStorage.setItem(STORAGE_KEY_CONV_ID, targetConvId).catch(() => {});
+      if (trimmedTitle) {
+        setConversationTitle(trimmedTitle);
+        persistConversation(targetConvId, trimmedTitle);
+      } else if (!alreadySelected) {
+        // No title yet; show the id until conv_selected provides the real one.
+        setConversationTitle(targetConvId);
+        persistConversation(targetConvId, targetConvId);
+      }
+
+      if (alreadySelected) {
+        // Same conversation: refresh the label but don't clear the transcript.
+        setStatus('Ready');
+        return;
+      }
+
       pendingTurnsRef.current = [];
       turnsInFlightRef.current = 0;
       clearTimeoutRef(watchdogRef);
@@ -200,11 +226,11 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
       setStatus(title ? `Switched: ${title}` : 'Switched');
       callbacksRef.current.onConversationSwitched?.(targetConvId, title);
     },
-    [sendRaw]
+    [persistConversation, sendRaw]
   );
 
   const clearSavedConversation = useCallback(() => {
-    AsyncStorage.removeItem(STORAGE_KEY_CONV_ID).catch(() => {});
+    AsyncStorage.multiRemove([STORAGE_KEY_CONV_ID, STORAGE_KEY_CONV_TITLE]).catch(() => {});
   }, []);
 
   const handleServerMessage = useCallback(
@@ -250,6 +276,10 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
           if (message.toLowerCase().includes('conversation not found')) {
             convIdRef.current = null;
             setConversationId(null);
+            setConversationTitle(null);
+            AsyncStorage.multiRemove([STORAGE_KEY_CONV_ID, STORAGE_KEY_CONV_TITLE]).catch(
+              () => {}
+            );
             announceVoiceRef.current = true;
           }
           turnsInFlightRef.current = 0;
@@ -275,8 +305,21 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
           }
           return;
         }
-        case 'conv_selected':
+        case 'conv_selected': {
+          const selectedConvId =
+            typeof event.conv_id === 'string' ? event.conv_id : '';
+          const title = typeof event.title === 'string' ? event.title.trim() : '';
+          if (!selectedConvId || (convIdRef.current && convIdRef.current !== selectedConvId)) {
+            return;
+          }
+          convIdRef.current = selectedConvId;
+          setConversationId(selectedConvId);
+          if (title) {
+            setConversationTitle(title);
+            persistConversation(selectedConvId, title);
+          }
           return;
+        }
         case 'switch_conversation': {
           const targetConvId =
             typeof event.target_conv_id === 'string' ? event.target_conv_id : '';
@@ -286,11 +329,21 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
           }
           return;
         }
+        case 'conv_renamed': {
+          const renamedConvId =
+            typeof event.conv_id === 'string' ? event.conv_id : '';
+          const title = typeof event.title === 'string' ? event.title.trim() : '';
+          if (renamedConvId && convIdRef.current === renamedConvId && title) {
+            setConversationTitle(title);
+            persistConversation(renamedConvId, title);
+          }
+          return;
+        }
         default:
           return;
       }
     },
-    [armWatchdog, switchConversation]
+    [armWatchdog, persistConversation, switchConversation]
   );
 
   const connect = useCallback(() => {
@@ -420,7 +473,10 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     announceVoiceRef.current = true;
     historyRequestConvRef.current = null;
     // Defer the state reset so the effect does not synchronously set state.
-    const timer = setTimeout(() => setConversationId(null), 0);
+    const timer = setTimeout(() => {
+      setConversationId(null);
+      setConversationTitle(null);
+    }, 0);
     return () => clearTimeout(timer);
   }, [host, token]);
 
@@ -465,12 +521,16 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
   }, [connect]);
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY_CONV_ID)
-      .then((saved) => {
+    Promise.all([
+      AsyncStorage.getItem(STORAGE_KEY_CONV_ID),
+      AsyncStorage.getItem(STORAGE_KEY_CONV_TITLE),
+    ])
+      .then(([saved, savedTitle]) => {
         if (saved && saved.trim() && !convIdRef.current) {
           const trimmed = saved.trim();
           convIdRef.current = trimmed;
           setConversationId(trimmed);
+          setConversationTitle((savedTitle && savedTitle.trim()) || trimmed);
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             sendRaw(wsRef.current, { type: 'select_conv', conv_id: trimmed });
           }
@@ -493,11 +553,15 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
       convPromiseRef.current = (async () => {
         // 1. Try restoring from AsyncStorage
         try {
-          const saved = await AsyncStorage.getItem(STORAGE_KEY_CONV_ID);
+          const [[, saved], [, savedTitle]] = await AsyncStorage.multiGet([
+            STORAGE_KEY_CONV_ID,
+            STORAGE_KEY_CONV_TITLE,
+          ]);
           if (saved && saved.trim()) {
             const trimmed = saved.trim();
             convIdRef.current = trimmed;
             setConversationId(trimmed);
+            setConversationTitle((savedTitle && savedTitle.trim()) || trimmed);
             return trimmed;
           }
         } catch {
@@ -509,7 +573,8 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
           const custom = customLobbyConvId.trim();
           convIdRef.current = custom;
           setConversationId(custom);
-          await AsyncStorage.setItem(STORAGE_KEY_CONV_ID, custom).catch(() => {});
+          setConversationTitle(custom);
+          persistConversation(custom, custom);
           return custom;
         }
 
@@ -521,12 +586,20 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
             },
           });
           if (homeResp.ok) {
-            const homeData = (await homeResp.json()) as { conv_id?: unknown };
+            const homeData = (await homeResp.json()) as {
+              conv_id?: unknown;
+              title?: unknown;
+            };
             if (typeof homeData.conv_id === 'string' && homeData.conv_id) {
               const homeId = homeData.conv_id;
+              const homeTitle =
+                typeof homeData.title === 'string' && homeData.title.trim()
+                  ? homeData.title.trim()
+                  : homeId;
               convIdRef.current = homeId;
               setConversationId(homeId);
-              await AsyncStorage.setItem(STORAGE_KEY_CONV_ID, homeId).catch(() => {});
+              setConversationTitle(homeTitle);
+              persistConversation(homeId, homeTitle);
               announceVoiceRef.current = true;
               return homeId;
             }
@@ -547,13 +620,18 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
         if (!resp.ok) {
           throw new Error(`Session creation failed (HTTP ${resp.status})`);
         }
-        const data = (await resp.json()) as { conv_id?: unknown };
+        const data = (await resp.json()) as { conv_id?: unknown; title?: unknown };
         if (typeof data.conv_id !== 'string' || !data.conv_id) {
           throw new Error('Session creation returned no conversation id');
         }
+        const createdTitle =
+          typeof data.title === 'string' && data.title.trim()
+            ? data.title.trim()
+            : data.conv_id;
         convIdRef.current = data.conv_id;
         setConversationId(data.conv_id);
-        await AsyncStorage.setItem(STORAGE_KEY_CONV_ID, data.conv_id).catch(() => {});
+        setConversationTitle(createdTitle);
+        persistConversation(data.conv_id, createdTitle);
         announceVoiceRef.current = true;
         return data.conv_id;
       })().finally(() => {
@@ -561,7 +639,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
       });
     }
     return convPromiseRef.current;
-  }, [customLobbyConvId, host, token]);
+  }, [customLobbyConvId, host, persistConversation, token]);
 
   const cancelTurn = useCallback(() => {
     const convId = convIdRef.current;
@@ -638,6 +716,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     connected,
     status,
     convId: conversationId,
+    convTitle: conversationTitle,
     manualReconnect,
     sendTurn,
     cancelTurn,
