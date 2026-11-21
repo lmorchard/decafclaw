@@ -107,4 +107,10 @@ def main():
         config_main()
         return
 
+    # CLI subcommand: python -m decafclaw toil audit ...
+    if len(sys.argv) > 1 and sys.argv[1] == "toil":
+        from .toil import main as toil_main
+
+        raise SystemExit(toil_main(sys.argv[2:]))
+
     start_app()

@@ -29,6 +29,7 @@ from decafclaw.improvement_inbox import (
     update_status,
 )
 from decafclaw.media import ToolResult
+from decafclaw.toil import audit_toil, export_candidates, format_report
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -332,6 +333,28 @@ async def improvement_retro(ctx: "Context", conversation_id: str = "") -> ToolRe
     )
 
 
+def toil_audit(ctx: "Context", days: int = 7, min_strikes: int = 3, export: bool = False) -> ToolResult:
+    """Mine conversation archives for repeated procedural toil (Three Strikes)."""
+    try:
+        window = max(0, int(days))
+        strikes = max(1, int(min_strikes))
+    except (TypeError, ValueError):
+        return ToolResult(text="[error: days and min_strikes must be integers]")
+
+    report = audit_toil(ctx.config, days=None if window == 0 else window, min_strikes=strikes)
+    exported: list[dict[str, Any]] = []
+    skipped = 0
+    if export:
+        exported, skipped_candidates = export_candidates(ctx.config, report.candidates)
+        skipped = len(skipped_candidates)
+
+    data = report.to_dict()
+    if export:
+        data["exported"] = [str(item.get("id", "")) for item in exported]
+        data["skipped_existing"] = skipped
+    return ToolResult(text=format_report(report, exported=exported, skipped=skipped), data=data)
+
+
 TOOLS = {
     "improvement_inbox_list": improvement_inbox_list,
     "improvement_inbox_show": improvement_inbox_show,
@@ -340,6 +363,7 @@ TOOLS = {
     "improvement_inbox_clear": improvement_inbox_clear,
     "improvement_inbox_export": improvement_inbox_export,
     "improvement_retro": improvement_retro,
+    "toil_audit": toil_audit,
 }
 
 TOOL_DEFINITIONS = [
@@ -452,6 +476,35 @@ TOOL_DEFINITIONS = [
                     "conversation_id": {
                         "type": "string",
                         "description": "Conversation id; defaults to the current conversation.",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "toil_audit",
+            "description": (
+                "Mine conversation archives for repeated procedural toil (Three Strikes): "
+                "defensive shell pipelines, read-after-write verification, and discovery or "
+                "setup ceremony. Reaches across conversations; export appends strike-3 "
+                "candidates to the improvement inbox."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Lookback window in days (default 7); 0 scans every archive.",
+                    },
+                    "min_strikes": {
+                        "type": "integer",
+                        "description": "Distinct-conversation threshold (default 3).",
+                    },
+                    "export": {
+                        "type": "boolean",
+                        "description": "Append new candidates to the improvement inbox (default false).",
                     },
                 },
             },
