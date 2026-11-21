@@ -213,6 +213,25 @@ describe('shell purpose and denial feedback (#1559)', () => {
     expect(el.querySelector('.confirm-purpose')).toBeNull();
   });
 
+  it('renders the judge suggested alternative separately from the decline reason (#1626)', async () => {
+    const { el } = await mountWithStore([{
+      context_id: 'ctx-jf', confirmation_id: 'c-jf', tool: 'shell', tool_call_id: 'tc-jf',
+      command: 'grep -rn TODO src/',
+      decline_reason: 'Raw grep duplicates a native tool',
+      action_data: {
+        decline_reason: 'Raw grep duplicates a native tool',
+        feedback: 'Use workspace_search(pattern="TODO", path="src/") instead.',
+      },
+    }]);
+
+    const decline = el.querySelector('.confirm-decline-reason');
+    expect(decline.textContent).toContain('Raw grep duplicates a native tool');
+    const advice = el.querySelector('.confirm-judge-feedback');
+    expect(advice).toBeTruthy();
+    expect(advice.textContent).toContain('Use workspace_search(pattern="TODO", path="src/") instead.');
+    expect(advice.textContent).not.toContain('Raw grep');
+  });
+
   it('sends typed feedback with a denial', async () => {
     const { el, responses } = await mountWithStore([{
       context_id: 'ctx-fb', confirmation_id: 'c-fb', tool: 'shell', tool_call_id: 'tc-fb',

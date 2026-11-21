@@ -309,6 +309,7 @@ class ConversationDisplay:
         suggested_rule="",
         cwd="",
         purpose="",
+        feedback="",
     ) -> str:
         """Tool needs confirmation — show prompt with buttons and/or emoji.
 
@@ -337,6 +338,12 @@ class ConversationDisplay:
             msg += f"\n> **Purpose:** {one_line}"
         if decline_reason:
             msg += f"\n> **Reviewer:** {decline_reason}"
+        if feedback:
+            # Judge feedback is bounded and mention-neutralized like the
+            # purpose: it is model/agent-adjacent text on a card (#1626).
+            one_line = " ".join(feedback.split())[:2000]
+            one_line = re.sub(r"@(?=[A-Za-z0-9_.-])", "@\u200b", one_line)
+            msg += f"\n> **Suggested alternative:** {one_line}"
         if suggested_rule:
             msg += f"\n> **Suggested exception rule:** `{suggested_rule}`"
 
