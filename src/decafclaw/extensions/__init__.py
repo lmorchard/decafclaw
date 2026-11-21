@@ -229,6 +229,13 @@ class BaseExtension:
     # vault retrieval) may declare a larger value (#1489).
     pre_compose_timeout: float | None = None
 
+    # True when the hook trims its contribution to
+    # ``ComposerState.dynamic_token_budget``. The composer dispatches these
+    # hooks after the fixed-cost phase publishes the budget, so fixed-slot
+    # contributions (mentions, references, guides, hints) are charged first
+    # (#1365).
+    consumes_dynamic_budget: bool = False
+
     def __init__(self, name: str = ""):
         self.name = name
         self.subscription_ids: list[str] = []

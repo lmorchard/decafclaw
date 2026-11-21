@@ -386,7 +386,9 @@ This captures conceptual relationships that pure embedding similarity might miss
 
 ### Dynamic budget allocation
 
-Fixed costs (system prompt, history, tools, explicit `@[[Page]]` refs) are reserved first. Remaining tokens go to scored candidates, filled in composite_score order until budget is exhausted or candidate caps are reached.
+Fixed costs (system prompt, history, tools, user message, explicit `@[[Page]]` references, `@file`/`@mcp` mentions, the vault guide, pre-empt hints, notes, and journal entries) are reserved first. Remaining tokens go to scored candidates, filled in composite_score order until budget is exhausted or candidate caps are reached.
+
+The composer charges fixed costs in two phases: it dispatches the fixed-slot `PRE_COMPOSE` hooks first, sums their source entries plus the system prompt, tools, user message, and archived history, and only then publishes `ComposerState.dynamic_token_budget`. Extensions that trim themselves to that budget (vault retrieval) declare `consumes_dynamic_budget` and are dispatched in a second wave, so mention and reference content is charged before the dynamic pool is sized (#1365). Message mount order is unchanged.
 
 The budget is derived from `context_window_size` minus fixed costs minus a response reserve (4096 tokens), with an explicit ceiling enforced via `vault_retrieval.max_tokens` (default 4000 tokens) and candidate count capped by `vault_retrieval.max_results` (default 5). This proactive retrieval ceiling prevents large-context models (e.g. Gemini with 300k+ tokens) from pulling in unbounded pages and flooding the prompt (#1048). If available context space is tighter than `max_tokens`, the smaller remaining space is used; if the context window is exhausted (`remaining_budget <= 0`), retrieval is skipped.
 

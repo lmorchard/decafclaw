@@ -109,6 +109,10 @@ class VaultRetrievalExtension(BaseExtension):
     # too tight for the first call that loads the embedding model.
     pre_compose_timeout = 5.0
 
+    # Trims to the dynamic pool, so the composer runs this hook after fixed
+    # contributions are charged and the budget is published (#1365).
+    consumes_dynamic_budget = True
+
     def __init__(self, options: dict[str, Any], config: Any):
         super().__init__(name="vault_retrieval")
         self.options = options or {}

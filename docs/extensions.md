@@ -105,6 +105,14 @@ hook that advances durable state (such as an injection cursor) must do so
 immediately before it returns, with no `await` in between, so a cancellation
 cannot strand the state.
 
+Dispatch runs in two waves so token accounting is correct (#1365). Fixed-cost
+hooks run first; the composer then charges their source entries (with the
+system prompt, tools, user message, and history) and publishes
+`ComposerState.dynamic_token_budget`. Hooks whose extension sets
+`consumes_dynamic_budget = True` run in the second wave and trim to that
+budget. Message mount order does not change: both waves contribute to the same
+slots, so fixed and dynamic content keep their documented positions.
+
 ## Reference and journal extensions (default on)
 
 Four small extensions own the remaining per-turn fixed-cost injections, so
@@ -352,13 +360,15 @@ provider for that turn only; the surfaced paths travel as metadata on the
 archived user row for auditing and Context Inspector display without suppressing
 future turns.
 
-Core computes fixed costs (system prompt, tools, history, response reserve)
-and publishes the remainder on `ComposerState.dynamic_token_budget` before
-dispatching hooks; the extension trims to that budget, capped by its
-`max_tokens` option. It also writes the turn's `last_retrieved_context_text`
-and `last_memory_results` to composer state for reflection and the Context
-Inspector, publishes the `vault_retrieval` UI event, and publishes
-`retrieval_event` telemetry.
+Core computes fixed costs (system prompt, tools, history, user message, and
+fixed-slot hook contributions such as mentions and references) and publishes
+the remainder on `ComposerState.dynamic_token_budget` before dispatching
+budget-consuming hooks; the extension declares
+`consumes_dynamic_budget = True` so it runs in that second wave and trims to
+that budget, capped by its `max_tokens` option (#1365). It also writes the
+turn's `last_retrieved_context_text` and `last_memory_results` to composer
+state for reflection and the Context Inspector, publishes the
+`vault_retrieval` UI event, and publishes `retrieval_event` telemetry.
 
 Modes and gates match the pre-extraction behavior: `always`, `headlines`,
 `on_demand`; skipped for heartbeat, scheduled, and child-agent turns; honors

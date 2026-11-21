@@ -54,6 +54,8 @@ from .context_pipeline import (
     assemble_provider_history,
     compose_pre_compose_hooks,
     compose_system_prompt,
+    compute_fixed_tokens,
+    merge_provenance,
     working_memory_envelope,
 )
 from .context_sidecars import read_context_sidecar, read_last_request_sidecar, write_context_sidecar
@@ -212,12 +214,9 @@ class ContextComposer:
         sources.append(tools_entry)
 
         # -- Compute fixed costs for dynamic budget allocation --
-        # Fixed costs: system prompt + wiki refs + notes + tools + existing history
-        fixed_tokens = system_entry.tokens_estimated
         # Archived prior-turn content only: fresh injections are appended after
         # all token accounting. Counts match the LLM-visible message list.
         history_tokens, history_msg_count = account_history_tokens(history)
-        fixed_tokens += history_tokens
         # User message — has its own SourceEntry so the diagnostics
         # waffle chart and [Context: ...] status line account for the
         # current-turn user content alongside archived history.
@@ -228,9 +227,50 @@ class ContextComposer:
             items_included=1,
         )
         sources.append(user_msg_entry)
-        fixed_tokens += user_msg_tokens
-        # Tools (actual token cost, not estimate)
-        fixed_tokens += tools_entry.tokens_estimated
+
+        # Contribution owners refill these each turn. Clear them first so a
+        # disabled extension cannot leak the previous turn's retrieval into
+        # reflection, the Context Inspector, or a fixed-cost hook.
+        ctx.composer.dynamic_token_budget = None
+        ctx.composer.last_retrieved_context_text = ""
+        ctx.composer.last_memory_results = []
+        ctx.composer.last_recalled_facts = []
+        ctx.composer.last_provenance = {}
+        ctx.composer.injected_paths.clear()
+
+        # -- PRE_COMPOSE fixed-cost wave (#1454, #1486, #1507, #1574) --
+        # HEAD messages mount outside the archived history (see below); DELTA
+        # and TAIL messages are archived with the rest of this turn's
+        # injections; EPILOGUE messages mount after the user message and are
+        # archived there; WORKING_MEMORY messages are bundled into one
+        # transient envelope that is never archived. Fixed-slot contributions
+        # (mentions, references, guide, hints, notes, journal) run first so
+        # their tokens are charged before the dynamic budget is published.
+        (
+            head_msgs,
+            delta_msgs,
+            tail_hook_msgs,
+            epilogue_msgs,
+            working_memory_msgs,
+            hook_sources,
+            recalled_facts,
+            provenance,
+        ) = await compose_pre_compose_hooks(
+            ctx,
+            config,
+            user_message,
+            history,
+            budget_consumers=False,
+        )
+        sources.extend(hook_sources)
+
+        # -- Fixed-token phase (#1365) --
+        # Charges everything mounted so far — system prompt, tools, the user
+        # message, and the fixed PRE_COMPOSE contributions — plus archived
+        # history. Mentions in particular arrive as a TAIL contribution, so
+        # charging them here keeps the dynamic pool from over-filling a tight
+        # context window.
+        fixed_tokens = self._compute_fixed_tokens(sources, history_tokens)
 
         # Response reserve (leave room for the model's response)
         response_reserve = 4096
@@ -251,41 +291,39 @@ class ContextComposer:
         # PRE_COMPOSE extensions that own a dynamic pool (vault retrieval,
         # #1489) trim to this budget; core owns fixed-cost accounting.
         ctx.composer.dynamic_token_budget = memory_budget
-        # Contribution owners refill these each turn. Clear them first so a
-        # disabled extension cannot leak the previous turn's retrieval into
-        # reflection or the Context Inspector.
-        ctx.composer.last_retrieved_context_text = ""
-        ctx.composer.last_memory_results = []
-        ctx.composer.last_recalled_facts = []
-        ctx.composer.last_provenance = {}
-        ctx.composer.injected_paths.clear()
 
-        # -- PRE_COMPOSE lifecycle collector hooks (#1454, #1486, #1507, #1574) --
-        # HEAD messages mount outside the archived history (see below); DELTA
-        # and TAIL messages are archived with the rest of this turn's
-        # injections; EPILOGUE messages mount after the user message and are
-        # archived there; WORKING_MEMORY messages are bundled into one
-        # transient envelope that is never archived.
+        # -- PRE_COMPOSE dynamic-pool wave (#1365) --
+        # Budget consumers run only after the fixed-cost phase publishes the
+        # budget, so mention/reference tokens are already reserved.
         (
-            head_msgs,
-            delta_msgs,
-            tail_hook_msgs,
-            epilogue_msgs,
-            working_memory_msgs,
-            hook_sources,
-            recalled_facts,
-            provenance,
+            dynamic_head,
+            dynamic_delta,
+            dynamic_tail,
+            dynamic_epilogue,
+            dynamic_working_memory,
+            dynamic_sources,
+            dynamic_facts,
+            dynamic_provenance,
         ) = await compose_pre_compose_hooks(
             ctx,
             config,
             user_message,
             history,
+            budget_consumers=True,
         )
+        head_msgs.extend(dynamic_head)
+        delta_msgs.extend(dynamic_delta)
+        tail_hook_msgs.extend(dynamic_tail)
+        epilogue_msgs.extend(dynamic_epilogue)
+        working_memory_msgs.extend(dynamic_working_memory)
+        sources.extend(dynamic_sources)
+        recalled_facts.extend(dynamic_facts)
+        merge_provenance(dynamic_provenance, provenance)
+
         ctx.composer.last_recalled_facts = list(recalled_facts)
         ctx.composer.last_provenance = provenance
         for hm in (*delta_msgs, *tail_hook_msgs):
             to_archive.append(hm)
-        sources.extend(hook_sources)
 
         # -- User message (archived; appended to history at the end) --
         # The archive row is a copy so provenance metadata can attach to it
@@ -483,12 +521,18 @@ class ContextComposer:
     def _compose_system_prompt(self, config) -> tuple[str, SourceEntry]:
         return compose_system_prompt(config)
 
+    @staticmethod
+    def _compute_fixed_tokens(sources: list[SourceEntry], history_tokens: int) -> int:
+        return compute_fixed_tokens(sources, history_tokens)
+
     async def _compose_pre_compose_hooks(
         self,
         ctx: "Context",
         config: Any,
         user_message: str,
         history: list,
+        *,
+        budget_consumers: bool | None = None,
     ) -> tuple[
         list[dict],
         list[dict],
@@ -499,4 +543,4 @@ class ContextComposer:
         list[str],
         dict[str, list[dict]],
     ]:
-        return await compose_pre_compose_hooks(ctx, config, user_message, history)
+        return await compose_pre_compose_hooks(ctx, config, user_message, history, budget_consumers=budget_consumers)

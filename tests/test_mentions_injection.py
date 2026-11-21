@@ -1,7 +1,7 @@
 """Tests for bare mentions parsing, context injection, and truncation."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -162,3 +162,32 @@ async def test_compose_mentions_references_dedup(ctx, config, tmp_path):
     assert entry is not None
     assert entry.items_truncated == 1
     assert entry.items_included == 0
+
+
+@pytest.mark.asyncio
+async def test_mentions_charged_to_fixed_tokens_budget(ctx, config, tmp_path):
+    """Mention content is a fixed cost, so it shrinks the dynamic budget (#1365)."""
+    config.agent.tool_context_budget_pct = 1.0
+    config.compaction.max_tokens = 100_000
+    config.vault_retrieval.max_tokens = 100_000
+    config.agent.data_home = str(tmp_path / "data")
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    config.workspace_path.mkdir(parents=True, exist_ok=True)
+    (config.workspace_path / "big.txt").write_text("A" * 4000, encoding="utf-8")
+
+    with (
+        patch("decafclaw.context_tools.collect_all_tool_defs", return_value=[]),
+        patch(
+            "decafclaw.extensions.vault_retrieval.retrieve_memory_context",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+    ):
+        composed = await ContextComposer().compose(ctx, "Read @big.txt please", [], mode=ComposerMode.INTERACTIVE)
+
+    entries = {entry.source: entry for entry in composed.sources}
+    assert entries["mentions"].tokens_estimated > 0
+    # Fixed cost is every entry except the dynamic pool ("memory"). The budget
+    # must reserve the mention tokens, not only system/tools/user/history.
+    fixed = sum(entry.tokens_estimated for source, entry in entries.items() if source != "memory")
+    assert ctx.composer.dynamic_token_budget == 100_000 - fixed - 4096
