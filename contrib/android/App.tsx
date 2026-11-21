@@ -66,6 +66,7 @@ function TransceiverScreen() {
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechPendingRef = useRef(0);
+  const suppressSpeechRef = useRef(false);
   const idSeqRef = useRef(0);
 
   // Active settings ref — solves closure staleness across WebSocket events!
@@ -259,7 +260,7 @@ function TransceiverScreen() {
   const speakChunk = useCallback(
     (rawText: string) => {
       const { voice, pitch: p, rate: r, ttsEnabled: enabled } = settingsRef.current;
-      if (!enabled) return;
+      if (!enabled || suppressSpeechRef.current) return;
 
       const clean = cleanMarkdownForSpeech(rawText);
       if (clean.length === 0) return;
@@ -339,10 +340,10 @@ function TransceiverScreen() {
 
   const handleTurnComplete = useCallback(() => {
     flushPendingText();
-    if (unspokenBufferRef.current.trim().length > 0) {
+    if (!suppressSpeechRef.current && unspokenBufferRef.current.trim().length > 0) {
       speakChunk(unspokenBufferRef.current);
-      unspokenBufferRef.current = '';
     }
+    unspokenBufferRef.current = '';
     requestScroll();
   }, [flushPendingText, requestScroll, speakChunk]);
 
@@ -395,6 +396,19 @@ function TransceiverScreen() {
     [nextId, requestScroll]
   );
 
+  const handleConversationSwitched = useCallback(() => {
+    suppressSpeechRef.current = true;
+    unspokenBufferRef.current = '';
+    pendingTextRef.current = '';
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    stopSpeaking();
+    setMessages([]);
+    requestScroll();
+  }, [requestScroll, stopSpeaking]);
+
   // Hook: WebSocket Gateway to DecafClaw
   const {
     connected,
@@ -404,6 +418,7 @@ function TransceiverScreen() {
     sendTurn,
     cancelTurn,
     returnToHome,
+    clearSavedConversation,
   } = useDecafClawWebSocket({
     host,
     token,
@@ -412,6 +427,7 @@ function TransceiverScreen() {
     onTurnComplete: handleTurnComplete,
     onError: handleError,
     onHistoryRecovered: handleHistoryRecovered,
+    onConversationSwitched: handleConversationSwitched,
   });
 
   const handleOpenWebUi = useCallback(() => {
@@ -433,6 +449,8 @@ function TransceiverScreen() {
       if (changed) {
         setHost(normalized);
         setToken(trimmed);
+        clearSavedConversation();
+        handleConversationSwitched();
         AsyncStorage.multiSet([
           [STORAGE_KEYS.HOST, normalized],
           [STORAGE_KEYS.TOKEN, trimmed],
@@ -444,7 +462,7 @@ function TransceiverScreen() {
         manualReconnect();
       }
     },
-    [host, manualReconnect, token]
+    [clearSavedConversation, handleConversationSwitched, host, manualReconnect, token]
   );
 
   // Handle final speech recognition result
@@ -461,6 +479,7 @@ function TransceiverScreen() {
         text: '',
       };
 
+      suppressSpeechRef.current = false;
       setMessages((prev) => [...prev, userEntry, agentEntry]);
       unspokenBufferRef.current = '';
       pendingTextRef.current = '';
@@ -476,11 +495,14 @@ function TransceiverScreen() {
   );
 
   const handleInterruption = useCallback(() => {
+    suppressSpeechRef.current = true;
+    unspokenBufferRef.current = '';
+    flushPendingText();
     stopSpeaking();
     if (bargeInEnabled) {
       cancelTurn();
     }
-  }, [bargeInEnabled, cancelTurn, stopSpeaking]);
+  }, [bargeInEnabled, cancelTurn, flushPendingText, stopSpeaking]);
 
   // Hook: On-Device Speech Recognition (Pixel Tensor TPU)
   const { recognizing, isStarting, longListening, transcript, toggleListening, startLongListening } =

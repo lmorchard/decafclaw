@@ -96,6 +96,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
   const retryCountRef = useRef(0);
   const stoppedRef = useRef(false);
   const authFailedRef = useRef(false);
+  const connectionInitializedRef = useRef(false);
   const connectRef = useRef<() => void>(() => {});
 
   const convIdRef = useRef<string | null>(null);
@@ -183,6 +184,29 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     [sendRaw]
   );
 
+  const switchConversation = useCallback(
+    (targetConvId: string, title: string) => {
+      convIdRef.current = targetConvId;
+      setConversationId(targetConvId);
+      AsyncStorage.setItem(STORAGE_KEY_CONV_ID, targetConvId).catch(() => {});
+      pendingTurnsRef.current = [];
+      turnsInFlightRef.current = 0;
+      clearTimeoutRef(watchdogRef);
+      historyRequestConvRef.current = null;
+      const ws = wsRef.current;
+      if (ws) {
+        sendRaw(ws, { type: 'select_conv', conv_id: targetConvId });
+      }
+      setStatus(title ? `Switched: ${title}` : 'Switched');
+      callbacksRef.current.onConversationSwitched?.(targetConvId, title);
+    },
+    [sendRaw]
+  );
+
+  const clearSavedConversation = useCallback(() => {
+    AsyncStorage.removeItem(STORAGE_KEY_CONV_ID).catch(() => {});
+  }, []);
+
   const handleServerMessage = useCallback(
     (event: ServerMessage) => {
       const callbacks = callbacksRef.current;
@@ -258,14 +282,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
             typeof event.target_conv_id === 'string' ? event.target_conv_id : '';
           const title = typeof event.title === 'string' ? event.title : '';
           if (targetConvId) {
-            convIdRef.current = targetConvId;
-            setConversationId(targetConvId);
-            AsyncStorage.setItem(STORAGE_KEY_CONV_ID, targetConvId).catch(() => {});
-            if (wsRef.current) {
-              sendRaw(wsRef.current, { type: 'select_conv', conv_id: targetConvId });
-            }
-            setStatus(`Switched: ${title || targetConvId}`);
-            callbacks.onConversationSwitched?.(targetConvId, title);
+            switchConversation(targetConvId, title);
           }
           return;
         }
@@ -273,7 +290,7 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
           return;
       }
     },
-    [armWatchdog]
+    [armWatchdog, switchConversation]
   );
 
   const connect = useCallback(() => {
@@ -392,6 +409,10 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
 
   // A host or token change starts a fresh conversation on the new server.
   useEffect(() => {
+    if (!connectionInitializedRef.current) {
+      connectionInitializedRef.current = true;
+      return;
+    }
     convIdRef.current = null;
     convPromiseRef.current = null;
     pendingTurnsRef.current = [];
@@ -571,17 +592,10 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
       }
     }
     if (targetId) {
-      convIdRef.current = targetId;
-      setConversationId(targetId);
-      await AsyncStorage.setItem(STORAGE_KEY_CONV_ID, targetId).catch(() => {});
-      const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        sendRaw(ws, { type: 'select_conv', conv_id: targetId });
-      }
+      switchConversation(targetId, 'Lobby');
       setStatus('Lobby');
-      callbacksRef.current.onConversationSwitched?.(targetId, 'Lobby');
     }
-  }, [customLobbyConvId, host, sendRaw, token]);
+  }, [customLobbyConvId, host, switchConversation, token]);
 
   const sendTurn = useCallback(
     async (text: string) => {
@@ -628,5 +642,6 @@ export function useDecafClawWebSocket(options: UseWebSocketOptions) {
     sendTurn,
     cancelTurn,
     returnToHome,
+    clearSavedConversation,
   };
 }

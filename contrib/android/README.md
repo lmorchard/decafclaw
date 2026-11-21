@@ -33,6 +33,9 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
    - No application-level keepalive: RN's `WebSocket.ping()` sends an empty binary frame on Android, which DecafClaw's `receive_text()` rejects by closing the socket. The server's protocol ping/pong keeps the connection alive.
    - Turns spoken while the socket is down are queued and flushed on reconnect.
    - Server `error` events render as transcript errors instead of hanging on "Thinking...". A `4001` close reports an auth failure and stops reconnecting.
+   - Starting to listen cancels the in-flight turn via `cancel_turn` when Server Barge-In is enabled; local TTS stays suppressed until the next turn.
+   - The active conversation ID persists (`@decafclaw_conv_id`) and is restored on launch. With none saved, the app resolves the user's Home Lobby from `/api/conversations/home`.
+   - Server `switch_conversation` events (session tools, Home) update the active conversation and clear the local transcript.
 3. **Pipelined Native Speech (TTS)**:
    - Speaks each complete sentence as soon as its boundary arrives, using Android's native Google Speech engine via `expo-speech`.
    - Normalizes Markdown syntax (code fences, wiki links, links, headers, lists, tables, HTML, emphasis) into speakable English.
@@ -42,8 +45,9 @@ Designed for screen-on, tap-to-talk voice interactions on the **Google Pixel 10 
    - A long press (~450ms) gives a 40ms vibrate and starts a continuous session that keeps listening across silences (`Listening... Tap to Finish`). Finalized segments accumulate; tapping again stops the engine and sends the whole monologue as one turn.
    - On Android 13+ the continuous session uses the segmented on-device recognizer; if the engine ends unexpectedly, it restarts up to 3 times into the same buffer.
    - A status glyph inside the button shows state at a glance: green connected, amber connecting/thinking/tooling, red offline/error, `♪` speaking, white listening.
-   - Once a conversation exists, a floating `↗` button above the settings menu opens it in the web UI (`/?conv=<conv_id>`). The browser keeps its own login; the web client re-selects the linked conversation after sign-in.
-   - Hamburger menu (`☰`) opens Settings: DecafClaw host/token, TTS toggle, pitch/speed, starred voices, and inline audition `▶` buttons.
+   - A floating `⌂` button on the left returns to the Home Lobby; the `↗` button on the right opens the current conversation in the web UI (`/?conv=<conv_id>`). The browser keeps its own login; the web client re-selects the linked conversation after sign-in.
+   - The active conversation survives app restarts; the transcript itself stays session-local, so use the web link for history.
+   - Hamburger menu (`☰`) opens Settings: DecafClaw host/token, Home Lobby override, server barge-in toggle, TTS toggle, pitch/speed, starred voices, and inline audition `▶` buttons.
 
 ---
 
@@ -55,6 +59,9 @@ The Settings sheet stores the DecafClaw connection in `AsyncStorage`:
 | --- | --- | --- |
 | Host URL | `@decafclaw_host` | `http://decafclaw:18880` |
 | Session token | `@decafclaw_token` | `DEFAULT_TOKEN` in `src/config.ts` |
+| Active conversation | `@decafclaw_conv_id` | restored on launch; cleared when host/token changes |
+| Home Lobby override | `@decafclaw_lobby_conv_id` | blank (server `web-<user>-home`) |
+| Server barge-in | `@decafclaw_barge_in` | `true` |
 
 Saving either value reconnects the socket and starts a fresh conversation on the new server. Hosts are normalized to `http://`/`https://` and trailing slashes are stripped.
 
@@ -133,4 +140,6 @@ adb logcat -d -t 100 | grep -iE 'ReactNativeJS|com.lmorchard.decafclawvoice|FATA
 - **Socket Closure Safety**: Always read speech parameters and active options from mutable React refs (`settingsRef.current`) rather than callback closures to prevent WebSocket churn or stale voice profiles.
 - **Identity-Guarded Sockets**: Every handler checks `wsRef.current === ws`; a socket is detached before it is closed. This prevents a replaced socket's `close` event from scheduling a reconnect that kills the healthy one.
 - **Batched Streaming**: Assistant tokens are flushed into the transcript on a 50 ms timer, never per token. Transcript bubbles are memoized and scrolling is throttled.
+- **Conversation Switches**: Switching conversations or returning Home clears the local transcript, speech buffers, and in-flight turn state. The next turn starts fresh.
+- **Barge-In**: Starting to listen cancels the server turn (when enabled) and suppresses TTS until a new turn is sent.
 - **Exact Pins**: All npm dependencies are exact-pinned. The monorepo's `make check-npm-policy` covers this `package.json` too.
