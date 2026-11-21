@@ -819,13 +819,15 @@ class MCPRegistry:
         timeout_s = timeout_ms / 1000
 
         async def call_tool(arguments):
+            from .media import ToolResult
+
             # Try auto-reconnect if server is down
             if not await self._maybe_reconnect(server_name):
-                return f"[error: MCP server {server_name} is not available]"
+                return ToolResult(text=f"[error: MCP server {server_name} is not available]")
 
             state = self.servers.get(server_name)
             if not state or not state.session:
-                return f"[error: MCP server {server_name} has no active session]"
+                return ToolResult(text=f"[error: MCP server {server_name} has no active session]")
 
             try:
                 result = await asyncio.wait_for(
@@ -834,12 +836,12 @@ class MCPRegistry:
                 )
                 return _convert_mcp_response(result)
             except asyncio.TimeoutError:
-                return f"[error: MCP tool {tool_name} on {server_name} timed out after {timeout_s}s]"
+                return ToolResult(text=f"[error: MCP tool {tool_name} on {server_name} timed out after {timeout_s}s]")
             except Exception as e:
                 # Mark server as failed for auto-restart on next call
                 if state:
                     state.status = ConnState.FAILED
-                return f"[error: MCP tool {tool_name} on {server_name} failed: {e}]"
+                return ToolResult(text=f"[error: MCP tool {tool_name} on {server_name} failed: {e}]")
 
         return call_tool
 

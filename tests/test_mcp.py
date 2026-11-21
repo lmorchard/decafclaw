@@ -20,6 +20,7 @@ from decafclaw.mcp_client import (
     _validate_server_name,
     load_mcp_config,
 )
+from decafclaw.media import ToolResult
 
 # -- env var expansion tests --
 
@@ -489,7 +490,8 @@ async def test_tool_caller_timeout():
     caller = registry._make_tool_caller("slow", "slow_tool", cfg.timeout)
 
     result = await caller({"query": "test"})
-    assert "timed out" in result
+    assert isinstance(result, ToolResult)
+    assert "timed out" in result.text
 
 
 # -- auto-restart tests --
