@@ -15,13 +15,13 @@ import pytest
 from decafclaw.archive import read_archive
 from decafclaw.context_types import InjectionCursors
 from decafclaw.conversation_manager import (
+    _CTX_DRIVEN_FIELDS,
+    _PERSISTED_BINDINGS,
     CANCEL_MARKER_TEXT,
     TURN_ABORTED_MARKER_TEXT,
     ConversationManager,
     PersistedTurnState,
     TurnKind,
-    _CTX_DRIVEN_FIELDS,
-    _PERSISTED_BINDINGS,
     _write_cancel_archive,
 )
 from decafclaw.events import EventBus
