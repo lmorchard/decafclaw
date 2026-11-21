@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  applyEvent, closeTabById, currentSnapshot, setActiveConv, switchToTab,
+  applyEvent, closeTabById, currentSnapshot, dismiss, resummon, setActiveConv, switchToTab,
 } from './canvas-state.js';
 
 /**
@@ -78,5 +78,102 @@ describe('closeTabById', () => {
       method: 'POST', credentials: 'same-origin',
     }));
     expect(JSON.parse(post[1].body)).toEqual({ tab_id: 't1' });
+  });
+});
+
+/**
+ * Background creation (#1024) keeps the reader's view. `background: true` on a
+ * `new_tab` event must preserve the active tab and a dismissed panel while
+ * still making the new tab discoverable.
+ */
+describe('background new_tab', () => {
+  const tab = (id, label) => ({ id, label, widget_type: 'terminal', data: {} });
+
+  beforeEach(async () => {
+    localStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', {
+      status: 500, headers: { 'Content-Type': 'application/json' },
+    })));
+    await setActiveConv('c1');
+    applyEvent({ conv_id: 'c1', kind: 'clear' });
+    applyEvent({
+      conv_id: 'c1', kind: 'new_tab', active_tab: 't1', background: false, tab: tab('t1', 'One'),
+    });
+  });
+
+  it('foreground creation still selects the new tab and reveals the panel', () => {
+    applyEvent({
+      conv_id: 'c1', kind: 'new_tab', active_tab: 't2', background: false, tab: tab('t2', 'Two'),
+    });
+    const snap = currentSnapshot();
+    expect(snap.activeTabId).toBe('t2');
+    expect(snap.visible).toBe(true);
+    expect(localStorage.getItem('canvas-dismissed.c1')).toBeNull();
+  });
+
+  it('keeps the existing selection and visible panel', () => {
+    applyEvent({
+      conv_id: 'c1', kind: 'new_tab', active_tab: 't1', background: true, tab: tab('t2', 'Two'),
+    });
+    const snap = currentSnapshot();
+    expect(snap.tabs.map(t => t.id)).toEqual(['t1', 't2']);
+    expect(snap.activeTabId).toBe('t1');
+    expect(snap.visible).toBe(true);
+    expect(snap.unreadDot).toBe(false);
+    expect(localStorage.getItem('canvas-dismissed.c1')).toBeNull();
+  });
+
+  it('does not select a background tab when it is updated', () => {
+    applyEvent({
+      conv_id: 'c1', kind: 'new_tab', active_tab: 't1', background: true, tab: tab('t2', 'Two'),
+    });
+    applyEvent({
+      conv_id: 'c1', kind: 'update', active_tab: 't1',
+      tab: { ...tab('t2', 'Two'), data: { revised: true } },
+    });
+    expect(currentSnapshot().activeTabId).toBe('t1');
+  });
+
+  it('preserves a dismissed panel and raises the unread dot', () => {
+    dismiss();
+    applyEvent({
+      conv_id: 'c1', kind: 'new_tab', active_tab: 't1', background: true, tab: tab('t2', 'Two'),
+    });
+    const snap = currentSnapshot();
+    expect(snap.visible).toBe(false);
+    expect(snap.activeTabId).toBe('t1');
+    expect(snap.unreadDot).toBe(true);
+    expect(localStorage.getItem('canvas-dismissed.c1')).toBe('true');
+  });
+
+  it('stays hidden on an empty canvas with the new tab as a valid selection', () => {
+    applyEvent({ conv_id: 'c1', kind: 'clear' });
+    applyEvent({
+      conv_id: 'c1', kind: 'new_tab', active_tab: 'n1', background: true, tab: tab('n1', 'Prepared'),
+    });
+    let snap = currentSnapshot();
+    expect(snap.visible).toBe(false);
+    expect(snap.activeTabId).toBe('n1');
+    expect(snap.unreadDot).toBe(true);
+
+    resummon();
+    snap = currentSnapshot();
+    expect(snap.visible).toBe(true);
+    expect(snap.activeTabId).toBe('n1');
+    expect(snap.tabs.map(t => t.id)).toEqual(['n1']);
+  });
+
+  it('a foreground creation after an empty background reveal clears the hidden state', () => {
+    applyEvent({ conv_id: 'c1', kind: 'clear' });
+    applyEvent({
+      conv_id: 'c1', kind: 'new_tab', active_tab: 'n1', background: true, tab: tab('n1', 'Prepared'),
+    });
+    applyEvent({
+      conv_id: 'c1', kind: 'new_tab', active_tab: 'n2', background: false, tab: tab('n2', 'Shown'),
+    });
+    const snap = currentSnapshot();
+    expect(snap.visible).toBe(true);
+    expect(snap.activeTabId).toBe('n2');
+    expect(localStorage.getItem('canvas-dismissed.c1')).toBeNull();
   });
 });

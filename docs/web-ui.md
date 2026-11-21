@@ -532,8 +532,12 @@ a label, active indicator, and `[×]` close. 44px tap targets on rows and
 close buttons. See [Web UI — mobile conventions](web-ui-mobile.md#canvas-tabs) for details.
 
 **Lifecycle:**
-- `canvas_new_tab(widget_type, data, label?)` — append a tab; set active;
-  return `tab_id`. Reveals the panel.
+- `canvas_new_tab(widget_type, data, label?, artifact_id?, background?)` —
+  append a tab; return `tab_id`. Foreground (default) selects it and
+  reveals the panel. `background=true` keeps the current selection and a
+  dismissed panel dismissed; the tab is still listed and the pill's unread
+  dot can flag it. On an empty canvas the new tab becomes the active
+  selection but the panel stays hidden until the user opens it.
 - `canvas_update(tab_id, data)` — replace data on the identified tab;
   preserves panel-hidden state.
 - `canvas_close_tab(tab_id)` — remove the identified tab; activates
@@ -552,10 +556,10 @@ Canvas item instead of the strip's pill.
 
 **Dismiss behavior:** dismissing the panel persists to localStorage
 per-conversation (key `canvas-dismissed.{conv_id}`); the canvas sidecar
-itself is unaffected. The dismissed state is cleared on `canvas_new_tab`
-events, `canvas_clear` events, and resummon click. It is preserved
-across page reload and conversation-switch so the user's intent
-sticks.
+itself is unaffected. The dismissed state is cleared on foreground `canvas_new_tab`
+events, `canvas_clear` events, and resummon click. Background
+`canvas_new_tab` events preserve it. It is preserved across page reload and
+conversation-switch so the user's intent sticks.
 
 **Standalone views:**
 - `/canvas/{conv_id}` — full-screen render of the active tab. Follows

@@ -111,11 +111,23 @@ export function applyEvent(evt) {
     s.dismissed = false;
     _saveDismissed(convId, false);
   } else if (kind === 'new_tab') {
+    const wasEmpty = s.tabs.length === 0;
     if (evt.tab) s.tabs.push({...evt.tab});
     s.activeTabId = evt.active_tab;
-    s.dismissed = false;
-    s.unreadDot = false;
-    _saveDismissed(convId, false);
+    if (evt.background === true) {
+      // Background creation keeps the reader's view: a dismissed panel stays
+      // dismissed, and an empty canvas stays hidden until the user opens it.
+      // The new tab (or the preserved tab) remains the valid selection.
+      if (wasEmpty) {
+        s.dismissed = true;
+        _saveDismissed(convId, true);
+      }
+      if (s.dismissed) s.unreadDot = true;
+    } else {
+      s.dismissed = false;
+      s.unreadDot = false;
+      _saveDismissed(convId, false);
+    }
   } else if (kind === 'update') {
     if (evt.tab) {
       const idx = s.tabs.findIndex(t => t.id === evt.tab.id);

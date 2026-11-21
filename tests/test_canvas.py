@@ -239,6 +239,81 @@ async def test_new_tab_creates_and_activates(config, md_doc_registry, emit_recor
 
 
 @pytest.mark.asyncio
+async def test_new_tab_background_preserves_existing_selection(config, md_doc_registry, emit_recorder):
+    first = await canvas.new_tab(config, "c", "markdown_document", {"content": "a"}, emit=emit_recorder)
+    emit_recorder.events.clear()
+
+    second = await canvas.new_tab(
+        config, "c", "markdown_document", {"content": "b"}, emit=emit_recorder, background=True
+    )
+
+    assert second.ok
+    assert second.tab_id == "canvas_2"
+    state = canvas.read_canvas_state(config, "c")
+    assert [t["id"] for t in state["tabs"]] == [first.tab_id, "canvas_2"]
+    assert state["active_tab"] == first.tab_id, "background creation must not change the current view"
+    _, event = emit_recorder.events[0]
+    assert event["kind"] == "new_tab"
+    assert event["background"] is True
+    assert event["active_tab"] == first.tab_id
+    assert event["tab"]["id"] == "canvas_2"
+
+
+@pytest.mark.asyncio
+async def test_new_tab_foreground_event_is_not_background(config, md_doc_registry, emit_recorder):
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "a"}, emit=emit_recorder)
+    _, event = emit_recorder.events[0]
+    assert event["background"] is False
+    assert event["active_tab"] == "canvas_1"
+
+
+@pytest.mark.asyncio
+async def test_new_tab_background_on_empty_canvas_sets_valid_selection(config, md_doc_registry, emit_recorder):
+    result = await canvas.new_tab(
+        config, "c", "markdown_document", {"content": "prepared"}, emit=emit_recorder, background=True
+    )
+
+    assert result.ok
+    state = canvas.read_canvas_state(config, "c")
+    assert state["active_tab"] == "canvas_1", "opening the panel must show the prepared tab"
+    _, event = emit_recorder.events[0]
+    assert event["background"] is True
+    assert event["active_tab"] == "canvas_1"
+
+
+@pytest.mark.asyncio
+async def test_new_tab_background_replaces_stale_selection(config, md_doc_registry, emit_recorder):
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "a"}, emit=emit_recorder)
+    state = canvas.read_canvas_state(config, "c")
+    state["active_tab"] = "canvas_99"
+    canvas.write_canvas_state(config, "c", state)
+    emit_recorder.events.clear()
+
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "b"}, emit=emit_recorder, background=True)
+
+    state = canvas.read_canvas_state(config, "c")
+    assert state["active_tab"] == "canvas_2"
+    assert emit_recorder.events[0][1]["active_tab"] == "canvas_2"
+
+
+@pytest.mark.asyncio
+async def test_reopen_artifact_background_preserves_existing_selection(config, md_doc_registry, emit_recorder):
+    first = await canvas.new_tab(config, "c", "markdown_document", {"content": "a"}, emit=emit_recorder)
+    state = canvas.read_canvas_state(config, "c")
+    artifact_id = state["tabs"][0]["artifact_id"]
+    emit_recorder.events.clear()
+
+    reopened = await canvas.reopen_artifact(config, "c", artifact_id, emit=emit_recorder, background=True)
+
+    assert reopened.ok
+    state = canvas.read_canvas_state(config, "c")
+    assert state["active_tab"] == first.tab_id
+    _, event = emit_recorder.events[0]
+    assert event["background"] is True
+    assert event["active_tab"] == first.tab_id
+
+
+@pytest.mark.asyncio
 async def test_new_tab_increments_counter_across_close(config, md_doc_registry, emit_recorder):
     """Closing a tab does NOT decrement next_tab_id; ids never reused."""
     r1 = await canvas.new_tab(config, "c", "markdown_document", {"content": "a"}, emit=emit_recorder)

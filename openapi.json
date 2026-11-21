@@ -3707,6 +3707,11 @@
                       }
                     ],
                     "title": "Label"
+                  },
+                  "background": {
+                    "default": false,
+                    "title": "Background",
+                    "type": "boolean"
                   }
                 },
                 "required": [

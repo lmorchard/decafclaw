@@ -33,27 +33,33 @@ async def tool_canvas_new_tab(
     data: dict | None = None,
     label: str | None = None,
     artifact_id: str | None = None,
+    background: bool = False,
 ) -> ToolResult:
-    """Create a new canvas tab and make it active, or reopen an existing artifact."""
+    """Create a new canvas tab (optionally in the background), or reopen an existing artifact."""
     if artifact_id:
-        log.info("[tool:canvas_new_tab] reopen artifact=%s label=%r", artifact_id, label)
+        log.info("[tool:canvas_new_tab] reopen artifact=%s label=%r background=%s", artifact_id, label, background)
         reopened = await canvas_mod.reopen_artifact(
             ctx.config,
             ctx.conv_id,
             artifact_id,
             label=label,
             emit=emit_for_ctx(ctx),
+            background=background,
         )
         if not reopened.ok:
             return ToolResult(text=f"[error: {reopened.error}]")
         url = _canvas_url(ctx.conv_id, reopened.tab_id)
         return ToolResult(
-            text=(f"artifact {artifact_id} reopened as tab (id={reopened.tab_id}) — view at {url}"),
+            text=(
+                f"artifact {artifact_id} reopened as "
+                f"{'background ' if background else ''}tab (id={reopened.tab_id})"
+                f"{'; current view unchanged' if background else ''} — view at {url}"
+            ),
             data={"tab_id": reopened.tab_id, "artifact_id": artifact_id},
         )
     if not widget_type or data is None:
         return ToolResult(text="[error: widget_type and data are required unless artifact_id is given]")
-    log.info("[tool:canvas_new_tab] widget=%s label=%r", widget_type, label)
+    log.info("[tool:canvas_new_tab] widget=%s label=%r background=%s", widget_type, label, background)
     result = await canvas_mod.new_tab(
         ctx.config,
         ctx.conv_id,
@@ -61,10 +67,12 @@ async def tool_canvas_new_tab(
         data,
         label=label,
         emit=emit_for_ctx(ctx),
+        background=background,
     )
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
     url = _canvas_url(ctx.conv_id, result.tab_id)
+    created = "tab prepared in background" if background else "tab created"
     # Report the durable handle so the tab can be reopened after it is closed.
     tab = canvas_mod.get_tab(ctx.config, ctx.conv_id, result.tab_id or "") or {}
     payload = {"tab_id": result.tab_id}
@@ -72,14 +80,14 @@ async def tool_canvas_new_tab(
         payload["artifact_id"] = tab["artifact_id"]
         return ToolResult(
             text=(
-                f"tab created (id={result.tab_id}, artifact={tab['artifact_id']}) — view at {url}. "
+                f"{created} (id={result.tab_id}, artifact={tab['artifact_id']}) — view at {url}. "
                 "Closing the tab hides it; the content stays and canvas_new_tab with "
                 f"artifact_id='{tab['artifact_id']}' reopens it."
             ),
             data=payload,
         )
     return ToolResult(
-        text=f"tab created (id={result.tab_id}) — view at {url}",
+        text=f"{created} (id={result.tab_id}) — view at {url}",
         data=payload,
     )
 
@@ -183,8 +191,13 @@ CANVAS_TOOL_DEFINITIONS = [
                 "active tab. The canvas is a persistent display surface in the "
                 "user's web UI — use it for documents, plans, visualizations, "
                 "or interactive demos you intend to revise across multiple "
-                "turns. Returns a tab_id you MUST keep to target this tab in "
-                "subsequent canvas_update or canvas_close_tab calls. "
+                "turns. Set background=true to prepare content WITHOUT "
+                "interrupting the user: the current tab stays selected and a "
+                "dismissed panel stays dismissed (the new tab is discoverable "
+                "in the tab list). Use background=true when the user asks you "
+                "to prepare, stage, or queue something while they read or work "
+                "on something else. Returns a tab_id you MUST keep to target "
+                "this tab in subsequent canvas_update or canvas_close_tab calls. "
                 "A markdown_document also gets a durable artifact_id: closing its "
                 "tab only hides it, and calling canvas_new_tab with that "
                 "artifact_id (no widget_type/data) reopens the same content in a "
@@ -227,6 +240,10 @@ CANVAS_TOOL_DEFINITIONS = [
                     "artifact_id": {
                         "type": "string",
                         "description": "Reopen an existing artifact (e.g. 'artifact_1' from canvas_read) in a fresh tab instead of creating content. Omit widget_type and data when using this.",
+                    },
+                    "background": {
+                        "type": "boolean",
+                        "description": "Create the tab without changing the current view: keep the current selection and a dismissed panel dismissed. Defaults to false (select the new tab and reveal the panel).",
                     },
                 },
                 "required": [],

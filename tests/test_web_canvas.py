@@ -161,6 +161,45 @@ async def test_post_canvas_new_tab_writes_state_and_emits(
 
 
 @pytest.mark.asyncio
+async def test_post_canvas_new_tab_background_preserves_active(
+    authed_client,
+    manager_mock,
+    owned_conv,
+):
+    await authed_client.post(
+        f"/api/canvas/{owned_conv}/new_tab",
+        json={"widget_type": "markdown_document", "data": {"content": "a"}},
+    )
+    manager_mock.emit.reset_mock()
+    resp = await authed_client.post(
+        f"/api/canvas/{owned_conv}/new_tab",
+        json={"widget_type": "markdown_document", "data": {"content": "b"}, "background": True},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["tab_id"] == "canvas_2"
+    state = (await authed_client.get(f"/api/canvas/{owned_conv}")).json()
+    assert state["active_tab"] == "canvas_1"
+    args = manager_mock.emit.await_args
+    assert args.args[1]["background"] is True
+    assert args.args[1]["active_tab"] == "canvas_1"
+
+
+@pytest.mark.asyncio
+async def test_post_canvas_new_tab_background_on_empty_selects_new_tab(
+    authed_client,
+    manager_mock,
+    owned_conv,
+):
+    resp = await authed_client.post(
+        f"/api/canvas/{owned_conv}/new_tab",
+        json={"widget_type": "markdown_document", "data": {"content": "a"}, "background": True},
+    )
+    assert resp.status_code == 200, resp.text
+    state = (await authed_client.get(f"/api/canvas/{owned_conv}")).json()
+    assert state["active_tab"] == "canvas_1"
+
+
+@pytest.mark.asyncio
 async def test_post_canvas_new_tab_rejects_unknown_widget(authed_client, owned_conv):
     resp = await authed_client.post(
         f"/api/canvas/{owned_conv}/new_tab",
@@ -217,6 +256,10 @@ def test_canvas_openapi_contracts(app):
         request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
         assert request_schema["title"] == schema
         assert operation["parameters"][0]["schema"]["type"] == "string"
+    new_tab_schema = paths["/api/canvas/{conv_id}/new_tab"]["post"]["requestBody"]["content"]["application/json"][
+        "schema"
+    ]
+    assert new_tab_schema["properties"]["background"]["default"] is False
 
 
 @pytest.mark.asyncio

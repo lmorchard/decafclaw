@@ -710,9 +710,13 @@ the canvas panel from any context without activating a skill. Phase 4 uses
 explicit tab IDs; the Phase 3 implicit-active-tab tools (`canvas_set`,
 no-id `canvas_update`) are removed.
 
-- `canvas_new_tab(widget_type, data, label?)` — append a new tab to the
-  canvas, set it active, return `tab_id` in `ToolResult.data["tab_id"]`.
-  Validates widget type + data schema. Reveals the panel.
+- `canvas_new_tab(widget_type, data, label?, artifact_id?, background?)` —
+  append a new tab to the canvas and return `tab_id` in
+  `ToolResult.data["tab_id"]`. Validates widget type + data schema.
+  Foreground (default) selects the tab and reveals the panel. With
+  `background=true` the current tab stays selected and a dismissed panel
+  stays dismissed; an empty canvas adopts the new tab as its valid initial
+  selection but remains hidden until the user opens it.
 - `canvas_update(tab_id, data)` — replace the data payload of the
   identified tab in place; errors `[error: tab '{id}' not found]` on
   unknown id. Preserves panel-hidden state.
@@ -724,7 +728,8 @@ no-id `canvas_update`) are removed.
 
 Each successful call emits a `canvas_update` WebSocket event (with a `kind`
 field: `new_tab`, `update`, `close_tab`, `set_active`, or `clear`) to
-connected clients. The canvas state persists in
+connected clients. `new_tab` events also carry `background` so clients can
+preserve the reader's selection and panel dismissal state. The canvas state persists in
 `workspace/sessions/{session_id}/{conv_id}/canvas.json`.
 
 ## Key files

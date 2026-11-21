@@ -85,6 +85,73 @@ async def test_canvas_new_tab_unknown_widget(config, md_doc_registry):
 
 
 @pytest.mark.asyncio
+async def test_canvas_new_tab_background_keeps_current_tab_active(config, md_doc_registry, manager_mock):
+    from decafclaw import canvas as canvas_mod
+
+    ctx = _make_ctx(config, manager_mock)
+    first = await canvas_tools.tool_canvas_new_tab(
+        ctx,
+        "markdown_document",
+        {"content": "# One"},
+        label="One",
+    )
+    second = await canvas_tools.tool_canvas_new_tab(
+        ctx,
+        "markdown_document",
+        {"content": "# Two"},
+        label="Two",
+        background=True,
+    )
+
+    assert second.data["tab_id"] == "canvas_2"
+    assert "prepared in background" in second.text
+    state = canvas_mod.read_canvas_state(config, "conv1")
+    assert state["active_tab"] == first.data["tab_id"]
+    assert [t["id"] for t in state["tabs"]] == ["canvas_1", "canvas_2"]
+    event = manager_mock.emit.await_args.args[1]
+    assert event["kind"] == "new_tab"
+    assert event["background"] is True
+    assert event["active_tab"] == "canvas_1"
+
+
+@pytest.mark.asyncio
+async def test_canvas_new_tab_background_on_empty_canvas_returns_tab_id(config, md_doc_registry, manager_mock):
+    from decafclaw import canvas as canvas_mod
+
+    ctx = _make_ctx(config, manager_mock)
+    result = await canvas_tools.tool_canvas_new_tab(
+        ctx,
+        "markdown_document",
+        {"content": "# Prepared"},
+        background=True,
+    )
+
+    assert result.data["tab_id"] == "canvas_1"
+    state = canvas_mod.read_canvas_state(config, "conv1")
+    assert state["active_tab"] == "canvas_1"
+
+
+@pytest.mark.asyncio
+async def test_canvas_new_tab_background_reopen_artifact_keeps_current_tab(config, md_doc_registry, manager_mock):
+    from decafclaw import canvas as canvas_mod
+
+    ctx = _make_ctx(config, manager_mock)
+    first = await canvas_tools.tool_canvas_new_tab(
+        ctx,
+        "markdown_document",
+        {"content": "# One"},
+        label="One",
+    )
+    artifact_id = first.data["artifact_id"]
+    reopened = await canvas_tools.tool_canvas_new_tab(ctx, artifact_id=artifact_id, background=True)
+
+    assert "background tab" in reopened.text
+    state = canvas_mod.read_canvas_state(config, "conv1")
+    assert state["active_tab"] == first.data["tab_id"]
+    assert state["tabs"][-1]["artifact_id"] == artifact_id
+
+
+@pytest.mark.asyncio
 async def test_canvas_update_targets_explicit_id(config, md_doc_registry, manager_mock):
     ctx = _make_ctx(config, manager_mock)
     r1 = await canvas_tools.tool_canvas_new_tab(

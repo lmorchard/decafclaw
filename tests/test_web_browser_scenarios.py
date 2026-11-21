@@ -1042,6 +1042,81 @@ def test_browser_canvas_tabs_and_standalone_page(built_static, chromium, config)
         assert widget_catalog_requests() == [True, True]
 
 
+def test_browser_canvas_background_creation_keeps_current_view(built_static, chromium, config):
+    """Background tab creation leaves the reader's tab and dismissal state alone (#1024)."""
+    conv_id = seed_conversation(config, "Canvas background")
+    with browser_scenario(built_static, chromium, config, viewport={"width": 1280, "height": 800}) as scenario:
+        page = scenario.page
+        page.goto(scenario.base + f"/?conv={conv_id}")
+        page.wait_for_selector("#chat-layout:not(.hidden)", timeout=15000)
+        page.evaluate(
+            """async (convId) => {
+            const canvas = await import('/static/lib/canvas-state.js');
+            await canvas.setActiveConv(convId);
+            window.__canvasReload = async (id) => {
+              await canvas.setActiveConv(id);
+              return canvas.currentSnapshot();
+            };
+        }""",
+            conv_id,
+        )
+
+        def create_tab(label, background):
+            return page.evaluate(
+                """async ([convId, label, background]) => {
+                const response = await fetch(`/api/canvas/${convId}/new_tab`, {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({
+                    widget_type: 'markdown_document',
+                    data: {content: `# ${label}`},
+                    label,
+                    background,
+                  }),
+                });
+                if (!response.ok) throw new Error(`new_tab failed: ${response.status}`);
+                return (await response.json()).tab_id;
+            }""",
+                [conv_id, label, background],
+            )
+
+        reading_tab = create_tab("Reading", False)
+        snap = page.evaluate("(convId) => window.__canvasReload(convId)", conv_id)
+        assert snap["activeTabId"] == reading_tab
+        assert snap["visible"] is True
+        page.wait_for_function("() => document.querySelectorAll('.canvas-tab').length === 1")
+
+        # Background creation while the user reads another tab.
+        prepared_tab = create_tab("Prepared", True)
+        snap = page.evaluate("(convId) => window.__canvasReload(convId)", conv_id)
+        assert [t["id"] for t in snap["tabs"]] == [reading_tab, prepared_tab]
+        assert snap["activeTabId"] == reading_tab, "background creation must not change the view"
+        assert snap["visible"] is True
+        page.wait_for_function("() => document.querySelectorAll('.canvas-tab').length === 2")
+
+        # A dismissed panel stays dismissed through background creation and reload.
+        page.evaluate("async () => { (await import('/static/lib/canvas-state.js')).dismiss(); }")
+        hidden_tab = create_tab("While hidden", True)
+        snap = page.evaluate("(convId) => window.__canvasReload(convId)", conv_id)
+        assert [t["id"] for t in snap["tabs"]] == [reading_tab, prepared_tab, hidden_tab]
+        assert snap["activeTabId"] == reading_tab
+        assert snap["visible"] is False, "background creation must keep the panel dismissed"
+        assert page.evaluate("(convId) => localStorage.getItem('canvas-dismissed.' + convId)", conv_id) == "true"
+
+        # The user can still open the panel and find the background tabs.
+        snap = page.evaluate(
+            """async (convId) => {
+            const canvas = await import('/static/lib/canvas-state.js');
+            canvas.resummon();
+            return canvas.currentSnapshot();
+        }""",
+            conv_id,
+        )
+        assert snap["visible"] is True
+        assert snap["activeTabId"] == reading_tab
+        page.wait_for_function("() => document.querySelectorAll('.canvas-tab').length === 3")
+
+
 def test_browser_canvas_resize_drag_survives_iframe(built_static, chromium, config):
     """The canvas divider keeps tracking after the pointer enters an iframe (#1577).
 

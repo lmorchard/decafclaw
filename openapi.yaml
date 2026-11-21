@@ -2319,6 +2319,10 @@ paths:
                   - type: string
                   - type: 'null'
                   title: Label
+                background:
+                  default: false
+                  title: Background
+                  type: boolean
               required:
               - widget_type
               - data

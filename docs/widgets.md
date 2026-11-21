@@ -365,8 +365,11 @@ returned by `canvas_new_tab` and required as arguments by the mutating
 tools — the implicit active-tab model from Phase 3 is gone. See
 [Context Composer](context-composer.md#canvas-tools) for descriptions.
 
-- `canvas_new_tab(widget_type, data, label?, artifact_id?)` — append a new
-  tab; set it active; return `tab_id` in `ToolResult.data["tab_id"]`.
+- `canvas_new_tab(widget_type, data, label?, artifact_id?, background?)` —
+  append a new tab; return `tab_id` in `ToolResult.data["tab_id"]`.
+  Foreground (default) selects it and reveals the panel. `background=true`
+  keeps the current selection and a dismissed panel dismissed; an empty
+  canvas selects the new tab but stays hidden until opened.
   A `markdown_document` tab also gets a durable `artifact_id` (see below).
   Passing `artifact_id` (and no `widget_type`/`data`) reopens that artifact
   in a fresh tab.
