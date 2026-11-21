@@ -227,11 +227,25 @@ Use `cwd` instead of `cd <path> && <command>`: chained commands bypass atomic al
 
 `shell` and `shell_background_start` take an optional `purpose`: a short statement of what the agent is trying to accomplish. The purpose is **untrusted metadata**, not a permission grant — Tier 1 blocks and sensitive-command confirmations are unaffected no matter how benign the stated purpose is. It feeds three places:
 
-- **Aux auto-approval judge.** The prompt includes `Stated Purpose` and instructs the judge to treat a command that contradicts its purpose as high risk. It also carries a **native tool index** (`workspace_read`, `workspace_search`, `workspace_edit`, `web_fetch`, `vault_search`, …): when a native tool cleanly covers the purpose, the judge declines auto-approval and names that tool in `feedback` instead of approving a raw `grep`/`cat`/`sed`/`curl`.
+- **Aux auto-approval judge.** The prompt includes `Stated Purpose` and instructs the judge to treat a command that contradicts its purpose as high risk. It also carries a **native tool index** generated from the live registry for that turn (`workspace_read`, `workspace_search`, `workspace_outline`, `workspace_edit`, `web_fetch`, `vault_search`, MCP tools, activated skill tools, …): when a native tool cleanly covers the purpose, the judge declines auto-approval and names that tool in `feedback` instead of approving a raw `grep`/`cat`/`sed`/`curl`. Active tools are grouped by category; deferred tools (not loaded this turn) are listed separately so the judge can say "call `tool_search` first". Unknown tools land under "Other" rather than disappearing.
 - **Tier 2 classifier.** `evaluate_command_llm(purpose=...)` shows the stated purpose to the security classifier and asks it to flag command/purpose conflicts as high risk.
 - **Human confirmation.** The web card and the Mattermost post show the purpose next to the command, collapsed to one bounded line (mention-neutralized in Mattermost) so agent-supplied text cannot inject prompt lines or forge card content.
 
 A denial may carry `feedback` — the judge's safer-alternative advice, or the human's. The tool result becomes `[error: command denied: <reason>. Feedback: <feedback>]`, so the agent can self-correct in the same turn. The standing guidance in `AGENT.md` tells it to treat denial feedback as guidance, not a failure.
+
+#### Redirect before interrupting the human (#1626)
+
+A judge decline **with usable `feedback`** does not prompt a human on the first offense. `check_shell_approval` returns a redirect `ToolResult` immediately:
+
+```
+[error: command not run — no approval requested yet. Feedback: <judge feedback>
+This is the only redirect for this command; if you repeat it, a human will be asked.]
+```
+
+- **Budget.** One redirect per `(command, cwd, purpose)` fingerprint per turn (reusing `loop_breaker.fingerprint`), capped at 3 redirects per turn as a backstop. A repeated command, or a fourth unrelated one, falls through to the normal confirmation. The budget lives on `ctx.tools.shell_redirect_fingerprints`, which `fork_for_tool_call` shares across concurrent `shell` / `shell_background_start` calls; a new turn builds a new `Context`, so it never persists.
+- **Unattended turns.** A redirect-eligible decline returns the redirect instead of the hard "unattended turn" denial, so the agent can self-correct with nobody present. A repeat denies with the judge's feedback attached.
+- **Second offense.** The confirmation card carries both the judge's `decline_reason` and its `feedback` (`action_data.feedback`) — the web card renders "Suggested alternative:", the Mattermost card renders `> **Suggested alternative:**` — so the human sees what was already suggested and can overrule it.
+- The redirect keeps the `[error` prefix, so `agent.py` still counts it toward the loop breaker's error/thrash accounting. A stated purpose never buys a redirect past a Tier 1 block or a security-monitor `ASK` confirmation; those still prompt.
 
 Feedback collection by transport:
 - **Web UI:** the confirmation card has an optional feedback field. `Deny` sends it as `feedback` on `confirm_response`.

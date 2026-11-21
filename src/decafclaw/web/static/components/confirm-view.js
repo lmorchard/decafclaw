@@ -234,6 +234,11 @@ export class ConfirmView extends LitElement {
                 <span class="confirm-decline-label">Declined:</span> ${c.decline_reason}
               </div>
             ` : ''}
+            ${c.action_data?.feedback ? html`
+              <div class="confirm-judge-feedback">
+                <span class="confirm-judge-feedback-label">Suggested alternative:</span> ${c.action_data.feedback}
+              </div>
+            ` : ''}
             ${c.suggested_rule ? html`
               <div class="confirm-rule-box">
                 <label for="rule-input-${confirmId}" class="confirm-rule-label">Suggested exception rule:</label>

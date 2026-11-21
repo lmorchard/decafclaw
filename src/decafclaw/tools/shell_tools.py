@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from decafclaw.conversation_paths import conversation_dir
+from decafclaw.loop_breaker import fingerprint
 from decafclaw.output_truncation import format_size, tail_cut_to_bytes, truncate_tail, truncation_note
 from decafclaw.security_monitor import SecurityStatus, evaluate_command, evaluate_command_llm
 from decafclaw.shell_presets import (
@@ -571,17 +572,239 @@ def _finalize_denial(ctx: "Context", result: dict, *, command: str, purpose: str
     return result
 
 
-# Native tools the judge can deflect a shell command to (#1559 addendum). Kept
-# as one index so the prompt stays short and the names stay discoverable in
-# tests; only tools that are actually registered belong here.
-_NATIVE_TOOL_INDEX = (
-    "File reading/inspection: workspace_read, workspace_search, workspace_glob, workspace_list\n"
-    "File editing/mutation: workspace_edit, workspace_write, workspace_append, workspace_replace_lines\n"
-    "Workspace comparison: workspace_diff\n"
-    "Network / HTTP: web_fetch, http_request\n"
-    "Persistent knowledge: vault_read, vault_write, vault_search\n"
-    "System clock: current_time"
+# A judge-declined command gets one same-turn redirect before a human is
+# interrupted (#1626). The budget is one redirect per (command, purpose)
+# fingerprint per turn, with a small total cap as a backstop against a model
+# spraying unrelated commands instead of correcting itself.
+_MAX_SHELL_REDIRECTS_PER_TURN = 3
+
+# Deflecting `shell` back to `shell` is meaningless, and `tool_search` is
+# named separately as the way to reach deferred tools.
+_NATIVE_INDEX_EXCLUDED = frozenset({"shell", "shell_background_start", "tool_search"})
+
+# Category map for the generated native-tool index (#1626). Unknown tools are
+# still listed under "Other": omission, not untidiness, is the failure this
+# index exists to prevent. Adding a tool to the registry does not require
+# touching this map; it only decides where a known name is grouped.
+_NATIVE_TOOL_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "File reading/inspection",
+        (
+            "workspace_read",
+            "workspace_search",
+            "workspace_glob",
+            "workspace_list",
+            "workspace_outline",
+            "workspace_diff",
+            "workspace_preview_markdown",
+            "tool_output_read",
+            "list_attachments",
+            "get_attachment",
+        ),
+    ),
+    (
+        "File editing/mutation",
+        (
+            "workspace_edit",
+            "workspace_write",
+            "workspace_append",
+            "workspace_insert",
+            "workspace_replace_lines",
+            "workspace_move",
+            "workspace_copy",
+            "workspace_mkdir",
+            "workspace_delete",
+        ),
+    ),
+    ("Network / HTTP", ("web_fetch", "web_search", "http_request")),
+    (
+        "Persistent knowledge",
+        (
+            "vault_read",
+            "vault_write",
+            "vault_search",
+            "vault_list",
+            "vault_recent",
+            "vault_tags",
+            "vault_journal_append",
+        ),
+    ),
+    ("Notes / conversation", ("notes_append", "notes_read", "conversation_search", "conversation_compact")),
+    (
+        "Administration",
+        (
+            "admin_read",
+            "admin_list",
+            "admin_edit",
+            "admin_write",
+            "admin_replace_lines",
+            "admin_delete",
+            "admin_restart",
+            "update_system_prompt",
+        ),
+    ),
+    (
+        "Background jobs",
+        ("shell_background_status", "shell_background_stop", "shell_background_list", "delegate_task"),
+    ),
+    ("System clock", ("current_time",)),
 )
+_NATIVE_TOOL_CATEGORY_BY_NAME = {name: category for category, names in _NATIVE_TOOL_CATEGORIES for name in names}
+_NATIVE_TOOL_CATEGORY_ORDER = tuple(category for category, _ in _NATIVE_TOOL_CATEGORIES)
+
+# Cheap read-command heuristic: when the declined command looks like
+# inspection, the inspection tools lead the index so the judge's suggestion is
+# the obvious one.
+_READ_COMMANDS = frozenset(
+    {
+        "grep",
+        "egrep",
+        "fgrep",
+        "rg",
+        "ag",
+        "ack",
+        "find",
+        "fd",
+        "cat",
+        "head",
+        "tail",
+        "ls",
+        "tree",
+        "wc",
+        "less",
+        "more",
+        "stat",
+        "file",
+        "sort",
+        "uniq",
+        "cut",
+        "awk",
+        "sed",
+    }
+)
+
+
+def _command_head(command: str) -> str:
+    """First word of a command, with any path prefix removed."""
+    stripped = (command or "").strip()
+    if not stripped:
+        return ""
+    return stripped.split(maxsplit=1)[0].rsplit("/", 1)[-1]
+
+
+def _reachable_tool_names(ctx: "Context") -> tuple[list[str], list[str]]:
+    """Names of active and deferred tools the agent can reach this turn.
+
+    ``collect_all_tool_defs`` is the authoritative gatherer (core + activated
+    skills + bundled-skill natives + MCP + extra). Deferred members come from
+    the turn's budget classification, and the same allowed/disallowed filters
+    ``build_tool_list`` applies are applied here — the judge must never be
+    told to use a tool this turn cannot reach.
+    """
+    # Function-level import: decafclaw.tools (which this module is part of)
+    # imports shell_tools at package load, so a module-level import cycles.
+    from decafclaw.tool_definitions import collect_all_tool_defs
+
+    deferred = {td.get("function", {}).get("name") for td in ctx.tools.deferred_pool}
+    allowed = ctx.tools.allowed
+    disallowed = ctx.tools.disallowed or set()
+    active: list[str] = []
+    deferred_names: list[str] = []
+    seen: set[str] = set()
+    for td in collect_all_tool_defs(ctx):
+        name = td.get("function", {}).get("name", "")
+        if not name or name in seen or name in _NATIVE_INDEX_EXCLUDED:
+            continue
+        seen.add(name)
+        if allowed is not None and name not in allowed:
+            continue
+        if name in disallowed:
+            continue
+        (deferred_names if name in deferred else active).append(name)
+    return sorted(active), sorted(deferred_names)
+
+
+def _group_names_by_category(names: list[str]) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for name in names:
+        category = _NATIVE_TOOL_CATEGORY_BY_NAME.get(name, "Other")
+        groups.setdefault(category, []).append(name)
+    return groups
+
+
+def _format_tool_groups(names: list[str], *, read_first: bool) -> list[str]:
+    """Render one line per category; every reachable name survives.
+
+    Names are never truncated. The index is bounded by the registry — the
+    agent is already shown every one of these tools as a schema — and an
+    elided tool is exactly the dead-end redirect this index exists to prevent.
+    """
+    groups = _group_names_by_category(names)
+    order = list(_NATIVE_TOOL_CATEGORY_ORDER)
+    if read_first:
+        order.remove("File reading/inspection")
+        order.insert(0, "File reading/inspection")
+    order.append("Other")
+    lines: list[str] = []
+    for category in order:
+        members = groups.pop(category, [])
+        if not members:
+            continue
+        # Registry names are not free text, but a workspace skill controls its
+        # own tool names; collapse line breaks so the judge prompt cannot gain
+        # instruction-shaped lines (#1626).
+        clean = [_single_line(member, limit=200) for member in members]
+        lines.append(f"{category}: {', '.join(clean)}")
+    return lines
+
+
+def build_native_tool_index(ctx: "Context", command: str = "") -> str:
+    """Render the aux judge's tool index from the live registry (#1626).
+
+    Active tools are grouped by category; deferred tools are listed separately
+    so the judge can tell the agent whether a suggestion needs ``tool_search``
+    first. Unknown-but-present tools land in "Other" instead of vanishing.
+    """
+    active, deferred = _reachable_tool_names(ctx)
+    read_first = _command_head(command) in _READ_COMMANDS
+    lines = _format_tool_groups(active, read_first=read_first)
+    if deferred:
+        lines.append("Deferred (not loaded yet; call tool_search to fetch):")
+        lines.extend(_format_tool_groups(deferred, read_first=read_first))
+    return "\n".join(lines)
+
+
+def _redirect_text(feedback: str) -> str:
+    """Tool result for a judge redirect (#1626).
+
+    Keeps the ``[error`` prefix: ``agent.py`` classifies tool results that way
+    and feeds them to the loop breaker's error accounting. A redirect is a
+    failed call the agent should correct, not a success.
+    """
+    return (
+        "[error: command not run — no approval requested yet. "
+        f"Feedback: {_single_line(feedback, limit=2000)} "
+        "This is the only redirect for this command; if you repeat it, a human will be asked.]"
+    )
+
+
+def _claim_shell_redirect(ctx: "Context", *, command: str, cwd: str | None, purpose: str) -> bool:
+    """Claim this (command, purpose) fingerprint's one redirect for the turn.
+
+    The claim is recorded before returning with no await in between, so two
+    concurrent shell calls cannot both claim the same fingerprint. The budget
+    object lives on ``ctx.tools`` and is shared by ``fork_for_tool_call``
+    children; a new turn builds a new Context, so it starts empty.
+    """
+    fp = fingerprint(
+        "shell",
+        {"command": command, "cwd": cwd or "", "purpose": _single_line(purpose)},
+    )
+    claimed = ctx.tools.shell_redirect_fingerprints
+    if fp in claimed or len(claimed) >= _MAX_SHELL_REDIRECTS_PER_TURN:
+        return False
+    claimed.add(fp)
+    return True
 
 
 def build_aux_approval_prompt(ctx: "Context", command: str, cwd: str | None = None, purpose: str = "") -> str:
@@ -589,6 +812,7 @@ def build_aux_approval_prompt(ctx: "Context", command: str, cwd: str | None = No
     guidelines = resolve_aux_approval_guidance(ctx)
     working_dir = cwd or str(ctx.config.workspace_path)
     stated_purpose = _single_line(purpose) or "(none provided)"
+    native_tool_index = build_native_tool_index(ctx, command)
 
     base = (
         "You are evaluating a shell command for execution.\n"
@@ -601,8 +825,10 @@ def build_aux_approval_prompt(ctx: "Context", command: str, cwd: str | None = No
         "Prefer the native tools below when they can satisfy the stated purpose; deflect instead of approving a "
         "raw shell command that duplicates one (for example, use workspace_search instead of grep/find, "
         "workspace_read instead of cat, workspace_edit instead of sed, web_fetch instead of curl).\n"
+        "The index reflects the tools reachable this turn. Tools under 'Deferred' are not loaded yet: "
+        "tell the agent to call tool_search before using one.\n"
         "Native tool index:\n"
-        f"{_NATIVE_TOOL_INDEX}\n"
+        f"{native_tool_index}\n"
         "Return a JSON object: "
         '{"auto_approve": bool, "reason": "<string>", "risk": "low" | "medium" | "high", '
         '"suggested_rule": "<string or null>", "feedback": "<string or null>", '
@@ -659,7 +885,11 @@ async def check_shell_approval(
     safer-alternative advice or the human reviewer's — which the tool result
     surfaces back to the agent.
 
-    Returns {"approved": True} if auto-approved, or the user's confirmation result.
+    Optional return ``{"approved": False, "redirected": True, "feedback": ...}``
+    means the aux judge declined with actionable advice and nobody was
+    prompted: the caller must return the redirect text, not execute the
+    command. Everything else is ``{"approved": True}`` or the user's
+    confirmation result.
     """
     # Show the working directory only when it differs from the workspace root:
     # the same command text means something different in a subproject. It rides
@@ -846,6 +1076,18 @@ async def check_shell_approval(
         except Exception as e:
             log.warning(f"[{tool_name}] aux LLM approval failed, falling through: {e}")
 
+    # Self-correction before interruption (#1626): a judge decline carrying
+    # actionable advice returns a redirect instead of prompting a human. One
+    # redirect per (command, purpose) fingerprint per turn — a repeat, or a
+    # fourth unrelated redirect, falls through and the human decides.
+    if decline_feedback and _claim_shell_redirect(ctx, command=command, cwd=cwd, purpose=purpose):
+        log.info(f"[{tool_name}] redirecting agent after aux-judge decline: {command}")
+        return {
+            "approved": False,
+            "redirected": True,
+            "feedback": _single_line(decline_feedback, limit=2000),
+        }
+
     suggested_pattern = _suggest_pattern(command)
     if ctx.is_unattended:
         # Nobody can answer a prompt on this turn: it would block for the 60s
@@ -976,6 +1218,9 @@ async def tool_shell(ctx: "Context", command: str, cwd: str | None = None, purpo
     log.info(f"[tool:shell] requesting confirmation for: {command} (cwd: {workdir})")
 
     result = await check_shell_approval(ctx, command, tool_name="shell", cwd=str(workdir), purpose=purpose)
+    if result.get("redirected"):
+        log.info(f"[tool:shell] redirecting instead of prompting: {command}")
+        return ToolResult(text=_redirect_text(str(result.get("feedback") or "")))
     if not result.get("approved"):
         reason = result.get("reason") or "denied by user"
         feedback = str(result.get("feedback") or "").strip()

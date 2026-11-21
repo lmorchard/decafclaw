@@ -666,6 +666,7 @@ class MattermostClient:
                     suggested_rule=suggested_rule,
                     cwd=action_data.get("cwd", ""),
                     purpose=action_data.get("purpose", ""),
+                    feedback=action_data.get("feedback", ""),
                 )
 
                 # Start emoji polling routed through the manager
@@ -882,6 +883,7 @@ class MattermostClient:
                     suggested_rule=action_data.get("suggested_rule", ""),
                     cwd=action_data.get("cwd", ""),
                     purpose=action_data.get("purpose", ""),
+                    feedback=action_data.get("feedback", ""),
                 )
                 if confirm_post_id and manager:
                     asyncio.create_task(

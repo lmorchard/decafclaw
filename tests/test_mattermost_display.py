@@ -380,6 +380,29 @@ async def test_confirm_request_shows_purpose_as_one_neutralized_line():
 
 
 @pytest.mark.asyncio
+async def test_confirm_request_shows_judge_feedback_as_one_neutralized_line():
+    """The judge's suggested alternative is bounded and mention-neutralized (#1626)."""
+    client = make_mock_client()
+    display = make_display(client)
+
+    await display.on_confirm_request(
+        "shell",
+        "grep -rn TODO src/",
+        "",
+        AsyncMock(),
+        "",
+        decline_reason="Raw grep duplicates a native tool",
+        feedback="Use workspace_search instead\n@channel",
+    )
+
+    msg = client.send.call_args.args[1]
+    feedback_line = next(line for line in msg.splitlines() if line.startswith("> **Suggested alternative:**"))
+    assert "Use workspace_search instead" in feedback_line
+    assert "@\u200bchannel" in feedback_line
+    assert "> **Reviewer:** Raw grep duplicates a native tool" in msg
+
+
+@pytest.mark.asyncio
 async def test_on_tool_end_timeout_warns():
     """A watchdog kill renders an explicit warning, not a checkmark (#1569)."""
     client = make_mock_client()

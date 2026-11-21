@@ -64,6 +64,11 @@ class ToolState:
     preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
     llm_approved_shell_patterns: list[str] = field(default_factory=list)
+    # Command fingerprints that already received their one aux-judge redirect
+    # this turn (#1626). A fresh turn builds a fresh Context, so this resets
+    # naturally; `fork_for_tool_call` shares the set object across concurrent
+    # shell calls, which is what keeps the budget coherent. Never persisted.
+    shell_redirect_fingerprints: set[str] = field(default_factory=set)
     active_aux_approval_presets: list[str] = field(default_factory=list)
     disabled_aux_approval_presets: list[str] = field(default_factory=list)
     aux_approval_guidance: list[str] = field(default_factory=list)

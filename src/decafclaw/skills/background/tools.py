@@ -764,7 +764,7 @@ async def tool_shell_background_start(
     log.info(f"[tool:shell_background_start] command={command[:80]}")
     preset = parse_progress_preset(progress_parser)
 
-    from decafclaw.tools.shell_tools import check_shell_approval
+    from decafclaw.tools.shell_tools import _redirect_text, check_shell_approval
 
     result = await check_shell_approval(
         ctx,
@@ -773,6 +773,11 @@ async def tool_shell_background_start(
         message=f"Background process: `{command}`",
         purpose=purpose,
     )
+    if result.get("redirected"):
+        return ToolResult(
+            text=_redirect_text(str(result.get("feedback") or "")),
+            data={"status": "error"},
+        )
     if not result.get("approved"):
         reason = result.get("reason") or "background process was denied by user"
         feedback = str(result.get("feedback") or "").strip()

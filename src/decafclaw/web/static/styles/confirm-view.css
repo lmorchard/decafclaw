@@ -119,6 +119,21 @@
   color: var(--pico-color);
 }
 
+.confirm-judge-feedback {
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.1);
+  border-left: 3px solid #3b82f6;
+  font-size: 0.8rem;
+  color: var(--pico-color);
+}
+
+.confirm-judge-feedback-label {
+  font-weight: 600;
+  color: var(--pico-color);
+}
+
 .confirm-rule-box {
   margin-top: 0.5rem;
 }
