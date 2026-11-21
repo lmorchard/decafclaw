@@ -87,7 +87,7 @@ An audit of all 63 built-in tools across 19 modules and all capability/skill too
 | | `ask_user_text` | Prompt text + fields | Interactive form input | `text_input` (Bundled) | Done |
 | | `current_time` | ISO timestamp text | None | None / Text | Low |
 | | `wait` | Waiting confirmation text | None | None / Text | Low |
-| **http** | `web_fetch` | Raw HTML/text response | Syntax-highlighted HTML or rendered doc | `code_block` / `markdown_document` | Medium |
+| **http** | `web_fetch` | Status, headers, title, byte count, time | HTTP fetch outcome card | `web_fetch_result` (Bundled) | Done |
 | | `http_request` | Status, headers, body text | HTTP Inspector with tabs | `json_view` / Proposed `multi_tab_view` | Medium |
 | **attachment**| `list_attachments` | JSON array string | File attachments table | `data_table` | Medium |
 | | `get_attachment` | Base64 or markdown image | Media display card | `code_block` / Image | Low |
@@ -197,7 +197,7 @@ The `code_block` widget renders syntax-highlighted code with line numbers, copy 
   "filename": "hello.py"
 }
 ```
-- **Candidates**: `workspace_read` for code files, `web_fetch` for raw HTML/JS/CSS, `shell` for complex script execution outputs.
+- **Candidates**: `workspace_read` for code files, `shell` for complex script execution outputs. (Note: `web_fetch` was migrated from `code_block` to the purpose-built `web_fetch_result` widget in #1625 to eliminate raw HTML noise).
 
 ### 3.5 `markdown_document`
 The `markdown_document` widget renders formatted Markdown with inline collapsing and canvas tab editing:

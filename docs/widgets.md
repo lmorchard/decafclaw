@@ -72,6 +72,10 @@ Post-#414:
 
 - **`progress_tracker`** — quiet multi-step status list; inline, canvas, and sticky modes. Display-only, snapshot-rendered (each update replaces the full step list). Data shape: `{steps: [{label, status, note?}], title?, summary?}` where `status ∈ pending | in_progress | done | failed | skipped`. Auto-emitted into the sticky slot by the checklist tools and the project skill; can also be pinned manually via `widget_pin_sticky`. See [progress_tracker](#progress_tracker-widget).
 
+Post-#1625:
+
+- **`web_fetch_result`** — compact HTTP fetch outcome card; inline mode. Shows HTTP status code + reason phrase with tone coloring, page title (for HTML), target/redirect URLs, content type, formatted byte size, and duration. Emitted automatically by `web_fetch`. The raw body is deliberately excluded from the widget payload to prevent source dumps; it remains accessible via the tool row's raw result disclosure. See [web_fetch_result](#web_fetch_result-widget).
+
 ## Adding a new widget
 
 Widgets are extensible by admins without changing DecafClaw's core. Each
@@ -687,6 +691,40 @@ occupies the slot, and a producer clearing its own tracker (checklist
 completion/abort, project leaving `executing`) clears the slot regardless of
 who pinned it.
 
+## `web_fetch_result` widget
+
+Bundled at `src/decafclaw/web/static/widgets/web_fetch_result/`. A compact HTTP
+fetch outcome card authored to solve #1625: previously, `web_fetch` attached a
+`code_block` widget containing the raw HTML markup, creating significant
+visual noise.
+
+The `web_fetch_result` widget displays:
+- HTTP status code and reason phrase (e.g. `200 OK`, `301 Moved Permanently`) with semantic tone coloring (green for 2xx, amber for 3xx, red for 4xx/5xx).
+- Extracted `<title>` when fetching HTML documents.
+- Shortened target URL and explicit redirect target when redirects were followed.
+- Metadata line: bare media type, humanized payload size (e.g. `48.2 KB`), and wall-clock duration (`ms`).
+- A `truncated` warning badge if the response exceeded the 50 KB body cap.
+
+### Data shape
+
+```json
+{
+  "status": 200,
+  "status_text": "OK",
+  "url": "https://example.com/page",
+  "final_url": "https://example.com/page",
+  "content_type": "text/html",
+  "bytes": 48213,
+  "elapsed_ms": 320,
+  "truncated": false,
+  "title": "Example Page Title"
+}
+```
+
+The response body is intentionally omitted from the widget data. The raw body
+is returned in `ToolResult.text` (which the LLM sees) and remains viewable in
+the web UI by expanding the tool row's built-in "Show raw result" disclosure.
+
 ## Sticky slot
 
 A single-slot, display-only widget surface pinned directly above the
@@ -772,6 +810,7 @@ For a comprehensive audit of existing built-in and capability tools that can lev
 - `src/decafclaw/web/static/widgets/code_block/` — code_block widget descriptor + Lit component
 - `src/decafclaw/web/static/widgets/iframe_sandbox/` — iframe_sandbox widget descriptor + Lit component
 - `src/decafclaw/web/static/widgets/progress_tracker/` — progress_tracker widget descriptor + Lit component; auto-emit callers in `tools/checklist_tools.py` and `skills/project/tools.py`
+- `src/decafclaw/web/static/widgets/web_fetch_result/` — web_fetch_result widget descriptor + Lit component (#1625)
 - `vendor/bundle/highlight.js` — bundled hljs core + ~20 languages + dual themes
 - `src/decafclaw/web/static/components/widgets/widget-host.js` — frontend host
 - `src/decafclaw/web/static/lib/widget-catalog.js` — catalog client
