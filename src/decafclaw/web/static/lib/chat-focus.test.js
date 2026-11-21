@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { shouldFocusChatInput } from './chat-focus.js';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { isMobileKeyboardDevice, shouldFocusChatInput } from './chat-focus.js';
 
 /**
  * Build a chat-input stand-in containing a textarea, plus a sibling input
@@ -75,10 +75,40 @@ describe('shouldFocusChatInput', () => {
     expect(shouldFocusChatInput({ ...base(), readOnly: true, turnFinished: true })).toBe(false);
   });
 
+  it('never focuses on a mobile keyboard device', () => {
+    // The soft keyboard would cover half the transcript. Every automatic
+    // focus path waits for an explicit tap instead.
+    expect(shouldFocusChatInput({ ...base(), isMobile: true, convChanged: true })).toBe(false);
+    expect(shouldFocusChatInput({ ...base(), isMobile: true, turnFinished: true })).toBe(false);
+    dom.composer.focus();
+    expect(shouldFocusChatInput({ ...base(), isMobile: true, turnFinished: true })).toBe(false);
+  });
+
   it('tolerates a missing chat input element', () => {
     dom.composer.focus();
     // No element to compare containment against — the focused composer now
     // reads as "somewhere else", so a turn end must not yank it.
     expect(shouldFocusChatInput({ ...base(), chatInputEl: null, turnFinished: true })).toBe(false);
+  });
+});
+
+describe('isMobileKeyboardDevice', () => {
+  const original = window.matchMedia;
+
+  afterEach(() => { window.matchMedia = original; });
+
+  it('is true on a coarse-primary-pointer device', () => {
+    window.matchMedia = vi.fn((query) => ({ matches: query === '(pointer: coarse)' }));
+    expect(isMobileKeyboardDevice()).toBe(true);
+  });
+
+  it('is false on a fine-pointer (desktop) device', () => {
+    window.matchMedia = vi.fn(() => ({ matches: false }));
+    expect(isMobileKeyboardDevice()).toBe(false);
+  });
+
+  it('tolerates a missing matchMedia implementation', () => {
+    /** @type {any} */ (window).matchMedia = undefined;
+    expect(isMobileKeyboardDevice()).toBe(false);
   });
 });

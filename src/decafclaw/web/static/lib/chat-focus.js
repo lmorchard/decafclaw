@@ -28,8 +28,24 @@ function isFocusParkedElsewhere(chatInputEl) {
 }
 
 /**
+ * Is this a touch-primary device that opens an on-screen keyboard when the
+ * composer takes focus?
+ *
+ * Primary-pointer, not viewport width: a landscape phone is wider than the
+ * 639px mobile breakpoint but its keyboard still covers the transcript, while
+ * a narrow desktop window keeps its hardware keyboard and tolerates autofocus.
+ *
+ * @returns {boolean}
+ */
+export function isMobileKeyboardDevice() {
+  return window.matchMedia?.('(pointer: coarse)').matches ?? false;
+}
+
+/**
  * Decide whether a store `change` should move focus into the chat input.
  *
+ * - Mobile keyboard devices: never. The keyboard would cover the transcript;
+ *   an explicit tap (or a keyboard shortcut) is the only way in.
  * - Conversation switch: always focus. It only happens from an explicit
  *   navigation, and landing in the composer is the whole point.
  * - Agent finished a turn: focus only if it wouldn't steal — the user may
@@ -41,10 +57,14 @@ function isFocusParkedElsewhere(chatInputEl) {
  * @param {boolean} opts.convChanged  - The current conversation id just changed
  * @param {boolean} opts.turnFinished - The agent went busy → idle on this change
  * @param {Element|null} [opts.chatInputEl] - The chat-input element, for focus containment
+ * @param {boolean} [opts.isMobile]   - Touch-primary device with an on-screen keyboard
  * @returns {boolean}
  */
-export function shouldFocusChatInput({ readOnly, convChanged, turnFinished, chatInputEl = null }) {
+export function shouldFocusChatInput({
+  readOnly, convChanged, turnFinished, chatInputEl = null, isMobile = false,
+}) {
   if (readOnly) return false;
+  if (isMobile) return false;
   if (convChanged) return true;
   if (!turnFinished) return false;
   return !isFocusParkedElsewhere(chatInputEl);
