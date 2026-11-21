@@ -38,6 +38,13 @@ Real-time streaming chat over WebSocket. Messages stream token-by-token as the L
 - Cancel in-progress turns
 - Confirmation prompts for shell commands and skill activation
 
+**In-session links (#1485).** Markdown links rendered in a conversation open
+in the side panel instead of a new tab. `[[Page]]` and `vault://Notes/Page`
+open the Vault editor; `workspace://drafts/post.md` opens the Files editor.
+A modified click (Cmd/Ctrl/Shift/Alt or middle click) falls through to the
+link's href, so it still opens in a new tab — the raw `workspace://` target is
+the workspace file endpoint, which downloads non-text files.
+
 **Switching mid-turn.** The server keeps the current unarchived assistant
 segment (text and thinking) per conversation, resetting it whenever the agent
 loop archives an assistant message. A full history load subscribes the socket
