@@ -6,7 +6,7 @@
 - Worktree: `.claude/worktrees/issue-1690-sed-regex-paths`
 - Branch: `issue-1690-sed-regex-paths`, based on `origin/main` @ `6b59bddc`
 - Goal: stop the security monitor from treating filter-command scripts/patterns that start with `/` as filesystem paths.
-- Status: implementation and focused tests complete; docs updated. Next: `make fmt`, `make check` (expect the known host-metrics failures), commit, publish draft.
+- Status: implementation, docs, and PR #1711 complete; same-model self-review found option-cluster gaps, now fixed. Next: ready submission and CI follow-up.
 
 ## Decisions
 
@@ -28,3 +28,9 @@
   shell timing failures appeared only while a second full suite ran concurrently; both
   passed immediately when rerun alone (`test_shell_auto_background`,
   `test_shell_output_collection`).
+- Same-model self-review found two gaps in the first implementation:
+  (1) `sed -f script.sed /etc/passwd` skipped the positional data file because a
+  program came from `-f`; (2) clustered/long option values (`sed -ne`, `grep -ie`,
+  `grep -m 1`, `grep --include X`) shifted the pattern into the file slot. Both fixed
+  with `_short_option_value` and regression cases; final shell suites → 325 passed,
+  `ruff`/`pyright` clean.
