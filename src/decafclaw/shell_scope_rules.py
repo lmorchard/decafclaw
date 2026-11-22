@@ -14,7 +14,7 @@ Two files with different trust levels:
   reads it and proposes rules; a human still confirms the ``admin_write``.
 
 Both live under ``config.agent_path`` (``data/{agent_id}/``), next to
-``shell_allow_patterns.json`` and ``approval_state/`` — never under the
+``shell_allow_patterns.json`` — never under the
 agent-writable workspace or the vault.
 
 Rule key: the activity scope (``activity.derive_domains``: repo/project label)

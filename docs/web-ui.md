@@ -430,51 +430,6 @@ sidebar's containing block instead of being clipped by it.
 
 See [Context Composer](context-composer.md#context-inspection) for details.
 
-### Shell approval panel
-
-The per-conversation shell auto-approval panel (`<shell-approval-panel>`, #1159) gives the
-human a single view of why a conversation's shell commands are — or aren't — auto-approved,
-and the controls to change it:
-
-- **Conversation rules** (editable): the conversation's "remember why" rules added via
-  the "Approve + remember why" confirmation path. Add or delete rules here; each
-  add/remove clears the conversation's cached reviewer approval pattern so the next
-  prompt re-derives.
-  - **Bulk edit** (#1267): the **Edit** button turns the list into a draft — every
-    rule becomes editable, with add and remove row controls. **Save** replaces the
-    full list atomically in one action; **Cancel** discards it. While editing, the
-    single-rule actions are hidden — the draft is the only writer.
-  - **Condense** (#1267): in edit mode, asks the resolved condensation model to
-    rewrite the current rules into fewer, more general summary rules. The proposal
-    lands in the draft with before/after markers (added rows highlighted, dropped
-    rules struck through). Saving a condensed draft is an ordinary bulk save.
-    Condensation never mutates state — rules on disk and cached patterns change only
-    when the user saves; a model or parse error keeps the draft as-is and shows the
-    server's error.
-- **Preset rules** (read-only): the active (not disabled) situational presets with source
-  (`builtin` / `config` / `custom`) and activation path.
-- **Always-on config guidance** (read-only): the static `shell.aux_approval_guidance`
-  from the agent config.
-- **Approved command patterns** (cached): the conversation's cached reviewer approvals;
-  revoke one to fall back to the reviewer.
-- **Promote to custom preset**: the 🏆 button on a conversation rule opens a form that
-  shows the rule being copied, then offers existing custom presets plus a new-name field.
-  On success the panel confirms what was promoted into which preset and reloads the shared
-  presets store, so the promote picker and Config → Shell Presets offer the new preset
-  immediately. A promoted preset stays inactive — activation is a separate action.
-
-Edits that change the rules go through the conversation-scoped REST endpoints
-(`PUT /api/conversations/{id}/shell-approval/rules`, `DELETE .../rules`,
-`PUT .../rules/replace`, `POST .../condense`, `DELETE .../patterns`,
-`POST .../promote`); rule add/remove and full-list replace clear the cached pattern
-server-side, while condense is read-only with respect to state. The panel portals to a
-body-level `shell-approval-panel-mount` div (the
-[portal pattern](web-ui-mobile.md#no-position-fixed-inside-transformed-ancestors)).
-Opened via the shell-approval gear in the chat controls' conversation-action cluster
-(compact 32px sizing, level with the terminal and side-question buttons) or from the
-sidebar trigger when the controls strip is absent. Both triggers share the
-`.shell-approval-open-btn` class the panel listens for.
-
 ### Copy conversation
 
 The conversation copy buttons live inside the context inspector raw pane, not
@@ -643,16 +598,14 @@ Lit web components in `src/decafclaw/web/static/`:
 | `chat-view` | `components/chat-view.js` | Main chat area with message list |
 | `chat-input` | `components/chat-input.js` | Message input with file upload and command autocomplete |
 | `chat-message` | `components/chat-message.js` | Individual message rendering |
-| `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/mode/context controls plus the conversation action cluster (issue #1190); on mobile (≤639px) the strip is replaced by the conversation-actions menu (issue #1192) |
+| `chat-controls` | `components/chat-controls.js` | Conversation control strip: model/context controls plus the conversation action cluster (issue #1190); on mobile (≤639px) the strip is replaced by the conversation-actions menu (issue #1192) |
 | `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor (see [host contract](#the-wiki-editor-host-contract)) |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |
 | `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter strip/panel: view-mode summary + tags, edit-mode typed controls and raw YAML editor |
 | `context-inspector` | `components/context-inspector.js` | Context diagnostics popover |
-| `shell-approval-panel` | `components/shell-approval-panel.js` | Per-conversation shell auto-approval panel: editable conversation rules (with bulk-edit draft + LLM condensation, #1267), active preset rules, config guidance, cached approval patterns (#1159) |
 | `notification-inbox` | `components/notification-inbox.js` | Bell icon + dropdown inbox panel |
-| `config-panel` | `components/config-panel.js` | Admin config file editor & shell presets tab |
-| `preset-manager` | `components/preset-manager.js` | Shell auto-approval preset manager (list, create, edit, delete) |
+| `config-panel` | `components/config-panel.js` | Admin config file editor |
 | `confirm-view` | `components/confirm-view.js` | Confirmation dialog for tool approvals |
 | `login-view` | `components/login-view.js` | Login screen |
 | `canvas-panel` | `components/canvas-panel.js` | Canvas side panel and resummon pill |
@@ -842,33 +795,6 @@ See [Bookmarks](#bookmarks) for the UI.
 | `GET` | `/api/config/files` | List editable config files |
 | `GET` | `/api/config/files/{path}` | Read a config file |
 | `PUT` | `/api/config/files/{path}` | Write a config file |
-### Shell Approval Presets
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/shell-approval/presets` | List all presets with `name`, `rules: list[str]`, `source` (`builtin` \| `config` \| `custom`), and `shadows_config` |
-| `PUT` | `/api/shell-approval/presets/{name}` | Create or replace a custom preset's rules |
-| `DELETE` | `/api/shell-approval/presets/{name}` | Delete a custom preset |
-
-PUT and DELETE on built-in or config preset names return 400. Successful mutations clear reviewer approval caches in active in-memory conversations that reference the modified preset.
-
-### Shell approval panel (per-conversation)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/conversations/{id}/shell-approval` | Per-conversation approval view: `conversation_rules`, active `presets`, `config_guidance`, and `cached_patterns`. Always readable; never mutates state |
-| `PUT` | `/api/conversations/{id}/shell-approval/rules` | Add or replace a conversation rule. Body `{"rule": "..."}`. Clears the conversation's cached reviewer approval patterns |
-| `DELETE` | `/api/conversations/{id}/shell-approval/rules` | Remove one conversation rule. Body `{"rule": "..."}`. Clears the conversation's cached reviewer approval patterns |
-| `PUT` | `/api/conversations/{id}/shell-approval/rules/replace` | Atomically replace the conversation's full rule list (the bulk-edit save path). Body `{"rules": ["...", ...]}`. Clears the conversation's cached reviewer approval patterns |
-| `POST` | `/api/conversations/{id}/shell-approval/condense` | Propose condensed rules: a one-shot completion (no tools) on the resolved condensation model returns `{"rules": [...]}`. Never mutates state — rules and cached patterns are unchanged; the proposal lands in the panel's draft. 400 when there are no rules or the model output is unparseable |
-| `DELETE` | `/api/conversations/{id}/shell-approval/patterns` | Revoke one cached approval pattern. Body `{"pattern": "..."}` |
-| `POST` | `/api/conversations/{id}/shell-approval/promote` | Copy a conversation rule into a custom preset. Body `{"rule": "...", "preset": "..."}`. Appends without duplicate; creates a new custom preset; 400 for built-in or config preset names |
-
-Rule mutations (single-rule PUT/DELETE and full-list replace) and condense are
-rejected with 409 while the conversation is `busy` or `waiting` (an interactive
-turn owns the reviewer surface). The web UI panel disables its editable surfaces in
-those states.
-
 ### Notifications
 
 | Method | Endpoint | Description |
@@ -954,10 +880,16 @@ uses the adjacent TypeScript definitions, so changes to consumed response
 fields fail at the caller. The generated JavaScript bundle is excluded from
 TypeScript's input scan because its generated TypeScript source supplies the types.
 
-`make check-js` regenerates the client before checking frontend types.
-`make check` also runs the static module path tests after generation. These
-commands rebuild missing or outdated client output. Commit the generated
-schema, types, and bundle with changes to the API.
+The generator normalizes multi-method route operation IDs, which FastAPI
+otherwise derives from set iteration order and would flip on every run. The
+bundle opens with a `DO NOT EDIT` header naming the regeneration command.
+
+`make check-js` regenerates the client, then fails if any generated file
+differs from what is committed (`git diff` over the schema, client tree, and
+bundle) — the same pattern as `check-message-types`. `make check` also runs
+the static module path tests after generation. Commit the generated schema,
+types, and bundle with changes to the API; hand edits to generated files are
+drift.
 
 `sticky-state.js:setActiveConv()` also uses a generated method for
 `GET /api/sticky/{conv_id}`. Its identifier is a required string. The response

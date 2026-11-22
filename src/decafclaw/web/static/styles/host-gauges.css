@@ -1,0 +1,79 @@
+/* Host capacity gauges (VM 302) — companion to chat-controls.css */
+
+host-gauges {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+host-gauges .host-gauges {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color);
+  transition: opacity 0.2s ease;
+}
+
+/* A stale reading keeps its numbers visible but dimmed — better than blanking
+   the strip, since the last known values still orient the reader. */
+host-gauges .host-gauges.stale {
+  opacity: 0.55;
+}
+
+host-gauges .gauge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.2rem;
+  white-space: nowrap;
+  cursor: default;
+}
+
+host-gauges .gauge-label {
+  color: var(--pico-muted-color);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+host-gauges .gauge-value {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--pico-color);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+host-gauges .gauge.warn .gauge-value {
+  color: var(--pico-color-orange-500, #f59e0b);
+}
+
+host-gauges .gauge.danger .gauge-value {
+  color: var(--pico-del-color);
+}
+
+host-gauges .gauge.unknown .gauge-value {
+  color: var(--pico-muted-color);
+}
+
+host-gauges .host-gauges.error .gauge-value {
+  color: var(--pico-del-color);
+}
+
+/* Narrow viewports: the control bar already scrolls horizontally, so trim the
+   least actionable readings rather than letting the strip wrap. Process count
+   and tmpfs detail remain in the hover titles once the panel exists. */
+@media (max-width: 900px) {
+  host-gauges .gauge:nth-child(5),
+  host-gauges .gauge:nth-child(6) {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  host-gauges {
+    display: none;
+  }
+}

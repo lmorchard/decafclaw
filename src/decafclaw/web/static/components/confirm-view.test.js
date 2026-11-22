@@ -115,7 +115,7 @@ describe('confirm-view dialog semantics', () => {
     expect(badge.textContent).toBe('⏱ No timeout');
   });
 
-  it('renders decline reason, editable rule, and Approve + remember why button (#982)', async () => {
+  it('shows the decline reason and allowlist without a rule box (#1684)', async () => {
     let responded = null;
     const fakeStore = {
       respondToConfirm: (contextId, tool, toolCallId, approved, extra) => {
@@ -126,10 +126,10 @@ describe('confirm-view dialog semantics', () => {
     const el = /** @type {any} */ (document.createElement('confirm-view'));
     el.store = fakeStore;
     el.confirms = [{
-      context_id: 'ctx-982',
-      confirmation_id: 'c-982',
+      context_id: 'ctx-1684',
+      confirmation_id: 'c-1684',
       tool: 'shell',
-      tool_call_id: 'tc-982',
+      tool_call_id: 'tc-1684',
       command: 'gh pr create',
       suggested_pattern: 'gh pr create *',
       decline_reason: 'Remote PR creation modifies external state',
@@ -138,37 +138,25 @@ describe('confirm-view dialog semantics', () => {
     document.body.appendChild(el);
     await el.updateComplete;
 
-    // Check decline reason display
     const declineEl = el.querySelector('.confirm-decline-reason');
-    expect(declineEl).toBeTruthy();
-    expect(declineEl.textContent).toContain('Remote PR creation modifies external state');
+    expect(declineEl?.textContent).toContain('Remote PR creation modifies external state');
 
-    // Check rule input
-    const input = el.querySelector('.confirm-rule-input');
-    expect(input).toBeTruthy();
-    expect(input.value).toBe('Auto-approve gh pr create in this repo');
+    expect(el.querySelector('.confirm-rule-box')).toBeNull();
+    expect(el.querySelector('.confirm-rule-input')).toBeNull();
 
-    // Check Approve + remember why button
     const buttons = Array.from(el.querySelectorAll('.confirm-buttons button'));
-    const rememberBtn = buttons.find(b => b.textContent?.includes('Approve + remember why'));
-    expect(rememberBtn).toBeTruthy();
+    expect(buttons.some(b => b.textContent?.includes('Approve + remember why'))).toBe(false);
 
-    // Edit input and click
-    input.value = 'Auto-approve gh pr create in this repo (edited)';
-    input.dispatchEvent(new Event('input'));
-    await el.updateComplete;
-
-    rememberBtn.click();
+    const allowBtn = buttons.find(b => b.textContent?.includes('Allow: gh pr create *'));
+    expect(allowBtn).toBeTruthy();
+    allowBtn.click();
 
     expect(responded).toEqual({
-      contextId: 'ctx-982',
+      contextId: 'ctx-1684',
       tool: 'shell',
-      toolCallId: 'tc-982',
+      toolCallId: 'tc-1684',
       approved: true,
-      extra: {
-        add_rule: true,
-        rule: 'Auto-approve gh pr create in this repo (edited)',
-      },
+      extra: { add_pattern: true },
     });
   });
 });

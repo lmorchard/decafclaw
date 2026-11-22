@@ -21,12 +21,6 @@ from decafclaw.loop_breaker import fingerprint
 from decafclaw.output_truncation import format_size, tail_cut_to_bytes, truncate_tail, truncation_note
 from decafclaw.security_monitor import SecurityStatus, evaluate_command, evaluate_command_llm
 from decafclaw.shell_judge import AUX_RISK_CATEGORIES, render_aux_approval_prompt
-from decafclaw.shell_presets import (
-    DEFAULT_AUX_APPROVAL_PRESETS,
-    ShellPresetStore,
-    format_rules,
-    split_rules,
-)
 from decafclaw.shell_readonly import is_read_only_command
 from decafclaw.subprocess_limits import describe_kill, resource_cap_prefix
 from decafclaw.tool_outputs import CAPPED, COMPLETE, format_handle, record_artifact
@@ -390,153 +384,25 @@ def _suggest_aux_approval_pattern(command: str, has_guidance: bool) -> str:
     return cmd_stripped
 
 
-def _saved_presets_path(config) -> Path:
-    """Path to custom saved presets file in the agent data directory."""
-    return config.agent_path / "shell_approval_presets.json"
-
-
-def _get_preset_store(config) -> ShellPresetStore:
-    """Get or create ShellPresetStore for the given config."""
-    return ShellPresetStore(config)
-
-
-def _load_saved_presets(config) -> dict[str, str]:
-    """Load custom saved presets from disk. Returns {'preset_name': 'guidance text'}.
-
-    Raises ValueError if file exists but contains invalid or corrupt data.
-    """
-    store = _get_preset_store(config)
-    return store._load_saved_unlocked()
-
-
-def _save_custom_preset(config, preset_name: str, rules: list[str]) -> tuple[bool, str]:
-    """Save or append rules to a custom preset on disk via ShellPresetStore."""
-    store = _get_preset_store(config)
-    return store._save_custom_preset_sync(preset_name, rules)
-
-
-def _get_all_presets(config) -> dict[str, str]:
-    """Merge built-in presets with user-defined presets from config and saved presets."""
-    store = _get_preset_store(config)
-    return store.get_all_presets_dict_sync()
-
-
-_warned_deprecated_guidance_files: set[str] = set()
-
-
-def _warn_deprecated_guidance_file(config) -> None:
-    """Warn once if legacy shell_approval_guidance.json is present on disk (#986)."""
-    path = config.agent_path / "shell_approval_guidance.json"
-    path_str = str(path)
-    if path_str not in _warned_deprecated_guidance_files and path.exists():
-        _warned_deprecated_guidance_files.add(path_str)
-        log.warning(
-            f"Found deprecated {path}. Dynamic persistent guidance has been removed (#986). "
-            "Please configure global presets and guidance in config.json via "
-            "'shell.active_aux_approval_presets' and 'shell.aux_approval_guidance'."
-        )
-
-
-def _load_guidance_text(ctx: "Context", raw: str) -> str:
-    """Resolve guidance text, reading from a file if raw is an existing path.
-
-    Guidance files must reside in admin-controlled locations (agent_path).
-    Resolving inside workspace_path is forbidden because workspace files
-    are agent-writable and would allow bypassing confirmation-gated policy.
-    """
-    text = raw.strip()
-    if not text:
-        return ""
-    if "\n" not in text and len(text) < 512:
-        p = Path(text)
-        candidate: Path | None = None
-        if p.is_absolute():
-            try:
-                p.resolve().relative_to(ctx.config.workspace_path.resolve())
-                log.warning(f"Rejecting shell guidance file inside workspace: {text}")
-                return text
-            except ValueError:
-                candidate = p
-        else:
-            candidate = ctx.config.agent_path / text
-
-        if candidate and candidate.is_file():
-            try:
-                return candidate.read_text().strip()
-            except OSError:
-                pass
-    return text
-
-
-def resolve_aux_approval_guidance(
+def resolve_scope_rule_guidance(
     ctx: "Context",
     *,
     command: str = "",
     activity: Activity | None = None,
 ) -> list[str]:
-    """Collect active aux-LLM approval guidance from presets, config, and session state.
+    """Collect the global scope-keyed rules that apply to this command (#1641 phase 4).
 
-    ``command``/``activity`` add the global scope-keyed rules that apply to this
-    command (#1641 phase 4): a rule for another repo never leaks into the prompt.
-    Callers that omit them (tests, listing) get only the conversation/config
-    guidance, preserving the pre-phase-4 result.
+    Approval knowledge now lives only in ``shell_scope_rules.jsonl``. A rule
+    for another repo never leaks into the prompt. Callers that omit
+    ``command``/``activity`` (tests, listing) get no command-specific guidance.
     """
-    _warn_deprecated_guidance_file(ctx.config)
     guidelines: list[str] = []
-
-    # 1. Resolve presets (config + session - disabled)
-    active_preset_names: list[str] = []
-    config_active = getattr(ctx.config.shell, "active_aux_approval_presets", [])
-    if isinstance(config_active, str):
-        active_preset_names.extend(p.strip() for p in config_active.split(",") if p.strip())
-    elif isinstance(config_active, (list, tuple, set)):
-        active_preset_names.extend(str(p).strip() for p in config_active if str(p).strip())
-
-    session_active = getattr(ctx.tools, "active_aux_approval_presets", [])
-    if isinstance(session_active, str):
-        active_preset_names.extend(p.strip() for p in session_active.split(",") if p.strip())
-    elif isinstance(session_active, (list, tuple, set)):
-        active_preset_names.extend(str(p).strip() for p in session_active if str(p).strip())
-
-    disabled_presets = set(getattr(ctx.tools, "disabled_aux_approval_presets", []))
-
-    all_presets = _get_all_presets(ctx.config)
-    seen_presets = set()
-    for name in active_preset_names:
-        if name in seen_presets or name in disabled_presets:
-            continue
-        seen_presets.add(name)
-        if name in all_presets:
-            preset_text = all_presets[name].strip()
-            if preset_text:
-                guidelines.append(preset_text)
-        else:
-            log.warning(f"Unknown shell aux approval preset: {name}")
-
-    # 2. Configured guidance string / file
-    raw_guidance = getattr(ctx.config.shell, "aux_approval_guidance", "")
-    if raw_guidance:
-        loaded = _load_guidance_text(ctx, raw_guidance)
-        if loaded and loaded not in guidelines:
-            guidelines.append(loaded)
-
-    # 3. Session-scoped guidance
-    session_guidance = getattr(ctx.tools, "aux_approval_guidance", [])
-    if isinstance(session_guidance, str):
-        session_guidance = [session_guidance]
-    for item in session_guidance:
-        item_text = str(item).strip()
-        if item_text and item_text not in guidelines:
-            guidelines.append(item_text)
-
-    # 4. Global scope-keyed rules for this command's activity (#1641 phase 4)
     if command and activity is not None:
         from ..shell_scope_rules import matching_rules
 
         for item in matching_rules(ctx.config, command, activity):
             if item and item not in guidelines:
                 guidelines.append(item)
-
     return guidelines
 
 
@@ -724,27 +590,13 @@ def _apply_approval_additions(
     ctx: "Context",
     result: dict,
     *,
-    tool_name: str,
     suggested_pattern: str,
-    suggested_rule: str = "",
-    allow_rule_without_suggestion: bool = False,
 ) -> None:
-    """Persist what the human chose alongside an approval (#982, #1641).
-
-    A rule from the confirmation UI wins over the judge's suggestion; on a
-    new-activity prompt there is no judge suggestion, but the human can still
-    type one. Activity-scoped phrasing is requested in the judge prompt.
-    """
+    """Persist the allowlist pattern when the human chose it (#1641)."""
     if not result.get("approved"):
         return
     if result.get("add_pattern"):
         _save_allow_pattern(ctx.config, suggested_pattern)
-    if result.get("add_rule") and (suggested_rule or allow_rule_without_suggestion):
-        rule_value = result.get("rule")
-        new_rule = str(rule_value).strip() if rule_value is not None else suggested_rule.strip()
-        if new_rule and new_rule not in ctx.tools.aux_approval_guidance:
-            ctx.tools.aux_approval_guidance.append(new_rule)
-            log.info(f"[{tool_name}] added per-conversation aux approval rule: '{new_rule}'")
 
 
 # A judge-declined command gets one same-turn redirect before a human is
@@ -1007,7 +859,7 @@ def build_aux_approval_prompt(
         stated_purpose=_single_line(purpose) or "(none provided)",
         activity=activity,
         native_tool_index=build_native_tool_index(ctx, command),
-        guidelines=resolve_aux_approval_guidance(ctx, command=command, activity=activity),
+        guidelines=resolve_scope_rule_guidance(ctx, command=command, activity=activity),
     )
 
 
@@ -1283,9 +1135,7 @@ async def check_shell_approval(
         _apply_approval_additions(
             ctx,
             result,
-            tool_name=tool_name,
             suggested_pattern=suggested_pattern,
-            allow_rule_without_suggestion=True,
         )
         return _finalize_denial(ctx, result, command=command, purpose=purpose)
     if not activity.established:
@@ -1304,7 +1154,6 @@ async def check_shell_approval(
 
     decline_reason = ""
     decline_risk = ""
-    suggested_rule = ""
     decline_feedback = ""
     if ctx.config.shell.aux_approval_enabled:
         if _command_matches_pattern(command, ctx.tools.llm_approved_shell_patterns):
@@ -1315,7 +1164,7 @@ async def check_shell_approval(
             return {"approved": True}
 
         try:
-            had_guidance = bool(resolve_aux_approval_guidance(ctx, command=command, activity=activity))
+            had_guidance = bool(resolve_scope_rule_guidance(ctx, command=command, activity=activity))
             prompt = build_aux_approval_prompt(ctx, command, cwd=cwd, purpose=purpose, activity=activity)
             messages = [{"role": "user", "content": prompt}]
             response = await ctx.aux_approval_llm()(messages)
@@ -1394,7 +1243,6 @@ async def check_shell_approval(
 
             decline_reason = str(data.get("reason") or "").strip()
             decline_risk = str(data.get("risk") or "").strip()
-            suggested_rule = str(data.get("suggested_rule") or "").strip()
             decline_feedback = advisory
             await _record_approval(
                 ctx,
@@ -1491,7 +1339,6 @@ async def check_shell_approval(
         message=message or prompt_message,
         suggested_pattern=suggested_pattern,
         decline_reason=decline_reason,
-        suggested_rule=suggested_rule,
         purpose=purpose,
         feedback=decline_feedback,
         action_data=action_data,
@@ -1499,9 +1346,7 @@ async def check_shell_approval(
     _apply_approval_additions(
         ctx,
         result,
-        tool_name=tool_name,
         suggested_pattern=suggested_pattern,
-        suggested_rule=suggested_rule,
     )
     if result.get("approved"):
         return result
@@ -2126,74 +1971,14 @@ async def tool_shell_patterns(ctx: "Context", action: str = "list", pattern: str
 async def tool_shell_guidance(
     ctx: "Context",
     action: str = "list",
-    preset: str = "",
-    rule: str = "",
-    mode: str = "",
 ) -> str | ToolResult:
-    """Manage aux-LLM shell auto-approval prompt guidance and situational presets."""
-    _warn_deprecated_guidance_file(ctx.config)
-    log.info(f"[tool:shell_guidance] action={action} preset={preset} rule={rule} mode={mode}")
-
-    all_presets = _get_all_presets(ctx.config)
+    """Inspect and draft the global shell scope rulebook."""
+    log.info(f"[tool:shell_guidance] action={action}")
 
     if action == "list":
-        from ..modes import get_all_modes
-
-        all_modes = get_all_modes(ctx.config)
-        active_mode = getattr(ctx, "active_mode", "default") or "default"
-        mode_lines = ["### Session Modes\n"]
-        for m_name, m_obj in sorted(all_modes.items()):
-            active_marker = " [ACTIVE]" if m_name == active_mode else ""
-            presets_str = ", ".join(f"`{p}`" for p in m_obj.presets) if m_obj.presets else "none"
-            tools_str = ", ".join(f"`{t}`" for t in m_obj.promoted_tools) if m_obj.promoted_tools else "none"
-            mode_lines.append(
-                f"- **`{m_name}`**{active_marker}: {m_obj.description} (presets: {presets_str}; promoted tools: {tools_str})"
-            )
-
-        session_active = set(getattr(ctx.tools, "active_aux_approval_presets", []))
-        session_disabled = set(getattr(ctx.tools, "disabled_aux_approval_presets", []))
-
-        config_active_raw = getattr(ctx.config.shell, "active_aux_approval_presets", [])
-        if isinstance(config_active_raw, (list, tuple, set)):
-            config_active = set(config_active_raw)
-        else:
-            config_active = set(p.strip() for p in str(config_active_raw).split(",") if p.strip())
-
-        lines = ["### Shell Auto-Approval Presets\n"]
-        for name, desc in sorted(all_presets.items()):
-            sources = []
-            if name in config_active:
-                sources.append("config")
-            if name in session_active:
-                sources.append("session")
-
-            if name in session_disabled:
-                status = " [DISABLED in session]"
-            elif sources:
-                status = f" [ACTIVE via {', '.join(sources)}]"
-            else:
-                status = ""
-
-            lines.append(f"- **`{name}`**{status}: {desc}")
-
-        lines.append("\n### Active Guidance Rules\n")
-        raw_config_guidance = getattr(ctx.config.shell, "aux_approval_guidance", "").strip()
-        has_rules = False
-        if raw_config_guidance:
-            loaded_cfg = _load_guidance_text(ctx, raw_config_guidance)
-            lines.append(f"- *(config)*: {loaded_cfg}")
-            has_rules = True
-
-        for r in getattr(ctx.tools, "aux_approval_guidance", []):
-            lines.append(f"- *(session)*: {r}")
-            has_rules = True
-
-        if not has_rules:
-            lines.append("*(No custom guidance rules configured)*")
-
         from ..shell_scope_rules import format_rules_summary
 
-        return "\n".join(mode_lines + ["\n"] + lines + ["\n" + format_rules_summary(ctx.config)])
+        return format_rules_summary(ctx.config)
 
     if ctx.is_unattended:
         log.warning(f"[tool:shell_guidance] denied on unattended turn (task_mode={ctx.task_mode.value})")
@@ -2201,221 +1986,7 @@ async def tool_shell_guidance(
             text="[error: denied on unattended turn: modifying approval rules requires user confirmation]"
         )
 
-    scope_desc = "for this conversation"
-
-    if action == "set_mode":
-        if not mode:
-            return ToolResult(text="[error: 'mode' is required for action 'set_mode']")
-        from ..modes import get_all_modes
-
-        all_modes = get_all_modes(ctx.config)
-        if mode not in all_modes:
-            available = ", ".join(sorted(all_modes.keys()))
-            return ToolResult(text=f"[error: unknown mode '{mode}'. Available: {available}]")
-
-        target_mode = all_modes[mode]
-        presets_desc = (
-            ", ".join(f"`{p}`" for p in target_mode.presets)
-            if target_mode.presets
-            else "none (default interactive confirmation)"
-        )
-        tools_desc = ", ".join(f"`{t}`" for t in target_mode.promoted_tools) if target_mode.promoted_tools else "none"
-
-        confirm_msg = (
-            f"Switch session mode to `{mode}` {scope_desc}?\n"
-            f"- Auto-approval presets: {presets_desc}\n"
-            f"- Promoted tools: {tools_desc}"
-        )
-        result = await request_confirmation(
-            ctx,
-            tool_name="shell_guidance",
-            command=f"Switch session mode to '{mode}' ({scope_desc})",
-            message=confirm_msg,
-            force=True,
-        )
-        if not result.get("approved"):
-            return ToolResult(text="[error: denied]")
-
-        ctx.active_mode = mode
-        if getattr(ctx, "_parent_ctx", None):
-            ctx._parent_ctx.active_mode = mode
-        ctx.tools.active_aux_approval_presets.clear()
-        ctx.tools.active_aux_approval_presets.extend(target_mode.presets)
-        ctx.tools.disabled_aux_approval_presets.clear()
-        ctx.tools.llm_approved_shell_patterns.clear()
-
-        if ctx.manager and ctx.conv_id:
-            ctx.manager.set_flag(ctx.conv_id, "active_mode", mode)
-            ctx.manager.set_flag(ctx.conv_id, "active_aux_approval_presets", list(target_mode.presets))
-            ctx.manager.set_flag(ctx.conv_id, "disabled_aux_approval_presets", [])
-            ctx.manager.set_flag(ctx.conv_id, "llm_approved_shell_patterns", [])
-
-        if ctx.conv_id:
-            from ..archive import append_message
-
-            append_message(ctx.config, ctx.conv_id, {"role": "mode", "content": mode})
-
-        from ..events import emit_for_ctx
-
-        emit = emit_for_ctx(ctx)
-        if emit:
-            await emit(
-                {
-                    "type": "mode_changed",
-                    "conv_id": ctx.conv_id,
-                    "mode": mode,
-                    "presets": list(target_mode.presets),
-                    "promoted_tools": list(target_mode.promoted_tools),
-                }
-            )
-
-        return f"Switched session mode to `{mode}` {scope_desc}."
-
-    elif action == "enable_preset":
-        if not preset:
-            return ToolResult(text="[error: 'preset' is required for action 'enable_preset']")
-        if preset not in all_presets:
-            available = ", ".join(sorted(all_presets.keys()))
-            return ToolResult(text=f"[error: unknown preset '{preset}'. Available: {available}]")
-
-        confirm_msg = f"Enable shell auto-approval preset `{preset}` {scope_desc}?"
-        result = await request_confirmation(
-            ctx,
-            tool_name="shell_guidance",
-            command=f"Enable shell auto-approval preset '{preset}' ({scope_desc})",
-            message=confirm_msg,
-            force=True,
-        )
-        if not result.get("approved"):
-            return ToolResult(text="[error: denied]")
-
-        if preset in ctx.tools.disabled_aux_approval_presets:
-            ctx.tools.disabled_aux_approval_presets.remove(preset)
-        if preset not in ctx.tools.active_aux_approval_presets:
-            ctx.tools.active_aux_approval_presets.append(preset)
-
-        return f"Enabled shell auto-approval preset `{preset}` {scope_desc}."
-
-    elif action == "disable_preset":
-        if not preset:
-            return ToolResult(text="[error: 'preset' is required for action 'disable_preset']")
-
-        confirm_msg = f"Disable shell auto-approval preset `{preset}` {scope_desc}?"
-        result = await request_confirmation(
-            ctx,
-            tool_name="shell_guidance",
-            command=f"Disable shell auto-approval preset '{preset}' ({scope_desc})",
-            message=confirm_msg,
-            force=True,
-        )
-        if not result.get("approved"):
-            return ToolResult(text="[error: denied]")
-
-        if preset in ctx.tools.active_aux_approval_presets:
-            ctx.tools.active_aux_approval_presets.remove(preset)
-        if preset not in ctx.tools.disabled_aux_approval_presets:
-            ctx.tools.disabled_aux_approval_presets.append(preset)
-
-        # Invalidate aux-approval session cache when policy is narrowed
-        ctx.tools.llm_approved_shell_patterns.clear()
-
-        return f"Disabled shell auto-approval preset `{preset}` {scope_desc}."
-    elif action == "add_rule":
-        if not rule:
-            return ToolResult(text="[error: 'rule' is required for action 'add_rule']")
-
-        confirm_msg = f"Add shell auto-approval rule {scope_desc}:\n> {rule}"
-        result = await request_confirmation(
-            ctx,
-            tool_name="shell_guidance",
-            command=f"Add shell auto-approval rule: {rule} ({scope_desc})",
-            message=confirm_msg,
-            force=True,
-        )
-        if not result.get("approved"):
-            return ToolResult(text="[error: denied]")
-
-        if rule not in ctx.tools.aux_approval_guidance:
-            ctx.tools.aux_approval_guidance.append(rule)
-
-        return f"Added shell auto-approval rule {scope_desc}: '{rule}'"
-
-    elif action == "remove_rule":
-        if not rule:
-            return ToolResult(text="[error: 'rule' is required for action 'remove_rule']")
-
-        confirm_msg = f"Remove shell auto-approval rule {scope_desc}:\n> {rule}"
-        result = await request_confirmation(
-            ctx,
-            tool_name="shell_guidance",
-            command=f"Remove shell auto-approval rule: {rule} ({scope_desc})",
-            message=confirm_msg,
-            force=True,
-        )
-        if not result.get("approved"):
-            return ToolResult(text="[error: denied]")
-
-        if rule in ctx.tools.aux_approval_guidance:
-            ctx.tools.aux_approval_guidance.remove(rule)
-
-        # Invalidate aux-approval session cache when policy is narrowed
-        ctx.tools.llm_approved_shell_patterns.clear()
-
-        return f"Removed shell auto-approval rule {scope_desc}: '{rule}'"
-
-    elif action == "save_preset":
-        preset_clean = (preset or "").strip()
-        if not preset_clean:
-            return ToolResult(text="[error: 'preset' name is required for action 'save_preset']")
-
-        if preset_clean in DEFAULT_AUX_APPROVAL_PRESETS:
-            return ToolResult(
-                text=f"[error: cannot overwrite built-in preset '{preset_clean}'. Please choose a custom preset name.]"
-            )
-
-        # Rules to save: explicit rule argument if supplied, otherwise all active conversation guidance
-        if rule and rule.strip():
-            rules_to_save = [rule.strip()]
-        else:
-            rules_to_save = [r.strip() for r in getattr(ctx.tools, "aux_approval_guidance", []) if r.strip()]
-
-        if not rules_to_save:
-            return ToolResult(
-                text="[error: no guidance rules to save. Pass rule='...' or add rules to the conversation first.]"
-            )
-
-        try:
-            saved_presets = _load_saved_presets(ctx.config)
-        except ValueError as e:
-            return ToolResult(
-                text=f"[error: cannot save preset because {_saved_presets_path(ctx.config)} is unreadable or malformed: {e}]"
-            )
-        is_existing = preset_clean in saved_presets or preset_clean in getattr(
-            ctx.config.shell, "aux_approval_presets", {}
-        )
-        action_verb = "Update" if is_existing else "Save"
-
-        rules_formatted = "\n".join(f"> - {r}" for r in rules_to_save)
-        confirm_msg = f"{action_verb} custom shell auto-approval preset `{preset_clean}` with rules:\n{rules_formatted}"
-        result = await request_confirmation(
-            ctx,
-            tool_name="shell_guidance",
-            command=f"{action_verb} shell auto-approval preset '{preset_clean}'",
-            message=confirm_msg,
-            force=True,
-        )
-        if not result.get("approved"):
-            return ToolResult(text="[error: denied]")
-
-        try:
-            store = _get_preset_store(ctx.config)
-            is_new, updated_text = await store.append_rules_from_tool(preset_clean, rules_to_save)
-        except ValueError as e:
-            return ToolResult(text=f"[error: failed to save preset: {e}]")
-        status_msg = "Created" if is_new else "Updated"
-        return f"{status_msg} custom shell auto-approval preset `{preset_clean}`:\n{updated_text}"
-
-    elif action == "promote_scope_rules":
+    if action == "promote_scope_rules":
         # Read-only proposal. The rulebook is policy and is written only by the
         # admin_* tools after an interactive human confirmation (#1641 phase 4).
         from ..shell_scope_rules import promotion_proposal, scope_rules_path
@@ -2445,9 +2016,9 @@ async def tool_shell_guidance(
         )
 
     elif action == "condense_scope_rules":
-        # Draft-only proposal, like the #1267 per-conversation surface: the
-        # model's output lands in a rulebook the human applies via admin_write.
-        from ..model_catalog import effective_condense_model
+        # Draft-only proposal: the model's output lands in a rulebook the human
+        # applies via admin_write.
+        from ..model_catalog import effective_active_model
         from ..shell_scope_rules import (
             ScopeRule,
             build_scope_condense_prompt,
@@ -2462,7 +2033,7 @@ async def tool_shell_guidance(
 
         from ..llm import call_llm
 
-        model_name = effective_condense_model(ctx.config, getattr(ctx, "active_model", "") or "")
+        model_name = effective_active_model(ctx.config, getattr(ctx, "active_model", "") or "")
         try:
             response = await call_llm(
                 ctx.config,
@@ -2507,12 +2078,7 @@ async def tool_shell_guidance(
             data={"path": str(path), "content": content, "before": len(existing), "after": len(proposed)},
         )
 
-    return ToolResult(
-        text=(
-            "[error: invalid action. Use 'list', 'set_mode', 'enable_preset', 'disable_preset', "
-            "'add_rule', 'remove_rule', 'save_preset', 'promote_scope_rules', or 'condense_scope_rules'.]"
-        )
-    )
+    return ToolResult(text=("[error: invalid action. Use 'list', 'promote_scope_rules', or 'condense_scope_rules'.]"))
 
 
 SHELL_TOOLS = {
@@ -2526,6 +2092,7 @@ SHELL_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": True,
+        "summary": "Manage shell command allow patterns.",
         "function": {
             "name": "shell_patterns",
             "description": (
@@ -2555,21 +2122,18 @@ SHELL_TOOL_DEFINITIONS = [
         "priority": "low",
         "timeout": None,
         "writes": True,
+        "summary": "Inspect and refine the global shell scope rulebook.",
         "function": {
             "name": "shell_guidance",
             "description": (
-                "Manage aux-LLM shell auto-approval prompt guidance, situational presets, and session modes. "
-                "Guidance rules, enabled presets, and session modes are scoped to the current conversation. "
-                "Call at the start of software development, testing, or GitHub workflows to reduce approval friction on routine commands. "
-                "Use 'list' to view available modes, presets, and active rules. "
-                "Use 'set_mode' with mode='name' to switch conversation mode (e.g. 'default', 'dev', 'research', 'admin'). "
-                "Use 'enable_preset' or 'disable_preset' with preset='name' to toggle situational presets (e.g. 'developer', 'github'). "
-                "Use 'add_rule' or 'remove_rule' with rule='text' to add or remove custom auto-approval prompt guidelines for this conversation. "
-                "Use 'save_preset' with preset='name' to bundle active conversation rules (or a specific rule) into a reusable custom preset on disk. "
-                "Use 'promote_scope_rules' to draft global scope-keyed rules from repeated human approvals (evidence ledger); "
-                "use 'condense_scope_rules' to merge the global rulebook into fewer rules. "
-                "Both are draft-only: apply the returned content with admin_write, which requires human confirmation. "
-                "Modifying approval rules or modes requires user confirmation."
+                "Inspect and refine the global shell scope rulebook. The rulebook is keyed by "
+                "(activity scope, command shape) from the decision ledger of human approvals and "
+                "denials, and is the sole mechanism for accumulating cross-conversation approval "
+                "knowledge. Use 'list' to view current rules. "
+                "Use 'promote_scope_rules' to draft rules from repeated human approvals in the "
+                "evidence ledger; use 'condense_scope_rules' to merge the global rulebook into "
+                "fewer rules. Both are draft-only: apply the returned content with admin_write, "
+                "which requires human confirmation."
             ),
             "parameters": {
                 "type": "object",
@@ -2578,28 +2142,10 @@ SHELL_TOOL_DEFINITIONS = [
                         "type": "string",
                         "enum": [
                             "list",
-                            "set_mode",
-                            "enable_preset",
-                            "disable_preset",
-                            "add_rule",
-                            "remove_rule",
-                            "save_preset",
                             "promote_scope_rules",
                             "condense_scope_rules",
                         ],
                         "description": "Action to perform (default: list)",
-                    },
-                    "mode": {
-                        "type": "string",
-                        "description": "Mode name for action 'set_mode' (e.g. 'default', 'dev', 'research', 'admin')",
-                    },
-                    "preset": {
-                        "type": "string",
-                        "description": "Preset name (for enable_preset / disable_preset / save_preset). E.g. 'developer', 'github', 'my_project'",
-                    },
-                    "rule": {
-                        "type": "string",
-                        "description": "Guidance rule text (for add_rule / remove_rule, or optional specific rule for save_preset). E.g. 'Auto-approve pytest and ruff in workspace'",
                     },
                 },
                 "required": [],

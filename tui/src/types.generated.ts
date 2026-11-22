@@ -58,7 +58,6 @@ export interface SrvConfirmRequest {
   command: string;
   suggested_pattern: string;
   decline_reason?: string;
-  suggested_rule?: string;
   message: string;
   approve_label: string;
   deny_label: string;
@@ -88,8 +87,6 @@ export interface SrvConvHistory {
   available_models?: string[];
   model_groups?: Array<Record<string, unknown>>;
   default_model?: string;
-  active_mode?: string;
-  available_modes?: Array<Record<string, unknown>>;
   turn_active?: boolean;
   pending_confirmation?: Record<string, unknown>;
 }
@@ -132,14 +129,6 @@ export interface SrvMessageComplete {
   context_usage?: number;
   context_limit?: number;
   provenance?: Record<string, unknown>;
-}
-
-export interface SrvModeChanged {
-  type: "mode_changed";
-  conv_id: string;
-  mode: string;
-  presets: string[];
-  promoted_tools: string[];
 }
 
 export interface SrvModelChanged {
@@ -292,8 +281,6 @@ export interface CliConfirmResponse {
   approved: boolean;
   always: boolean;
   add_pattern: boolean;
-  add_rule?: boolean;
-  rule?: string;
   feedback?: string;
   data?: Record<string, unknown>;
 }
@@ -328,12 +315,6 @@ export interface CliSetEffort {
   model: string;
 }
 
-export interface CliSetMode {
-  type: "set_mode";
-  conv_id: string;
-  mode: string;
-}
-
 export interface CliSetModel {
   type: "set_model";
   conv_id: string;
@@ -362,7 +343,6 @@ export type ServerMessage =
   | SrvConversationStatus
   | SrvError
   | SrvMessageComplete
-  | SrvModeChanged
   | SrvModelChanged
   | SrvModelsAvailable
   | SrvNotificationCreated
@@ -391,6 +371,5 @@ export type ClientMessage =
   | CliSelectConv
   | CliSend
   | CliSetEffort
-  | CliSetMode
   | CliSetModel
   | CliWidgetResponse;

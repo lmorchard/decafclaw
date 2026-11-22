@@ -163,7 +163,8 @@ def tool_search(ctx: "Context", query: str, max_results: int = 10) -> ToolResult
     if fetched_tool_defs:
         parts.append(f"{len(fetched_tool_defs)} tool(s) loaded. These tools are now available to call.")
         for td in fetched_tool_defs:
-            parts.append(json.dumps(td, indent=2))
+            # `summary` feeds the deferred catalogue, not the fetched schema.
+            parts.append(json.dumps({k: v for k, v in td.items() if k != "summary"}, indent=2))
 
     if missing:
         parts.append(f"Not found: {', '.join(sorted(missing))}")

@@ -82,6 +82,16 @@ async def test_health_tools_section(ctx):
 
 
 @pytest.mark.asyncio
+async def test_health_tools_section_with_fetched_list(ctx):
+    """Fetched tools are stored as a JSON list; reporting must not error."""
+    ctx.skills.data = {"fetched_tools": ["wait"]}
+    result = await tool_health_status(ctx)
+    assert "[error" not in result
+    assert "### Tools" in result
+    assert "Active:" in result
+
+
+@pytest.mark.asyncio
 async def test_health_embeddings_no_db(ctx):
     """Embeddings section handles missing database."""
     result = await tool_health_status(ctx)

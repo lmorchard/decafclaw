@@ -121,6 +121,7 @@ ATTACHMENT_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "List files uploaded to this conversation.",
         "function": {
             "name": "list_attachments",
             "description": (
@@ -139,6 +140,7 @@ ATTACHMENT_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "Fetch a conversation attachment by filename.",
         "function": {
             "name": "get_attachment",
             "description": (

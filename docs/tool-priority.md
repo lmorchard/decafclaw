@@ -7,8 +7,8 @@ Every core tool declares a priority that determines whether it appears in the de
 | Priority | Meaning | Behavior |
 |---|---|---|
 | `critical` | Must always be available | Hard floor — included in the active set even when it blows the budget |
-| `normal` | Default tier | Included while the active set is under both the token budget and the `max_active_tools` count |
-| `low` | Fetch on demand by default | Included only if budget and count room remain after the `normal` tier |
+| `normal` | Default tier | Included while the active set is under the token budget |
+| `low` | Fetch on demand by default | Included only if budget room remains after the `normal` tier |
 
 Tiers are string values on the tool definition, parsed as the `Priority` enum in `src/decafclaw/tools/tool_registry.py`.
 
@@ -17,10 +17,11 @@ Tiers are string values on the tool definition, parsed as the `Priority` enum in
 Priority is resolved per tool with this precedence (highest first):
 
 1. **`CRITICAL_TOOLS` env override** — names in this set are promoted to `critical` regardless of what the tool declares. Useful for pinning a specific MCP tool or giving a custom skill priority.
-2. **Explicit fetches** — tools fetched via `tool_search` are promoted to `critical` and remain fetched for the conversation. Keyword matches append discovery hints without changing native schemas (#1257).
-3. **On-demand skill activation** — tools from activated on-demand skills without declared priority are promoted to `critical`.
-4. **Declared `priority` field** on the tool definition dict (`critical`, `normal`, `low`). Used by core tools and native tools of always-loaded skills (`vault`, `background`, `mcp`).
-5. **Default `normal`** — any tool without an explicit declaration (e.g. MCP server tools, which the MCP layer exposes without priority metadata).
+2. **Always-loaded skill tools** — their skill bodies already sit in the system prompt, so every tool they declare is forced `critical`. Deferring one would contradict the catalog that advertises it as callable now (#1692).
+3. **Explicit fetches** — tools fetched via `tool_search` are promoted to `critical` and remain fetched for the conversation. Keyword matches append discovery hints without changing native schemas (#1257).
+4. **On-demand skill activation** — tools from activated on-demand skills without declared priority are promoted to `critical`.
+5. **Declared `priority` field** on the tool definition dict (`critical`, `normal`, `low`). Used by core tools and native tools of on-demand skills.
+6. **Default `normal`** — any tool without an explicit declaration (e.g. MCP server tools, which the MCP layer exposes without priority metadata).
 
 ## Declaring priority on a core or skill tool
 
@@ -29,9 +30,10 @@ Every entry in core `TOOL_DEFINITIONS` and always-loaded skills (`vault`, `backg
 ```python
 {
     "type": "function",
-    "priority": "critical",  # or "normal" or "low"
+    "priority": "normal",  # or "critical" or "low"
+    "summary": "List files and directories in the workspace.",
     "function": {
-        "name": "shell",
+        "name": "workspace_list",
         "description": "...",
         "parameters": {...},
     },
@@ -40,22 +42,24 @@ Every entry in core `TOOL_DEFINITIONS` and always-loaded skills (`vault`, `backg
 
 When adding a new core tool, you **must** declare a priority — an invariant test (`TestCoreToolsDeclarePriority` in `tests/test_tool_registry.py`) fails CI otherwise.
 
+A core tool with `normal` or `low` priority can be deferred, so it must also declare a one-line `summary` of at most 120 characters. `TestCoreToolsDeclareSummary` enforces that. Critical tools never render in the deferred catalogue and may omit it. See [Tool Search](tool-search.md#deferred-catalog-layout) for how the summary becomes a catalogue line.
+
 ### Guidelines
 
 - **`critical`**: tools the agent needs in every conversation regardless of context. File I/O (`workspace_read`, `workspace_write`), `workspace_edit` (the default surgical-edit tool), shell, skill activation, delegation (`delegate_task`), the checklist loop (`checklist_create`, `checklist_step_done`, `checklist_abort`, `checklist_status`), core vault tools (`vault_read`, `vault_write`, `vault_search`, `vault_list`, `vault_journal_append`), `notes_append`, time (`current_time`), and web ingestion (`web_fetch`).
 - **`normal`**: widely useful but situational. Workspace file discovery and structure (`workspace_search`, `workspace_list`, `workspace_glob`, `workspace_diff`, `workspace_move`, `workspace_outline`), secondary vault operations (`vault_delete`, `vault_recent`, `vault_tags`, `vault_backlinks`), `notes_read`, conversation search/compact, attachments.
 - **`low`**: admin tools (`admin_*`), specialized editing variants (`workspace_insert`, `workspace_replace_lines`, `vault_show_sections`, `vault_move_lines`, `vault_section`, `vault_update_frontmatter`, `vault_rename`, `vault_grant_folder`), background process tools (`shell_background_*`), MCP introspection tools (`mcp_*`), rarely-called utilities (`wait`, `http_request`, `refresh_skills`, `debug_context`, `context_stats`, `health_status`, `heartbeat_trigger`, `shell_patterns`, `shell_guidance`).
 
+Always-loaded skill tools keep their declared tier on the definition but are forced `critical` at classification; see [Skill tools](#skill-tools).
+
 ## Skill tools
 
 Skill tools can declare an explicit `"priority"` field:
 
-- **Always-loaded skills** (`vault`, `background`, `mcp`): tools respect their declared priority. Only tools explicitly marked `critical` join the hard floor; `normal` tools compete for open slots, and `low` tools stay deferred behind `tool_search`.
+- **Always-loaded skills** (`vault`, `background`, `mcp`): every tool is forced `critical`. Their bodies and the skill catalog are already in the prompt, so the tools must be directly callable; a deferred `low` tool would contradict that promise (#1692). Their schemas therefore count against the token budget as part of the hard floor.
 - **On-demand skills** (e.g. `project`, `tabstack`):
   - **Not activated** → hidden from direct tool callability (advertised via the skill catalog in the system prompt; activation is required).
   - **Activated** → undeclared tools are promoted to `critical` automatically (ensuring backward compatibility), while tools declaring `normal` or `low` honor their declared tier.
-
-This allows always-loaded skills to expose rich toolsets without blowing the default active-tool budget.
 
 ## MCP tools
 
@@ -66,17 +70,16 @@ External MCP server tools (`mcp__server__tool`) default to `normal` since the MC
 See `classify_tools()` in `src/decafclaw/tools/tool_registry.py`:
 
 1. Resolve every tool's priority.
-2. Active set starts with all `critical` tools (hard floor — still included even when over; a token-budget overrun is logged as a warning, a count-cap overrun as info).
-3. If `promoted_tools` are passed (e.g. from the active `SessionMode`), those tools are ordered at the front of `normal` (elevating any declared `low` tools to `normal` priority), claiming active budget ahead of other normal and low tools.
-4. Append `normal` tools one by one while the active set is under `tool_context_budget` and `max_active_tools`.
-5. Append `low` tools the same way, only if room remains.
-6. Whatever didn't make the cut becomes the deferred set, surfaced via `tool_search` and the deferred catalog.
+2. Active set starts with all `critical` tools (hard floor — still included even when over; a token-budget overrun is logged as a warning).
+3. Append `normal` tools one by one while the active set is under `tool_context_budget`.
+4. Append `low` tools the same way, only if room remains.
+5. Whatever didn't make the cut becomes the deferred set, surfaced via `tool_search` and the deferred catalog.
 
-`classify_tools` preserves input order within each tier. Production assembly sorts candidates by tool name before classification, so skill restoration order cannot change budget selection (#1257). Session-mode promotions still take precedence within the normal tier.
+`classify_tools` preserves input order within each tier. Production assembly sorts candidates by tool name before classification, so skill restoration order cannot change budget selection (#1257).
 
 ## Deferred catalog sort
 
-The deferred catalog (rendered by `build_deferred_list_text()`) groups tools into sections — Core, Skills, and one section per MCP server. Within each section, tools sort by `(priority desc, source asc, name asc)`:
+The deferred catalog (rendered by `build_deferred_list_text()`) groups tools into sections — Core and one section per MCP server. Tools from non-activated on-demand skills stay in the deferred pool for `tool_search` but are not rendered, so the model never sees a tool name it cannot call. Within each section, tools sort by `(priority desc, source asc, name asc)`:
 
 - Priority desc → high-priority tools appear first
 - Source asc → tools from the same skill or MCP server cluster together

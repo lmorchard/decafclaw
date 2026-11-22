@@ -69,9 +69,6 @@ class ToolState:
     # naturally; `fork_for_tool_call` shares the set object across concurrent
     # shell calls, which is what keeps the budget coherent. Never persisted.
     shell_redirect_fingerprints: set[str] = field(default_factory=set)
-    active_aux_approval_presets: list[str] = field(default_factory=list)
-    disabled_aux_approval_presets: list[str] = field(default_factory=list)
-    aux_approval_guidance: list[str] = field(default_factory=list)
     # Scheduled-task overlay: addresses + `@domain.com` suffix patterns
     # that bypass confirmation for the `send_email` tool. Merged with
     # `config.email.allowed_recipients` at check time. Empty for
@@ -222,7 +219,6 @@ class Context:
         self.skip_archive: bool = False
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.active_model: str = ""  # named model config from config.model_configs
-        self.active_mode: str = "default"  # active session mode (e.g. default, dev, research, admin)
         # From TurnKind.task_mode_for() (conversation_manager.py): one of the
         # TaskMode members, or INTERACTIVE for an attended user/workflow turn.
         # The canonical partitions are derived from context_types'
@@ -319,7 +315,6 @@ class Context:
         channel_id: str = "",
         channel_name: str = "",
         active_model: str = "",
-        active_mode: str = "default",
         task_mode: TaskMode = TaskMode.INTERACTIVE,
         skip_reflection: bool = True,
         skip_vault_retrieval: bool = True,
@@ -343,7 +338,6 @@ class Context:
         ctx.channel_id = channel_id
         ctx.channel_name = channel_name
         ctx.active_model = active_model
-        ctx.active_mode = active_mode
         ctx.task_mode = task_mode
         ctx.skip_reflection = skip_reflection
         ctx.skip_vault_retrieval = skip_vault_retrieval

@@ -297,7 +297,6 @@ _ENV_TO_PATH: dict[str, str] = {
     "MAX_CONCURRENT_TOOLS": "agent.max_concurrent_tools",
     "MAX_MESSAGE_LENGTH": "agent.max_message_length",
     "TOOL_CONTEXT_BUDGET_PCT": "agent.tool_context_budget_pct",
-    "MAX_ACTIVE_TOOLS": "agent.max_active_tools",
     "CRITICAL_TOOLS": "agent.critical_tools",
     "CHILD_MAX_TOOL_ITERATIONS": "agent.child_max_tool_iterations",
     "CHILD_TIMEOUT_SEC": "agent.child_timeout_sec",

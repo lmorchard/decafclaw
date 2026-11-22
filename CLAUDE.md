@@ -90,7 +90,7 @@ Read [web UI design](docs/web-ui-design.md), [web UI](docs/web-ui.md), and [mobi
 - Scope panel selectors to intended children. `.sched-md input[type="text"]` can override nested component styles; use `.sched-md label > input[type="text"]` where appropriate.
 - Themes have two axes: `data-theme` × `data-palette`, managed by `lib/theme.js`. Only palettes may set `--pico-primary-background`/`-inverse`, under `[data-palette]`.
 - Hand-written `static/` code is served raw. Import browser-loadable files. `make vendor` bundles dependencies; `make gen-api-client` generates OpenAPI types and `lib/api-client/index.js`.
-- `make check-js` regenerates the client before TypeScript checking. TypeScript's bundler resolution can accept missing JS imports; the static module-graph test and browser scenarios cover the served assets.
+- `make check-js` regenerates the client, fails on generated drift (`git diff` over openapi.json/yaml and `lib/api-client/`), then TypeScript-checks. TypeScript's bundler resolution can accept missing JS imports; the static module-graph test and browser scenarios cover the served assets.
 - Add WebSocket wire types to `src/decafclaw/web/message_types.json` and run `make gen-message-types`. Use Python `WSMessageType.X` and JS `MESSAGE_TYPES.X`, never string literals. `make check-message-types` detects drift.
 
 ## Skills and trust
@@ -165,7 +165,7 @@ Python modules below are under `src/decafclaw/`. Use [docs/index.md](docs/index.
 | Context | `context_composer.py` (orchestrator), `context_pipeline.py`, `context_types.py`, `context_tools.py`, `context_preempt.py`, `context_diagnostics.py`, `compaction.py`, `compaction_decisions.py`, `context_cleanup.py`, `memory_context.py` |
 | Tools | `tool_definitions.py`, `tool_execution.py`, `tools/tool_registry.py`, `tools/search_tools.py`, `preempt_search.py` |
 | Configuration/models | `config.py`, `config_types.py`, `config_watcher.py`, `model_catalog.py`, `llm/` |
-| Persistence | `archive.py`, `conversation_paths.py`, `persistence.py`, `approval_state.py`, `attachments.py`, `embeddings.py`, `frontmatter.py` |
+| Persistence | `archive.py`, `conversation_paths.py`, `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py` |
 | UI/transports | `mattermost*.py`, `http_server.py`, `web/`, `terminals.py`, `canvas.py`, `sticky.py`, `widgets.py` |
 | Skills | `skills/` (vault/background/mcp always-loaded); opt-in skills under `contrib/skills/` |
 | Other subsystems | `notifications.py`, `notification_channels/`, `mail.py`, `schedules.py`, `scheduled_wakes.py`, `polling.py`, `heartbeat.py`, `extensions/` (see [docs/extensions.md](docs/extensions.md)) |

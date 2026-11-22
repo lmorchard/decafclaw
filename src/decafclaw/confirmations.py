@@ -82,8 +82,6 @@ class ConfirmationResponse:
     approved: bool
     always: bool = False
     add_pattern: bool = False
-    add_rule: bool = False
-    rule: str = ""
     # Human or reviewer denial feedback (#1559). A denial carrying feedback is
     # surfaced to the agent in the tool result so it can self-correct.
     feedback: str = ""
@@ -100,10 +98,6 @@ class ConfirmationResponse:
             msg.pop("always")
         if not msg["add_pattern"]:
             msg.pop("add_pattern")
-        if not msg["add_rule"]:
-            msg.pop("add_rule")
-        if not msg["rule"]:
-            msg.pop("rule")
         if not msg["feedback"]:
             msg.pop("feedback")
         if not msg["data"]:

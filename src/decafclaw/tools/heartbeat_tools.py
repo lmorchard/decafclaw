@@ -224,6 +224,7 @@ HEARTBEAT_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": True,
+        "summary": "Run a heartbeat cycle now instead of waiting for the schedule.",
         "function": {
             "name": "heartbeat_trigger",
             "description": (

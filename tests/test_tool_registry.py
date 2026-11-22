@@ -6,6 +6,7 @@ from pathlib import Path
 from decafclaw.skills import SkillInfo
 from decafclaw.tools import TOOL_DEFINITIONS
 from decafclaw.tools.tool_registry import (
+    SUMMARY_MAX_CHARS,
     Priority,
     add_fetched_tools,
     build_deferred_list_text,
@@ -16,6 +17,7 @@ from decafclaw.tools.tool_registry import (
     get_description,
     get_fetched_tools,
     get_priority,
+    get_tool_summary,
     normalize_deferred_description,
 )
 
@@ -52,6 +54,13 @@ class TestEstimateToolTokens:
         small = _make_tool_def("s", "short")
         big = _make_tool_def("b", "a" * 400)
         assert estimate_tool_tokens([big]) > estimate_tool_tokens([small])
+
+    def test_summary_not_counted(self):
+        """Catalogue-only metadata never inflates the schema budget."""
+        td = _make_tool_def("t", "short")
+        before = estimate_tool_tokens([td])
+        td["summary"] = "x" * SUMMARY_MAX_CHARS
+        assert estimate_tool_tokens([td]) == before
 
 
 # -- get_critical_names (env override + always-loaded skill tools) -------
@@ -131,7 +140,6 @@ class TestClassifyTools:
         """Normal tools are added while under budget."""
         tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(10)]
         config.compaction.max_tokens = 1000000  # huge budget
-        config.agent.max_active_tools = 40
 
         active, deferred = classify_tools(tools, config)
         assert len(active) == 10
@@ -141,8 +149,9 @@ class TestClassifyTools:
         """Low priority tools deferred when no room after normal."""
         normal_tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(5)]
         low_tools = [_make_tool_def(f"low_{i}", "x" * 50, priority="low") for i in range(5)]
-        # Budget fits normal but not low
-        config.agent.max_active_tools = 5
+        # Budget fits all five normal tools but leaves no room for a low one.
+        per_tool = estimate_tool_tokens([normal_tools[0]])
+        config.compaction.max_tokens = int(5.5 * per_tool / config.agent.tool_context_budget_pct)
 
         active, deferred = classify_tools(normal_tools + low_tools, config)
         active_names = {td["function"]["name"] for td in active}
@@ -167,52 +176,14 @@ class TestClassifyTools:
         assert "low_1" in active_names
         assert deferred == []
 
-    def test_promoted_tools_prioritized_at_head_of_normal(self, config):
-        """Tools in promoted_tools claim active slots before unpromoted normal tools."""
-        normal_tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(10)]
-        # Cap max active tools to 3
-        config.agent.max_active_tools = 3
-        config.compaction.max_tokens = 1000000
-
-        # Without promotion, norm_0, norm_1, norm_2 are active
-        active_unpromoted, deferred_unpromoted = classify_tools(normal_tools, config)
-        assert [td["function"]["name"] for td in active_unpromoted] == ["norm_0", "norm_1", "norm_2"]
-
-        # Promoting norm_8 and norm_5 moves them to the front
-        active_promoted, deferred_promoted = classify_tools(
-            normal_tools,
-            config,
-            promoted_tools=["norm_8", "norm_5"],
-        )
-        active_promoted_names = [td["function"]["name"] for td in active_promoted]
-        assert active_promoted_names == ["norm_8", "norm_5", "norm_0"]
-        assert "norm_8" not in [td["function"]["name"] for td in deferred_promoted]
-
-    def test_promoted_tools_promotes_low_priority_tool(self, config):
-        """A low priority tool in promoted_tools is promoted ahead of unpromoted normal tools."""
-        normal_tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(5)]
-        low_tools = [_make_tool_def(f"low_{i}", "x" * 50, priority="low") for i in range(5)]
-        config.agent.max_active_tools = 2
-        config.compaction.max_tokens = 1000000
-
-        active, deferred = classify_tools(
-            normal_tools + low_tools,
-            config,
-            promoted_tools=["low_3"],
-        )
-        active_names = [td["function"]["name"] for td in active]
-        # low_3 gets the first active slot ahead of all normal tools
-        assert active_names == ["low_3", "norm_0"]
-
-    def test_max_active_tools_cap(self, config):
-        """max_active_tools limits active set even when under token budget."""
+    def test_no_count_cap_under_budget(self, config):
+        """The token budget is the only limit; there is no tool-count cap."""
         tools = [_make_tool_def(f"norm_{i}", priority="normal") for i in range(50)]
         config.compaction.max_tokens = 1000000  # huge budget
-        config.agent.max_active_tools = 10
 
         active, deferred = classify_tools(tools, config)
-        assert len(active) == 10
-        assert len(deferred) == 40
+        assert len(active) == 50
+        assert deferred == []
 
     def test_fetched_tools_treated_critical(self, config):
         """Fetched tool names are promoted to critical regardless of declaration."""
@@ -253,16 +224,17 @@ class TestClassifyTools:
         assert "ondemand_norm" in deferred_names
         assert "ondemand_low" in deferred_names
 
-    def test_always_loaded_skill_tools_respect_declared_priority(self, config):
-        """Tools belonging to always-loaded skills respect declared priority and
-        are not automatically forced critical."""
+    def test_always_loaded_skill_tools_forced_critical(self, config):
+        """Always-loaded skill tools are always visible: the catalog promises
+        they are callable now, so they join the hard floor regardless of
+        declared priority or budget pressure."""
         config.always_loaded_skill_tools = {"al_crit", "al_norm", "al_low"}
         tools = [
             _make_tool_def("al_crit", "x" * 200, priority="critical"),
             _make_tool_def("al_norm", "x" * 200, priority="normal"),
             _make_tool_def("al_low", "x" * 200, priority="low"),
         ]
-        # Very tight budget: only critical fits
+        # Very tight budget: non-always-loaded tools would not fit.
         config.compaction.max_tokens = 100
 
         active, deferred = classify_tools(
@@ -271,11 +243,9 @@ class TestClassifyTools:
             skill_tool_names={"al_crit", "al_norm", "al_low"},
         )
         active_names = {td["function"]["name"] for td in active}
-        deferred_names = {td["function"]["name"] for td in deferred}
 
-        assert "al_crit" in active_names
-        assert "al_norm" in deferred_names
-        assert "al_low" in deferred_names
+        assert active_names == {"al_crit", "al_norm", "al_low"}
+        assert deferred == []
 
     def test_env_override_treated_critical(self, config):
         """Env override (via critical_tools) promotes to critical."""
@@ -286,6 +256,16 @@ class TestClassifyTools:
         active, deferred = classify_tools(tools, config)
         active_names = {td["function"]["name"] for td in active}
         assert "norm_7" in active_names
+
+    def test_fetched_tools_list_input_coerced(self, config):
+        """Runtime state stores fetched tools as a JSON list; classify must
+        coerce it before set union instead of raising TypeError."""
+        tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
+        config.compaction.max_tokens = 100  # tight
+
+        active, deferred = classify_tools(tools, config, fetched_names=["norm_2"])
+        active_names = {td["function"]["name"] for td in active}
+        assert "norm_2" in active_names
 
     def test_multiple_explicit_fetches_treated_critical(self, config):
         """Explicitly fetched tools remain available despite budget pressure."""
@@ -320,78 +300,39 @@ REGISTRY_LOGGER = "decafclaw.tools.tool_registry"
 
 
 class TestClassifyToolsOverflowLogging:
-    """Count-only critical overflow logs at info; token-budget overflow still
-    logs at warning. Classification itself never changes."""
+    """The token budget is the only limit (#1692): overflow logs one WARNING.
+    Classification itself never changes."""
 
     def _records(self, caplog, level):
         return [r for r in caplog.records if r.name == REGISTRY_LOGGER and r.levelno == level]
 
-    def test_count_only_overflow_logs_info_not_warning(self, config, caplog):
-        """Critical set over the count cap but under the token budget: one INFO, no WARNING."""
-        tools = [_make_tool_def(f"crit_{i}", priority="critical") for i in range(35)]
-        config.compaction.max_tokens = 1000000  # huge token budget; count cap stays 30
-
-        with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
-            active, deferred = classify_tools(tools, config)
-
-        assert self._records(caplog, logging.WARNING) == []
-        infos = self._records(caplog, logging.INFO)
-        assert len(infos) == 1
-        msg = infos[0].getMessage()
-        assert "count cap" in msg
-        assert "normal and low" in msg
-        assert "deferred" in msg
-        # Classification unchanged: all critical active, nothing deferred
-        assert [td["function"]["name"] for td in active] == [f"crit_{i}" for i in range(35)]
-        assert deferred == []
-
-    def test_token_budget_overflow_logs_warning_count_under_cap(self, config, caplog):
-        """Critical set over the token budget, under the count cap: WARNING, as before."""
+    def test_token_budget_overflow_logs_warning(self, config, caplog):
+        """Critical set over the token budget: one WARNING."""
         critical_tools = [_make_tool_def(f"crit_{i}", "x" * 200, priority="critical") for i in range(5)]
         normal_tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(5)]
-        config.compaction.max_tokens = 100  # tiny budget → 10 token budget; count cap stays 30
+        config.compaction.max_tokens = 100  # tiny budget → 10 token budget
 
         with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
             active, deferred = classify_tools(critical_tools + normal_tools, config)
 
         warnings = self._records(caplog, logging.WARNING)
         assert len(warnings) == 1
-        assert "exceeds budget or count" in warnings[0].getMessage()
-        # No count-overflow info: the token-budget warning takes precedence
-        assert not [r for r in self._records(caplog, logging.INFO) if "count cap" in r.getMessage()]
+        assert "exceeds budget" in warnings[0].getMessage()
         # Classification unchanged: critical active, normal deferred
         assert {td["function"]["name"] for td in active} == {f"crit_{i}" for i in range(5)}
         assert {td["function"]["name"] for td in deferred} == {f"norm_{i}" for i in range(5)}
 
-    def test_token_budget_overflow_logs_warning_count_over_cap(self, config, caplog):
-        """Both limits exceeded: still exactly one WARNING, no count-overflow INFO."""
-        tools = [_make_tool_def(f"crit_{i}", "x" * 200, priority="critical") for i in range(35)]
-        config.compaction.max_tokens = 100  # tiny budget; 35 critical > count cap 30
-
-        with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
-            active, deferred = classify_tools(tools, config)
-
-        warnings = self._records(caplog, logging.WARNING)
-        assert len(warnings) == 1
-        assert "exceeds budget or count" in warnings[0].getMessage()
-        assert not [r for r in self._records(caplog, logging.INFO) if "count cap" in r.getMessage()]
-        # All critical tools stay active
-        assert {td["function"]["name"] for td in active} == {f"crit_{i}" for i in range(35)}
-        assert deferred == []
-
-    def test_within_limits_logs_no_overflow_record(self, config, caplog):
-        """Critical set within both limits: no overflow warning or info at all."""
-        tools = [_make_tool_def(f"crit_{i}", priority="critical") for i in range(5)]
-        config.compaction.max_tokens = 1000000
+    def test_many_critical_under_budget_logs_nothing(self, config, caplog):
+        """35 tools exceed the retired count cap but fit the budget: no log."""
+        tools = [_make_tool_def(f"crit_{i}", priority="critical") for i in range(35)]
+        config.compaction.max_tokens = 1000000  # huge token budget
 
         with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
             active, deferred = classify_tools(tools, config)
 
         all_records = self._records(caplog, logging.WARNING) + self._records(caplog, logging.INFO)
-        assert not [
-            r for r in all_records if "exceeds budget or count" in r.getMessage() or "count cap" in r.getMessage()
-        ]
-        assert len(active) == 5
+        assert all_records == []
+        assert [td["function"]["name"] for td in active] == [f"crit_{i}" for i in range(35)]
         assert deferred == []
 
 
@@ -440,6 +381,23 @@ class TestBuildDeferredListText:
         text = build_deferred_list_text(tools, core_names={"workspace_edit"})
         assert text.startswith("<deferred_tools>\n")
         assert text.endswith("\n</deferred_tools>")
+
+    def test_renders_authored_summary_not_description(self):
+        td = _make_tool_def("workspace_edit", "Description text that must not render.")
+        td["summary"] = "Edit a workspace file."
+        text = build_deferred_list_text([td], core_names={"workspace_edit"})
+        assert "- workspace_edit — Edit a workspace file." in text
+        assert "Description text that must not render." not in text
+
+    def test_fallback_summary_bounded_in_catalogue(self):
+        # One long sentence: the 120-char clamp fires, not get_description's
+        # 80-char no-punctuation cutoff.
+        td = _make_tool_def("workspace_edit", " ".join(["word"] * 60) + ".")
+        text = build_deferred_list_text([td], core_names={"workspace_edit"})
+        line = next(line for line in text.splitlines() if "workspace_edit" in line)
+        summary = line.split(" — ", 1)[1]
+        assert len(summary) <= SUMMARY_MAX_CHARS
+        assert summary.endswith("...")
 
     def test_inner_markdown_preserved(self):
         """The wrapping is additive: the existing section headings
@@ -534,7 +492,6 @@ class TestBuildDeferredListText:
 
         class _FakeAgentConfig:
             critical_tools: list[str] = []
-            max_active_tools = 40
 
         class _FakeConfig:
             agent = _FakeAgentConfig()
@@ -580,7 +537,6 @@ class TestBuildDeferredListText:
 
         class _FakeAgentConfig:
             critical_tools: list[str] = []
-            max_active_tools = 40
 
         class _FakeConfig:
             agent = _FakeAgentConfig()
@@ -692,6 +648,38 @@ class TestNormalizeDeferredDescription:
         assert normalize_deferred_description(raw) == "Read a file (e.g. config.json)."
 
 
+class TestGetToolSummary:
+    """Authored summaries, with a bounded mechanical fallback (#1703)."""
+
+    def test_authored_summary_wins_over_description(self):
+        td = _make_tool_def("t", "Schema-oriented description that should be ignored.")
+        td["summary"] = "Do the thing."
+        assert get_tool_summary(td) == "Do the thing."
+
+    def test_fallback_short_description_unchanged(self):
+        td = _make_tool_def("t", "Short description. More text follows.")
+        assert get_tool_summary(td) == "Short description."
+
+    def test_fallback_clamps_long_description_at_word_boundary(self):
+        td = _make_tool_def("t", " ".join(["word"] * 60) + ".")
+        summary = get_tool_summary(td)
+        assert len(summary) <= SUMMARY_MAX_CHARS
+        assert summary.endswith("...")
+        assert summary[:-3].endswith("word")
+
+    def test_authored_summary_collapsed_to_one_line(self):
+        td = _make_tool_def("t", "desc")
+        td["summary"] = "Line one\nline two."
+        assert get_tool_summary(td) == "Line one line two."
+
+    def test_authored_summary_clamped(self):
+        td = _make_tool_def("t", "desc")
+        td["summary"] = " ".join(["alpha"] * 40)
+        summary = get_tool_summary(td)
+        assert len(summary) <= SUMMARY_MAX_CHARS
+        assert summary.endswith("...")
+
+
 # -- Fetched tools helpers -----------------------------------------------------
 
 
@@ -757,6 +745,37 @@ class TestCoreToolsDeclarePriority:
                 name = td.get("function", {}).get("name", "<unknown>")
                 invalid.append((name, prio))
         assert not invalid, f"Invalid priority values: {invalid}"
+
+
+# -- Invariant: deferrable core tools declare a summary (#1703) -----------------
+
+
+class TestCoreToolsDeclareSummary:
+    """Every non-critical core tool can be deferred, so it must declare a
+    one-line intent summary of at most SUMMARY_MAX_CHARS (issue #1703).
+
+    Critical tools never render in the catalogue. Skill and MCP tools use
+    the mechanical fallback.
+    """
+
+    def test_deferrable_core_tools_have_summary(self):
+        missing = []
+        too_long = []
+        multiline = []
+        for td in TOOL_DEFINITIONS:
+            if td.get("priority") == "critical":
+                continue
+            name = td.get("function", {}).get("name", "<unknown>")
+            summary = td.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                missing.append(name)
+            elif len(summary) > SUMMARY_MAX_CHARS:
+                too_long.append((name, len(summary)))
+            elif "\n" in summary:
+                multiline.append(name)
+        assert not missing, f"Deferrable core tools missing 'summary': {missing}"
+        assert not too_long, f"Summaries over {SUMMARY_MAX_CHARS} chars: {too_long}"
+        assert not multiline, f"Summaries must be one line: {multiline}"
 
 
 # -- Invariant: every tool declares a boolean writes flag (#87) ------------------
@@ -874,9 +893,8 @@ def test_collect_never_emits_duplicate_names(ctx):
 def _real_pool(config):
     """Core tool defs + the real always-loaded skill tool defs
     (background/mcp/vault), with ``config.always_loaded_skill_tools`` populated
-    the way startup activation does, so ``get_critical_names`` fires the
-    always-loaded branch. Reproduces the deployed default floor: 14 core-critical
-    + 24 always-loaded = 38 tools, which exceeds ``max_active_tools`` (30)."""
+    the way startup activation does. Reproduces the deployed default floor:
+    14 core-critical + 24 always-loaded = 38 always-visible tools."""
     from decafclaw.skills import discover_skills, grants_capability
     from decafclaw.tools.skill_tools import _load_native_tools
 
@@ -916,9 +934,8 @@ class TestWorkspaceEditDescription:
 
     def test_stays_within_token_budget(self):
         """#989 pins the def at/below its original 386-token estimate (390
-        after the #87 `writes` flag was added). The critical floor already
-        exceeds max_active_tools (30), so a growing definition only tightens the
-        hard floor — keep it bounded.
+        after the #87 `writes` flag was added). A growing definition only
+        tightens the hard floor — keep it bounded.
 
         #1126 added the optional ``expected_version`` parameter to the edit
         def (+~38 tokens on top of the pre-#1126 estimate); the bound moves

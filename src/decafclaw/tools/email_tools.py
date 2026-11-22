@@ -239,6 +239,7 @@ EMAIL_TOOL_DEFINITIONS = [
         "priority": "normal",
         "timeout": None,
         "writes": True,
+        "summary": "Send an email through the configured SMTP provider.",
         "function": {
             "name": "send_email",
             "description": (

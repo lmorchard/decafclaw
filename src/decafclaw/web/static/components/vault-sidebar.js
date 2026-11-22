@@ -2,12 +2,7 @@ import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 import { isBookmarked, load as loadBookmarks, subscribe as subscribeBookmarks, toggle as toggleBookmark } from '../lib/bookmarks-store.js';
-
-/** @param {unknown} body */
-function responseError(body) {
-  if (!body || typeof body !== 'object' || !("error" in body)) return '';
-  return typeof body.error === 'string' ? body.error : '';
-}
+import { responseError } from '../lib/utils.js';
 
 export class VaultSidebar extends LitElement {
   static properties = {

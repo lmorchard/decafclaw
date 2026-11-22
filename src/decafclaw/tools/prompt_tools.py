@@ -389,6 +389,7 @@ PROMPT_TOOL_DEFINITIONS = [
         "priority": "low",
         "timeout": None,
         "writes": True,
+        "summary": "Update the USER.md or CUSTOM.md section of the system prompt.",
         "function": {
             "name": "update_system_prompt",
             "description": (

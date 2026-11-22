@@ -313,6 +313,7 @@ SESSION_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Send a message to another conversation in this session tree.",
         "function": {
             "name": "session_send",
             "description": (
@@ -351,6 +352,7 @@ SESSION_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "List recent sessions with ids, titles, and update times.",
         "function": {
             "name": "session_list",
             "description": (
@@ -377,6 +379,7 @@ SESSION_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "Search past sessions by topic, keyword, or title.",
         "function": {
             "name": "session_search",
             "description": (
@@ -411,6 +414,7 @@ SESSION_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Tell the client to switch to another conversation.",
         "function": {
             "name": "session_switch",
             "description": (
@@ -438,6 +442,7 @@ SESSION_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Tell the client to return to the Home conversation.",
         "function": {
             "name": "session_home",
             "description": (
@@ -459,6 +464,7 @@ SESSION_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Create a new conversation session and switch the client to it.",
         "function": {
             "name": "session_create",
             "description": (

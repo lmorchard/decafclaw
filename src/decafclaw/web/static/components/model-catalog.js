@@ -147,20 +147,6 @@ export class ModelCatalog extends LitElement {
   }
 
   /** @param {string} model */
-  async #setCondense(model) {
-    this._busy = true;
-    this._error = '';
-    try {
-      this._catalog = await DefaultService.wrapperApiModelsCatalogCondensePost({ model });
-    } catch (e) {
-      this._error = this.#errorText(e, 'Failed to set rule-condensation model');
-      void this.#fetchCatalog();
-    } finally {
-      this._busy = false;
-    }
-  }
-
-  /** @param {string} model */
   async #setReflection(model) {
     this._busy = true;
     this._error = '';
@@ -276,7 +262,6 @@ export class ModelCatalog extends LitElement {
 
         ${catalog ? this.#renderDefaultPicker(catalog) : nothing}
         ${catalog ? this.#renderAuxApprovalPicker(catalog) : nothing}
-        ${catalog ? this.#renderCondensePicker(catalog) : nothing}
         ${catalog ? this.#renderReflectionPicker(catalog) : nothing}
         ${catalog ? this.#renderVerifierPicker(catalog) : nothing}
         ${catalog ? this.#renderFilter() : nothing}
@@ -367,27 +352,6 @@ export class ModelCatalog extends LitElement {
             Selected auto-approval model reports no tool support — the approval judgment needs structured output.
           </div>
         ` : nothing}
-      </div>
-    `;
-  }
-
-  /** Rule-condensation-model picker (#1267): enabled catalog models + explicit "use conversation model". */
-  #renderCondensePicker(catalog) {
-    return html`
-      <div class="model-catalog-judge">
-        <label class="model-catalog-default-label" for="catalog-condense-select">Rule-condensation model</label>
-        <select
-          id="catalog-condense-select"
-          class="model-catalog-default-select"
-          ?disabled=${this._busy}
-          @change=${(e) => void this.#setCondense(e.target.value)}
-        >
-          <option value="" ?selected=${!catalog.condense_pointer}>${'(use conversation model)'}</option>
-          ${repeat(catalog.picker_models, m => m, m => html`
-            <option value="${m}" ?selected=${m === catalog.condense_pointer}>${m}</option>
-          `)}
-        </select>
-        <span class="model-catalog-default-hint" title="Condenses shell auto-approval rules in the approval panel; empty = ride on the active conversation model">${catalog.condense_model || '(use conversation model)'}</span>
       </div>
     `;
   }

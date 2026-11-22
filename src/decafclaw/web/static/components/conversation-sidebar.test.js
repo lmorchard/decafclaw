@@ -31,12 +31,6 @@ describe('conversation-sidebar model selector', () => {
         { name: 'Vertex', models: ['vertex-gemini-flash-3.8'] },
       ],
       defaultModel: 'vertex-gemini-flash-3.8',
-      activeMode: 'default',
-      availableModes: [
-        { name: 'default', description: 'Standard assistance', presets: [], promoted_tools: [] },
-        { name: 'dev', description: 'Software engineering', presets: ['developer', 'github'], promoted_tools: ['workspace_diff'] },
-        { name: 'research', description: 'Deep research', presets: [], promoted_tools: ['web_fetch'] },
-      ],
       selectConversation: vi.fn(),
       listConversations: vi.fn(),
       listSessions: vi.fn(),
@@ -205,7 +199,7 @@ describe('conversation-sidebar context inspector', () => {
   });
 });
 
-describe('conversation-sidebar mode selector', () => {
+describe('conversation-sidebar retired shell approval controls (#1684)', () => {
   let sidebar;
 
   afterEach(() => {
@@ -215,7 +209,7 @@ describe('conversation-sidebar mode selector', () => {
   async function mount(storeOverrides = {}) {
     const store = Object.assign(new EventTarget(), {
       currentConvId: 'c1',
-      conversations: [{ conv_id: 'c1', title: 'Trip planning' }, { conv_id: 'c2', title: 'Coding' }],
+      conversations: [{ conv_id: 'c1', title: 'Trip planning' }],
       folders: [],
       archivedConversations: [],
       archivedFolders: [],
@@ -224,26 +218,15 @@ describe('conversation-sidebar mode selector', () => {
       contextUsage: 0,
       contextLimit: 0,
       activeModel: 'vertex-gemini-flash-3.8',
-      availableModels: ['anthropic-claude-3.5-sonnet', 'openai-gpt-4o', 'vertex-gemini-flash-3.8'],
-      modelGroups: [
-        { name: 'Anthropic', models: ['anthropic-claude-3.5-sonnet'] },
-        { name: 'OpenAI', models: ['openai-gpt-4o'] },
-        { name: 'Vertex', models: ['vertex-gemini-flash-3.8'] },
-      ],
+      availableModels: ['vertex-gemini-flash-3.8'],
+      modelGroups: [{ name: 'Vertex', models: ['vertex-gemini-flash-3.8'] }],
       defaultModel: 'vertex-gemini-flash-3.8',
-      activeMode: 'default',
-      availableModes: [
-        { name: 'default', description: 'Standard assistance', presets: [], promoted_tools: [] },
-        { name: 'dev', description: 'Software engineering', presets: ['developer', 'github'], promoted_tools: ['workspace_diff'] },
-        { name: 'research', description: 'Deep research', presets: [], promoted_tools: ['web_fetch'] },
-      ],
       selectConversation: vi.fn(),
       listConversations: vi.fn(),
       listSessions: vi.fn(),
       listArchivedConversations: vi.fn(),
       listSystemConversations: vi.fn(),
       setModel: vi.fn(),
-      setMode: vi.fn(),
       createConversation: vi.fn(),
       ...storeOverrides,
     });
@@ -254,59 +237,11 @@ describe('conversation-sidebar mode selector', () => {
     return { sidebar, store };
   }
 
-  it('renders mode selector and selects the active mode', async () => {
-    const { sidebar } = await mount({ activeMode: 'dev' });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#mode-select'));
-    expect(select).toBeTruthy();
-    expect(select.value).toBe('dev');
-  });
-
-  it('renders disabled Custom option when activeMode is custom', async () => {
-    const { sidebar } = await mount({ activeMode: 'custom' });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#mode-select'));
-    expect(select).toBeTruthy();
-    expect(select.value).toBe('custom');
-    const customOpt = /** @type {HTMLOptionElement} */ (select.querySelector('option[value="custom"]'));
-    expect(customOpt).toBeTruthy();
-    expect(customOpt.disabled).toBe(true);
-  });
-
-  it('calls store.setMode when the user changes mode selection', async () => {
-    const { sidebar, store } = await mount({ activeMode: 'default' });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#mode-select'));
-    select.value = 'dev';
-    select.dispatchEvent(new Event('change'));
-
-    expect(store.setMode).toHaveBeenCalledWith('dev');
-  });
-
-  it('updates mode selector when store activeMode changes', async () => {
-    const { sidebar, store } = await mount({ activeMode: 'default' });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#mode-select'));
-    expect(select.value).toBe('default');
-
-    store.activeMode = 'research';
-    store.dispatchEvent(new Event('change'));
-    await sidebar.updateComplete;
-
-    expect(select.value).toBe('research');
-  });
-
-  it('disables mode selector when store is busy or readOnly', async () => {
-    const { sidebar, store } = await mount({ isBusy: true });
-    const select = /** @type {HTMLSelectElement} */ (sidebar.querySelector('#mode-select'));
-    expect(select.disabled).toBe(true);
-
-    store.isBusy = false;
-    store.isReadOnly = true;
-    store.dispatchEvent(new Event('change'));
-    await sidebar.updateComplete;
-    expect(select.disabled).toBe(true);
-
-    store.isReadOnly = false;
-    store.dispatchEvent(new Event('change'));
-    await sidebar.updateComplete;
-    expect(select.disabled).toBe(false);
+  it('has no mode selector or shell approval panel/trigger', async () => {
+    const { sidebar } = await mount();
+    expect(sidebar.querySelector('#mode-select')).toBeNull();
+    expect(sidebar.querySelector('shell-approval-panel')).toBeNull();
+    expect(sidebar.querySelector('button.shell-approval-open-btn')).toBeNull();
   });
 });
 

@@ -216,17 +216,6 @@ chat-input .conversation-menu-toggle input[type="checkbox"] {
   margin: 0;
 }
 
-chat-input .conversation-menu-select {
-  width: 100%;
-  min-height: 44px;
-  margin: 0;
-  padding-block: 0.5rem;
-  padding-left: 0.75rem;
-  /* Preserve Pico's arrow and its reserved right padding. A 16px floor avoids
-     iOS focus zoom even with the slightly smaller root font. */
-  font-size: max(1rem, 16px);
-}
-
 /* Desktop continues to use the conversation control strip. */
 @media (min-width: 640px) {
   chat-input button.conversation-actions-btn,

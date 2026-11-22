@@ -650,7 +650,6 @@ class MattermostClient:
                 deny_label = event.get("deny_label", "")
                 display_tool = action_data.get("tool_name", action_type)
                 decline_reason = action_data.get("decline_reason") or action_data.get("reason", "")
-                suggested_rule = action_data.get("suggested_rule", "")
                 confirm_post_id = await display.on_confirm_request(
                     display_tool,
                     command,
@@ -663,7 +662,6 @@ class MattermostClient:
                     approve_label=approve_label,
                     deny_label=deny_label,
                     decline_reason=decline_reason,
-                    suggested_rule=suggested_rule,
                     cwd=action_data.get("cwd", ""),
                     purpose=action_data.get("purpose", ""),
                     feedback=action_data.get("feedback", ""),
@@ -680,7 +678,6 @@ class MattermostClient:
                             action_type,
                             timeout=event.get("timeout"),
                             allow_always=not bool(approve_label),
-                            suggested_rule=suggested_rule,
                         )
                     )
 
@@ -880,7 +877,6 @@ class MattermostClient:
                     approve_label=event.get("approve_label", ""),
                     deny_label=event.get("deny_label", ""),
                     decline_reason=action_data.get("decline_reason") or action_data.get("reason", ""),
-                    suggested_rule=action_data.get("suggested_rule", ""),
                     cwd=action_data.get("cwd", ""),
                     purpose=action_data.get("purpose", ""),
                     feedback=action_data.get("feedback", ""),
@@ -895,7 +891,6 @@ class MattermostClient:
                             action_type,
                             timeout=event.get("timeout"),
                             allow_always=not bool(event.get("approve_label")),
-                            suggested_rule=action_data.get("suggested_rule", ""),
                         )
                     )
                 return
@@ -1039,21 +1034,15 @@ class MattermostClient:
         timeout: float | None = None,
         poll_interval=2,
         allow_always=True,
-        suggested_rule: str = "",
     ):
         """Poll a post for reactions to resolve a confirmation via the manager."""
 
-        async def _resolve(
-            approved, always=False, add_pattern=False, add_rule=False, rule="", label="", flag_missing_tool=False
-        ):
+        async def _resolve(approved, always=False, add_pattern=False, label="", flag_missing_tool=False):
             kwargs = {
                 "approved": approved,
                 "always": always,
                 "add_pattern": add_pattern,
             }
-            if add_rule or rule:
-                kwargs["add_rule"] = add_rule
-                kwargs["rule"] = rule
             if flag_missing_tool:
                 kwargs["data"] = {"flag_missing_tool": True}
             await manager.respond_to_confirmation(
@@ -1080,7 +1069,6 @@ class MattermostClient:
                 timeout,
                 poll_interval,
                 allow_always,
-                suggested_rule,
                 _resolve,
             )
         finally:
@@ -1097,7 +1085,6 @@ class MattermostClient:
         timeout,
         poll_interval,
         allow_always,
-        suggested_rule,
         _resolve,
     ):
         deadline = (time.monotonic() + timeout) if (timeout is not None and timeout > 0) else None
@@ -1126,16 +1113,7 @@ class MattermostClient:
                     user_id = r.get("user_id", "")
                     if user_id == self.bot_user_id:
                         continue
-                    if emoji in ("memo", "pencil2") and action_type == "run_shell_command" and suggested_rule:
-                        log.info(f"Tool approved with rule by {user_id}")
-                        await _resolve(
-                            True,
-                            add_rule=True,
-                            rule=suggested_rule,
-                            label="\U0001f4dd approved + rule added",
-                        )
-                        return
-                    elif emoji in ("notebook",) and action_type == "run_shell_command":
+                    if emoji in ("notebook",) and action_type == "run_shell_command":
                         log.info(f"Tool approved with pattern by {user_id}")
                         await _resolve(True, add_pattern=True, label="\U0001f4d3 approved + pattern added")
                         return

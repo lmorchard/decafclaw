@@ -1188,7 +1188,6 @@ def test_save_restore_round_trip(manager, config):
     save_ctx.tools.extra_definitions = [{"name": "sentinel_tool"}]
     save_ctx.skills.activated = {"sentinel_skill": ""}
     save_ctx.skip_vault_retrieval = True
-    save_ctx.active_mode = "sentinel-mode"
     sentinel_ts = datetime(2026, 7, 23, 14, 30)
     sentinel_cursors = InjectionCursors(
         notes_ts="2026-07-23T14:30:00Z",
@@ -1210,7 +1209,6 @@ def test_save_restore_round_trip(manager, config):
     assert restore_ctx.tools.extra_definitions == [{"name": "sentinel_tool"}]
     assert restore_ctx.skills.activated == {"sentinel_skill": ""}
     assert restore_ctx.skip_vault_retrieval is True
-    assert restore_ctx.active_mode == "sentinel-mode"
     assert restore_ctx.active_model == "sentinel-model"
     assert restore_ctx.composer.injection_cursors == sentinel_cursors
     assert restore_ctx.composer.prefix_fingerprints == {"tools": "sentinel-digest"}

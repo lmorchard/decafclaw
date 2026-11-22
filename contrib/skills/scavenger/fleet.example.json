@@ -1,0 +1,50 @@
+{
+  "default_broadcast": "192.168.1.255",
+  "default_wol_port": 9,
+  "hosts": [
+    {
+      "name": "desktop-linux",
+      "ssh_alias": "scavenger-desktop",
+      "os": "linux",
+      "arch": "x86_64",
+      "priority": 10,
+      "container": {
+        "engine": "podman",
+        "needs_selinux_z": false,
+        "device_flags": ["--device", "/dev/dri"]
+      },
+      "power": {
+        "wol_mac": "AA:BB:CC:DD:EE:01",
+        "wol_wait_seconds": 10
+      },
+      "courtesy": {
+        "sunshine_check": false
+      },
+      "limits": {
+        "default_memory": "16g",
+        "default_cpus": 8
+      },
+      "tags": ["desktop", "gpu", "vulkan", "fast-build"]
+    },
+    {
+      "name": "laptop-mac",
+      "ssh_alias": "scavenger-laptop",
+      "os": "darwin",
+      "arch": "arm64",
+      "priority": 20,
+      "container": {
+        "engine": "docker"
+      },
+      "power": {
+        "battery_guard": true,
+        "wol_mac": "AA:BB:CC:DD:EE:02",
+        "wol_wait_seconds": 10
+      },
+      "limits": {
+        "default_memory": "16g",
+        "default_cpus": 8
+      },
+      "tags": ["laptop", "apple-silicon", "metal", "mlx"]
+    }
+  ]
+}

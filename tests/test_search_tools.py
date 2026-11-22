@@ -72,6 +72,17 @@ class TestKeywordSearchNonSkillTools:
         assert "workspace_edit" in fetched
         assert "workspace_search" in fetched
 
+    def test_fetched_result_omits_catalogue_summary(self, ctx):
+        """The fetched schema text does not repeat catalogue-only metadata."""
+        tool = _make_tool_def("summary_tool", "Read a special config file.")
+        tool["summary"] = "Read a special config."
+        ctx.tools.deferred_pool = [tool]
+        ctx.config.skill_tool_owners = {}
+        ctx.config.discovered_skills = []
+        result = tool_search(ctx, "special")
+        assert '"name": "summary_tool"' in result.text
+        assert '"summary"' not in result.text
+
     def test_matches_wrapped_description_continuation_lines(self, ctx):
         """Keyword search matches terms on continuation lines of a wrapped first sentence."""
         tool = _make_tool_def(

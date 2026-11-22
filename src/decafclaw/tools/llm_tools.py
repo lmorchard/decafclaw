@@ -464,6 +464,7 @@ LLM_TOOL_DEFINITIONS = [
         "timeout": None,
         # No side effects beyond the LLM call itself: runs concurrently.
         "writes": False,
+        "summary": "Run a single-shot completion on a named model, with no tools.",
         "function": {
             "name": "llm_query",
             "description": (
@@ -534,6 +535,7 @@ LLM_TOOL_DEFINITIONS = [
         # Read-only: concurrent with other shared calls in a batch.
         "execution": "shared",
         "writes": False,
+        "summary": "List configured models accepted by llm_query and delegate_task.",
         "function": {
             "name": "llm_models",
             "description": (

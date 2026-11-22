@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { encodePagePath, formatTime, formatRelativeTime, copyToClipboard, setupResizeHandle } from './utils.js';
+import { encodePagePath, formatTime, formatRelativeTime, responseError, copyToClipboard, setupResizeHandle } from './utils.js';
 
 describe('utils', () => {
     describe('encodePagePath', () => {
@@ -7,6 +7,31 @@ describe('utils', () => {
             expect(encodePagePath('a/b/c')).toBe('a/b/c');
             expect(encodePagePath('my page/is cool')).toBe('my%20page/is%20cool');
             expect(encodePagePath('a&b/c?d')).toBe('a%26b/c%3Fd');
+        });
+    });
+
+    describe('responseError', () => {
+        it('returns the error string from an object body', () => {
+            expect(responseError({ error: 'boom' })).toBe('boom');
+        });
+
+        it('returns empty string for null and undefined bodies', () => {
+            expect(responseError(null)).toBe('');
+            expect(responseError(undefined)).toBe('');
+        });
+
+        it('returns empty string when the body is not an object', () => {
+            expect(responseError('boom')).toBe('');
+            expect(responseError(42)).toBe('');
+        });
+
+        it('returns empty string when there is no error key', () => {
+            expect(responseError({ message: 'boom' })).toBe('');
+        });
+
+        it('returns empty string when error is not a string', () => {
+            expect(responseError({ error: 42 })).toBe('');
+            expect(responseError({ error: { code: 'boom' } })).toBe('');
         });
     });
 

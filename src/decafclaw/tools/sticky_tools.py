@@ -47,6 +47,7 @@ STICKY_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Pin a display-only widget above the chat input for this workflow.",
         "function": {
             "name": "widget_pin_sticky",
             "description": (
@@ -79,6 +80,7 @@ STICKY_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Clear the sticky widget slot.",
         "function": {
             "name": "widget_unpin_sticky",
             "description": (

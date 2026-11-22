@@ -6,7 +6,6 @@ import { STATUS_LABELS, STATUS_TITLE_LABELS } from '../lib/constants.js';
 import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 import { showToast } from '../lib/toast.js';
 import './context-inspector.js';
-import './shell-approval-panel.js';
 import './notification-inbox.js';
 import './model-picker.js';
 import './vault-sidebar.js';
@@ -35,8 +34,6 @@ export class ConversationSidebar extends LitElement {
     _availableModels: { type: Array, state: true },
     _modelGroups: { type: Array, state: true },
     _defaultModel: { type: String, state: true },
-    _activeMode: { type: String, state: true },
-    _availableModes: { type: Array, state: true },
     _isBusy: { type: Boolean, state: true },
     _isReadOnly: { type: Boolean, state: true },
     _collapsed: { type: Boolean, state: true },
@@ -44,7 +41,6 @@ export class ConversationSidebar extends LitElement {
     _sidebarTab: { type: String, state: true },
     _contextInspectorOpen: { type: Boolean, state: true },
     _contextVersion: { type: Number, state: true },
-    _shellApprovalOpen: { type: Boolean, state: true },
     _openSchedule: { type: String, state: true },
     _hasControlsStrip: { type: Boolean, state: true },
     _movePickerConvId: { type: String, state: true },
@@ -81,8 +77,6 @@ export class ConversationSidebar extends LitElement {
     this._availableModels = [];
     this._modelGroups = [];
     this._defaultModel = '';
-    this._activeMode = 'default';
-    this._availableModes = [];
     this._isBusy = false;
     this._isReadOnly = false;
     this._collapsed = false;
@@ -99,7 +93,6 @@ export class ConversationSidebar extends LitElement {
     this._sidebarTab = 'conversations';
     this._contextInspectorOpen = false;
     this._contextVersion = 0;
-    this._shellApprovalOpen = false;
     this._openSchedule = '';
     this._hasControlsStrip = document.querySelector('chat-controls') !== null;
     /** @type {string} conv id of the open "Move to…" picker, or '' (#1277) */
@@ -129,11 +122,6 @@ export class ConversationSidebar extends LitElement {
     this._mobileOpen = true;
   }
 
-  /** Open the per-conversation shell approval panel (mode-picker trigger). */
-  #openShellApproval() {
-    this._shellApprovalOpen = true;
-  }
-
   closeMobile() {
     this._mobileOpen = false;
   }
@@ -144,16 +132,11 @@ export class ConversationSidebar extends LitElement {
       this._contextInspectorOpen = !this._contextInspectorOpen;
     };
     document.addEventListener('toggle-context-inspector', this._onToggleInspector);
-    this._onToggleShellApproval = () => {
-      this._shellApprovalOpen = !this._shellApprovalOpen;
-    };
-    document.addEventListener('toggle-shell-approval', this._onToggleShellApproval);
     this._onStoreChange = () => {
       const newId = this.store?.currentConvId;
       const newSessions = this.store?.sessions || [];
       if (newId !== this._activeId) {
         this._contextInspectorOpen = false;
-        this._shellApprovalOpen = false;
         // Collapse is per conversation: each tab reflects the conversation
         // it is showing instead of one global width for the whole browser.
         this.#applyCollapsed(newId);
@@ -176,8 +159,6 @@ export class ConversationSidebar extends LitElement {
       this._availableModels = this.store?.availableModels || [];
       this._modelGroups = this.store?.modelGroups || [];
       this._defaultModel = this.store?.defaultModel || '';
-      this._activeMode = this.store?.activeMode || 'default';
-      this._availableModes = this.store?.availableModes || [];
       this._isBusy = Boolean(this.store?.isBusy);
       this._isReadOnly = Boolean(this.store?.isReadOnly);
       // Update conversation list and folders based on current section
@@ -201,7 +182,6 @@ export class ConversationSidebar extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('toggle-context-inspector', this._onToggleInspector);
-    document.removeEventListener('toggle-shell-approval', this._onToggleShellApproval);
     this.store?.removeEventListener('change', this._onStoreChange);
   }
 
@@ -220,15 +200,6 @@ export class ConversationSidebar extends LitElement {
     // the desktop session left _collapsed=true.
     this.toggleAttribute('collapsed', this._collapsed && !this._mobileOpen);
     this.toggleAttribute('mobile-open', this._mobileOpen);
-
-    // Sync mode selector value if present
-    const modeSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#mode-select'));
-    if (modeSelect) {
-      const target = this._activeMode || 'default';
-      if (target && modeSelect.value !== target) {
-        modeSelect.value = target;
-      }
-    }
   }
 
   /** @param {string} tab */
@@ -887,12 +858,6 @@ export class ConversationSidebar extends LitElement {
     this.closeMobile();
   }
 
-  /** @param {Event} e */
-  #handleModeChange(e) {
-    const mode = /** @type {HTMLSelectElement} */ (e.target).value;
-    this.store?.setMode(mode);
-  }
-
   /**
    * @param {'idle' | 'busy' | 'waiting' | 'finished' | string} status
    */
@@ -1316,30 +1281,6 @@ export class ConversationSidebar extends LitElement {
           <button class="wiki-new-folder-btn outline" @click=${() => this.#createChatFolder()} aria-label="New chat folder">+ Folder</button>
         </div>
       ` : nothing}
-      ${!this._hasControlsStrip && this._availableModes.length > 0 ? html`
-      <div class="mode-picker">
-        <label class="mode-picker-label" for="mode-select">Mode</label>
-        <select id="mode-select" class="mode-select"
-                ?disabled=${this._isBusy || this._isReadOnly}
-                @change=${(e) => this.#handleModeChange(e)}>
-          ${(() => {
-            const target = this._activeMode || 'default';
-            const isCustom = target === 'custom';
-            return html`
-              ${isCustom ? html`
-                <option value="custom" selected disabled>Custom</option>
-              ` : nothing}
-              ${this._availableModes.map(m => html`
-                <option value="${m.name}" ?selected=${m.name === target} .selected=${m.name === target} title="${m.description}">
-                  ${m.name}
-                </option>
-              `)}
-            `;
-          })()}
-        </select>
-        <button class="shell-approval-open-btn dc-icon-btn" title="Shell auto-approval" aria-label="Open shell auto-approval panel" @click=${() => this.#openShellApproval()}>&#9881;</button>
-      </div>
-      ` : nothing}
       ${!this._hasControlsStrip && this._availableModels.length > 0 ? html`
       <div class="model-picker">
         <label class="model-picker-label">Model</label>
@@ -1381,11 +1322,6 @@ export class ConversationSidebar extends LitElement {
         .contextVersion=${this._contextVersion}
         @close=${() => { this._contextInspectorOpen = false; }}
       ></context-inspector>
-      <shell-approval-panel
-        .convId=${this._activeId || ''}
-        .open=${this._shellApprovalOpen}
-        @close=${() => { this._shellApprovalOpen = false; }}
-      ></shell-approval-panel>
       <div class="sidebar-footer">
         <div class="footer-icons">
           <theme-toggle></theme-toggle>
