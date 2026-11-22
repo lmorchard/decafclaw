@@ -20,6 +20,8 @@ Tools can return rich visual presentations in the web UI via DecafClaw's widget 
 
 Sandboxed file operations inside `data/{agent_id}/workspace/`. See [Data Layout](data-layout.md).
 
+Shared file-tool helpers (cancellation check, error conversion, mini-diff) live in `tools/_file_common.py` (#1340); the admin file tools keep their own copies until 6.4b adopts the module.
+
 | Tool | Always | What it does |
 |------|:------:|--------------|
 | `workspace_read` | ✓ | Read a file (supports line ranges and targeted section retrieval). Returns a content version token per read; pass it as `expected_version` to `workspace_edit` to reject edits against a stale read |
