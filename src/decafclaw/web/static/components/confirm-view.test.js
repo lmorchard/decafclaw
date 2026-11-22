@@ -287,4 +287,48 @@ describe('shell purpose and denial feedback (#1559)', () => {
     expect(el.querySelector('.confirm-feedback-flag')).toBeNull();
     expect(el.querySelector('.confirm-feedback-input')).toBeNull();
   });
+
+  it('renders security review reason from action_data', async () => {
+    const { el } = await mountWithStore([{
+      context_id: 'ctx-sec', confirmation_id: 'c-sec', tool: 'shell', tool_call_id: 'tc-sec',
+      command: 'ssh -i ~/.ssh/id_test host',
+      action_data: {
+        tier: 'security_monitor_ask',
+        reason: 'Attempted operation outside workspace path: ~/.ssh/id_test',
+      },
+    }]);
+
+    const declineEl = el.querySelector('.confirm-decline-reason');
+    expect(declineEl).toBeTruthy();
+    expect(declineEl.textContent).toContain('Security review:');
+    expect(declineEl.textContent).toContain('Attempted operation outside workspace path: ~/.ssh/id_test');
+  });
+
+  it('renders activity reason from action_data', async () => {
+    const { el } = await mountWithStore([{
+      context_id: 'ctx-act', confirmation_id: 'c-act', tool: 'shell', tool_call_id: 'tc-act',
+      command: 'make deploy',
+      action_data: {
+        tier: 'activity_new',
+        reason: 'first homelab command in this conversation',
+      },
+    }]);
+
+    const declineEl = el.querySelector('.confirm-decline-reason');
+    expect(declineEl).toBeTruthy();
+    expect(declineEl.textContent).toContain('Activity:');
+    expect(declineEl.textContent).toContain('first homelab command in this conversation');
+  });
+
+  it('falls back to message Reason when decline_reason is absent', async () => {
+    const { el } = await mountWithStore([{
+      context_id: 'ctx-msg', confirmation_id: 'c-msg', tool: 'shell', tool_call_id: 'tc-msg',
+      command: 'ls /etc',
+      message: 'Shell command: `ls /etc`\nReason: Outside sandbox boundary',
+    }]);
+
+    const declineEl = el.querySelector('.confirm-decline-reason');
+    expect(declineEl).toBeTruthy();
+    expect(declineEl.textContent).toContain('Outside sandbox boundary');
+  });
 });

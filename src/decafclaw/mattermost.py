@@ -649,7 +649,7 @@ class MattermostClient:
                 approve_label = event.get("approve_label", "")
                 deny_label = event.get("deny_label", "")
                 display_tool = action_data.get("tool_name", action_type)
-                decline_reason = action_data.get("decline_reason", "")
+                decline_reason = action_data.get("decline_reason") or action_data.get("reason", "")
                 suggested_rule = action_data.get("suggested_rule", "")
                 confirm_post_id = await display.on_confirm_request(
                     display_tool,
@@ -879,7 +879,7 @@ class MattermostClient:
                     confirmation_id=event.get("confirmation_id", ""),
                     approve_label=event.get("approve_label", ""),
                     deny_label=event.get("deny_label", ""),
-                    decline_reason=action_data.get("decline_reason", ""),
+                    decline_reason=action_data.get("decline_reason") or action_data.get("reason", ""),
                     suggested_rule=action_data.get("suggested_rule", ""),
                     cwd=action_data.get("cwd", ""),
                     purpose=action_data.get("purpose", ""),
