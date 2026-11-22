@@ -21,6 +21,8 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
   mcp_servers.json                  # MCP server configuration
   skill_permissions.json            # Skill activation permissions
   shell_allow_patterns.json         # Approved shell command patterns
+  shell_scope_rules.jsonl           # Global scope-keyed rules; admin_* writes only (#1641 phase 4)
+  shell_scope_ledger.jsonl          # Append-only human approval evidence (#1641 phase 4)
   web_tokens.json                   # Web UI auth tokens (managed by decafclaw-token CLI)
   approval_state/
     {conv_id}.json                  # Per-conversation shell approval state (#1160)

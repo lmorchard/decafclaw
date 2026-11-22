@@ -468,8 +468,19 @@ def _load_guidance_text(ctx: "Context", raw: str) -> str:
     return text
 
 
-def resolve_aux_approval_guidance(ctx: "Context") -> list[str]:
-    """Collect active aux-LLM approval guidance from presets, config, and session state."""
+def resolve_aux_approval_guidance(
+    ctx: "Context",
+    *,
+    command: str = "",
+    activity: Activity | None = None,
+) -> list[str]:
+    """Collect active aux-LLM approval guidance from presets, config, and session state.
+
+    ``command``/``activity`` add the global scope-keyed rules that apply to this
+    command (#1641 phase 4): a rule for another repo never leaks into the prompt.
+    Callers that omit them (tests, listing) get only the conversation/config
+    guidance, preserving the pre-phase-4 result.
+    """
     _warn_deprecated_guidance_file(ctx.config)
     guidelines: list[str] = []
 
@@ -517,6 +528,14 @@ def resolve_aux_approval_guidance(ctx: "Context") -> list[str]:
         item_text = str(item).strip()
         if item_text and item_text not in guidelines:
             guidelines.append(item_text)
+
+    # 4. Global scope-keyed rules for this command's activity (#1641 phase 4)
+    if command and activity is not None:
+        from ..shell_scope_rules import matching_rules
+
+        for item in matching_rules(ctx.config, command, activity):
+            if item and item not in guidelines:
+                guidelines.append(item)
 
     return guidelines
 
@@ -580,6 +599,20 @@ async def _record_approval(
         reason=_single_line(reason),
         **_activity_fields(activity),
     )
+    if tier == "human":
+        # Evidence for the global scope rulebook (#1641 phase 4). Only explicit
+        # human verdicts count: judge/read-only allowances are telemetry, not
+        # consent. This writes the ledger, never the rulebook.
+        from ..shell_scope_rules import record_human_decision
+
+        record_human_decision(
+            ctx.config,
+            conv_id=getattr(ctx, "conv_id", "") or "",
+            command=command,
+            cwd=cwd,
+            decision=decision,
+            activity=activity,
+        )
 
 
 async def _request_confirmation_timed(
@@ -974,7 +1007,7 @@ def build_aux_approval_prompt(
         stated_purpose=_single_line(purpose) or "(none provided)",
         activity=activity,
         native_tool_index=build_native_tool_index(ctx, command),
-        guidelines=resolve_aux_approval_guidance(ctx),
+        guidelines=resolve_aux_approval_guidance(ctx, command=command, activity=activity),
     )
 
 
@@ -1264,7 +1297,7 @@ async def check_shell_approval(
             return {"approved": True}
 
         try:
-            had_guidance = bool(resolve_aux_approval_guidance(ctx))
+            had_guidance = bool(resolve_aux_approval_guidance(ctx, command=command, activity=activity))
             prompt = build_aux_approval_prompt(ctx, command, cwd=cwd, purpose=purpose, activity=activity)
             messages = [{"role": "user", "content": prompt}]
             response = await ctx.aux_approval_llm()(messages)
@@ -2130,7 +2163,9 @@ async def tool_shell_guidance(
         if not has_rules:
             lines.append("*(No custom guidance rules configured)*")
 
-        return "\n".join(mode_lines + ["\n"] + lines)
+        from ..shell_scope_rules import format_rules_summary
+
+        return "\n".join(mode_lines + ["\n"] + lines + ["\n" + format_rules_summary(ctx.config)])
 
     if ctx.is_unattended:
         log.warning(f"[tool:shell_guidance] denied on unattended turn (task_mode={ctx.task_mode.value})")
@@ -2352,8 +2387,103 @@ async def tool_shell_guidance(
         status_msg = "Created" if is_new else "Updated"
         return f"{status_msg} custom shell auto-approval preset `{preset_clean}`:\n{updated_text}"
 
+    elif action == "promote_scope_rules":
+        # Read-only proposal. The rulebook is policy and is written only by the
+        # admin_* tools after an interactive human confirmation (#1641 phase 4).
+        from ..shell_scope_rules import promotion_proposal, scope_rules_path
+
+        candidates, content = promotion_proposal(ctx.config)
+        if not candidates:
+            return "No global scope-rule promotion candidates at the current thresholds."
+        path = scope_rules_path(ctx.config)
+        preview = "\n".join(
+            f"- `{rule.scope}` · `{rule.pattern}` ({rule.approvals} approvals, {rule.denials} denials)"
+            for rule in candidates
+        )
+        return ToolResult(
+            text=(
+                f"{len(candidates)} promotion candidate(s) from the decision ledger.\n{preview}\n\n"
+                f"Nothing was written. To apply, call admin_write(path={path.name!r}, content=<the "
+                '"content" field>) — that requires human confirmation and a diff preview.'
+            ),
+            data={
+                "path": str(path),
+                "content": content,
+                "candidates": [
+                    {"scope": rule.scope, "pattern": rule.pattern, "approvals": rule.approvals, "denials": rule.denials}
+                    for rule in candidates
+                ],
+            },
+        )
+
+    elif action == "condense_scope_rules":
+        # Draft-only proposal, like the #1267 per-conversation surface: the
+        # model's output lands in a rulebook the human applies via admin_write.
+        from ..model_catalog import effective_condense_model
+        from ..shell_scope_rules import (
+            ScopeRule,
+            build_scope_condense_prompt,
+            load_scope_rules,
+            render_scope_rules,
+            scope_rules_path,
+        )
+
+        existing = load_scope_rules(ctx.config).rules
+        if len(existing) < 2:
+            return "Need at least two global scope rules to condense."
+
+        from ..llm import call_llm
+
+        model_name = effective_condense_model(ctx.config, getattr(ctx, "active_model", "") or "")
+        try:
+            response = await call_llm(
+                ctx.config,
+                [{"role": "user", "content": build_scope_condense_prompt(existing)}],
+                model_name=model_name,
+            )
+        except Exception as exc:
+            log.warning(f"[tool:shell_guidance] scope-rule condensation failed: {exc}")
+            return ToolResult(text=f"[error: condensation failed: {exc}]")
+
+        raw_text = (response.get("content") or "").strip()
+        if "```" in raw_text:
+            raw_text = re.sub(r"^```(?:json)?\n?", "", raw_text, flags=re.MULTILINE)
+            raw_text = re.sub(r"```$", "", raw_text, flags=re.MULTILINE).strip()
+        try:
+            data = json.loads(raw_text)
+        except (json.JSONDecodeError, ValueError):
+            return ToolResult(text="[error: condensation returned unparseable output; nothing written]")
+        proposed_raw = data.get("rules") if isinstance(data, dict) else None
+        if not isinstance(proposed_raw, list):
+            return ToolResult(text="[error: condensation response missing a 'rules' list; nothing written]")
+        proposed: list[ScopeRule] = []
+        for item in proposed_raw:
+            if not isinstance(item, dict):
+                continue
+            scope = str(item.get("scope") or "").strip()
+            pattern = str(item.get("pattern") or "").strip()
+            text = str(item.get("rule") or "").strip()
+            if scope and pattern and text:
+                proposed.append(ScopeRule(scope=scope, pattern=pattern, rule=text))
+        if not proposed:
+            return ToolResult(text="[error: condensation returned no usable rules; nothing written]")
+
+        path = scope_rules_path(ctx.config)
+        content = render_scope_rules(proposed)
+        return ToolResult(
+            text=(
+                f"Proposed {len(proposed)} rule(s) from {len(existing)} (draft only; nothing written). "
+                f'To apply, call admin_write(path={path.name!r}, content=<the "content" field>) — '
+                "that requires human confirmation and a diff preview."
+            ),
+            data={"path": str(path), "content": content, "before": len(existing), "after": len(proposed)},
+        )
+
     return ToolResult(
-        text="[error: invalid action. Use 'list', 'set_mode', 'enable_preset', 'disable_preset', 'add_rule', 'remove_rule', or 'save_preset'.]"
+        text=(
+            "[error: invalid action. Use 'list', 'set_mode', 'enable_preset', 'disable_preset', "
+            "'add_rule', 'remove_rule', 'save_preset', 'promote_scope_rules', or 'condense_scope_rules'.]"
+        )
     )
 
 
@@ -2408,6 +2538,9 @@ SHELL_TOOL_DEFINITIONS = [
                 "Use 'enable_preset' or 'disable_preset' with preset='name' to toggle situational presets (e.g. 'developer', 'github'). "
                 "Use 'add_rule' or 'remove_rule' with rule='text' to add or remove custom auto-approval prompt guidelines for this conversation. "
                 "Use 'save_preset' with preset='name' to bundle active conversation rules (or a specific rule) into a reusable custom preset on disk. "
+                "Use 'promote_scope_rules' to draft global scope-keyed rules from repeated human approvals (evidence ledger); "
+                "use 'condense_scope_rules' to merge the global rulebook into fewer rules. "
+                "Both are draft-only: apply the returned content with admin_write, which requires human confirmation. "
                 "Modifying approval rules or modes requires user confirmation."
             ),
             "parameters": {
@@ -2423,6 +2556,8 @@ SHELL_TOOL_DEFINITIONS = [
                             "add_rule",
                             "remove_rule",
                             "save_preset",
+                            "promote_scope_rules",
+                            "condense_scope_rules",
                         ],
                         "description": "Action to perform (default: list)",
                     },
