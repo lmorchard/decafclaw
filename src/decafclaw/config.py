@@ -770,7 +770,6 @@ def load_config() -> Config:
             "max_concurrent_tools": "MAX_CONCURRENT_TOOLS",
             "max_message_length": "MAX_MESSAGE_LENGTH",
             "tool_context_budget_pct": "TOOL_CONTEXT_BUDGET_PCT",
-            "max_active_tools": "MAX_ACTIVE_TOOLS",
             "critical_tools": "CRITICAL_TOOLS",
             "child_max_tool_iterations": "CHILD_MAX_TOOL_ITERATIONS",
             "child_timeout_sec": "CHILD_TIMEOUT_SEC",

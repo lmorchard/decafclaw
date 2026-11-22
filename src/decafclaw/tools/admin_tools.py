@@ -1125,6 +1125,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": False,
+        "summary": "Read an agent admin file such as a skill, prompt, or config.",
         "function": {
             "name": "admin_read",
             "description": (
@@ -1157,6 +1158,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": False,
+        "summary": "List files and directories under the agent admin root.",
         "function": {
             "name": "admin_list",
             "description": (
@@ -1180,6 +1182,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "priority": "low",
         "timeout": None,
         "writes": True,
+        "summary": "Create or overwrite an agent admin file.",
         "function": {
             "name": "admin_write",
             "description": (
@@ -1209,6 +1212,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "priority": "low",
         "timeout": None,
         "writes": True,
+        "summary": "Replace a line range in an agent admin file.",
         "function": {
             "name": "admin_replace_lines",
             "description": (
@@ -1246,6 +1250,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "priority": "low",
         "timeout": None,
         "writes": True,
+        "summary": "Replace exact text matches in an agent admin file.",
         "function": {
             "name": "admin_edit",
             "description": (
@@ -1283,6 +1288,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "priority": "low",
         "timeout": None,
         "writes": True,
+        "summary": "Delete a file or directory under the agent admin root.",
         "function": {
             "name": "admin_delete",
             "description": (
@@ -1309,6 +1315,7 @@ ADMIN_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": True,
+        "summary": "Request a restart of the DecafClaw service.",
         "function": {
             "name": "admin_restart",
             "description": (

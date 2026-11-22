@@ -14,7 +14,7 @@ from decafclaw.skills import discover_skills
 from decafclaw.testing import ScriptedResponse
 from decafclaw.tool_definitions import build_tool_list
 from decafclaw.tools.search_tools import tool_search
-from decafclaw.tools.tool_registry import add_fetched_tools
+from decafclaw.tools.tool_registry import add_fetched_tools, estimate_tool_tokens
 from tests.harness import AgentHarness
 
 
@@ -24,7 +24,8 @@ def composer(ctx, config):
     config.system_prompt = "Stable test system prompt"
     config.vault_retrieval.mode = RetrievalMode.ON_DEMAND
     config.agent.show_context_status = True
-    config.agent.max_active_tools = 25
+    # Force deferral through the token budget; there is no count cap (#1692).
+    config.agent.tool_context_budget_pct = 0.001
     return ContextComposer(ctx.composer)
 
 
@@ -248,7 +249,6 @@ async def test_manager_preserves_prefix_across_real_turn_boundaries(tmp_path):
 
 
 def test_skill_restore_order_cannot_change_budget_selection(ctx):
-    ctx.config.agent.max_active_tools = 1
     ctx.config.agent.tool_context_budget_pct = 1.0
     definitions = [
         {
@@ -262,6 +262,8 @@ def test_skill_restore_order_cannot_change_budget_selection(ctx):
         }
         for name in ("restored_z", "restored_a")
     ]
+    # Room for exactly one tool: the second must be deferred either way.
+    ctx.config.compaction.max_tokens = estimate_tool_tokens([definitions[0]]) + 1
     first = build_tool_list(ctx, all_defs=definitions)
     restored = build_tool_list(ctx, all_defs=list(reversed(definitions)))
     assert first == restored

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from decafclaw.media import ToolResult
 from decafclaw.skills.vault._grants import is_path_in_grants, normalize_folder
+from decafclaw.skills.vault._paths import _is_in_agent_dir
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -38,15 +39,6 @@ class GateOutcome(Enum):
     ALLOW = "allow"
     NEEDS_CONFIRMATION = "needs_confirmation"
     NON_INTERACTIVE_ERROR = "non_interactive_error"
-
-
-def _is_in_agent_dir(config, path: Path) -> bool:
-    """Check if a path is within the agent's folder."""
-    try:
-        agent = config.vault_agent_dir.resolve()
-        return path.resolve().is_relative_to(agent)
-    except (ValueError, OSError):
-        return False
 
 
 def _is_in_user_writable_paths(config, path: Path) -> bool:

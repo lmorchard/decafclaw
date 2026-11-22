@@ -25,7 +25,11 @@ from decafclaw.context_types import ComposerMode, SourceEntry
 from decafclaw.events import EventBus, TurnLifecycle
 from decafclaw.preempt_search import match_tools, tokenize
 from decafclaw.tool_definitions import collect_all_tool_defs
-from decafclaw.tools.tool_registry import get_critical_names, get_fetched_tools
+from decafclaw.tools.tool_registry import (
+    get_always_loaded_tool_names,
+    get_critical_names,
+    get_fetched_tools,
+)
 from decafclaw.util import estimate_tokens
 
 from . import BaseExtension, ContextContribution, ContextSlot, register_extension_type
@@ -140,7 +144,7 @@ def compose_preempt_matches(ctx: "Context", config, user_message: str, mode: Com
     # get_critical_names), fetched (via get_fetched_tools), and
     # activated skill tools (from ctx.tools.extra_definitions).
     # Plus declared priority: "critical" on the tool def itself.
-    always_loaded = getattr(config, "always_loaded_skill_tools", set()) or set()
+    always_loaded = get_always_loaded_tool_names(config)
     on_demand = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions} - always_loaded
     already_critical: set[str] = get_critical_names(config)
     already_critical |= get_fetched_tools(ctx)

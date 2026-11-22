@@ -880,10 +880,16 @@ uses the adjacent TypeScript definitions, so changes to consumed response
 fields fail at the caller. The generated JavaScript bundle is excluded from
 TypeScript's input scan because its generated TypeScript source supplies the types.
 
-`make check-js` regenerates the client before checking frontend types.
-`make check` also runs the static module path tests after generation. These
-commands rebuild missing or outdated client output. Commit the generated
-schema, types, and bundle with changes to the API.
+The generator normalizes multi-method route operation IDs, which FastAPI
+otherwise derives from set iteration order and would flip on every run. The
+bundle opens with a `DO NOT EDIT` header naming the regeneration command.
+
+`make check-js` regenerates the client, then fails if any generated file
+differs from what is committed (`git diff` over the schema, client tree, and
+bundle) — the same pattern as `check-message-types`. `make check` also runs
+the static module path tests after generation. Commit the generated schema,
+types, and bundle with changes to the API; hand edits to generated files are
+drift.
 
 `sticky-state.js:setActiveConv()` also uses a generated method for
 `GET /api/sticky/{conv_id}`. Its identifier is a required string. The response
