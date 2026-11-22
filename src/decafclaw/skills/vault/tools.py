@@ -7,7 +7,7 @@ that supports curated pages, daily journal entries, and user content.
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from enum import Enum, StrEnum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,9 +22,13 @@ from decafclaw.skills.vault._events import (
     KIND_UPDATE,
     publish_vault_changed,
 )
+from decafclaw.skills.vault._gate import (
+    GateOutcome,  # noqa: F401 — re-exported for tests/test_vault_tools.py
+    _check_user_write_allowed,
+    _run_gate_or_confirm,
+)
 from decafclaw.skills.vault._grants import (
     add_grant,
-    is_path_in_grants,
     normalize_folder,
 )
 from decafclaw.skills.vault._journal import (
@@ -53,88 +57,6 @@ if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
-
-
-class GateOutcome(Enum):
-    """Outcome of the user-page write gate. See `_check_user_write_allowed`."""
-
-    ALLOW = "allow"
-    NEEDS_CONFIRMATION = "needs_confirmation"
-    NON_INTERACTIVE_ERROR = "non_interactive_error"
-
-
-def _is_in_user_writable_paths(config, path: Path) -> bool:
-    """Check if a vault-relative path is under any configured allowlist entry.
-
-    Per-call: silent on invalid entries. The allowlist is validated once at
-    config-load time (see `load_config` in `decafclaw.config`), which surfaces
-    misconfigured entries without spamming logs on every write attempt.
-    """
-    paths = config.vault.user_writable_paths or []
-    if not paths:
-        return False
-    try:
-        rel = str(path.resolve().relative_to(_vault_root(config).resolve()))
-    except (ValueError, OSError):
-        return False
-    rel = rel.replace("\\", "/")
-    for entry in paths:
-        norm = normalize_folder(entry)
-        if norm and rel.startswith(norm):
-            return True
-    return False
-
-
-def _check_user_write_allowed(ctx: "Context", path: Path) -> GateOutcome:
-    """Decide how to handle a vault write/delete/rename for the given path.
-
-    Returns:
-        GateOutcome.ALLOW — write directly (path is in agent/, allowlist, or grants)
-        GateOutcome.NEEDS_CONFIRMATION — caller must call request_confirmation()
-        GateOutcome.NON_INTERACTIVE_ERROR — no UI available; caller returns error
-    """
-    if _is_in_agent_dir(ctx.config, path):
-        return GateOutcome.ALLOW
-    if _is_in_user_writable_paths(ctx.config, path):
-        return GateOutcome.ALLOW
-    if is_path_in_grants(ctx.config, ctx.conv_id, path):
-        return GateOutcome.ALLOW
-    if ctx.request_confirmation is None:
-        return GateOutcome.NON_INTERACTIVE_ERROR
-    return GateOutcome.NEEDS_CONFIRMATION
-
-
-async def _run_gate_or_confirm(
-    ctx: "Context",
-    outcomes: list[GateOutcome],
-    *,
-    tool_name: str,
-    command: str,
-    preview: str,
-    non_interactive_error: str,
-    denied_error: str,
-) -> ToolResult | None:
-    """Run the user-write gate flow shared by vault_write/delete/rename.
-
-    Pass one or more `GateOutcome` values (write/delete take one path; rename
-    takes both old and new). Returns:
-        - ToolResult with the appropriate error message if any outcome is
-          NON_INTERACTIVE_ERROR or if the user denies confirmation.
-        - None if the operation should proceed (all outcomes are ALLOW, or the
-          user approved confirmation).
-    """
-    if any(o == GateOutcome.NON_INTERACTIVE_ERROR for o in outcomes):
-        return ToolResult(text=non_interactive_error)
-    if any(o == GateOutcome.NEEDS_CONFIRMATION for o in outcomes):
-        approval = await request_confirmation(
-            ctx,
-            tool_name=tool_name,
-            command=command,
-            message=preview,
-        )
-        if not approval.get("approved"):
-            return ToolResult(text=denied_error)
-    return None
 
 
 def _format_vault_write_preview(config, path: Path, content: str, exists: bool) -> str:
