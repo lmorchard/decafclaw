@@ -102,7 +102,7 @@ export class DefaultService {
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static handleConfirmActionsConfirmGet1(): CancelablePromise<any> {
+    public static handleConfirmActionsConfirmPost(): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/actions/confirm',
@@ -126,7 +126,7 @@ export class DefaultService {
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static handleCancelActionsCancelGet1(): CancelablePromise<any> {
+    public static handleCancelActionsCancelPost(): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/actions/cancel',
