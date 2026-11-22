@@ -15,9 +15,10 @@ The three-tier decision (``_check_user_write_allowed``):
 ``ToolResult`` or ``None`` (proceed), prompting the user once when any path
 needs confirmation.
 
-The two path predicates below (``_is_in_agent_dir``, ``_is_in_user_writable_paths``)
-are the gate's allow/deny checks and move with it. They read the vault/agent
-directories straight off ``config`` so this module has no dependency on
+The two path predicates (``_is_in_agent_dir``, ``_is_in_user_writable_paths``)
+are the gate's allow/deny checks; the agent-dir predicate lives in ``_paths``
+because path safety needs it too. ``_is_in_user_writable_paths`` reads the
+vault directory straight off ``config`` so this module has no dependency on
 ``tools.py`` (which imports it) — keeping the import graph one-way.
 """
 
