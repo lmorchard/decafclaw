@@ -27,6 +27,7 @@ from decafclaw.shell_presets import (
     split_rules,
 )
 from decafclaw.shell_readonly import is_read_only_command
+from decafclaw.subprocess_limits import describe_kill, resource_cap_prefix
 from decafclaw.tool_outputs import CAPPED, COMPLETE, format_handle, record_artifact
 
 from ..media import ToolResult
@@ -36,6 +37,30 @@ if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
+
+
+def shell_cap_prefix(config, label: str = "shell") -> list[str]:
+    """Return the cgroup-limit prefix for a spawned shell command.
+
+    Reads ``config.shell``'s resource-limit settings and delegates to
+    :func:`decafclaw.subprocess_limits.resource_cap_prefix`. Returns ``[]``
+    when caps are disabled or the host cannot apply them, in which case the
+    command runs exactly as it did before.
+
+    An explicit ``resource_limits_enabled = false`` skips the helper entirely
+    so an intentional disable logs no "cap unavailable" warning.
+    """
+    shell_cfg = getattr(config, "shell", None)
+    if shell_cfg is None or not getattr(shell_cfg, "resource_limits_enabled", False):
+        return []
+    return resource_cap_prefix(
+        memory_max=getattr(shell_cfg, "memory_max", "") or "",
+        memory_high=getattr(shell_cfg, "memory_high", "") or "",
+        memory_swap_max=getattr(shell_cfg, "memory_swap_max", "") or "",
+        cpu_weight=getattr(shell_cfg, "cpu_weight", None),
+        tasks_max=getattr(shell_cfg, "tasks_max", None),
+        label=label,
+    )
 
 
 def _allow_patterns_path(config) -> Path:
@@ -1711,7 +1736,19 @@ async def _execute_command(
     stdout_collector = _StreamCollector(tool_outputs_dir / f"{call_id}.stdout.txt", max_bytes, disk_cap, max_lines)
     stderr_collector = _StreamCollector(tool_outputs_dir / f"{call_id}.stderr.txt", max_bytes, disk_cap, max_lines)
 
-    process = await asyncio.create_subprocess_shell(
+    # Run the command under a transient cgroup scope when caps are available:
+    # the kernel then kills this command instead of the daemon when it outgrows
+    # its memory or pid budget. An empty prefix means "no caps available" and
+    # the command runs exactly as before.
+    #
+    # ``sh -c`` is passed EXPLICITLY. create_subprocess_shell would otherwise
+    # supply its own ["-c", command], which systemd-run would read as options
+    # meant for itself rather than the command to run.
+    cap_prefix = shell_cap_prefix(ctx.config, label="shell")
+    process = await asyncio.create_subprocess_exec(
+        *cap_prefix,
+        "/bin/sh",
+        "-c",
         command,
         cwd=cwd or str(ctx.config.workspace_path),
         stdout=asyncio.subprocess.PIPE,
@@ -1819,6 +1856,15 @@ async def _execute_command(
     if timed_out:
         prefix = f"[error: command timed out after {timeout:.0f} seconds]"
         return ToolResult(text=f"{prefix}\n\n{output}" if output else prefix)
+
+    # A cap that fires should say so: a bare "-9" reads as a mystery crash.
+    # Outside a capped scope the kernel can still pick this command (or something
+    # in its tree) as an OOM victim when the whole host is short, so this note is
+    # useful either way.
+    if cap_prefix:
+        kill_note = describe_kill(exit_code, label="command")
+        if kill_note:
+            return ToolResult(text=f"[error: {kill_note}]\n\n{output}" if output else f"[error: {kill_note}]")
 
     return ToolResult(text=output or "(no output)")
 

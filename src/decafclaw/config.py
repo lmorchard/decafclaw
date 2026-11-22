@@ -717,7 +717,20 @@ def load_config() -> Config:
 
     terminal = load_sub_config(TerminalConfig, file_data.get("terminal", {}), "TERMINAL")
 
-    shell = load_sub_config(ShellConfig, file_data.get("shell", {}), "SHELL")
+    shell = load_sub_config(
+        ShellConfig,
+        file_data.get("shell", {}),
+        "SHELL",
+        env_aliases={
+            "max_runtime_sec": "SHELL_MAX_RUNTIME_SEC",
+            "resource_limits_enabled": "SHELL_RESOURCE_LIMITS_ENABLED",
+            "memory_max": "SHELL_MEMORY_MAX",
+            "memory_high": "SHELL_MEMORY_HIGH",
+            "memory_swap_max": "SHELL_MEMORY_SWAP_MAX",
+            "cpu_weight": "SHELL_CPU_WEIGHT",
+            "tasks_max": "SHELL_TASKS_MAX",
+        },
+    )
 
     agent = load_sub_config(
         AgentConfig,

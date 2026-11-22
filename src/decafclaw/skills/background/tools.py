@@ -19,6 +19,8 @@ from decafclaw.skills.background.parsers import (
     get_progress_parser,
     parse_progress_preset,
 )
+from decafclaw.subprocess_limits import describe_kill
+from decafclaw.tools.shell_tools import shell_cap_prefix
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -199,6 +201,12 @@ async def _notify_job_exit(job: BackgroundJob) -> None:
     priority = "normal" if job.exit_code == 0 else "high"
     cmd_preview = job.command[:80] + ("..." if len(job.command) > 80 else "")
     body = f"{cmd_preview} (exit {job.exit_code})"
+    # Say when a cgroup limit killed it: "-9" alone reads as a mystery crash,
+    # and "it hit its memory cap" is the difference between a bug to chase and
+    # a budget to raise.
+    kill_note = describe_kill(job.exit_code, label="Background command")
+    if kill_note:
+        body += f" — {kill_note}"
     last_stderr = job.stderr_buffer[-1] if job.stderr_buffer else ""
     if last_stderr and job.exit_code != 0:
         body += f" — {last_stderr[:120]}"
@@ -593,7 +601,17 @@ class BackgroundJobManager:
         budgeted foreground shell path (#1136) uses it to expose
         DECAFCLAW_WORKSPACE like the legacy foreground runner did.
         """
-        process = await asyncio.create_subprocess_shell(
+        # Same cgroup caps as the foreground shell path: a long-running command
+        # is more likely to grow, not less, so a background job that outgrows
+        # its budget must die in its scope rather than starve the daemon.
+        cap_prefix = shell_cap_prefix(config, label="background command")
+        # ``sh -c`` is passed explicitly: create_subprocess_shell would supply
+        # its own ["-c", command], which systemd-run would read as options for
+        # itself rather than the command to run.
+        process = await asyncio.create_subprocess_exec(
+            *cap_prefix,
+            "/bin/sh",
+            "-c",
             command,
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
