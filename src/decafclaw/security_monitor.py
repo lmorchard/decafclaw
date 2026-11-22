@@ -193,6 +193,280 @@ def is_ambiguous_command(command: str) -> bool:
     return any(p.search(command) for p in AMBIGUOUS_PATTERNS)
 
 
+# Shell operator tokens that start a new command segment. ``shlex`` punctuation
+# tokenization emits these even when the source has no spaces around them.
+_SEGMENT_SEPARATORS = frozenset({"|", "||", "&&", "&", ";", "\n", "(", ")"})
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_REDIRECT_PREFIX_RE = re.compile(r"^\d*[<>]")
+
+# Commands whose first positional argument (or explicit expression option) is
+# a program/pattern, not a file path. This is the context the flat token scan
+# was missing (#1690): ``sed -n '/Failed Tests/p'`` is data, but a later
+# positional argument is still a file and stays subject to the path check.
+_FILTER_COMMANDS = frozenset({"awk", "egrep", "fgrep", "grep", "perl", "perl5", "sed"})
+
+# grep long options whose value is a separate argument. Without consuming it,
+# the value would be mistaken for the positional pattern and shift the file
+# argument into the pattern slot.
+_GREP_VALUE_LONG_OPTIONS = frozenset(
+    {
+        "--after-context",
+        "--before-context",
+        "--binary-files",
+        "--color",
+        "--colour",
+        "--context",
+        "--devices",
+        "--directories",
+        "--exclude",
+        "--exclude-dir",
+        "--exclude-from",
+        "--group-separator",
+        "--include",
+        "--label",
+        "--max-count",
+    }
+)
+
+
+def _tokenize_command(command: str) -> list[str]:
+    """Split a shell command into tokens while preserving quoting.
+
+    ``shlex.split`` drops the quotes we need for context but leaves an unspaced
+    operator inside a token (``a|sed``). Punctuation tokenization fixes that;
+    newline is removed from whitespace so it remains a segment separator. This
+    is deliberately permissive — the security monitor must still inspect
+    redirection, substitution, and expansion that the read-only classifier
+    rejects outright.
+    """
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;()\n")
+        lexer.whitespace_split = True
+        lexer.whitespace = " \t\r"
+        lexer.commenters = ""
+        return list(lexer)
+    except ValueError:
+        try:
+            return shlex.split(command, posix=True)
+        except ValueError:
+            return command.split()
+
+
+def _command_segments(tokens: list[str]) -> list[tuple[int, list[str]]]:
+    """Group tokens into shell segments, returning each segment's start index."""
+    segments: list[tuple[int, list[str]]] = []
+    start = 0
+    current: list[str] = []
+    for index, token in enumerate(tokens):
+        if token in _SEGMENT_SEPARATORS:
+            if current:
+                segments.append((start, current))
+                current = []
+            start = index + 1
+            continue
+        if not current:
+            start = index
+        current.append(token)
+    if current:
+        segments.append((start, current))
+    return segments
+
+
+def _executable_index(segment: list[str]) -> int | None:
+    """Index of the command word, skipping leading assignments and redirection."""
+    for index, token in enumerate(segment):
+        if _ENV_ASSIGN_RE.match(token):
+            continue
+        if _REDIRECT_PREFIX_RE.match(token):
+            continue
+        return index
+    return None
+
+
+def _short_option_letters(token: str) -> str:
+    """Letters of a short-option token, including clusters like ``-ne``."""
+    if token.startswith("--") or not token.startswith("-") or token == "-":
+        return ""
+    return token[1:]
+
+
+def _short_option_value(token: str, value_options: str) -> tuple[str, str]:
+    """First value-taking short option in a cluster and its attached value."""
+    letters = _short_option_letters(token)
+    for offset, char in enumerate(letters, start=1):
+        if char in value_options:
+            return char, token[offset + 1 :]
+    return "", ""
+
+
+def _expression_argument_indices(segment: list[str], exe_index: int | None) -> set[int]:
+    """Indices of filter-command program/pattern arguments inside one segment.
+
+    Only the argument that holds the sed/awk/grep/perl program is returned.
+    File arguments (``sed -n '/x/p' /etc/shadow``) are not included, so the
+    path check still sees them.
+    """
+    if exe_index is None:
+        return set()
+    command = Path(segment[exe_index]).name
+    if command not in _FILTER_COMMANDS:
+        return set()
+
+    indices: set[int] = set()
+    index = exe_index + 1
+    length = len(segment)
+
+    def consumes_value(position: int, *, expression: bool = False) -> bool:
+        """Consume an option's separate value; mark it only when it is data."""
+        if position + 1 < length:
+            if expression:
+                indices.add(position + 1)
+            return True
+        return False
+
+    if command == "sed":
+        expression_option = False
+        program_from_file = False
+        seen_positional = False
+        while index < length:
+            token = segment[index]
+            if token in ("-e", "--expression"):
+                expression_option = True
+                index += 2 if consumes_value(index, expression=True) else 1
+                continue
+            if token in ("-f", "--file"):
+                program_from_file = True
+                index += 2 if consumes_value(index) else 1
+                continue
+            if token in ("-l", "--line-length"):
+                index += 2 if consumes_value(index) else 1
+                continue
+            if token.startswith(("--expression=", "--file=", "--line-length=")):
+                if token.startswith("--expression="):
+                    expression_option = True
+                if token.startswith("--file="):
+                    program_from_file = True
+                index += 1
+                continue
+            if token.startswith("-") and token != "-":
+                if token.startswith("-i"):
+                    # -i takes an optional backup suffix attached to the flag.
+                    index += 1
+                    continue
+                option, attached = _short_option_value(token, "efl")
+                if option == "e":
+                    expression_option = True
+                elif option == "f":
+                    program_from_file = True
+                if option and not attached:
+                    index += 2 if consumes_value(index, expression=option == "e") else 1
+                else:
+                    index += 1
+                continue
+            if not seen_positional and not expression_option and not program_from_file:
+                indices.add(index)
+            seen_positional = True
+            index += 1
+        return indices
+
+    if command == "awk":
+        program_option = False
+        program_from_file = False
+        seen_positional = False
+        while index < length:
+            token = segment[index]
+            if token in ("-e", "--source"):
+                program_option = True
+                index += 2 if consumes_value(index, expression=True) else 1
+                continue
+            if token in ("-f", "--file"):
+                program_from_file = True
+                index += 2 if consumes_value(index) else 1
+                continue
+            if token in ("-v", "--assign", "-F", "--field-separator"):
+                index += 2 if consumes_value(index) else 1
+                continue
+            if token.startswith("--source="):
+                program_option = True
+                index += 1
+                continue
+            if token.startswith(("--file=", "--assign=", "--field-separator=")):
+                if token.startswith("--file="):
+                    program_from_file = True
+                index += 1
+                continue
+            if token.startswith("-") and token != "-":
+                option, attached = _short_option_value(token, "efvFil")
+                if option == "e":
+                    program_option = True
+                elif option == "f":
+                    program_from_file = True
+                if option and not attached:
+                    index += 2 if consumes_value(index, expression=option == "e") else 1
+                else:
+                    index += 1
+                continue
+            if not seen_positional and not program_option and not program_from_file:
+                indices.add(index)
+            seen_positional = True
+            index += 1
+        return indices
+
+    if command in ("grep", "egrep", "fgrep"):
+        pattern_option = False
+        seen_positional = False
+        while index < length:
+            token = segment[index]
+            if token in ("-e", "--regexp"):
+                pattern_option = True
+                index += 2 if consumes_value(index, expression=True) else 1
+                continue
+            if token in ("-f", "--file"):
+                pattern_option = True
+                index += 2 if consumes_value(index) else 1
+                continue
+            if token.startswith("--regexp="):
+                pattern_option = True
+                index += 1
+                continue
+            if token.startswith("--file="):
+                pattern_option = True
+                index += 1
+                continue
+            if token in _GREP_VALUE_LONG_OPTIONS:
+                index += 2 if consumes_value(index) else 1
+                continue
+            if token.startswith("--"):
+                index += 1
+                continue
+            if token.startswith("-") and token != "-":
+                option, attached = _short_option_value(token, "efmABCdD")
+                if option in ("e", "f"):
+                    pattern_option = True
+                if option and not attached:
+                    index += 2 if consumes_value(index, expression=option == "e") else 1
+                else:
+                    index += 1
+                continue
+            if not seen_positional and not pattern_option:
+                indices.add(index)
+            seen_positional = True
+            index += 1
+        return indices
+
+    # perl/perl5: ``-e`` and ``-E`` take inline program text, including the
+    # clustered form ``-pe``. Without one, the first positional argument is a
+    # script path and must still be checked.
+    while index < length:
+        token = segment[index]
+        letters = _short_option_letters(token)
+        if token in ("-e", "-E") or letters.endswith(("e", "E")):
+            index += 2 if consumes_value(index, expression=True) else 1
+            continue
+        index += 1
+    return indices
+
+
 def evaluate_command(
     command: str,
     workspace_path: str | Path | None = None,
@@ -212,13 +486,16 @@ def evaluate_command(
     # Tier 1: Check out-of-workspace file operations
     resolved_workspace = Path(workspace_path or Path.cwd()).resolve()
 
-    try:
-        tokens = shlex.split(command, posix=True)
-    except Exception:
-        # Fallback to simple whitespace split if shlex fails on unclosed quotes
-        tokens = command.split()
+    tokens = _tokenize_command(command)
+    expression_indices: set[int] = set()
+    for start, segment in _command_segments(tokens):
+        exe_index = _executable_index(segment)
+        expression_indices.update(start + i for i in _expression_argument_indices(segment, exe_index))
 
     for idx, token in enumerate(tokens):
+        if idx in expression_indices:
+            continue
+
         # Strip redirection operators attached to path, e.g. >/tmp/out, 2>>/tmp/err, </etc/passwd
         cleaned = re.sub(r"^(?:[0-9]*>>?|[0-9]*<)", "", token)
 
