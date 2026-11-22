@@ -17,7 +17,15 @@ from decafclaw.frontmatter import (
     split_frontmatter,
 )
 from decafclaw.media import ToolResult
-from decafclaw.skills.vault.tools import _WIKI_LINK_RE, tool_vault_delete, tool_vault_update_frontmatter
+from decafclaw.skills.vault._events import KIND_UPDATE, publish_vault_changed
+from decafclaw.skills.vault._sections import Document
+from decafclaw.skills.vault.tools import (
+    _WIKI_LINK_RE,
+    _reindex_page,
+    resolve_page,
+    tool_vault_delete,
+    tool_vault_update_frontmatter,
+)
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -182,6 +190,236 @@ async def tool_vault_delete_plan(
             "deleted": deleted,
             "would_delete": would_delete,
             "blocked": blocked,
+            "failed": failed,
+        },
+    )
+
+
+_MIN_LINK_TITLE_LENGTH = 3
+
+
+def _strip_fenced_code(text: str) -> str:
+    """Blank out fenced code blocks while preserving line numbering."""
+    out: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            out.append("")
+            continue
+        out.append("" if in_fence else line)
+    return "\n".join(out)
+
+
+async def tool_vault_link_opportunities(
+    ctx: "Context",
+    min_occurrences: int = 1,
+    limit: int = 50,
+) -> ToolResult:
+    """Find unlinked exact mentions of agent-page titles (#1715).
+
+    Frontmatter, fenced code, and text already inside ``[[...]]`` are
+    excluded. Pure string matching over agent pages; no LLM, embeddings, or
+    network calls. Reports candidates only — selecting edges stays with the
+    model.
+    """
+    log.info(f"[tool:vault_link_opportunities] min_occurrences={min_occurrences} limit={limit}")
+    pages = dict(_iter_importance_candidates(ctx.config))
+    if not pages:
+        return ToolResult(
+            text="No link opportunities: no agent pages found.",
+            data={"opportunities": [], "counts": {"pages_scanned": 0, "candidates": 0}, "truncated": False},
+        )
+
+    vault = ctx.config.vault_root
+    all_pages = sorted(vault.rglob("*.md"))
+    full_lower_map, stem_lower_map = backlinks._build_page_lookup(all_pages, vault)
+
+    title_to_rel: dict[str, str | None] = {}
+    for rel in pages:
+        title = Path(rel).stem.strip()
+        if len(title) < _MIN_LINK_TITLE_LENGTH:
+            continue
+        key = title.lower()
+        if key in title_to_rel and title_to_rel[key] != rel:
+            title_to_rel[key] = None  # ambiguous title: skip rather than guess
+        else:
+            title_to_rel.setdefault(key, rel)
+    usable = {title: rel for title, rel in title_to_rel.items() if rel is not None}
+    titles = sorted(usable, key=lambda title: (-len(title), title))
+    if not titles:
+        return ToolResult(
+            text="No link opportunities: no usable page titles.",
+            data={"opportunities": [], "counts": {"pages_scanned": len(pages), "candidates": 0}, "truncated": False},
+        )
+    pattern = re.compile(
+        r"(?<![\w])(?:" + "|".join(re.escape(title) for title in titles) + r")(?![\w])",
+        re.IGNORECASE,
+    )
+
+    minimum = max(1, int(min_occurrences))
+    opportunities: list[dict] = []
+    for rel, path in sorted(pages.items()):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            log.debug("vault_link_opportunities: could not read %s: %s", rel, exc)
+            continue
+        _raw_yaml, body = split_frontmatter(text)
+        body = _strip_fenced_code(body)
+
+        linked_targets: set[str] = set()
+        for match in _WIKI_LINK_RE.finditer(body):
+            target = backlinks._resolve_link_target(match.group(1), full_lower_map, stem_lower_map)
+            if target is not None:
+                linked_targets.add(target)
+
+        counts: dict[str, int] = {}
+        context_by_target: dict[str, str] = {}
+        for match in pattern.finditer(body):
+            target = usable.get(match.group(0).lower())
+            if target is None:
+                continue
+            counts[target] = counts.get(target, 0) + 1
+            if target not in context_by_target:
+                line_no = body[: match.start()].count("\n")
+                lines = body.splitlines()
+                context_by_target[target] = lines[line_no].strip()[:200] if line_no < len(lines) else ""
+
+        for target, count in counts.items():
+            if target == rel or target in linked_targets or count < minimum:
+                continue
+            opportunities.append(
+                {
+                    "page": rel,
+                    "target": target,
+                    "title": Path(target).stem,
+                    "occurrences": count,
+                    "sample_context": context_by_target.get(target, ""),
+                }
+            )
+
+    opportunities.sort(key=lambda item: (-item["occurrences"], item["page"], item["target"]))
+    total = len(opportunities)
+    bounded = opportunities[: max(0, int(limit))]
+    if bounded:
+        lines = [
+            f"- {entry['page']} -> {entry['target']} ({entry['occurrences']}x): {entry['sample_context']}"
+            for entry in bounded[:10]
+        ]
+        text = f"{total} link opportunity(ies) across {len(pages)} agent page(s).\n" + "\n".join(lines)
+    else:
+        text = f"No unlinked title mentions found across {len(pages)} agent page(s)."
+    return ToolResult(
+        text=text,
+        data={
+            "opportunities": bounded,
+            "counts": {"pages_scanned": len(pages), "candidates": total},
+            "truncated": total > len(bounded),
+        },
+    )
+
+
+async def tool_vault_apply_link_plan(
+    ctx: "Context",
+    items: list[dict],
+    dry_run: bool | None = None,
+) -> ToolResult:
+    """Apply an approved link plan in one batch (#1715).
+
+    Each item needs ``page``, ``text``, and either ``insert_in_section`` or
+    ``insert_after_heading``. Re-applying the same text is a no-op. Returns
+    per-item outcomes so a partial batch is observable.
+    """
+    if not items:
+        return ToolResult(text="[error: items list is required]")
+    if dry_run is None:
+        dry_run = _skill_config.dry_run
+    log.info(f"[tool:vault_apply_link_plan] items={len(items)} dry_run={dry_run}")
+
+    agent_pages = ctx.config.vault_agent_pages_dir.resolve()
+    outcomes: list[dict] = []
+    for item in items:
+        page = str(item.get("page") or "").strip()
+        text = str(item.get("text") or "").strip()
+        section = item.get("insert_in_section")
+        after = item.get("insert_after_heading")
+        section_target = str(section or after or "").strip()
+        if not page or not text or not section_target:
+            outcomes.append(
+                {
+                    "page": page,
+                    "ok": False,
+                    "error": "page, text, and insert_in_section or insert_after_heading are required",
+                }
+            )
+            continue
+
+        path = resolve_page(ctx.config, page)
+        if path is None:
+            outcomes.append({"page": page, "ok": False, "error": "page not found"})
+            continue
+        try:
+            path.resolve().relative_to(agent_pages)
+        except ValueError:
+            outcomes.append({"page": page, "ok": False, "error": "page is outside agent/pages"})
+            continue
+
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            outcomes.append({"page": page, "ok": False, "error": f"could not read page: {exc}"})
+            continue
+        if any(line.strip() == text for line in content.splitlines()):
+            outcomes.append({"page": page, "ok": True, "skipped": True, "text": "already present"})
+            continue
+
+        doc = Document.from_text(content)
+        target_section = doc.find_section(section_target)
+        if target_section is None:
+            candidates = doc.section_candidates(section_target)
+            hint = f"; candidates: {', '.join(candidates)}" if candidates else ""
+            outcomes.append({"page": page, "ok": False, "error": f"section not found: {section_target}{hint}"})
+            continue
+
+        if dry_run:
+            outcomes.append(
+                {
+                    "page": page,
+                    "ok": True,
+                    "skipped": False,
+                    "dry_run": True,
+                    "text": f"would insert into '{target_section.title}'",
+                }
+            )
+            continue
+
+        if section:
+            doc.append(target_section, text)
+        else:
+            doc.prepend(target_section, text)
+        path.write_text(doc.to_text(), encoding="utf-8")
+        await _reindex_page(ctx, path)
+        await publish_vault_changed(ctx.event_bus, ctx.config, kind=KIND_UPDATE, path=path)
+        outcomes.append({"page": page, "ok": True, "skipped": False, "text": f"inserted into '{target_section.title}'"})
+
+    applied = sum(1 for item in outcomes if item["ok"] and not item.get("skipped") and not item.get("dry_run"))
+    skipped = sum(1 for item in outcomes if item.get("skipped"))
+    would_apply = sum(1 for item in outcomes if item.get("dry_run"))
+    failed = sum(1 for item in outcomes if not item["ok"])
+    if dry_run:
+        text = f"[dry run] Link plan: {len(outcomes)} item(s); {would_apply} would apply, {skipped} skipped, {failed} failed."
+    else:
+        text = f"Link plan: {len(outcomes)} item(s); {applied} applied, {skipped} skipped, {failed} failed."
+    return ToolResult(
+        text=text,
+        data={
+            "items": outcomes,
+            "dry_run": dry_run,
+            "applied": applied,
+            "skipped": skipped,
+            "would_apply": would_apply,
             "failed": failed,
         },
     )
@@ -628,6 +866,8 @@ TOOLS = {
     "vault_broken_links": tool_vault_broken_links,
     "vault_frontmatter_audit": tool_vault_frontmatter_audit,
     "vault_find_duplicate_candidates": tool_vault_find_duplicate_candidates,
+    "vault_link_opportunities": tool_vault_link_opportunities,
+    "vault_apply_link_plan": tool_vault_apply_link_plan,
     "vault_delete_plan": tool_vault_delete_plan,
     "vault_reorganize_folders": tool_vault_reorganize_folders,
 }
@@ -682,6 +922,70 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "writes": False,
+        "priority": "normal",
+        "function": {
+            "name": "vault_link_opportunities",
+            "description": (
+                "Find agent pages that mention another agent page's exact title "
+                "without linking to it. Excludes frontmatter, fenced code, and "
+                "text already inside [[...]]; reports occurrence counts and a "
+                "context line. Deterministic; proposes edges only, the model "
+                "chooses which to accept."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "min_occurrences": {
+                        "type": "integer",
+                        "description": "Only report pages mentioned at least this many times (default 1).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum opportunities to return (default 50).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "writes": True,
+        "priority": "normal",
+        "function": {
+            "name": "vault_apply_link_plan",
+            "description": (
+                "Apply an approved batch of link insertions. Each item needs "
+                "page, text, and insert_in_section or insert_after_heading. "
+                "Returns per-item success/failure; re-applying the same text is "
+                "a no-op. dry_run defaults from the skill config — use a dry-run "
+                "pass to review the plan before executing."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "page": {"type": "string"},
+                                "text": {"type": "string"},
+                                "insert_in_section": {"type": "string"},
+                                "insert_after_heading": {"type": "string"},
+                            },
+                            "required": ["page", "text"],
+                        },
+                    },
+                    "dry_run": {"type": "boolean"},
+                },
+                "required": ["items"],
             },
         },
     },

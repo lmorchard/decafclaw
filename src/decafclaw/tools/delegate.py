@@ -61,6 +61,7 @@ _VAULT_WRITE_TOOLS = frozenset(
         "vault_reorganize_folders",
         "vault_recompute_importance",
         "vault_delete_plan",
+        "vault_apply_link_plan",
     }
 )
 

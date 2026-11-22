@@ -168,6 +168,8 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_broken_links(limit?)` | List unresolved `[[wiki-links]]` in agent pages with line numbers and `difflib` nearest-match suggestions. Resolution uses the same alias/anchor-stripping rules as the backlink index. Read-only. |
 | `vault_frontmatter_audit(limit?)` | Report malformed YAML, missing `summary`/`keywords`/`tags`/`importance`, oversized pages, missing `> tl;dr:`, and an advisory stale-summary token-overlap hint. Counts plus bounded examples; read-only. |
 | `vault_find_duplicate_candidates(threshold?, limit?)` | High-similarity agent-page pairs from the existing embedding index. Queries stored vectors only — never re-embeds or merges; pages missing from the index are skipped. |
+| `vault_link_opportunities(min_occurrences?, limit?)` | Find exact unlinked mentions of agent-page titles, excluding frontmatter, fenced code, and text inside `[[...]]`. Returns occurrence counts and a context line; proposes edges only. Deterministic; no LLM, embeddings, or network. |
+| `vault_apply_link_plan(items, dry_run?)` | Apply an approved link plan in one batch (`insert_in_section` or `insert_after_heading`). Per-item success/failure, idempotent for identical text, and `dry_run` defaults from the garden skill config. |
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
 | `vault_section(page, action, section?, title?, level?, content?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. `add` takes `content` so a new section arrives with its body in one call; `level` is inferred from the anchor when omitted (see [Section paths](#section-paths-671)). |
@@ -304,6 +306,21 @@ Garden's `vault_broken_links`, `vault_frontmatter_audit`, and
 
 All three are deterministic and bounded (`limit`), with counts kept separate
 from the example lists.
+### Link discovery and plans (#1715)
+
+`vault_link_opportunities` scans agent-page bodies for exact other-page title
+mentions that are not already `[[linked]]`. It strips frontmatter, blanks
+fenced code blocks (preserving line numbers), resolves existing links through
+the same lookup maps as the backlink index, and reports occurrence counts plus
+a context line. Titles shared by multiple pages are skipped rather than
+guessed. No embedding or model call is involved.
+
+`vault_apply_link_plan` consumes the reviewed candidates as a batch. Each item
+names a page, insertion text, and either `insert_in_section` (append to that
+section) or `insert_after_heading` (prepend directly after it). It skips text
+that is already present, returns per-item outcomes, reindexes the changed page,
+and publishes `vault_changed` so the backlink index updates. `dry_run` defaults
+from the garden skill config, mirroring `vault_reorganize_folders`.
 
 ### Importance recompute (#197)
 

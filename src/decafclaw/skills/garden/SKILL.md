@@ -43,8 +43,10 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 - Call `vault_graph_report` (sections `["totals", "sinks", "toeholds", "pages"]`) to see where the graph is thin in one pass.
 - Sinks (high outbound, negligible inbound) need links *to* them; toeholds (high inbound, negligible outbound) need outward links. Isolates and weak fragments need both.
-- Read the candidate pages and look for topics mentioned in the text that have their own pages but aren't linked.
-- Add `[[wiki-links]]` where they're missing.
+- Call `vault_link_opportunities` to get exact unlinked title mentions with occurrence counts and context. Frontmatter, code fences, and existing `[[...]]` links are already excluded.
+- Review the candidates. A passing mention is not automatically a link worth making; read the context and choose.
+- Build a plan and call `vault_apply_link_plan`. Run its default dry-run first, review the proposed text, then execute with `dry_run=false`. It is idempotent and reports per-item failures.
+- Use `vault_backlinks` only when you need the specific linkers of one page after a change.
 
 ## Step 5: Update tl;dr Summaries
 
