@@ -284,6 +284,12 @@ class ShellConfig:
     # "unbounded" made the setting that looks like "off" the most dangerous
     # value in the file.
     activity_window: int = 50
+    # Shadow mode for direction inference (#1661). When True, every command
+    # still derives its activity and the pipeline still decides exactly as
+    # before; a `direction_shadow` audit event records what the direction tier
+    # *would* have done (prompt / defer / pass). This is the low-risk way to
+    # compare direction decisions with real outcomes before trusting the tier.
+    direction_shadow_mode: bool = False
 
     # --- Resource caps for spawned shell commands ---------------------------
     # Agent-authored shell commands are the least predictable child processes

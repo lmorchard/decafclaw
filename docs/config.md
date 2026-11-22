@@ -448,12 +448,15 @@ Settings for shell command execution and pre-approval logic (see #473).
 | `active_aux_approval_presets` | list[str] | `[]` | `SHELL_ACTIVE_AUX_APPROVAL_PRESETS` |
 | `read_only_enabled` | bool | `true` | `SHELL_READ_ONLY_ENABLED` |
 | `activity_window` | int | `50` | `SHELL_ACTIVITY_WINDOW` |
+| `direction_shadow_mode` | bool | `false` | `SHELL_DIRECTION_SHADOW_MODE` |
 | `foreground_wait_budget_sec` | float \| None | `None` | `SHELL_FOREGROUND_WAIT_BUDGET_SEC` |
 | `max_runtime_sec` | float | `30.0` | `SHELL_MAX_RUNTIME_SEC` |
 
 When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxiliary LLM to screen unrecognized commands. If the aux LLM deems the command low-risk (e.g. `ls -la`, `git status`), it is auto-approved without prompting the user. If the aux LLM deems it risky or errors out, it falls through to standard interactive confirmation. Auto-approved patterns are temporarily cached per-conversation so repeated benign commands don't trigger redundant LLM calls.
 
 `read_only_enabled` (#1641) is the kill switch for the **deterministic read-only tier** — the only approval tier that runs a shell command with no human and no model in the loop. Leave it `true` normally. Setting it to `false` (the explicit boolean; only `true`/`false` are meaningful) disables that tier, so commands it would have allowed silently fall through to the security monitor → aux judge → human prompt instead. Tier 1 blocks and explicit allow patterns are unaffected. This is the emergency lever during an incident: turn it off in `data/{agent_id}/config.json` (or set `SHELL_READ_ONLY_ENABLED=false`) and the config watcher applies it in place — no restart and no code revert needed.
+
+`direction_shadow_mode` (#1661) computes direction for every shell command and writes a `direction_shadow` audit event (`would_decide`: `prompt`, `defer`, or `pass`, plus the activity) **without changing the decision**. It is the low-risk way to compare what direction would have done against real outcomes before trusting the tier; leave it `false` in normal operation. See [Tools — Direction-aware approval](tools.md#direction-aware-approval-1641).
 
 `activity_window` (#1641) is how many recent shell calls define a conversation's established activity. A command whose activity domain (derived from `cwd` and command tokens) appears in that window proceeds to the aux judge; a command that starts a new activity is confirmed once with the direction stated. The window is recomputed from conversation history, so compaction resets it naturally. `0` or below **disables direction entirely**: every command counts as established, so the new-activity tier never fires (the safe way to turn the tier off). Lower positive values make drift prompt sooner. See [Tools — Direction-aware approval](tools.md#direction-aware-approval-1641).
 
