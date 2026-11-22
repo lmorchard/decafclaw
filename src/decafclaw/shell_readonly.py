@@ -219,9 +219,14 @@ _TREE_WRITE_FLAGS = ("-o", "--output")
 _URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _ATTACHED_PATH_RE = re.compile(r"^-([A-Za-z]+)(.+)$")
-# `jq -n env` / `jq -n env.HOME` prints the process environment, which can
-# hold credentials. A field literally named `.env` is not the builtin.
-_JQ_ENV_RE = re.compile(r"(?:^|[^A-Za-z0-9_.])env(?:\.|$)", re.IGNORECASE)
+# `jq -n env` prints the process environment, which can hold credentials. The
+# builtin has many spellings — `env`, `$ENV`, `env[]`, `env["HOME"]`,
+# `env|to_entries`, `$ENV.HOME` — and enumerating them by regex is a losing
+# game, so the check is inverted: if a non-flag argument mentions the env
+# builtin in any form (bare `env`, or `$ENV`, or `env`/`ENV` used as a value),
+# refuse. A field literally named `.env` is still allowed, so a contained
+# `jq .env file.json` keeps working.
+_JQ_ENV_RE = re.compile(r"(?:^|[^A-Za-z0-9_.])env(?![A-Za-z0-9_])|\$ENV(?![A-Za-z0-9_])", re.IGNORECASE)
 
 
 def _split_segments(command: str) -> list[str] | None:
