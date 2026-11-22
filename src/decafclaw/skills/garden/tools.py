@@ -60,9 +60,13 @@ def compute_importance_signals(config) -> dict[str, tuple[int, int]]:
     return {p: (stats.get(p, {}).get("retrieval_count", 0), backlinks.inbound_count(config, p)) for p in pages}
 
 
-def compute_importance_scores(config) -> dict[str, float]:
+def compute_importance_scores(
+    config,
+    signals: dict[str, tuple[int, int]] | None = None,
+) -> dict[str, float]:
     weights = config.importance
-    signals = compute_importance_signals(config)
+    if signals is None:
+        signals = compute_importance_signals(config)
     retrieval_freq = {p: rc for p, (rc, _ic) in signals.items()}
     inbound_links = {p: ic for p, (_rc, ic) in signals.items()}
 
@@ -80,8 +84,8 @@ def compute_importance_scores(config) -> dict[str, float]:
 
 async def tool_vault_recompute_importance(ctx: "Context", dry_run: bool = False) -> ToolResult:
     log.info(f"[tool:vault_recompute_importance] dry_run={dry_run}")
-    scores = compute_importance_scores(ctx.config)
     signals = compute_importance_signals(ctx.config)
+    scores = compute_importance_scores(ctx.config, signals)
 
     deltas: list[dict] = []
     written = 0
@@ -117,6 +121,7 @@ async def tool_vault_recompute_importance(ctx: "Context", dry_run: bool = False)
             log.warning(f"vault_recompute_importance: failed to write {rel}: {result.text}")
             continue
         written += 1
+        ctx.tools.progress_text = f"{written} of {len(scores)} page(s) written so far"
 
     if dry_run:
         text = f"Dry run: {len(deltas)} of {len(scores)} scored page(s) would change importance."

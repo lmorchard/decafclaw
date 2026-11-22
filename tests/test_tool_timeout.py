@@ -78,6 +78,44 @@ async def test_hanging_tool_times_out_at_default(ctx):
 
 
 @pytest.mark.asyncio
+async def test_timeout_reports_tool_progress(ctx):
+    """A tool that records partial progress gets it named in the timeout
+    result, so an interrupted bulk write is diagnosable (#1687)."""
+
+    async def partial(ctx):
+        ctx.tools.progress_text = "37 page(s) written so far"
+        await asyncio.sleep(10)
+        return "never"
+
+    _register_extra_tool(ctx, "partial", partial)
+    _set_timeout(ctx, 1)
+
+    result = await _safe_execute(ctx, "partial")
+
+    assert "timed out after 1s" in result.text
+    assert "37 page(s) written so far" in result.text
+
+
+@pytest.mark.asyncio
+async def test_cancel_reports_tool_progress(ctx):
+    """The interrupt path reports partial progress too (#1687)."""
+
+    async def partial(ctx):
+        ctx.tools.progress_text = "12 page(s) written so far"
+        await asyncio.sleep(10)
+        return "never"
+
+    _register_extra_tool(ctx, "partial", partial)
+    ctx.cancelled = asyncio.Event()
+    asyncio.get_running_loop().call_later(0.1, ctx.cancelled.set)
+
+    result = await _safe_execute(ctx, "partial")
+
+    assert "interrupted" in result.text
+    assert "12 page(s) written so far" in result.text
+
+
+@pytest.mark.asyncio
 async def test_per_tool_short_override_wins(ctx):
     async def hang(ctx):
         await asyncio.sleep(10)

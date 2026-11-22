@@ -99,6 +99,14 @@ TOOL_DEFINITIONS = (
 )
 
 
+def _progress_suffix(ctx) -> str:
+    """Name a tool's recorded partial progress in an interrupt/timeout result."""
+    if ctx is None:
+        return ""
+    progress = ctx.tools.progress_text
+    return f" ({progress})" if progress else ""
+
+
 async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name="", ctx=None):
     """Run a coroutine, racing it against optional cancel + timeout signals.
 
@@ -148,7 +156,7 @@ async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name="", c
                 await tool_task
             except (asyncio.CancelledError, Exception):
                 pass
-            return tool_task, ToolResult(text="[tool interrupted: agent turn cancelled]")
+            return tool_task, ToolResult(text=f"[tool interrupted: agent turn cancelled{_progress_suffix(ctx)}]")
 
         # Timer task fired
         if timer_task is not None and timer_task in done:
@@ -171,7 +179,9 @@ async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name="", c
                             await tool_task
                         except (asyncio.CancelledError, Exception):
                             pass
-                        return tool_task, ToolResult(text="[tool interrupted: agent turn cancelled]")
+                        return tool_task, ToolResult(
+                            text=f"[tool interrupted: agent turn cancelled{_progress_suffix(ctx)}]"
+                        )
                     if tool_task in wait_done:
                         if not conf_poll.done():
                             conf_poll.cancel()
@@ -202,7 +212,7 @@ async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name="", c
                 getattr(ctx, "conv_id", ""),
             )
             return tool_task, ToolResult(
-                text=f"[error: tool {tool_name} timed out after {timeout_sec}s]",
+                text=f"[error: tool {tool_name} timed out after {timeout_sec}s{_progress_suffix(ctx)}]",
                 timed_out=True,
                 timeout_sec=timeout_sec,
             )

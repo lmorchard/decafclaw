@@ -79,6 +79,10 @@ class ToolState:
     # (#1569). `fork_for_tool_call` gives each call its own ToolState, so the
     # generic progress heartbeat reads only its own call's progress.
     last_status_at: float = 0.0
+    # Human-readable partial-progress note for a bulk tool call. The timeout
+    # watchdog appends it to a timeout/interrupt result so a killed bulk write
+    # reports what it already completed (#1687).
+    progress_text: str = ""
     # Dynamic tool providers: skill_name → get_tools(ctx) callable.
     # Called each turn to refresh that skill's tools and definitions.
     dynamic_providers: dict[str, Any] = field(default_factory=dict)

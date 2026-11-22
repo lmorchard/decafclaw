@@ -967,6 +967,7 @@ async def tool_vault_update_frontmatter(
             return gate_result
 
     from decafclaw.frontmatter import (
+        build_composite_text,
         merge_frontmatter,
         parse_frontmatter,
         serialize_frontmatter,
@@ -983,8 +984,13 @@ async def tool_vault_update_frontmatter(
             data={"path": page, "changed": []},
         )
 
+    # Only reindex when the embedded text actually changed. Fields such as
+    # `importance` are not part of `build_composite_text`; reindexing for
+    # them costs an embedding round trip and changes nothing (#1687).
+    reindex_needed = build_composite_text(metadata, body) != build_composite_text(merged, body)
     path.write_text(serialize_frontmatter(merged, body), encoding="utf-8")
-    await _reindex_page(ctx, path)
+    if reindex_needed:
+        await _reindex_page(ctx, path)
     await publish_vault_changed(
         ctx.event_bus,
         ctx.config,
