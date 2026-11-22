@@ -124,7 +124,7 @@ def tool_debug_context(ctx: "Context") -> str | ToolResult:
     log.info("[tool:debug_context]")
     messages = ctx.messages
     if messages is None:
-        return "[no context available]"
+        return ToolResult(text="[no context available]")
 
     # Build full dump with message details
     lines = [f"Total messages: {len(messages)}\n"]
