@@ -6,7 +6,7 @@
         "type": "function",
         "function": {
           "name": "shell",
-          "arguments": "{\"command\": \"echo hello\"}"
+          "arguments": "{\"command\": \"touch marker.txt\"}"
         }
       }
     ]

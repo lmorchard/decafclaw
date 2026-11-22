@@ -262,6 +262,28 @@ class ShellConfig:
     aux_approval_guidance: str = ""
     aux_approval_presets: dict[str, str] = field(default_factory=dict)
     active_aux_approval_presets: list[str] = field(default_factory=list)
+    # Kill switch for the deterministic read-only tier (#1641). When False, a
+    # provably read-only command falls through to the normal pipeline (security
+    # monitor → judge → human) instead of being allowed silently.
+    #
+    # This tier is the one place a command can run with NO human and NO model
+    # in the loop, so a false positive is an unreviewed execution. Having an
+    # off switch means a suspect classifier can be neutralized by editing
+    # config.json (which the watcher applies in place, no restart) rather than
+    # reverting and redeploying. Default True: the tier is the point of the
+    # feature, and off-by-default would ship it dead.
+    read_only_enabled: bool = True
+    # How many recent shell calls define a conversation's established activity
+    # (#1641). A command is "in direction" only when every domain it touches
+    # appeared in this window. Lower it to make drift prompt sooner.
+    #
+    # 0 or a negative value DISABLES direction entirely: every command counts
+    # as established, so the new-activity tier never fires. This is the safe
+    # off switch — an unbounded window (all history counts) would re-create the
+    # stale-direction failure the window exists to avoid, and having "0" mean
+    # "unbounded" made the setting that looks like "off" the most dangerous
+    # value in the file.
+    activity_window: int = 50
 
 
 @dataclass

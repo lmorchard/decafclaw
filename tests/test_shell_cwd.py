@@ -182,7 +182,9 @@ async def test_subdirectory_cwd_reaches_confirmation_card(ctx):
         await tool_shell(ctx, "pytest tests", cwd="sub")
 
     kwargs = mock_confirm.await_args.kwargs
-    assert kwargs["action_data"] == {"cwd": str(sub.resolve())}
+    assert kwargs["action_data"]["cwd"] == str(sub.resolve())
+    assert kwargs["action_data"]["activity"] == "unknown"
+    assert kwargs["action_data"]["activity_established"] is False
     assert "Working directory" in kwargs["message"]
 
 
@@ -199,7 +201,7 @@ async def test_workspace_cwd_adds_no_confirmation_noise(ctx):
         await tool_shell(ctx, "pytest tests")
 
     kwargs = mock_confirm.await_args.kwargs
-    assert "action_data" not in kwargs
+    assert "cwd" not in kwargs.get("action_data", {})
     assert "Working directory" not in kwargs["message"]
 
 
