@@ -8,6 +8,7 @@ from decafclaw.llm.providers.vertex import (
     _build_request_body,
     _parse_response,
     _parse_usage,
+    _VertexStreamState,
 )
 
 # -- Request body translation --------------------------------------------------
@@ -780,6 +781,8 @@ def test_parse_empty_response():
     result = _parse_response(data)
     assert result["content"] is None
     assert result["tool_calls"] is None
+    # A no-candidate response is an error, not a silent success (#1325).
+    assert result["finish_reason"] == "error"
 
 
 def test_parse_usage():
@@ -801,6 +804,52 @@ def test_parse_usage():
 
 def test_parse_usage_missing():
     assert _parse_usage({}) is None
+
+
+# -- Streaming finish-reason classification ------------------------------------
+
+
+async def test_streaming_empty_response_matches_nonstreaming():
+    """A stream that delivers no candidates classifies like the non-streaming path (#1325)."""
+    nonstreaming = _parse_response({"candidates": []})
+
+    # e.g. a safety-blocked response: usage and prompt feedback, no candidates
+    state = _VertexStreamState()
+    await state.process_chunk(
+        {
+            "promptFeedback": {"blockReason": "PROBABILITY"},
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 0,
+                "totalTokenCount": 10,
+            },
+        }
+    )
+    streaming = await state.finalize()
+
+    assert nonstreaming["finish_reason"] == "error"
+    assert streaming["finish_reason"] == nonstreaming["finish_reason"]
+
+
+async def test_streaming_zero_chunks_matches_nonstreaming():
+    """A stream that delivers no events at all is also an empty response (#1325)."""
+    nonstreaming = _parse_response({"candidates": []})
+
+    state = _VertexStreamState()
+    streaming = await state.finalize()
+
+    assert nonstreaming["finish_reason"] == "error"
+    assert streaming["finish_reason"] == nonstreaming["finish_reason"]
+
+
+async def test_streaming_content_without_reason_still_stop():
+    """Content without an explicit finish reason stays "stop" — only candidate-less
+    streams are classified as errors (#1325)."""
+    state = _VertexStreamState()
+    await state.process_chunk({"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello!"}]}}]})
+    result = await state.finalize()
+    assert result["content"] == "Hello!"
+    assert result["finish_reason"] == "stop"
 
 
 # -- Multimodal content (image attachments) ------------------------------------

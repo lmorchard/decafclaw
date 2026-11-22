@@ -354,6 +354,7 @@ class _VertexStreamState:
         self.tool_calls_seen = 0
         self.usage: dict | None = None
         self.finish_reason: str | None = None
+        self.candidates_seen = 0
         self._all_events: list = []
 
     def record_event(self, chunk: dict):
@@ -378,6 +379,7 @@ class _VertexStreamState:
         candidates = chunk.get("candidates", [])
         if not candidates:
             return
+        self.candidates_seen += 1
 
         raw_reason = candidates[0].get("finishReason")
         if raw_reason == "MAX_TOKENS":
@@ -449,8 +451,13 @@ class _VertexStreamState:
                 tool_calls.append(tc)
 
         finish_reason = self.finish_reason
-        if finish_reason is None and (content or thinking or tool_calls):
-            finish_reason = FINISH_REASON_STOP
+        if finish_reason is None:
+            if content or thinking or tool_calls:
+                finish_reason = FINISH_REASON_STOP
+            elif self.candidates_seen == 0:
+                # No candidate was ever delivered (e.g. safety-blocked) — classify
+                # like _parse_response does for an empty response (#1325).
+                finish_reason = FINISH_REASON_ERROR
 
         await self._emit("done", {"usage": self.usage})
 
