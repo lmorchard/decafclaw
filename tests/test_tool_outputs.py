@@ -29,7 +29,7 @@ from decafclaw.tool_outputs import (
     parse_handle,
     read_page,
 )
-from decafclaw.tools.tool_output_tools import tool_output_read
+from decafclaw.tools.tool_output_tools import _page_result, tool_output_read
 
 
 @pytest.fixture
@@ -267,6 +267,20 @@ async def test_tool_output_read_reports_missing_and_denied(ctx):
     denied = await tool_output_read(ctx, format_handle("theirs", "call_x.txt"))
     assert denied.text.startswith("[error:")
     assert "another conversation" in denied.text
+
+
+def test_page_result_is_a_tool_result_for_errors(ctx):
+    """The paged-read helper returns a ToolResult for error states, never a bare string."""
+    missing_handle = format_handle(ctx.conv_id, "nope.txt")
+    missing = _page_result(missing_handle, read_page(ctx.config, ctx.conv_id, missing_handle))
+    assert isinstance(missing, ToolResult)
+
+    other = Context(config=ctx.config, event_bus=EventBus())
+    other.conv_id = "theirs"
+    capture(ctx.config, "theirs", "call_x", b"secret")
+    denied_handle = format_handle("theirs", "call_x.txt")
+    denied = _page_result(denied_handle, read_page(ctx.config, ctx.conv_id, denied_handle))
+    assert isinstance(denied, ToolResult)
 
 
 @pytest.mark.asyncio
