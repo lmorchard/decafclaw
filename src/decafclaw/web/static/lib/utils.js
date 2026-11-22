@@ -39,6 +39,16 @@ export function formatRelativeTime(ts) {
 }
 
 /**
+ * Extract a server-provided error without trusting arbitrary response JSON.
+ * @param {unknown} body
+ * @returns {string}
+ */
+export function responseError(body) {
+  if (!body || typeof body !== 'object' || !("error" in body)) return '';
+  return typeof body.error === 'string' ? body.error : '';
+}
+
+/**
  * Copy text to the clipboard, with a fallback for non-secure contexts.
  *
  * `navigator.clipboard` only exists in secure contexts (HTTPS or localhost).
