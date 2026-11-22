@@ -12,7 +12,15 @@ from typing import Any
 import httpx
 
 from ..history import without_provider_data
-from ..types import DiscoveredModel, LLMRetryExhaustedError, StreamCallback
+from ..types import (
+    FINISH_REASON_CANCELLED,
+    FINISH_REASON_ERROR,
+    FINISH_REASON_STOP,
+    FINISH_REASON_TOOL_CALLS,
+    DiscoveredModel,
+    LLMRetryExhaustedError,
+    StreamCallback,
+)
 
 log = logging.getLogger(__name__)
 
@@ -273,7 +281,7 @@ class OpenAICompatProvider:
             finish_reason = choice.get("finish_reason")
         else:
             message = {}
-            finish_reason = "error"
+            finish_reason = FINISH_REASON_ERROR
         usage = data.get("usage")
 
         if usage:
@@ -365,7 +373,7 @@ class OpenAICompatProvider:
                 if not state.content_parts and not state.thinking_parts and not state.tool_calls_in_progress:
                     raise
                 log.error("LLM streaming error (partial content kept): %s", e)
-                state.finish_reason = "error"
+                state.finish_reason = FINISH_REASON_ERROR
                 break
 
         return await state.finalize()
@@ -399,7 +407,7 @@ class OpenAICompatProvider:
         async for event in event_source.aiter_sse():
             if cancel_event and cancel_event.is_set():
                 log.info("LLM streaming cancelled by user")
-                state.finish_reason = "cancelled"
+                state.finish_reason = FINISH_REASON_CANCELLED
                 break
             if event.data == "[DONE]":
                 state.saw_done = True
@@ -527,7 +535,7 @@ class _StreamState:
         choices = chunk.get("choices", [])
         if not choices:
             if chunk.get("error"):
-                self.finish_reason = "error"
+                self.finish_reason = FINISH_REASON_ERROR
             elif not chunk.get("usage"):
                 log.debug("LLM chunk with no choices: %s", json.dumps(chunk)[:500])
             return
@@ -535,7 +543,7 @@ class _StreamState:
         finish_reason = choices[0].get("finish_reason")
         if finish_reason:
             self.finish_reason = finish_reason
-            if finish_reason not in ("stop", "tool_calls"):
+            if finish_reason not in (FINISH_REASON_STOP, FINISH_REASON_TOOL_CALLS):
                 log.warning("LLM finish_reason: %s", finish_reason)
 
         delta = choices[0].get("delta", {})
@@ -614,9 +622,9 @@ class _StreamState:
         finish_reason = self.finish_reason
         if finish_reason is None:
             if self.saw_done:
-                finish_reason = "stop"
+                finish_reason = FINISH_REASON_STOP
             elif content or thinking or self.tool_calls_in_progress:
-                finish_reason = "error"
+                finish_reason = FINISH_REASON_ERROR
 
         await self._emit("done", {"usage": self.usage})
 

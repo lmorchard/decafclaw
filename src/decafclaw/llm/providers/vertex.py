@@ -8,7 +8,14 @@ from typing import Any
 
 import httpx
 
-from ..types import DiscoveredModel, LLMRetryExhaustedError, StreamCallback
+from ..types import (
+    FINISH_REASON_ERROR,
+    FINISH_REASON_LENGTH,
+    FINISH_REASON_STOP,
+    DiscoveredModel,
+    LLMRetryExhaustedError,
+    StreamCallback,
+)
 from .openai_compat import _cancellable_sleep, _RetryableError
 
 log = logging.getLogger(__name__)
@@ -374,9 +381,9 @@ class _VertexStreamState:
 
         raw_reason = candidates[0].get("finishReason")
         if raw_reason == "MAX_TOKENS":
-            self.finish_reason = "length"
+            self.finish_reason = FINISH_REASON_LENGTH
         elif raw_reason == "STOP":
-            self.finish_reason = "stop"
+            self.finish_reason = FINISH_REASON_STOP
         elif raw_reason:
             self.finish_reason = raw_reason.lower()
 
@@ -443,7 +450,7 @@ class _VertexStreamState:
 
         finish_reason = self.finish_reason
         if finish_reason is None and (content or thinking or tool_calls):
-            finish_reason = "stop"
+            finish_reason = FINISH_REASON_STOP
 
         await self._emit("done", {"usage": self.usage})
 
@@ -863,14 +870,14 @@ def _parse_response(data: dict) -> dict:
             "tool_calls": None,
             "role": "assistant",
             "usage": _parse_usage(data),
-            "finish_reason": "error",
+            "finish_reason": FINISH_REASON_ERROR,
         }
 
     raw_reason = candidates[0].get("finishReason")
     if raw_reason == "MAX_TOKENS":
-        finish_reason = "length"
+        finish_reason = FINISH_REASON_LENGTH
     elif raw_reason == "STOP":
-        finish_reason = "stop"
+        finish_reason = FINISH_REASON_STOP
     elif raw_reason:
         finish_reason = raw_reason.lower()
     else:
