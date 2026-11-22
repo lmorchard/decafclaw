@@ -1002,6 +1002,10 @@ async def check_shell_approval(
         shell_cwd = _resolve_shell_cwd(ctx, cwd) if cwd else ctx.config.workspace_path.resolve()
     except ValueError:
         shell_cwd = ctx.config.workspace_path.resolve()
+    # Kill switch for the silent read-only tier. Defaults to enabled when the
+    # key is absent or unreadable, but an explicit False always wins — an
+    # operator turning this off must never be overridden by a config typo.
+    read_only_enabled = getattr(ctx.config.shell, "read_only_enabled", True) is not False
 
     # 1. Tier 1 fast path: Immediately block catastrophically dangerous commands
     tier1 = evaluate_command(
@@ -1050,7 +1054,11 @@ async def check_shell_approval(
     # back ASK — costing a human prompt in exactly the category this tier
     # exists to silence. Tier 1's hard BLOCK above still wins, and allow
     # patterns are unchanged; only the soft classifier is bypassed.
-    if is_read_only_command(command, cwd=shell_cwd, workspace=ctx.config.workspace_path):
+    #
+    # Gated by `shell.read_only_enabled` (kill switch): this is the only tier
+    # that executes with no human and no model, so a suspect classifier must be
+    # neutralizable by config rather than by reverting a deploy.
+    if read_only_enabled and is_read_only_command(command, cwd=shell_cwd, workspace=ctx.config.workspace_path):
         log.info(f"[{tool_name}] auto-approved as read-only: {command}")
         await _record_approval(ctx, command=command, cwd=cwd, decision="allow", tier="read_only", activity=activity)
         return {"approved": True}

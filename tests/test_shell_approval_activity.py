@@ -65,6 +65,57 @@ async def test_read_only_command_never_reaches_the_judge(ctx):
 
 
 @pytest.mark.asyncio
+async def test_kill_switch_bypasses_the_read_only_tier(ctx):
+    """shell.read_only_enabled=False must send read-only commands down the
+    normal pipeline. This is the emergency lever for a suspect classifier, so
+    it has to actually restore model/human review — not merely reorder it.
+    """
+    ctx.config.shell.read_only_enabled = False
+    ctx.config.shell.aux_approval_enabled = True
+    # Seed activity so the command reaches the JUDGE: without this it would
+    # land in the new-activity tier and block on a real confirmation prompt.
+    _seed_activity(ctx)
+
+    async def allow(messages):
+        return {"content": json.dumps({"auto_approve": True, "reason": "safe", "risk": "low"})}
+
+    judge = MagicMock(return_value=allow)
+    ctx.aux_approval_llm = judge
+    events: list[dict] = []
+    ctx.event_bus.subscribe(events.append)
+
+    result = await check_shell_approval(ctx, "ls -la")
+
+    assert result == {"approved": True}
+    # The judge saw it, so the silent tier did not short-circuit.
+    judge.assert_called_once()
+    tiers = [e["tier"] for e in events if e["type"] == "approval_decision"]
+    assert "read_only" not in tiers
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_off_still_lets_a_dangerous_command_be_blocked(ctx):
+    """Tier 1 must keep its veto with the tier disabled."""
+    ctx.config.shell.read_only_enabled = False
+
+    result = await check_shell_approval(ctx, "rm -rf /")
+
+    assert result["approved"] is False
+    assert "blocked" in result["reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_is_on_by_default(ctx):
+    """Absent flag = tier enabled; off-by-default would ship the feature dead."""
+    assert ctx.config.shell.read_only_enabled is True
+    judge = MagicMock()
+    ctx.aux_approval_llm = judge
+
+    assert await check_shell_approval(ctx, "ls -la") == {"approved": True}
+    judge.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_new_activity_prompts_with_direction_and_skips_judge(ctx):
     ctx.config.shell.aux_approval_enabled = True
     judge = MagicMock()
