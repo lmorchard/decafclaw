@@ -31,9 +31,9 @@ Every entry in core `TOOL_DEFINITIONS` and always-loaded skills (`vault`, `backg
 {
     "type": "function",
     "priority": "normal",  # or "critical" or "low"
-    "summary": "Run a shell command in the workspace.",
+    "summary": "List files and directories in the workspace.",
     "function": {
-        "name": "shell",
+        "name": "workspace_list",
         "description": "...",
         "parameters": {...},
     },

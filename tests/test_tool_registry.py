@@ -390,10 +390,14 @@ class TestBuildDeferredListText:
         assert "Description text that must not render." not in text
 
     def test_fallback_summary_bounded_in_catalogue(self):
-        td = _make_tool_def("workspace_edit", " ".join(["word"] * 100))
+        # One long sentence: the 120-char clamp fires, not get_description's
+        # 80-char no-punctuation cutoff.
+        td = _make_tool_def("workspace_edit", " ".join(["word"] * 60) + ".")
         text = build_deferred_list_text([td], core_names={"workspace_edit"})
         line = next(line for line in text.splitlines() if "workspace_edit" in line)
-        assert len(line.split(" — ", 1)[1]) <= SUMMARY_MAX_CHARS
+        summary = line.split(" — ", 1)[1]
+        assert len(summary) <= SUMMARY_MAX_CHARS
+        assert summary.endswith("...")
 
     def test_inner_markdown_preserved(self):
         """The wrapping is additive: the existing section headings

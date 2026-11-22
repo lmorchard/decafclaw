@@ -1218,7 +1218,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
             "Use workspace_outline to inspect classes, functions, and headings before reading specific sections of large files."
         ],
         "writes": False,
-        "summary": "Show a file's structure or read one section by line range.",
+        "summary": "Show a file's structure or read one named section.",
         "function": {
             "name": "workspace_outline",
             "description": "Show a structural outline of a workspace file (Python classes/functions or Markdown headings) with line numbers, or retrieve a specific section. Use this on large files before reading full contents to identify relevant code or documentation.",
