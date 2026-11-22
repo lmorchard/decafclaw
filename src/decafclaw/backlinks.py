@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Iterable
 
 from decafclaw.skills.vault._events import KIND_DELETE, KIND_RENAME
 
@@ -177,6 +177,62 @@ def load_index(config) -> dict[str, list[str]]:
     except (json.JSONDecodeError, OSError) as exc:
         log.debug("backlinks: load_index failed (%s), rebuilding", exc)
         return rebuild_index(config)
+
+
+def compute_pagerank(
+    index: dict[str, list[str]],
+    nodes: Iterable[str] | None = None,
+    *,
+    damping: float = 0.85,
+    max_iter: int = 100,
+    tolerance: float = 1e-9,
+) -> dict[str, float]:
+    """PageRank over the persisted ``{target: [sources]}`` backlink index.
+
+    When ``nodes`` is omitted, the node set is every key and source in the
+    index. Callers that want isolates included must pass the full page set;
+    a node with no edges still receives the teleport floor rather than zero.
+
+    Deterministic (nodes are sorted), bounded by ``max_iter``, and cheap at
+    vault scale: ~1–2k nodes and a few thousand edges converge in well under
+    a second. No LLM, network, or embedding calls (#1714/#1713).
+    """
+    if nodes is None:
+        node_set = set(index)
+        for sources in index.values():
+            node_set.update(sources)
+    else:
+        node_set = set(nodes)
+    ordered = sorted(node_set)
+    count = len(ordered)
+    if count == 0:
+        return {}
+
+    outbound: dict[str, set[str]] = {node: set() for node in ordered}
+    for target, sources in index.items():
+        if target not in outbound:
+            continue
+        for source in sources:
+            if source in outbound:
+                outbound[source].add(target)
+
+    rank = {node: 1.0 / count for node in ordered}
+    teleport = (1.0 - damping) / count
+    for _ in range(max_iter):
+        dangling = sum(rank[node] for node in ordered if not outbound[node])
+        new = {node: teleport + damping * dangling / count for node in ordered}
+        for source in ordered:
+            targets = outbound[source]
+            if not targets:
+                continue
+            share = damping * rank[source] / len(targets)
+            for target in targets:
+                new[target] += share
+        delta = sum(abs(new[node] - rank[node]) for node in ordered)
+        rank = new
+        if delta < tolerance:
+            break
+    return rank
 
 
 def inbound_count(config, page: str) -> int:

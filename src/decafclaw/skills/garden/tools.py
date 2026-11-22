@@ -125,6 +125,154 @@ async def tool_vault_recompute_importance(ctx: "Context", dry_run: bool = False)
     return ToolResult(text=text, data={"deltas": deltas, "dry_run": dry_run})
 
 
+_GRAPH_SECTIONS = ("totals", "components", "isolates", "sinks", "toeholds", "pages")
+_SINK_MIN_OUTBOUND = 10
+_SINK_MAX_INBOUND = 2
+_TOEHOLD_MIN_INBOUND = 10
+_TOEHOLD_MAX_OUTBOUND = 1
+
+
+def _weak_components(
+    agent_pages: dict[str, Path],
+    outbound: dict[str, set[str]],
+) -> list[list[str]]:
+    """Weakly-connected components over agent pages (undirected)."""
+    adjacency = {rel: set() for rel in agent_pages}
+    for source, targets in outbound.items():
+        if source not in adjacency:
+            continue
+        for target in targets:
+            if target in adjacency and target != source:
+                adjacency[source].add(target)
+                adjacency[target].add(source)
+
+    seen: set[str] = set()
+    components: list[list[str]] = []
+    for rel in sorted(adjacency):
+        if rel in seen:
+            continue
+        seen.add(rel)
+        stack = [rel]
+        component: list[str] = []
+        while stack:
+            node = stack.pop()
+            component.append(node)
+            for neighbor in adjacency[node]:
+                if neighbor not in seen:
+                    seen.add(neighbor)
+                    stack.append(neighbor)
+        components.append(sorted(component))
+    return components
+
+
+async def tool_vault_graph_report(
+    ctx: "Context",
+    sections: list[str] | None = None,
+    top_n: int = 50,
+) -> ToolResult:
+    """Report the agent-page link graph: totals, components, isolates, sinks,
+    toeholds, and a bounded degree/PageRank table. Pure arithmetic over the
+    persisted backlink index (#1714)."""
+    log.info(f"[tool:vault_graph_report] sections={sections} top_n={top_n}")
+    requested = list(_GRAPH_SECTIONS) if sections is None else list(sections)
+    unknown = sorted(set(requested) - set(_GRAPH_SECTIONS))
+    if unknown:
+        return ToolResult(
+            text=(
+                f"[error: unknown graph section(s): {', '.join(unknown)}. Valid sections: {', '.join(_GRAPH_SECTIONS)}]"
+            )
+        )
+    page_limit = max(0, min(int(top_n), 1000))
+
+    vault = ctx.config.vault_root
+    agent_pages = dict(_iter_importance_candidates(ctx.config))
+    if vault.is_dir():
+        nodes = {path.relative_to(vault).as_posix() for path in vault.rglob("*.md")}
+        index = backlinks.load_index(ctx.config)
+    else:
+        nodes = set()
+        index = {}
+
+    inbound: dict[str, set[str]] = {node: set() for node in nodes}
+    outbound: dict[str, set[str]] = {node: set() for node in nodes}
+    for target, sources in index.items():
+        if target not in nodes:
+            continue
+        for source in sources:
+            if source not in nodes or source == target:
+                continue
+            outbound[source].add(target)
+            inbound[target].add(source)
+
+    edges = sum(len(targets) for targets in outbound.values())
+    degrees = {rel: (len(inbound.get(rel, ())), len(outbound.get(rel, ()))) for rel in agent_pages}
+    isolates = sorted(rel for rel, (in_count, out_count) in degrees.items() if in_count == 0 and out_count == 0)
+    orphans = sorted(rel for rel, (in_count, _out_count) in degrees.items() if in_count == 0)
+    sink_tuples = sorted(
+        (
+            (out_count, rel, in_count)
+            for rel, (in_count, out_count) in degrees.items()
+            if out_count >= _SINK_MIN_OUTBOUND and in_count <= _SINK_MAX_INBOUND
+        ),
+        key=lambda item: (-item[0], item[1]),
+    )
+    sinks = [{"path": rel, "inbound": in_count, "outbound": out_count} for out_count, rel, in_count in sink_tuples]
+    toehold_tuples = sorted(
+        (
+            (in_count, rel, out_count)
+            for rel, (in_count, out_count) in degrees.items()
+            if in_count >= _TOEHOLD_MIN_INBOUND and out_count <= _TOEHOLD_MAX_OUTBOUND
+        ),
+        key=lambda item: (-item[0], item[1]),
+    )
+    toeholds = [
+        {"path": rel, "inbound": in_count, "outbound": out_count} for in_count, rel, out_count in toehold_tuples
+    ]
+
+    components = _weak_components(agent_pages, outbound)
+    components.sort(key=lambda component: (-len(component), component[0] if component else ""))
+
+    pagerank = backlinks.compute_pagerank(index, nodes=nodes) if nodes else {}
+    page_tuples = sorted(
+        ((pagerank.get(rel, 0.0), rel, in_count, out_count) for rel, (in_count, out_count) in degrees.items()),
+        key=lambda item: (-item[0], item[1]),
+    )[:page_limit]
+    page_rows = [
+        {
+            "path": rel,
+            "inbound": in_count,
+            "outbound": out_count,
+            "pagerank": round(rank, 6),
+        }
+        for rank, rel, in_count, out_count in page_tuples
+    ]
+
+    largest_component = len(components[0]) if components else 0
+    full = {
+        "totals": {
+            "pages": len(agent_pages),
+            "edges": edges,
+            "isolates": len(isolates),
+            "orphans": len(orphans),
+            "components": len(components),
+            "largest_component": largest_component,
+        },
+        "components": [{"size": len(component), "sample": component[:5]} for component in components],
+        "isolates": isolates,
+        "sinks": sinks,
+        "toeholds": toeholds,
+        "pages": page_rows,
+    }
+    data = {section: full[section] for section in _GRAPH_SECTIONS if section in requested}
+    text = (
+        f"Graph report: {len(agent_pages)} agent page(s), {edges} edge(s), "
+        f"{len(isolates)} isolate(s), {len(orphans)} orphan(s), "
+        f"{len(components)} component(s) (largest {largest_component}); "
+        f"{len(sinks)} sink(s), {len(toeholds)} toehold(s)."
+    )
+    return ToolResult(text=text, data=data)
+
+
 async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = None) -> ToolResult:
     """Detect clusters of 3+ related agent pages and move them into dedicated folders."""
     if dry_run is None:
@@ -205,6 +353,7 @@ async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = N
 
 TOOLS = {
     "vault_recompute_importance": tool_vault_recompute_importance,
+    "vault_graph_report": tool_vault_graph_report,
     "vault_reorganize_folders": tool_vault_reorganize_folders,
 }
 
@@ -218,6 +367,46 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {"dry_run": {"type": "boolean"}},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "writes": False,
+        "priority": "normal",
+        "function": {
+            "name": "vault_graph_report",
+            "description": (
+                "Compute the whole agent-page link graph in one read-only call: "
+                "totals (pages, edges, isolates, orphans, components, largest "
+                "component), weakly-connected components, isolates, sinks (high "
+                "outbound / negligible inbound), toeholds (high inbound / "
+                "negligible outbound), and a bounded per-page inbound/outbound/"
+                "PageRank table. Deterministic over the backlink index — no LLM, "
+                "network, or embedding calls. Use this instead of repeatedly "
+                "calling vault_backlinks to survey connectivity."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sections": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": list(_GRAPH_SECTIONS),
+                        },
+                        "description": (
+                            "Optional subset of sections to return (default: all). Use 'totals' for a cheap overview."
+                        ),
+                    },
+                    "top_n": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum rows in the per-page table, sorted by PageRank descending (default 50)."
+                        ),
+                    },
+                },
+                "required": [],
             },
         },
     },
