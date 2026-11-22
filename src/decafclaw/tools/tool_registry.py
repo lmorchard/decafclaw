@@ -59,10 +59,16 @@ def get_critical_names(config) -> set[str]:
 
 
 def get_always_loaded_tool_names(config) -> set[str]:
-    """Return the set of tool names belonging to always-loaded skills."""
+    """Return the set of tool names belonging to always-loaded skills.
+
+    Always-loaded skill bodies already sit in the system prompt, and the
+    skill catalog promises their tools are available now. Their tools are
+    therefore force-critical: they must never be deferred out of sight.
+    """
     cached = getattr(config, "always_loaded_skill_tools", set()) or set()
     if cached:
-        return cached
+        # Coerce: the runtime field is serialized as a list in some paths.
+        return set(cached)
     names: set[str] = set()
     for skill in config.discovered_skills:
         if skill.always_loaded and skill.has_native_tools:
@@ -116,9 +122,12 @@ def classify_tools(
     2. All ``critical`` tools enter the active set (hard floor, included
        even if over budget).
     3. ``normal`` tools added one at a time while under
-       ``tool_context_budget`` and ``max_active_tools``.
+       ``tool_context_budget``.
     4. ``low`` tools added only if room remains after ``normal``.
     5. Everything else goes to deferred.
+
+    The token budget is the only limit on the active set; there is no
+    tool-count cap (#1692).
 
     Input order within a tier is preserved so callers can influence
     tie-breaks by ordering the input list.
@@ -127,8 +136,10 @@ def classify_tools(
     fetched tools persist in ``fetched_names`` instead of changing schemas
     for each user message.
     """
-    fetched_names = fetched_names or set()
-    skill_tool_names = skill_tool_names or set()
+    # Coerce: runtime state stores these as lists in some paths (the
+    # fetched-tools set is JSON-serialized as a sorted list).
+    fetched_names = set(fetched_names or ())
+    skill_tool_names = set(skill_tool_names or ())
     skill_tool_owners = getattr(config, "skill_tool_owners", {}) or {}
 
     always_loaded_tools = get_always_loaded_tool_names(config)
@@ -142,13 +153,15 @@ def classify_tools(
         if tname in on_demand_skill_tools and td.get("priority") not in _PRIORITY_RANK:
             undeclared_on_demand.add(tname)
 
-    # Build the "force critical" set
+    # Build the "force critical" set. Always-loaded skill tools are included:
+    # their skill bodies are already in the prompt, so deferring them would
+    # contradict the catalog that advertises them as callable now.
     force_critical = get_critical_names(config)
+    force_critical |= always_loaded_tools
     force_critical |= fetched_names
     force_critical |= undeclared_on_demand
 
     budget = config.tool_context_budget
-    max_active = getattr(config.agent, "max_active_tools", 40)
 
     # Bucket by resolved priority, preserving input order. Compute
     # each tool's token cost once up front — classify_tools runs every
@@ -185,28 +198,17 @@ def classify_tools(
 
     if active_tokens > budget:
         log.warning(
-            "Critical tool set exceeds budget or count: "
-            "%d tools / %d tokens (budget %d, max %d). "
-            "Critical tools are included anyway.",
+            "Critical tool set exceeds budget: %d tools / %d tokens (budget %d). Critical tools are included anyway.",
             len(active),
             active_tokens,
             budget,
-            max_active,
-        )
-    elif len(active) > max_active:
-        # Count-only overflow: the normal state under the default config
-        # (#1012). The token budget is intact, so this is informational.
-        log.info(
-            "Critical tool set over count cap: %d tools (max %d); normal and low tools are deferred.",
-            len(active),
-            max_active,
         )
 
     def _fill(tier: list[dict]) -> None:
         nonlocal active_tokens
         for td in tier:
             tokens = token_cost[id(td)]
-            if active_tokens + tokens <= budget and len(active) + 1 <= max_active:
+            if active_tokens + tokens <= budget:
                 active.append(td)
                 active_tokens += tokens
             else:
