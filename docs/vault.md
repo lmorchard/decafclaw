@@ -155,7 +155,8 @@ The vault skill is **always loaded** — its tools are available in every conver
 |------|-------------|
 | `vault_read(page)` | Read a page by name or path. Searches subdirectories. |
 | `vault_write(page, content)` | Create or overwrite a page. Indexes in semantic search. After saving, resolves the page's `[[wiki-links]]` and reports any that don't resolve (an `Unresolved links:` line in the result and `data.unresolved_links`); the write still succeeds (fail-open). |
-| `vault_delete(page)` | Delete a page. Pages outside `agent/` trigger a user confirmation. |
+| `vault_delete(page, allow_broken_links?, dry_run?)` | Delete a page. Refuses when other pages link to it unless `allow_broken_links=true`, which reports the pages left with dangling links. In unattended contexts (no `request_confirmation`), `dry_run` defaults to true. Pages outside `agent/` trigger a user confirmation. |
+| `vault_delete_plan(pages, dry_run?, allow_broken_links?)` | Garden batch form: applies the same per-page guard and returns per-item success/failure. `dry_run` defaults from the garden skill config and is forced on in unattended contexts. |
 | `vault_rename(from_page, to_page)` | Rename/move a page (preserves links). Pages outside `agent/` trigger a user confirmation. |
 | `vault_grant_folder(folder, reason)` | Request per-conversation trust for a folder. After approval, vault_write/delete/rename under the folder skip confirmation. |
 | `vault_journal_append(tags, content)` | Append timestamped entry to today's journal file. Tags surface both as the back-compat `- **tags:**` bullet and as inline Obsidian-style `#tags` in the body (#318), so `extract_tags`/tag search see them without a separate scan pass. |
@@ -349,6 +350,23 @@ sweep (`skills/garden/SKILL.md`) — review the reported deltas, and use
 `vault_graph_report` to see whether a move came from a sink, toehold, or
 isolate. Connectivity work — not a manual guess — is what raises a floor
 score.
+
+### Delete guardrails (#1717)
+
+`vault_delete` checks `backlinks.load_index` before unlinking. If any page
+links to the target, the default is to refuse and name the referring pages.
+Callers that intentionally accept the breakage pass `allow_broken_links=true`;
+the result then lists the pages that now contain dangling links so they can be
+repaired in the same pass. When `ctx.request_confirmation is None`
+(scheduled/unattended), an unset `dry_run` defaults to true and only reports
+the outcome.
+
+`vault_delete_plan` applies the same per-page rules to a batch and returns
+per-item outcomes, so a mostly-good conflict cleanup still reports the one page
+that was refused. It defaults `dry_run` from the garden skill config and forces
+it on in unattended contexts. Legitimate sync-conflict duplicates have no
+inbound links, so a conflict batch passes without per-page approvals; a page
+with live inbound links is refused.
 
 ### Ownership
 

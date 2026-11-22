@@ -17,7 +17,7 @@ from decafclaw.frontmatter import (
     split_frontmatter,
 )
 from decafclaw.media import ToolResult
-from decafclaw.skills.vault.tools import _WIKI_LINK_RE, tool_vault_update_frontmatter
+from decafclaw.skills.vault.tools import _WIKI_LINK_RE, tool_vault_delete, tool_vault_update_frontmatter
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -122,6 +122,69 @@ async def tool_vault_recompute_importance(ctx: "Context", dry_run: bool = False)
     else:
         text = f"Recomputed importance for {len(scores)} page(s): {written} updated, {len(scores) - written} unchanged."
     return ToolResult(text=text, data={"deltas": deltas, "dry_run": dry_run})
+
+
+async def tool_vault_delete_plan(
+    ctx: "Context",
+    pages: list[str],
+    dry_run: bool | None = None,
+    allow_broken_links: bool = False,
+) -> ToolResult:
+    """Delete a batch of vault pages with per-item outcomes.
+
+    ``dry_run`` defaults from the garden skill config and is forced on in
+    unattended contexts (no ``request_confirmation``), mirroring the single
+    delete tool's guardrail (#1717).
+    """
+    if not pages:
+        return ToolResult(text="[error: pages list is required]")
+    if dry_run is None:
+        dry_run = _skill_config.dry_run or ctx.request_confirmation is None
+    log.info(f"[tool:vault_delete_plan] pages={len(pages)} dry_run={dry_run}")
+
+    requested = list(dict.fromkeys(pages))
+    items: list[dict] = []
+    for page in requested:
+        result = await tool_vault_delete(
+            ctx,
+            page,
+            allow_broken_links=allow_broken_links,
+            dry_run=dry_run,
+        )
+        items.append(
+            {
+                "page": page,
+                "ok": not result.text.startswith("[error:"),
+                "text": result.text,
+                "data": result.data,
+            }
+        )
+
+    ok_count = sum(1 for item in items if item["ok"])
+    failed = len(items) - ok_count
+    deleted = sum(1 for item in items if item["ok"] and not item["data"].get("dry_run"))
+    would_delete = sum(1 for item in items if item["ok"] and item["data"].get("would_delete"))
+    blocked = sum(1 for item in items if item["ok"] and item["data"].get("blocked"))
+
+    if dry_run:
+        text = (
+            f"[dry run] Delete plan: {len(items)} requested; "
+            f"{would_delete} would delete, {blocked} blocked, {failed} failed."
+        )
+    else:
+        text = f"Delete plan: {len(items)} requested; {deleted} deleted, {failed} failed/refused."
+    return ToolResult(
+        text=text,
+        data={
+            "items": items,
+            "dry_run": dry_run,
+            "requested": len(items),
+            "deleted": deleted,
+            "would_delete": would_delete,
+            "blocked": blocked,
+            "failed": failed,
+        },
+    )
 
 
 _GRAPH_SECTIONS = ("totals", "components", "isolates", "sinks", "toeholds", "pages")
@@ -565,6 +628,7 @@ TOOLS = {
     "vault_broken_links": tool_vault_broken_links,
     "vault_frontmatter_audit": tool_vault_frontmatter_audit,
     "vault_find_duplicate_candidates": tool_vault_find_duplicate_candidates,
+    "vault_delete_plan": tool_vault_delete_plan,
     "vault_reorganize_folders": tool_vault_reorganize_folders,
 }
 
@@ -695,6 +759,47 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "writes": True,
+        "priority": "normal",
+        "function": {
+            "name": "vault_delete_plan",
+            "description": (
+                "Delete a batch of vault pages and report per-item outcomes. "
+                "The single-delete inbound-link guard applies to each page: a "
+                "page with inbound links is refused unless allow_broken_links=true. "
+                "dry_run defaults from the garden skill config and is forced on "
+                "in unattended contexts; use a dry-run pass to review candidates "
+                "before executing. Legitimate conflict-duplicate batches have no "
+                "inbound links and pass without per-page approvals."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pages": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Page paths relative to the vault root.",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": (
+                            "Report what would happen without deleting. Defaults "
+                            "from the skill config, and true in unattended contexts."
+                        ),
+                    },
+                    "allow_broken_links": {
+                        "type": "boolean",
+                        "description": (
+                            "Allow deleting pages that still have inbound links, reporting which pages become dangling."
+                        ),
+                    },
+                },
+                "required": ["pages"],
             },
         },
     },

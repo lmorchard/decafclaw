@@ -543,10 +543,85 @@ class TestVaultDelete:
     async def test_deletes_agent_page(self, ctx, agent_pages):
         (agent_pages / "Stale.md").write_text("old")
         with patch("decafclaw.embeddings.delete_entries") as mock_del:
-            result = await tool_vault_delete(ctx, "agent/pages/Stale")
+            result = await tool_vault_delete(ctx, "agent/pages/Stale", dry_run=False)
         assert "deleted" in result.text.lower()
         assert not (agent_pages / "Stale.md").exists()
         mock_del.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_refuses_delete_with_inbound_links(self, ctx, agent_pages, config):
+        (agent_pages / "Target.md").write_text("target", encoding="utf-8")
+        (agent_pages / "Other.md").write_text("See [[Target]].", encoding="utf-8")
+        from decafclaw.backlinks import rebuild_index
+
+        rebuild_index(config)
+
+        result = await tool_vault_delete(ctx, "agent/pages/Target", dry_run=False)
+
+        assert result.text.startswith("[error:")
+        assert "agent/pages/Other.md" in result.text
+        assert result.data["inbound_links"] == ["agent/pages/Other.md"]
+        assert (agent_pages / "Target.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_allow_broken_links_deletes_and_reports_dangling_pages(self, ctx, agent_pages, config):
+        (agent_pages / "Target.md").write_text("target", encoding="utf-8")
+        (agent_pages / "Other.md").write_text("See [[Target|alias]] and [[Target#Section]].", encoding="utf-8")
+        from decafclaw.backlinks import rebuild_index
+
+        rebuild_index(config)
+
+        with patch("decafclaw.embeddings.delete_entries"):
+            result = await tool_vault_delete(
+                ctx,
+                "agent/pages/Target",
+                dry_run=False,
+                allow_broken_links=True,
+            )
+
+        assert "deleted" in result.text.lower()
+        assert result.data["dangling_pages"] == ["agent/pages/Other.md"]
+        assert "dangling" in result.text.lower()
+        assert not (agent_pages / "Target.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_unattended_defaults_to_dry_run(self, ctx, agent_pages):
+        (agent_pages / "Stale.md").write_text("old", encoding="utf-8")
+        ctx.request_confirmation = None
+
+        result = await tool_vault_delete(ctx, "agent/pages/Stale")
+
+        assert result.data["dry_run"] is True
+        assert result.data["would_delete"] is True
+        assert "dry run" in result.text.lower()
+        assert (agent_pages / "Stale.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_dry_run_reports_inbound_block(self, ctx, agent_pages, config):
+        (agent_pages / "Target.md").write_text("target", encoding="utf-8")
+        (agent_pages / "Other.md").write_text("See [[Target]].", encoding="utf-8")
+        from decafclaw.backlinks import rebuild_index
+
+        rebuild_index(config)
+
+        result = await tool_vault_delete(ctx, "agent/pages/Target", dry_run=True)
+
+        assert result.data["dry_run"] is True
+        assert result.data["blocked"] is True
+        assert result.data["would_delete"] is False
+        assert "allow_broken_links" in result.text
+        assert (agent_pages / "Target.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_explicit_dry_run_false_deletes_unattended(self, ctx, agent_pages):
+        (agent_pages / "Stale.md").write_text("old", encoding="utf-8")
+        ctx.request_confirmation = None
+
+        with patch("decafclaw.embeddings.delete_entries"):
+            result = await tool_vault_delete(ctx, "agent/pages/Stale", dry_run=False)
+
+        assert "deleted" in result.text.lower()
+        assert not (agent_pages / "Stale.md").exists()
 
     @pytest.mark.asyncio
     async def test_cleans_up_empty_parent_dirs(self, ctx, vault_dir, config):
@@ -556,7 +631,7 @@ class TestVaultDelete:
         nested.mkdir(parents=True, exist_ok=True)
         (nested / "Alice.md").write_text("old")
         with patch("decafclaw.embeddings.delete_entries"):
-            await tool_vault_delete(ctx, "agent/pages/people/obsolete/Alice")
+            await tool_vault_delete(ctx, "agent/pages/people/obsolete/Alice", dry_run=False)
         assert not nested.exists()
         # But the vault root itself must still exist
         assert vault_dir.exists()
@@ -569,7 +644,7 @@ class TestVaultDelete:
         missing prerequisite."""
         ctx.request_confirmation = None
         (vault_dir / "User Notes.md").write_text("mine")
-        result = await tool_vault_delete(ctx, "User Notes")
+        result = await tool_vault_delete(ctx, "User Notes", dry_run=False)
         assert "error" in result.text.lower()
         assert "interactive confirmation" in result.text.lower()
         assert (vault_dir / "User Notes.md").exists()
@@ -589,7 +664,7 @@ class TestVaultDelete:
     async def test_strips_md_suffix(self, ctx, agent_pages):
         (agent_pages / "Test.md").write_text("x")
         with patch("decafclaw.embeddings.delete_entries"):
-            result = await tool_vault_delete(ctx, "agent/pages/Test.md")
+            result = await tool_vault_delete(ctx, "agent/pages/Test.md", dry_run=False)
         assert "deleted" in result.text.lower()
         assert not (agent_pages / "Test.md").exists()
 
@@ -613,7 +688,7 @@ class TestVaultDelete:
 
         ctx.event_bus.publish = capture
         with patch("decafclaw.embeddings.delete_entries"):
-            await tool_vault_delete(ctx, "agent/pages/Stale")
+            await tool_vault_delete(ctx, "agent/pages/Stale", dry_run=False)
         matching = [e for e in captured if e.get("type") == "vault_changed"]
         assert len(matching) == 1
         assert matching[0]["kind"] == "delete"
@@ -633,7 +708,7 @@ class TestVaultDeleteUserFolders:
         (vault_dir / "creative" / "foo.md").write_text("body")
         ctx.config.vault.user_writable_paths = ["creative/"]
         with patch("decafclaw.embeddings.delete_entries"):
-            result = await tool_vault_delete(ctx, "creative/foo")
+            result = await tool_vault_delete(ctx, "creative/foo", dry_run=False)
         assert "deleted" in result.text.lower()
         assert not (vault_dir / "creative" / "foo.md").exists()
 
@@ -644,7 +719,7 @@ class TestVaultDeleteUserFolders:
         ctx.conv_id = "conv-123"
         add_grant(ctx.config, "conv-123", "creative/")
         with patch("decafclaw.embeddings.delete_entries"):
-            result = await tool_vault_delete(ctx, "creative/foo")
+            result = await tool_vault_delete(ctx, "creative/foo", dry_run=False)
         assert "deleted" in result.text.lower()
         assert not (vault_dir / "creative" / "foo.md").exists()
 
@@ -680,7 +755,7 @@ class TestVaultDeleteUserFolders:
         (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
         (vault_dir / "creative" / "foo.md").write_text("body")
         ctx.request_confirmation = None
-        result = await tool_vault_delete(ctx, "creative/foo")
+        result = await tool_vault_delete(ctx, "creative/foo", dry_run=False)
         text = result.text if hasattr(result, "text") else str(result)
         assert "interactive confirmation" in text
         assert (vault_dir / "creative" / "foo.md").exists()

@@ -60,6 +60,7 @@ _VAULT_WRITE_TOOLS = frozenset(
         # Garden-skill vault maintenance writes (#87 added their `writes: True`).
         "vault_reorganize_folders",
         "vault_recompute_importance",
+        "vault_delete_plan",
     }
 )
 
