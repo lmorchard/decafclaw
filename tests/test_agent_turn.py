@@ -104,7 +104,7 @@ def test_check_cancelled_not_set(ctx):
 
 def test_build_tool_list_base_tools(ctx):
     tools, deferred_text, guidance_text = build_tool_list(ctx)
-    # Should have some active tools and may defer some with max_active_tools
+    # Should have some active tools and may defer some over the token budget
     assert len(tools) > 0
     names = [t["function"]["name"] for t in tools]
     # Core tools that are always-loaded should be present

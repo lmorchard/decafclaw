@@ -393,7 +393,6 @@ class AgentConfig:
     max_concurrent_tools: int = 5
     max_message_length: int = 50000
     tool_context_budget_pct: float = 0.10
-    max_active_tools: int = 30
     critical_tools: list[str] = field(default_factory=list)
     child_max_tool_iterations: int = 10
     child_timeout_sec: int = 300
