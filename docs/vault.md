@@ -163,6 +163,7 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_list(folder?, pattern?)` | List pages with last-modified dates. |
 | `vault_tags()` | List every tag in use across the vault with usage counts, sorted by count descending (tie-broken by tag name). Thin wrapper over `collect_all_tags` (#318) — enumerates the tag vocabulary itself, distinct from `vault_search`'s content-filtering `tags` parameter. |
 | `vault_backlinks(page)` | Find pages linking to this page via `[[wiki-links]]`. |
+| `vault_graph_report(sections?, top_n?)` | One-call deterministic census of the agent-page link graph: totals, weakly-connected components, isolates, orphans, sinks, toeholds, and a bounded per-page inbound/outbound/PageRank table. Inbound counts include agent pages, journals, and user notes; components/isolates cover agent pages. Read-only — no LLM, network, or embedding calls. |
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
 | `vault_section(page, action, section?, title?, level?, content?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. `add` takes `content` so a new section arrives with its body in one call; `level` is inferred from the anchor when omitted (see [Section paths](#section-paths-671)). |
@@ -267,6 +268,13 @@ level and never propagate into a tool call or event subscriber.
 `vault_backlinks(page)` itself now just resolves `page`, looks up its
 inbound linkers in the index, and re-reads only those specific linking
 pages (not the whole vault) to pull a one-line quote for display context.
+
+`compute_pagerank(index, nodes, damping=0.85)` turns the persisted edge set
+into PageRank scores over the full graph, including journal and user-note
+sources. `vault_graph_report` uses it for the bounded per-page table and
+reports weakly-connected agent-page components, isolates, sinks, and
+toeholds in one read-only call — replacing a page-by-page `vault_backlinks`
+survey. Everything is deterministic; no embeddings or model calls.
 
 ### Importance recompute (#197)
 

@@ -39,9 +39,10 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 ## Step 4: Add Missing Connections
 
-- Read through pages and look for topics mentioned in the text that have their own pages but aren't linked.
+- Call `vault_graph_report` (sections `["totals", "sinks", "toeholds", "pages"]`) to see where the graph is thin in one pass.
+- Sinks (high outbound, negligible inbound) need links *to* them; toeholds (high inbound, negligible outbound) need outward links. Isolates and weak fragments need both.
+- Read the candidate pages and look for topics mentioned in the text that have their own pages but aren't linked.
 - Add `[[wiki-links]]` where they're missing.
-- Use `vault_backlinks` on key pages to check their connectivity.
 
 ## Step 5: Update tl;dr Summaries
 
@@ -56,7 +57,7 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 ## Step 7: Review Orphan Pages
 
-- Use `vault_backlinks` to find pages with no incoming links.
+- Call `vault_graph_report` with sections `["isolates", "components"]` to get every page with no incoming links, grouped by component size.
 - For each orphan, find related pages and add links to it.
 - If a page is truly disconnected and has little value, note it for review.
 
@@ -66,7 +67,7 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 - Pages with no measured signal yet (new pages, or pages nobody has retrieved or linked to) are left untouched rather than zeroed — any existing importance (e.g. dream's initial guess) stays put until real signal accumulates.
 - Review the reported deltas for outliers: a page that jumped or dropped sharply is worth a second look, since it usually means the retrieval or link graph shifted, not that the page itself changed.
 - Spot-check frontmatter consistency on a few pages while you're in there — `summary`/`keywords`/`tags` that no longer match the body content.
-- Flag pages that are both orphaned (zero inbound links via `vault_backlinks`) and rarely retrieved (low importance after recompute) — these are strong split/merge/delete candidates for a future pass, not something to act on unilaterally.
+- Flag pages that are both orphaned (zero inbound links in `vault_graph_report`) and rarely retrieved (low importance after recompute) — these are strong split/merge/delete candidates for a future pass, not something to act on unilaterally.
 - Also flag weakly-linked pages (one or two thin connections) as candidates for Step 4's "add missing connections" work next time around.
 
 ## Finishing Up
