@@ -58,7 +58,7 @@
       "post": {
         "summary": "Handle Confirm",
         "description": "Handle interactive button/link callbacks for tool confirmation.",
-        "operationId": "handle_confirm_actions_confirm_get",
+        "operationId": "handle_confirm_actions_confirm_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -90,7 +90,7 @@
       "post": {
         "summary": "Handle Cancel",
         "description": "Handle interactive button/link callback for stop/cancel.",
-        "operationId": "handle_cancel_actions_cancel_get",
+        "operationId": "handle_cancel_actions_cancel_post",
         "responses": {
           "200": {
             "description": "Successful Response",

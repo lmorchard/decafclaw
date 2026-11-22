@@ -98,8 +98,12 @@ install-js:
 	    exit 1; \
 	  fi
 
-# Regenerate backend types and browser output, then type check frontend callers.
+# Regenerate backend types and browser output, gate generated drift, then type
+# check frontend callers. The diff step mirrors check-message-types: after
+# regeneration, any hand edit to a generated file (or stale committed output)
+# fails the gate instead of being silently reverted.
 check-js: gen-api-client
+	git diff --exit-code -- openapi.json openapi.yaml src/decafclaw/web/static/lib/api-client/
 	cd src/decafclaw/web/static && npx tsc --noEmit
 
 # Test JS with vitest

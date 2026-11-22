@@ -1,3 +1,6 @@
+// DO NOT EDIT — regenerate via 'make gen-api-client'
+// Source: lib/api-client/index.ts (esbuild bundle of the generated client)
+
 // src/decafclaw/web/static/lib/api-client/core/ApiError.ts
 var ApiError = class extends Error {
   url;
@@ -591,7 +594,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleConfirmActionsConfirmGet1() {
+  static handleConfirmActionsConfirmPost() {
     return request2(OpenAPI, {
       method: "POST",
       url: "/actions/confirm"
@@ -615,7 +618,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleCancelActionsCancelGet1() {
+  static handleCancelActionsCancelPost() {
     return request2(OpenAPI, {
       method: "POST",
       url: "/actions/cancel"
