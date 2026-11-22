@@ -293,6 +293,62 @@ class TestClassifyTools:
         names = [td["function"]["name"] for td in active]
         assert names == ["norm_a", "norm_b", "norm_c"]
 
+    def test_budget_follows_declared_model_window(self, config):
+        """A declared model window replaces the compaction proxy (#1718)."""
+        from decafclaw.config_types import ModelConfig
+
+        config.compaction.max_tokens = 300000
+        config.agent.tool_context_budget_pct = 0.10
+        config.model_configs["small"] = ModelConfig(provider="local", model="tiny", context_window_size=32000)
+
+        assert config.tool_context_budget_for("small") == 3200
+        # No declared window on the selected model → unchanged proxy.
+        assert config.tool_context_budget_for("") == 30000
+
+    def test_classification_follows_active_model_window(self, config):
+        """The active model's window decides how many normal tools fit."""
+        from decafclaw.config_types import ModelConfig
+
+        config.compaction.max_tokens = 300000
+        config.agent.tool_context_budget_pct = 0.10
+        config.model_configs["small"] = ModelConfig(provider="local", model="tiny", context_window_size=32000)
+        config.model_configs["big"] = ModelConfig(provider="local", model="wide", context_window_size=300000)
+        tools = [_make_tool_def(f"norm_{i}", "x" * 2000) for i in range(10)]
+        per_tool = estimate_tool_tokens([tools[0]])
+        assert per_tool < config.tool_context_budget_for("small") < per_tool * 10
+
+        active_small, deferred_small = classify_tools(tools, config, model_name="small")
+        active_big, deferred_big = classify_tools(tools, config, model_name="big")
+
+        assert 0 < len(active_small) < 10
+        assert len(deferred_small) == 10 - len(active_small)
+        assert len(active_big) == 10
+        assert deferred_big == []
+
+
+def test_build_tool_list_uses_active_model_window(ctx):
+    """Production tool assembly resolves the budget from ctx.active_model (#1718)."""
+    from decafclaw.config_types import ModelConfig
+    from decafclaw.tool_definitions import build_tool_list
+
+    config = ctx.config
+    config.compaction.max_tokens = 300000
+    config.agent.tool_context_budget_pct = 0.10
+    config.model_configs["small"] = ModelConfig(provider="local", model="tiny", context_window_size=32000)
+    config.model_configs["big"] = ModelConfig(provider="local", model="wide", context_window_size=300000)
+    tools = [_make_tool_def(f"norm_{i}", "x" * 2000) for i in range(10)]
+
+    ctx.active_model = "small"
+    build_tool_list(ctx, all_defs=tools)
+    small_deferred = len(ctx.tools.deferred_pool)
+
+    ctx.active_model = "big"
+    build_tool_list(ctx, all_defs=tools)
+    big_deferred = len(ctx.tools.deferred_pool)
+
+    assert small_deferred > 0
+    assert big_deferred == 0
+
 
 # -- classify_tools overflow logging (#1012) -----------------------------------
 
@@ -495,7 +551,10 @@ class TestBuildDeferredListText:
 
         class _FakeConfig:
             agent = _FakeAgentConfig()
-            tool_context_budget = 1_000_000  # generous; would normally fit
+
+            def tool_context_budget_for(self, model_name=""):
+                return 1_000_000  # generous; would normally fit
+
             discovered_skills: list = []
             skill_tool_owners = {"edit_with_strunk": "writing-clearly"}
 
@@ -540,7 +599,10 @@ class TestBuildDeferredListText:
 
         class _FakeConfig:
             agent = _FakeAgentConfig()
-            tool_context_budget = 1_000_000
+
+            def tool_context_budget_for(self, model_name=""):
+                return 1_000_000
+
             discovered_skills: list = []
             skill_tool_owners = {"edit_with_strunk": "writing-clearly"}
 

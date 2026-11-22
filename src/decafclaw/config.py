@@ -568,9 +568,19 @@ class Config:
         """Agent's daily journal directory."""
         return self.vault_agent_dir / "journal"
 
-    @property
-    def tool_context_budget(self) -> int:
-        return int(self.compaction.max_tokens * self.agent.tool_context_budget_pct)
+    def tool_context_budget_for(self, model_name: str = "") -> int:
+        """Token budget for active tool definitions on the selected model (#1718).
+
+        ``agent.tool_context_budget_pct`` is a fraction of the model's
+        effective context window, not the global ``compaction.max_tokens``
+        proxy. An empty ``model_name`` resolves through
+        ``config.default_model``. When no window is declared,
+        :func:`effective_context_window` falls back to
+        ``compaction.max_tokens`` and the result matches the old proxy.
+        """
+        from .model_catalog import effective_context_window  # deferred: config module cycle
+
+        return int(effective_context_window(self, model_name) * self.agent.tool_context_budget_pct)
 
     @property
     def compaction_context_budget(self) -> int:

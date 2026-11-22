@@ -9,7 +9,7 @@ See also:
 ## How It Works
 
 1. **Priority classification**: each tool resolves to a priority (`critical` / `normal` / `low`). Always-loaded skill tools, activated skill tools, fetched tools, and tools in the `CRITICAL_TOOLS` env override are treated as critical.
-2. **Fill the active set**: the classifier starts with all `critical` tools (hard floor, included regardless of budget). Then it fills `normal` tools while under `tool_context_budget`, followed by `low` tools if room remains.
+2. **Fill the active set**: the classifier starts with all `critical` tools (hard floor, included regardless of budget). Then it fills `normal` tools while under the selected model's tool budget, followed by `low` tools if room remains.
 3. **Everything else is deferred**: deferred tools are listed by name and description in a system prompt block. The `tool_search` tool is added to the active set so the model can fetch full schemas.
 4. **Persistence**: fetched tools stay loaded for the rest of the conversation and survive agent restarts.
 
@@ -17,10 +17,10 @@ See also:
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `TOOL_CONTEXT_BUDGET_PCT` | 0.10 | Fraction of `COMPACTION_MAX_TOKENS` used as the tool definition budget |
+| `TOOL_CONTEXT_BUDGET_PCT` | 0.10 | Fraction of the selected model's effective context window used as the tool definition budget |
 | `CRITICAL_TOOLS` | (empty) | Comma-separated tool names to force-promote to `critical` priority |
 
-The effective budget is `COMPACTION_MAX_TOKENS * TOOL_CONTEXT_BUDGET_PCT`. With the default 100K token compaction threshold and 10% budget, normal tools start being deferred once the active set exceeds ~10K tokens.
+The effective budget is `effective_context_window(selected model) * TOOL_CONTEXT_BUDGET_PCT` (#1718). The window ladder prefers the model's declared `context_window_size`, then the `llm.context_window_size` setting, then `compaction.max_tokens`. With no window declared, the final fallback keeps the old `compaction.max_tokens * TOOL_CONTEXT_BUDGET_PCT` behaviour: the default 100K compaction threshold and 10% budget defer normal tools once the active set exceeds ~10K tokens. A 32K-window model gets a 3.2K tool budget instead of inheriting 10K–30K from the compaction proxy.
 
 ## Critical Tools (defaults)
 
