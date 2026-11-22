@@ -74,6 +74,10 @@ export class ChatInput extends LitElement {
     _activeMode: { type: String, state: true },
     _availableModes: { type: Array, state: true },
     _isBusy: { type: Boolean, state: true },
+    // Whether the textarea holds non-whitespace text. Drives the merged
+    // Send/Stop action: while busy, text means the operator has something to
+    // steer with, so the button must send rather than cancel (#1666).
+    _hasText: { type: Boolean, state: true },
     _pendingAttachments: { type: Array, state: true },
     _dragOver: { type: Boolean, state: true },
     _trigger: { type: Object, state: true },
@@ -170,6 +174,7 @@ export class ChatInput extends LitElement {
     this._activeMode = 'default';
     this._availableModes = [];
     this._isBusy = false;
+    this._hasText = false;
     /** @type {Array<UploadedAttachment | PendingAttachment>} */
     this._pendingAttachments = [];
     this._dragOver = false;
@@ -437,6 +442,12 @@ export class ChatInput extends LitElement {
     }
   }
 
+  /** Deliberate Stop route while the composer holds text (#1666). */
+  #handleMenuStop() {
+    this._conversationMenuOpen = false;
+    this.#handleStop();
+  }
+
   /** @param {KeyboardEvent} e */
   #handleKeydown(e) {
     const ctx = this.#triggerContext();
@@ -550,6 +561,7 @@ export class ChatInput extends LitElement {
     this._draft = '';
     textarea.value = '';
     textarea.style.height = 'auto';
+    this._hasText = false;
     this.#closeMenu();
     this._conversationMenuOpen = false;
     this.#clearAttachments();
@@ -582,6 +594,7 @@ export class ChatInput extends LitElement {
     const row = this.querySelector('.input-row');
     const floor = row ? row.getBoundingClientRect().height : 0;
     textarea.style.height = Math.max(Math.min(textarea.scrollHeight, 128), floor) + 'px';
+    this._hasText = Boolean(textarea.value.trim());
     this.#syncMenu();
   }
 
@@ -722,6 +735,10 @@ export class ChatInput extends LitElement {
 
   render() {
     const hasAttachments = this._pendingAttachments.length > 0;
+    // While busy, the merged primary action is Stop only when there is
+    // nothing to steer with. Text or an attachment means the operator has
+    // something to say, so the same button sends (#1666).
+    const isStop = this.busy && !this._hasText && !hasAttachments;
     const isMention = this._trigger?.prefix === '@';
     const matchCount = isMention ? this._mentionMatches.length : this.#matchingCommands().length;
     const highlight = Math.min(this._highlight, matchCount - 1);
@@ -752,6 +769,12 @@ export class ChatInput extends LitElement {
           @keydown=${this.#handleConversationKeydown}>
           <div class="conversation-menu-heading">Conversation</div>
           <div class="conversation-menu-actions">
+            ${this.busy ? html`
+              <button type="button" class="conversation-menu-item" @click=${this.#handleMenuStop}>
+                <span class="conversation-menu-icon" aria-hidden="true">&#x25A0;</span>
+                <span class="conversation-menu-label">Stop</span>
+              </button>
+            ` : nothing}
             ${!this.disabled ? html`
               <button type="button" class="conversation-menu-item" @click=${this.#handleMenuAttach}>
                 <span class="conversation-menu-icon" aria-hidden="true">&#128206;</span>
@@ -847,14 +870,14 @@ export class ChatInput extends LitElement {
         ></textarea>
         <button
           type="button"
-          class="composer-primary-btn ${this.busy ? 'stop-btn' : ''}"
-          @click=${this.busy ? this.#handleStop : this.#handleSend}
-          ?disabled=${!this.busy && this.disabled}
-          aria-label=${this.busy ? 'Stop generation' : 'Send message'}
-          title=${this.busy ? 'Stop generation' : 'Send message'}
+          class="composer-primary-btn ${isStop ? 'stop-btn' : ''}"
+          @click=${isStop ? this.#handleStop : this.#handleSend}
+          ?disabled=${!isStop && this.disabled}
+          aria-label=${isStop ? 'Stop generation' : 'Send message'}
+          title=${isStop ? 'Stop generation' : 'Send message'}
         >
-          <span class="composer-primary-icon" aria-hidden="true">${this.busy ? '\u25A0' : '\u27A4'}</span>
-          <span class="composer-primary-label">${this.busy ? 'Stop' : 'Send'}</span>
+          <span class="composer-primary-icon" aria-hidden="true">${isStop ? '\u25A0' : '\u27A4'}</span>
+          <span class="composer-primary-label">${isStop ? 'Stop' : 'Send'}</span>
         </button>
       </div>
     `;

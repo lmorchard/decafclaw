@@ -170,9 +170,17 @@ conversation actions as before.
 The textarea owns the composer row. Below 640px:
 
 - The `⋮` toggle and the primary action are icon-only 44px controls. The
-  primary action merges Send and Stop: idle it sends (➤), and while a turn
-  runs it stops (■). Enter still sends while busy, which keeps mid-turn
-  steering available from the keyboard.
+  primary action merges Send and Stop: idle it sends (➤); while a turn runs it
+  stops (■) only when the composer is empty. Text or an attachment in the box
+  means the operator has something to say, so the merged button sends (➤) and
+  steers the running turn (#1666). Enter still sends while busy, which keeps
+  mid-turn steering available from the keyboard. `Escape`, or the explicit
+  Stop item the `⋮` menu shows while busy, cancels the turn deliberately.
+
+  The discriminator is `_hasText`, updated on `input` (typing, paste, history
+  recall, `setText`) and cleared after send; attachments come from the
+  reactive `_pendingAttachments`. Do not go back to selecting the action from
+  `busy` alone — that made a steering follow-up tap cancel the turn.
 - The paperclip is hidden from the row; Attach file lives in the `⋮` menu.
   Desktop keeps the paperclip beside the composer.
 - Composer padding and row gaps shrink to 0.5rem and 0.25rem so the textarea
