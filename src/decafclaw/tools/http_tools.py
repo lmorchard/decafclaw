@@ -191,6 +191,7 @@ HTTP_TOOL_DEFINITIONS = [
         "priority": "low",
         "timeout": None,
         "writes": True,
+        "summary": "Make an HTTP request.",
         "function": {
             "name": "http_request",
             "description": (

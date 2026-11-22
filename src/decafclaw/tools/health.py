@@ -463,6 +463,7 @@ HEALTH_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": False,
+        "summary": "Show agent health and diagnostic status.",
         "function": {
             "name": "health_status",
             "description": (

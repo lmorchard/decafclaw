@@ -6,6 +6,7 @@ from pathlib import Path
 from decafclaw.skills import SkillInfo
 from decafclaw.tools import TOOL_DEFINITIONS
 from decafclaw.tools.tool_registry import (
+    SUMMARY_MAX_CHARS,
     Priority,
     add_fetched_tools,
     build_deferred_list_text,
@@ -16,6 +17,7 @@ from decafclaw.tools.tool_registry import (
     get_description,
     get_fetched_tools,
     get_priority,
+    get_tool_summary,
     normalize_deferred_description,
 )
 
@@ -52,6 +54,13 @@ class TestEstimateToolTokens:
         small = _make_tool_def("s", "short")
         big = _make_tool_def("b", "a" * 400)
         assert estimate_tool_tokens([big]) > estimate_tool_tokens([small])
+
+    def test_summary_not_counted(self):
+        """Catalogue-only metadata never inflates the schema budget."""
+        td = _make_tool_def("t", "short")
+        before = estimate_tool_tokens([td])
+        td["summary"] = "x" * SUMMARY_MAX_CHARS
+        assert estimate_tool_tokens([td]) == before
 
 
 # -- get_critical_names (env override + always-loaded skill tools) -------
@@ -373,6 +382,23 @@ class TestBuildDeferredListText:
         assert text.startswith("<deferred_tools>\n")
         assert text.endswith("\n</deferred_tools>")
 
+    def test_renders_authored_summary_not_description(self):
+        td = _make_tool_def("workspace_edit", "Description text that must not render.")
+        td["summary"] = "Edit a workspace file."
+        text = build_deferred_list_text([td], core_names={"workspace_edit"})
+        assert "- workspace_edit — Edit a workspace file." in text
+        assert "Description text that must not render." not in text
+
+    def test_fallback_summary_bounded_in_catalogue(self):
+        # One long sentence: the 120-char clamp fires, not get_description's
+        # 80-char no-punctuation cutoff.
+        td = _make_tool_def("workspace_edit", " ".join(["word"] * 60) + ".")
+        text = build_deferred_list_text([td], core_names={"workspace_edit"})
+        line = next(line for line in text.splitlines() if "workspace_edit" in line)
+        summary = line.split(" — ", 1)[1]
+        assert len(summary) <= SUMMARY_MAX_CHARS
+        assert summary.endswith("...")
+
     def test_inner_markdown_preserved(self):
         """The wrapping is additive: the existing section headings
         for Core and MCP remain visible inside. Skill tools are
@@ -622,6 +648,38 @@ class TestNormalizeDeferredDescription:
         assert normalize_deferred_description(raw) == "Read a file (e.g. config.json)."
 
 
+class TestGetToolSummary:
+    """Authored summaries, with a bounded mechanical fallback (#1703)."""
+
+    def test_authored_summary_wins_over_description(self):
+        td = _make_tool_def("t", "Schema-oriented description that should be ignored.")
+        td["summary"] = "Do the thing."
+        assert get_tool_summary(td) == "Do the thing."
+
+    def test_fallback_short_description_unchanged(self):
+        td = _make_tool_def("t", "Short description. More text follows.")
+        assert get_tool_summary(td) == "Short description."
+
+    def test_fallback_clamps_long_description_at_word_boundary(self):
+        td = _make_tool_def("t", " ".join(["word"] * 60) + ".")
+        summary = get_tool_summary(td)
+        assert len(summary) <= SUMMARY_MAX_CHARS
+        assert summary.endswith("...")
+        assert summary[:-3].endswith("word")
+
+    def test_authored_summary_collapsed_to_one_line(self):
+        td = _make_tool_def("t", "desc")
+        td["summary"] = "Line one\nline two."
+        assert get_tool_summary(td) == "Line one line two."
+
+    def test_authored_summary_clamped(self):
+        td = _make_tool_def("t", "desc")
+        td["summary"] = " ".join(["alpha"] * 40)
+        summary = get_tool_summary(td)
+        assert len(summary) <= SUMMARY_MAX_CHARS
+        assert summary.endswith("...")
+
+
 # -- Fetched tools helpers -----------------------------------------------------
 
 
@@ -687,6 +745,37 @@ class TestCoreToolsDeclarePriority:
                 name = td.get("function", {}).get("name", "<unknown>")
                 invalid.append((name, prio))
         assert not invalid, f"Invalid priority values: {invalid}"
+
+
+# -- Invariant: deferrable core tools declare a summary (#1703) -----------------
+
+
+class TestCoreToolsDeclareSummary:
+    """Every non-critical core tool can be deferred, so it must declare a
+    one-line intent summary of at most SUMMARY_MAX_CHARS (issue #1703).
+
+    Critical tools never render in the catalogue. Skill and MCP tools use
+    the mechanical fallback.
+    """
+
+    def test_deferrable_core_tools_have_summary(self):
+        missing = []
+        too_long = []
+        multiline = []
+        for td in TOOL_DEFINITIONS:
+            if td.get("priority") == "critical":
+                continue
+            name = td.get("function", {}).get("name", "<unknown>")
+            summary = td.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                missing.append(name)
+            elif len(summary) > SUMMARY_MAX_CHARS:
+                too_long.append((name, len(summary)))
+            elif "\n" in summary:
+                multiline.append(name)
+        assert not missing, f"Deferrable core tools missing 'summary': {missing}"
+        assert not too_long, f"Summaries over {SUMMARY_MAX_CHARS} chars: {too_long}"
+        assert not multiline, f"Summaries must be one line: {multiline}"
 
 
 # -- Invariant: every tool declares a boolean writes flag (#87) ------------------

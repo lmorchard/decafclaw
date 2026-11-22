@@ -108,6 +108,7 @@ SUBAGENT_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "List this session's subagents with status and task.",
         "function": {
             "name": "subagent_list",
             "description": (
@@ -127,6 +128,7 @@ SUBAGENT_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Abort an active subagent's turn.",
         "function": {
             "name": "subagent_cancel",
             "description": (

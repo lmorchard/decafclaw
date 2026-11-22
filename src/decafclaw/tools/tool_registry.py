@@ -32,20 +32,21 @@ _PRIORITY_RANK = {
 }
 
 
+# Top-level keys that never reach the provider as part of the tool schema.
+_SCHEMA_EXCLUDED_KEYS = ("prompt_guidelines", "summary")
+
+
 def estimate_tool_tokens(tool_defs: list[dict]) -> int:
     """Estimate token cost of tool definitions.
 
-    Top-level prompt_guidelines are excluded because they are injected
-    into the prompt as <tool_guidance> and accounted for there, not in
-    the tool schema declarations sent to the model.
+    Top-level ``prompt_guidelines`` and ``summary`` are excluded because
+    they are not sent in the schema declarations. Guidelines go into
+    <tool_guidance>; summaries are only rendered in the deferred catalogue.
     """
     total = 0
     for td in tool_defs:
-        if "prompt_guidelines" in td:
-            clean = {k: v for k, v in td.items() if k != "prompt_guidelines"}
-            total += estimate_tokens(json.dumps(clean))
-        else:
-            total += estimate_tokens(json.dumps(td))
+        clean = {k: v for k, v in td.items() if k not in _SCHEMA_EXCLUDED_KEYS}
+        total += estimate_tokens(json.dumps(clean))
     return total
 
 
@@ -339,6 +340,35 @@ def normalize_deferred_description(desc: str, tool_name: str = "") -> str:
     return " ".join(_extract_first_sentence(fallback).split())
 
 
+SUMMARY_MAX_CHARS = 120
+
+
+def _clamp_summary(text: str, limit: int = SUMMARY_MAX_CHARS) -> str:
+    """Collapse to one line and bound the length at a word boundary."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 3]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:-") + "..."
+
+
+def get_tool_summary(tool_def: dict) -> str:
+    """Return the one-line catalogue summary for a deferred tool.
+
+    Uses the authored top-level ``summary`` when present. Otherwise falls
+    back to the first sentence of the description, clamped to
+    ``SUMMARY_MAX_CHARS`` at a word boundary. Always returns one line.
+    """
+    summary = tool_def.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return _clamp_summary(summary)
+    name = tool_def.get("function", {}).get("name", "")
+    desc = normalize_deferred_description(get_description(tool_def), tool_name=name)
+    return _clamp_summary(desc)
+
+
 def _get_declared_priority(tool_def: dict) -> str:
     """Return the priority declared on a tool def, defaulting to normal."""
     prio = tool_def.get("priority")
@@ -407,8 +437,7 @@ def build_deferred_list_text(
         rendered = []
         for td in defs_sorted:
             name = td.get("function", {}).get("name", "")
-            desc = normalize_deferred_description(get_description(td), tool_name=name)
-            rendered.append(f"- {name} — {desc}")
+            rendered.append(f"- {name} — {get_tool_summary(td)}")
         return rendered
 
     lines = ["## Available tools (use tool_search to load)\n"]

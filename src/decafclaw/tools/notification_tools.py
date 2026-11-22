@@ -69,6 +69,7 @@ NOTIFICATION_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Send a notification to the agent inbox and configured channels.",
         "function": {
             "name": "send_notification",
             "description": (
