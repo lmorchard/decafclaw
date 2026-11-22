@@ -23,3 +23,8 @@
 - Focused after change: `tests/test_security_monitor.py tests/test_shell_approval_activity.py
   tests/test_shell_purpose.py` → 56 passed. Earlier shell suite run →
   326 passed including read-only adversarial tests. `ruff` and `pyright` clean on changed files.
+- `make check`: passed (fmt, lint, pyright, generated files, JS assets).
+- Full `make test` after change: same 4 host-metrics failures; 6587 passed. Two extra
+  shell timing failures appeared only while a second full suite ran concurrently; both
+  passed immediately when rerun alone (`test_shell_auto_background`,
+  `test_shell_output_collection`).
