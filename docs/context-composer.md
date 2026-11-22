@@ -218,7 +218,7 @@ This contract closes a class of underreporting bugs (#393) where a role-based fi
 6. Builds and archives the user message, with provenance metadata on the archive row
 7. Filters/remaps history roles for the LLM
 8. `PreemptHintsExtension` keyword-matches the raw user message against tool names/descriptions and the skill catalog and mounts the discovery hints as an `EPILOGUE` contribution. See [Pre-emptive Tool Search](preemptive-tool-search.md).
-9. Classifies tools into active vs deferred sets using the priority system. See [Tool Priority](tool-priority.md).
+9. Classifies tools into active vs deferred sets using the priority system. The active-set token budget is `agent.tool_context_budget_pct` of the active model's effective context window (#1718). See [Tool Priority](tool-priority.md).
 10. Returns a `ComposedContext` with everything ready to send
 
 ### ComposedContext

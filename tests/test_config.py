@@ -12,6 +12,7 @@ from decafclaw.config_types import (
     EmbeddingConfig,
     LlmConfig,
     MattermostConfig,
+    ModelConfig,
     is_secret,
 )
 
@@ -117,12 +118,25 @@ class TestDefaults:
         assert str(c.agent_path) == "/tmp/test/mybot"
         assert str(c.workspace_path) == "/tmp/test/mybot/workspace"
 
-    def test_tool_context_budget(self):
+    def test_tool_context_budget_tracks_model_window(self):
         c = Config(
-            compaction=CompactionConfig(max_tokens=100000),
+            compaction=CompactionConfig(max_tokens=300000),
             agent=AgentConfig(tool_context_budget_pct=0.10),
         )
-        assert c.tool_context_budget == 10000
+        c.model_configs["small"] = ModelConfig(provider="local", model="tiny", context_window_size=32000)
+        c.model_configs["measured"] = ModelConfig(provider="local", model="wide", context_window_size=128000)
+        c.model_configs["unmeasured"] = ModelConfig(provider="local", model="proxy")
+        c.default_model = "small"
+
+        # The selected model's declared window drives the budget (#1718).
+        assert c.tool_context_budget_for("small") == 3200
+        # The budget changes with the active model.
+        assert c.tool_context_budget_for("measured") == 12800
+        # An empty name means the default model.
+        assert c.tool_context_budget_for() == 3200
+        # No declared window (or an unknown name) keeps the old proxy.
+        assert c.tool_context_budget_for("unmeasured") == 30000
+        assert c.tool_context_budget_for("no-such-model") == 30000
 
     def test_compaction_context_budget(self):
         c = Config(compaction=CompactionConfig(max_tokens=100000, llm_max_tokens=50000))

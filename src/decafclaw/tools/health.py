@@ -340,9 +340,10 @@ def _tools_section(ctx: "Context") -> list[str]:
             all_defs = all_defs + state.tool_definitions
 
     fetched = get_fetched_tools(ctx)
-    active, deferred = classify_tools(all_defs, ctx.config, fetched)
+    model_name = ctx.active_model
+    active, deferred = classify_tools(all_defs, ctx.config, fetched, model_name=model_name)
     total_tokens = estimate_tool_tokens(all_defs)
-    budget = ctx.config.tool_context_budget
+    budget = ctx.config.tool_context_budget_for(model_name)
 
     return [
         "### Tools",

@@ -115,6 +115,8 @@ def classify_tools(
     config,
     fetched_names: set[str] | None = None,
     skill_tool_names: set[str] | None = None,
+    *,
+    model_name: str = "",
 ) -> tuple[list[dict], list[dict]]:
     """Split tool definitions into active and deferred sets by priority.
 
@@ -122,13 +124,15 @@ def classify_tools(
     1. Resolve every tool's priority.
     2. All ``critical`` tools enter the active set (hard floor, included
        even if over budget).
-    3. ``normal`` tools added one at a time while under
-       ``tool_context_budget``.
+    3. ``normal`` tools added one at a time while under the model's
+       tool-definition budget.
     4. ``low`` tools added only if room remains after ``normal``.
     5. Everything else goes to deferred.
 
     The token budget is the only limit on the active set; there is no
-    tool-count cap (#1692).
+    tool-count cap (#1692). The budget scales with the context window of
+    ``model_name`` (the active conversation model, #1718) rather than the
+    global ``compaction.max_tokens`` proxy.
 
     Input order within a tier is preserved so callers can influence
     tie-breaks by ordering the input list.
@@ -162,7 +166,7 @@ def classify_tools(
     force_critical |= fetched_names
     force_critical |= undeclared_on_demand
 
-    budget = config.tool_context_budget
+    budget = config.tool_context_budget_for(model_name)
 
     # Bucket by resolved priority, preserving input order. Compute
     # each tool's token cost once up front — classify_tools runs every

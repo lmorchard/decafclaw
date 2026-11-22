@@ -270,6 +270,7 @@ def build_tool_list(ctx: "Context", *, all_defs: list | None = None) -> tuple[li
         ctx.config,
         fetched,
         skill_tool_names,
+        model_name=ctx.active_model,
     )
 
     # Apply allowed_tools / disallowed_tools filters
