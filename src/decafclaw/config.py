@@ -179,6 +179,21 @@ def _resolve_top_level_scalar(
     return _coerce_scalar(raw, key, default)
 
 
+def _resolve_top_level_str(file_data: dict, key: str, env_name: str, default: str = "") -> str:
+    """Resolve a top-level string field: env var > config.json > default.
+
+    Top-level fields don't go through load_sub_config (no env prefix), so each
+    needs an explicit lookup — same pattern as EXTRA_SKILL_PATHS. An unset or
+    empty env var falls through to the config file value (first non-empty wins);
+    a null or absent file value resolves to ``default``.
+    """
+    raw = os.getenv(env_name)
+    if raw is None or raw == "":
+        val = file_data.get(key, default)
+        return val if isinstance(val, str) else default
+    return raw
+
+
 def _coerce(value: str, field_type) -> object:
     """Coerce a string value to the target field type."""
     origin = get_origin(field_type)
@@ -887,11 +902,15 @@ def load_config() -> Config:
     # config.json resolves to None; non-optional fields map it back to the
     # default (max_tool_output_bytes is the exception: its null means "cap
     # disabled", which stays None downstream).
-    default_model = _resolve_top_level_scalar(file_data, "default_model", ("DEFAULT_MODEL",), "")
+    default_model = _resolve_top_level_scalar(
+        file_data, "default_model", ("DECAFCLAW_DEFAULT_MODEL", "DEFAULT_MODEL"), ""
+    )
     if default_model is None:
         default_model = ""
 
-    auxiliary_model = _resolve_top_level_scalar(file_data, "auxiliary_model", ("AUXILIARY_MODEL",), "")
+    auxiliary_model = _resolve_top_level_scalar(
+        file_data, "auxiliary_model", ("DECAFCLAW_AUXILIARY_MODEL", "AUXILIARY_MODEL"), ""
+    )
     if auxiliary_model is None:
         auxiliary_model = ""
 

@@ -562,11 +562,11 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 | `reasoning_effort` | str or null | `null` | OpenAI Responses only: reasoning effort; omitted/null uses model default |
 | `supports_vision` | bool or null | `null` | Tri-state vision capability (#1143): `false` turns every inbound image into an omission notice; `null`/true budgets normally |
 
-`default_model` (top-level string, env `DEFAULT_MODEL`) sets which model config to use when none is explicitly selected.
+`default_model` (top-level string) sets which model config to use when none is explicitly selected. Env overrides: `DECAFCLAW_DEFAULT_MODEL` or `DEFAULT_MODEL`.
 
-`auxiliary_model` (top-level string, env `AUXILIARY_MODEL`) sets the model config to use for background operations like compaction or scoring, where speed or cost might be prioritized over reasoning capability. If unset, these operations fall back to the active conversation model or `default_model`.
+`auxiliary_model` (top-level string) sets the model config to use for background operations like compaction or scoring, where speed or cost might be prioritized over reasoning capability. If unset, these operations fall back to the active conversation model or `default_model`. Env overrides: `DECAFCLAW_AUXILIARY_MODEL` or `AUXILIARY_MODEL`.
 
-Both resolve through the shared top-level scalar path: env var > config.json > default (first non-empty wins).
+Both resolve through the shared top-level scalar path: env var > config.json > default (first non-empty wins). The `DECAFCLAW_*` aliases take precedence over `DEFAULT_MODEL` / `AUXILIARY_MODEL` if both are set.
 
 **Migration:** If no `providers`/`model_configs` sections exist but the `llm` section is present, a "default" `openai-compat` provider and model config are auto-generated from the `llm` values.
 
