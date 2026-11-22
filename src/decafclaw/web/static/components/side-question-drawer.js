@@ -291,7 +291,9 @@ export class SideQuestionDrawer extends LitElement {
     const chatView = /** @type {any} */ (document.querySelector('chat-view'));
     if (chatView?._convId) return chatView._convId;
     const sidebar = /** @type {any} */ (document.querySelector('conversation-sidebar'));
-    if (sidebar?._activeId) return sidebar._activeId;
+    // The sidebar no longer mirrors the selection into local state (#1408);
+    // its store is the source of truth.
+    if (sidebar?.store?.currentConvId) return sidebar.store.currentConvId;
     return '';
   }
 

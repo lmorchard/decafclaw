@@ -22,20 +22,8 @@ export class ConversationSidebar extends LitElement {
   static properties = {
     store: { type: Object, attribute: false },
     authClient: { type: Object, attribute: false },
-    _conversations: { type: Array, state: true },
-    _sessions: { type: Array, state: true },
-    _chatFolders: { type: Array, state: true },
     _chatSection: { type: String, state: true },
     _chatFolder: { type: String, state: true },
-    _activeId: { type: String, state: true },
-    _contextUsage: { type: Number, state: true },
-    _contextLimit: { type: Number, state: true },
-    _activeModel: { type: String, state: true },
-    _availableModels: { type: Array, state: true },
-    _modelGroups: { type: Array, state: true },
-    _defaultModel: { type: String, state: true },
-    _isBusy: { type: Boolean, state: true },
-    _isReadOnly: { type: Boolean, state: true },
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
     _sidebarTab: { type: String, state: true },
@@ -55,30 +43,22 @@ export class ConversationSidebar extends LitElement {
 
   createRenderRoot() { return this; }
 
+  // Change detection for #onStoreChange only — the rendered values are read
+  // straight from the store, never mirrored into reactive state (#1408).
+  /** @type {string|null} */
+  #lastConvId = null;
+  /** @type {number} */
+  #lastContextUsage = 0;
+
   constructor() {
     super();
     /** @type {import("../lib/conversation-store.js").ConversationStore | null} */
     this.store = null;
     this.authClient = null;
-    /** @type {Array<import("../lib/conversation-store.js").ConversationMeta | import("../lib/conversation-store.js").SystemConversationMeta>} */
-    this._conversations = [];
-    /** @type {import("../lib/conversation-store.js").SessionEntry[]} server-grouped sessions (#1115) */
-    this._sessions = [];
-    /** @type {import("../lib/conversation-store.js").FolderEntry[]} */
-    this._chatFolders = [];
     /** @type {string} which section: '' (active), '_archived', '_system' */
     this._chatSection = '';
     /** @type {string} folder path within the section */
     this._chatFolder = '';
-    this._activeId = null;
-    this._contextUsage = 0;
-    this._contextLimit = 0;
-    this._activeModel = '';
-    this._availableModels = [];
-    this._modelGroups = [];
-    this._defaultModel = '';
-    this._isBusy = false;
-    this._isReadOnly = false;
     this._collapsed = false;
     // Read the URL's conversation before the store delivers one, so a
     // reload of a collapsed conversation does not flash the expanded
@@ -132,10 +112,13 @@ export class ConversationSidebar extends LitElement {
       this._contextInspectorOpen = !this._contextInspectorOpen;
     };
     document.addEventListener('toggle-context-inspector', this._onToggleInspector);
+    // The store is the single source of truth: render() reads its getters
+    // directly, so this handler only runs the per-change side effects and
+    // asks Lit to re-render (#1408). The #last* fields detect transitions;
+    // they are bookkeeping, not rendered state.
     this._onStoreChange = () => {
       const newId = this.store?.currentConvId;
-      const newSessions = this.store?.sessions || [];
-      if (newId !== this._activeId) {
+      if (newId !== this.#lastConvId) {
         this._contextInspectorOpen = false;
         // Collapse is per conversation: each tab reflects the conversation
         // it is showing instead of one global width for the whole browser.
@@ -145,35 +128,19 @@ export class ConversationSidebar extends LitElement {
         // into that session's conversation signals interest again. Reads
         // straight from the store so it also works on the same change
         // event that first delivers the sessions data.
+        const newSessions = this.store?.sessions || [];
         for (const g of newSessions) {
           if ((g.conversations || []).some((c) => c?.conv_id === newId)) this._collapsedSessions.delete(g.session_id);
         }
         if (newSessions.length === 0 && newId) this._collapsedSessions.delete(parentConvIdOf(newId) || newId);
       }
-      this._activeId = newId;
+      this.#lastConvId = newId;
+      // Bump the inspector's version only when the usage actually changed,
+      // so a turn's streaming frames do not refetch diagnostics.
       const newUsage = this.store?.contextUsage || 0;
-      if (newUsage !== this._contextUsage) this._contextVersion++;
-      this._contextUsage = newUsage;
-      this._contextLimit = this.store?.contextLimit || 0;
-      this._activeModel = this.store?.activeModel || '';
-      this._availableModels = this.store?.availableModels || [];
-      this._modelGroups = this.store?.modelGroups || [];
-      this._defaultModel = this.store?.defaultModel || '';
-      this._isBusy = Boolean(this.store?.isBusy);
-      this._isReadOnly = Boolean(this.store?.isReadOnly);
-      // Update conversation list and folders based on current section
-      if (this._chatSection === '_archived') {
-        this._conversations = [...(this.store?.archivedConversations || [])];
-        this._chatFolders = this.store?.archivedFolders || [];
-      } else if (this._chatSection === '_system') {
-        this._conversations = [...(this.store?.systemConversations || [])];
-        this._chatFolders = this.store?.systemFolders || [];
-      } else {
-        this._conversations = [...(this.store?.conversations || [])];
-        this._chatFolders = this.store?.folders || [];
-        // Server-grouped sessions (#1115) — the hierarchy data for the
-        // active section; client-side grouping remains as fallback.
-        this._sessions = [...newSessions];
+      if (newUsage !== this.#lastContextUsage) {
+        this._contextVersion++;
+        this.#lastContextUsage = newUsage;
       }
       this.requestUpdate();
     };
@@ -183,6 +150,11 @@ export class ConversationSidebar extends LitElement {
     super.disconnectedCallback();
     document.removeEventListener('toggle-context-inspector', this._onToggleInspector);
     this.store?.removeEventListener('change', this._onStoreChange);
+  }
+
+  /** Selected conversation id, read straight from the store ('' when none). */
+  get #activeId() {
+    return this.store?.currentConvId || '';
   }
 
   /** @param {Map} changedProps */
@@ -336,7 +308,7 @@ export class ConversationSidebar extends LitElement {
 
   #toggleCollapse() {
     this._collapsed = !this._collapsed;
-    const convId = this._activeId || this.store?.currentConvId || getConvFromUrl();
+    const convId = this.#activeId || getConvFromUrl();
     if (convId) localStorage.setItem(`${COLLAPSE_STORAGE_PREFIX}${convId}`, String(this._collapsed));
   }
 
@@ -354,7 +326,7 @@ export class ConversationSidebar extends LitElement {
   #handleNew() {
     // Create in current folder (only in active section)
     const folder = this._chatSection === '' ? this._chatFolder : '';
-    const model = this._activeModel || this._defaultModel;
+    const model = this.store?.activeModel || this.store?.defaultModel || '';
     this.store?.createConversation('', model, folder);
   }
 
@@ -598,7 +570,7 @@ export class ConversationSidebar extends LitElement {
       <div class="conv-search-results" role="list" aria-label="Session search results">
         ${this._searchMatches.map((m) => html`
           <div
-            class="conv-item conv-search-result${m.conv_id === this._activeId ? ' active' : ''}"
+            class="conv-item conv-search-result${m.conv_id === this.#activeId ? ' active' : ''}"
             role="listitem"
             tabindex="0"
             aria-label=${`Open conversation ${m.title}`}
@@ -694,13 +666,23 @@ export class ConversationSidebar extends LitElement {
   }
 
   /**
+   * Session groups for the active section, read from the store: server-grouped
+   * sessions (#1115) when present, else client-side grouping of the flat list.
+   * @returns {Array}
+   */
+  #sessionGroups() {
+    const sessions = this.store?.sessions || [];
+    return sessions.length > 0 ? sessions : this.#groupSessions(this.store?.conversations || []);
+  }
+
+  /**
    * Root conversation ids currently listed for the active section. Only those
    * rows are move sources; subagent children always move with their root.
    * @param {string} convId
    * @returns {boolean}
    */
   #isRootConvId(convId) {
-    const groups = this._sessions.length > 0 ? this._sessions : this.#groupSessions(this._conversations);
+    const groups = this.#sessionGroups();
     return groups.some((g) => {
       const root = (g.conversations || [])[0];
       return (root?.conv_id || g.session_id) === convId;
@@ -1010,7 +992,7 @@ export class ConversationSidebar extends LitElement {
    * @returns {import('lit').TemplateResult | typeof nothing}
    */
   #renderSessionGroups() {
-    const groups = this._sessions.length > 0 ? this._sessions : this.#groupSessions(this._conversations);
+    const groups = this.#sessionGroups();
     if (groups.length === 0) return nothing;
     return html`
       ${groups.map((g) => html`<div class="conv-session">${this.#renderSessionGroup(g)}</div>`)}
@@ -1030,7 +1012,7 @@ export class ConversationSidebar extends LitElement {
   #isSessionExpanded(g) {
     if (this._collapsedSessions.has(g.session_id)) return false;
     if (this._expandedSessions.has(g.session_id)) return true;
-    return (g.conversations || []).some((c) => c?.conv_id === this._activeId);
+    return (g.conversations || []).some((c) => c?.conv_id === this.#activeId);
   }
 
   /**
@@ -1062,7 +1044,7 @@ export class ConversationSidebar extends LitElement {
     const parent = convs[0];
     const children = convs.slice(1);
     const parentOpts = {
-      isActive: parent?.conv_id === this._activeId,
+      isActive: parent?.conv_id === this.#activeId,
       actionLabel: '\u00d7',
       actionTitle: 'Archive conversation',
       onAction: (id) => this.#handleArchive(id),
@@ -1106,7 +1088,7 @@ export class ConversationSidebar extends LitElement {
   #renderSubagentRow(child) {
     const status = this.store?.getConversationStatus?.(child.conv_id) || 'idle';
     const isBusy = status === 'busy';
-    const isActive = child.conv_id === this._activeId;
+    const isActive = child.conv_id === this.#activeId;
     const classes = ['conv-item', 'conv-subagent'];
     if (isActive) classes.push('active');
     const titleAttr = status && status !== 'idle' ? `${child.title} (${status})` : child.title;
@@ -1163,6 +1145,23 @@ export class ConversationSidebar extends LitElement {
     }
   }
 
+  /**
+   * Conversation rows and folders for the active sidebar section, read from
+   * the store. The section is local navigation state; its data is not
+   * mirrored (#1408).
+   * @returns {{conversations: Array, folders: Array}}
+   */
+  #sectionLists() {
+    const store = this.store;
+    if (this._chatSection === '_archived') {
+      return { conversations: store?.archivedConversations || [], folders: store?.archivedFolders || [] };
+    }
+    if (this._chatSection === '_system') {
+      return { conversations: store?.systemConversations || [], folders: store?.systemFolders || [] };
+    }
+    return { conversations: store?.conversations || [], folders: store?.folders || [] };
+  }
+
   render() {
     // Collapsed-narrow view is desktop-only. When the user opens the
     // sidebar via hamburger on mobile, render the full content even if
@@ -1176,6 +1175,8 @@ export class ConversationSidebar extends LitElement {
     }
 
     const currentFolder = this.store?.currentFolder ?? this._chatFolder ?? '';
+    // The active section's rows and folders, read from the store (#1408).
+    const { conversations, folders } = this.#sectionLists();
 
     return html`
       <div class="sidebar-header dc-overlay-header">
@@ -1218,7 +1219,7 @@ export class ConversationSidebar extends LitElement {
         ${this.#renderSearchBox()}
         ${this._searchQuery.trim() ? this.#renderSearchResults() : html`
         ${this.#renderChatBreadcrumbs()}
-        ${this._chatFolders.map(f => {
+        ${folders.map(f => {
           const isVirtual = ('virtual' in f && f.virtual) || f.path === '_archived' || f.path === '_system' || this._chatSection !== '';
           const openFolder = () => {
             if (f.path === '_archived') {
@@ -1249,12 +1250,12 @@ export class ConversationSidebar extends LitElement {
             </div>
           `;
         })}
-        ${this._conversations.length === 0 && this._chatFolders.length === 0
+        ${conversations.length === 0 && folders.length === 0
           ? html`<p style="padding: 0.5rem 0.75rem; color: var(--pico-muted-color); font-size: 0.85rem;">No conversations</p>`
           : nothing
         }
         ${this._chatSection === '_archived'
-          ? this._conversations.map(c => this.#renderConversationItem(c, {
+          ? conversations.map(c => this.#renderConversationItem(c, {
               extraClass: 'archived',
               actionLabel: '\u21a9',
               actionTitle: 'Unarchive conversation',
@@ -1264,8 +1265,8 @@ export class ConversationSidebar extends LitElement {
               onAction2: (id) => this.#handleDelete(id),
             }))
           : this._chatSection === '_system'
-            ? this._conversations.map(c => this.#renderConversationItem(c, {
-                isActive: c.conv_id === this._activeId,
+            ? conversations.map(c => this.#renderConversationItem(c, {
+                isActive: c.conv_id === this.#activeId,
                 extraClass: 'system',
                 badge: 'conv_type' in c ? c.conv_type : '',
                 titleSuffix: 'conv_type' in c ? c.conv_type : '',
@@ -1281,21 +1282,22 @@ export class ConversationSidebar extends LitElement {
           <button class="wiki-new-folder-btn outline" @click=${() => this.#createChatFolder()} aria-label="New chat folder">+ Folder</button>
         </div>
       ` : nothing}
-      ${!this._hasControlsStrip && this._availableModels.length > 0 ? html`
+      ${!this._hasControlsStrip && (this.store?.availableModels || []).length > 0 ? html`
       <div class="model-picker">
         <label class="model-picker-label">Model</label>
         <model-picker
-          .groups=${this._modelGroups}
-          .activeModel=${this._activeModel}
-          .defaultModel=${this._defaultModel}
-          ?disabled=${this._isBusy || this._isReadOnly}
-          .convId=${this._activeId || ''}
+          .groups=${this.store?.modelGroups || []}
+          .activeModel=${this.store?.activeModel || ''}
+          .defaultModel=${this.store?.defaultModel || ''}
+          ?disabled=${Boolean(this.store?.isBusy || this.store?.isReadOnly)}
+          .convId=${this.#activeId}
         ></model-picker>
       </div>
       ` : nothing}
-      ${!this._hasControlsStrip && this._contextLimit > 0 ? html`
+      ${!this._hasControlsStrip && (this.store?.contextLimit || 0) > 0 ? html`
         ${(() => {
-          const pct = Math.round(this._contextUsage / this._contextLimit * 100);
+          const limit = this.store?.contextLimit || 0;
+          const pct = Math.round((this.store?.contextUsage || 0) / limit * 100);
           const cls = pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
           return html`
             <div class="context-usage ${cls}" title="Click for details"
@@ -1317,7 +1319,7 @@ export class ConversationSidebar extends LitElement {
         })()}
       ` : nothing}
       <context-inspector
-        .convId=${this._activeId || ''}
+        .convId=${this.#activeId}
         .open=${this._contextInspectorOpen}
         .contextVersion=${this._contextVersion}
         @close=${() => { this._contextInspectorOpen = false; }}
