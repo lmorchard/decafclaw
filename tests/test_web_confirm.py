@@ -254,8 +254,8 @@ def test_request_via_manager_uses_empty_label_defaults():
     assert req.action_data["suggested_pattern"] == "tv list-screens *"
 
 
-def test_confirmation_to_dict_includes_decline_reason_and_suggested_rule():
-    """_confirmation_to_dict forwards decline_reason and suggested_rule to the client (#982)."""
+def test_confirmation_to_dict_includes_decline_reason_without_rule():
+    """_confirmation_to_dict forwards decline_reason; the #982 rule field is retired (#1684)."""
     from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
     from decafclaw.web.websocket import _confirmation_to_dict
 
@@ -271,11 +271,11 @@ def test_confirmation_to_dict_includes_decline_reason_and_suggested_rule():
     )
     payload = _confirmation_to_dict(req)
     assert payload["decline_reason"] == "Modifies git remote state"
-    assert payload["suggested_rule"] == "Auto-approve git push to origin topic branches"
+    assert "suggested_rule" not in payload
 
 
-def test_request_via_manager_forwards_decline_and_rule_fields():
-    """_request_via_manager maps decline_reason and suggested_rule to action_data and returns add_rule/rule."""
+def test_request_via_manager_forwards_decline_and_feedback_fields():
+    """_request_via_manager maps decline_reason and feedback to action_data and the result."""
     import asyncio
 
     from decafclaw.confirmations import (
@@ -292,8 +292,7 @@ def test_request_via_manager_forwards_decline_and_rule_fields():
         return ConfirmationResponse(
             confirmation_id=request.confirmation_id,
             approved=True,
-            add_rule=True,
-            rule="My custom exception rule",
+            feedback="Use the narrower push.",
         )
 
     class _ToolsState:
@@ -311,13 +310,13 @@ def test_request_via_manager_forwards_decline_and_rule_fields():
             message="Shell command: `git push origin my-branch`",
             timeout=1.0,
             decline_reason="Remote git push",
-            suggested_rule="Auto-approve push to my-branch",
+            feedback="Push only the feature branch.",
         )
     )
 
     assert len(captured) == 1
     assert captured[0].action_data["decline_reason"] == "Remote git push"
-    assert captured[0].action_data["suggested_rule"] == "Auto-approve push to my-branch"
+    assert captured[0].action_data["feedback"] == "Push only the feature branch."
     assert result["approved"] is True
-    assert result["add_rule"] is True
-    assert result["rule"] == "My custom exception rule"
+    assert result["feedback"] == "Use the narrower push."
+    assert "add_rule" not in result

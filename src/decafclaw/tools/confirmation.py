@@ -55,7 +55,6 @@ async def _request_via_manager(ctx: "Context", tool_name, command, message, time
         "decline_reason",
         "reason",
         "tier",
-        "suggested_rule",
         "purpose",
         "feedback",
     ):
@@ -82,9 +81,6 @@ async def _request_via_manager(ctx: "Context", tool_name, command, message, time
         result["always"] = True
     if response.add_pattern:
         result["add_pattern"] = True
-    if response.add_rule:
-        result["add_rule"] = True
-        result["rule"] = response.rule
     if response.feedback:
         result["feedback"] = response.feedback
     if response.data:

@@ -49,17 +49,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
     const bookmarks = options.url === '/api/bookmarks';
-    const shellPresets = options.url === '/api/shell-approval/presets'
-        || options.url === '/api/shell-approval/presets/{name}';
-    const shellApprovalGet = options.method === 'GET' && options.url === '/api/conversations/{id}/shell-approval';
-    const shellApprovalPut = options.method === 'PUT' && options.url === '/api/conversations/{id}/shell-approval/rules';
-    const shellApprovalRulesDelete = options.method === 'DELETE' && options.url === '/api/conversations/{id}/shell-approval/rules';
-    const shellApprovalRulesReplace = options.method === 'PUT' && options.url === '/api/conversations/{id}/shell-approval/rules/replace';
-    const shellApprovalPatternsDelete = options.method === 'DELETE' && options.url === '/api/conversations/{id}/shell-approval/patterns';
-    const shellApprovalPromote = options.method === 'POST' && options.url === '/api/conversations/{id}/shell-approval/promote';
-    const shellApprovalCondense = options.method === 'POST' && options.url === '/api/conversations/{id}/shell-approval/condense';
-    const shellApprovalConversation = shellApprovalGet || shellApprovalPut || shellApprovalRulesDelete || shellApprovalRulesReplace || shellApprovalPatternsDelete || shellApprovalPromote || shellApprovalCondense;
-    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && !shellPresets && !shellApprovalConversation && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
@@ -96,10 +86,6 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                 ? `${config.BASE}${options.url.replace('{id}', encodeURIComponent(options.path!.id))}${query ? getQueryString(query) : ''}`
                 : sticky
                 ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path!.conv_id)}`
-                : shellPresets && options.path?.name
-                ? `${config.BASE}/api/shell-approval/presets/${encodeURIComponent(options.path.name)}`
-                : shellApprovalConversation
-                ? `${config.BASE}${options.url.replace('{id}', encodeURIComponent(options.path!.id))}`
                 : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
             const headers = await getHeaders(config, options);
             if (onCancel.isCancelled) return;
@@ -141,7 +127,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                         ? workspaceSave ? await response.text()
                             : await response.json().catch(() => undefined)
                     : canvasNewTab && !response.ok ? await response.text()
-                    : (shellPresets || shellApprovalConversation) && !response.ok ? await response.json().catch(() => undefined) : undefined,
+                    : undefined,
             });
             if (options.discardResponse || workspaceRename) {
                 // Void overloads and the legacy rename caller do not decode

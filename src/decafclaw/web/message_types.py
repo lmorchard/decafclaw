@@ -27,7 +27,6 @@ class WSMessageType(StrEnum):
     CONVERSATION_STATUS = "conversation_status"
     ERROR = "error"
     MESSAGE_COMPLETE = "message_complete"
-    MODE_CHANGED = "mode_changed"
     MODEL_CHANGED = "model_changed"
     MODELS_AVAILABLE = "models_available"
     NOTIFICATION_CREATED = "notification_created"
@@ -54,7 +53,6 @@ class WSMessageType(StrEnum):
     SELECT_CONV = "select_conv"
     SEND = "send"
     SET_EFFORT = "set_effort"
-    SET_MODE = "set_mode"
     SET_MODEL = "set_model"
     WIDGET_RESPONSE = "widget_response"
 
@@ -77,7 +75,6 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.CONVERSATION_STATUS,
         WSMessageType.ERROR,
         WSMessageType.MESSAGE_COMPLETE,
-        WSMessageType.MODE_CHANGED,
         WSMessageType.MODEL_CHANGED,
         WSMessageType.MODELS_AVAILABLE,
         WSMessageType.NOTIFICATION_CREATED,
@@ -109,7 +106,6 @@ C2S_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset(
         WSMessageType.SELECT_CONV,
         WSMessageType.SEND,
         WSMessageType.SET_EFFORT,
-        WSMessageType.SET_MODE,
         WSMessageType.SET_MODEL,
         WSMessageType.WIDGET_RESPONSE,
     }
@@ -178,7 +174,6 @@ class SrvConfirmRequest(TypedDict):
     command: str
     suggested_pattern: str
     decline_reason: NotRequired[str]
-    suggested_rule: NotRequired[str]
     message: str
     approve_label: str
     deny_label: str
@@ -208,8 +203,6 @@ class SrvConvHistory(TypedDict):
     available_models: NotRequired[list[str]]
     model_groups: NotRequired[list[dict[str, object]]]
     default_model: NotRequired[str]
-    active_mode: NotRequired[str]
-    available_modes: NotRequired[list[dict[str, object]]]
     turn_active: NotRequired[bool]
     pending_confirmation: NotRequired[dict[str, object]]
 
@@ -252,14 +245,6 @@ class SrvMessageComplete(TypedDict):
     context_usage: NotRequired[int]
     context_limit: NotRequired[int]
     provenance: NotRequired[dict[str, object]]
-
-
-class SrvModeChanged(TypedDict):
-    type: Literal[WSMessageType.MODE_CHANGED]
-    conv_id: str
-    mode: str
-    presets: list[str]
-    promoted_tools: list[str]
 
 
 class SrvModelChanged(TypedDict):
@@ -412,8 +397,6 @@ class CliConfirmResponse(TypedDict):
     approved: bool
     always: bool
     add_pattern: bool
-    add_rule: NotRequired[bool]
-    rule: NotRequired[str]
     feedback: NotRequired[str]
     data: NotRequired[dict[str, object]]
 
@@ -448,12 +431,6 @@ class CliSetEffort(TypedDict):
     model: str
 
 
-class CliSetMode(TypedDict):
-    type: Literal[WSMessageType.SET_MODE]
-    conv_id: str
-    mode: str
-
-
 class CliSetModel(TypedDict):
     type: Literal[WSMessageType.SET_MODEL]
     conv_id: str
@@ -484,7 +461,6 @@ ServerMessage = (
     | SrvConversationStatus
     | SrvError
     | SrvMessageComplete
-    | SrvModeChanged
     | SrvModelChanged
     | SrvModelsAvailable
     | SrvNotificationCreated
@@ -514,7 +490,6 @@ ClientMessage = (
     | CliSelectConv
     | CliSend
     | CliSetEffort
-    | CliSetMode
     | CliSetModel
     | CliWidgetResponse
 )

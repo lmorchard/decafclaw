@@ -676,18 +676,6 @@ class TestDictFields:
         assert entry["flag"] is True
         assert entry["disabled"] is None
 
-    def test_env_dict_string_values_unchanged(self, tmp_path, monkeypatch):
-        """String values were always strings; the fix must not change that."""
-        agent_dir = tmp_path / "decafclaw"
-        agent_dir.mkdir()
-        monkeypatch.setenv("DATA_HOME", str(tmp_path))
-        monkeypatch.setenv(
-            "SHELL_AUX_APPROVAL_PRESETS",
-            '{"careful": "confirm destructive commands"}',
-        )
-        c = load_config()
-        assert c.shell.aux_approval_presets == {"careful": "confirm destructive commands"}
-
     def test_env_dict_malformed_returns_empty(self, tmp_path, monkeypatch):
         """A non-JSON env value yields an empty dict (fail open)."""
         agent_dir = tmp_path / "decafclaw"

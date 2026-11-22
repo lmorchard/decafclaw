@@ -167,39 +167,6 @@ when the selected model's discovery metadata reports no tool support
 The agent cannot change its own auto-approval model — same user-only rule as
 the default model.
 
-### Rule-condensation model (#1267)
-
-The shell approval panel's **Condense** action asks a model to rewrite the
-conversation's auto-approval rules into fewer, more general summary rules. It
-rides on the active conversation model (then the effective default) by default;
-a dedicated condensation model is optional so a conversation model does not pay
-condensation prices it does not need.
-
-- **Config**: `shell.condense_model` (`""` = ride on the active conversation
-  model, then the effective default; when set, names a `model_configs` key —
-  discovered models materialize as keys).
-- **UI**: **⚙ Agent Config → Models → Rule-condensation model** lists every
-  enabled catalog model plus an explicit **"use conversation model"** option
-  that clears the pointer. Writes land in the `data/{agent_id}/model_catalog.json`
-  sidecar under `condense_model`.
-
-Resolution order for condensation:
-
-1. The sidecar's `condense_model` pointer, when it names a selectable model.
-2. `config.json`'s `shell.condense_model` (the seed; a hand-written raw name
-   has no endpoint to route through, so it is treated as unset with a warning).
-3. The active conversation model, then the effective default — today's behavior
-   when nothing is set.
-
-Unlike the auto-approval judge there is no `auxiliary_model` step: condensation
-is new and has no legacy behavior to preserve. An empty pointer or seed falls
-through to step 3; a pointer at a disabled or vanished model falls back cleanly
-to the seed, then down the chain.
-
-Condensation is a one-shot completion (no tools), so the picker needs no
-tool-support warning. The agent cannot change its own condensation model — same
-user-only rule as the default model.
-
 ### Reflection and verifier model pickers (#1212)
 
 The **⚙ Agent Config → Models** tab also renders two judge pickers on top of
@@ -314,7 +281,6 @@ a single set of tests:
 | `effective_active_model` | active conversation model, verbatim → effective default |
 | `effective_aux_model` | `auxiliary_model` → active conversation model → effective default → `""` |
 | `effective_aux_approval_model` | sidecar `aux_approval_model` → `shell.aux_approval_model` → `effective_aux_model` |
-| `effective_condense_model` | sidecar `condense_model` → `shell.condense_model` → `effective_active_model` |
 | `effective_reflection_model` | sidecar `reflection_model` → `reflection.model` |
 | `effective_verifier_model` | sidecar `verifier_model` → `reflection.verifier_model` |
 | `effective_judge_model` | selectable verifier → selectable reflection model → effective default (only when no reflection model is set) → legacy `reflection.resolved()` url/model/api_key |

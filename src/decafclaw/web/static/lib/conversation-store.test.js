@@ -777,7 +777,7 @@ describe('conversation activity status tracking', () => {
     expect(store.getConversationStatus('c1')).toBe('idle');
   });
 
-  it('updates activeMode and availableModes on CONV_HISTORY', () => {
+  it('ignores retired session-mode fields in CONV_HISTORY (#1684)', () => {
     store.selectConversation('c1');
     ws.fireMessage({
       type: MESSAGE_TYPES.CONV_HISTORY,
@@ -791,40 +791,8 @@ describe('conversation activity status tracking', () => {
         { name: 'dev', description: 'Dev', presets: ['developer'], promoted_tools: ['shell'] },
       ],
     });
-    expect(store.activeMode).toBe('dev');
-    expect(store.availableModes).toHaveLength(2);
-  });
-
-  it('sends SET_MODE on setMode() and updates activeMode on MODE_CHANGED', () => {
-    store.selectConversation('c1');
-    store.setMode('research');
-    const setModeMsg = ws.sent.find(m => m.type === MESSAGE_TYPES.SET_MODE);
-    expect(setModeMsg).toEqual({ type: MESSAGE_TYPES.SET_MODE, conv_id: 'c1', mode: 'research' });
-    expect(store.activeMode).toBe('default');
-
-    ws.fireMessage({
-      type: MESSAGE_TYPES.MODE_CHANGED,
-      conv_id: 'c1',
-      mode: 'research',
-      presets: [],
-      promoted_tools: ['web_fetch'],
-    });
-    expect(store.activeMode).toBe('research');
-  });
-
-  it('updates activeMode on MODE_CHANGED event', () => {
-    store.selectConversation('c1');
-    const change = vi.fn();
-    store.addEventListener('change', change);
-    ws.fireMessage({
-      type: MESSAGE_TYPES.MODE_CHANGED,
-      conv_id: 'c1',
-      mode: 'admin',
-      presets: [],
-      promoted_tools: ['admin_read'],
-    });
-    expect(store.activeMode).toBe('admin');
-    expect(change).toHaveBeenCalled();
+    expect(store.activeMode).toBeUndefined();
+    expect(store.availableModes).toBeUndefined();
   });
 });
 

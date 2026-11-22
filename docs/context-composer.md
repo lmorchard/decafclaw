@@ -475,10 +475,6 @@ not to be conflated (#197 P0-M2).
 
 The agent loop (`run_agent_turn`) creates a `ContextComposer` at the start of each turn and calls `compose()` once. Across iterations within a turn, `TurnRunner` delegates mid-turn tool message updates to `ContextComposer.update_iteration_tools()`, which synchronizes both `<deferred_tools>` and `<tool_guidance>` system messages in-place as tools are fetched via `tool_search` or refreshed dynamically. After each LLM response, `record_actuals()` stores the real token counts for future calibration.
 
-## Session Modes and situational tool profiles (#959)
-
-When composing the tool loadout (`_compose_tools`), `ContextComposer` resolves the conversation's active `SessionMode` (from `ctx.active_mode`). If the mode declares `promoted_tools`, those tools are passed to `classify_tools()` and prioritized at the head of the `normal` tier (and elevated from `low`), ensuring situational tools claim active budget ahead of unpromoted general tools.
-
 ## Memory retrieval modes (#301)
 
 By default, every interactive turn auto-injects scored full-body candidates from the vault into a `vault_retrieval` message. That's costly for short turns where the user message doesn't need memory. The `vault_retrieval.mode` config (a `RetrievalMode` enum in `config_types.py`) controls the trade-off:
@@ -664,7 +660,7 @@ A prompt cache reuses a previously processed sequence of tokens from the start o
 
 Ordinary turns preserve the prefix (#1257):
 
-- Native tools use declared priorities, configured budgets, session modes, activated skills, and explicit fetches. Keyword matches produce archived discovery hints instead of promoting native tools.
+- Native tools use declared priorities, configured budgets, activated skills, and explicit fetches. Keyword matches produce archived discovery hints instead of promoting native tools.
 - Turn-start accounting and iteration requests use `build_tool_list()`. Candidates use tool-name order so skill restoration cannot change budget selection. That function also builds the deferred catalog and trusted guidance.
 - Notes, journal entries, references, and retrieved pages enter history at their original position. Later turns append new context rather than rebuilding earlier injections.
 - Skill hints, tool hints, and context status notes follow the user message. They remain in live history and the archive. Internal `skill_hint` and `context_status` roles map to `user` for the LLM. The UI hides them, and compaction skips them.

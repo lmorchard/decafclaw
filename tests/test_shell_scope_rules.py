@@ -20,7 +20,7 @@ from decafclaw.shell_scope_rules import (
 from decafclaw.tools.shell_tools import (
     _record_approval,
     build_aux_approval_prompt,
-    resolve_aux_approval_guidance,
+    resolve_scope_rule_guidance,
     tool_shell_guidance,
 )
 
@@ -127,8 +127,8 @@ async def test_only_human_decisions_reach_the_ledger(ctx):
 def test_guidance_resolution_includes_only_matching_global_rules(ctx):
     _write_rules(ctx.config, [ScopeRule(scope="homelab", pattern="make -n *", rule="homelab deploy is fine")])
     activity = _activity("homelab")
-    assert "homelab deploy is fine" in resolve_aux_approval_guidance(ctx, command="make -n deploy", activity=activity)
-    assert "homelab deploy is fine" not in resolve_aux_approval_guidance(ctx)
+    assert "homelab deploy is fine" in resolve_scope_rule_guidance(ctx, command="make -n deploy", activity=activity)
+    assert "homelab deploy is fine" not in resolve_scope_rule_guidance(ctx)
 
 
 async def test_judge_prompt_includes_the_matching_global_rule(ctx):

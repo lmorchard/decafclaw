@@ -16,8 +16,7 @@ Native tools are advisory: when one cleanly satisfies the stated purpose, set au
 The index reflects the tools reachable this turn. Tools under 'Deferred' are not loaded yet: tell the agent to call tool_search before using one.
 Native tool index:
 {{NATIVE_TOOL_INDEX}}
-Return a JSON object: {"auto_approve": bool, "reason": "<string>", "risk": "low" | "medium" | "high", "risk_category": "data_loss" | "exfiltration" | "privilege_escalation" | "outside_workspace" | "irreversible" | null, "suggested_rule": "<string or null>", "feedback": "<string or null>", "tool_gap": {"proposed_tool": "<string>", "rationale": "<string>"} | null}
-If auto_approve is false, formulate a concise, natural-language exception rule in suggested_rule. Scope it to the conversation's activity so it can be reused instead of re-learned: e.g. "In homelab: auto-approve make deploy after tests pass". If auto_approve is true or no rule makes sense, set suggested_rule to null.
+Return a JSON object: {"auto_approve": bool, "reason": "<string>", "risk": "low" | "medium" | "high", "risk_category": "data_loss" | "exfiltration" | "privilege_escalation" | "outside_workspace" | "irreversible" | null, "feedback": "<string or null>", "tool_gap": {"proposed_tool": "<string>", "rationale": "<string>"} | null}
 If auto_approve is false, put constructive, actionable advice in feedback: name the safer native tool or the narrower command the agent should use instead. Use null when no better approach exists.
 If the command exists only because no native tool covers the operation, describe the missing tool in tool_gap; otherwise set tool_gap to null.
 {{POLICY_BLOCK}}

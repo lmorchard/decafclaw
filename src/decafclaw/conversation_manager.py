@@ -15,14 +15,6 @@ from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
 
-from .approval_state import (
-    APPROVAL_STATE_FIELDS,
-    ApprovalState,
-    apply_approval_state,
-    approval_state_from,
-    load_approval_state,
-    save_approval_state,
-)
 from .archive import append_message
 from .confirmations import (
     ConfirmationAction,
@@ -265,10 +257,6 @@ class PersistedTurnState:
     activated_skills: set = field(default_factory=set)
     skip_vault_retrieval: bool = False
     active_model: str = ""
-    active_mode: str = "default"
-    active_aux_approval_presets: list = field(default_factory=list, metadata={"replaceable": True})
-    disabled_aux_approval_presets: list = field(default_factory=list, metadata={"replaceable": True})
-    aux_approval_guidance: list = field(default_factory=list, metadata={"replaceable": True})
     llm_approved_shell_patterns: list = field(default_factory=list, metadata={"replaceable": True})
     injection_cursors: InjectionCursors = field(default_factory=InjectionCursors, metadata={"replaceable": True})
     prefix_fingerprints: dict[str, str] = field(default_factory=dict, metadata={"replaceable": True})
@@ -310,22 +298,6 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
         lambda ctx: ctx.active_model,
         lambda ctx, v: setattr(ctx, "active_model", v),
     ),
-    "active_mode": (
-        lambda ctx: getattr(ctx, "active_mode", "default") or "default",
-        lambda ctx, v: setattr(ctx, "active_mode", v or "default"),
-    ),
-    "active_aux_approval_presets": (
-        lambda ctx: ctx.tools.active_aux_approval_presets,
-        lambda ctx, v: setattr(ctx.tools, "active_aux_approval_presets", list(v)),
-    ),
-    "disabled_aux_approval_presets": (
-        lambda ctx: ctx.tools.disabled_aux_approval_presets,
-        lambda ctx, v: setattr(ctx.tools, "disabled_aux_approval_presets", list(v)),
-    ),
-    "aux_approval_guidance": (
-        lambda ctx: ctx.tools.aux_approval_guidance,
-        lambda ctx, v: setattr(ctx.tools, "aux_approval_guidance", list(v)),
-    ),
     "llm_approved_shell_patterns": (
         lambda ctx: ctx.tools.llm_approved_shell_patterns,
         lambda ctx, v: setattr(ctx.tools, "llm_approved_shell_patterns", list(v)),
@@ -361,10 +333,6 @@ _CTX_DRIVEN_FIELDS: frozenset[str] = frozenset(
         "extra_tool_definitions",
         "activated_skills",
         "skip_vault_retrieval",
-        "active_mode",
-        "active_aux_approval_presets",
-        "disabled_aux_approval_presets",
-        "aux_approval_guidance",
         "llm_approved_shell_patterns",
         "injection_cursors",
         "prefix_fingerprints",
@@ -527,13 +495,6 @@ class ConversationState:
     # interact with it.
     persisted: PersistedTurnState = field(default_factory=PersistedTurnState)
 
-    # Last approval state known to be on disk (#1160) — loaded from the
-    # approval_state sidecar when the state is created, updated on each
-    # successful write. ``None`` means no sidecar exists for this
-    # conversation yet (a fresh or pre-#1160 conversation). Used to skip
-    # unchanged writes and to gate the legacy archived-mode fallback.
-    approval_state_saved: ApprovalState | None = None
-
     # Circuit breaker state (rate-limiting turns per conversation)
     turn_times: list = field(default_factory=list)
     paused_until: float = 0
@@ -637,33 +598,12 @@ class ConversationManager:
         """Get existing conversation state or create a new one."""
         if conv_id not in self._conversations:
             state = ConversationState(conv_id=conv_id)
-            loaded = load_approval_state(self.config, conv_id)
-            if loaded is not None:
-                apply_approval_state(state.persisted, loaded)
-                state.approval_state_saved = loaded
             self._conversations[conv_id] = state
         return self._conversations[conv_id]
 
     def ensure_state(self, conv_id: str) -> ConversationState:
-        """Get conversation state, creating it (and loading durable
-        per-conversation state such as approval settings) if needed."""
+        """Get conversation state, creating it if needed."""
         return self._get_or_create(conv_id)
-
-    def _persist_approval_state(self, state: ConversationState) -> None:
-        """Write the approval-state sidecar if it changed (#1160).
-
-        Skips the write when the state matches what is already on disk,
-        and when a conversation without a sidecar still has default
-        state (no file for conversations that never touched approvals).
-        Fail-open: a failed write logs and leaves the snapshot unchanged
-        so the next change retries.
-        """
-        current = approval_state_from(state.persisted)
-        saved = state.approval_state_saved
-        if current == saved or (saved is None and current == ApprovalState()):
-            return
-        if save_approval_state(self.config, state.conv_id, current):
-            state.approval_state_saved = current
 
     def _circuit_breaker_tripped(self, state: ConversationState) -> bool:
         """Check if the circuit breaker has tripped for a conversation.
@@ -900,8 +840,6 @@ class ConversationManager:
         *,
         always: bool = False,
         add_pattern: bool = False,
-        add_rule: bool = False,
-        rule: str = "",
         feedback: str = "",
         data: dict | None = None,
     ) -> None:
@@ -959,8 +897,6 @@ class ConversationManager:
                 approved=approved,
                 always=always,
                 add_pattern=add_pattern,
-                add_rule=add_rule,
-                rule=rule,
                 feedback=feedback,
                 data=data or {},
             )
@@ -1596,8 +1532,6 @@ class ConversationManager:
         state = self._get_or_create(conv_id)
         if key in _PERSISTED_FIELD_NAMES:
             setattr(state.persisted, key, value)
-            if key in APPROVAL_STATE_FIELDS:
-                self._persist_approval_state(state)
             return
         if hasattr(state, key):
             setattr(state, key, value)
@@ -2466,7 +2400,6 @@ class ConversationManager:
                     setattr(persisted, f.name, value)
             elif value:
                 setattr(persisted, f.name, value)
-        self._persist_approval_state(state)
 
     async def _drain_pending(self, state: ConversationState) -> None:
         """Process queued entries one batch at a time.

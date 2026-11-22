@@ -197,7 +197,6 @@ export class ToolStatusStore {
           suggested_pattern: msg.suggested_pattern || '',
           decline_reason: msg.decline_reason || msg.action_data?.decline_reason || msg.action_data?.reason || '',
           reason: msg.reason || msg.action_data?.reason || msg.decline_reason || msg.action_data?.decline_reason || '',
-          suggested_rule: msg.suggested_rule || msg.action_data?.suggested_rule || '',
           message: msg.message || '',
           approve_label: msg.approve_label || '',
           deny_label: msg.deny_label || '',

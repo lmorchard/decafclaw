@@ -18,7 +18,6 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from decafclaw.commands import list_invokable_commands
 from decafclaw.conversation_manager import TurnKind
-from decafclaw.conversation_paths import approval_state_path
 from decafclaw.llm.history import without_provider_data
 from decafclaw.model_catalog import (
     MODELS_CHANGED_EVENT_TYPE,
@@ -38,7 +37,6 @@ from decafclaw.web.message_types import (
     SrvConvHistory,
     SrvConvSelected,
     SrvMessageComplete,
-    SrvModeChanged,
     SrvStickyClear,
     SrvStickySet,
     SrvStreamState,
@@ -190,8 +188,6 @@ def _confirmation_to_dict(req) -> dict:
     }
     if action_data.get("decline_reason"):
         res["decline_reason"] = action_data["decline_reason"]
-    if action_data.get("suggested_rule"):
-        res["suggested_rule"] = action_data["suggested_rule"]
     if getattr(req, "timeout", None) is not None:
         res["timeout"] = req.timeout
     return res
@@ -408,68 +404,6 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
         response["available_models"] = picker
         response["default_model"] = effective_default_model(config)
         response["model_groups"] = picker_model_groups(config)
-
-    # Send available session modes and active mode
-    from ..modes import get_all_modes
-
-    all_modes = get_all_modes(config)
-    modes_list = [
-        {
-            "name": m.name,
-            "description": m.description,
-            "presets": list(m.presets),
-            "promoted_tools": list(m.promoted_tools),
-        }
-        for m in all_modes.values()
-    ]
-    response["available_modes"] = sorted(modes_list, key=lambda x: str(x["name"]))
-
-    active_mode = None
-    for m in reversed(all_msgs):
-        if m.get("role") == "mode":
-            m_name = m.get("content", "")
-            if m_name and m_name in all_modes:
-                active_mode = m_name
-                break
-
-    manager = state.get("manager")
-    if manager:
-        # ensure_state loads the approval-state sidecar (#1160), which is
-        # the source of truth for the mode.
-        conv_state = manager.ensure_state(conv_id)
-        if conv_state:
-            # Legacy fallback: conversations written before #1160 have no
-            # approval-state sidecar, only archived `role: "mode"` records.
-            # If there is no sidecar file and the manager state is pristine
-            # (default mode with empty presets) but the archive recorded a
-            # mode, hydrate manager state from the archive. Gated on actual
-            # file absence so a corrupt sidecar fails open to defaults
-            # rather than reviving an older archived mode. set_flag also
-            # writes the sidecar, so this migration runs once.
-            if (
-                not approval_state_path(manager.config, conv_id).exists()
-                and conv_state.approval_state_saved is None
-                and conv_state.persisted.active_mode == "default"
-                and not conv_state.persisted.active_aux_approval_presets
-                and active_mode
-            ):
-                manager.set_flag(conv_id, "active_mode", active_mode)
-                manager.set_flag(conv_id, "active_aux_approval_presets", list(all_modes[active_mode].presets))
-
-            persisted_mode = conv_state.persisted.active_mode or "default"
-            active_presets = set(conv_state.persisted.active_aux_approval_presets)
-            if persisted_mode in all_modes:
-                expected_presets = set(all_modes[persisted_mode].presets)
-                if active_presets == expected_presets:
-                    active_mode = persisted_mode
-                else:
-                    active_mode = "custom"
-            else:
-                active_mode = "custom"
-
-    if active_mode is None:
-        active_mode = "default"
-    response["active_mode"] = active_mode
 
     # Check if a turn is active for this conversation via the manager
     manager = state.get("manager")
@@ -966,70 +900,6 @@ async def _handle_set_model(ws_send: WSSendCallable, index, username, msg, state
     )
 
 
-async def _handle_set_mode(ws_send: WSSendCallable, index, username, msg, state) -> None:
-    conv_id = msg.get("conv_id", "")
-    mode_name = msg.get("mode", "")
-    conv = index.get(conv_id)
-    if not conv or conv.user_id != username:
-        await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found", "conv_id": conv_id})
-        return
-
-    config = state["config"]
-    if not mode_name:
-        await ws_send({"type": WSMessageType.ERROR, "message": "No mode specified", "conv_id": conv_id})
-        return
-
-    from ..modes import get_all_modes
-
-    all_modes = get_all_modes(config)
-    if mode_name not in all_modes:
-        await ws_send({"type": WSMessageType.ERROR, "message": f"Unknown mode: {mode_name}", "conv_id": conv_id})
-        return
-
-    manager = state.get("manager")
-    if manager:
-        conv_state = manager.get_state(conv_id)
-        if conv_state and conv_state.busy:
-            cur_mode = conv_state.persisted.active_mode or "default"
-            cur_obj = all_modes.get(cur_mode, all_modes["default"])
-            rejection_payload: SrvModeChanged = {
-                "type": WSMessageType.MODE_CHANGED,
-                "conv_id": conv_id,
-                "mode": cur_mode,
-                "presets": list(cur_obj.presets),
-                "promoted_tools": list(cur_obj.promoted_tools),
-            }
-            await ws_send(rejection_payload)
-            return
-
-    target_mode = all_modes[mode_name]
-
-    # Record mode change in archive
-    from ..archive import append_message
-
-    append_message(config, conv_id, {"role": "mode", "content": mode_name})
-
-    event_payload: SrvModeChanged = {
-        "type": WSMessageType.MODE_CHANGED,
-        "conv_id": conv_id,
-        "mode": mode_name,
-        "presets": list(target_mode.presets),
-        "promoted_tools": list(target_mode.promoted_tools),
-    }
-
-    if manager:
-        manager.set_flag(conv_id, "active_mode", mode_name)
-        manager.set_flag(conv_id, "active_aux_approval_presets", list(target_mode.presets))
-        manager.set_flag(conv_id, "disabled_aux_approval_presets", [])
-        manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
-        await manager.emit(conv_id, event_payload)
-        subscriptions = state.get("conv_subscriptions", {})
-        if conv_id not in subscriptions:
-            await ws_send(event_payload)
-    else:
-        await ws_send(event_payload)
-
-
 async def _handle_list_commands(ws_send: WSSendCallable, index, username, msg, state) -> None:
     """Reply with every user-invokable command, for the composer's autocomplete.
 
@@ -1089,8 +959,6 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
             approved=msg.get("approved", False),
             always=msg.get("always", False),
             add_pattern=msg.get("add_pattern", False),
-            add_rule=msg.get("add_rule", False),
-            rule=msg.get("rule", ""),
             feedback=feedback,
             data=data,
         )
@@ -1106,8 +974,6 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
                 **({"tool_call_id": tool_call_id} if tool_call_id else {}),
                 **({"always": True} if msg.get("always") else {}),
                 **({"add_pattern": True} if msg.get("add_pattern") else {}),
-                **({"add_rule": True} if msg.get("add_rule") else {}),
-                **({"rule": msg.get("rule", "")} if msg.get("rule") else {}),
                 **({"feedback": feedback} if feedback else {}),
             }
         )
@@ -1308,8 +1174,6 @@ def _subscribe_to_conv(state, conv_id):
             }
             if action_data.get("decline_reason"):
                 confirm_req["decline_reason"] = action_data["decline_reason"]
-            if action_data.get("suggested_rule"):
-                confirm_req["suggested_rule"] = action_data["suggested_rule"]
             if event.get("timeout") is not None:
                 confirm_req["timeout"] = event.get("timeout")
             if event.get("timestamp"):
@@ -1442,17 +1306,6 @@ def _subscribe_to_conv(state, conv_id):
                 }
             )
 
-        elif event_type == "mode_changed":
-            await ws_send(
-                {
-                    "type": WSMessageType.MODE_CHANGED,
-                    "conv_id": event_conv_id,
-                    "mode": event.get("mode", ""),
-                    "presets": event.get("presets", []),
-                    "promoted_tools": event.get("promoted_tools", []),
-                }
-            )
-
         elif event_type == "compaction_end":
             # #1005 — forward the success flag so the web UI can mark a failed
             # compaction as such (the old notice read "compacted" even on
@@ -1499,7 +1352,6 @@ _HANDLERS = {
     WSMessageType.CANCEL_TURN: _handle_cancel_turn,
     WSMessageType.SET_EFFORT: _handle_set_model,  # backward compat for old web UI
     WSMessageType.SET_MODEL: _handle_set_model,
-    WSMessageType.SET_MODE: _handle_set_mode,
     WSMessageType.CONFIRM_RESPONSE: _handle_confirm_response,
     WSMessageType.WIDGET_RESPONSE: _handle_widget_response,
     WSMessageType.LIST_COMMANDS: _handle_list_commands,

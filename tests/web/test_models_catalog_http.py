@@ -292,29 +292,6 @@ async def test_models_catalog_set_aux_approval(client, catalog_config):
 
 
 @pytest.mark.asyncio
-async def test_models_catalog_set_condense(client, catalog_config):
-    """POST /api/models/catalog/condense — pointer write/clear + validation (#1267)."""
-    _seed_catalog(catalog_config)
-
-    resp = await client.post("/api/models/catalog/condense", json={"model": "local/on"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["condense_pointer"] == "local/on"
-    assert data["condense_model"] == "local/on"
-
-    # Clearing the pointer → ride on the active conversation model. The payload
-    # emits the empty inherit sentinel rather than naming the global default.
-    resp = await client.post("/api/models/catalog/condense", json={"model": ""})
-    assert resp.status_code == 200
-    assert resp.json()["condense_pointer"] == ""
-    assert resp.json()["condense_model"] == ""
-
-    # A disabled (unselectable) model is rejected.
-    resp = await client.post("/api/models/catalog/condense", json={"model": "local/off"})
-    assert resp.status_code == 400
-
-
-@pytest.mark.asyncio
 async def test_models_catalog_set_reflection(client, catalog_config):
     """POST /api/models/catalog/reflection — pointer write/clear + validation (#1212)."""
     _seed_catalog(catalog_config)

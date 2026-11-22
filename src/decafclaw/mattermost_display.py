@@ -306,7 +306,6 @@ class ConversationDisplay:
         approve_label="",
         deny_label="",
         decline_reason="",
-        suggested_rule="",
         cwd="",
         purpose="",
         feedback="",
@@ -344,18 +343,13 @@ class ConversationDisplay:
             one_line = " ".join(feedback.split())[:2000]
             one_line = re.sub(r"@(?=[A-Za-z0-9_.-])", "@\u200b", one_line)
             msg += f"\n> **Suggested alternative:** {one_line}"
-        if suggested_rule:
-            msg += f"\n> **Suggested exception rule:** `{suggested_rule}`"
-
         # Add emoji instructions (unless disabled)
         show_emoji = not config or config.mattermost.enable_emoji_confirms
         if show_emoji:
             if approve_label:
                 msg += f"\nReact: \U0001f44d {approve_label.lower()} | \U0001f44e {deny_label.lower() if deny_label else 'deny'}"
-            elif tool_name == "shell" and (suggested_pattern or suggested_rule):
+            elif tool_name == "shell" and suggested_pattern:
                 react_parts = ["\U0001f44d approve", "\U0001f44e deny"]
-                if suggested_rule:
-                    react_parts.append("\U0001f4dd approve + remember why")
                 if suggested_pattern:
                     react_parts.append(f"\U0001f4d3 allow `{suggested_pattern}`")
                 react_parts.append("\U0001f527 needs a native tool")
@@ -380,7 +374,6 @@ class ConversationDisplay:
                 confirmation_id=confirmation_id,
                 approve_label=approve_label,
                 deny_label=deny_label,
-                suggested_rule=suggested_rule,
             )
             if attachments:
                 import json as _json
