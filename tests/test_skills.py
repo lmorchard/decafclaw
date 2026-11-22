@@ -10,6 +10,7 @@ import pytest
 from decafclaw.config import load_sub_config
 from decafclaw.context import TaskMode
 from decafclaw.media import ToolResult
+from decafclaw.schedules import _render_required_skill_bodies
 from decafclaw.skills import (
     CheckResult,
     SkillInfo,
@@ -21,6 +22,7 @@ from decafclaw.skills import (
     build_skill_info,
     discover_skills,
     parse_skill_md,
+    substitute_skill_placeholders,
     validate_skill_md,
 )
 from decafclaw.tools.skill_tools import (
@@ -30,6 +32,7 @@ from decafclaw.tools.skill_tools import (
     _load_permissions,
     _rejection_display_path,
     _save_permission,
+    activate_skill_internal,
     tool_activate_skill,
     tool_refresh_skills,
     tool_skill_validate,
@@ -1165,9 +1168,9 @@ async def test_activate_substitutes_skill_dir_in_body(ctx, tmp_path):
     shown verbatim to the LLM, which then has to guess where the
     skill lives. That guess fails for skills loaded via
     `extra_skill_paths` (e.g. shared optional skills in `contrib/`)
-    because their location isn't conventional. The substitution
-    matches the behavior of the command and schedule paths
-    (`substitute_body` in `commands.py`).
+    because their location isn't conventional. The substitution routes
+    through the shared `substitute_skill_placeholders` helper, matching the
+    command and schedule paths.
     """
     skill = _make_skill_info(
         tmp_path,
@@ -1183,6 +1186,85 @@ async def test_activate_substitutes_skill_dir_in_body(ctx, tmp_path):
     # The substitution uses .resolve() to match the command/schedule paths
     # so the body always carries an absolute path regardless of data_home.
     assert f"Run: {skill.location.resolve()}/fetch.sh" in text
+
+
+# -- substitute_skill_placeholders ---------------------------------------------
+
+
+class TestSubstituteSkillPlaceholders:
+    """The single placeholder-expansion helper shared by every body renderer."""
+
+    def test_arguments_placeholder(self):
+        result = substitute_skill_placeholders("Do the thing with $ARGUMENTS", arguments="foo bar")
+        assert result == "Do the thing with foo bar"
+
+    def test_positional_args(self):
+        result = substitute_skill_placeholders("Move $0 to $1", arguments="today tomorrow")
+        assert result == "Move today to tomorrow"
+
+    def test_mixed(self):
+        result = substitute_skill_placeholders("City: $0\nFull: $ARGUMENTS", arguments="Portland OR")
+        assert result == "City: Portland\nFull: Portland OR"
+
+    def test_no_placeholder_appends(self):
+        result = substitute_skill_placeholders("Do the thing.", arguments="extra context")
+        assert "ARGUMENTS: extra context" in result
+
+    def test_no_arguments_replaces_with_empty(self):
+        # $ARGUMENTS is replaced even when the argument string is empty.
+        result = substitute_skill_placeholders("Do the thing. $ARGUMENTS", arguments="")
+        assert result == "Do the thing. "
+
+    def test_out_of_range_positional_left_literal(self):
+        result = substitute_skill_placeholders("Use $0 and $5", arguments="only-one")
+        assert "only-one" in result
+        assert "$5" in result  # unreplaced
+
+    def test_skill_dir(self):
+        result = substitute_skill_placeholders("Run $SKILL_DIR/fetch.sh", skill_dir="/skills/x")
+        assert result == "Run /skills/x/fetch.sh"
+
+    def test_skill_dir_unset_leaves_literal(self):
+        # An empty skill_dir leaves $SKILL_DIR untouched.
+        result = substitute_skill_placeholders("Run $SKILL_DIR/fetch.sh")
+        assert result == "Run $SKILL_DIR/fetch.sh"
+
+
+@pytest.mark.asyncio
+async def test_all_three_entry_points_expand_identically(ctx, config, tmp_path):
+    """The command path, skill activation, and the schedule's required-skill
+    renderer must expand `$SKILL_DIR`/`$ARGUMENTS`/positional placeholders
+    identically — they all route through `substitute_skill_placeholders`.
+
+    Regression guard: before centralization, activation and the schedule
+    renderer only substituted `$SKILL_DIR` (leaving `$ARGUMENTS` literal)
+    while the command path substituted it, so the same body expanded to
+    different text depending on how it was reached.
+    """
+    skill_dir = tmp_path / "demo"
+    skill_dir.mkdir()
+    dir_str = str(skill_dir.resolve())
+    body = "Run $SKILL_DIR/fetch.sh with $ARGUMENTS and $0"
+
+    # The helper is the single source of truth.
+    expected = substitute_skill_placeholders(body, arguments="", skill_dir=dir_str)
+
+    # Entry point 1: the helper itself (the command path calls this).
+    assert substitute_skill_placeholders(body, arguments="", skill_dir=dir_str) == expected
+
+    # Entry point 2: skill activation.
+    skill = SkillInfo(name="demo", description="Demo", location=skill_dir, body=body, trust_tier="bundled")
+    ctx.config.discovered_skills = [skill]
+    activated = await activate_skill_internal(ctx, skill)
+    assert isinstance(activated, str), f"expected body text, got {type(activated).__name__}"
+    assert activated == expected
+
+    # Entry point 3: the schedule's required-skill renderer.
+    config.discovered_skills = [skill]
+    rendered = _render_required_skill_bodies(config, ["demo"])
+    assert '<skill name="demo">' in rendered
+    inner = rendered.split('<skill name="demo">\n', 1)[1].rsplit("\n</skill>", 1)[0]
+    assert inner == expected
 
 
 @pytest.mark.asyncio

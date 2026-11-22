@@ -1,11 +1,16 @@
 """User-invokable commands — trigger detection, argument substitution, execution."""
 
 import logging
-import re
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
-from .skills import SkillInfo, find_command, grants_capability, list_commands
+from .skills import (
+    SkillInfo,
+    find_command,
+    grants_capability,
+    list_commands,
+    substitute_skill_placeholders,
+)
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -43,41 +48,6 @@ def parse_command_trigger(text: str, prefix: str = "!") -> tuple[str, str] | Non
     command_name = parts[0]
     arguments = parts[1] if len(parts) > 1 else ""
     return command_name, arguments
-
-
-def substitute_body(body: str, arguments: str = "", skill_dir: str = "") -> str:
-    """Substitute placeholders in a skill/schedule body.
-
-    Supported placeholders:
-    - $ARGUMENTS — full argument string
-    - $0, $1, ... — positional arguments
-    - $SKILL_DIR — path to the skill's directory
-    """
-    # Always replace placeholders, even with empty arguments
-    positional = arguments.split() if arguments else []
-    has_placeholders = "$ARGUMENTS" in body or re.search(r"\$\d+", body)
-
-    # Replace positional: $0, $1, $2, ...
-    def _replace_positional(match):
-        idx = int(match.group(1))
-        if idx < len(positional):
-            return positional[idx]
-        return match.group(0)  # leave unreplaced if out of range
-
-    result = re.sub(r"\$(\d+)", _replace_positional, body)
-
-    # Replace $ARGUMENTS with the full string
-    result = result.replace("$ARGUMENTS", arguments)
-
-    # Replace $SKILL_DIR with the skill directory path
-    if skill_dir:
-        result = result.replace("$SKILL_DIR", skill_dir)
-
-    # If no placeholders existed at all and there are arguments, append them
-    if not has_placeholders and arguments:
-        result = result.rstrip() + f"\n\nARGUMENTS: {arguments}"
-
-    return result
 
 
 def list_invokable_commands(discovered_skills: list[SkillInfo]) -> list[dict[str, object]]:
@@ -469,8 +439,8 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> C
                 except Exception as e:
                     log.error(f"Failed to activate required skill '{req_name}' for command '{skill.name}': {e}")
 
-    # Substitute arguments and skill directory into the body
-    body = substitute_body(skill.body, arguments, skill_dir=skill_dir)
+    # Substitute arguments and skill directory into the body.
+    body = substitute_skill_placeholders(skill.body, arguments=arguments, skill_dir=skill_dir)
 
     if skill.context == "fork":
         from .tools.delegate import run_child_turn

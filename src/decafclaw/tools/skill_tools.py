@@ -18,6 +18,7 @@ from ..skills import (
     CheckResult,
     find_misplaced_skills,
     is_discoverable_skill_dir,
+    substitute_skill_placeholders,
     validate_skill_md,
 )
 from ..web.workspace_paths import PathContainmentError, resolve_contained
@@ -890,13 +891,13 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
     caller can tell an edit took effect from a no-op.
     """
     name = skill_info.name
-    # Substitute $SKILL_DIR in the body so the LLM sees usable paths.
-    # The command and schedule paths do the same via commands.substitute_body
-    # (commands.py:417 / schedules.py:235), both using .resolve() so the LLM
-    # always gets an absolute path regardless of how data_home was configured.
-    # activate_skill needs to match so skills loaded via extra_skill_paths
-    # (where the location isn't a conventional guess) work consistently.
-    body = skill_info.body.replace("$SKILL_DIR", str(skill_info.location.resolve()))
+    # Expand placeholders in the body so the LLM sees usable paths. Routed
+    # through the shared `substitute_skill_placeholders` helper (the same one
+    # the command and schedule paths use) with `.resolve()` so the LLM always
+    # gets an absolute path regardless of how data_home was configured.
+    # Activation carries no user arguments, so `$ARGUMENTS`/positional expand
+    # to empty/out-of-range exactly as the other entry points do.
+    body = substitute_skill_placeholders(skill_info.body, skill_dir=str(skill_info.location.resolve()))
     result_parts = [body]
 
     if skill_info.has_native_tools:

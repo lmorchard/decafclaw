@@ -130,6 +130,54 @@ class SkillRejection:
     reason: str
 
 
+def substitute_skill_placeholders(body: str, *, arguments: str = "", skill_dir: str = "") -> str:
+    """Substitute `$ARGUMENTS`, positional (`$0`..`$n`), and `$SKILL_DIR`
+    placeholders in a skill/schedule body.
+
+    The single source of truth for placeholder expansion, shared by every
+    entry point that renders a skill or schedule body: the command path
+    (`commands.execute_command`), skill activation
+    (`tools.skill_tools.activate_skill_internal`), and the schedule path
+    (`schedules._render_required_skill_bodies`). Keeping one implementation
+    stops the three from drifting apart — they must expand the same
+    placeholders identically.
+
+    Supported placeholders:
+    - `$ARGUMENTS` — the full argument string (replaced even when empty)
+    - `$0`, `$1`, ... — positional arguments (left literal if out of range)
+    - `$SKILL_DIR` — the skill's directory path (replaced only when set)
+
+    When no placeholder is present and `arguments` is non-empty, the
+    arguments are appended as a trailing ``ARGUMENTS: ...`` block so an
+    untemplated body still receives them.
+    """
+    # Always replace placeholders, even with empty arguments.
+    positional = arguments.split() if arguments else []
+    has_placeholders = "$ARGUMENTS" in body or re.search(r"\$\d+", body)
+
+    # Replace positional: $0, $1, $2, ...
+    def _replace_positional(match):
+        idx = int(match.group(1))
+        if idx < len(positional):
+            return positional[idx]
+        return match.group(0)  # leave unreplaced if out of range
+
+    result = re.sub(r"\$(\d+)", _replace_positional, body)
+
+    # Replace $ARGUMENTS with the full string.
+    result = result.replace("$ARGUMENTS", arguments)
+
+    # Replace $SKILL_DIR with the skill directory path.
+    if skill_dir:
+        result = result.replace("$SKILL_DIR", skill_dir)
+
+    # If no placeholders existed at all and there are arguments, append them.
+    if not has_placeholders and arguments:
+        result = result.rstrip() + f"\n\nARGUMENTS: {arguments}"
+
+    return result
+
+
 def validate_skill_md(path: Path) -> SkillValidation:
     """Run the discovery-level checks on a SKILL.md — THE accept/reject decision.
 
