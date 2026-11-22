@@ -256,9 +256,11 @@ def resource_cap_prefix(
             # See memory_cap_prefix: the scope default is "max", which would let
             # the child swap instead of being capped.
             prefix += ["-p", "MemorySwapMax=0"]
-    if has_cpu:
+    # Narrow on the value itself, not just the has_cpu flag: the flag encodes
+    # this check but a type checker cannot see through it.
+    if cpu_weight is not None:
         prefix += ["-p", f"CPUWeight={int(cpu_weight)}"]
-    if has_tasks:
+    if tasks_max is not None:
         prefix += ["-p", f"TasksMax={int(tasks_max)}"]
     prefix.append("--")
     return prefix
