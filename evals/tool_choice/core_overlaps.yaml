@@ -499,6 +499,16 @@
     auto-approval presets and promoted tool profiles is shell_guidance
     with action='set_mode', mode='dev'.
 
+- name: shell-guidance-promote-scope-rules
+  scenario: "I've approved `make -n` in the homelab repo several times; turn those repeated human approvals into a durable global rule."
+  expected: shell_guidance
+  near_miss: [shell_patterns, admin_write, shell]
+  notes: |
+    Turning repeated human approvals into global scope-keyed rules starts with
+    shell_guidance (action='promote_scope_rules'), which returns a draft; the
+    human applies it with admin_write. shell_patterns is a flat glob allowlist,
+    not scope-keyed judge guidance (#1641 phase 4).
+
 # -- update_system_prompt vs admin_write / workspace_write / vault (#24) ------
 # update_system_prompt rewrites the agent's own prompt sections (USER.md /
 # CUSTOM.md) in data/{agent_id}/. The near-misses are the generic file tools
