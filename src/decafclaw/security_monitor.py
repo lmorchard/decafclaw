@@ -205,6 +205,29 @@ _REDIRECT_PREFIX_RE = re.compile(r"^\d*[<>]")
 # positional argument is still a file and stays subject to the path check.
 _FILTER_COMMANDS = frozenset({"awk", "egrep", "fgrep", "grep", "perl", "perl5", "sed"})
 
+# grep long options whose value is a separate argument. Without consuming it,
+# the value would be mistaken for the positional pattern and shift the file
+# argument into the pattern slot.
+_GREP_VALUE_LONG_OPTIONS = frozenset(
+    {
+        "--after-context",
+        "--before-context",
+        "--binary-files",
+        "--color",
+        "--colour",
+        "--context",
+        "--devices",
+        "--directories",
+        "--exclude",
+        "--exclude-dir",
+        "--exclude-from",
+        "--group-separator",
+        "--include",
+        "--label",
+        "--max-count",
+    }
+)
+
 
 def _tokenize_command(command: str) -> list[str]:
     """Split a shell command into tokens while preserving quoting.
@@ -267,6 +290,15 @@ def _short_option_letters(token: str) -> str:
     return token[1:]
 
 
+def _short_option_value(token: str, value_options: str) -> tuple[str, str]:
+    """First value-taking short option in a cluster and its attached value."""
+    letters = _short_option_letters(token)
+    for offset, char in enumerate(letters, start=1):
+        if char in value_options:
+            return char, token[offset + 1 :]
+    return "", ""
+
+
 def _expression_argument_indices(segment: list[str], exe_index: int | None) -> set[int]:
     """Indices of filter-command program/pattern arguments inside one segment.
 
@@ -317,12 +349,19 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
                 index += 1
                 continue
             if token.startswith("-") and token != "-":
-                letters = _short_option_letters(token)
-                if "e" in letters:
+                if token.startswith("-i"):
+                    # -i takes an optional backup suffix attached to the flag.
+                    index += 1
+                    continue
+                option, attached = _short_option_value(token, "efl")
+                if option == "e":
                     expression_option = True
-                if "f" in letters:
+                elif option == "f":
                     program_from_file = True
-                index += 1
+                if option and not attached:
+                    index += 2 if consumes_value(index, expression=option == "e") else 1
+                else:
+                    index += 1
                 continue
             if not seen_positional and not expression_option and not program_from_file:
                 indices.add(index)
@@ -357,12 +396,15 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
                 index += 1
                 continue
             if token.startswith("-") and token != "-":
-                letters = _short_option_letters(token)
-                if "e" in letters:
+                option, attached = _short_option_value(token, "efvFil")
+                if option == "e":
                     program_option = True
-                if "f" in letters:
+                elif option == "f":
                     program_from_file = True
-                index += 1
+                if option and not attached:
+                    index += 2 if consumes_value(index, expression=option == "e") else 1
+                else:
+                    index += 1
                 continue
             if not seen_positional and not program_option and not program_from_file:
                 indices.add(index)
@@ -391,11 +433,20 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
                 pattern_option = True
                 index += 1
                 continue
-            if token.startswith("-") and token != "-":
-                letters = _short_option_letters(token)
-                if "e" in letters or "f" in letters:
-                    pattern_option = True
+            if token in _GREP_VALUE_LONG_OPTIONS:
+                index += 2 if consumes_value(index) else 1
+                continue
+            if token.startswith("--"):
                 index += 1
+                continue
+            if token.startswith("-") and token != "-":
+                option, attached = _short_option_value(token, "efmABCdD")
+                if option in ("e", "f"):
+                    pattern_option = True
+                if option and not attached:
+                    index += 2 if consumes_value(index, expression=option == "e") else 1
+                else:
+                    index += 1
                 continue
             if not seen_positional and not pattern_option:
                 indices.add(index)

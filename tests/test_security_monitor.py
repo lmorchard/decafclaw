@@ -58,10 +58,14 @@ def test_filter_expressions_are_not_paths(tmp_path: Path):
         "sed -n '/Failed Tests/,/2\\/2/p' notes.txt",
         "test-runner 2>&1 | sed -n '/Failed Tests/,/2\\/2/p' | head -40",
         "sed '/delete_pattern/d' input.txt",
+        "sed -ne '/start_marker/,/end_marker/p' input.txt",
         "sed -e '/start_marker/,/end_marker/p' -e 's/a/b/' input.txt",
         "awk '/pattern/ {print $1}' data.txt",
         "awk -v limit=10 '/pattern/ {print}' data.txt",
         "grep -e '/pattern/' data.txt",
+        "grep -ie '/pattern/' data.txt",
+        "grep -m 1 '/pattern/' data.txt",
+        "grep --include '*.py' '/pattern/' src/",
         "grep '/pattern/' data.txt",
         "perl -e 'print \"/etc/passwd\"'",
         "perl -pe '/pattern/' data.txt",
@@ -89,6 +93,8 @@ def test_filter_expressions_do_not_hide_file_arguments(tmp_path: Path):
         "grep '/x/' /etc/passwd",
         "grep -f /etc/patterns data.txt",
         "grep -if /etc/patterns data.txt",
+        "grep -m 1 '/x/' /etc/passwd",
+        "grep --include '*.py' '/x/' /etc/passwd",
     ]
 
     for cmd in commands:
