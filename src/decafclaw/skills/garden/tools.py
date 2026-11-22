@@ -607,15 +607,13 @@ TOOL_DEFINITIONS = [
                             "enum": list(_GRAPH_SECTIONS),
                         },
                         "description": (
-                            "Optional subset of sections to return (default: all). "
-                            "Use 'totals' for a cheap overview."
+                            "Optional subset of sections to return (default: all). Use 'totals' for a cheap overview."
                         ),
                     },
                     "top_n": {
                         "type": "integer",
                         "description": (
-                            "Maximum rows in the per-page table, sorted by "
-                            "PageRank descending (default 50)."
+                            "Maximum rows in the per-page table, sorted by PageRank descending (default 50)."
                         ),
                     },
                 },
