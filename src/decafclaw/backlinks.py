@@ -5,8 +5,8 @@ in ``tool_vault_backlinks``: a JSON index at ``{workspace}/backlinks.json``
 mapping ``page -> [pages that link to it]``. Rebuilt lazily on first read,
 kept current via the ``vault_changed`` EventBus subscriber wired in
 ``runner.py`` (see ``make_backlinks_subscriber``), and consumed directly
-by ``inbound_count`` — the raw signal Phase 5's importance formula folds
-into its score.
+by ``inbound_count`` and by ``compute_pagerank`` — the structural signal
+garden's importance recompute writes into frontmatter (#1713).
 
 Link resolution matches the pre-Phase-4 semantics: a raw ``[[link]]`` (or
 ``[[link|display]]``) is resolved to an existing vault page case-
@@ -233,6 +233,64 @@ def compute_pagerank(
         if delta < tolerance:
             break
     return rank
+
+
+def _pagerank_path(config) -> Path:
+    return config.workspace_path / "pagerank.json"
+
+
+def _save_pagerank(config, ranks: dict[str, float]) -> None:
+    """Persist PageRank beside the backlink index (fail-open)."""
+    path = _pagerank_path(config)
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {page: round(rank, 12) for page, rank in sorted(ranks.items())}
+        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        log.debug("backlinks: failed to persist PageRank: %s", exc)
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError as cleanup_exc:
+            log.debug("backlinks: PageRank tmp cleanup failed: %s", cleanup_exc)
+
+
+def rebuild_pagerank(config) -> dict[str, float]:
+    """Recompute PageRank over the current index and persist it."""
+    index = load_index(config)
+    vault = config.vault_root
+    nodes = {path.relative_to(vault).as_posix() for path in vault.rglob("*.md")} if vault.is_dir() else set()
+    ranks = compute_pagerank(index, nodes=nodes)
+    _save_pagerank(config, ranks)
+    return ranks
+
+
+def load_pagerank(config) -> dict[str, float]:
+    """Read persisted PageRank, recomputing only when the backlink index moved.
+
+    The cache is keyed by the index file's mtime, so a `vault_changed`
+    rebuild invalidates it without a separate invalidation hook. Missing or
+    corrupt cache files rebuild and re-save. Fail-open: a failure returns a
+    fresh computation rather than raising (#1713).
+    """
+    index = load_index(config)
+    path = _pagerank_path(config)
+    index_path = _index_path(config)
+    try:
+        if path.exists() and index_path.exists() and path.stat().st_mtime >= index_path.stat().st_mtime:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(page): float(rank) for page, rank in data.items()}
+    except (OSError, TypeError, ValueError) as exc:
+        log.debug("backlinks: load_pagerank failed (%s), rebuilding", exc)
+
+    vault = config.vault_root
+    nodes = {p.relative_to(vault).as_posix() for p in vault.rglob("*.md")} if vault.is_dir() else set()
+    ranks = compute_pagerank(index, nodes=nodes)
+    _save_pagerank(config, ranks)
+    return ranks
 
 
 def inbound_count(config, page: str) -> int:

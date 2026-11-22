@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from decafclaw import backlinks, retrieval_telemetry, tags
+from decafclaw import backlinks, tags
 from decafclaw.frontmatter import get_frontmatter_field, parse_frontmatter
 from decafclaw.media import ToolResult
 from decafclaw.skills.vault.tools import tool_vault_update_frontmatter
@@ -19,9 +19,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # Rounding precision for written scores and the unchanged-skip comparison.
-# Three decimal places is plenty of resolution for a 0..1 importance score
-# and avoids rewriting a page for float noise between runs.
-_SCORE_PRECISION = 3
+# PageRank values are small (they sum to 1 across the graph; most pages sit
+# near the floor), so three decimals would collapse too many distinct scores.
+# Six keeps the tie-break meaningful without chasing float noise.
+_SCORE_PRECISION = 6
 
 
 @dataclass
@@ -50,36 +51,27 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def _norm(value: float, max_value: float) -> float:
-    return value / max_value if max_value > 0 else 0.0
+def compute_importance_signals(config) -> dict[str, float]:
+    """PageRank for every scoreable agent page (#1713).
 
-
-def compute_importance_signals(config) -> dict[str, tuple[int, int]]:
+    PageRank is computed over the full backlink index (including journal and
+    user-note sources) and persisted beside it, so this reads the cached
+    scores rather than recomputing per page. Retrieval telemetry is
+    deliberately absent — it made the score self-referential.
+    """
     pages = [rel for rel, _ in _iter_importance_candidates(config)]
-    stats = retrieval_telemetry.aggregate(retrieval_telemetry.load_records(config))
-    return {p: (stats.get(p, {}).get("retrieval_count", 0), backlinks.inbound_count(config, p)) for p in pages}
+    ranks = backlinks.load_pagerank(config)
+    return {p: ranks.get(p, 0.0) for p in pages}
 
 
 def compute_importance_scores(
     config,
-    signals: dict[str, tuple[int, int]] | None = None,
+    signals: dict[str, float] | None = None,
 ) -> dict[str, float]:
     weights = config.importance
     if signals is None:
         signals = compute_importance_signals(config)
-    retrieval_freq = {p: rc for p, (rc, _ic) in signals.items()}
-    inbound_links = {p: ic for p, (_rc, ic) in signals.items()}
-
-    max_retrieval = max(retrieval_freq.values(), default=0)
-    max_inbound = max(inbound_links.values(), default=0)
-
-    return {
-        p: _clamp01(
-            weights.w_retrieval * _norm(retrieval_freq[p], max_retrieval)
-            + weights.w_inbound * _norm(inbound_links[p], max_inbound)
-        )
-        for p in signals
-    }
+    return {p: _clamp01(weights.w_inbound * rank) for p, rank in signals.items()}
 
 
 async def tool_vault_recompute_importance(ctx: "Context", dry_run: bool = False) -> ToolResult:
@@ -90,10 +82,6 @@ async def tool_vault_recompute_importance(ctx: "Context", dry_run: bool = False)
     deltas: list[dict] = []
     written = 0
     for rel, new_score in sorted(scores.items()):
-        retrieval_count, inbound_count = signals.get(rel, (0, 0))
-        if retrieval_count == 0 and inbound_count == 0:
-            continue
-
         path = ctx.config.vault_root / rel
         try:
             text = path.read_text(encoding="utf-8")

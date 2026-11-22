@@ -73,6 +73,8 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
     media/                          # Media files saved from tool results
     HEARTBEAT.md                    # Agent-managed heartbeat tasks
     embeddings.db                   # Semantic search index (SQLite + sqlite-vec)
+    backlinks.json                  # Backlink index ({page: [pages linking to it]})
+    pagerank.json                   # Cached PageRank over the backlink index (#1713)
     improvement_inbox.jsonl         # Improvement scout inbox (pending/exported/dismissed/archived, #1482)
     telemetry/                      # Instrumentation sidecars (rotated past retention_days)
       retrieval.jsonl               # Vault retrieval telemetry

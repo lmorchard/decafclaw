@@ -358,7 +358,7 @@ class TestScoring:
         )
         assert scored[0]["modified_at"] == recent
 
-    def test_importance_influences_score(self, config):
+    def test_importance_breaks_equal_relevance_ties(self, config):
         scored = score_candidates(
             [
                 {"similarity": 0.5, "modified_at": "", "importance": 0.1},
@@ -367,6 +367,27 @@ class TestScoring:
             config,
         )
         assert scored[0]["importance"] == 0.9
+
+    def test_importance_does_not_change_threshold_score(self, config):
+        low = score_candidates([{"similarity": 0.8, "importance": 0.0}], config)[0]["composite_score"]
+        high = score_candidates([{"similarity": 0.8, "importance": 1.0}], config)[0]["composite_score"]
+
+        assert low == high
+
+    def test_renormalized_relevance_does_not_collapse_threshold(self, config):
+        # Default 0.625 * 0.9 + 0.375 * 0.5 (missing modified_at) = 0.75.
+        # The old 0.5/0.3 weights would score 0.60 and drop this candidate.
+        scored = score_candidates([{"similarity": 0.9, "importance": 0.0}], config)
+
+        assert scored[0]["composite_score"] == pytest.approx(0.75)
+        assert scored[0]["composite_score"] >= config.relevance.min_composite_score
+
+    def test_relevance_weights_renormalize_when_overridden(self, config):
+        config.relevance.w_similarity = 0.9
+        config.relevance.w_recency = 0.1
+        scored = score_candidates([{"similarity": 1.0, "importance": 0.0}], config)
+
+        assert scored[0]["composite_score"] == pytest.approx(0.95)
 
     def test_missing_modified_at_defaults_recency(self, config):
         scored = score_candidates([{"similarity": 0.5, "importance": 0.5}], config)
