@@ -166,7 +166,7 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
 | `vault_section(page, action, section?, title?, level?, content?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. `add` takes `content` so a new section arrives with its body in one call; `level` is inferred from the anchor when omitted (see [Section paths](#section-paths-671)). |
-| `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes the page. Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; the `backfill-frontmatter` CLI and garden importance tuning build on the same primitive. Interactive callers writing outside `agent/` go through the same confirmation gate as `vault_write`; non-interactive callers (scheduled dream/garden) proceed without confirmation by design — the one mutating vault tool that doesn't error in non-interactive contexts. |
+| `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes only when the embedded composite text changes, so frontmatter-only fields such as `importance` skip the embedding round trip (#1687). Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; the `backfill-frontmatter` CLI and garden importance tuning build on the same primitive. Interactive callers writing outside `agent/` go through the same confirmation gate as `vault_write`; non-interactive callers (scheduled dream/garden) proceed without confirmation by design — the one mutating vault tool that doesn't error in non-interactive contexts. |
 
 ### Section paths (#671)
 
@@ -313,8 +313,11 @@ other sub-config.
 page, writes changed scores via `vault_update_frontmatter(overwrite=True)`,
 and skips pages whose rounded score is unchanged or that have no measured
 signal at all yet, so a re-run only touches pages that both moved and have
-real data behind the move. `dry_run=true` reports the planned deltas
-without writing. It's the weekly step in the `garden` skill's sweep
+real data behind the move. Importance-only writes skip the embedding round
+trip because the score is not part of `build_composite_text` (#1687), and a
+timeout or interrupt reports how many pages were already written.
+`dry_run=true` reports the planned deltas without writing. It's the weekly
+step in the `garden` skill's sweep
 (`skills/garden/SKILL.md`) — review the reported deltas for outliers, and
 use `vault_backlinks` + the recomputed score together to flag orphaned,
 rarely-retrieved pages as split/merge/delete candidates.
