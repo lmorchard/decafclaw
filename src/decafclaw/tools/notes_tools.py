@@ -120,6 +120,7 @@ NOTES_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "Read recent notes from this conversation's scratchpad.",
         "function": {
             "name": "notes_read",
             "description": (

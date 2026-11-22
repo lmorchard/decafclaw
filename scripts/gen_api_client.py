@@ -9,6 +9,16 @@ import yaml
 from decafclaw.config import Config
 from decafclaw.http_server import create_app
 
+_HTTP_METHODS = ("delete", "get", "head", "options", "patch", "post", "put")
+
+# Prepended to the esbuild bundle so the generated-vs-authored boundary is
+# visible in the committed file. check-js gates drift against it (Makefile).
+# esbuild appends its own newline after the banner, so omit a trailing one.
+GENERATED_BANNER = (
+    "// DO NOT EDIT — regenerate via 'make gen-api-client'\n"
+    "// Source: lib/api-client/index.ts (esbuild bundle of the generated client)"
+)
+
 
 def normalize_codegen_literals(value) -> None:
     """Expose OpenAPI 3.1 string constants to the TypeScript generator.
@@ -28,6 +38,30 @@ def normalize_codegen_literals(value) -> None:
     elif isinstance(value, list):
         for child in value:
             normalize_codegen_literals(child)
+
+
+def normalize_operation_ids(schema) -> None:
+    """Make multi-method routes emit deterministic, unique operation IDs.
+
+    FastAPI derives a route's unique ID from ``list(route.methods)[0]``, and
+    ``route.methods`` is a set whose iteration order follows the per-process
+    hash seed. A route registered for several methods therefore flips its ID
+    suffix (``..._get`` vs ``..._post``) on every regeneration, and all of
+    its operations share one ID. Rewrite each operation's ID from the method
+    actually serving it so the generated client is stable and unambiguous.
+    Path items without duplicate IDs are left untouched.
+    """
+    for item in schema.get("paths", {}).values():
+        if not isinstance(item, dict):
+            continue
+        operations = {m: item[m] for m in _HTTP_METHODS if isinstance(item.get(m), dict)}
+        ids = [op.get("operationId") for op in operations.values()]
+        if len(ids) < 2 or len(set(ids)) == len(ids):
+            continue
+        for method, op in operations.items():
+            operation_id = op.get("operationId") or ""
+            base = re.sub(r"_(get|post|put|patch|delete|head|options)$", "", operation_id)
+            op["operationId"] = f"{base}_{method}"
 
 
 def add_discard_overload(service: Path, method_name: str, verb: str, url: str) -> None:
@@ -150,6 +184,7 @@ def dump_openapi():
     app = create_app(Config(), None, None, None)
     openapi_schema = app.openapi()
     normalize_codegen_literals(openapi_schema)
+    normalize_operation_ids(openapi_schema)
 
     with open("openapi.json", "w") as f:
         json.dump(openapi_schema, f, indent=2)
@@ -220,6 +255,7 @@ def dump_openapi():
             "--format=esm",
             "--platform=browser",
             "--target=es2022",
+            "--banner:js=" + GENERATED_BANNER,
             "--outfile=" + str(static / "lib/api-client/index.js"),
         ],
         check=True,

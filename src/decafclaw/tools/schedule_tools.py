@@ -193,6 +193,7 @@ SCHEDULE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Schedule an autonomous wake turn after a delay.",
         "function": {
             "name": "schedule_turn",
             "description": (
@@ -227,6 +228,7 @@ SCHEDULE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Cancel a pending scheduled wake by its id.",
         "function": {
             "name": "schedule_cancel",
             "description": "Cancel a pending scheduled wake turn by its schedule_id.",
@@ -246,6 +248,7 @@ SCHEDULE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "List pending scheduled wakes for this conversation.",
         "function": {
             "name": "schedule_list",
             "description": "List all pending scheduled wake turns for the current conversation.",

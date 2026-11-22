@@ -327,7 +327,7 @@ def _heartbeat_section(config) -> list[str]:
 def _tools_section(ctx: "Context") -> list[str]:
     """Gather tool deferral stats."""
     from . import TOOL_DEFINITIONS
-    from .tool_registry import classify_tools, estimate_tool_tokens
+    from .tool_registry import classify_tools, estimate_tool_tokens, get_fetched_tools
 
     # Collect all tool definitions the agent currently has
     all_defs = TOOL_DEFINITIONS + ctx.tools.extra_definitions
@@ -339,7 +339,7 @@ def _tools_section(ctx: "Context") -> list[str]:
         for state in registry.servers.values():
             all_defs = all_defs + state.tool_definitions
 
-    fetched = ctx.skills.data.get("fetched_tools", set())
+    fetched = get_fetched_tools(ctx)
     active, deferred = classify_tools(all_defs, ctx.config, fetched)
     total_tokens = estimate_tool_tokens(all_defs)
     budget = ctx.config.tool_context_budget
@@ -463,6 +463,7 @@ HEALTH_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": False,
+        "summary": "Show agent health and diagnostic status.",
         "function": {
             "name": "health_status",
             "description": (

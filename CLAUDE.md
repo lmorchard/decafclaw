@@ -90,7 +90,7 @@ Read [web UI design](docs/web-ui-design.md), [web UI](docs/web-ui.md), and [mobi
 - Scope panel selectors to intended children. `.sched-md input[type="text"]` can override nested component styles; use `.sched-md label > input[type="text"]` where appropriate.
 - Themes have two axes: `data-theme` × `data-palette`, managed by `lib/theme.js`. Only palettes may set `--pico-primary-background`/`-inverse`, under `[data-palette]`.
 - Hand-written `static/` code is served raw. Import browser-loadable files. `make vendor` bundles dependencies; `make gen-api-client` generates OpenAPI types and `lib/api-client/index.js`.
-- `make check-js` regenerates the client before TypeScript checking. TypeScript's bundler resolution can accept missing JS imports; the static module-graph test and browser scenarios cover the served assets.
+- `make check-js` regenerates the client, fails on generated drift (`git diff` over openapi.json/yaml and `lib/api-client/`), then TypeScript-checks. TypeScript's bundler resolution can accept missing JS imports; the static module-graph test and browser scenarios cover the served assets.
 - Add WebSocket wire types to `src/decafclaw/web/message_types.json` and run `make gen-message-types`. Use Python `WSMessageType.X` and JS `MESSAGE_TYPES.X`, never string literals. `make check-message-types` detects drift.
 
 ## Skills and trust

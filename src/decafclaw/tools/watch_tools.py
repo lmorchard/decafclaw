@@ -234,6 +234,7 @@ WATCH_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Watch a workspace file and wake this conversation when it changes.",
         "function": {
             "name": "watch_file",
             "description": (
@@ -272,6 +273,7 @@ WATCH_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Disarm a pending file watch by id.",
         "function": {
             "name": "watch_cancel",
             "description": "Disarm a pending file watch by its watch_id.",
@@ -291,6 +293,7 @@ WATCH_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "List pending file watches for this conversation.",
         "function": {
             "name": "watch_list",
             "description": "List all pending file watches for the current conversation.",

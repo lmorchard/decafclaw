@@ -6,6 +6,8 @@ Ensures that:
 3. Generated API models and service methods maintain strong typing without `any` escape hatches.
 """
 
+import importlib.util
+import json
 import pathlib
 import re
 
@@ -19,6 +21,59 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 STATIC_DIR = REPO_ROOT / "src/decafclaw/web/static"
 API_CLIENT_DIR = STATIC_DIR / "lib/api-client"
 SERVICE_PATH = API_CLIENT_DIR / "services/DefaultService.ts"
+INDEX_JS_PATH = API_CLIENT_DIR / "index.js"
+OPENAPI_JSON_PATH = REPO_ROOT / "openapi.json"
+
+
+def _load_gen_module():
+    spec = importlib.util.spec_from_file_location("gen_api_client", REPO_ROOT / "scripts/gen_api_client.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_index_js_marks_generated_header():
+    """The committed bundle must carry the generated-file header.
+
+    The check-js git-diff gate catches hand edits, but a banner removed from
+    the generator and committed would regenerate in sync; this pins it.
+    """
+    text = INDEX_JS_PATH.read_text(encoding="utf-8")
+    assert text.startswith("// DO NOT EDIT — regenerate via 'make gen-api-client'")
+
+
+def test_openapi_operation_ids_unique_per_path():
+    """No path item may carry duplicate operationIds.
+
+    FastAPI derives a route's unique ID from the first element of its methods
+    *set*, so multi-method routes used to flip and duplicate on regeneration.
+    """
+    schema = json.loads(OPENAPI_JSON_PATH.read_text(encoding="utf-8"))
+    for path, item in schema.get("paths", {}).items():
+        ids = [op["operationId"] for key, op in item.items() if isinstance(op, dict) and "operationId" in op]
+        assert len(ids) == len(set(ids)), f"duplicate operationIds at {path}: {ids}"
+
+
+def test_normalize_operation_ids_deterministic():
+    """Multi-method routes get per-method IDs regardless of the flipped seed."""
+    gen = _load_gen_module()
+    schema = {
+        "paths": {
+            "/actions/confirm": {
+                # Both operations share the ID a POST-first hash seed produced.
+                "get": {"operationId": "handle_confirm_actions_confirm_post"},
+                "post": {"operationId": "handle_confirm_actions_confirm_post"},
+            },
+            "/api/auth/me": {"get": {"operationId": "authMeApiAuthMeGet"}},
+        }
+    }
+    gen.normalize_operation_ids(schema)
+    item = schema["paths"]["/actions/confirm"]
+    assert item["get"]["operationId"] == "handle_confirm_actions_confirm_get"
+    assert item["post"]["operationId"] == "handle_confirm_actions_confirm_post"
+    # Single-method routes are left untouched.
+    assert schema["paths"]["/api/auth/me"]["get"]["operationId"] == "authMeApiAuthMeGet"
 
 
 def test_no_raw_api_fetch_in_frontend():

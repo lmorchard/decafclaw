@@ -2092,6 +2092,7 @@ SHELL_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": True,
+        "summary": "Manage shell command allow patterns.",
         "function": {
             "name": "shell_patterns",
             "description": (
@@ -2121,6 +2122,7 @@ SHELL_TOOL_DEFINITIONS = [
         "priority": "low",
         "timeout": None,
         "writes": True,
+        "summary": "Inspect and refine the global shell scope rulebook.",
         "function": {
             "name": "shell_guidance",
             "description": (

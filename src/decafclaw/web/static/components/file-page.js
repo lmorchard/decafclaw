@@ -11,6 +11,7 @@ import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { buildNativeWorkspaceUrl } from '../lib/api-client/index.js';
 import { isBookmarked, load as loadBookmarks, subscribe as subscribeBookmarks, toggle as toggleBookmark } from '../lib/bookmarks-store.js';
+import { responseError } from '../lib/utils.js';
 import './file-editor.js';
 
 /**
@@ -21,16 +22,6 @@ function formatDate(ts) {
   if (!ts) return '';
   const d = new Date(ts * 1000);
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-/**
- * Extract a server-provided error without trusting arbitrary response JSON.
- * @param {unknown} body
- * @returns {string}
- */
-function responseError(body) {
-  if (typeof body !== 'object' || body === null || !('error' in body)) return '';
-  return typeof body.error === 'string' ? body.error : '';
 }
 
 export class FilePage extends LitElement {
