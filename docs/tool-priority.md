@@ -47,6 +47,8 @@ When adding a new core tool, you **must** declare a priority — an invariant te
 - **`normal`**: widely useful but situational. Workspace file discovery and structure (`workspace_search`, `workspace_list`, `workspace_glob`, `workspace_diff`, `workspace_move`, `workspace_outline`), secondary vault operations (`vault_delete`, `vault_recent`, `vault_tags`, `vault_backlinks`), `notes_read`, conversation search/compact, attachments.
 - **`low`**: admin tools (`admin_*`), specialized editing variants (`workspace_insert`, `workspace_replace_lines`, `vault_show_sections`, `vault_move_lines`, `vault_section`, `vault_update_frontmatter`, `vault_rename`, `vault_grant_folder`), background process tools (`shell_background_*`), MCP introspection tools (`mcp_*`), rarely-called utilities (`wait`, `http_request`, `refresh_skills`, `debug_context`, `context_stats`, `health_status`, `heartbeat_trigger`, `shell_patterns`, `shell_guidance`).
 
+Always-loaded skill tools keep their declared tier on the definition but are forced `critical` at classification; see [Skill tools](#skill-tools).
+
 ## Skill tools
 
 Skill tools can declare an explicit `"priority"` field:

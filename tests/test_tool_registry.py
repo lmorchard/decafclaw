@@ -322,7 +322,7 @@ class TestClassifyToolsOverflowLogging:
             active, deferred = classify_tools(tools, config)
 
         all_records = self._records(caplog, logging.WARNING) + self._records(caplog, logging.INFO)
-        assert not [r for r in all_records if "exceeds budget" in r.getMessage()]
+        assert all_records == []
         assert [td["function"]["name"] for td in active] == [f"crit_{i}" for i in range(35)]
         assert deferred == []
 
