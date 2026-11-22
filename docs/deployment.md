@@ -179,6 +179,45 @@ cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.c
 
 **Why the service unit has no `MemoryMax`.** Setting `MemoryMax` on `decafclaw.service` would put the daemon inside the same cap as its subagents: the cgroup OOM killer could then select the daemon, and the default `OOMPolicy=stop` would stop the whole unit. Per-child scopes keep the daemon outside every cap.
 
+## Shell Command Limits
+
+Agent-authored shell commands — the `shell` tool and every background job — are the least predictable child processes in the system. A build, an LSP index, a runaway script, or a fork bomb can outgrow the host, and when it does the VM usually stops answering SSH before the OOM killer selects anything. Each shell command therefore runs in its own transient systemd scope:
+
+```
+systemd-run --user --scope --quiet \
+  -p MemoryMax=40% -p MemorySwapMax=0 -p CPUWeight=50 -p TasksMax=512 -- \
+  /bin/sh -c <command>
+```
+
+**Defaults** (`config.shell`, overridable per-key in `config.json` or via env):
+
+| Setting | Default | Env var | Effect |
+|---|---|---|---|
+| `resource_limits_enabled` | `true` | `SHELL_RESOURCE_LIMITS_ENABLED` | master switch |
+| `memory_max` | `40%` | `SHELL_MEMORY_MAX` | hard cap; cgroup OOM killer fires here |
+| `memory_high` | empty | `SHELL_MEMORY_HIGH` | soft reclaim threshold — see below |
+| `memory_swap_max` | `0` | `SHELL_MEMORY_SWAP_MAX` | swap available to the command |
+| `cpu_weight` | `50` | `SHELL_CPU_WEIGHT` | relative CPU share (systemd default is 100) |
+| `tasks_max` | `512` | `SHELL_TASKS_MAX` | hard task/process count |
+
+Set `cpu_weight` or `tasks_max` to `none` (env) or `null` (config.json) to drop that individual limit. An explicitly disabled cap (`resource_limits_enabled: false`) runs commands uncapped and logs nothing — an intentional disable is not a missing capability.
+
+**`memory_swap_max` defaults to `0` for a reason.** A cgroup's `memory.swap.max` is `max` by default, so a `MemoryMax` alone lets a runaway spill into swap instead of dying — which reproduces the exact thrash the cap exists to prevent on a host given swap as a shock absorber. `MemoryMax` therefore implies `MemorySwapMax=0` unless you set `memory_swap_max` explicitly.
+
+**Why `memory_high` is empty by default.** `MemoryHigh` is a *soft* threshold: the kernel reclaims instead of killing. With swap available that means "page out and survive". With `memory_swap_max: 0` there is nowhere to reclaim to, so the kernel instead **throttles** the allocating process — it slows to near-zero progress, holds its memory, and never trips `MemoryMax`. The command burns its whole timeout and the agent sees a timeout rather than "you hit your memory cap". A hard cap plus swap disabled gives a fast, unambiguous kill. Set `memory_high` only if you also allow swapping and want graceful reclaim.
+
+**Reporting.** A command killed by its cap says so instead of returning a bare `-9`. Note that when the kernel OOM-kills something *inside* a scope, the victim is usually a child of `sh` rather than `sh` itself, and systemd's default `OOMPolicy=stop` then stops the scope — so the process the caller waited on reports SIGTERM (`-15`), not SIGKILL. That case is reported as a *possible* cap kill with a pointer at `journalctl --user`, since a deliberate kill looks identical.
+
+**Graceful degradation.** Limits are applied per controller and degrade independently: on a host that delegates `cpu` and `pids` but not `memory`, commands still get `CPUWeight` and `TasksMax`, and the missing memory cap is logged once. When no requested controller is delegated — or `systemd-run` is absent, as on macOS development — commands run uncapped exactly as before.
+
+**Examining delegation.** Same probe as the subagent caps; `cpu`, `memory`, and `pids` should all be listed:
+
+```bash
+cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers
+```
+
+**Host precondition: swap.** Caps bound a single command, not the host's total footprint. On a small VM, give the kernel somewhere to put cold pages so a near-miss is a slowdown rather than a lockup — see `lmorchard-homelab`'s `decafclaw_host` role (`decafclaw_host_swap_*`), which provisions a 4 GB swapfile at `vm.swappiness=20`. Swap is a shock absorber here, never a substitute for `memory_max`: with `memory_swap_max: 0` a capped command cannot use it at all.
+
 ## Updating the Systemd Unit
 
 If you modify `deploy/decafclaw.service`:

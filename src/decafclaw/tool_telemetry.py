@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from .mcp_client import parse_mcp_tool_name
 from .telemetry_rotation import rotate_if_needed
 
 log = logging.getLogger(__name__)
@@ -40,8 +41,8 @@ def classify_source(name: str, config) -> tuple[str, str]:
     owner)`` for names in ``config.skill_tool_owners``, else ``("core", "")``.
     """
     if name.startswith("mcp__"):
-        parts = name.split("__", 2)
-        server = parts[1] if len(parts) >= 3 else "unknown"
+        parsed = parse_mcp_tool_name(name)
+        server = parsed[0] if parsed is not None else "unknown"
         return ("mcp", server)
     owner = getattr(config, "skill_tool_owners", {}).get(name)
     if owner:

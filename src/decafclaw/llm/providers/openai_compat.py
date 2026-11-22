@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from ..history import without_provider_data
+from ..retry import MAX_RETRIES, RetryableError, cancellable_sleep
 from ..types import (
     FINISH_REASON_CANCELLED,
     FINISH_REASON_ERROR,
@@ -26,7 +27,12 @@ log = logging.getLogger(__name__)
 
 # Max SSE events kept for diagnostic dump on empty LLM responses
 _MAX_DIAGNOSTIC_EVENTS = 50
-_MAX_RETRIES = 3
+
+# Backward-compat aliases: vertex.py and openai_responses.py still import the
+# private names from this module; #1312 (3.2) moves them to ..retry directly.
+_MAX_RETRIES = MAX_RETRIES
+_RetryableError = RetryableError
+_cancellable_sleep = cancellable_sleep
 
 
 def _sanitize_tool_call_id(tc_id: str) -> str:
@@ -340,7 +346,7 @@ class OpenAICompatProvider:
 
         state = _StreamState(on_chunk)
 
-        for attempt in range(_MAX_RETRIES + 1):
+        for attempt in range(MAX_RETRIES + 1):
             try:
                 await self._stream_one_attempt(
                     url,
@@ -350,10 +356,10 @@ class OpenAICompatProvider:
                     state,
                 )
                 break  # Success
-            except _RetryableError as e:
-                if attempt >= _MAX_RETRIES:
+            except RetryableError as e:
+                if attempt >= MAX_RETRIES:
                     raise LLMRetryExhaustedError(
-                        f"LLM failed after {_MAX_RETRIES} retries (status {e.status}): {e.body[:200]}",
+                        f"LLM failed after {MAX_RETRIES} retries (status {e.status}): {e.body[:200]}",
                         status=e.status,
                         body=e.body,
                         retry_after=e.retry_after,
@@ -365,10 +371,10 @@ class OpenAICompatProvider:
                     e.status,
                     delay,
                     attempt + 1,
-                    _MAX_RETRIES,
+                    MAX_RETRIES,
                     e.body[:200],
                 )
-                await _cancellable_sleep(delay, cancel_event)
+                await cancellable_sleep(delay, cancel_event)
             except Exception as e:
                 if not state.content_parts and not state.thinking_parts and not state.tool_calls_in_progress:
                     raise
@@ -379,7 +385,7 @@ class OpenAICompatProvider:
         return await state.finalize()
 
     async def _stream_one_attempt(self, url, body, timeout, cancel_event, state):
-        """Execute a single streaming attempt, raising _RetryableError on 429/5xx."""
+        """Execute a single streaming attempt, raising RetryableError on 429/5xx."""
         from httpx_sse import aconnect_sse
 
         async with httpx.AsyncClient() as client:
@@ -398,7 +404,7 @@ class OpenAICompatProvider:
                 if status == 429 or status >= 500:
                     error_body = (await event_source.response.aread()).decode(errors="replace")[:500]
                     retry_after = event_source.response.headers.get("retry-after")
-                    raise _RetryableError(status, error_body, retry_after)
+                    raise RetryableError(status, error_body, retry_after)
 
                 await self._consume_sse_events(event_source, cancel_event, state)
 
@@ -483,28 +489,6 @@ def _cached_tokens(usage: dict | None) -> int:
         return 0
     details = usage.get("prompt_tokens_details") or {}
     return details.get("cached_tokens", 0) or 0
-
-
-class _RetryableError(Exception):
-    """Raised on 429/5xx to trigger retry logic."""
-
-    def __init__(self, status: int, body: str, retry_after: str | None = None):
-        self.status = status
-        self.body = body
-        self.retry_after = retry_after
-
-
-async def _cancellable_sleep(delay: float, cancel_event: asyncio.Event | None):
-    """Sleep that can be interrupted by a cancel event."""
-    if cancel_event:
-        try:
-            await asyncio.wait_for(cancel_event.wait(), timeout=delay)
-            log.info("LLM retry sleep cancelled by user")
-            raise asyncio.CancelledError()
-        except asyncio.TimeoutError:
-            pass
-    else:
-        await asyncio.sleep(delay)
 
 
 class _StreamState:

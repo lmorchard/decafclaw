@@ -72,6 +72,8 @@ log = logging.getLogger(__name__)
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
+T = TypeVar("T")
+
 
 def _parse_bool(value: str, default: bool = False) -> bool:
     """Parse a string to boolean. Returns default if empty/None."""
@@ -113,26 +115,68 @@ def _parse_dict(value: str) -> dict[str, Any]:
     return {}
 
 
-def _resolve_top_level_int(file_data: dict, key: str, env_name: str, default: int) -> int | None:
+def _coerce_scalar(raw: object, key: str, default: T) -> T | None:
+    """Coerce a raw env/file value to the field's type (inferred from ``default``).
+
+    A malformed value warns and falls back to ``default``.
+    """
+    if isinstance(default, str):
+        if isinstance(raw, str):
+            return cast(T, raw)
+        log.warning("Invalid %s value %r; using default %r", key, raw, default)
+        return default
+    if isinstance(default, list):
+        # Env values arrive as strings (JSON array or comma-separated); JSON
+        # file values are already lists. Both map through the same forms that
+        # load_sub_config accepts for list fields.
+        if isinstance(raw, str):
+            return cast(T, _parse_list(raw))
+        if isinstance(raw, list):
+            return cast(T, [str(item) for item in raw])
+        log.warning("Invalid %s value %r; using default", key, raw)
+        return default
+    if isinstance(default, (int, float)) and not isinstance(default, bool):
+        # Env values arrive as strings; JSON file values are already numeric.
+        if not isinstance(raw, (str, int, float)):
+            log.warning("Invalid %s value %r; using default %r", key, raw, default)
+            return default
+        try:
+            if type(default) is int:
+                return cast(T, int(raw))
+            return cast(T, float(raw))
+        except (TypeError, ValueError):
+            log.warning("Invalid %s value %r; using default %r", key, raw, default)
+            return default
+    return cast(T, raw)
+
+
+def _resolve_top_level_scalar(
+    file_data: dict,
+    key: str,
+    env_keys: tuple[str, ...],
+    default: T,
+) -> T | None:
     """Resolve a top-level scalar field: env var > config.json > default.
 
-    Top-level fields don't go through load_sub_config (no env prefix), so each
-    needs an explicit lookup — same pattern as EXTRA_SKILL_PATHS. An explicit
-    null in config.json is honored (max_tool_output_bytes: null disables the
-    cap); a malformed value warns and falls back to the default.
+    Top-level fields don't go through load_sub_config (no env prefix), so
+    each needs an explicit lookup. ``env_keys`` are checked in order and the
+    first non-empty value wins; it is coerced to the field's type (inferred
+    from ``default``). An explicit null in config.json resolves to None —
+    callers of non-optional fields map it back to ``default`` (max_tool_output_bytes
+    is the exception: its null means "cap disabled"). A malformed value warns
+    and falls back to ``default``.
     """
-    raw = os.getenv(env_name)
-    if raw is None or raw == "":
-        if key not in file_data:
-            return default
-        raw = file_data[key]
+    for env_name in env_keys:
+        raw = os.getenv(env_name)
+        if raw is not None and raw != "":
+            return _coerce_scalar(raw, key, default)
+
+    if key not in file_data:
+        return default
+    raw = file_data[key]
     if raw is None:
         return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        log.warning("Invalid %s value %r; using default %d", env_name, raw, default)
-        return default
+    return _coerce_scalar(raw, key, default)
 
 
 def _coerce(value: str, field_type) -> object:
@@ -162,8 +206,6 @@ def _coerce(value: str, field_type) -> object:
 # ---------------------------------------------------------------------------
 # Generic sub-config loader
 # ---------------------------------------------------------------------------
-
-T = TypeVar("T")
 
 
 def load_sub_config(
@@ -717,7 +759,20 @@ def load_config() -> Config:
 
     terminal = load_sub_config(TerminalConfig, file_data.get("terminal", {}), "TERMINAL")
 
-    shell = load_sub_config(ShellConfig, file_data.get("shell", {}), "SHELL")
+    shell = load_sub_config(
+        ShellConfig,
+        file_data.get("shell", {}),
+        "SHELL",
+        env_aliases={
+            "max_runtime_sec": "SHELL_MAX_RUNTIME_SEC",
+            "resource_limits_enabled": "SHELL_RESOURCE_LIMITS_ENABLED",
+            "memory_max": "SHELL_MEMORY_MAX",
+            "memory_high": "SHELL_MEMORY_HIGH",
+            "memory_swap_max": "SHELL_MEMORY_SWAP_MAX",
+            "cpu_weight": "SHELL_CPU_WEIGHT",
+            "tasks_max": "SHELL_TASKS_MAX",
+        },
+    )
 
     agent = load_sub_config(
         AgentConfig,
@@ -827,37 +882,44 @@ def load_config() -> Config:
     providers = _load_providers(file_data.get("providers", {}))
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
     modes = _load_modes(file_data.get("modes", {}))
-    default_model = file_data.get("default_model", "")
-    auxiliary_model = file_data.get("auxiliary_model", "")
+    # Top-level scalars (#1327): one generic env-alias path each —
+    # env var > config.json > dataclass default. An explicit null in
+    # config.json resolves to None; non-optional fields map it back to the
+    # default (max_tool_output_bytes is the exception: its null means "cap
+    # disabled", which stays None downstream).
+    default_model = _resolve_top_level_scalar(file_data, "default_model", ("DEFAULT_MODEL",), "")
+    if default_model is None:
+        default_model = ""
 
-    env_extra = os.getenv("EXTRA_SKILL_PATHS", "")
-    if env_extra:
-        extra_skill_paths = _parse_list(env_extra)
-    else:
-        raw_extra = file_data.get("extra_skill_paths", [])
-        extra_skill_paths = [str(p) for p in raw_extra] if isinstance(raw_extra, list) else []
+    auxiliary_model = _resolve_top_level_scalar(file_data, "auxiliary_model", ("AUXILIARY_MODEL",), "")
+    if auxiliary_model is None:
+        auxiliary_model = ""
 
-    env_always_loaded = os.getenv("SKILLS_ALWAYS_LOADED", "")
-    if env_always_loaded:
-        skills_always_loaded = _parse_list(env_always_loaded)
-    else:
-        raw_always_loaded = file_data.get("skills_always_loaded", [])
-        skills_always_loaded = [str(s) for s in raw_always_loaded] if isinstance(raw_always_loaded, list) else []
+    extra_skill_paths = _resolve_top_level_scalar(file_data, "extra_skill_paths", ("EXTRA_SKILL_PATHS",), [])
+    if extra_skill_paths is None:
+        extra_skill_paths = []
+
+    skills_always_loaded = _resolve_top_level_scalar(file_data, "skills_always_loaded", ("SKILLS_ALWAYS_LOADED",), [])
+    if skills_always_loaded is None:
+        skills_always_loaded = []
 
     # Tool-output bounds (#922). max_tool_output_bytes existed but was never
     # wired into load_config — it could not be overridden; wire all three now.
-    max_tool_output_bytes = _resolve_top_level_int(file_data, "max_tool_output_bytes", "MAX_TOOL_OUTPUT_BYTES", 51200)
-    max_tool_output_lines = _resolve_top_level_int(file_data, "max_tool_output_lines", "MAX_TOOL_OUTPUT_LINES", 2000)
-    max_tool_output_disk_bytes = _resolve_top_level_int(
-        file_data, "max_tool_output_disk_bytes", "MAX_TOOL_OUTPUT_DISK_BYTES", 10 * 1024 * 1024
+    max_tool_output_bytes = _resolve_top_level_scalar(
+        file_data, "max_tool_output_bytes", ("MAX_TOOL_OUTPUT_BYTES",), 51200
+    )
+    max_tool_output_lines = _resolve_top_level_scalar(
+        file_data, "max_tool_output_lines", ("MAX_TOOL_OUTPUT_LINES",), 2000
     )
     # The line and disk bounds are hard safety limits — they are never "turned
-    # off" — so an explicit null in config.json / an unset-but-null value falls
-    # back to the default instead of resolving to None. (max_tool_output_bytes is
-    # the exception: its null means "cap disabled", which is why it stays
-    # int | None downstream.)
+    # off" — so an explicit null in config.json falls back to the default
+    # instead of resolving to None. (max_tool_output_bytes is the exception:
+    # its null means "cap disabled", which is why it stays int | None.)
     if max_tool_output_lines is None:
         max_tool_output_lines = 2000
+    max_tool_output_disk_bytes = _resolve_top_level_scalar(
+        file_data, "max_tool_output_disk_bytes", ("MAX_TOOL_OUTPUT_DISK_BYTES",), 10 * 1024 * 1024
+    )
     if max_tool_output_disk_bytes is None:
         max_tool_output_disk_bytes = 10 * 1024 * 1024
 

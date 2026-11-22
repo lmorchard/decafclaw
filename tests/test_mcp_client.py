@@ -15,9 +15,12 @@ from decafclaw.mcp_client import (
     MCPServerConfig,
     MCPServerState,
     MCPTimeoutError,
+    _namespace_tool,
     init_mcp,
+    parse_mcp_tool_name,
     shutdown_mcp,
 )
+from decafclaw.media import ToolResult
 from decafclaw.schedules import ScheduleTask, parse_schedule_file, run_schedule_task
 from decafclaw.tool_definitions import collect_all_tool_defs, refresh_dynamic_tools
 
@@ -37,6 +40,28 @@ def _make_mock_session(tools=None):
     session.list_tools = AsyncMock(return_value=tools_result)
     session.get_server_capabilities = MagicMock(return_value=MagicMock(resources=None, prompts=None))
     return session
+
+
+# -- parse_mcp_tool_name -------------------------------------------------------
+
+
+def test_parse_mcp_tool_name_well_formed():
+    """Parse inverts namespace: the server segment is the normalized form,
+    not the original MCP server name (callers needing it look up via the
+    registry)."""
+    namespaced = _namespace_tool("my-server", "get_data")
+    assert parse_mcp_tool_name(namespaced) == ("my_server", "get_data")
+
+
+def test_parse_mcp_tool_name_non_mcp():
+    assert parse_mcp_tool_name("think") is None
+    assert parse_mcp_tool_name("shell") is None
+
+
+def test_parse_mcp_tool_name_missing_tool():
+    assert parse_mcp_tool_name("mcp__") is None
+    assert parse_mcp_tool_name("mcp__server") is None
+    assert parse_mcp_tool_name("mcp____tool") is None
 
 
 @pytest.mark.asyncio
@@ -688,3 +713,74 @@ async def test_cross_task_disconnect_anyio_cancel_scope_safety():
 
     assert registry.servers["anyio_srv"].status == ConnState.DISCONNECTED
     assert t.done()
+
+
+# -- Tool caller error branches (#1333) -----------------------------------------
+
+
+def _make_caller(status=ConnState.CONNECTED, session=None, retry_count=0):
+    """Build a registry with one server in the given state; return (registry, caller)."""
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="srv", type="stdio")
+    state = MCPServerState(config=cfg, status=status, session=session, retry_count=retry_count)
+    registry.servers["srv"] = state
+    return registry, registry._make_tool_caller("srv", "mytool", 10)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_server_unavailable_returns_tool_result():
+    """A failed server past its retry budget returns a ToolResult, not a bare string."""
+    registry, caller = _make_caller(status=ConnState.FAILED, retry_count=3)
+
+    result = await caller({})
+
+    assert isinstance(result, ToolResult)
+    assert result.text == "[error: MCP server srv is not available]"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_no_active_session_returns_tool_result():
+    """A connected server whose session was cleared returns a ToolResult, not a bare string."""
+    registry, caller = _make_caller(status=ConnState.CONNECTED, session=None)
+
+    result = await caller({})
+
+    assert isinstance(result, ToolResult)
+    assert result.text == "[error: MCP server srv has no active session]"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_timeout_returns_tool_result():
+    """A tool call that exceeds its timeout returns a ToolResult, not a bare string."""
+    never = asyncio.Event()
+
+    async def hang(*args, **kwargs):
+        await never.wait()
+
+    session = MagicMock()
+    session.call_tool = hang
+    registry, caller = _make_caller(status=ConnState.CONNECTED, session=session)
+
+    result = await caller({})
+
+    assert isinstance(result, ToolResult)
+    assert "timed out" in result.text
+
+
+@pytest.mark.asyncio
+async def test_call_tool_exception_returns_tool_result():
+    """A tool call that raises returns a ToolResult and marks the server failed."""
+
+    async def boom(*args, **kwargs):
+        raise ValueError("boom")
+
+    session = MagicMock()
+    session.call_tool = boom
+    registry, caller = _make_caller(status=ConnState.CONNECTED, session=session)
+
+    result = await caller({})
+
+    assert isinstance(result, ToolResult)
+    assert "failed" in result.text
+    assert "boom" in result.text
+    assert registry.servers["srv"].status == ConnState.FAILED

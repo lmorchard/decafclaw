@@ -285,6 +285,49 @@ class ShellConfig:
     # value in the file.
     activity_window: int = 50
 
+    # --- Resource caps for spawned shell commands ---------------------------
+    # Agent-authored shell commands are the least predictable child processes
+    # in the system. Without caps, one runaway command can take the whole host
+    # down: memory exhaustion makes the kernel thrash and stop answering SSH,
+    # and CPU saturation starves the daemon that would otherwise report it.
+    # Each capped command runs in a transient systemd scope, so the kernel
+    # kills the command instead of the daemon.
+    #
+    # Values are systemd memory specs: a percentage of physical memory or an
+    # absolute size (e.g. "2G", "512M"). Percentages survive a VM resize.
+    # MemoryMax is the hard limit where the cgroup OOM killer fires; empty
+    # disables that limit.
+    #
+    # 40% of this 3.8 GB host caps one command at ~1.5 GB, which still leaves
+    # the daemon, Marimo, Television and Syncthing resident. Raise it on a host
+    # with more RAM rather than removing it.
+    resource_limits_enabled: bool = True
+    memory_max: str = "40%"
+    # Empty by default, and that is deliberate. MemoryHigh is a soft threshold
+    # at which the kernel starts reclaiming rather than killing. With swap
+    # allowed that means "page out and survive". With memory_swap_max="0" there
+    # is nowhere to reclaim to, so the kernel instead THROTTLES the allocating
+    # process: it slows to a crawl, holds its memory, and never trips
+    # MemoryMax. The command then burns its entire timeout before being
+    # SIGTERM'd, and the agent sees a timeout rather than "you hit your memory
+    # cap". A hard cap plus swap disabled gives a fast, unambiguous kill, which
+    # is what a runaway should get. Set a value here only if you also allow
+    # swapping (memory_swap_max > 0) and want graceful reclaim.
+    memory_high: str = ""
+    # A cgroup's memory.swap.max defaults to "max", so a memory cap alone would
+    # let a runaway spill into swap instead of dying — moving the thrash rather
+    # than preventing it. Keep this at "0" unless you deliberately want capped
+    # commands to be able to swap.
+    memory_swap_max: str = "0"
+    # Relative CPU share (systemd's own default is 100). Lowering it means a
+    # command that pins every core still leaves the daemon and SSH scheduled.
+    # None = systemd default, i.e. no explicit CPUWeight property.
+    cpu_weight: int | None = 50
+    # Hard task (thread/process) count for the scope. A runaway recursive
+    # script or fork bomb hits this instead of consuming the host's pid space.
+    # None = systemd default.
+    tasks_max: int | None = 512
+
 
 @dataclass
 class TerminalConfig:

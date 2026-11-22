@@ -16,10 +16,10 @@ from decafclaw.mcp_client import (
     _convert_tool_definition,
     _expand_env,
     _namespace_tool,
-    _parse_namespace,
     _validate_server_name,
     load_mcp_config,
 )
+from decafclaw.media import ToolResult
 
 # -- env var expansion tests --
 
@@ -174,26 +174,6 @@ def test_namespace_tool_normalizes_hyphens_to_underscores():
 def test_namespace_tool_underscore_unchanged():
     """Server names already using underscores round-trip unchanged."""
     assert _namespace_tool("my_server", "get_data") == "mcp__my_server__get_data"
-
-
-def test_parse_namespace_returns_normalized_segment():
-    """Parsed server segment is the normalized form, not the original MCP
-    server name. Callers that need the original must look it up via the
-    registry."""
-    namespaced = _namespace_tool("my-server", "get_data")
-    result = _parse_namespace(namespaced)
-    assert result == ("my_server", "get_data")
-
-
-def test_parse_namespace_non_mcp():
-    assert _parse_namespace("think") is None
-    assert _parse_namespace("shell") is None
-
-
-def test_parse_namespace_malformed():
-    assert _parse_namespace("mcp__") is None
-    assert _parse_namespace("mcp__server") is None
-    assert _parse_namespace("mcp____tool") is None
 
 
 # -- tool definition conversion tests --
@@ -489,7 +469,8 @@ async def test_tool_caller_timeout():
     caller = registry._make_tool_caller("slow", "slow_tool", cfg.timeout)
 
     result = await caller({"query": "test"})
-    assert "timed out" in result
+    assert isinstance(result, ToolResult)
+    assert "timed out" in result.text
 
 
 # -- auto-restart tests --
