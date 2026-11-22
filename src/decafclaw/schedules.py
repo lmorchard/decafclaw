@@ -23,6 +23,7 @@ from .skills import (
     _resolve_extra_skill_paths,
     _split_frontmatter,
     grants_capability,
+    substitute_skill_placeholders,
 )
 
 if TYPE_CHECKING:
@@ -729,8 +730,9 @@ def _resolve_skill_dir(config, task: "ScheduleTask") -> str:
     unresolvable one does, so the fallback below still applies.
 
     The tier check is **unconditional**, not gated on `task.source`. The
-    returned value feeds both the shell pattern and `substitute_body`, and
-    keeping those two pointing at the same directory is this function's whole
+    returned value feeds both the shell pattern and
+    `substitute_skill_placeholders`, and keeping those two pointing at the same
+    directory is this function's whole
     purpose (see above). Gating only the pre-approval path would desync them:
     the body would send the agent to the workspace dir while the pattern
     named somewhere else. One rule keeps the invariant, and keeps the trust
@@ -796,7 +798,8 @@ def _render_required_skill_bodies(config, skill_names: list[str]) -> str:
             continue
         if not info.body:
             continue
-        body = info.body.replace("$SKILL_DIR", str(info.location.resolve()))
+        # Shared placeholder helper (no user arguments on a scheduled turn).
+        body = substitute_skill_placeholders(info.body, skill_dir=str(info.location.resolve()))
         safe_name = html.escape(info.name, quote=True)
         blocks.append(f'<skill name="{safe_name}">\n{body}\n</skill>')
     if not blocks:
@@ -907,11 +910,11 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask, conv
                 )
             await registry.wait_for_servers(task.required_servers, timeout=task.server_timeout)
 
-        from .commands import substitute_body
         from .polling import build_task_preamble
 
         preamble = build_task_preamble("scheduled task", task.name)
-        body = substitute_body(task.body, skill_dir=skill_dir)
+        # No user arguments on a scheduled turn; the shared helper expands them.
+        body = substitute_skill_placeholders(task.body, skill_dir=skill_dir)
         loaded_skills = _render_required_skill_bodies(config, required_skills)
         pre_output = await _run_pre_script(config, task)
         pre_block = f"<pre_script_output>\n{pre_output.rstrip()}\n</pre_script_output>\n\n" if pre_output else ""

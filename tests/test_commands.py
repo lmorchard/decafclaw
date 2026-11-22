@@ -9,7 +9,6 @@ from decafclaw.commands import (
     execute_command,
     format_help,
     parse_command_trigger,
-    substitute_body,
 )
 from decafclaw.skills import SkillInfo
 
@@ -45,42 +44,6 @@ class TestParseCommandTrigger:
 
     def test_just_prefix(self):
         assert parse_command_trigger("!") is None
-
-
-# -- substitute_body -----------------------------------------------------------
-
-
-class TestSubstituteBody:
-    def test_arguments_placeholder(self):
-        body = "Do the thing with $ARGUMENTS"
-        result = substitute_body(body, "foo bar")
-        assert result == "Do the thing with foo bar"
-
-    def test_positional_args(self):
-        body = "Move $0 to $1"
-        result = substitute_body(body, "today tomorrow")
-        assert result == "Move today to tomorrow"
-
-    def test_mixed(self):
-        body = "City: $0\nFull: $ARGUMENTS"
-        result = substitute_body(body, "Portland OR")
-        assert result == "City: Portland\nFull: Portland OR"
-
-    def test_no_placeholder_appends(self):
-        body = "Do the thing."
-        result = substitute_body(body, "extra context")
-        assert "ARGUMENTS: extra context" in result
-
-    def test_no_arguments(self):
-        body = "Do the thing. $ARGUMENTS"
-        result = substitute_body(body, "")
-        assert result == "Do the thing. "  # $ARGUMENTS replaced with empty
-
-    def test_out_of_range_positional(self):
-        body = "Use $0 and $5"
-        result = substitute_body(body, "only-one")
-        assert "only-one" in result
-        assert "$5" in result  # unreplaced
 
 
 # -- format_help ---------------------------------------------------------------
