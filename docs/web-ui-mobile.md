@@ -98,6 +98,18 @@ Then layout CSS uses `var(--vh, 100vh)` instead of raw `100vh` for any full-heig
 
 If you add a new full-height surface, use `var(--vh, 100vh)` not `100vh`.
 
+## No automatic composer focus on mobile (#1652)
+
+On a touch-primary device (`(pointer: coarse)`), the chat composer never takes
+focus on its own — not on load, not on a conversation switch, not at turn end.
+The soft keyboard would cover half the screen just as the user settles in to
+read the transcript. An explicit tap in the textarea is the only way the
+keyboard opens (plus the `⌘/` keyboard shortcut). The rule lives in
+`static/lib/chat-focus.js`; `app.js` passes `isMobileKeyboardDevice()` into
+`shouldFocusChatInput`. Do not gate other auto-focus on viewport width — a
+landscape phone is wider than the 639px breakpoint but still has the keyboard
+problem.
+
 ## Canvas panel
 
 On mobile (≤639px) the canvas panel renders as a full-screen overlay

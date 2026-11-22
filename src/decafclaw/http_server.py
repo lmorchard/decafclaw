@@ -95,6 +95,18 @@ _CONFIG_FILES = [
     {"name": "USER.md", "path": "USER.md", "description": "User-specific context", "scope": "admin"},
     {"name": "HEARTBEAT.md", "path": "HEARTBEAT.md", "description": "Heartbeat check sections", "scope": "admin"},
     {"name": "COMPACTION.md", "path": "COMPACTION.md", "description": "Compaction prompt override", "scope": "admin"},
+    {
+        "name": "SHELL_APPROVAL.md",
+        "path": "SHELL_APPROVAL.md",
+        "description": "Shell auto-approval judge prompt override",
+        "scope": "admin",
+    },
+    {
+        "name": "activity_domains.jsonl",
+        "path": "activity_domains.jsonl",
+        "description": "Shell activity domain rules (JSONL)",
+        "scope": "admin",
+    },
 ]
 
 # Directories pruned from workspace_recent walks — they can grow huge and

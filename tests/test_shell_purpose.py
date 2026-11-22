@@ -48,6 +48,9 @@ def _declining_judge(feedback: str = JUDGE_FEEDBACK, reason: str = "Raw grep dup
                     "auto_approve": False,
                     "reason": reason,
                     "risk": "low",
+                    # #1641: a decline needs a concrete risk category; a bare
+                    # style preference is now advisory and allows the command.
+                    "risk_category": "irreversible",
                     "feedback": feedback,
                 }
             )
@@ -56,13 +59,35 @@ def _declining_judge(feedback: str = JUDGE_FEEDBACK, reason: str = "Raw grep dup
     return fake_call
 
 
+def _seed_activity(ctx, command: str = "touch prior-marker"):
+    """Seed one prior shell call so the command is in an established activity.
+
+    Direction gates the judge (#1641): a first command in a conversation asks
+    without consulting the judge. Judge-behavior tests must therefore start
+    from an established activity, exactly as a mid-conversation call would.
+    """
+    ctx.history = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "prior-call",
+                    "type": "function",
+                    "function": {"name": "shell", "arguments": json.dumps({"command": command})},
+                }
+            ],
+        }
+    ]
+
+
 # -- prompt construction --------------------------------------------------------
 
 
 def test_aux_prompt_carries_purpose_and_live_tool_index(ctx):
-    prompt = build_aux_approval_prompt(ctx, "grep -rn TODO src/", purpose="Find all TODO comments")
+    prompt = build_aux_approval_prompt(ctx, "make build", purpose="Build the project")
 
-    assert "Stated Purpose: Find all TODO comments" in prompt
+    assert "Stated Purpose: Build the project" in prompt
     assert "untrusted metadata" in prompt
     # The index is generated from the live registry, so previously omitted
     # tools appear and shell cannot deflect to itself (#1626).
@@ -126,6 +151,7 @@ def test_aux_prompt_marks_missing_purpose(ctx):
 @pytest.mark.asyncio
 async def test_purpose_reaches_aux_judge(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     captured = {}
 
     async def fake_call(messages):
@@ -134,10 +160,10 @@ async def test_purpose_reaches_aux_judge(ctx):
 
     ctx.aux_approval_llm = MagicMock(return_value=fake_call)
 
-    result = await check_shell_approval(ctx, "ls -la", purpose="List the workspace files")
+    result = await check_shell_approval(ctx, "touch marker.txt", purpose="Create a marker file")
 
     assert result == {"approved": True}
-    assert "Stated Purpose: List the workspace files" in captured["prompt"]
+    assert "Stated Purpose: Create a marker file" in captured["prompt"]
 
 
 @pytest.mark.asyncio
@@ -159,6 +185,7 @@ async def test_purpose_reaches_tier2_classifier(ctx):
 async def test_tier1_block_ignores_stated_purpose(ctx):
     """A benign purpose never unlocks a Tier 1 hard block."""
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     mock_aux = MagicMock()
     ctx.aux_approval_llm = mock_aux
 
@@ -175,13 +202,14 @@ async def test_tier1_block_ignores_stated_purpose(ctx):
 async def test_judge_decline_with_feedback_redirects_without_prompt(ctx):
     """First offense: hand the agent a redirect, do not interrupt a human."""
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge())
 
     with (
         patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm,
         patch("decafclaw.tools.shell_tools._execute_command", new_callable=AsyncMock) as mock_exec,
     ):
-        result = await tool_shell(ctx, "grep -rn TODO src/", purpose="Find all TODO comments")
+        result = await tool_shell(ctx, "make build", purpose="Build the project")
 
     mock_confirm.assert_not_awaited()
     mock_exec.assert_not_awaited()
@@ -194,6 +222,7 @@ async def test_judge_decline_with_feedback_redirects_without_prompt(ctx):
 async def test_second_attempt_same_fingerprint_prompts_with_judge_context(ctx):
     """Second offense: the human decides, and the card carries reason + feedback."""
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge())
 
     with patch(
@@ -201,8 +230,8 @@ async def test_second_attempt_same_fingerprint_prompts_with_judge_context(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        first = await tool_shell(ctx, "grep -rn TODO src/", purpose="Find all TODO comments")
-        second = await tool_shell(ctx, "grep -rn TODO src/", purpose="Find all TODO comments")
+        first = await tool_shell(ctx, "make build", purpose="Build the project")
+        second = await tool_shell(ctx, "make build", purpose="Build the project")
 
     assert first.text.startswith("[error: command not run")
     assert second.text.startswith("[error: command denied")
@@ -215,11 +244,12 @@ async def test_second_attempt_same_fingerprint_prompts_with_judge_context(ctx):
 @pytest.mark.asyncio
 async def test_same_command_different_purpose_gets_own_redirect(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge())
 
     with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
-        first = await tool_shell(ctx, "grep -rn TODO src/", purpose="Find all TODO comments")
-        second = await tool_shell(ctx, "grep -rn TODO src/", purpose="Audit stale TODO markers")
+        first = await tool_shell(ctx, "make build", purpose="Build the project")
+        second = await tool_shell(ctx, "make build", purpose="Audit stale TODO markers")
 
     assert first.text.startswith("[error: command not run")
     assert second.text.startswith("[error: command not run")
@@ -229,11 +259,12 @@ async def test_same_command_different_purpose_gets_own_redirect(ctx):
 @pytest.mark.asyncio
 async def test_different_command_gets_own_redirect(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge())
 
     with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
-        await tool_shell(ctx, "grep -rn TODO src/", purpose="Find TODOs")
-        result = await tool_shell(ctx, "find . -name '*.py'", purpose="List Python files")
+        await tool_shell(ctx, "make build", purpose="Find TODOs")
+        result = await tool_shell(ctx, "make lint", purpose="Run the linter")
 
     assert result.text.startswith("[error: command not run")
     mock_confirm.assert_not_awaited()
@@ -243,6 +274,7 @@ async def test_different_command_gets_own_redirect(ctx):
 async def test_redirect_budget_caps_total_redirects_per_turn(ctx):
     """Three unrelated redirects are the backstop; a fourth prompts."""
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge())
 
     with patch(
@@ -250,7 +282,7 @@ async def test_redirect_budget_caps_total_redirects_per_turn(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        results = [await tool_shell(ctx, f"grep -rn TODO src{i}/", purpose=f"Find TODOs {i}") for i in range(4)]
+        results = [await tool_shell(ctx, f"make build{i}", purpose=f"Build target {i}") for i in range(4)]
 
     for result in results[:3]:
         assert result.text.startswith("[error: command not run")
@@ -261,6 +293,7 @@ async def test_redirect_budget_caps_total_redirects_per_turn(ctx):
 @pytest.mark.asyncio
 async def test_redirect_budget_shared_across_concurrent_tool_call_forks(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge())
     child = ctx.fork_for_tool_call("call-2")
 
@@ -269,8 +302,8 @@ async def test_redirect_budget_shared_across_concurrent_tool_call_forks(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        first = await tool_shell(ctx, "grep -rn TODO src/", purpose="Find all TODO comments")
-        second = await tool_shell(child, "grep -rn TODO src/", purpose="Find all TODO comments")
+        first = await tool_shell(ctx, "make build", purpose="Build the project")
+        second = await tool_shell(child, "make build", purpose="Build the project")
 
     assert first.text.startswith("[error: command not run")
     assert second.text.startswith("[error: command denied")
@@ -281,6 +314,7 @@ async def test_redirect_budget_shared_across_concurrent_tool_call_forks(ctx):
 async def test_concurrent_shell_calls_claim_one_redirect(ctx):
     """Two concurrent tool-call forks cannot both claim the same fingerprint."""
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     release = asyncio.Event()
     both_started = asyncio.Event()
     started = 0
@@ -301,10 +335,10 @@ async def test_concurrent_shell_calls_claim_one_redirect(ctx):
         return_value={"approved": False},
     ) as mock_confirm:
         first = asyncio.create_task(
-            tool_shell(ctx.fork_for_tool_call("call-a"), "grep -rn TODO src/", purpose="Find all TODO comments")
+            tool_shell(ctx.fork_for_tool_call("call-a"), "make build", purpose="Build the project")
         )
         second = asyncio.create_task(
-            tool_shell(ctx.fork_for_tool_call("call-b"), "grep -rn TODO src/", purpose="Find all TODO comments")
+            tool_shell(ctx.fork_for_tool_call("call-b"), "make build", purpose="Build the project")
         )
         await asyncio.wait_for(both_started.wait(), timeout=5)
         release.set()
@@ -319,13 +353,15 @@ async def test_concurrent_shell_calls_claim_one_redirect(ctx):
 @pytest.mark.asyncio
 async def test_redirect_budget_does_not_leak_across_turns(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge())
 
     with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as mock_confirm:
-        first = await tool_shell(ctx, "grep -rn TODO src/", purpose="Find all TODO comments")
+        first = await tool_shell(ctx, "make build", purpose="Build the project")
         next_turn = ctx.fork()
+        _seed_activity(next_turn)
         next_turn.aux_approval_llm = MagicMock(return_value=_declining_judge())
-        second = await tool_shell(next_turn, "grep -rn TODO src/", purpose="Find all TODO comments")
+        second = await tool_shell(next_turn, "make build", purpose="Build the project")
 
     assert first.text.startswith("[error: command not run")
     assert second.text.startswith("[error: command not run")
@@ -335,10 +371,11 @@ async def test_redirect_budget_does_not_leak_across_turns(ctx):
 @pytest.mark.asyncio
 async def test_unattended_first_decline_redirects_instead_of_hard_denial(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.task_mode = TaskMode.HEARTBEAT
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge())
 
-    result = await tool_shell(ctx, "ls -la", purpose="List files")
+    result = await tool_shell(ctx, "touch marker.txt", purpose="Create a marker file")
 
     assert result.text.startswith("[error: command not run")
     assert f"Feedback: {JUDGE_FEEDBACK}" in result.text
@@ -347,11 +384,12 @@ async def test_unattended_first_decline_redirects_instead_of_hard_denial(ctx):
 @pytest.mark.asyncio
 async def test_unattended_second_decline_denies_with_feedback(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.task_mode = TaskMode.HEARTBEAT
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge())
 
-    await tool_shell(ctx, "ls -la", purpose="List files")
-    second = await tool_shell(ctx, "ls -la", purpose="List files")
+    await tool_shell(ctx, "touch marker.txt", purpose="Create a marker file")
+    second = await tool_shell(ctx, "touch marker.txt", purpose="Create a marker file")
 
     assert second.text.startswith("[error: command denied: unattended turn")
     assert f"Feedback: {JUDGE_FEEDBACK}" in second.text
@@ -360,6 +398,7 @@ async def test_unattended_second_decline_denies_with_feedback(ctx):
 @pytest.mark.asyncio
 async def test_human_feedback_overrides_judge_feedback(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge(feedback="judge advice", reason="Risky"))
 
     with patch(
@@ -367,8 +406,8 @@ async def test_human_feedback_overrides_judge_feedback(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False, "feedback": "Read it with workspace_read first."},
     ):
-        await tool_shell(ctx, "cat notes.md", purpose="Read notes")
-        result = await tool_shell(ctx, "cat notes.md", purpose="Read notes")
+        await tool_shell(ctx, "python3 scripts/report.py", purpose="Generate the report")
+        result = await tool_shell(ctx, "python3 scripts/report.py", purpose="Generate the report")
 
     assert "command denied" in result.text
     assert "Feedback: Read it with workspace_read first." in result.text
@@ -378,6 +417,7 @@ async def test_human_feedback_overrides_judge_feedback(ctx):
 @pytest.mark.asyncio
 async def test_decline_without_feedback_still_prompts(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
     ctx.aux_approval_llm = MagicMock(return_value=_declining_judge(feedback=""))
 
     with patch(
@@ -385,7 +425,7 @@ async def test_decline_without_feedback_still_prompts(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        result = await tool_shell(ctx, "grep -rn TODO src/", purpose="Find all TODO comments")
+        result = await tool_shell(ctx, "make build", purpose="Build the project")
 
     mock_confirm.assert_awaited_once()
     assert result.text.startswith("[error: command denied")
@@ -447,6 +487,7 @@ async def test_manager_bridge_forwards_purpose_and_returns_feedback(ctx):
 @pytest.mark.asyncio
 async def test_judge_tool_gap_appends_improvement_inbox_item(ctx):
     ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
 
     async def fake_call(messages):
         return {

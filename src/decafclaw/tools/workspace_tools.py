@@ -20,6 +20,14 @@ from ..media import ToolResult, WidgetRequest
 from ..util import find_fuzzy_matches
 from ..web.workspace_paths import PathContainmentError, resolve_contained
 from ..workspace_index import invalidate_workspace_file_cache
+from ._file_common import (
+    MAX_DIFF_WIDGET_CHARS,
+    MAX_DIFF_WIDGET_LINES,
+    MAX_READ_LINES,
+    _file_error,
+    _is_cancelled,
+    _mini_diff,
+)
 from .file_locks import file_lock
 from .workspace_outlines import (
     find_section,
@@ -33,27 +41,6 @@ if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
-
-
-def _is_cancelled(ctx: "Context | None") -> bool:
-    """Return True if the context has an active cancellation event set."""
-    if ctx is None:
-        return False
-    cancelled = getattr(ctx, "cancelled", None)
-    return bool(cancelled is not None and cancelled.is_set())
-
-
-def _file_error(e: Exception, path: str) -> ToolResult:
-    """Convert common file exceptions to a ToolResult error."""
-    if isinstance(e, FileNotFoundError):
-        return ToolResult(text=f"[error: file not found: {path}]")
-    if isinstance(e, IsADirectoryError):
-        return ToolResult(text=f"[error: path is a directory, not a file: {path}]")
-    if isinstance(e, PermissionError):
-        return ToolResult(text=f"[error: permission denied: {path}]")
-    if isinstance(e, UnicodeDecodeError):
-        return ToolResult(text=f"[error: file is not valid UTF-8 text: {path}]")
-    return ToolResult(text=f"[error: {e}: {path}]")
 
 
 # Upper bound on files examined when looking for "Did you mean" suggestions,
@@ -100,12 +87,6 @@ def _file_not_found_with_suggestions(config, path: str) -> ToolResult:
     return ToolResult(text=f"[error: file not found: {path}. Did you mean: {', '.join(matches)}?]")
 
 
-# Max lines returned by workspace_read when no line range is specified
-MAX_READ_LINES = 200
-# Max characters per file buffer before diff_view widget attachment is suppressed
-MAX_DIFF_WIDGET_CHARS = 50_000
-# Max total lines before diff_view widget attachment is suppressed
-MAX_DIFF_WIDGET_LINES = 1_000
 # Code-block language by file extension (workspace_read code_block widget, #1172)
 _CODE_EXT_LANGUAGES = {
     ".py": "python",
@@ -123,26 +104,6 @@ _CODE_EXT_LANGUAGES = {
     ".md": "markdown",
     ".sql": "sql",
 }
-# Context lines shown in edit tool mini-diffs
-EDIT_CONTEXT_LINES = 3
-
-
-def _mini_diff(old_text: str, new_text: str, path: str = "") -> str:
-    """Generate a compact unified diff for edit tool output."""
-    old_lines = old_text.splitlines(keepends=True)
-    new_lines = new_text.splitlines(keepends=True)
-    diff = list(
-        difflib.unified_diff(
-            old_lines,
-            new_lines,
-            fromfile=f"a/{path}" if path else "before",
-            tofile=f"b/{path}" if path else "after",
-            n=EDIT_CONTEXT_LINES,
-        )
-    )
-    if not diff:
-        return ""
-    return "".join(diff)
 
 
 def _redundant_prefix_note(path: str) -> str:

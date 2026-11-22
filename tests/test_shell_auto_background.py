@@ -244,7 +244,7 @@ async def test_spawn_failure_returns_error(ctx):
     _save_allow_pattern(ctx.config, "echo hi")
 
     with patch(
-        "asyncio.create_subprocess_shell",
+        "asyncio.create_subprocess_exec",
         new_callable=AsyncMock,
         side_effect=OSError("resource exhausted"),
     ):

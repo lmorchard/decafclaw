@@ -13,7 +13,7 @@ import { SIDE_EFFECT_COMMANDS } from './lib/constants.js';
 import { load as loadBookmarks } from './lib/bookmarks-store.js';
 import { handleConversationLinkClick } from './lib/conversation-links.js';
 import { setupResizeHandle } from './lib/utils.js';
-import { shouldFocusChatInput } from './lib/chat-focus.js';
+import { isMobileKeyboardDevice, shouldFocusChatInput } from './lib/chat-focus.js';
 import { applyPageTitle } from './lib/page-title.js';
 import { updateFaviconBadge } from './lib/favicon-badge.js';
 import { showToast } from './lib/toast.js';
@@ -114,12 +114,15 @@ store.addEventListener('change', () => {
     chatInput.placeholder = store.isReadOnly ? 'Read-only conversation' : 'Type a message...';
     chatInput.commands = store.commands;
     // `change` fires on every WebSocket message, so the focus decision has to
-    // name the transitions it cares about — see lib/chat-focus.js.
+    // name the transitions it cares about — see lib/chat-focus.js. On mobile
+    // the composer never takes focus on its own: the soft keyboard would
+    // cover the transcript, so the user taps the field first.
     const focusOpts = {
       readOnly: store.isReadOnly,
       convChanged: convChanged && !!cur,
       turnFinished: wasBusy && !store.isBusy,
       chatInputEl: chatInput,
+      isMobile: isMobileKeyboardDevice(),
     };
     if (shouldFocusChatInput(focusOpts)) {
       // Re-check after layout: an in-flight click may land focus elsewhere

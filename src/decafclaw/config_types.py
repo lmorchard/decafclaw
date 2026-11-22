@@ -262,6 +262,71 @@ class ShellConfig:
     aux_approval_guidance: str = ""
     aux_approval_presets: dict[str, str] = field(default_factory=dict)
     active_aux_approval_presets: list[str] = field(default_factory=list)
+    # Kill switch for the deterministic read-only tier (#1641). When False, a
+    # provably read-only command falls through to the normal pipeline (security
+    # monitor → judge → human) instead of being allowed silently.
+    #
+    # This tier is the one place a command can run with NO human and NO model
+    # in the loop, so a false positive is an unreviewed execution. Having an
+    # off switch means a suspect classifier can be neutralized by editing
+    # config.json (which the watcher applies in place, no restart) rather than
+    # reverting and redeploying. Default True: the tier is the point of the
+    # feature, and off-by-default would ship it dead.
+    read_only_enabled: bool = True
+    # How many recent shell calls define a conversation's established activity
+    # (#1641). A command is "in direction" only when every domain it touches
+    # appeared in this window. Lower it to make drift prompt sooner.
+    #
+    # 0 or a negative value DISABLES direction entirely: every command counts
+    # as established, so the new-activity tier never fires. This is the safe
+    # off switch — an unbounded window (all history counts) would re-create the
+    # stale-direction failure the window exists to avoid, and having "0" mean
+    # "unbounded" made the setting that looks like "off" the most dangerous
+    # value in the file.
+    activity_window: int = 50
+
+    # --- Resource caps for spawned shell commands ---------------------------
+    # Agent-authored shell commands are the least predictable child processes
+    # in the system. Without caps, one runaway command can take the whole host
+    # down: memory exhaustion makes the kernel thrash and stop answering SSH,
+    # and CPU saturation starves the daemon that would otherwise report it.
+    # Each capped command runs in a transient systemd scope, so the kernel
+    # kills the command instead of the daemon.
+    #
+    # Values are systemd memory specs: a percentage of physical memory or an
+    # absolute size (e.g. "2G", "512M"). Percentages survive a VM resize.
+    # MemoryMax is the hard limit where the cgroup OOM killer fires; empty
+    # disables that limit.
+    #
+    # 40% of this 3.8 GB host caps one command at ~1.5 GB, which still leaves
+    # the daemon, Marimo, Television and Syncthing resident. Raise it on a host
+    # with more RAM rather than removing it.
+    resource_limits_enabled: bool = True
+    memory_max: str = "40%"
+    # Empty by default, and that is deliberate. MemoryHigh is a soft threshold
+    # at which the kernel starts reclaiming rather than killing. With swap
+    # allowed that means "page out and survive". With memory_swap_max="0" there
+    # is nowhere to reclaim to, so the kernel instead THROTTLES the allocating
+    # process: it slows to a crawl, holds its memory, and never trips
+    # MemoryMax. The command then burns its entire timeout before being
+    # SIGTERM'd, and the agent sees a timeout rather than "you hit your memory
+    # cap". A hard cap plus swap disabled gives a fast, unambiguous kill, which
+    # is what a runaway should get. Set a value here only if you also allow
+    # swapping (memory_swap_max > 0) and want graceful reclaim.
+    memory_high: str = ""
+    # A cgroup's memory.swap.max defaults to "max", so a memory cap alone would
+    # let a runaway spill into swap instead of dying — moving the thrash rather
+    # than preventing it. Keep this at "0" unless you deliberately want capped
+    # commands to be able to swap.
+    memory_swap_max: str = "0"
+    # Relative CPU share (systemd's own default is 100). Lowering it means a
+    # command that pins every core still leaves the daemon and SSH scheduled.
+    # None = systemd default, i.e. no explicit CPUWeight property.
+    cpu_weight: int | None = 50
+    # Hard task (thread/process) count for the scope. A runaway recursive
+    # script or fork bomb hits this instead of consuming the host's pid space.
+    # None = systemd default.
+    tasks_max: int | None = 512
 
 
 @dataclass

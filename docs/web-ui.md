@@ -127,6 +127,13 @@ never grabs focus mid-turn. The policy lives in `static/lib/chat-focus.js`;
 fires on *every* WebSocket message, so a looser condition there steals focus
 on each streamed chunk.
 
+On a touch-primary device (`(pointer: coarse)`) the composer never takes focus
+by itself: no conversation switch, no turn end, no initial load. The soft
+keyboard would cover half the transcript while the user just wants to read, so
+they tap the field when they mean to type. `⌘/` still focuses it. The query is
+pointer-based rather than the 639px breakpoint because a landscape phone is
+wider than the breakpoint but still keyboard-obscuring.
+
 ### Side Questions (Explanation Only)
 
 During an active or long-running turn, users can ask out-of-band explanation questions without interrupting or steering the main agent loop (#1141).

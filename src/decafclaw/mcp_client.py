@@ -170,19 +170,23 @@ def _namespace_tool(server_name: str, tool_name: str) -> str:
     return f"mcp__{_normalize_server_segment(server_name)}__{tool_name}"
 
 
-def _parse_namespace(namespaced: str) -> tuple[str, str] | None:
-    """Parse a namespaced MCP tool name into (server_segment, tool_name).
+def parse_mcp_tool_name(name: str) -> tuple[str, str] | None:
+    """Parse an ``mcp__<server>__<tool>`` name into (server, tool).
 
-    Note: the returned ``server_segment`` is the normalized form
-    (hyphens replaced with underscores). It will not match an original
-    MCP server name if the server had hyphens. Callers that need the
-    original server name should look it up via the registry.
+    The returned server segment is the normalized form
+    (hyphens replaced with underscores) as advertised by
+    ``_namespace_tool``. It will not match an original MCP server name if
+    the server had hyphens; callers that need the original server name
+    should look it up via the registry.
 
-    Returns None if the name doesn't match the mcp__<server>__<tool> pattern.
+    Returns None if the name doesn't match the mcp__<server>__<tool>
+    pattern (non-MCP names, or missing/empty segments). This is the single
+    parse helper for MCP tool identifiers — use it instead of ad-hoc
+    ``name.split("__", 2)``.
     """
-    if not namespaced.startswith("mcp__"):
+    if not name.startswith("mcp__"):
         return None
-    rest = namespaced[5:]  # after "mcp__"
+    rest = name[5:]  # after "mcp__"
     parts = rest.split("__", 1)
     if len(parts) != 2 or not parts[0] or not parts[1]:
         return None
@@ -819,13 +823,15 @@ class MCPRegistry:
         timeout_s = timeout_ms / 1000
 
         async def call_tool(arguments):
+            from .media import ToolResult
+
             # Try auto-reconnect if server is down
             if not await self._maybe_reconnect(server_name):
-                return f"[error: MCP server {server_name} is not available]"
+                return ToolResult(text=f"[error: MCP server {server_name} is not available]")
 
             state = self.servers.get(server_name)
             if not state or not state.session:
-                return f"[error: MCP server {server_name} has no active session]"
+                return ToolResult(text=f"[error: MCP server {server_name} has no active session]")
 
             try:
                 result = await asyncio.wait_for(
@@ -834,12 +840,12 @@ class MCPRegistry:
                 )
                 return _convert_mcp_response(result)
             except asyncio.TimeoutError:
-                return f"[error: MCP tool {tool_name} on {server_name} timed out after {timeout_s}s]"
+                return ToolResult(text=f"[error: MCP tool {tool_name} on {server_name} timed out after {timeout_s}s]")
             except Exception as e:
                 # Mark server as failed for auto-restart on next call
                 if state:
                     state.status = ConnState.FAILED
-                return f"[error: MCP tool {tool_name} on {server_name} failed: {e}]"
+                return ToolResult(text=f"[error: MCP tool {tool_name} on {server_name} failed: {e}]")
 
         return call_tool
 

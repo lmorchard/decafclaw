@@ -446,10 +446,13 @@ Settings for shell command execution and pre-approval logic (see #473).
 | `aux_approval_guidance` | str | `""` | `SHELL_AUX_APPROVAL_GUIDANCE` |
 | `aux_approval_presets` | dict | `{}` | `SHELL_AUX_APPROVAL_PRESETS` |
 | `active_aux_approval_presets` | list[str] | `[]` | `SHELL_ACTIVE_AUX_APPROVAL_PRESETS` |
+| `activity_window` | int | `50` | `SHELL_ACTIVITY_WINDOW` |
 | `foreground_wait_budget_sec` | float \| None | `None` | `SHELL_FOREGROUND_WAIT_BUDGET_SEC` |
 | `max_runtime_sec` | float | `30.0` | `SHELL_MAX_RUNTIME_SEC` |
 
 When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxiliary LLM to screen unrecognized commands. If the aux LLM deems the command low-risk (e.g. `ls -la`, `git status`), it is auto-approved without prompting the user. If the aux LLM deems it risky or errors out, it falls through to standard interactive confirmation. Auto-approved patterns are temporarily cached per-conversation so repeated benign commands don't trigger redundant LLM calls.
+
+`activity_window` (#1641) is how many recent shell calls define a conversation's established activity. A command whose activity domain (derived from `cwd` and command tokens) appears in that window proceeds to the aux judge; a command that starts a new activity is confirmed once with the direction stated. The window is recomputed from conversation history, so compaction resets it naturally. `0` or a negative value disables the window (all history counts) and re-creates the stale-direction failure the window exists to avoid; lower values make drift prompt sooner. See [Tools — Direction-aware approval](tools.md#direction-aware-approval-1641).
 
 #### Foreground time budget (#1136)
 
@@ -548,11 +551,19 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 | `reasoning_effort` | str or null | `null` | OpenAI Responses only: reasoning effort; omitted/null uses model default |
 | `supports_vision` | bool or null | `null` | Tri-state vision capability (#1143): `false` turns every inbound image into an omission notice; `null`/true budgets normally |
 
+<<<<<<< HEAD
 `default_model` (top-level string) sets which model config to use when none is explicitly selected. Env override: `DECAFCLAW_DEFAULT_MODEL`.
 
 `auxiliary_model` (top-level string) sets the model config to use for background operations like compaction or scoring, where speed or cost might be prioritized over reasoning capability. If unset, these operations fall back to the active conversation model or `default_model`. Env override: `DECAFCLAW_AUXILIARY_MODEL`.
 
 Both resolve env var > config file > empty (first non-empty wins), like the other top-level scalars. An unset or empty env var falls through to the config file value; a non-empty one wins outright.
+=======
+`default_model` (top-level string, env `DEFAULT_MODEL`) sets which model config to use when none is explicitly selected.
+
+`auxiliary_model` (top-level string, env `AUXILIARY_MODEL`) sets the model config to use for background operations like compaction or scoring, where speed or cost might be prioritized over reasoning capability. If unset, these operations fall back to the active conversation model or `default_model`.
+
+Both resolve through the shared top-level scalar path: env var > config.json > default (first non-empty wins).
+>>>>>>> origin/main
 
 **Migration:** If no `providers`/`model_configs` sections exist but the `llm` section is present, a "default" `openai-compat` provider and model config are auto-generated from the `llm` values.
 

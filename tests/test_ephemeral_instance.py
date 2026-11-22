@@ -27,7 +27,7 @@ TOOL_RESPONSES = REPO_ROOT / "tests" / "fixtures" / "ephemeral" / "tool-roundtri
 CONFIRM_RESPONSES = REPO_ROOT / "tests" / "fixtures" / "ephemeral" / "confirmation-halt.responses.json"
 
 TOOL_PROMPT = "Write the exact text hello to the file notes.txt in the workspace."
-SHELL_PROMPT = "Run the shell command: echo hello"
+SHELL_PROMPT = "Run the shell command: touch marker.txt"
 
 
 def _run_launcher(responses: Path, prompts: list[str], *extra: str) -> subprocess.CompletedProcess:
@@ -99,7 +99,7 @@ def test_ephemeral_confirmation_halt():
     assert summary["confirmations"], "expected a recorded confirmation gate"
     conf = summary["confirmations"][0]
     assert conf["tool"] == "shell"
-    assert conf["command"] == "echo hello"
+    assert conf["command"] == "touch marker.txt"
 
     _child_pid_gone(proc)
     _temp_dir_gone(proc)

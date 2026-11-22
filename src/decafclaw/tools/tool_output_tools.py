@@ -17,16 +17,20 @@ log = logging.getLogger(__name__)
 MAX_PAGE_BYTES = 64 * 1024
 
 
-def _page_text(handle: str, page) -> str:
+def _page_result(handle: str, page) -> ToolResult:
     if page.state == DENIED:
-        return f"[error: {handle} belongs to another conversation; its content is not readable from this conversation]"
+        return ToolResult(
+            text=f"[error: {handle} belongs to another conversation; its content is not readable from this conversation]"
+        )
     if page.state == MISSING:
-        return (
-            f"[error: no saved output for {handle}. The artifact may have been deleted, "
-            "or the tool result was never large enough to be saved.]"
+        return ToolResult(
+            text=(
+                f"[error: no saved output for {handle}. The artifact may have been deleted, "
+                "or the tool result was never large enough to be saved.]"
+            )
         )
     if page.state == FAILED:
-        return f"[error: saved output for {handle} is unreadable: {page.message}]"
+        return ToolResult(text=f"[error: saved output for {handle} is unreadable: {page.message}]")
 
     parts = [page.content]
     if page.next_offset is not None:
@@ -39,7 +43,17 @@ def _page_text(handle: str, page) -> str:
             f"[saved artifact holds the first {page.stored_bytes} of {page.total_bytes} bytes; "
             "the rest was not captured when the output was truncated.]"
         )
-    return "\n\n".join(part for part in parts if part)
+    text = "\n\n".join(part for part in parts if part)
+    return ToolResult(
+        text=text,
+        data={
+            "state": page.state,
+            "offset": page.offset,
+            "next_offset": page.next_offset,
+            "total_bytes": page.total_bytes,
+            "stored_bytes": page.stored_bytes,
+        },
+    )
 
 
 async def tool_output_read(
@@ -61,19 +75,7 @@ async def tool_output_read(
     except ValueError as exc:
         return ToolResult(text=f"[error: {exc}]")
 
-    text = _page_text(handle, page)
-    if page.state in (DENIED, MISSING, FAILED):
-        return ToolResult(text=text)
-    return ToolResult(
-        text=text,
-        data={
-            "state": page.state,
-            "offset": page.offset,
-            "next_offset": page.next_offset,
-            "total_bytes": page.total_bytes,
-            "stored_bytes": page.stored_bytes,
-        },
-    )
+    return _page_result(handle, page)
 
 
 TOOL_OUTPUT_TOOLS = {
