@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from decafclaw.security_monitor import (
+    SYSTEM_EXEC_DIRS,
     SecurityStatus,
     evaluate_command,
     evaluate_command_llm,
@@ -116,7 +117,10 @@ def test_env_assignment_prefix_identifies_system_executable(tmp_path: Path):
     assert decision.status == SecurityStatus.ALLOW
 
     decision = evaluate_command("FOO=bar /usr/bin/env python script.py", workspace_path=workspace)
-    assert decision.status == SecurityStatus.ALLOW
+    assert decision.status == SecurityStatus.ALLOW, (
+        f"{decision.reason}; resolved={Path('/usr/bin/env').resolve()}; "
+        f"dirs={sorted(str(path) for path in SYSTEM_EXEC_DIRS)}"
+    )
 
     decision = evaluate_command("FOO=bar /opt/custom/bin/python script.py", workspace_path=workspace)
     assert decision.status == SecurityStatus.ASK
