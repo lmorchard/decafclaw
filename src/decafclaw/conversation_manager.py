@@ -30,7 +30,7 @@ from .confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
-from .context import TaskMode
+from .context import TaskMode, TokenUsage
 from .context_types import InjectionCursors
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
@@ -127,6 +127,48 @@ def _turn_settle_outcome(is_cancelled: bool, reason: TerminationReason | None) -
     if reason is TerminationReason.ERROR:
         return "failed"
     return "completed"
+
+
+def _build_message_complete(
+    response_text: str,
+    media: list[dict],
+    *,
+    suppress_user_message: bool = False,
+    tokens: TokenUsage,
+    context_limit: int,
+    thinking: str | None = None,
+    provenance: dict[str, list[dict]] | None = None,
+) -> dict:
+    """Assemble the ``message_complete`` payload for a completed agent turn.
+
+    Pure builder (#1346): returns the event dict without emitting it, so
+    the payload shape is unit-testable in isolation. ``context_usage``
+    prefers a recorded post-compaction estimate over the last prompt size
+    (#1005); ``thinking`` and ``provenance`` are included only when
+    present so ordinary turns keep the minimal wire shape.
+    """
+    payload: dict = {
+        "type": "message_complete",
+        "role": "assistant",
+        "text": response_text,
+        "media": media,
+        "final": True,
+        "suppress_user_message": suppress_user_message,
+        "usage": {
+            "prompt_tokens": tokens.last_prompt,
+            "completion_tokens": tokens.total_completion,
+            "total_tokens": (tokens.total_prompt + tokens.total_completion),
+        },
+        "context_usage": (
+            tokens.last_compaction_estimate if tokens.last_compaction_estimate is not None else tokens.last_prompt
+        ),
+        "context_limit": context_limit,
+    }
+    if thinking:
+        payload["thinking"] = thinking
+    if provenance:
+        payload["provenance"] = provenance
+    return payload
 
 
 class TurnKind(Enum):
@@ -2229,30 +2271,15 @@ class ConversationManager:
                     if state.partial_assistant_thinking_chunks
                     else None
                 )
-                msg_complete_payload = {
-                    "type": "message_complete",
-                    "role": "assistant",
-                    "text": response_text,
-                    "media": response_media,
-                    "final": True,
-                    "suppress_user_message": suppress,
-                    "usage": {
-                        "prompt_tokens": ctx.tokens.last_prompt,
-                        "completion_tokens": ctx.tokens.total_completion,
-                        "total_tokens": (ctx.tokens.total_prompt + ctx.tokens.total_completion),
-                    },
-                    "context_usage": (
-                        ctx.tokens.last_compaction_estimate
-                        if ctx.tokens.last_compaction_estimate is not None
-                        else ctx.tokens.last_prompt
-                    ),
-                    "context_limit": self.config.compaction.max_tokens,
-                }
-                if response_thinking:
-                    msg_complete_payload["thinking"] = response_thinking
-                provenance = dict(ctx.composer.last_provenance)
-                if provenance:
-                    msg_complete_payload["provenance"] = provenance
+                msg_complete_payload = _build_message_complete(
+                    response_text,
+                    response_media,
+                    suppress_user_message=suppress,
+                    tokens=ctx.tokens,
+                    context_limit=self.config.compaction.max_tokens,
+                    thinking=response_thinking,
+                    provenance=dict(ctx.composer.last_provenance),
+                )
                 await self.emit(conv_id, msg_complete_payload)
                 if kind is TurnKind.WAKE and not suppress and not state.subscribers:
                     transport = getattr(ctx, "transport", "")
