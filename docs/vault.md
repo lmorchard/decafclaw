@@ -164,6 +164,9 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_tags()` | List every tag in use across the vault with usage counts, sorted by count descending (tie-broken by tag name). Thin wrapper over `collect_all_tags` (#318) — enumerates the tag vocabulary itself, distinct from `vault_search`'s content-filtering `tags` parameter. |
 | `vault_backlinks(page)` | Find pages linking to this page via `[[wiki-links]]`. |
 | `vault_graph_report(sections?, top_n?)` | One-call deterministic census of the agent-page link graph: totals, weakly-connected components, isolates, orphans, sinks, toeholds, and a bounded per-page inbound/outbound/PageRank table. Inbound counts include agent pages, journals, and user notes; components/isolates cover agent pages. Read-only — no LLM, network, or embedding calls. |
+| `vault_broken_links(limit?)` | List unresolved `[[wiki-links]]` in agent pages with line numbers and `difflib` nearest-match suggestions. Resolution uses the same alias/anchor-stripping rules as the backlink index. Read-only. |
+| `vault_frontmatter_audit(limit?)` | Report malformed YAML, missing `summary`/`keywords`/`tags`/`importance`, oversized pages, missing `> tl;dr:`, and an advisory stale-summary token-overlap hint. Counts plus bounded examples; read-only. |
+| `vault_find_duplicate_candidates(threshold?, limit?)` | High-similarity agent-page pairs from the existing embedding index. Queries stored vectors only — never re-embeds or merges; pages missing from the index are skipped. |
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
 | `vault_section(page, action, section?, title?, level?, content?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. `add` takes `content` so a new section arrives with its body in one call; `level` is inferred from the anchor when omitted (see [Section paths](#section-paths-671)). |
@@ -278,6 +281,28 @@ sources. `vault_graph_report` uses it for the bounded per-page table and
 reports weakly-connected agent-page components, isolates, sinks, and
 toeholds in one read-only call — replacing a page-by-page `vault_backlinks`
 survey. Everything is deterministic; no embeddings or model calls.
+
+### Deterministic audit tools (#1716)
+
+Garden's `vault_broken_links`, `vault_frontmatter_audit`, and
+`vault_find_duplicate_candidates` are read-only census tools. They replace
+"read every page and notice problems" with an exact list:
+
+- `vault_broken_links` scans agent pages, resolves each `[[link]]` with the
+  same lookup maps as the backlink index (aliases and `#Section` anchors
+  are stripped), and returns misses with line numbers and
+  `difflib` nearest-match suggestions.
+- `vault_frontmatter_audit` uses the lexical `split_frontmatter` +
+  `parse_frontmatter_block` pair so malformed YAML is reported instead of
+  disappearing into `{}`. It also reports missing fields, oversized pages,
+  missing `> tl;dr:`, and an advisory stale-summary token-overlap hint.
+- `vault_find_duplicate_candidates` reads the existing `embeddings_vec`
+  table and queries each stored page vector, returning de-duplicated
+  high-similarity pairs. It never calls an embedding provider and never
+  merges; a page missing from the index is skipped.
+
+All three are deterministic and bounded (`limit`), with counts kept separate
+from the example lists.
 
 ### Importance recompute (#197)
 

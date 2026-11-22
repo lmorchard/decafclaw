@@ -519,6 +519,82 @@ def search_similar_sync(
     return results[:top_k]
 
 
+def find_similar_page_pairs(
+    config,
+    *,
+    threshold: float = 0.9,
+    limit: int = 20,
+    source_type: str = "page",
+    path_prefix: str | None = None,
+) -> tuple[list[dict], int]:
+    """Find high-similarity pairs in the existing index without re-embedding.
+
+    Queries each stored vector against ``embeddings_vec`` (one connection,
+    no provider calls) and returns ``(pairs, indexed_pages)``. Pairs are
+    de-duplicated as ``(a, b)`` with ``a < b`` and sorted by similarity
+    descending. ``indexed_pages`` counts distinct pages under
+    ``path_prefix`` that have a stored vector. Missing DB or dimension
+    mismatch returns ``([], 0)`` rather than creating/reindexing anything.
+    """
+    db_path = _db_path(config)
+    if not db_path.exists():
+        return [], 0
+
+    threshold = max(0.0, min(1.0, threshold))
+    limit = max(0, limit)
+    per_page = max(10, min(max(limit, 1) * 3, 100))
+    best: dict[tuple[str, str], float] = {}
+    indexed: set[str] = set()
+
+    with _open_db(config) as conn:
+        if _index_mismatch(conn, _effective_dimensions(config)):
+            return [], 0
+        rows = conn.execute(
+            """SELECT m.id, m.file_path, v.embedding
+               FROM memory_embeddings m
+               JOIN embeddings_vec v ON v.rowid = m.id
+               WHERE m.source_type = ?""",
+            (source_type,),
+        ).fetchall()
+        page_paths = {rowid: file_path for rowid, file_path, _blob in rows}
+        if path_prefix is not None:
+            indexed = {path for path in page_paths.values() if path.startswith(path_prefix)}
+        else:
+            indexed = set(page_paths.values())
+
+        for rowid, file_path, blob in rows:
+            if path_prefix is not None and not file_path.startswith(path_prefix):
+                continue
+            hits = conn.execute(
+                """SELECT rowid, distance
+                   FROM embeddings_vec
+                   WHERE embedding MATCH ?
+                   ORDER BY distance
+                   LIMIT ?""",
+                (blob, per_page),
+            ).fetchall()
+            for hit_rowid, distance in hits:
+                if hit_rowid == rowid:
+                    continue
+                other_path = page_paths.get(hit_rowid)
+                if other_path is None or other_path == file_path:
+                    continue
+                if path_prefix is not None and not other_path.startswith(path_prefix):
+                    continue
+                similarity = 1.0 - float(distance)
+                if similarity < threshold:
+                    continue
+                pair = (file_path, other_path) if file_path < other_path else (other_path, file_path)
+                if similarity > best.get(pair, -1.0):
+                    best[pair] = similarity
+
+    pairs = [
+        {"a": a, "b": b, "similarity": round(similarity, 6)}
+        for (a, b), similarity in sorted(best.items(), key=lambda item: (-item[1], item[0]))
+    ][:limit]
+    return pairs, len(indexed)
+
+
 async def index_entry(config, file_path: str, entry_text: str, source_type: str = "memory"):
     """Embed and index an entry (async)."""
     embedding = await embed_text(config, entry_text)

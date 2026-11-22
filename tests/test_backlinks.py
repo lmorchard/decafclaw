@@ -110,6 +110,14 @@ class TestRebuildIndex:
         assert index["PageC.md"] == ["PageA.md", "PageB.md"]
         assert "PageA.md" not in index  # nothing links to A
 
+    def test_resolves_heading_anchors_and_aliases(self, config, vault_dir):
+        (vault_dir / "PageA.md").write_text("# A\n\nLinks to [[PageB#Section|display]] and [[PageB#Other]].")
+        (vault_dir / "PageB.md").write_text("# B\n")
+
+        index = rebuild_index(config)
+
+        assert index["PageB.md"] == ["PageA.md"]
+
     def test_persists_human_readable_json(self, config, vault_dir):
         (vault_dir / "PageA.md").write_text("# A\n\nLinks to [[PageB]].")
         (vault_dir / "PageB.md").write_text("# B")
