@@ -10,7 +10,15 @@ from typing import Any
 import httpx
 import httpx_sse
 
-from ..types import LLMRetryExhaustedError, StreamCallback
+from ..types import (
+    FINISH_REASON_CANCELLED,
+    FINISH_REASON_ERROR,
+    FINISH_REASON_LENGTH,
+    FINISH_REASON_STOP,
+    FINISH_REASON_TOOL_CALLS,
+    LLMRetryExhaustedError,
+    StreamCallback,
+)
 from .openai import OpenAIProvider
 from .openai_compat import _MAX_RETRIES, _cancellable_sleep, _RetryableError
 
@@ -161,7 +169,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
             body["stream"] = True
         state = _ResponsesState(self._provenance(model), on_chunk)
         if cancel_event and cancel_event.is_set():
-            state.finish_reason = "cancelled"
+            state.finish_reason = FINISH_REASON_CANCELLED
         else:
             request = asyncio.create_task(self._request(body, timeout, streaming, state, cancel_event))
             watcher = asyncio.create_task(cancel_event.wait()) if cancel_event else None
@@ -169,7 +177,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 if watcher:
                     done, _ = await asyncio.wait([request, watcher], return_when=asyncio.FIRST_COMPLETED)
                     if watcher in done:
-                        state.finish_reason = "cancelled"
+                        state.finish_reason = FINISH_REASON_CANCELLED
                         request.cancel()
                         await asyncio.gather(request, return_exceptions=True)
                     else:
@@ -221,7 +229,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 if not state.has_output:
                     raise
                 log.debug("Responses stream interrupted; partial output kept: %s", exc)
-                state.finish_reason = "error"
+                state.finish_reason = FINISH_REASON_ERROR
                 return
 
     @staticmethod
@@ -241,7 +249,7 @@ class _ResponsesState:
         self.text: list[str] = []
         self.thinking: list[str] = []
         self.response: dict | None = None
-        self.finish_reason = "error"  # EOF is not successful completion.
+        self.finish_reason = FINISH_REASON_ERROR  # EOF is not successful completion.
         self.terminal = False
         self.started: set[int] = set()
 
@@ -272,14 +280,16 @@ class _ResponsesState:
         self.terminal = True
         if status == "completed":
             self.finish_reason = (
-                "tool_calls" if any(item["type"] == "function_call" for item in self.items.values()) else "stop"
+                FINISH_REASON_TOOL_CALLS
+                if any(item["type"] == "function_call" for item in self.items.values())
+                else FINISH_REASON_STOP
             )
         elif status == "incomplete" and (response.get("incomplete_details") or {}).get("reason") == "max_output_tokens":
-            self.finish_reason = "length"
+            self.finish_reason = FINISH_REASON_LENGTH
         elif status == "cancelled":
-            self.finish_reason = "cancelled"
+            self.finish_reason = FINISH_REASON_CANCELLED
         else:
-            self.finish_reason = "error"
+            self.finish_reason = FINISH_REASON_ERROR
         if status == "failed" and not self.has_output and response.get("error"):
             raise RuntimeError(f"LLM Responses error: {response['error'].get('message', 'request failed')}")
 
@@ -317,7 +327,7 @@ class _ResponsesState:
         elif kind in ("response.completed", "response.incomplete", "response.failed"):
             self.accept_response(event["response"])
         elif kind == "error":
-            self.finish_reason, self.terminal = "error", True
+            self.finish_reason, self.terminal = FINISH_REASON_ERROR, True
             raise RuntimeError(f"LLM Responses error: {event.get('message', 'stream failed')}")
         # Other lifecycle/content/reasoning-summary events do not change the
         # existing callback contract. Their complete items carry replay state.
@@ -355,6 +365,6 @@ class _ResponsesState:
             "usage": usage,
             "finish_reason": self.finish_reason,
         }
-        if self.finish_reason in ("stop", "tool_calls"):
+        if self.finish_reason in (FINISH_REASON_STOP, FINISH_REASON_TOOL_CALLS):
             result["provider_data"] = {"openai_responses": {**self.provenance, "output": deepcopy(output)}}
         return result
