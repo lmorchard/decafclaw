@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import shlex
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -1741,15 +1742,30 @@ async def _execute_command(
     # its memory or pid budget. An empty prefix means "no caps available" and
     # the command runs exactly as before.
     #
-    # ``sh -c`` is passed EXPLICITLY. create_subprocess_shell would otherwise
-    # supply its own ["-c", command], which systemd-run would read as options
-    # meant for itself rather than the command to run.
+    # Argument escaping: in systemd < 256 (e.g. Debian 12 / Ubuntu 24.04), the
+    # service manager expands environment variables and specifiers on every
+    # argument in ExecStart, unescaping "$$" to "$" and expanding "$VAR". Passing
+    # an arbitrary shell command directly on systemd-run's argv would corrupt
+    # script text (e.g. `echo $$` becoming `echo $`).
+    #
+    # We bounce through a one-line Python launcher that reads the command from
+    # the process environment (DECAFCLAW_SHELL_CMD) and execl()s /bin/sh in place.
+    # Systemd-run's argv stays fixed and free of "$", while execl keeps the same
+    # PID, process group, cgroup, and file descriptors.
     cap_prefix = shell_cap_prefix(ctx.config, label="shell")
+    if cap_prefix:
+        env["DECAFCLAW_SHELL_CMD"] = command
+        spawn_args = [
+            *cap_prefix,
+            sys.executable,
+            "-c",
+            "import os; os.execl('/bin/sh', 'sh', '-c', os.environ['DECAFCLAW_SHELL_CMD'])",
+        ]
+    else:
+        spawn_args = ["/bin/sh", "-c", command]
+
     process = await asyncio.create_subprocess_exec(
-        *cap_prefix,
-        "/bin/sh",
-        "-c",
-        command,
+        *spawn_args,
         cwd=cwd or str(ctx.config.workspace_path),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

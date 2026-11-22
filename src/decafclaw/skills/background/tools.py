@@ -3,7 +3,9 @@
 import asyncio
 import codecs
 import logging
+import os
 import re
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -604,20 +606,34 @@ class BackgroundJobManager:
         # Same cgroup caps as the foreground shell path: a long-running command
         # is more likely to grow, not less, so a background job that outgrows
         # its budget must die in its scope rather than starve the daemon.
+        #
+        # See shell_tools._execute_command for why the command text bounces
+        # through DECAFCLAW_SHELL_CMD + execl instead of sitting on argv:
+        # systemd < 256 unescapes "$$" to "$" and expands "$VAR" in ExecStart.
         cap_prefix = shell_cap_prefix(config, label="background command")
-        # ``sh -c`` is passed explicitly: create_subprocess_shell would supply
-        # its own ["-c", command], which systemd-run would read as options for
-        # itself rather than the command to run.
+        if env is None:
+            child_env = os.environ.copy()
+        else:
+            child_env = env.copy()
+
+        if cap_prefix:
+            child_env["DECAFCLAW_SHELL_CMD"] = command
+            spawn_args = [
+                *cap_prefix,
+                sys.executable,
+                "-c",
+                "import os; os.execl('/bin/sh', 'sh', '-c', os.environ['DECAFCLAW_SHELL_CMD'])",
+            ]
+        else:
+            spawn_args = ["/bin/sh", "-c", command]
+
         process = await asyncio.create_subprocess_exec(
-            *cap_prefix,
-            "/bin/sh",
-            "-c",
-            command,
+            *spawn_args,
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
-            env=env,
+            env=child_env,
         )
 
         preset = parse_progress_preset(progress_parser)

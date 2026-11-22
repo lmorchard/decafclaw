@@ -11,6 +11,7 @@ parse the command as its own options, so every capped command would fail to
 start.
 """
 
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -125,10 +126,12 @@ async def test_execute_command_prepends_prefix_before_explicit_sh_c(ctx, monkeyp
 
     args = captured["args"]
     assert args[:2] == ("systemd-run", "--")
-    # The command is handed to sh EXPLICITLY, never via create_subprocess_shell's
-    # implicit -c, or systemd-run would consume it as an option.
-    assert args[2:4] == ("/bin/sh", "-c")
-    assert args[4] == "echo hi"
+    # Command text is passed via DECAFCLAW_SHELL_CMD through a Python trampoline
+    # so systemd's unit parser never sees it (systemd < 256 unescapes $$ to $).
+    assert captured["kwargs"]["env"]["DECAFCLAW_SHELL_CMD"] == "echo hi"
+    assert args[2] == sys.executable
+    assert args[3] == "-c"
+    assert "DECAFCLAW_SHELL_CMD" in args[4]
 
 
 @pytest.mark.asyncio
@@ -230,6 +233,7 @@ async def test_background_start_prepends_prefix_before_explicit_sh_c(monkeypatch
 
     async def _fake_exec(*args, **kwargs):
         captured["args"] = args
+        captured["kwargs"] = kwargs
         return _FakeProc()
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec)
@@ -254,8 +258,10 @@ async def test_background_start_prepends_prefix_before_explicit_sh_c(monkeypatch
 
     args = captured["args"]
     assert args[:2] == ("systemd-run", "--")
-    assert args[2:4] == ("/bin/sh", "-c")
-    assert args[4] == "echo hi"
+    assert captured["kwargs"]["env"]["DECAFCLAW_SHELL_CMD"] == "echo hi"
+    assert args[2] == sys.executable
+    assert args[3] == "-c"
+    assert "DECAFCLAW_SHELL_CMD" in args[4]
 
 
 @pytest.mark.asyncio
