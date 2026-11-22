@@ -20,7 +20,7 @@ See also:
 | `TOOL_CONTEXT_BUDGET_PCT` | 0.10 | Fraction of the selected model's effective context window used as the tool definition budget |
 | `CRITICAL_TOOLS` | (empty) | Comma-separated tool names to force-promote to `critical` priority |
 
-The effective budget is `effective_context_window(selected model) * TOOL_CONTEXT_BUDGET_PCT` (#1718). The window ladder prefers the model's declared `context_window_size`, then `LLM_CONTEXT_WINDOW_SIZE`, then `COMPACTION_MAX_TOKENS`. With no window declared, the final fallback keeps the old `COMPACTION_MAX_TOKENS * TOOL_CONTEXT_BUDGET_PCT` behaviour: the default 100K compaction threshold and 10% budget defer normal tools once the active set exceeds ~10K tokens. A 32K-window model gets a 3.2K tool budget instead of inheriting 10K–30K from the compaction proxy.
+The effective budget is `effective_context_window(selected model) * TOOL_CONTEXT_BUDGET_PCT` (#1718). The window ladder prefers the model's declared `context_window_size`, then the `llm.context_window_size` setting, then `compaction.max_tokens`. With no window declared, the final fallback keeps the old `compaction.max_tokens * TOOL_CONTEXT_BUDGET_PCT` behaviour: the default 100K compaction threshold and 10% budget defer normal tools once the active set exceeds ~10K tokens. A 32K-window model gets a 3.2K tool budget instead of inheriting 10K–30K from the compaction proxy.
 
 ## Critical Tools (defaults)
 
