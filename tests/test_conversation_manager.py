@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from decafclaw.archive import read_archive
+from decafclaw.context import TokenUsage
 from decafclaw.context_types import InjectionCursors
 from decafclaw.conversation_manager import (
     _CTX_DRIVEN_FIELDS,
@@ -22,6 +23,7 @@ from decafclaw.conversation_manager import (
     ConversationManager,
     PersistedTurnState,
     TurnKind,
+    _build_message_complete,
     _write_cancel_archive,
 )
 from decafclaw.events import EventBus
@@ -881,6 +883,72 @@ async def test_message_complete_context_usage_falls_back_without_compaction_1005
     assert completes
     assert completes[-1]["context_usage"] == 9_876
     assert completes[-1]["usage"]["prompt_tokens"] == 9_876
+
+
+# -- message_complete payload builder (#1346) ---------------------------------
+
+
+def test_build_message_complete_payload_shape():
+    """#1346 — the extracted builder returns the full message_complete payload:
+    usage from the turn's token counters, context_usage falling back to
+    last_prompt without a compaction estimate, and the configured limit."""
+    tokens = TokenUsage(total_prompt=100, total_completion=50, last_prompt=80)
+    payload = _build_message_complete(
+        "hello",
+        [{"file_id": "f1"}],
+        suppress_user_message=False,
+        tokens=tokens,
+        context_limit=100_000,
+    )
+    assert payload == {
+        "type": "message_complete",
+        "role": "assistant",
+        "text": "hello",
+        "media": [{"file_id": "f1"}],
+        "final": True,
+        "suppress_user_message": False,
+        "usage": {
+            "prompt_tokens": 80,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+        },
+        "context_usage": 80,
+        "context_limit": 100_000,
+    }
+
+
+def test_build_message_complete_prefers_compaction_estimate():
+    """#1346/#1005 — a recorded post-compaction estimate wins over last_prompt
+    for context_usage; usage keeps the honest per-call counters."""
+    tokens = TokenUsage(
+        total_prompt=50_000,
+        total_completion=10,
+        last_prompt=50_000,
+        last_compaction_estimate=12_345,
+    )
+    payload = _build_message_complete("done", [], tokens=tokens, context_limit=100_000)
+    assert payload["context_usage"] == 12_345
+    assert payload["usage"]["prompt_tokens"] == 50_000
+
+
+def test_build_message_complete_optional_thinking_and_provenance():
+    """#1346 — thinking and provenance appear only when present, so the wire
+    shape stays minimal for ordinary turns."""
+    tokens = TokenUsage()
+    bare = _build_message_complete("plain", [], tokens=tokens, context_limit=10)
+    assert "thinking" not in bare
+    assert "provenance" not in bare
+
+    with_extras = _build_message_complete(
+        "thoughtful",
+        [],
+        tokens=tokens,
+        context_limit=10,
+        thinking="hmm",
+        provenance={"skill:foo": [{"name": "bar"}]},
+    )
+    assert with_extras["thinking"] == "hmm"
+    assert with_extras["provenance"] == {"skill:foo": [{"name": "bar"}]}
 
 
 @pytest.mark.asyncio
