@@ -17,6 +17,8 @@ from ..media import ToolResult
 from ..skills import (
     CheckResult,
     find_misplaced_skills,
+    find_skill,
+    index_skills,
     is_discoverable_skill_dir,
     validate_skill_md,
 )
@@ -650,10 +652,10 @@ async def restore_skills(ctx: "Context") -> None:
     if not skill_names:
         return
     discovered = ctx.config.discovered_skills
-    skill_map = {s.name: s for s in discovered}
+    skill_map = index_skills(discovered)
     existing_tools = set(ctx.tools.extra.keys())
     for name in list(skill_names):
-        skill_info = skill_map.get(name)
+        skill_info = find_skill(skill_map, name)
         if not skill_info or not skill_info.has_native_tools:
             continue
 
@@ -704,20 +706,12 @@ def _core_tool_names() -> set[str]:
     return {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
 
 
-def _find_skill(discovered, name: str):
-    """Return the discovered SkillInfo named `name`, or None."""
-    for s in discovered:
-        if s.name == name:
-            return s
-    return None
-
-
 async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
     """Activate a skill to make its capabilities available in this conversation."""
     log.info(f"[tool:activate_skill] name={name}")
 
     # Find the skill in discovered skills
-    skill_info = _find_skill(ctx.config.discovered_skills, name)
+    skill_info = find_skill(index_skills(ctx.config.discovered_skills), name)
 
     if skill_info is None:
         # Catalog miss. The skill may have been written earlier in this same
@@ -728,7 +722,7 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
         # Re-scan once before giving up, which also repairs the catalog so
         # restore_skills finds the skill on later turns.
         await asyncio.to_thread(rediscover_skills, ctx.config)
-        skill_info = _find_skill(ctx.config.discovered_skills, name)
+        skill_info = find_skill(index_skills(ctx.config.discovered_skills), name)
 
     if skill_info is None:
         return ToolResult(text=f"[error: skill '{name}' not found. Check Available Skills in your instructions.]")

@@ -20,12 +20,14 @@ from decafclaw.skills import (
     build_catalog_text,
     build_skill_info,
     discover_skills,
+    find_command,
+    find_skill,
+    index_skills,
     parse_skill_md,
     validate_skill_md,
 )
 from decafclaw.tools.skill_tools import (
     _compute_skill_hash,
-    _find_skill,
     _load_native_tools,
     _load_permissions,
     _rejection_display_path,
@@ -301,8 +303,6 @@ def test_parse_always_loaded_default(tmp_path):
 
 
 def test_find_command():
-    from decafclaw.skills import find_command
-
     skills = [
         SkillInfo(name="weather", description="Weather", location=Path("."), user_invocable=True),
         SkillInfo(name="tabstack", description="Tabstack", location=Path("."), user_invocable=False),
@@ -326,6 +326,50 @@ def test_list_commands():
     assert len(cmds) == 2
     assert cmds[0].name == "migrate"  # sorted
     assert cmds[1].name == "weather"
+
+
+# -- index_skills / find_skill tests --
+
+
+def test_index_skills_first_wins():
+    """Duplicate names: the first occurrence wins, matching discovery precedence."""
+    first = SkillInfo(name="dup", description="first", location=Path("."))
+    second = SkillInfo(name="dup", description="second", location=Path("."))
+    other = SkillInfo(name="other", description="other", location=Path("."))
+
+    index = index_skills([first, second, other])
+
+    assert set(index) == {"dup", "other"}
+    assert index["dup"] is first  # shadowed, not replaced
+    assert index["other"] is other
+
+
+def test_find_skill_hit_and_miss():
+    skill = SkillInfo(name="weather", description="Weather", location=Path("."))
+    index = index_skills([skill])
+
+    assert find_skill(index, "weather") is skill
+    assert find_skill(index, "nonexistent") is None
+
+
+def test_find_command_shadowed_by_non_invocable():
+    """First occurrence wins: a non-invocable same-name skill shadows an invocable one."""
+    skills = [
+        SkillInfo(name="weather", description="Weather (workspace)", location=Path("."), user_invocable=False),
+        SkillInfo(name="weather", description="Weather (bundled)", location=Path("."), user_invocable=True),
+    ]
+    assert find_command("weather", skills) is None
+
+
+def test_find_command_prefix_is_not_a_match():
+    """Lookup is exact-name; a prefix of the requested name must not match."""
+    skills = [
+        SkillInfo(name="weather", description="Weather", location=Path("."), user_invocable=True),
+        SkillInfo(name="weather-forecast", description="Forecast", location=Path("."), user_invocable=True),
+    ]
+    assert find_command("weather-forecast", skills) is not None
+    assert find_command("weather-forecast", skills).name == "weather-forecast"
+    assert find_command("weather-for", skills) is None
 
 
 # -- discover_skills tests --
@@ -2288,7 +2332,10 @@ async def test_activation_warns_when_skill_tool_shadows_core_tool(ctx):
     _save_permission(
         ctx.config,
         "shadower",
-        {"status": "always", "hash": _compute_skill_hash(_find_skill(ctx.config.discovered_skills, "shadower"))},
+        {
+            "status": "always",
+            "hash": _compute_skill_hash(find_skill(index_skills(ctx.config.discovered_skills), "shadower")),
+        },
     )
 
     result = _text(await tool_activate_skill(ctx, name="shadower"))
@@ -2324,7 +2371,10 @@ async def test_shadow_warnings_are_ordered_deterministically(ctx):
     _save_permission(
         ctx.config,
         "multishadow",
-        {"status": "always", "hash": _compute_skill_hash(_find_skill(ctx.config.discovered_skills, "multishadow"))},
+        {
+            "status": "always",
+            "hash": _compute_skill_hash(find_skill(index_skills(ctx.config.discovered_skills), "multishadow")),
+        },
     )
 
     result = _text(await tool_activate_skill(ctx, name="multishadow"))
@@ -2978,8 +3028,6 @@ async def test_skill_invocation_flags_enforced(ctx, tmp_path):
     # 2. disable_model_invocation=True -> tool_activate_skill should reject
     skill_dir2 = tmp_path / "hidden_from_model"
     _write_skill(skill_dir2, "name: hidden_from_model\ndescription: desc\ndisable-model-invocation: true")
-
-    from decafclaw.skills import find_command, parse_skill_md
 
     info1 = parse_skill_md(skill_dir1 / "SKILL.md")
     info2 = parse_skill_md(skill_dir2 / "SKILL.md")
