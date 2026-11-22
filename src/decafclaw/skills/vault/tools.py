@@ -269,15 +269,113 @@ async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | Too
     return ToolResult(text=result_text, data=result_data)
 
 
-async def tool_vault_delete(ctx: "Context", page: str) -> ToolResult:
-    """Delete a vault page. Agent pages allow direct delete; user pages
-    require confirmation per call (or grant/allowlist short-circuit)."""
-    log.info(f"[tool:vault_delete] page={page}")
+def _deleted_link_match(raw: str, deleted_rel: str) -> bool:
+    """True when raw [[link]] text targeted the deleted page."""
+    target = raw.split("|")[0].split("#")[0].strip()
+    if target.endswith(".md"):
+        target = target[:-3]
+    if not target:
+        return False
+    deleted_no_ext = deleted_rel[:-3] if deleted_rel.endswith(".md") else deleted_rel
+    if target.lower() == deleted_no_ext.lower():
+        return True
+    return Path(target).stem.lower() == Path(deleted_rel).stem.lower()
+
+
+def _inbound_referrers(config, rel_path: str) -> list[str]:
+    """Pages that link to `rel_path`, from the persisted backlink index."""
+    from decafclaw.backlinks import load_index
+
+    try:
+        return sorted(load_index(config).get(rel_path, []))
+    except Exception as exc:  # fail-open
+        log.debug("vault_delete: inbound lookup failed for %r: %s", rel_path, exc)
+        return []
+
+
+def _dangling_referrers_after_delete(config, deleted_rel: str, referrers: list[str]) -> list[str]:
+    """Referrers whose links to the deleted page no longer resolve."""
+    from decafclaw.backlinks import _build_page_lookup, _resolve_link_target
+
+    vault = _vault_root(config).resolve()
+    pages = sorted(vault.rglob("*.md"))
+    full_lower_map, stem_lower_map = _build_page_lookup(pages, vault)
+    dangling: list[str] = []
+    for referrer in referrers:
+        try:
+            text = (vault / referrer).read_text(encoding="utf-8")
+        except OSError as exc:
+            log.debug("vault_delete: could not read referrer %r: %s", referrer, exc)
+            continue
+        for match in _WIKI_LINK_RE.finditer(text):
+            raw = match.group(1)
+            if _deleted_link_match(raw, deleted_rel) and (
+                _resolve_link_target(raw, full_lower_map, stem_lower_map) is None
+            ):
+                dangling.append(referrer)
+                break
+    return sorted(set(dangling))
+
+
+async def tool_vault_delete(
+    ctx: "Context",
+    page: str,
+    allow_broken_links: bool = False,
+    dry_run: bool | None = None,
+) -> ToolResult:
+    """Delete a vault page with an inbound-link guard.
+
+    Agent pages allow direct delete; user pages require confirmation per call
+    (or grant/allowlist short-circuit). A page with inbound links is refused
+    unless ``allow_broken_links`` is set; the allowed path reports the pages
+    that now contain dangling links. In unattended contexts
+    (``ctx.request_confirmation is None``), an unset ``dry_run`` defaults to
+    reporting rather than deleting (#1717).
+    """
+    log.info(f"[tool:vault_delete] page={page} allow_broken_links={allow_broken_links} dry_run={dry_run}")
     path = _safe_write_path(ctx.config, page)
     if path is None:
         return ToolResult(text=f"[error: invalid page name '{page}' — must be within vault directory]")
     if not path.exists():
         return ToolResult(text=f"[error: vault page '{page}' not found]")
+
+    vault_resolved = _vault_root(ctx.config).resolve()
+    rel_path = str(path.resolve().relative_to(vault_resolved))
+    referrers = _inbound_referrers(ctx.config, rel_path)
+    effective_dry_run = (ctx.request_confirmation is None) if dry_run is None else dry_run
+
+    if effective_dry_run:
+        if referrers and not allow_broken_links:
+            preview = ", ".join(referrers[:10]) + ("…" if len(referrers) > 10 else "")
+            return ToolResult(
+                text=(
+                    f"[dry run] Would delete '{page}', but {len(referrers)} page(s) link to it "
+                    f"({preview}). Pass allow_broken_links=true to proceed and report the "
+                    "dangling links."
+                ),
+                data={
+                    "dry_run": True,
+                    "would_delete": False,
+                    "blocked": True,
+                    "inbound_links": referrers,
+                },
+            )
+        suffix = f" It is linked from {len(referrers)} page(s)." if referrers else ""
+        return ToolResult(
+            text=f"[dry run] Would delete '{page}'.{suffix}",
+            data={"dry_run": True, "would_delete": True, "blocked": False, "inbound_links": referrers},
+        )
+
+    if referrers and not allow_broken_links:
+        preview = ", ".join(referrers[:10]) + ("…" if len(referrers) > 10 else "")
+        return ToolResult(
+            text=(
+                f"[error: refusing to delete '{page}': {len(referrers)} page(s) link to it "
+                f"({preview}). Pass allow_broken_links=true to delete and report the "
+                "dangling links.]"
+            ),
+            data={"inbound_links": referrers},
+        )
 
     outcome = _check_user_write_allowed(ctx, path)
     gate_result = await _run_gate_or_confirm(
@@ -295,8 +393,6 @@ async def tool_vault_delete(ctx: "Context", page: str) -> ToolResult:
     if gate_result is not None:
         return gate_result
 
-    vault_resolved = _vault_root(ctx.config).resolve()
-    rel_path = str(path.resolve().relative_to(vault_resolved))
     source_type = _source_type_for_path(ctx.config, path)
 
     path.unlink()
@@ -324,7 +420,15 @@ async def tool_vault_delete(ctx: "Context", page: str) -> ToolResult:
         kind=KIND_DELETE,
         path=path,
     )
-    return ToolResult(text=f"Vault page '{page}' deleted.")
+    result_text = f"Vault page '{page}' deleted."
+    result_data = {"path": page, "inbound_links": referrers}
+    if referrers and allow_broken_links:
+        dangling = _dangling_referrers_after_delete(ctx.config, rel_path, referrers)
+        result_data["dangling_pages"] = dangling
+        if dangling:
+            preview = ", ".join(dangling[:10]) + ("…" if len(dangling) > 10 else "")
+            result_text += f" Warning: {len(dangling)} page(s) now contain dangling links: {preview}."
+    return ToolResult(text=result_text, data=result_data)
 
 
 async def tool_vault_rename(ctx: "Context", page: str, rename_to: str) -> ToolResult:
@@ -1295,12 +1399,16 @@ TOOL_DEFINITIONS = [
             "name": "vault_delete",
             "description": (
                 "DESTRUCTIVE — permanently delete a vault page and its embedding "
-                "entries. Pages outside the agent folder (agent/pages/, "
-                "agent/journal/) require user confirmation per call. For batch "
-                "operations, request folder trust via vault_grant_folder first. "
-                "Prefer vault_write with updated content to retire or mark pages "
-                "superseded; use delete only when the page is definitively wrong, "
-                "duplicate, or no longer reachable."
+                "entries. Refuses when other pages link to it unless "
+                "allow_broken_links=true, which reports the pages left with "
+                "dangling links. In unattended contexts (no interactive "
+                "confirmation available), dry_run defaults to true and only "
+                "reports what would happen. Pages outside the agent folder "
+                "(agent/pages/, agent/journal/) require user confirmation per "
+                "call. For batch operations use vault_delete_plan from the garden "
+                "skill. Prefer vault_write with updated content to retire or mark "
+                "pages superseded; use delete only when the page is definitively "
+                "wrong, duplicate, or no longer reachable."
             ),
             "parameters": {
                 "type": "object",
@@ -1308,6 +1416,18 @@ TOOL_DEFINITIONS = [
                     "page": {
                         "type": "string",
                         "description": ("Page path relative to vault root (e.g. 'agent/pages/Stale Draft')."),
+                    },
+                    "allow_broken_links": {
+                        "type": "boolean",
+                        "description": (
+                            "Delete even when other pages link here, and report which pages now contain dangling links."
+                        ),
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": (
+                            "Report what would happen without deleting. Defaults to true in unattended contexts."
+                        ),
                     },
                 },
                 "required": ["page"],

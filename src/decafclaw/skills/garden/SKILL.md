@@ -62,7 +62,8 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 - Call `vault_graph_report` with sections `["isolates", "components"]` to get every page with no incoming links, grouped by component size.
 - For each orphan, find related pages and add links to it.
-- If a page is truly disconnected and has little value, note it for review.
+- If a page is truly disconnected and has little value, build an explicit deletion plan with `vault_delete_plan` in its default dry-run mode, review the proposed set, then execute with `dry_run=false`.
+- `vault_delete_plan` refuses any page that still has inbound links unless you pass `allow_broken_links=true`; when you do, it reports the pages left with dangling links so you can repair them in the same pass.
 
 ## Step 8: Recompute Importance Scores
 
@@ -75,4 +76,4 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 ## Finishing Up
 
-End with a short narrative summary of what you tidied: pages merged, links fixed, summaries added, etc. If the vault was already in good shape and nothing needed attention, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.
+End with a short narrative summary of what you tidied: pages merged, links fixed, summaries added, and **pages deleted with explicit counts** (including any deletion refused by the inbound-link guard and why). If the vault was already in good shape and nothing needed attention, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.
