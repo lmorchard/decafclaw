@@ -19,7 +19,8 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 ## Step 2: Merge Overlapping Pages
 
-- Look for pages that cover similar or overlapping topics.
+- Call `vault_find_duplicate_candidates` to get high-similarity page pairs from the existing embedding index; it never re-embeds or merges.
+- Review each candidate pair. Similar vectors are a hint, not a verdict — a shared topic is not always a duplicate.
 - If two pages are about the same thing, consolidate into one well-organized page.
 - Redirect the merged page's content and update any `[[wiki-links]]` that pointed to it.
 
@@ -31,7 +32,8 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 ## Step 3: Fix Broken Links
 
-- Scan pages for `[[wiki-links]]` that point to non-existent pages.
+- Call `vault_broken_links` to get unresolved `[[wiki-links]]` with line numbers and nearest-match suggestions.
+- Review each entry; suggestions can be a moved page or just a similar title.
 - For each broken link, decide:
   - Create a stub page if the topic deserves one
   - Remove the link if it's not useful
@@ -46,12 +48,13 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 ## Step 5: Update tl;dr Summaries
 
-- For pages longer than ~20 lines, check if they have a `> tl;dr:` summary after the title.
+- Use `vault_frontmatter_audit`'s `missing_tldr` category to find pages longer than ~20 lines without a `> tl;dr:` summary.
 - Add one if missing, update if the page content has changed significantly.
 
 ## Step 6: Split Oversized Pages
 
-- If a page has grown very long (100+ lines), consider splitting into sub-pages.
+- Use `vault_frontmatter_audit`'s `oversized` category to find pages over ~100 lines.
+- If a page has grown very long, consider splitting into sub-pages.
 - Create a summary parent page that links to the sub-pages.
 - Move detailed sections into their own pages.
 
@@ -66,7 +69,7 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 - Call `vault_recompute_importance` to refresh every agent page's `importance` frontmatter from structural PageRank over the backlink graph — not retrieval frequency, not a fresh guess. Scoped to `agent/` pages only, in keeping with this skill's charter — it never touches the user's own vault pages.
 - Pages with zero inbound links get the PageRank floor. That is expected; use `vault_graph_report` to see whether the page is an isolate, sink, or toehold, and fix connectivity in Steps 4 and 7 rather than hand-editing importance.
 - Review the reported deltas for outliers: a page that jumped or dropped sharply is worth a second look, since it usually means the link graph shifted, not that the page itself changed.
-- Spot-check frontmatter consistency on a few pages while you're in there — `summary`/`keywords`/`tags` that no longer match the body content.
+- Call `vault_frontmatter_audit` to catch malformed YAML, missing `summary`/`keywords`/`tags`/`importance`, oversized pages, and pages missing `> tl;dr:`. Its stale-summary overlap hint is advisory only — review the page before rewriting it.
 - Flag pages that are both orphaned (zero inbound links in `vault_graph_report`) and rarely retrieved (low importance after recompute) — these are strong split/merge/delete candidates for a future pass, not something to act on unilaterally.
 - Also flag weakly-linked pages (one or two thin connections) as candidates for Step 4's "add missing connections" work next time around.
 

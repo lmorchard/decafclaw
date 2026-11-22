@@ -9,9 +9,9 @@ by ``inbound_count`` and by ``compute_pagerank`` — the structural signal
 garden's importance recompute writes into frontmatter (#1713).
 
 Link resolution matches the pre-Phase-4 semantics: a raw ``[[link]]`` (or
-``[[link|display]]``) is resolved to an existing vault page case-
-insensitively, first by full relative path and falling back to bare
-filename (stem). Links that don't resolve to any existing page (dangling
+``[[link|display]]``, optionally carrying a ``#Section`` anchor) is resolved
+to an existing vault page case-insensitively, first by full relative path
+and falling back to bare filename (stem). Links that don't resolve to any existing page (dangling
 links) and self-links are not recorded — a backlink index only makes
 sense for edges between real pages.
 
@@ -94,6 +94,10 @@ def _resolve_link_target(
 ) -> str | None:
     """Resolve raw [[link]] text to an existing page's rel path, or None."""
     target = raw_link.split("|")[0].strip()
+    # Obsidian heading anchors ([[Page#Section]]) point at the page, not a
+    # separate target. Strip them before resolving so the index and the
+    # broken-link audit agree (#1716).
+    target = target.split("#")[0].strip()
     if target.endswith(".md"):
         target = target[:-3]
     if not target:

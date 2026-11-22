@@ -2,6 +2,7 @@
 # module in a fresh object that can leave sys.modules, and postponed dataclass
 # annotations then crash loading (see docs/skills.md). Quote them instead.
 
+import difflib
 import logging
 import re
 from dataclasses import dataclass
@@ -9,9 +10,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from decafclaw import backlinks, tags
-from decafclaw.frontmatter import get_frontmatter_field, parse_frontmatter
+from decafclaw.frontmatter import (
+    get_frontmatter_field,
+    parse_frontmatter,
+    parse_frontmatter_block,
+    split_frontmatter,
+)
 from decafclaw.media import ToolResult
-from decafclaw.skills.vault.tools import tool_vault_update_frontmatter
+from decafclaw.skills.vault.tools import _WIKI_LINK_RE, tool_vault_update_frontmatter
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -266,6 +272,215 @@ async def tool_vault_graph_report(
     return ToolResult(text=text, data=data)
 
 
+_AUDIT_FIELDS = ("summary", "keywords", "tags", "importance")
+_TLDR_RE = re.compile(r"^\s*>\s*tl;dr\s*:", re.IGNORECASE | re.MULTILINE)
+_WORD_RE = re.compile(r"[a-z0-9]+")
+_STALE_SUMMARY_THRESHOLD = 0.25
+
+
+def _summary_overlap(summary: str, body: str) -> float | None:
+    """Fraction of significant summary words present in the body.
+
+    Advisory only: a crude lexical hint that a summary may not describe the
+    current body. Returns None when the summary has no significant words.
+    """
+    words = [word for word in _WORD_RE.findall(summary.lower()) if len(word) >= 4]
+    if not words:
+        return None
+    body_words = set(_WORD_RE.findall(body.lower()))
+    return sum(1 for word in words if word in body_words) / len(words)
+
+
+async def tool_vault_broken_links(ctx: "Context", limit: int = 50) -> ToolResult:
+    """List unresolved [[wiki-links]] in agent pages, with nearest-match
+    suggestions. Read-only and deterministic (#1716)."""
+    log.info(f"[tool:vault_broken_links] limit={limit}")
+    vault = ctx.config.vault_root
+    agent_pages = dict(_iter_importance_candidates(ctx.config))
+    if not vault.is_dir() or not agent_pages:
+        return ToolResult(
+            text="No broken links: no agent pages found.",
+            data={"broken": [], "counts": {"pages": 0, "links": 0}, "truncated": False},
+        )
+
+    all_pages = sorted(vault.rglob("*.md"))
+    full_lower_map, stem_lower_map = backlinks._build_page_lookup(all_pages, vault)
+    candidates: dict[str, str] = {}
+    for key, rel in full_lower_map.items():
+        candidates.setdefault(key, rel)
+    for key, rels in stem_lower_map.items():
+        for rel in rels:
+            candidates.setdefault(key, rel)
+
+    broken: list[dict] = []
+    affected_pages = 0
+    for rel, path in sorted(agent_pages.items()):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            log.debug("vault_broken_links: could not read %s: %s", rel, exc)
+            continue
+        _raw_yaml, body = split_frontmatter(text)
+        offset = len(text) - len(body)
+        page_hits = 0
+        for match in _WIKI_LINK_RE.finditer(body):
+            raw = match.group(1)
+            if backlinks._resolve_link_target(raw, full_lower_map, stem_lower_map) is not None:
+                continue
+            target = raw.split("|")[0].split("#")[0].strip()
+            if not target:
+                continue
+            target = target[:-3] if target.endswith(".md") else target
+            suggestions: list[str] = []
+            for candidate in difflib.get_close_matches(target.lower(), list(candidates), n=5, cutoff=0.6):
+                rel_hit = candidates[candidate]
+                if rel_hit not in suggestions:
+                    suggestions.append(rel_hit)
+                if len(suggestions) == 3:
+                    break
+            line = text[: offset + match.start()].count("\n") + 1
+            broken.append(
+                {
+                    "page": rel,
+                    "link": f"[[{raw}]]",
+                    "line": line,
+                    "suggestions": suggestions,
+                    "kind": "possible_move" if suggestions else "missing",
+                }
+            )
+            page_hits += 1
+        if page_hits:
+            affected_pages += 1
+
+    bounded = broken[: max(0, int(limit))]
+    if broken:
+        examples = []
+        for entry in bounded[:10]:
+            hint = f" -> {', '.join(entry['suggestions'])}" if entry["suggestions"] else ""
+            examples.append(f"- {entry['page']}:{entry['line']} {entry['link']}{hint}")
+        text = f"{len(broken)} broken link(s) across {affected_pages} agent page(s).\n" + "\n".join(examples)
+    else:
+        text = f"No broken links in {len(agent_pages)} agent page(s)."
+    return ToolResult(
+        text=text,
+        data={
+            "broken": bounded,
+            "counts": {"pages": affected_pages, "links": len(broken)},
+            "truncated": len(broken) > len(bounded),
+        },
+    )
+
+
+async def tool_vault_frontmatter_audit(ctx: "Context", limit: int = 20) -> ToolResult:
+    """Report malformed/missing frontmatter, oversized pages, missing tl;dr,
+    and advisory stale summaries. Read-only and deterministic (#1716)."""
+    log.info(f"[tool:vault_frontmatter_audit] limit={limit}")
+    agent_pages = dict(_iter_importance_candidates(ctx.config))
+    malformed: list[dict] = []
+    missing: dict[str, list[str]] = {field: [] for field in _AUDIT_FIELDS}
+    oversized: list[dict] = []
+    missing_tldr: list[dict] = []
+    stale_summaries: list[dict] = []
+
+    for rel, path in sorted(agent_pages.items()):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            log.debug("vault_frontmatter_audit: could not read %s: %s", rel, exc)
+            continue
+        raw_yaml, body = split_frontmatter(text)
+        metadata, error = parse_frontmatter_block(raw_yaml)
+        if error:
+            malformed.append({"path": rel, "error": error.splitlines()[0] if error else "malformed YAML"})
+        for field in _AUDIT_FIELDS:
+            if get_frontmatter_field(metadata, field) in (None, "", []):
+                missing[field].append(rel)
+
+        lines = len(text.splitlines())
+        if lines > 100:
+            oversized.append({"path": rel, "lines": lines})
+        if lines > 20 and not _TLDR_RE.search(body):
+            missing_tldr.append({"path": rel, "lines": lines})
+
+        summary = metadata.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            overlap = _summary_overlap(summary, body)
+            if overlap is not None and overlap < _STALE_SUMMARY_THRESHOLD:
+                stale_summaries.append({"path": rel, "overlap": round(overlap, 3), "advisory": True})
+
+    bounded_limit = max(0, int(limit))
+    counts = {
+        "pages_scanned": len(agent_pages),
+        "malformed_yaml": len(malformed),
+        "missing": {field: len(paths) for field, paths in missing.items()},
+        "oversized": len(oversized),
+        "missing_tldr": len(missing_tldr),
+        "stale_summary": len(stale_summaries),
+    }
+    data = {
+        "counts": counts,
+        "malformed_yaml": malformed[:bounded_limit],
+        "missing": {field: paths[:bounded_limit] for field, paths in missing.items()},
+        "oversized": oversized[:bounded_limit],
+        "missing_tldr": missing_tldr[:bounded_limit],
+        "stale_summary": stale_summaries[:bounded_limit],
+        "truncated": any(
+            len(items) > bounded_limit
+            for items in (
+                malformed,
+                oversized,
+                missing_tldr,
+                stale_summaries,
+                *(paths for paths in missing.values()),
+            )
+        ),
+    }
+    text = (
+        f"Frontmatter audit: {len(agent_pages)} agent page(s); "
+        f"malformed YAML={len(malformed)}; "
+        + ", ".join(f"missing {field}={len(missing[field])}" for field in _AUDIT_FIELDS)
+        + f"; oversized={len(oversized)}, missing tl;dr={len(missing_tldr)}, "
+        f"stale summaries={len(stale_summaries)} (advisory)."
+    )
+    if malformed:
+        text += "\nMalformed YAML:\n" + "\n".join(f"- {entry['path']}: {entry['error']}" for entry in malformed[:5])
+    return ToolResult(text=text, data=data)
+
+
+async def tool_vault_find_duplicate_candidates(
+    ctx: "Context",
+    threshold: float = 0.9,
+    limit: int = 20,
+) -> ToolResult:
+    """Report high-similarity agent-page pairs from the existing embedding
+    index. Read-only: never re-embeds or merges (#1716)."""
+    from decafclaw.embeddings import find_similar_page_pairs
+
+    bounded_threshold = max(0.0, min(1.0, float(threshold)))
+    log.info(f"[tool:vault_find_duplicate_candidates] threshold={bounded_threshold} limit={limit}")
+    pairs, indexed_pages = find_similar_page_pairs(
+        ctx.config,
+        threshold=bounded_threshold,
+        limit=max(0, int(limit)),
+        source_type="page",
+        path_prefix="agent/pages/",
+    )
+    if indexed_pages == 0:
+        text = "No agent page embeddings found; run `make reindex` to build the index."
+    elif not pairs:
+        text = f"No duplicate candidates above {bounded_threshold:.2f} among {indexed_pages} indexed agent page(s)."
+    else:
+        text = (
+            f"{len(pairs)} duplicate candidate(s) above {bounded_threshold:.2f} "
+            f"among {indexed_pages} indexed agent page(s):\n"
+            + "\n".join(f"- {pair['a']} <-> {pair['b']} ({pair['similarity']:.3f})" for pair in pairs[:10])
+        )
+    return ToolResult(
+        text=text,
+        data={"pairs": pairs, "indexed_pages": indexed_pages, "threshold": bounded_threshold},
+    )
+
+
 async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = None) -> ToolResult:
     """Detect clusters of 3+ related agent pages and move them into dedicated folders."""
     if dry_run is None:
@@ -347,6 +562,9 @@ async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = N
 TOOLS = {
     "vault_recompute_importance": tool_vault_recompute_importance,
     "vault_graph_report": tool_vault_graph_report,
+    "vault_broken_links": tool_vault_broken_links,
+    "vault_frontmatter_audit": tool_vault_frontmatter_audit,
+    "vault_find_duplicate_candidates": tool_vault_find_duplicate_candidates,
     "vault_reorganize_folders": tool_vault_reorganize_folders,
 }
 
@@ -389,14 +607,93 @@ TOOL_DEFINITIONS = [
                             "enum": list(_GRAPH_SECTIONS),
                         },
                         "description": (
-                            "Optional subset of sections to return (default: all). Use 'totals' for a cheap overview."
+                            "Optional subset of sections to return (default: all). "
+                            "Use 'totals' for a cheap overview."
                         ),
                     },
                     "top_n": {
                         "type": "integer",
                         "description": (
-                            "Maximum rows in the per-page table, sorted by PageRank descending (default 50)."
+                            "Maximum rows in the per-page table, sorted by "
+                            "PageRank descending (default 50)."
                         ),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "writes": False,
+        "priority": "normal",
+        "function": {
+            "name": "vault_broken_links",
+            "description": (
+                "List unresolved [[wiki-links]] in agent pages with line "
+                "numbers and nearest-match suggestions. Read-only and "
+                "deterministic; resolution matches the backlink index "
+                "(aliases and heading anchors are stripped)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum broken-link entries to return (default 50).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "writes": False,
+        "priority": "normal",
+        "function": {
+            "name": "vault_frontmatter_audit",
+            "description": (
+                "Audit agent-page frontmatter: malformed YAML, missing "
+                "summary/keywords/tags/importance, oversized pages (>100 "
+                "lines), missing `> tl;dr:` on pages over ~20 lines, and an "
+                "advisory stale-summary token-overlap hint. Returns counts "
+                "plus bounded examples. Read-only."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum examples per category (default 20).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "writes": False,
+        "priority": "normal",
+        "function": {
+            "name": "vault_find_duplicate_candidates",
+            "description": (
+                "Find high-similarity agent-page pairs in the existing local "
+                "embedding index. Queries stored vectors; never re-embeds, "
+                "never merges. Returns candidate pairs plus similarity. If a "
+                "page is missing from the index it is skipped."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "threshold": {
+                        "type": "number",
+                        "description": "Minimum cosine similarity (default 0.9).",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum pairs to return (default 20).",
                     },
                 },
                 "required": [],
