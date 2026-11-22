@@ -457,15 +457,6 @@
 # -- shell_guidance vs shell_patterns / shell ---------------------------------
 # (#954)
 
-- name: shell-guidance-vs-patterns-enable-preset
-  scenario: "Enable the developer auto-approval preset so routine git commands and pytest don't require confirmation during this coding session."
-  expected: shell_guidance
-  near_miss: [shell_patterns, shell]
-  notes: |
-    Enabling a situational auto-approval preset / LLM prompt guidance rule is
-    shell_guidance (action='enable_preset'). shell_patterns manages static glob
-    allow patterns (e.g. 'pytest *'), not semantic LLM approval presets/guidance.
-
 - name: shell-patterns-vs-guidance-glob-pattern
   scenario: "Add a glob allow pattern 'pytest tests/*.py *' to automatically approve matching shell commands."
   expected: shell_patterns
@@ -475,29 +466,13 @@
     evaluation is shell_patterns (action='add', pattern='...').
 
 - name: shell-guidance-vs-shell-list-active
-  scenario: "Show me what shell auto-approval presets and prompt guidelines are currently active."
+  scenario: "Show me which global shell auto-approval scope rules are currently in effect."
   expected: shell_guidance
   near_miss: [shell_patterns, shell]
   notes: |
-    Inspecting the active auto-approval prompt guidance rules and presets
-    is shell_guidance with action='list'.
-
-- name: shell-guidance-save-preset
-  scenario: "Save our active conversation approval rules into a custom preset named 'web_deploy' so we can reuse them later."
-  expected: shell_guidance
-  near_miss: [shell_patterns, shell]
-  notes: |
-    Saving active conversation guidance rules into a named custom preset on disk
-    is shell_guidance with action='save_preset', preset='web_deploy'.
-
-- name: shell-guidance-set-mode-dev
-  scenario: "Switch this conversation to dev mode so we have development tools and auto-approvals for tests and linters."
-  expected: shell_guidance
-  near_miss: [shell, shell_patterns]
-  notes: |
-    Switching session modes (such as dev, research, or admin) that bundle
-    auto-approval presets and promoted tool profiles is shell_guidance
-    with action='set_mode', mode='dev'.
+    Inspecting the global scope-keyed approval rulebook is shell_guidance with
+    action='list'. shell_patterns is the flat glob allowlist and shell runs
+    commands.
 
 - name: shell-guidance-promote-scope-rules
   scenario: "I've approved `make -n` in the homelab repo several times; turn those repeated human approvals into a durable global rule."

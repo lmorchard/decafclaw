@@ -45,7 +45,7 @@ describe('ToolStatusStore', () => {
         expect(store.pendingConfirms.length).toBe(1);
     });
 
-    it('maps decline_reason and suggested_rule including action_data fallback (#982)', () => {
+    it('maps decline_reason without retaining suggested_rule (#1684)', () => {
         const ws = {};
         const msgStore = {};
         const store = new ToolStatusStore(() => {}, ws, msgStore);
@@ -62,7 +62,7 @@ describe('ToolStatusStore', () => {
         }, '1');
         expect(store.pendingConfirms.length).toBe(1);
         expect(store.pendingConfirms[0].decline_reason).toBe('Creating PR modifies state');
-        expect(store.pendingConfirms[0].suggested_rule).toBe('Auto-approve gh pr create');
+        expect(store.pendingConfirms[0].suggested_rule).toBeUndefined();
 
         // action_data fallback
         store.handleMessage({
@@ -78,7 +78,7 @@ describe('ToolStatusStore', () => {
         }, '1');
         expect(store.pendingConfirms.length).toBe(2);
         expect(store.pendingConfirms[1].decline_reason).toBe('Pushing to remote');
-        expect(store.pendingConfirms[1].suggested_rule).toBe('Auto-approve push to origin topic branches');
+        expect(store.pendingConfirms[1].suggested_rule).toBeUndefined();
     });
 
     it('handles CONFIRMATION_RESPONSE', () => {

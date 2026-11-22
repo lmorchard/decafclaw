@@ -62,10 +62,6 @@ async function mountCatalog(initialCatalog = CATALOG) {
       const body = JSON.parse(options.body);
       return jsonResponse({ ...initialCatalog, aux_approval_pointer: body.model, aux_approval_model: body.model });
     }
-    if (u.pathname === '/api/models/catalog/condense') {
-      const body = JSON.parse(options.body);
-      return jsonResponse({ ...initialCatalog, condense_pointer: body.model, condense_model: body.model });
-    }
     if (u.pathname === '/api/models/catalog/reflection') {
       const body = JSON.parse(options.body);
       return jsonResponse({ ...initialCatalog, reflection_pointer: body.model, reflection_model: body.model });
@@ -272,31 +268,6 @@ describe('model-catalog component', () => {
 
     const inherit = await mountCatalog({ ...catalog, aux_approval_pointer: '', aux_approval_model: '' });
     expect(inherit.el.querySelector('.model-catalog-judge-warning')).toBeFalsy();
-  });
-
-  it('condense picker lists the use-conversation-model default and posts the pointer', async () => {
-    const { el, fetchMock } = await mountCatalog({
-      ...CATALOG,
-      condense_pointer: '',
-      condense_model: '',
-    });
-
-    const select = el.querySelector('#catalog-condense-select');
-    expect(select).toBeTruthy();
-    const optionValues = [...select.querySelectorAll('option')].map(o => o.value);
-    expect(optionValues).toContain('');
-    expect(optionValues).toContain('hand-model');
-    // "Use conversation model" (empty) is the default when nothing is set.
-    expect(select.querySelector('option[selected]').value).toBe('');
-
-    select.value = 'hand-model';
-    select.dispatchEvent(new Event('change'));
-    await el.updateComplete;
-    await new Promise(r => setTimeout(r, 10));
-
-    const post = fetchMock.mock.calls.find(([url]) => url.endsWith('/api/models/catalog/condense'));
-    expect(post).toBeTruthy();
-    expect(JSON.parse(post[1].body)).toEqual({ model: 'hand-model' });
   });
 
   it('reflection picker lists enabled models plus an inherit option', async () => {

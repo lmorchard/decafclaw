@@ -20,7 +20,6 @@
 @import './styles/login.css';
 @import './styles/sidebar.css';
 @import './styles/context-inspector.css';
-@import './styles/shell-approval-panel.css';
 @import './styles/notification-inbox.css';
 @import './styles/chat.css';
 @import './styles/chat-controls.css';
@@ -34,7 +33,6 @@
 @import './styles/wiki-metadata.css';
 @import './styles/chip-list.css';
 @import './styles/config-panel.css';
-@import './styles/preset-manager.css';
 @import './styles/model-catalog.css';
 @import './styles/schedule-page.css';
 @import './styles/schedule-metadata.css';

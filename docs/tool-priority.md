@@ -67,12 +67,11 @@ See `classify_tools()` in `src/decafclaw/tools/tool_registry.py`:
 
 1. Resolve every tool's priority.
 2. Active set starts with all `critical` tools (hard floor — still included even when over; a token-budget overrun is logged as a warning, a count-cap overrun as info).
-3. If `promoted_tools` are passed (e.g. from the active `SessionMode`), those tools are ordered at the front of `normal` (elevating any declared `low` tools to `normal` priority), claiming active budget ahead of other normal and low tools.
-4. Append `normal` tools one by one while the active set is under `tool_context_budget` and `max_active_tools`.
-5. Append `low` tools the same way, only if room remains.
-6. Whatever didn't make the cut becomes the deferred set, surfaced via `tool_search` and the deferred catalog.
+3. Append `normal` tools one by one while the active set is under `tool_context_budget` and `max_active_tools`.
+4. Append `low` tools the same way, only if room remains.
+5. Whatever didn't make the cut becomes the deferred set, surfaced via `tool_search` and the deferred catalog.
 
-`classify_tools` preserves input order within each tier. Production assembly sorts candidates by tool name before classification, so skill restoration order cannot change budget selection (#1257). Session-mode promotions still take precedence within the normal tier.
+`classify_tools` preserves input order within each tier. Production assembly sorts candidates by tool name before classification, so skill restoration order cannot change budget selection (#1257).
 
 ## Deferred catalog sort
 

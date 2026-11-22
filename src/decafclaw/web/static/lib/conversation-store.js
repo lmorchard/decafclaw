@@ -51,7 +51,6 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {string} suggested_pattern
  * @property {string} [decline_reason]
  * @property {string} [reason]
- * @property {string} [suggested_rule]
  * @property {string} message
  * @property {string} approve_label
  * @property {string} deny_label
@@ -159,10 +158,6 @@ export class ConversationStore extends EventTarget {
   #modelGroups = [];
   /** @type {string} default model from server config */
   #defaultModel = '';
-  /** @type {string} active session mode for the conversation */
-  #activeMode = 'default';
-  /** @type {{name: string, description: string, presets: string[], promoted_tools: string[]}[]} available session modes from server */
-  #availableModes = [];
   /** @type {{name: string, description: string, argument_hint: string}[]} user-invokable commands from server */
   #commands = [];
   /** @type {boolean} whether the current conversation is read-only */
@@ -253,10 +248,6 @@ export class ConversationStore extends EventTarget {
   }
   /** @returns {string} */
   get defaultModel() { return this.#defaultModel; }
-  /** @returns {string} */
-  get activeMode() { return this.#activeMode; }
-  /** @returns {{name: string, description: string, presets: string[], promoted_tools: string[]}[]} */
-  get availableModes() { return this.#availableModes; }
   /** @returns {{name: string, description: string, argument_hint: string}[]} */
   get commands() { return this.#commands; }
   /** @returns {SystemConversationMeta[]} */
@@ -731,7 +722,6 @@ export class ConversationStore extends EventTarget {
     this.#contextUsage = 0;
     this.#contextLimit = 0;
     this.#activeModel = '';
-    this.#activeMode = 'default';
     // Delegated children are viewable read-only (#1115): only the parent
     // conversation can be prompted. Child-shaped ids are gated immediately
     // — don't wait for the server's CONV_SELECTED read_only echo, or the
@@ -853,13 +843,6 @@ export class ConversationStore extends EventTarget {
     this.#emitChange();
   }
 
-  /** @param {string} mode */
-  setMode(mode) {
-    if (this.#currentConvId) {
-      this.#ws.send({ type: MESSAGE_TYPES.SET_MODE, conv_id: this.#currentConvId, mode });
-    }
-  }
-
   cancelTurn() {
     if (!this.#currentConvId) return;
     this.#ws.send({ type: MESSAGE_TYPES.CANCEL_TURN, conv_id: this.#currentConvId });
@@ -911,8 +894,6 @@ export class ConversationStore extends EventTarget {
         // `in` (not truthiness): an explicitly cleared default arrives as ''
         // and must clear the stale marker (#1211).
         if ('default_model' in msg) this.#defaultModel = msg.default_model || '';
-        if (msg.active_mode) this.#activeMode = msg.active_mode;
-        if (msg.available_modes) this.#availableModes = msg.available_modes;
         if (msg.read_only) this.#readOnly = true;
         if (msg.turn_active) this.#busy = true;
         // Restore pending confirmation from server state (survives reload)
@@ -1061,13 +1042,6 @@ export class ConversationStore extends EventTarget {
       case MESSAGE_TYPES.MODEL_CHANGED:
         if (msg.conv_id === this.#currentConvId) {
           this.#activeModel = msg.model || '';
-          this.#emitChange();
-        }
-        break;
-
-      case MESSAGE_TYPES.MODE_CHANGED:
-        if (msg.conv_id === this.#currentConvId) {
-          this.#activeMode = msg.mode || '';
           this.#emitChange();
         }
         break;

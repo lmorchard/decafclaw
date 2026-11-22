@@ -4,7 +4,6 @@ import { SIDE_EFFECT_COMMANDS } from '../lib/constants.js';
 import './model-picker.js';
 import './host-gauges.js';
 
-/** @typedef {{ name: string, description?: string }} ModeConfig */
 /** @typedef {{ provider: string, model: string }} ModelConfig */
 
 export class ChatControls extends LitElement {
@@ -13,8 +12,6 @@ export class ChatControls extends LitElement {
     _activeModel: { type: String, state: true },
     _modelGroups: { type: Array, state: true },
     _defaultModel: { type: String, state: true },
-    _activeMode: { type: String, state: true },
-    _availableModes: { type: Array, state: true },
     _contextUsage: { type: Number, state: true },
     _contextLimit: { type: Number, state: true },
     _isBusy: { type: Boolean, state: true },
@@ -29,8 +26,6 @@ export class ChatControls extends LitElement {
     this._activeModel = '';
     this._modelGroups = [];
     this._defaultModel = '';
-    this._activeMode = 'default';
-    this._availableModes = [];
     this._contextUsage = 0;
     this._contextLimit = 100000;
     this._isBusy = false;
@@ -67,8 +62,6 @@ export class ChatControls extends LitElement {
     this._activeModel = this.store.activeModel || '';
     this._modelGroups = this.store.modelGroups || [];
     this._defaultModel = this.store.defaultModel || '';
-    this._activeMode = this.store.activeMode || 'default';
-    this._availableModes = this.store.availableModes || [];
     this._contextUsage = this.store.contextUsage || 0;
     // The store uses 0 as the "no limit known" sentinel; `??` preserves it
     // (a bare `||` would coerce 0 to the 100000 default and mis-render usage).
@@ -83,38 +76,18 @@ export class ChatControls extends LitElement {
       if (oldStore) oldStore.removeEventListener('change', this.#onStoreChange);
       if (this.store) {
         // app.js assigns `store` after the element is connected, so the
-        // listener must be registered here. The store populates availableModels/
-        // availableModes asynchronously from a WebSocket message, so without
-        // this the model/mode controls would never appear.
+        // listener must be registered here. The store populates availableModels
+        // asynchronously from a WebSocket message, so without this the model
+        // controls would never appear.
         this.store.addEventListener('change', this.#onStoreChange);
         this.#syncFromStore();
       }
     }
-
-    // Sync mode selector value if present
-    const modeSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#cc-mode-select'));
-    if (modeSelect) {
-      const targetMode = this._activeMode;
-      if (targetMode && modeSelect.value !== targetMode) {
-        modeSelect.value = targetMode;
-      }
-    }
-  }
-
-  #handleModeChange(e) {
-    const newMode = e.target.value;
-    if (newMode && newMode !== this._activeMode) {
-      this.dispatchEvent(new CustomEvent('set-mode', {
-        detail: { mode: newMode },
-        bubbles: true,
-        composed: true,
-      }));
-    }
   }
 
   // Conversation action cluster (issue #1190): compact controls hosted in the
-  // control bar, right of the mode selector. The context meter keeps the right
-  // end of the strip via its own margin-left:auto.
+  // control bar. The context meter keeps the right end of the strip via its
+  // own margin-left:auto.
   #handleTerminalClick() {
     const store = this.store;
     const convId = store?.currentConvId || '';
@@ -127,20 +100,9 @@ export class ChatControls extends LitElement {
   }
 
   // The context meter summons the context inspector. The inspector is owned
-  // by the sidebar, so we dispatch an event it listens for (mirroring set-model / set-mode).
+  // by the sidebar, so we dispatch an event it listens for.
   #handleContextClick() {
     this.dispatchEvent(new CustomEvent('toggle-context-inspector', {
-      detail: { convId: this.store?.currentConvId || '' },
-      bubbles: true,
-      composed: true,
-    }));
-  }
-
-  // The mode control row summons the per-conversation shell approval panel.
-  // The sidebar owns the panel; it listens for this event on document (the
-  // same pattern as toggle-context-inspector above).
-  #handleShellApprovalClick() {
-    this.dispatchEvent(new CustomEvent('toggle-shell-approval', {
       detail: { convId: this.store?.currentConvId || '' },
       bubbles: true,
       composed: true,
@@ -179,31 +141,14 @@ export class ChatControls extends LitElement {
         </div>
       ` : nothing}
 
-      <!-- Mode control -->
-      ${this._availableModes.length > 0 ? html`
-        <div class="control mode-control">
-          <label for="cc-mode-select">Mode</label>
-          <select id="cc-mode-select" .value=${this._activeMode} ?disabled=${this._isBusy} @change=${this.#handleModeChange}>
-            ${this._availableModes.map(m => html`
-              <option value="${m.name}" ?selected=${m.name === this._activeMode} .selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
-            `)}
-          </select>
-        </div>
-      ` : nothing}
-
       <!-- Conversation actions (issue #1190): compact controls in the control
-           bar, positioned right of the mode selector. The context meter below
-           keeps the strip's right end via its own margin-left:auto.
+           bar. The context meter below keeps the strip's right end via its own
+           margin-left:auto.
 
            Issue #1192: the copy-conversation-menu moved OUT of this cluster
            into the context inspector raw pane (conversation export copy now
            lives there), so the cluster keeps the canvas resummon pill, the
-           terminal button, and the side-question button.
-
-           Issue #1263: the shell-approval gear lives here too — the cluster's
-           compact 32px sizing is what keeps it level with its neighbours; in
-           the mode control it kept the 44px floating-btn floor and looked
-           oversized. -->
+           terminal button, and the side-question button. -->
       ${convId ? html`
         <div class="control actions-control">
           ${showResummon && canvas ? html`
@@ -230,13 +175,6 @@ export class ChatControls extends LitElement {
             aria-label="Ask side question"
             @click=${this.#handleSideQuestion}
           >&#x2753;</button>
-          <button
-            type="button"
-            class="shell-approval-open-btn dc-floating-btn"
-            title="Shell auto-approval"
-            aria-label="Open shell auto-approval panel"
-            @click=${this.#handleShellApprovalClick}
-          >&#9881;</button>
         </div>
       ` : nothing}
 

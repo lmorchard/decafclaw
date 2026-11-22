@@ -150,15 +150,10 @@ document.addEventListener('send', (e) => {
 
 // Handle stop events from chat-input
 document.addEventListener('stop', () => store.cancelTurn());
-// Handle model/mode changes from chat-controls
+// Handle model changes from chat-controls
 document.addEventListener('set-model', (e) => {
   const { model } = /** @type {CustomEvent} */ (e).detail;
   if (model && store) store.setModel(model);
-});
-
-document.addEventListener('set-mode', (e) => {
-  const { mode } = /** @type {CustomEvent} */ (e).detail;
-  if (mode && store) store.setMode(mode);
 });
 
 // Conversation actions menu (issue #1192): canvas resummon / terminal picked

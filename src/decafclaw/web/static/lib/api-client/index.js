@@ -144,17 +144,6 @@ var ConfigFileEntry;
   })(scope = ConfigFileEntry2.scope || (ConfigFileEntry2.scope = {}));
 })(ConfigFileEntry || (ConfigFileEntry = {}));
 
-// src/decafclaw/web/static/lib/api-client/models/ConversationShellApprovalPresetItem.ts
-var ConversationShellApprovalPresetItem;
-((ConversationShellApprovalPresetItem2) => {
-  let source;
-  ((source2) => {
-    source2["BUILTIN"] = "builtin";
-    source2["CONFIG"] = "config";
-    source2["CUSTOM"] = "custom";
-  })(source = ConversationShellApprovalPresetItem2.source || (ConversationShellApprovalPresetItem2.source = {}));
-})(ConversationShellApprovalPresetItem || (ConversationShellApprovalPresetItem = {}));
-
 // src/decafclaw/web/static/lib/api-client/models/FileCompletion.ts
 var FileCompletion;
 ((FileCompletion2) => {
@@ -184,17 +173,6 @@ var ScheduleResponse;
     source_tier2["EXTRA"] = "extra";
   })(source_tier = ScheduleResponse2.source_tier || (ScheduleResponse2.source_tier = {}));
 })(ScheduleResponse || (ScheduleResponse = {}));
-
-// src/decafclaw/web/static/lib/api-client/models/ShellPresetItem.ts
-var ShellPresetItem;
-((ShellPresetItem2) => {
-  let source;
-  ((source2) => {
-    source2["BUILTIN"] = "builtin";
-    source2["CONFIG"] = "config";
-    source2["CUSTOM"] = "custom";
-  })(source = ShellPresetItem2.source || (ShellPresetItem2.source = {}));
-})(ShellPresetItem || (ShellPresetItem = {}));
 
 // src/decafclaw/web/static/lib/api-client/models/VaultCompletion.ts
 var VaultCompletion;
@@ -488,22 +466,13 @@ var request2 = (config, options) => {
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
   const bookmarks = options.url === "/api/bookmarks";
-  const shellPresets = options.url === "/api/shell-approval/presets" || options.url === "/api/shell-approval/presets/{name}";
-  const shellApprovalGet = options.method === "GET" && options.url === "/api/conversations/{id}/shell-approval";
-  const shellApprovalPut = options.method === "PUT" && options.url === "/api/conversations/{id}/shell-approval/rules";
-  const shellApprovalRulesDelete = options.method === "DELETE" && options.url === "/api/conversations/{id}/shell-approval/rules";
-  const shellApprovalRulesReplace = options.method === "PUT" && options.url === "/api/conversations/{id}/shell-approval/rules/replace";
-  const shellApprovalPatternsDelete = options.method === "DELETE" && options.url === "/api/conversations/{id}/shell-approval/patterns";
-  const shellApprovalPromote = options.method === "POST" && options.url === "/api/conversations/{id}/shell-approval/promote";
-  const shellApprovalCondense = options.method === "POST" && options.url === "/api/conversations/{id}/shell-approval/condense";
-  const shellApprovalConversation = shellApprovalGet || shellApprovalPut || shellApprovalRulesDelete || shellApprovalRulesReplace || shellApprovalPatternsDelete || shellApprovalPromote || shellApprovalCondense;
-  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && !shellPresets && !shellApprovalConversation && (options.method !== "GET" || !sticky && !listing)) {
+  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && !bookmarks && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = upload ? `${config.BASE}/api/upload/${encodeURIComponent(options.path.conv_id)}` : workspaceMutation ? `${config.BASE}/api/workspace/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}${options.query ? getQueryString(options.query) : ""}` : schedule && options.path ? `${config.BASE}${options.url.replace("{name}", encodeURIComponent(options.path.name))}` : schedule ? `${config.BASE}${options.url}` : configFile && options.path ? `${config.BASE}/api/config/files/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : configFile ? `${config.BASE}/api/config/files` : vaultMutation && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : shellPresets && options.path?.name ? `${config.BASE}/api/shell-approval/presets/${encodeURIComponent(options.path.name)}` : shellApprovalConversation ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = upload ? `${config.BASE}/api/upload/${encodeURIComponent(options.path.conv_id)}` : workspaceMutation ? `${config.BASE}/api/workspace/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}${options.query ? getQueryString(options.query) : ""}` : schedule && options.path ? `${config.BASE}${options.url.replace("{name}", encodeURIComponent(options.path.name))}` : schedule ? `${config.BASE}${options.url}` : configFile && options.path ? `${config.BASE}/api/config/files/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : configFile ? `${config.BASE}/api/config/files` : vaultMutation && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       let formData = getFormData(options);
@@ -537,7 +506,7 @@ var request2 = (config, options) => {
         ok: response.ok,
         status: response.status,
         statusText: response.statusText,
-        body: folder && !response.ok ? await response.json() : vaultMutation && !response.ok ? await response.json().catch(() => void 0) : scheduleMutation && !response.ok ? await response.json().catch(() => void 0) : workspaceMutation && !response.ok ? workspaceSave ? await response.text() : await response.json().catch(() => void 0) : canvasNewTab && !response.ok ? await response.text() : (shellPresets || shellApprovalConversation) && !response.ok ? await response.json().catch(() => void 0) : void 0
+        body: folder && !response.ok ? await response.json() : vaultMutation && !response.ok ? await response.json().catch(() => void 0) : scheduleMutation && !response.ok ? await response.json().catch(() => void 0) : workspaceMutation && !response.ok ? workspaceSave ? await response.text() : await response.json().catch(() => void 0) : canvasNewTab && !response.ok ? await response.text() : void 0
       });
       if (options.discardResponse || workspaceRename) {
         resolve2(void 0);
@@ -1419,20 +1388,6 @@ var DefaultService = class {
    * @returns ModelCatalogResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiModelsCatalogCondensePost(requestBody) {
-    return request2(OpenAPI, {
-      method: "POST",
-      url: "/api/models/catalog/condense",
-      body: requestBody,
-      mediaType: "application/json"
-    });
-  }
-  /**
-   * Wrapper
-   * @param requestBody
-   * @returns ModelCatalogResponse Successful Response
-   * @throws ApiError
-   */
   static wrapperApiModelsCatalogReflectionPost(requestBody) {
     return request2(OpenAPI, {
       method: "POST",
@@ -1674,233 +1629,6 @@ var DefaultService = class {
   }
   /**
    * Wrapper
-   * @returns ShellPresetItem Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiShellApprovalPresetsGet() {
-    return request2(OpenAPI, {
-      method: "GET",
-      url: "/api/shell-approval/presets"
-    });
-  }
-  /**
-   * Wrapper
-   * @param name
-   * @param requestBody
-   * @returns ShellPresetMutateResponse Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiShellApprovalPresetsNamePut(name, requestBody) {
-    return request2(OpenAPI, {
-      method: "PUT",
-      url: "/api/shell-approval/presets/{name}",
-      path: {
-        "name": name
-      },
-      body: requestBody,
-      mediaType: "application/json"
-    });
-  }
-  /**
-   * Wrapper
-   * @param name
-   * @returns ShellPresetMutateResponse Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiShellApprovalPresetsNameDelete(name) {
-    return request2(OpenAPI, {
-      method: "DELETE",
-      url: "/api/shell-approval/presets/{name}",
-      path: {
-        "name": name
-      }
-    });
-  }
-  /**
-   * Get Conversation Shell Approval
-   * GET /api/conversations/{id}/shell-approval — per-conversation approval view.
-   *
-   * Returns the conversation's editable "remember why" rules, the active
-   * preset rules (read-only, source-tagged, disabled presets excluded), the
-   * always-on config guidance, and the cached reviewer approval patterns.
-   * Always readable; never mutates state.
-   * @param id
-   * @returns ConversationShellApprovalResponse Successful Response
-   * @throws ApiError
-   */
-  static getConversationShellApprovalApiConversationsIdShellApprovalGet(id) {
-    return request2(OpenAPI, {
-      method: "GET",
-      url: "/api/conversations/{id}/shell-approval",
-      path: {
-        "id": id
-      },
-      errors: {
-        422: `Validation Error`
-      }
-    });
-  }
-  /**
-   * Put Conversation Shell Rule
-   * PUT /api/conversations/{id}/shell-approval/rules — add (or re-set) a rule.
-   *
-   * Body: ``{"rule": "<text>"}``. Adds the rule to the conversation's editable
-   * guidance; re-putting the same text replaces it. Clears the conversation's
-   * cached reviewer approval patterns so the next prompt re-derives.
-   * @param id
-   * @param requestBody
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static putConversationShellRuleApiConversationsIdShellApprovalRulesPut(id, requestBody) {
-    return request2(OpenAPI, {
-      method: "PUT",
-      url: "/api/conversations/{id}/shell-approval/rules",
-      path: {
-        "id": id
-      },
-      body: requestBody,
-      mediaType: "application/json",
-      errors: {
-        422: `Validation Error`
-      }
-    });
-  }
-  /**
-   * Delete Conversation Shell Rule
-   * DELETE /api/conversations/{id}/shell-approval/rules — remove one rule.
-   *
-   * Body: ``{"rule": "<text>"}``. Clears the conversation's cached reviewer
-   * approval patterns as well, since dropping a guidance rule invalidates them.
-   * @param id
-   * @param requestBody
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static deleteConversationShellRuleApiConversationsIdShellApprovalRulesDelete(id, requestBody) {
-    return request2(OpenAPI, {
-      method: "DELETE",
-      url: "/api/conversations/{id}/shell-approval/rules",
-      path: {
-        "id": id
-      },
-      body: requestBody,
-      mediaType: "application/json",
-      errors: {
-        422: `Validation Error`
-      }
-    });
-  }
-  /**
-   * Delete Conversation Shell Pattern
-   * DELETE /api/conversations/{id}/shell-approval/patterns — revoke one cached pattern.
-   *
-   * Body: ``{"pattern": "<glob>"}``. Removes the cached reviewer approval so the
-   * next matching command falls back to the reviewer again.
-   * @param id
-   * @param requestBody
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static deleteConversationShellPatternApiConversationsIdShellApprovalPatternsDelete(id, requestBody) {
-    return request2(OpenAPI, {
-      method: "DELETE",
-      url: "/api/conversations/{id}/shell-approval/patterns",
-      path: {
-        "id": id
-      },
-      body: requestBody,
-      mediaType: "application/json",
-      errors: {
-        422: `Validation Error`
-      }
-    });
-  }
-  /**
-   * Post Conversation Shell Promote
-   * POST /api/conversations/{id}/shell-approval/promote — copy a rule into a preset.
-   *
-   * Body: ``{"rule": "<text>", "preset": "<name>"}``. Copies the conversation
-   * rule into an existing custom preset (append, no duplicate) or creates a new
-   * custom preset. Built-in or config preset names are rejected with 400.
-   * @param id
-   * @param requestBody
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static postConversationShellPromoteApiConversationsIdShellApprovalPromotePost(id, requestBody) {
-    return request2(OpenAPI, {
-      method: "POST",
-      url: "/api/conversations/{id}/shell-approval/promote",
-      path: {
-        "id": id
-      },
-      body: requestBody,
-      mediaType: "application/json",
-      errors: {
-        422: `Validation Error`
-      }
-    });
-  }
-  /**
-   * Put Conversation Shell Rules Replace
-   * PUT /api/conversations/{id}/shell-approval/rules/replace — replace the full rule list (#1267).
-   *
-   * Body: ``{"rules": ["...", ...]}``. Atomically replaces the conversation's
-   * entire editable guidance with the given list (an empty result clears every
-   * rule). Clears the conversation's cached reviewer approval patterns so the
-   * next prompt re-derives, same as the single-rule endpoints. Returns 409 when
-   * the conversation is busy or waiting, same as they do. The single-rule PUT/
-   * DELETE forms stay unchanged for one-at-a-time edits.
-   * @param id
-   * @param requestBody
-   * @returns ConversationShellApprovalRulesReplaceResponse Successful Response
-   * @throws ApiError
-   */
-  static putConversationShellRulesReplaceApiConversationsIdShellApprovalRulesReplacePut(id, requestBody) {
-    return request2(OpenAPI, {
-      method: "PUT",
-      url: "/api/conversations/{id}/shell-approval/rules/replace",
-      path: {
-        "id": id
-      },
-      body: requestBody,
-      mediaType: "application/json",
-      errors: {
-        422: `Validation Error`
-      }
-    });
-  }
-  /**
-   * Post Conversation Shell Condense
-   * POST /api/conversations/{id}/shell-approval/condense — propose condensed rules (#1267).
-   *
-   * Builds a prompt from the conversation's current rules and asks the resolved
-   * condense model to rewrite them into fewer, more general summary rules as a
-   * one-shot completion (no tools). Returns the proposal; it never mutates state
-   * — rules on disk and cached patterns are unchanged. The proposal lands in the
-   * panel's bulk-edit draft, where the user reviews before/after and saves it
-   * through the replace endpoint. Returns 409 when the conversation is busy or
-   * waiting; a model error or unparseable response returns an error and the panel
-   * keeps its current draft.
-   * @param id
-   * @returns ConversationShellApprovalCondenseResponse Successful Response
-   * @throws ApiError
-   */
-  static postConversationShellCondenseApiConversationsIdShellApprovalCondensePost(id) {
-    return request2(OpenAPI, {
-      method: "POST",
-      url: "/api/conversations/{id}/shell-approval/condense",
-      path: {
-        "id": id
-      },
-      errors: {
-        422: `Validation Error`
-      }
-    });
-  }
-  /**
-   * Wrapper
    * @returns any Successful Response
    * @throws ApiError
    */
@@ -2116,13 +1844,11 @@ export {
   CancelError,
   CancelablePromise,
   ConfigFileEntry,
-  ConversationShellApprovalPresetItem,
   DefaultService,
   FileCompletion,
   McpCompletion,
   OpenAPI,
   ScheduleResponse,
-  ShellPresetItem,
   VaultCompletion,
   WorkspaceFileEntry,
   buildNativeWorkspaceUrl

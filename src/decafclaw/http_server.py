@@ -39,7 +39,6 @@ from .schedules import (
     write_last_run,
     write_overlay,
 )
-from .shell_presets import DEFAULT_AUX_APPROVAL_PRESETS, ShellPresetStore
 from .skills import _extract_frontmatter_text
 from .skills.vault._events import (
     KIND_CREATE,
@@ -66,27 +65,6 @@ _SAFE_CONV_ID_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
 
 def _is_safe_conv_id(conv_id: str) -> bool:
     return bool(conv_id and _SAFE_CONV_ID_RE.match(conv_id))
-
-
-def _as_str_list(value: Any) -> list[str]:
-    """Coerce a list/str/set-of-str into a clean list of non-empty strings."""
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value.strip()] if value.strip() else []
-    if isinstance(value, (list, tuple, set)):
-        out: list[str] = []
-        for item in value:
-            text = str(item).strip()
-            if text and text not in out:
-                out.append(text)
-        return out
-    return []
-
-
-def _as_str_set(value: Any) -> set[str]:
-    """Coerce a list/str of preset names into a set of non-empty names."""
-    return {name for name in _as_str_list(value) if name}
 
 
 _CONFIG_FILES = [
@@ -371,89 +349,6 @@ class HostMetricsResponse(BaseModel):
     disk_tmpfs: HostDiskGauge | None = None
     process_count: int | None = None
     uptime_seconds: float | None = None
-
-
-class ShellPresetItem(BaseModel):
-    name: str
-    rules: list[str]
-    source: Literal["builtin", "config", "custom"]
-    shadows_config: bool = False
-    referenced_by: list[str] = []
-
-
-class ShellPresetPutRequest(BaseModel):
-    rules: list[str]
-
-
-class ShellPresetMutateResponse(BaseModel):
-    ok: Literal[True]
-    name: str
-    rules: list[str]
-    updated_text: str | None = None
-
-
-class ConversationShellApprovalPresetItem(BaseModel):
-    """One active preset surfaced in the per-conversation approval panel (#1159)."""
-
-    name: str
-    source: Literal["builtin", "config", "custom"]
-    rules: list[str] = []
-    activated_via: list[str] = []
-    active: bool = True
-
-
-class ConversationShellApprovalResponse(BaseModel):
-    """Per-conversation shell auto-approval view (#1159).
-
-    ``conversation_rules`` are the conversation's editable "remember why"
-    rules; ``presets`` are the active (not disabled) presets with their source
-    and activation path; ``config_guidance`` is the always-on configured
-    guidance; ``cached_patterns`` are the reviewer's auto-approved command
-    patterns for this conversation.
-    """
-
-    conv_id: str
-    status: str = "idle"
-    conversation_rules: list[str] = []
-    presets: list[ConversationShellApprovalPresetItem] = []
-    config_guidance: str = ""
-    cached_patterns: list[str] = []
-
-
-class ConversationShellApprovalRuleRequest(BaseModel):
-    rule: str = ""
-
-
-class ConversationShellApprovalPatternRequest(BaseModel):
-    pattern: str = ""
-
-
-class ConversationShellApprovalPromoteRequest(BaseModel):
-    rule: str = ""
-    preset: str = ""
-
-
-class ConversationShellApprovalRulesReplaceRequest(BaseModel):
-    """Full-list replace for the bulk-edit draft (#1267). An empty list clears
-    every conversation rule."""
-
-    rules: list[str] = []
-
-
-class ConversationShellApprovalRulesReplaceResponse(BaseModel):
-    ok: Literal[True]
-    conv_id: str
-    conversation_rules: list[str]
-
-
-class ConversationShellApprovalCondenseResponse(BaseModel):
-    """The condensation proposal (#1267). Never mutates state — the rules land
-    on disk only when the user reviews and saves them through the replace
-    endpoint."""
-
-    ok: Literal[True]
-    conv_id: str
-    rules: list[str]
 
 
 class BookmarkAddRequest(BaseModel):
@@ -848,16 +743,13 @@ async def handle_confirm(request: Request) -> Response:
     # Extract manager-routing fields from token data
     conv_id = (token_data or {}).get("conv_id", "") or context.get("conv_id", "")
     confirmation_id = (token_data or {}).get("confirmation_id", "") or context.get("confirmation_id", "")
-    # Prefer authenticated rule bound into single-use token; fall back to context for tokenless/direct callbacks
-    rule = (token_data or {}).get("rule", "") or context.get("rule", "")
 
     log.info(f"Confirm callback: action={action} tool={tool_name} context={context_id[:8]}")
 
     # Map action to event fields
-    approved = action in ("approve", "always", "add_pattern", "add_rule")
+    approved = action in ("approve", "always", "add_pattern")
     always = action == "always"
     add_pattern = action == "add_pattern"
-    add_rule = action == "add_rule"
 
     # Route through manager if available, fall back to event bus
     if manager and conv_id and confirmation_id:
@@ -867,8 +759,6 @@ async def handle_confirm(request: Request) -> Response:
             approved=approved,
             always=always,
             add_pattern=add_pattern,
-            add_rule=add_rule,
-            rule=rule,
         )
     else:
         await event_bus.publish(
@@ -880,8 +770,6 @@ async def handle_confirm(request: Request) -> Response:
                 **({"tool_call_id": tool_call_id} if tool_call_id else {}),
                 **({"always": True} if always else {}),
                 **({"add_pattern": True} if add_pattern else {}),
-                **({"add_rule": True} if add_rule else {}),
-                **({"rule": rule} if rule else {}),
             }
         )
 
@@ -890,7 +778,6 @@ async def handle_confirm(request: Request) -> Response:
         "approve": "\u2705 Approved",
         "always": "\u2705 Always approved",
         "add_pattern": "\U0001f4d3 Approved + pattern added",
-        "add_rule": "\U0001f4dd Approved + rule added",
         "deny": "\U0001f44e Denied",
     }
     label = labels.get(action, f"\u2753 Unknown action: {action}")
@@ -2826,572 +2713,6 @@ async def bookmarks_delete(request: Request, username: str) -> JSONResponse:
     return JSONResponse(data)
 
 
-def _invalidate_conversations_for_preset(config, manager, preset_name: str) -> None:
-    """Clear llm_approved_shell_patterns in in-memory conversations where preset_name is active."""
-    if not manager or not hasattr(manager, "_conversations"):
-        return
-    config_active_raw = getattr(config.shell, "active_aux_approval_presets", [])
-    if isinstance(config_active_raw, str):
-        config_active = set(p.strip() for p in config_active_raw.split(",") if p.strip())
-    elif isinstance(config_active_raw, (list, tuple, set)):
-        config_active = set(str(p).strip() for p in config_active_raw if str(p).strip())
-    else:
-        config_active = set()
-
-    for conv_id, conv_state in list(manager._conversations.items()):
-        persisted_active = set(getattr(conv_state.persisted, "active_aux_approval_presets", []))
-        disabled_presets = set(getattr(conv_state.persisted, "disabled_aux_approval_presets", []))
-        active_presets = (config_active | persisted_active) - disabled_presets
-        if preset_name in active_presets:
-            conv_state.persisted.llm_approved_shell_patterns.clear()
-            manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
-            # Invalidate live active turn context if one is running
-            active_ctx = getattr(conv_state, "active_context", None)
-            if active_ctx and hasattr(active_ctx, "tools"):
-                active_ctx.tools.llm_approved_shell_patterns.clear()
-
-
-@_authenticated
-async def shell_presets_list(request: Request, username: str) -> JSONResponse:
-    """GET /api/shell-approval/presets — list all presets with sources, rules, and reference tracking."""
-    config = request.app.state.config
-    store = getattr(request.app.state, "preset_store", None)
-    if not store:
-        store = ShellPresetStore(config)
-    try:
-        presets = await store.list_presets()
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-    # Compute referenced_by for each preset
-    from .modes import get_all_modes
-
-    all_modes = get_all_modes(config)
-    config_active_raw = getattr(config.shell, "active_aux_approval_presets", [])
-    if isinstance(config_active_raw, str):
-        config_active_set = set(p.strip() for p in config_active_raw.split(",") if p.strip())
-    elif isinstance(config_active_raw, (list, tuple, set)):
-        config_active_set = set(str(p).strip() for p in config_active_raw if str(p).strip())
-    else:
-        config_active_set = set()
-
-    for p in presets:
-        name = p["name"]
-        refs = []
-        for m_name, mode in all_modes.items():
-            if mode.presets and name in mode.presets:
-                refs.append(f"mode '{m_name}'")
-        if name in config_active_set:
-            refs.append("config.shell.active_aux_approval_presets")
-        p["referenced_by"] = refs
-
-    return JSONResponse(presets)
-
-
-@_authenticated
-async def shell_presets_put(request: Request, username: str) -> JSONResponse:
-    """PUT /api/shell-approval/presets/{name} — create or replace a custom preset."""
-    preset_name = request.path_params.get("name", "").strip()
-    if not preset_name:
-        return JSONResponse({"error": "preset name is required"}, status_code=400)
-
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-
-    rules = body.get("rules")
-    if not isinstance(rules, list) or not rules:
-        return JSONResponse({"error": "rules must be a non-empty list of strings"}, status_code=400)
-    for r in rules:
-        if not isinstance(r, str) or not r.strip():
-            return JSONResponse({"error": "each rule must be a non-empty string"}, status_code=400)
-
-    store = getattr(request.app.state, "preset_store", None)
-    if not store:
-        store = ShellPresetStore(request.app.state.config)
-
-    try:
-        is_new, updated_text = await store.save_preset(preset_name, rules)
-    except ValueError as e:
-        err_msg = str(e)
-        if "Corrupt or unreadable presets file" in err_msg:
-            return JSONResponse({"error": err_msg}, status_code=500)
-        return JSONResponse({"error": err_msg}, status_code=400)
-
-    manager = getattr(request.app.state, "manager", None)
-    _invalidate_conversations_for_preset(request.app.state.config, manager, preset_name)
-    clean_rules = [r.strip() for r in rules if r.strip()]
-    return JSONResponse(
-        {
-            "ok": True,
-            "name": preset_name,
-            "rules": clean_rules,
-            "updated_text": updated_text,
-        }
-    )
-
-
-@_authenticated
-async def shell_presets_delete(request: Request, username: str) -> JSONResponse:
-    """DELETE /api/shell-approval/presets/{name} — delete a custom preset."""
-    preset_name = request.path_params.get("name", "").strip()
-    if not preset_name:
-        return JSONResponse({"error": "preset name is required"}, status_code=400)
-
-    store = getattr(request.app.state, "preset_store", None)
-    if not store:
-        store = ShellPresetStore(request.app.state.config)
-
-    try:
-        deleted = await store.delete_preset(preset_name)
-    except ValueError as e:
-        err_msg = str(e)
-        if "Corrupt or unreadable presets file" in err_msg:
-            return JSONResponse({"error": err_msg}, status_code=500)
-        return JSONResponse({"error": err_msg}, status_code=400)
-
-    if not deleted:
-        return JSONResponse({"error": f"custom preset '{preset_name}' not found"}, status_code=404)
-
-    manager = getattr(request.app.state, "manager", None)
-    _invalidate_conversations_for_preset(request.app.state.config, manager, preset_name)
-    return JSONResponse({"ok": True, "name": preset_name, "rules": []})
-
-
-async def get_conversation_shell_approval(
-    request: Request, id: str
-) -> ConversationShellApprovalResponse | JSONResponse:
-    """GET /api/conversations/{id}/shell-approval — per-conversation approval view.
-
-    Returns the conversation's editable "remember why" rules, the active
-    preset rules (read-only, source-tagged, disabled presets excluded), the
-    always-on config guidance, and the cached reviewer approval patterns.
-    Always readable; never mutates state.
-    """
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    config = request.app.state.config
-    conv_id = id
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-
-    manager = getattr(request.app.state, "manager", None)
-    status = manager.get_activity_status(conv_id) if manager else "idle"
-    state = manager.get_state(conv_id) if manager else None
-
-    conversation_rules: list[str] = []
-    active_preset_names: set[str] = set()
-    disabled_preset_names: set[str] = set()
-    cached_patterns: list[str] = []
-
-    if state is not None:
-        live_tools = state.active_context.tools if (state.active_context is not None) else None
-        if live_tools is not None:
-            conversation_rules = _as_str_list(getattr(live_tools, "aux_approval_guidance", None))
-            active_preset_names = _as_str_set(getattr(live_tools, "active_aux_approval_presets", None))
-            disabled_preset_names = _as_str_set(getattr(live_tools, "disabled_aux_approval_presets", None))
-            cached_patterns = _as_str_list(getattr(live_tools, "llm_approved_shell_patterns", None))
-        else:
-            conversation_rules = _as_str_list(getattr(state.persisted, "aux_approval_guidance", None))
-            active_preset_names = _as_str_set(getattr(state.persisted, "active_aux_approval_presets", None))
-            disabled_preset_names = _as_str_set(getattr(state.persisted, "disabled_aux_approval_presets", None))
-            cached_patterns = _as_str_list(getattr(state.persisted, "llm_approved_shell_patterns", None))
-
-    store = getattr(request.app.state, "preset_store", None)
-    if not store:
-        store = ShellPresetStore(config)
-    try:
-        presets = await store.list_presets()
-    except ValueError as e:
-        err_msg = str(e)
-        if "Corrupt or unreadable presets file" in err_msg:
-            return JSONResponse({"error": err_msg}, status_code=500)
-        return JSONResponse({"error": err_msg}, status_code=500)
-
-    config_active = _as_str_set(getattr(config.shell, "active_aux_approval_presets", None))
-    active_names = (config_active | active_preset_names) - disabled_preset_names
-    preset_views: list[ConversationShellApprovalPresetItem] = []
-    for p in presets:
-        name = str(p.get("name") or "")
-        if name not in active_names:
-            continue
-        via: list[str] = []
-        if name in config_active:
-            via.append("config")
-        if name in active_preset_names:
-            via.append("session")
-        source_value = str(p.get("source") or "builtin")
-        preset_views.append(
-            ConversationShellApprovalPresetItem(
-                name=name,
-                source=cast(Literal["builtin", "config", "custom"], source_value),
-                rules=list(p.get("rules") or []),
-                activated_via=via,
-                active=True,
-            )
-        )
-
-    return ConversationShellApprovalResponse(
-        conv_id=conv_id,
-        status=status,
-        conversation_rules=conversation_rules,
-        presets=preset_views,
-        config_guidance=str(getattr(config.shell, "aux_approval_guidance", "") or ""),
-        cached_patterns=cached_patterns,
-    )
-
-
-async def put_conversation_shell_rule(request: Request, id: str) -> JSONResponse:
-    """PUT /api/conversations/{id}/shell-approval/rules — add (or re-set) a rule.
-
-    Body: ``{"rule": "<text>"}``. Adds the rule to the conversation's editable
-    guidance; re-putting the same text replaces it. Clears the conversation's
-    cached reviewer approval patterns so the next prompt re-derives.
-    """
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    config = request.app.state.config
-    conv_id = id
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    manager = getattr(request.app.state, "manager", None)
-    status = manager.get_activity_status(conv_id) if manager else "idle"
-    if status in ("busy", "waiting"):
-        # A turn-end save would silently undo an in-flight edit.
-        return JSONResponse({"error": f"conversation is {status}"}, status_code=409)
-
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    new_text = str(body.get("rule") or "").strip()
-    if not new_text:
-        return JSONResponse({"error": "rule is required"}, status_code=400)
-
-    state = manager.get_state(conv_id) if manager else None
-    conversation_rules: list[str] = []
-    if state is not None:
-        live_tools = state.active_context.tools if (state.active_context is not None) else None
-        if live_tools is not None:
-            conversation_rules = _as_str_list(getattr(live_tools, "aux_approval_guidance", None))
-        else:
-            conversation_rules = _as_str_list(getattr(state.persisted, "aux_approval_guidance", None))
-
-    new_list = [r for r in conversation_rules if r != new_text]
-    if new_text not in new_list:
-        new_list.append(new_text)
-
-    if manager is None:
-        return JSONResponse({"error": "manager not available"}, status_code=503)
-    manager.set_flag(conv_id, "aux_approval_guidance", new_list)
-    manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
-    return JSONResponse({"ok": True, "conv_id": conv_id, "conversation_rules": new_list})
-
-
-async def delete_conversation_shell_rule(request: Request, id: str) -> JSONResponse:
-    """DELETE /api/conversations/{id}/shell-approval/rules — remove one rule.
-
-    Body: ``{"rule": "<text>"}``. Clears the conversation's cached reviewer
-    approval patterns as well, since dropping a guidance rule invalidates them.
-    """
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    config = request.app.state.config
-    conv_id = id
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    manager = getattr(request.app.state, "manager", None)
-    status = manager.get_activity_status(conv_id) if manager else "idle"
-    if status in ("busy", "waiting"):
-        # A turn-end save would silently undo an in-flight delete.
-        return JSONResponse({"error": f"conversation is {status}"}, status_code=409)
-
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    rule_text = str(body.get("rule") or "").strip()
-    if not rule_text:
-        return JSONResponse({"error": "rule is required"}, status_code=400)
-
-    state = manager.get_state(conv_id) if manager else None
-    conversation_rules: list[str] = []
-    if state is not None:
-        live_tools = state.active_context.tools if (state.active_context is not None) else None
-        if live_tools is not None:
-            conversation_rules = _as_str_list(getattr(live_tools, "aux_approval_guidance", None))
-        else:
-            conversation_rules = _as_str_list(getattr(state.persisted, "aux_approval_guidance", None))
-
-    new_list = [r for r in conversation_rules if r != rule_text]
-    if manager is None:
-        return JSONResponse({"error": "manager not available"}, status_code=503)
-    manager.set_flag(conv_id, "aux_approval_guidance", new_list)
-    manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
-    return JSONResponse({"ok": True, "conv_id": conv_id, "conversation_rules": new_list})
-
-
-async def put_conversation_shell_rules_replace(request: Request, id: str) -> JSONResponse:
-    """PUT /api/conversations/{id}/shell-approval/rules/replace — replace the full rule list (#1267).
-
-    Body: ``{"rules": ["...", ...]}``. Atomically replaces the conversation's
-    entire editable guidance with the given list (an empty result clears every
-    rule). Clears the conversation's cached reviewer approval patterns so the
-    next prompt re-derives, same as the single-rule endpoints. Returns 409 when
-    the conversation is busy or waiting, same as they do. The single-rule PUT/
-    DELETE forms stay unchanged for one-at-a-time edits.
-    """
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    config = request.app.state.config
-    conv_id = id
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    manager = getattr(request.app.state, "manager", None)
-    status = manager.get_activity_status(conv_id) if manager else "idle"
-    if status in ("busy", "waiting"):
-        # A turn-end save would silently undo an in-flight bulk edit.
-        return JSONResponse({"error": f"conversation is {status}"}, status_code=409)
-
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    rules = body.get("rules")
-    if not isinstance(rules, list):
-        return JSONResponse({"error": "rules must be a list of strings"}, status_code=400)
-    if any(not isinstance(r, str) for r in rules):
-        return JSONResponse({"error": "each rule must be a string"}, status_code=400)
-    # Strip and drop blanks: blanking a row in the draft removes that rule. The
-    # remaining set is authoritative (no dedup — it is what the user reviewed).
-    new_list = [r.strip() for r in rules if r.strip()]
-
-    if manager is None:
-        return JSONResponse({"error": "manager not available"}, status_code=503)
-    manager.set_flag(conv_id, "aux_approval_guidance", new_list)
-    manager.set_flag(conv_id, "llm_approved_shell_patterns", [])
-    return JSONResponse({"ok": True, "conv_id": conv_id, "conversation_rules": new_list})
-
-
-def _build_condense_prompt(rules: list[str]) -> str:
-    """Prompt for the rule-condensation one-shot call (#1267).
-
-    Rules are free-text guidance for an LLM judge, so the model is asked to
-    merge near-duplicates and generalize into fewer summary rules that preserve
-    the same intent. It must return a bare JSON object with a ``rules`` list.
-    """
-    numbered = "\n".join(f"{i}. {r}" for i, r in enumerate(rules, 1))
-    return (
-        "You are condensing shell auto-approval rules for a conversation. Each rule below is a "
-        "free-text instruction to an LLM that decides whether to auto-approve a shell command. "
-        "Rewrite them into fewer, more general summary rules that preserve the same intent and "
-        "coverage: merge near-duplicates, generalize specific commands into their category where "
-        "safe, and drop any rule fully subsumed by a more general one. Do not invent new "
-        "permissions the rules do not already imply. Return ONLY JSON of the form "
-        '{"rules": ["...", ...]} with no prose outside the JSON.\n\n'
-        f"Current rules:\n{numbered}"
-    )
-
-
-async def post_conversation_shell_condense(request: Request, id: str) -> JSONResponse:
-    """POST /api/conversations/{id}/shell-approval/condense — propose condensed rules (#1267).
-
-    Builds a prompt from the conversation's current rules and asks the resolved
-    condense model to rewrite them into fewer, more general summary rules as a
-    one-shot completion (no tools). Returns the proposal; it never mutates state
-    — rules on disk and cached patterns are unchanged. The proposal lands in the
-    panel's bulk-edit draft, where the user reviews before/after and saves it
-    through the replace endpoint. Returns 409 when the conversation is busy or
-    waiting; a model error or unparseable response returns an error and the panel
-    keeps its current draft.
-    """
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    config = request.app.state.config
-    conv_id = id
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    manager = getattr(request.app.state, "manager", None)
-    status = manager.get_activity_status(conv_id) if manager else "idle"
-    if status in ("busy", "waiting"):
-        return JSONResponse({"error": f"conversation is {status}"}, status_code=409)
-
-    state = manager.get_state(conv_id) if manager else None
-    conversation_rules: list[str] = []
-    active_model = ""
-    if state is not None:
-        live_tools = state.active_context.tools if (state.active_context is not None) else None
-        if live_tools is not None:
-            conversation_rules = _as_str_list(getattr(live_tools, "aux_approval_guidance", None))
-        else:
-            conversation_rules = _as_str_list(getattr(state.persisted, "aux_approval_guidance", None))
-        active_model = getattr(state.persisted, "active_model", "") or ""
-
-    if not conversation_rules:
-        return JSONResponse({"error": "no rules to condense"}, status_code=400)
-
-    # Function-level import on purpose: the test stub patches
-    # ``decafclaw.llm.call_llm`` and a module-level binding would not see it.
-    from .llm import call_llm
-    from .model_catalog import effective_condense_model
-
-    model_name = effective_condense_model(config, active_model)
-    messages = [{"role": "user", "content": _build_condense_prompt(conversation_rules)}]
-
-    try:
-        response = await call_llm(config, messages, model_name=model_name)
-    except Exception as exc:
-        log.warning("shell condense: model call failed for conv %s: %s", conv_id, exc)
-        return JSONResponse({"error": f"condensation failed: {exc}"}, status_code=502)
-
-    raw_text = (response.get("content") or "").strip()
-    # Strip a ```json fence the model may wrap its output in (same as the judge).
-    if "```" in raw_text:
-        raw_text = re.sub(r"^```(?:json)?\n?", "", raw_text, flags=re.MULTILINE)
-        raw_text = re.sub(r"```$", "", raw_text, flags=re.MULTILINE).strip()
-
-    try:
-        data = json.loads(raw_text)
-    except (json.JSONDecodeError, ValueError):
-        return JSONResponse(
-            {"error": "condensation returned unparseable output; the draft is unchanged"},
-            status_code=400,
-        )
-
-    proposed = data.get("rules") if isinstance(data, dict) else None
-    if not isinstance(proposed, list):
-        return JSONResponse(
-            {"error": "condensation response missing a 'rules' list; the draft is unchanged"},
-            status_code=400,
-        )
-    proposed_rules = [r.strip() for r in proposed if isinstance(r, str) and r.strip()]
-
-    return JSONResponse({"ok": True, "conv_id": conv_id, "rules": proposed_rules})
-
-
-async def delete_conversation_shell_pattern(request: Request, id: str) -> JSONResponse:
-    """DELETE /api/conversations/{id}/shell-approval/patterns — revoke one cached pattern.
-
-    Body: ``{"pattern": "<glob>"}``. Removes the cached reviewer approval so the
-    next matching command falls back to the reviewer again.
-    """
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    config = request.app.state.config
-    conv_id = id
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    manager = getattr(request.app.state, "manager", None)
-    status = manager.get_activity_status(conv_id) if manager else "idle"
-    if status in ("busy", "waiting"):
-        # A turn-end save would silently restore the cache entry.
-        return JSONResponse({"error": f"conversation is {status}"}, status_code=409)
-
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict):
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    pattern_text = str(body.get("pattern") or "").strip()
-    if not pattern_text:
-        return JSONResponse({"error": "pattern is required"}, status_code=400)
-
-    state = manager.get_state(conv_id) if manager else None
-    cached_patterns: list[str] = []
-    if state is not None:
-        live_tools = state.active_context.tools if (state.active_context is not None) else None
-        if live_tools is not None:
-            cached_patterns = _as_str_list(getattr(live_tools, "llm_approved_shell_patterns", None))
-        else:
-            cached_patterns = _as_str_list(getattr(state.persisted, "llm_approved_shell_patterns", None))
-
-    remaining = [p for p in cached_patterns if p != pattern_text]
-    if manager is None:
-        return JSONResponse({"error": "manager not available"}, status_code=503)
-    manager.set_flag(conv_id, "llm_approved_shell_patterns", remaining)
-    return JSONResponse({"ok": True, "conv_id": conv_id, "cached_patterns": remaining})
-
-
-async def post_conversation_shell_promote(request: Request, id: str) -> JSONResponse:
-    """POST /api/conversations/{id}/shell-approval/promote — copy a rule into a preset.
-
-    Body: ``{"rule": "<text>", "preset": "<name>"}``. Copies the conversation
-    rule into an existing custom preset (append, no duplicate) or creates a new
-    custom preset. Built-in or config preset names are rejected with 400.
-    """
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    config = request.app.state.config
-    conv_id = id
-    if not _is_safe_conv_id(conv_id):
-        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-    if not _user_owns_conv(config, conv_id, username):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    body = await _read_json_body(request)
-    if body is None:
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    rule_text = str(body.get("rule") or "").strip()
-    preset_name = str(body.get("preset") or "").strip()
-    if not rule_text:
-        return JSONResponse({"error": "rule is required"}, status_code=400)
-    if not preset_name:
-        return JSONResponse({"error": "preset is required"}, status_code=400)
-
-    store = getattr(request.app.state, "preset_store", None)
-    if not store:
-        store = ShellPresetStore(config)
-    config_presets = store.get_config_presets()
-    if preset_name in DEFAULT_AUX_APPROVAL_PRESETS or preset_name in config_presets:
-        return JSONResponse(
-            {"error": f"cannot promote to built-in or config preset '{preset_name}'"},
-            status_code=400,
-        )
-
-    try:
-        is_new, updated_text = await store.append_rules_from_tool(preset_name, [rule_text])
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
-    return JSONResponse(
-        {
-            "ok": True,
-            "conv_id": conv_id,
-            "preset": preset_name,
-            "is_new": is_new,
-            "rules": [rule_text],
-            "updated_text": updated_text,
-        }
-    )
-
-
 @_authenticated
 async def vault_read(request: Request, username: str) -> JSONResponse:
     """Read a single vault page as JSON."""
@@ -4513,11 +3834,6 @@ class ModelCatalogResponse(BaseModel):
     # model).
     aux_approval_model: str = ""
     aux_approval_pointer: str = ""
-    # Shell rule-condensation pointer (#1267): raw sidecar pointer plus the
-    # effective model it resolves to (empty = ride on the active conversation
-    # model, then the effective default).
-    condense_model: str = ""
-    condense_pointer: str = ""
     # Reflection-judge / verifier pointers (#1212): raw sidecar pointers plus
     # the effective judge/verifier names they resolve to. Empty pointer = inherit.
     reflection_model: str = ""
@@ -4663,32 +3979,6 @@ async def models_catalog_set_aux_approval(request: Request, username: str) -> JS
     if name and name not in picker_models(config):
         return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
     await set_aux_approval_model(config, name, event_bus=request.app.state.event_bus)
-    return JSONResponse(catalog_payload(config))
-
-
-@_authenticated
-async def models_catalog_set_condense(request: Request, username: str) -> JSONResponse:
-    """POST /api/models/catalog/condense — set or clear the shell rule-condensation pointer (#1267).
-
-    An empty `model` clears the pointer (condensation then rides on the active
-    conversation model, then the effective default). A non-empty name must be
-    selectable: an enabled discovered model or a hand-authored config.
-    """
-    from .model_catalog import catalog_payload, picker_models, set_condense_model
-
-    config = request.app.state.config
-    try:
-        body = await request.json()
-    except Exception as exc:
-        log.debug("models_catalog_set_condense: invalid JSON body: %s", exc)
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
-        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
-
-    name = body["model"]
-    if name and name not in picker_models(config):
-        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
-    await set_condense_model(config, name, event_bus=request.app.state.event_bus)
     return JSONResponse(catalog_payload(config))
 
 
@@ -5419,22 +4709,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute(
-            "/api/models/catalog/condense",
-            models_catalog_set_condense,
-            methods=["POST"],
-            response_model=ModelCatalogResponse,
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {
-                            "schema": _request_schema(ModelCatalogUpdateRequest),
-                        },
-                    },
-                },
-            },
-        ),
-        APIRoute(
             "/api/models/catalog/reflection",
             models_catalog_set_reflection,
             methods=["POST"],
@@ -5699,128 +4973,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                 ]
             },
         ),
-        APIRoute(
-            "/api/shell-approval/presets",
-            shell_presets_list,
-            methods=["GET"],
-            response_model=list[ShellPresetItem],
-        ),
-        APIRoute(
-            "/api/shell-approval/presets/{name}",
-            shell_presets_put,
-            methods=["PUT"],
-            response_model=ShellPresetMutateResponse,
-            openapi_extra={
-                "parameters": [
-                    {
-                        "name": "name",
-                        "in": "path",
-                        "required": True,
-                        "schema": {"type": "string"},
-                    }
-                ],
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {"schema": ShellPresetPutRequest.model_json_schema()},
-                    },
-                },
-            },
-        ),
-        APIRoute(
-            "/api/shell-approval/presets/{name}",
-            shell_presets_delete,
-            methods=["DELETE"],
-            response_model=ShellPresetMutateResponse,
-            openapi_extra={
-                "parameters": [
-                    {
-                        "name": "name",
-                        "in": "path",
-                        "required": True,
-                        "schema": {"type": "string"},
-                    }
-                ]
-            },
-        ),
-        APIRoute(
-            "/api/conversations/{id}/shell-approval",
-            get_conversation_shell_approval,
-            methods=["GET"],
-            response_model=ConversationShellApprovalResponse,
-        ),
-        APIRoute(
-            "/api/conversations/{id}/shell-approval/rules",
-            put_conversation_shell_rule,
-            methods=["PUT"],
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {"schema": ConversationShellApprovalRuleRequest.model_json_schema()}
-                    },
-                },
-            },
-        ),
-        APIRoute(
-            "/api/conversations/{id}/shell-approval/rules",
-            delete_conversation_shell_rule,
-            methods=["DELETE"],
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {"schema": ConversationShellApprovalRuleRequest.model_json_schema()}
-                    },
-                },
-            },
-        ),
-        APIRoute(
-            "/api/conversations/{id}/shell-approval/patterns",
-            delete_conversation_shell_pattern,
-            methods=["DELETE"],
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {"schema": ConversationShellApprovalPatternRequest.model_json_schema()}
-                    },
-                },
-            },
-        ),
-        APIRoute(
-            "/api/conversations/{id}/shell-approval/promote",
-            post_conversation_shell_promote,
-            methods=["POST"],
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {"schema": ConversationShellApprovalPromoteRequest.model_json_schema()}
-                    },
-                },
-            },
-        ),
-        APIRoute(
-            "/api/conversations/{id}/shell-approval/rules/replace",
-            put_conversation_shell_rules_replace,
-            methods=["PUT"],
-            response_model=ConversationShellApprovalRulesReplaceResponse,
-            openapi_extra={
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {"schema": ConversationShellApprovalRulesReplaceRequest.model_json_schema()}
-                    },
-                },
-            },
-        ),
-        APIRoute(
-            "/api/conversations/{id}/shell-approval/condense",
-            post_conversation_shell_condense,
-            methods=["POST"],
-            response_model=ConversationShellApprovalCondenseResponse,
-        ),
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
         APIRoute("/api/wiki", vault_list, methods=["GET"]),
         APIRoute("/api/wiki/{page:path}", vault_read, methods=["GET"]),
@@ -5904,7 +5056,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     app.state.event_bus = event_bus
     app.state.manager = manager
     app.state.app_ctx = app_ctx
-    app.state.preset_store = ShellPresetStore(config)
     from .terminals import TerminalRegistry
 
     app.state.terminal_registry = TerminalRegistry(config)

@@ -67,7 +67,6 @@ def build_confirm_buttons(
     confirmation_id: str = "",
     approve_label: str = "",
     deny_label: str = "",
-    suggested_rule: str = "",
 ) -> list[dict]:
     """Build Mattermost attachment with interactive action buttons.
 
@@ -120,8 +119,8 @@ def build_confirm_buttons(
                 },
             },
         ]
-    elif tool_name == "shell" and (suggested_pattern or suggested_rule):
-        # Shell tool: Approve / Deny / Allow Pattern / Remember Rule (no Always)
+    elif tool_name == "shell" and suggested_pattern:
+        # Shell tool: Approve / Deny / Allow Pattern (no Always)
         # NOTE: button IDs must not contain underscores — Mattermost
         # silently drops callbacks for buttons with underscores in the ID.
         actions = [
@@ -144,18 +143,6 @@ def build_confirm_buttons(
                 },
             },
         ]
-        if suggested_rule:
-            actions.append(
-                {
-                    "id": "addrule",
-                    "name": "Approve + remember why",
-                    "style": "default",
-                    "integration": {
-                        "url": f"{base_url}?token={_make_token('add_rule', rule=suggested_rule)}",
-                        "context": {**base_context, "action": "add_rule", "rule": suggested_rule},
-                    },
-                }
-            )
         if suggested_pattern:
             actions.append(
                 {

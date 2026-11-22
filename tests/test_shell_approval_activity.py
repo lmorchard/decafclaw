@@ -141,27 +141,6 @@ async def test_new_activity_prompts_with_direction_and_skips_judge(ctx):
 
 
 @pytest.mark.asyncio
-async def test_new_activity_prompt_can_remember_a_scoped_rule(ctx):
-    ctx.config.shell.aux_approval_enabled = False
-    cwd = ctx.config.workspace_path / "decafclaw"
-    cwd.mkdir(parents=True)
-
-    with patch(
-        "decafclaw.tools.shell_tools.request_confirmation",
-        new_callable=AsyncMock,
-        return_value={
-            "approved": True,
-            "add_rule": True,
-            "rule": "In decafclaw: allow touch for marker files",
-        },
-    ):
-        result = await check_shell_approval(ctx, "touch marker.txt", cwd=str(cwd))
-
-    assert result["approved"] is True
-    assert "In decafclaw: allow touch for marker files" in ctx.tools.aux_approval_guidance
-
-
-@pytest.mark.asyncio
 async def test_established_activity_reaches_the_judge(ctx):
     ctx.config.shell.aux_approval_enabled = True
     cwd = str(ctx.config.workspace_path)

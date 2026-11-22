@@ -158,32 +158,3 @@
     max_tool_calls: 4
     max_tool_errors: 0
 
-- name: "routes proactively to shell_guidance when kicking off a development and testing session"
-  tests: routing
-  setup:
-    config_overrides: {reflection.enabled: false}
-  input: "I want to start a coding and testing session on our workspace repository. Please set up shell approval so routine test, lint, and git commands aren't interrupted by confirmation prompts."
-  expect:
-    expect_tool: shell_guidance
-    expect_tool_args:
-      - tool: shell_guidance
-        args:
-          action: enable_preset
-          preset: developer
-    max_tool_calls: 3
-    max_tool_errors: 0
-
-- name: "routes to shell_guidance save_preset to preserve active conversation guidance"
-  tests: routing
-  setup:
-    config_overrides: {reflection.enabled: false}
-  input: "Please bundle and save our current shell auto-approval guidance rules into a new preset called 'web_deploy' so we can reuse it later."
-  expect:
-    expect_tool: shell_guidance
-    expect_tool_args:
-      - tool: shell_guidance
-        args:
-          action: save_preset
-          preset: web_deploy
-    max_tool_calls: 3
-    max_tool_errors: 0
