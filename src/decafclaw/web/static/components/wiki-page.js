@@ -9,7 +9,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../lib/markdown.js';
-import { encodePagePath } from '../lib/utils.js';
+import { encodePagePath, responseError } from '../lib/utils.js';
 import { WikiWriteMutex } from '../lib/wiki-page-write-mutex.js';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { isBookmarked, load as loadBookmarks, subscribe as subscribeBookmarks, toggle as toggleBookmark } from '../lib/bookmarks-store.js';
@@ -17,12 +17,6 @@ import './wiki-editor.js';
 import './wiki-metadata.js';
 
 const EDIT_MODE_KEY = 'wiki-edit-mode';
-
-/** @param {unknown} body */
-function responseError(body) {
-  if (!body || typeof body !== 'object' || !("error" in body)) return '';
-  return typeof body.error === 'string' ? body.error : '';
-}
 
 /**
  * An explicit destination for a metadata PUT, used when it must not be read

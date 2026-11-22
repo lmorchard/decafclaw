@@ -10,16 +10,11 @@ import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import './wiki-editor.js';
 import './schedule-metadata.js';
+import { responseError } from '../lib/utils.js';
 
 /** @typedef {import('../lib/api-client/index.js').ScheduleResponse} Schedule */
 /** @typedef {import('../lib/api-client/index.js').ModelListResponse['models']} ModelChoices */
 /** @typedef {Parameters<typeof DefaultService.wrapperApiSchedulesNamePut>[1]} SchedulePatch */
-
-/** @param {unknown} body */
-function responseError(body) {
-  if (!body || typeof body !== 'object' || !("error" in body)) return '';
-  return typeof body.error === 'string' ? body.error : '';
-}
 
 export class SchedulePage extends LitElement {
   static properties = {
