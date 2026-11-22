@@ -4,9 +4,9 @@
 
 - Issue: https://github.com/lmorchard/decafclaw/issues/1693
 - Worktree: `.claude/worktrees/issue-1693-venv-redirect`
-- Branch: `issue-1693-venv-redirect`, based on `origin/main` @ `6b59bddc`
+- Branch: `issue-1693-venv-redirect`, stacked on `issue-1690-sed-regex-paths` (PR #1711)
 - Goal: one-shot redirect before a human prompt when a command's executable is an out-of-workspace `*/.venv/bin/*` or `*/venv/bin/*` binary; fix executable detection with leading env assignments.
-- Status: stacked on `issue-1690-sed-regex-paths` (`75bbda09`). Implementation and focused tests complete; docs updated. Next: `make fmt`, `make check`, commit, publish draft.
+- Status: stacked on `issue-1690-sed-regex-paths` (`932e64a2`), PR #1712. Implementation, focused tests, `make check`, and full suite complete. Next: ready submission; retarget to `main` after #1711 merges.
 
 ## Decisions
 
