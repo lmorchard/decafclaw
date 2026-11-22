@@ -897,22 +897,20 @@ def load_config() -> Config:
     providers = _load_providers(file_data.get("providers", {}))
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
     modes = _load_modes(file_data.get("modes", {}))
-<<<<<<< HEAD
-    # Model selectors (#1328): DECAFCLAW_* env var > config.json > "".
-    default_model = _resolve_top_level_str(file_data, "default_model", "DECAFCLAW_DEFAULT_MODEL")
-    auxiliary_model = _resolve_top_level_str(file_data, "auxiliary_model", "DECAFCLAW_AUXILIARY_MODEL")
-=======
     # Top-level scalars (#1327): one generic env-alias path each —
     # env var > config.json > dataclass default. An explicit null in
     # config.json resolves to None; non-optional fields map it back to the
     # default (max_tool_output_bytes is the exception: its null means "cap
     # disabled", which stays None downstream).
-    default_model = _resolve_top_level_scalar(file_data, "default_model", ("DEFAULT_MODEL",), "")
+    default_model = _resolve_top_level_scalar(
+        file_data, "default_model", ("DECAFCLAW_DEFAULT_MODEL", "DEFAULT_MODEL"), ""
+    )
     if default_model is None:
         default_model = ""
->>>>>>> origin/main
 
-    auxiliary_model = _resolve_top_level_scalar(file_data, "auxiliary_model", ("AUXILIARY_MODEL",), "")
+    auxiliary_model = _resolve_top_level_scalar(
+        file_data, "auxiliary_model", ("DECAFCLAW_AUXILIARY_MODEL", "AUXILIARY_MODEL"), ""
+    )
     if auxiliary_model is None:
         auxiliary_model = ""
 

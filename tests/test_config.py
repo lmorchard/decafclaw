@@ -42,14 +42,11 @@ def _isolate_env(monkeypatch):
                 "VAULT_GUIDE_",
                 "WORKFLOW_",
                 "LOOP_BREAKER_",
-<<<<<<< HEAD
                 "DECAFCLAW_DEFAULT_MODEL",
                 "DECAFCLAW_AUXILIARY_MODEL",
-=======
                 "DEFAULT_MODEL",
                 "AUXILIARY_MODEL",
                 "MAX_TOOL_OUTPUT_",
->>>>>>> origin/main
             )
         ):
             monkeypatch.delenv(key, raising=False)
@@ -1097,6 +1094,15 @@ class TestModelSelectorEnvOverride:
         cfg = load_config()
         assert cfg.default_model == "from-env"
         assert cfg.auxiliary_model == "aux-env"
+
+    def test_decafclaw_env_alias_precedes_generic_alias(self, tmp_path, monkeypatch):
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("DECAFCLAW_DEFAULT_MODEL", "preferred")
+        monkeypatch.setenv("DEFAULT_MODEL", "fallback")
+        cfg = load_config()
+        assert cfg.default_model == "preferred"
 
 
 class TestConfirmationTimeoutConfig:
