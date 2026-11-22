@@ -79,6 +79,8 @@ def test_filter_expressions_do_not_hide_file_arguments(tmp_path: Path):
     commands = [
         "sed -n '/x/p' /etc/shadow",
         "sed -e '/x/p' /etc/shadow",
+        "sed -f script.sed /etc/passwd",
+        "sed --file script.sed /etc/passwd",
         "awk '/x/ {print}' /etc/passwd",
         "grep -e '/x/' /etc/passwd",
         "grep '/x/' /etc/passwd",

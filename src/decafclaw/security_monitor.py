@@ -287,6 +287,7 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
 
     if command == "sed":
         expression_option = False
+        program_from_file = False
         seen_positional = False
         while index < length:
             token = segment[index]
@@ -294,20 +295,28 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
                 expression_option = True
                 index += 2 if consumes_value(index, expression=True) else 1
                 continue
-            if token in ("-f", "--file", "-l", "--line-length"):
+            if token in ("-f", "--file"):
+                program_from_file = True
+                index += 2 if consumes_value(index) else 1
+                continue
+            if token in ("-l", "--line-length"):
                 index += 2 if consumes_value(index) else 1
                 continue
             if token.startswith(("--expression=", "--file=", "--line-length=")):
                 if token.startswith("--expression="):
                     expression_option = True
+                if token.startswith("--file="):
+                    program_from_file = True
                 index += 1
                 continue
             if token.startswith("-") and token != "-":
                 if token.startswith("-e") and len(token) > 2:
                     expression_option = True
+                if token.startswith("-f") and len(token) > 2:
+                    program_from_file = True
                 index += 1
                 continue
-            if not seen_positional and not expression_option:
+            if not seen_positional and not expression_option and not program_from_file:
                 indices.add(index)
             seen_positional = True
             index += 1
