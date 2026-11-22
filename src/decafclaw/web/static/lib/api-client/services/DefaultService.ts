@@ -25,6 +25,7 @@ import type { ConversationSearchResponse } from '../models/ConversationSearchRes
 import type { ConversationShellApprovalCondenseResponse } from '../models/ConversationShellApprovalCondenseResponse';
 import type { ConversationShellApprovalResponse } from '../models/ConversationShellApprovalResponse';
 import type { ConversationShellApprovalRulesReplaceResponse } from '../models/ConversationShellApprovalRulesReplaceResponse';
+import type { HostMetricsResponse } from '../models/HostMetricsResponse';
 import type { JsonValue } from '../models/JsonValue';
 import type { LoginResponse } from '../models/LoginResponse';
 import type { LogoutResponse } from '../models/LogoutResponse';
@@ -94,7 +95,7 @@ export class DefaultService {
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static handleConfirmActionsConfirmPost(): CancelablePromise<any> {
+    public static handleConfirmActionsConfirmGet(): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/actions/confirm',
@@ -106,7 +107,7 @@ export class DefaultService {
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static handleConfirmActionsConfirmPost1(): CancelablePromise<any> {
+    public static handleConfirmActionsConfirmGet1(): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/actions/confirm',
@@ -118,7 +119,7 @@ export class DefaultService {
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static handleCancelActionsCancelPost(): CancelablePromise<any> {
+    public static handleCancelActionsCancelGet(): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/actions/cancel',
@@ -130,7 +131,7 @@ export class DefaultService {
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static handleCancelActionsCancelPost1(): CancelablePromise<any> {
+    public static handleCancelActionsCancelGet1(): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/actions/cancel',
@@ -1124,6 +1125,17 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/models',
+        });
+    }
+    /**
+     * Wrapper
+     * @returns HostMetricsResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiHostGet(): CancelablePromise<HostMetricsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/host',
         });
     }
     /**

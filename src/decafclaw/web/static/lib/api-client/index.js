@@ -610,7 +610,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleConfirmActionsConfirmPost() {
+  static handleConfirmActionsConfirmGet() {
     return request2(OpenAPI, {
       method: "GET",
       url: "/actions/confirm"
@@ -622,7 +622,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleConfirmActionsConfirmPost1() {
+  static handleConfirmActionsConfirmGet1() {
     return request2(OpenAPI, {
       method: "POST",
       url: "/actions/confirm"
@@ -634,7 +634,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleCancelActionsCancelPost() {
+  static handleCancelActionsCancelGet() {
     return request2(OpenAPI, {
       method: "GET",
       url: "/actions/cancel"
@@ -646,7 +646,7 @@ var DefaultService = class {
    * @returns any Successful Response
    * @throws ApiError
    */
-  static handleCancelActionsCancelPost1() {
+  static handleCancelActionsCancelGet1() {
     return request2(OpenAPI, {
       method: "POST",
       url: "/actions/cancel"
@@ -1336,6 +1336,17 @@ var DefaultService = class {
     return request2(OpenAPI, {
       method: "GET",
       url: "/api/models"
+    });
+  }
+  /**
+   * Wrapper
+   * @returns HostMetricsResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiHostGet() {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/host"
     });
   }
   /**

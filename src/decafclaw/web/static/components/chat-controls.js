@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from 'lit';
 import { subscribe as subscribeCanvas, resummon } from '../lib/canvas-state.js';
 import { SIDE_EFFECT_COMMANDS } from '../lib/constants.js';
 import './model-picker.js';
+import './host-gauges.js';
 
 /** @typedef {{ name: string, description?: string }} ModeConfig */
 /** @typedef {{ provider: string, model: string }} ModelConfig */
@@ -238,6 +239,11 @@ export class ChatControls extends LitElement {
           >&#9881;</button>
         </div>
       ` : nothing}
+
+      <!-- Host capacity gauges (VM 302). Reads the server-side sampler, not
+           /proc: CPU needs a delta between two samples. Sits ahead of the
+           context meter, which keeps the strip's right end via margin-left:auto. -->
+      <host-gauges></host-gauges>
 
       <!-- Context usage control -->
       <div class="control context-control ${contextCls}" role="button" tabindex="0"

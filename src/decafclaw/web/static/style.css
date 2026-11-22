@@ -24,6 +24,7 @@
 @import './styles/notification-inbox.css';
 @import './styles/chat.css';
 @import './styles/chat-controls.css';
+@import './styles/host-gauges.css';
 @import './styles/chat-input.css';
 @import './styles/model-picker.css';
 @import './styles/side-question-drawer.css';

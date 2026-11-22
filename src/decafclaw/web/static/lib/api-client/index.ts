@@ -42,6 +42,10 @@ export { ConversationShellApprovalPresetItem } from './models/ConversationShellA
 export type { ConversationShellApprovalResponse } from './models/ConversationShellApprovalResponse';
 export type { ConversationShellApprovalRulesReplaceResponse } from './models/ConversationShellApprovalRulesReplaceResponse';
 export { FileCompletion } from './models/FileCompletion';
+export type { HostDiskGauge } from './models/HostDiskGauge';
+export type { HostLoadGauge } from './models/HostLoadGauge';
+export type { HostMemoryGauge } from './models/HostMemoryGauge';
+export type { HostMetricsResponse } from './models/HostMetricsResponse';
 export type { HTTPValidationError } from './models/HTTPValidationError';
 export type { JsonValue } from './models/JsonValue';
 export type { LoginResponse } from './models/LoginResponse';
