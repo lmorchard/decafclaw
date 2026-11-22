@@ -262,6 +262,16 @@ class ShellConfig:
     aux_approval_guidance: str = ""
     aux_approval_presets: dict[str, str] = field(default_factory=dict)
     active_aux_approval_presets: list[str] = field(default_factory=list)
+    # Global, scope-keyed rulebook (#1641 phase 4). Rules keyed by
+    # (activity scope, command shape) are merged into the judge prompt for
+    # commands in that scope. Reads are in the hot path; writes only through
+    # the admin_* tools with human confirmation. Off disables merging without
+    # touching the files (the ledger keeps accumulating evidence).
+    scope_rules_enabled: bool = True
+    # Promotion thresholds: a ledger shape becomes a proposed rule at N human
+    # approvals with no more than M denials. Defaults are the design's N=2, M=0.
+    scope_rule_min_approvals: int = 2
+    scope_rule_max_denials: int = 0
     # Kill switch for the deterministic read-only tier (#1641). When False, a
     # provably read-only command falls through to the normal pipeline (security
     # monitor → judge → human) instead of being allowed silently.

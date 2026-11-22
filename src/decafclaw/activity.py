@@ -150,12 +150,15 @@ class Activity:
     ``domain`` is the label shown to a human and the judge. ``established`` is
     false when any domain the command touches is new to the recent command
     window. ``prior_domains`` are the other domains seen in that window, so a
-    prompt can say what the conversation *was* doing.
+    prompt can say what the conversation *was* doing. ``domains`` is every
+    domain this command touches (cwd first, then command tokens), which is what
+    global scope rules match against (#1641 phase 4).
     """
 
     domain: str
     established: bool
     prior_domains: tuple[str, ...] = ()
+    domains: tuple[str, ...] = ()
 
     def reason(self) -> str:
         """One-line explanation for a human confirmation card."""
@@ -345,4 +348,9 @@ def derive_activity(ctx: "Context", command: str, cwd: str | None) -> Activity:
         # every command as in-direction so the new-activity tier never fires.
         # `prior_domains` is still reported for the judge prompt and audit.
         established = True
-    return Activity(domain=domain, established=established, prior_domains=prior)
+    return Activity(
+        domain=domain,
+        established=established,
+        prior_domains=prior,
+        domains=tuple(domains),
+    )

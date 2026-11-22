@@ -255,6 +255,24 @@ Both vocabularies are operator-editable without a restart:
 
 **Read-only kill switch.** `shell.read_only_enabled` (default `true`) gates the entire deterministic tier from `check_shell_approval()`. Because a false positive there executes a command with no human and no LLM in the loop, this flag is the emergency lever: set it `false` in `data/{agent_id}/config.json` (or `SHELL_READ_ONLY_ENABLED=false`) and the config watcher applies it in place. With it off, commands the classifier would have allowed fall through to the security monitor → aux judge → human prompt. Tier 1 blocks and explicit allow patterns are unaffected. See [Configuration — `shell`](config.md#shell).
 
+#### Global scope-keyed rulebook (#1641 phase 4)
+
+Direction is per conversation; the operator's preferences are per **scope**. Two files close that loop, with different trust levels:
+
+| file (under `data/{agent_id}/`) | contents | writable by |
+|---|---|---|
+| `shell_scope_rules.jsonl` | durable rules keyed by `(scope, command shape)` | `admin_*` tools only, human-confirmed |
+| `shell_scope_ledger.jsonl` | append-only human decisions (evidence) | the runtime |
+
+- **Matching.** A rule applies only when its scope is one the command actually touches (`activity.domains`, cwd first) and its command shape matches. A `homelab` rule never leaks into a `blog` prompt. `shell.scope_rules_enabled` turns merging off without touching the files.
+- **Shape.** The key composes the existing vocabularies: the scope from `activity.derive_domains` and the command shape from `shell_tools._suggest_pattern` (executable + subcommand/script, args wildcarded). No second key vocabulary.
+- **Evidence, not policy.** `_record_approval` appends **human** verdicts to the ledger (judge/read-only allowances are telemetry, not consent). Promotion at `shell.scope_rule_min_approvals` approvals and `shell.scope_rule_max_denials` denials produces a draft; it never writes.
+- **Apply.** `shell_guidance(action="promote_scope_rules")` returns the promotion candidates and the full rulebook content plus the target path. The agent must apply it with `admin_write(path="shell_scope_rules.jsonl", content=...)`, which requires interactive confirmation and a diff preview and is refused on unattended turns and child agents. There is deliberately no workspace/vault write path.
+- **Condense.** `shell_guidance(action="condense_scope_rules")` asks the condense model to merge the global rulebook into fewer scope-keyed rules and returns a draft for the same `admin_write`. Past 30 rules, `shell_guidance(action="list")` recommends it. The model call is not on the approval path; nothing condenses a rule mid-approval.
+- **Review.** `shell_guidance(action="list")` shows the rulebook, promotion candidates, and the condense recommendation — "the shapes the system learned", not 500 conversation paragraphs.
+
+The original #1267 per-conversation Condense action remains for conversation rules; this is the global equivalent.
+
 **Telemetry.** Every decision publishes `approval_decision` (`command`, `cwd`, `decision`, `tier`, `reason`, `activity`, `activity_established`, `conv_id`); every human prompt publishes `approval_human` (`command`, `approved`, `latency_ms`, `tier`, …). The audit-log subscriber writes both to `audit.jsonl` when `audit_log.enabled`. Summarize them with:
 
 ```sh

@@ -446,6 +446,9 @@ Settings for shell command execution and pre-approval logic (see #473).
 | `aux_approval_guidance` | str | `""` | `SHELL_AUX_APPROVAL_GUIDANCE` |
 | `aux_approval_presets` | dict | `{}` | `SHELL_AUX_APPROVAL_PRESETS` |
 | `active_aux_approval_presets` | list[str] | `[]` | `SHELL_ACTIVE_AUX_APPROVAL_PRESETS` |
+| `scope_rules_enabled` | bool | `true` | `SHELL_SCOPE_RULES_ENABLED` |
+| `scope_rule_min_approvals` | int | `2` | `SHELL_SCOPE_RULE_MIN_APPROVALS` |
+| `scope_rule_max_denials` | int | `0` | `SHELL_SCOPE_RULE_MAX_DENIALS` |
 | `read_only_enabled` | bool | `true` | `SHELL_READ_ONLY_ENABLED` |
 | `activity_window` | int | `50` | `SHELL_ACTIVITY_WINDOW` |
 | `foreground_wait_budget_sec` | float \| None | `None` | `SHELL_FOREGROUND_WAIT_BUDGET_SEC` |
@@ -454,6 +457,8 @@ Settings for shell command execution and pre-approval logic (see #473).
 When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxiliary LLM to screen unrecognized commands. If the aux LLM deems the command low-risk (e.g. `ls -la`, `git status`), it is auto-approved without prompting the user. If the aux LLM deems it risky or errors out, it falls through to standard interactive confirmation. Auto-approved patterns are temporarily cached per-conversation so repeated benign commands don't trigger redundant LLM calls.
 
 `read_only_enabled` (#1641) is the kill switch for the **deterministic read-only tier** — the only approval tier that runs a shell command with no human and no model in the loop. Leave it `true` normally. Setting it to `false` (the explicit boolean; only `true`/`false` are meaningful) disables that tier, so commands it would have allowed silently fall through to the security monitor → aux judge → human prompt instead. Tier 1 blocks and explicit allow patterns are unaffected. This is the emergency lever during an incident: turn it off in `data/{agent_id}/config.json` (or set `SHELL_READ_ONLY_ENABLED=false`) and the config watcher applies it in place — no restart and no code revert needed.
+
+`scope_rules_enabled` (#1641 phase 4) turns on merging the global, scope-keyed rulebook (`data/{agent_id}/shell_scope_rules.jsonl`) into the aux-judge prompt for commands in a matching activity scope. The rulebook is policy: only the `admin_*` tools write it, each with interactive confirmation and a diff preview, and they refuse unattended turns and child agents. The runtime reads it and never writes it. `scope_rule_min_approvals` / `scope_rule_max_denials` are the promotion thresholds: a `(scope, command shape)` with at least N human approvals and no more than M denials becomes a proposed rule. Promotion writes nothing either — it returns a draft for `admin_write`, so a human still confirms. Evidence lives in the append-only `data/{agent_id}/shell_scope_ledger.jsonl`; forged ledger entries cannot promote a rule unattended. See [Tools — Global scope rules](tools.md#global-scope-keyed-rulebook-1641-phase-4).
 
 `activity_window` (#1641) is how many recent shell calls define a conversation's established activity. A command whose activity domain (derived from `cwd` and command tokens) appears in that window proceeds to the aux judge; a command that starts a new activity is confirmed once with the direction stated. The window is recomputed from conversation history, so compaction resets it naturally. `0` or below **disables direction entirely**: every command counts as established, so the new-activity tier never fires (the safe way to turn the tier off). Lower positive values make drift prompt sooner. See [Tools — Direction-aware approval](tools.md#direction-aware-approval-1641).
 
