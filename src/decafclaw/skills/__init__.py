@@ -3,7 +3,7 @@
 import logging
 import os
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -845,11 +845,11 @@ async def activate_skills_for_workflow(
     from ..tools.skill_tools import activate_skill_internal  # noqa: PLC0415 — symmetric with activate_always_loaded
     from ..workflow.errors import WorkflowSkillActivationFailed  # noqa: PLC0415 — break workflow → skills cycle
 
-    by_name = {s.name: s for s in ctx.config.discovered_skills}
+    by_name = index_skills(ctx.config.discovered_skills)
     for name in names:
         if name in ctx.skills.activated:
             continue
-        skill_info = by_name.get(name)
+        skill_info = find_skill(by_name, name)
         if skill_info is None:
             raise WorkflowSkillActivationFailed(f"requires_skills entry {name!r} is not a discovered skill")
         try:
@@ -868,11 +868,31 @@ async def activate_skills_for_workflow(
         log.debug("Workflow-activated skill %r", name)
 
 
+def index_skills(discovered: Iterable[SkillInfo]) -> dict[str, SkillInfo]:
+    """Index skills by name.
+
+    First occurrence wins on duplicate names, matching discovery's
+    precedence (workspace > agent-level > bundled > extra). A list from
+    `discover_skills` is already deduplicated, so this only matters for
+    hand-built lists.
+    """
+    index: dict[str, SkillInfo] = {}
+    for skill in discovered:
+        if skill.name not in index:
+            index[skill.name] = skill
+    return index
+
+
+def find_skill(index: Mapping[str, SkillInfo], name: str) -> SkillInfo | None:
+    """Return the skill named `name` from an index built with `index_skills`, or None."""
+    return index.get(name)
+
+
 def find_command(name: str, discovered_skills: list[SkillInfo]) -> SkillInfo | None:
     """Find a user-invokable command by name. Returns first match."""
-    for skill in discovered_skills:
-        if skill.user_invocable and skill.name == name:
-            return skill
+    skill = find_skill(index_skills(discovered_skills), name)
+    if skill is not None and skill.user_invocable:
+        return skill
     return None
 
 
