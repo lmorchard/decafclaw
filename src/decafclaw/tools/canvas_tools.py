@@ -184,6 +184,7 @@ CANVAS_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Open a new canvas tab and make it active.",
         "function": {
             "name": "canvas_new_tab",
             "description": (
@@ -254,6 +255,7 @@ CANVAS_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Replace the data of an existing canvas tab.",
         "function": {
             "name": "canvas_update",
             "description": (
@@ -283,6 +285,7 @@ CANVAS_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Close one canvas tab by id.",
         "function": {
             "name": "canvas_close_tab",
             "description": (
@@ -307,6 +310,7 @@ CANVAS_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": True,
+        "summary": "Close every canvas tab and hide the panel.",
         "function": {
             "name": "canvas_clear",
             "description": (
@@ -321,6 +325,7 @@ CANVAS_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "Read the canvas tabs, their data, and the active tab id.",
         "function": {
             "name": "canvas_read",
             "description": (

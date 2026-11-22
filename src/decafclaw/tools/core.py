@@ -555,6 +555,7 @@ CORE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": True,
+        "summary": "Dump the current conversation context for debugging.",
         "function": {
             "name": "debug_context",
             "description": "Dump the current conversation context for debugging. Writes full context as JSON to workspace/debug_context.json and a summary to workspace/debug_context_summary.txt. Returns a brief summary in the response. Use when asked to inspect or describe your context.",
@@ -569,6 +570,7 @@ CORE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": False,
+        "summary": "Show token budget statistics for this conversation.",
         "function": {
             "name": "context_stats",
             "description": "Show token budget statistics for the current conversation. Reports estimated breakdown of system prompt, tool definitions, and history versus the compaction budget. Use when asked about context size, token usage, or why the agent might be forgetting things.",
@@ -597,6 +599,7 @@ CORE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": False,
+        "summary": "Pause for a number of seconds within the current turn.",
         "function": {
             "name": "wait",
             "description": (
@@ -622,6 +625,7 @@ CORE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": True,
+        "summary": "Ask the user to pick from a fixed list of options.",
         "function": {
             "name": "ask_user_multiple_choice",
             "description": (
@@ -678,6 +682,7 @@ CORE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": True,
+        "summary": "Ask the user a free-form question or small form.",
         "function": {
             "name": "ask_user_text",
             "description": (

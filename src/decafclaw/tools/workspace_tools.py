@@ -1218,6 +1218,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
             "Use workspace_outline to inspect classes, functions, and headings before reading specific sections of large files."
         ],
         "writes": False,
+        "summary": "Show a file's structure or read one section by line range.",
         "function": {
             "name": "workspace_outline",
             "description": "Show a structural outline of a workspace file (Python classes/functions or Markdown headings) with line numbers, or retrieve a specific section. Use this on large files before reading full contents to identify relevant code or documentation.",
@@ -1242,6 +1243,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_search and workspace_glob to find files first."],
         "writes": False,
+        "summary": "Search the workspace for a regex pattern.",
         "function": {
             "name": "workspace_search",
             "description": "Search for a regex pattern across files in the workspace. Returns matching lines with line numbers and surrounding context, grouped by file. Use the glob parameter to filter file types (e.g. '*.py'). Pass a specific file path to search within one file.",
@@ -1274,6 +1276,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_search and workspace_glob to find files first."],
         "writes": False,
+        "summary": "Find workspace files by glob pattern.",
         "function": {
             "name": "workspace_glob",
             "description": "Find files by name/glob pattern, recursively. Returns matching file paths relative to workspace root with file sizes. Useful for finding files by extension or name pattern.",
@@ -1297,6 +1300,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "List files and directories in the workspace.",
         "function": {
             "name": "workspace_list",
             "description": "List files and directories in your workspace. Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
@@ -1317,6 +1321,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "priority": "normal",
         "prompt_guidelines": ["Use workspace_diff to compare two files."],
         "writes": False,
+        "summary": "Show a unified diff between two workspace files.",
         "function": {
             "name": "workspace_diff",
             "description": "Show a unified diff between two workspace files. Useful for comparing versions, checking what changed, or reviewing differences.",
@@ -1344,6 +1349,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "Render a workspace Markdown file as a preview for the user.",
         "function": {
             "name": "workspace_preview_markdown",
             "description": (
@@ -1397,6 +1403,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "prompt_guidelines": ["Use workspace_append to add to the end of a file."],
         "execution": "shared",
         "writes": True,
+        "summary": "Append content to the end of a workspace file.",
         "function": {
             "name": "workspace_append",
             "description": "Append content to the end of a file in your workspace. Creates the file (and parent directories) if it doesn't exist. Adds a newline separator if the file doesn't end with one.",
@@ -1494,6 +1501,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "prompt_guidelines": ["Use workspace_insert for insertions by line number."],
         "execution": "shared",
         "writes": True,
+        "summary": "Insert text at a line number in a workspace file.",
         "function": {
             "name": "workspace_insert",
             "description": "Insert text at a specific line number in a workspace file, pushing existing content down. Line numbers are 1-based. Use workspace_read first to see line numbers.",
@@ -1525,6 +1533,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         ],
         "execution": "shared",
         "writes": True,
+        "summary": "Replace a line range in a workspace file.",
         "function": {
             "name": "workspace_replace_lines",
             "description": "Replace a range of lines (1-based, inclusive) with new content. Pass empty content to delete lines. Use workspace_read first to see line numbers.",
@@ -1558,6 +1567,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "prompt_guidelines": ["Use workspace_move and workspace_delete to rename or remove files."],
         "execution": "shared",
         "writes": True,
+        "summary": "Move or rename a workspace file.",
         "function": {
             "name": "workspace_move",
             "description": "Move or rename a file within the workspace. Fails if the destination already exists.",
@@ -1582,6 +1592,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "priority": "normal",
         "execution": "shared",
         "writes": True,
+        "summary": "Create a directory and its parents in the workspace.",
         "function": {
             "name": "workspace_mkdir",
             "description": "Create an empty directory (and its parents) in the workspace. No-op if it exists. Useful for scaffolding project layouts up front.",
@@ -1602,6 +1613,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "priority": "normal",
         "execution": "shared",
         "writes": True,
+        "summary": "Copy a file within the workspace.",
         "function": {
             "name": "workspace_copy",
             "description": "Copy a file within the workspace. Fails if the destination already exists.",
@@ -1627,6 +1639,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "prompt_guidelines": ["Use workspace_move and workspace_delete to rename or remove files."],
         "execution": "shared",
         "writes": True,
+        "summary": "Delete a file or directory from the workspace.",
         "function": {
             "name": "workspace_delete",
             "description": "Delete a file or directory from the workspace. By default, it will only delete files or empty directories. To delete a non-empty directory and its contents, you must set recursive to true. NEVER guess a filename if a target is described ambiguously (e.g. 'the Q1 report' with multiple matching files) — use workspace_list to check existing files or ask the user for clarification first.",
@@ -1651,6 +1664,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "priority": "normal",
         "execution": "shared",
         "writes": True,
+        "summary": "Share a workspace file as a conversation attachment.",
         "function": {
             "name": "file_share",
             "description": "Share a file from the workspace as an attachment in the conversation. The file will be uploaded and displayed inline (images) or as a download (other files). Use this to share reports, images, logs, or any workspace file with the user.",

@@ -30,7 +30,8 @@ Every entry in core `TOOL_DEFINITIONS` and always-loaded skills (`vault`, `backg
 ```python
 {
     "type": "function",
-    "priority": "critical",  # or "normal" or "low"
+    "priority": "normal",  # or "critical" or "low"
+    "summary": "Run a shell command in the workspace.",
     "function": {
         "name": "shell",
         "description": "...",
@@ -40,6 +41,8 @@ Every entry in core `TOOL_DEFINITIONS` and always-loaded skills (`vault`, `backg
 ```
 
 When adding a new core tool, you **must** declare a priority — an invariant test (`TestCoreToolsDeclarePriority` in `tests/test_tool_registry.py`) fails CI otherwise.
+
+A core tool with `normal` or `low` priority can be deferred, so it must also declare a one-line `summary` of at most 120 characters. `TestCoreToolsDeclareSummary` enforces that. Critical tools never render in the deferred catalogue and may omit it. See [Tool Search](tool-search.md#deferred-catalog-layout) for how the summary becomes a catalogue line.
 
 ### Guidelines
 

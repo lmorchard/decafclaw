@@ -111,6 +111,17 @@ def test_build_tool_list_base_tools(ctx):
     assert "current_time" in names
 
 
+def test_build_tool_list_strips_summary_from_active_but_keeps_catalogue(ctx):
+    """`summary` is catalogue-only: active schemas omit it, the deferred
+    catalogue renders it (#1703)."""
+    ctx.config.agent.tool_context_budget_pct = 0.001  # force deferral
+    tools, deferred_text, _ = build_tool_list(ctx)
+    assert tools
+    assert all("summary" not in td for td in tools)
+    assert deferred_text is not None
+    assert "- workspace_list — List files and directories in the workspace." in deferred_text
+
+
 def test_build_tool_list_with_extra_tools(ctx):
     extra_def = {
         "type": "function",

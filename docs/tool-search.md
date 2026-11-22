@@ -65,6 +65,8 @@ Skill-owned tools are NOT rendered in the deferred list — they remain in the d
 
 Within each rendered section, tools sort by `(priority desc, source asc, name asc)`.
 
+Each line is `- <name> — <summary>`. A non-critical core tool authors its top-level `summary` (one line, at most 120 characters). Tools without one — MCP server tools and extra definitions — fall back to the first sentence of the description, clamped to 120 characters at a word boundary with `...`. The catalogue never shows a multi-line entry.
+
 ## Auto-Fetch
 
 If the model calls a deferred non-skill tool without searching first, `execute_tool` auto-fetches it — the call succeeds and the tool is added to the fetched set.
