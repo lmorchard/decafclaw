@@ -32,20 +32,21 @@ _PRIORITY_RANK = {
 }
 
 
+# Top-level keys that never reach the provider as part of the tool schema.
+_SCHEMA_EXCLUDED_KEYS = ("prompt_guidelines", "summary")
+
+
 def estimate_tool_tokens(tool_defs: list[dict]) -> int:
     """Estimate token cost of tool definitions.
 
-    Top-level prompt_guidelines are excluded because they are injected
-    into the prompt as <tool_guidance> and accounted for there, not in
-    the tool schema declarations sent to the model.
+    Top-level ``prompt_guidelines`` and ``summary`` are excluded because
+    they are not sent in the schema declarations. Guidelines go into
+    <tool_guidance>; summaries are only rendered in the deferred catalogue.
     """
     total = 0
     for td in tool_defs:
-        if "prompt_guidelines" in td:
-            clean = {k: v for k, v in td.items() if k != "prompt_guidelines"}
-            total += estimate_tokens(json.dumps(clean))
-        else:
-            total += estimate_tokens(json.dumps(td))
+        clean = {k: v for k, v in td.items() if k not in _SCHEMA_EXCLUDED_KEYS}
+        total += estimate_tokens(json.dumps(clean))
     return total
 
 
@@ -59,10 +60,16 @@ def get_critical_names(config) -> set[str]:
 
 
 def get_always_loaded_tool_names(config) -> set[str]:
-    """Return the set of tool names belonging to always-loaded skills."""
+    """Return the set of tool names belonging to always-loaded skills.
+
+    Always-loaded skill bodies already sit in the system prompt, and the
+    skill catalog promises their tools are available now. Their tools are
+    therefore force-critical: they must never be deferred out of sight.
+    """
     cached = getattr(config, "always_loaded_skill_tools", set()) or set()
     if cached:
-        return cached
+        # Coerce: the runtime field is serialized as a list in some paths.
+        return set(cached)
     names: set[str] = set()
     for skill in config.discovered_skills:
         if skill.always_loaded and skill.has_native_tools:
@@ -116,9 +123,12 @@ def classify_tools(
     2. All ``critical`` tools enter the active set (hard floor, included
        even if over budget).
     3. ``normal`` tools added one at a time while under
-       ``tool_context_budget`` and ``max_active_tools``.
+       ``tool_context_budget``.
     4. ``low`` tools added only if room remains after ``normal``.
     5. Everything else goes to deferred.
+
+    The token budget is the only limit on the active set; there is no
+    tool-count cap (#1692).
 
     Input order within a tier is preserved so callers can influence
     tie-breaks by ordering the input list.
@@ -127,8 +137,10 @@ def classify_tools(
     fetched tools persist in ``fetched_names`` instead of changing schemas
     for each user message.
     """
-    fetched_names = fetched_names or set()
-    skill_tool_names = skill_tool_names or set()
+    # Coerce: runtime state stores these as lists in some paths (the
+    # fetched-tools set is JSON-serialized as a sorted list).
+    fetched_names = set(fetched_names or ())
+    skill_tool_names = set(skill_tool_names or ())
     skill_tool_owners = getattr(config, "skill_tool_owners", {}) or {}
 
     always_loaded_tools = get_always_loaded_tool_names(config)
@@ -142,13 +154,15 @@ def classify_tools(
         if tname in on_demand_skill_tools and td.get("priority") not in _PRIORITY_RANK:
             undeclared_on_demand.add(tname)
 
-    # Build the "force critical" set
+    # Build the "force critical" set. Always-loaded skill tools are included:
+    # their skill bodies are already in the prompt, so deferring them would
+    # contradict the catalog that advertises them as callable now.
     force_critical = get_critical_names(config)
+    force_critical |= always_loaded_tools
     force_critical |= fetched_names
     force_critical |= undeclared_on_demand
 
     budget = config.tool_context_budget
-    max_active = getattr(config.agent, "max_active_tools", 40)
 
     # Bucket by resolved priority, preserving input order. Compute
     # each tool's token cost once up front — classify_tools runs every
@@ -185,28 +199,17 @@ def classify_tools(
 
     if active_tokens > budget:
         log.warning(
-            "Critical tool set exceeds budget or count: "
-            "%d tools / %d tokens (budget %d, max %d). "
-            "Critical tools are included anyway.",
+            "Critical tool set exceeds budget: %d tools / %d tokens (budget %d). Critical tools are included anyway.",
             len(active),
             active_tokens,
             budget,
-            max_active,
-        )
-    elif len(active) > max_active:
-        # Count-only overflow: the normal state under the default config
-        # (#1012). The token budget is intact, so this is informational.
-        log.info(
-            "Critical tool set over count cap: %d tools (max %d); normal and low tools are deferred.",
-            len(active),
-            max_active,
         )
 
     def _fill(tier: list[dict]) -> None:
         nonlocal active_tokens
         for td in tier:
             tokens = token_cost[id(td)]
-            if active_tokens + tokens <= budget and len(active) + 1 <= max_active:
+            if active_tokens + tokens <= budget:
                 active.append(td)
                 active_tokens += tokens
             else:
@@ -337,6 +340,35 @@ def normalize_deferred_description(desc: str, tool_name: str = "") -> str:
     return " ".join(_extract_first_sentence(fallback).split())
 
 
+SUMMARY_MAX_CHARS = 120
+
+
+def _clamp_summary(text: str, limit: int = SUMMARY_MAX_CHARS) -> str:
+    """Collapse to one line and bound the length at a word boundary."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 3]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:-") + "..."
+
+
+def get_tool_summary(tool_def: dict) -> str:
+    """Return the one-line catalogue summary for a deferred tool.
+
+    Uses the authored top-level ``summary`` when present. Otherwise falls
+    back to the first sentence of the description, clamped to
+    ``SUMMARY_MAX_CHARS`` at a word boundary. Always returns one line.
+    """
+    summary = tool_def.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return _clamp_summary(summary)
+    name = tool_def.get("function", {}).get("name", "")
+    desc = normalize_deferred_description(get_description(tool_def), tool_name=name)
+    return _clamp_summary(desc)
+
+
 def _get_declared_priority(tool_def: dict) -> str:
     """Return the priority declared on a tool def, defaulting to normal."""
     prio = tool_def.get("priority")
@@ -405,8 +437,7 @@ def build_deferred_list_text(
         rendered = []
         for td in defs_sorted:
             name = td.get("function", {}).get("name", "")
-            desc = normalize_deferred_description(get_description(td), tool_name=name)
-            rendered.append(f"- {name} — {desc}")
+            rendered.append(f"- {name} — {get_tool_summary(td)}")
         return rendered
 
     lines = ["## Available tools (use tool_search to load)\n"]

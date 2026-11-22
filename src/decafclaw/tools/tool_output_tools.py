@@ -87,6 +87,7 @@ TOOL_OUTPUT_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "writes": False,
+        "summary": "Read a saved tool output by handle, one page at a time.",
         "function": {
             "name": "tool_output_read",
             "description": (

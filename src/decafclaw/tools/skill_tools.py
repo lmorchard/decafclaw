@@ -1254,6 +1254,7 @@ SKILL_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": True,
+        "summary": "Rescan skill directories and refresh the skill catalog.",
         "function": {
             "name": "refresh_skills",
             "description": "Re-scan skill directories and update the available skills catalog. Use when new skills have been added or removed without restarting the agent.",
@@ -1268,6 +1269,7 @@ SKILL_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "writes": False,
+        "summary": "Check a workspace skill before loading it and list rejection reasons.",
         "function": {
             "name": "skill_validate",
             "description": (

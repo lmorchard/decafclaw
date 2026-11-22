@@ -237,6 +237,16 @@ def collect_trusted_tool_guidelines(ctx: "Context") -> dict[str, list[str]]:
     return guidelines
 
 
+def _strip_catalogue_metadata(tool_defs: list) -> list:
+    """Drop catalogue-only keys before active schemas go to the provider.
+
+    ``summary`` feeds the deferred catalogue; it is not part of the
+    function-calling schema. Copies keep the deferred pool's definitions
+    (and their summaries) intact.
+    """
+    return [{k: v for k, v in td.items() if k != "summary"} for td in tool_defs]
+
+
 def build_tool_list(ctx: "Context", *, all_defs: list | None = None) -> tuple[list, str | None, str | None]:
     """Build the tool list, with optional deferred mode and tool-owned guidance.
 
@@ -278,7 +288,7 @@ def build_tool_list(ctx: "Context", *, all_defs: list | None = None) -> tuple[li
 
     ctx.tools.deferred_pool = deferred
     if not deferred:
-        return active, None, build_tool_guidance_text(active, trusted_guidelines)
+        return _strip_catalogue_metadata(active), None, build_tool_guidance_text(active, trusted_guidelines)
 
     # Deferred mode: set the pool on ctx and add tool_search
     active = active + SEARCH_TOOL_DEFINITIONS
@@ -288,4 +298,4 @@ def build_tool_list(ctx: "Context", *, all_defs: list | None = None) -> tuple[li
     deferred_text = build_deferred_list_text(deferred, core_names=core_names)
     guidance_text = build_tool_guidance_text(active, trusted_guidelines)
 
-    return active, deferred_text, guidance_text
+    return _strip_catalogue_metadata(active), deferred_text, guidance_text

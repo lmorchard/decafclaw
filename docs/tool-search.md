@@ -8,8 +8,8 @@ See also:
 
 ## How It Works
 
-1. **Priority classification**: each tool resolves to a priority (`critical` / `normal` / `low`). Activated skill tools, fetched tools, and tools in the `CRITICAL_TOOLS` env override are treated as critical.
-2. **Fill the active set**: the classifier starts with all `critical` tools (hard floor, included regardless of budget). Then it fills `normal` tools while under both `tool_context_budget` and `max_active_tools`, followed by `low` tools if room remains.
+1. **Priority classification**: each tool resolves to a priority (`critical` / `normal` / `low`). Always-loaded skill tools, activated skill tools, fetched tools, and tools in the `CRITICAL_TOOLS` env override are treated as critical.
+2. **Fill the active set**: the classifier starts with all `critical` tools (hard floor, included regardless of budget). Then it fills `normal` tools while under `tool_context_budget`, followed by `low` tools if room remains.
 3. **Everything else is deferred**: deferred tools are listed by name and description in a system prompt block. The `tool_search` tool is added to the active set so the model can fetch full schemas.
 4. **Persistence**: fetched tools stay loaded for the rest of the conversation and survive agent restarts.
 
@@ -18,7 +18,6 @@ See also:
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `TOOL_CONTEXT_BUDGET_PCT` | 0.10 | Fraction of `COMPACTION_MAX_TOKENS` used as the tool definition budget |
-| `MAX_ACTIVE_TOOLS` | 30 | Hard cap on the number of tools in the active set |
 | `CRITICAL_TOOLS` | (empty) | Comma-separated tool names to force-promote to `critical` priority |
 
 The effective budget is `COMPACTION_MAX_TOKENS * TOOL_CONTEXT_BUDGET_PCT`. With the default 100K token compaction threshold and 10% budget, normal tools start being deferred once the active set exceeds ~10K tokens.
@@ -65,6 +64,8 @@ The deferred tool list sent to the LLM is grouped into sections:
 Skill-owned tools are NOT rendered in the deferred list — they remain in the deferred pool (so `tool_search` can match against them and surface the owning skill) but their names are never advertised directly to the agent. This is the skill-level progressive disclosure model: the catalog (in the main system prompt, not the deferred list) advertises skills, not individual tools.
 
 Within each rendered section, tools sort by `(priority desc, source asc, name asc)`.
+
+Each line is `- <name> — <summary>`. A non-critical core tool authors its top-level `summary` (one line, at most 120 characters). Tools without one — MCP server tools and extra definitions — fall back to the first sentence of the description, bounded to 120 characters at a word boundary with `...`. The catalogue never shows a multi-line entry.
 
 ## Auto-Fetch
 
