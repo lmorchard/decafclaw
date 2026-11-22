@@ -16,9 +16,11 @@ import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
+from decafclaw import notifications
+from decafclaw.notification_escalation import EscalationScheduler
 from decafclaw.notifications import NotificationRecord
 
-from . import PRIORITY_GLYPH, meets_priority
+from . import PRIORITY_GLYPH, meets_priority, should_defer
 
 log = logging.getLogger(__name__)
 
@@ -49,9 +51,38 @@ def _resolve_link(record: NotificationRecord, base_url: str) -> str | None:
     return None
 
 
+async def _deliver_record(config: Any, mm_client: Any, record: NotificationRecord) -> None:
+    """Post one notification, resolving the recipient at delivery time."""
+    cfg = config.notifications.channels.mattermost_dm
+    recipient = cfg.recipient_username
+    if not cfg.enabled or not recipient:
+        return
+    body = _format_dm(record, config.http.base_url)
+    try:
+        result = await mm_client.post_direct_message(recipient, body)
+        if result is None:
+            log.warning(
+                "Mattermost DM delivery failed: recipient '%s' not found (category=%s priority=%s conv=%s)",
+                recipient,
+                record.category,
+                record.priority,
+                record.conv_id or "-",
+            )
+    except Exception as exc:
+        log.warning(
+            "Mattermost DM delivery failed (recipient=%s category=%s priority=%s conv=%s): %s",
+            recipient,
+            record.category,
+            record.priority,
+            record.conv_id or "-",
+            exc,
+        )
+
+
 def make_mattermost_dm_adapter(
     config: Any,
     mm_client: Any,
+    scheduler: EscalationScheduler | None = None,
 ) -> Callable[[dict], Awaitable[None]]:
     """Return an event-bus handler that DMs notifications to a Mattermost user.
 
@@ -64,28 +95,18 @@ def make_mattermost_dm_adapter(
     restart, since there's no file-reload mechanism today.
     """
 
-    async def _deliver(record: NotificationRecord, recipient: str, base_url: str) -> None:
-        """Background-task delivery — fire-and-forget from the handler."""
-        try:
-            body = _format_dm(record, base_url)
-            result = await mm_client.post_direct_message(recipient, body)
-            if result is None:
-                log.warning(
-                    "Mattermost DM delivery failed: recipient '%s' not found (category=%s priority=%s conv=%s)",
-                    recipient,
-                    record.category,
-                    record.priority,
-                    record.conv_id or "-",
-                )
-        except Exception as exc:
-            log.warning(
-                "Mattermost DM delivery failed (recipient=%s category=%s priority=%s conv=%s): %s",
-                recipient,
-                record.category,
-                record.priority,
-                record.conv_id or "-",
-                exc,
-            )
+    async def deliver_deferred(payload: dict) -> None:
+        record = notifications.find_record(config, str(payload.get("record_id", "")))
+        if record is None:
+            log.info("Deferred Mattermost DM dropped: inbox record %r no longer live", payload.get("record_id"))
+            return
+        if notifications.is_read(config, record.id):
+            log.info("Deferred Mattermost DM cancelled: record %s was read", record.id)
+            return
+        await _deliver_record(config, mm_client, record)
+
+    if scheduler is not None:
+        scheduler.register("mattermost_dm", deliver_deferred)
 
     async def handle(event: dict) -> None:
         if event.get("type") != "notification_created":
@@ -100,8 +121,10 @@ def make_mattermost_dm_adapter(
         record = NotificationRecord.from_dict(event["record"])
         if not meets_priority(record.priority, cfg.min_priority):
             return
-        base_url = config.http.base_url
+        if scheduler is not None and should_defer(cfg, record):
+            scheduler.arm("mattermost_dm", record.id, cfg.escalate_after_sec, {"record_id": record.id})
+            return
         # Fire-and-forget — don't make notify() wait on Mattermost I/O.
-        asyncio.create_task(_deliver(record, recipient, base_url))
+        asyncio.create_task(_deliver_record(config, mm_client, record))
 
     return handle

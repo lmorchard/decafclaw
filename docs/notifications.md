@@ -85,6 +85,7 @@ class NotificationRecord:
     body: str = ""
     link: str | None = None    # "conv://<id>", "vault://<path>", "https://..."
     conv_id: str | None = None # correlation — set when the event is tied to a conversation
+    attended: bool = False     # a human may be watching (see deferred delivery)
 ```
 
 ## Producers (Phase 1)
@@ -189,6 +190,107 @@ out to channel adapters. Pass it whenever you have it.
 Failures inside `notify()` raise normally, so wrap the call in `try/except`
 if the emission is best-effort — see any of the producers for the pattern.
 
+## Deferred delivery and confirmation escalation
+
+Every channel used to deliver the instant a record was published, so an
+interrupting channel fired even when the operator was already looking at the
+event in the transcript. A channel can now be configured `delivery:
+"deferred"`: it arms a durable escalation instead of delivering, and the
+delivery is dropped if the event is acknowledged first (#1664).
+
+The inbox record is unchanged: it is still written synchronously before any
+channel sees it, and it remains the source of truth. Deferral only decides
+*when* an interrupting channel speaks.
+
+### What can defer
+
+| rule | effect |
+| --- | --- |
+| `delivery: "immediate"` | deliver at publish, as before |
+| `delivery: "deferred"` | arm an escalation for `escalate_after_sec` |
+| priority `high` / `urgent` | always immediate — scheduled-run crash reports must not be demoted |
+| category `security` / `denial` / `egress` / `outside_workspace` | always immediate |
+| `attended: false` (unattended turn) | always immediate — nobody is watching the transcript |
+
+`attended` is set by the producer: `ctx.notify()` and the
+`send_notification` tool mark a record attended when the turn is not
+unattended (`TaskMode`-derived, the same partition `request_confirmation`
+uses). Heartbeat, schedule, background-job, and other detached producers
+leave it `false`, so their records are immediate by definition.
+
+Defaults: ntfy is `deferred` (it is the interrupting channel); Mattermost DM
+and email are `immediate` (they are often the primary interface, and
+deferring a DM can make the bot feel unresponsive). All three accept
+`delivery` and `escalate_after_sec`.
+
+### Acknowledgement cancels
+
+The cancel signal is explicit acknowledgement, not presence inference:
+
+- `notification_read` on the global bus (from `mark_read` /
+  `mark_all_read`) cancels the armed entry for those record ids. The
+  WebSocket bridge already publishes it.
+- Confirmation escalation cancels when the confirmation resolves —
+  answered, cancelled, or timed out. `ConversationManager` calls
+  `cancel_escalations(confirmation_id)` on each of those paths.
+
+A record that was merely rendered but never marked read still escalates;
+that is deliberate. Presence is unreliable, and a cheap "seen" signal
+would need client-side reporting that does not exist.
+
+### Durable pending escalations
+
+An armed escalation is a line in
+`data/{agent_id}/pending_escalations.jsonl`:
+
+```json
+{"channel":"ntfy","key":"<record id>","fire_at":"2026-11-21T12:01:00.250000+00:00","payload":{"record_id":"<record id>"}}
+```
+
+The file is outside the agent-writable workspace: a forged entry could make
+the agent buzz the operator, the same rationale as `approval_state/` and
+`scheduled_wakes/`. On startup the scheduler reloads the file, re-arms
+future entries, and fires overdue ones. An entry is removed from disk before
+delivery runs, so a crash can lose at most one push, never duplicate it.
+
+Deferred payloads carry only the record id. The channel re-reads the durable
+inbox record at fire time and drops the delivery if the record is gone or
+already marked read. Confirmation payloads carry the request event so the
+push can be rebuilt after a restart; approval tokens are minted fresh at
+fire time, not persisted.
+
+### Confirmation ladder
+
+With ntfy `notify_on_confirmation` and
+`confirmation_escalate_after_sec > 0`:
+
+| t | event |
+| --- | --- |
+| 0 | confirmation appears in the transcript; no push |
+| answered before the threshold | done, no push ever |
+| unanswered at the threshold | push with the existing Approve/Deny tokens |
+| answered on the phone | existing `/actions/confirm` resolves it |
+| still unanswered | `agent.confirmation_timeout_sec` applies (if set) |
+
+`agent.confirmation_timeout_sec` currently means **deny** when it expires.
+A push at or after that point would alert on a command that was already
+refused, so config load rejects
+`confirmation_escalate_after_sec >= confirmation_timeout_sec` whenever ntfy
+confirmation pushes are enabled and the timeout is set. The default timeout
+is still `None` (wait indefinitely); escalation makes the indefinite default
+the safer choice. Set `confirmation_escalate_after_sec: 0` to push
+immediately.
+
+`notify_on_confirmation` remains the master switch for confirmation pushes,
+independent of `min_priority` and of the general notification `delivery`.
+
+### Scope
+
+Deferral is wired for Mattermost DM, email, and ntfy. The vault-page channel
+is a passive local log and stays immediate. Each channel module registers
+its delivery callback with the scheduler; an adapter constructed without a
+scheduler (direct unit tests) keeps the immediate behaviour.
+
 ## Channel adapters
 
 Beyond the inbox, notifications can fan out to delivery channels
@@ -226,7 +328,9 @@ caught, logged, and dropped (delivery is best-effort).
 event, filters against its own config, and then kicks off its real
 delivery work via `asyncio.create_task(self._deliver(record))`. This
 means a slow Mattermost post or an SMTP timeout **never blocks
-`notify()`** or the producer that called it.
+`notify()`** or the producer that called it. A `delivery: "deferred"`
+channel arms a durable escalation instead; see [deferred
+delivery](#deferred-delivery-and-confirmation-escalation).
 
 **Filtering is per-adapter.** There's no central router. Each adapter
 reads its own config section (`config.notifications.channels.<name>`)
@@ -328,6 +432,15 @@ Configured under `config.notifications.channels.ntfy`:
   general notifications (1 = min/lowest urgency, silent in drawer).
 - `confirmation_priority: int` (default `3`) — ntfy priority (1–5) for
   tool approval confirmations (3 = default/medium urgency).
+- `delivery: "immediate" | "deferred"` (default `deferred`) — defer
+  general notification pushes until acknowledged or
+  `escalate_after_sec` elapses. See
+  [deferred delivery](#deferred-delivery-and-confirmation-escalation).
+- `escalate_after_sec: float` (default `60`) — deferred push delay.
+- `confirmation_escalate_after_sec: float` (default `60`) — wait this
+  long for a confirmation to be answered in the transcript before
+  pushing it; `0` pushes immediately. Must be below
+  `agent.confirmation_timeout_sec` when that timeout is set.
 
 **Startup guard:** `enabled`, a non-empty `topic`, and an `http(s)`
 `server_url`. Missing any piece → adapter not wired.
@@ -341,7 +454,9 @@ When the HTTP server is enabled, the record's `http(s)` link (or its
 `conv_id` mapped to `<web base>/?conv=<id>`) becomes the notification
 `click` target.
 
-**Confirmation pushes.** `confirmation_request` events become medium-urgency
+**Confirmation pushes.** After `confirmation_escalate_after_sec` without a
+response (or immediately when it is `0`), `confirmation_request` events
+become medium-urgency
 (`priority: 3` / `confirmation_priority`) notifications with actions:
 
 - **Approve** / **Deny** (`action=http`, `method=POST`, `clear=true`)
@@ -353,8 +468,8 @@ When the HTTP server is enabled, the record's `http(s)` link (or its
 
 The Approve/Deny actions are only included when `config.http.enabled`
 (the callback must be reachable) and the event carries both routing
-ids. Confirmation pushes ignore `min_priority` — a pending approval is
-always worth a ping. The push itself is only as private as the ntfy
+ids. Confirmation pushes ignore `min_priority`; timing is decided by
+`confirmation_escalate_after_sec`, not by priority. The push itself is only as private as the ntfy
 topic; treat the approve links as credentials (they are single-use).
 
 **Transport callbacks.** `handle_confirm` reads the query token and
@@ -446,6 +561,12 @@ stands as the source of truth.
    keyword arg to `init_notification_channels` and pass it from
    `runner.py`.
 4. Follow the established pattern: filter → format → `asyncio.create_task(deliver)` → catch + log in `_deliver`.
+5. To support deferred delivery, accept the scheduler in the factory
+   (`make_<name>_adapter(config, ..., scheduler=None)`), call
+   `scheduler.register("<channel>", deliverer)`, and replace the immediate
+   `create_task` with `scheduler.arm(...)` when `should_defer(...)` is true.
+   `init_notification_channels` constructs the scheduler and starts it after
+   every adapter has registered.
 
 The Mattermost DM and email adapters are ~90 lines each and both are
 good templates.

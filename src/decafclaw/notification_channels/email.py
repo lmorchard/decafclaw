@@ -21,9 +21,11 @@ import asyncio
 import logging
 from typing import Any, Awaitable, Callable
 
+from decafclaw import notifications
+from decafclaw.notification_escalation import EscalationScheduler
 from decafclaw.notifications import NotificationRecord
 
-from . import PRIORITY_GLYPH, meets_priority
+from . import PRIORITY_GLYPH, meets_priority, should_defer
 
 log = logging.getLogger(__name__)
 
@@ -64,8 +66,51 @@ def _format_subject(agent_id: str, record: NotificationRecord) -> str:
     return f"[{agent_id}] [{record.category}] {record.title}"
 
 
+def _active_recipients(channel_cfg: Any, email_cfg: Any) -> list[str]:
+    """Recipients for the current config, or [] when the channel cannot run."""
+    recipients = [r.strip() for r in channel_cfg.recipient_addresses if r and r.strip()]
+    if (
+        not channel_cfg.enabled
+        or not recipients
+        or not email_cfg.enabled
+        or not email_cfg.smtp_host
+        or not (email_cfg.sender_address or "").strip()
+    ):
+        return []
+    return recipients
+
+
+async def _deliver_record(config: Any, record: NotificationRecord) -> None:
+    """Send one record, resolving recipients/base URL at delivery time."""
+    channel_cfg = config.notifications.channels.email
+    recipients = _active_recipients(channel_cfg, config.email)
+    if not recipients:
+        return
+    from decafclaw.mail import send_mail
+
+    body = _format_body(record, config.http.base_url)
+    subject = _format_subject(config.agent.id, record)
+    try:
+        await send_mail(
+            config,
+            to=recipients,
+            subject=subject,
+            body=body,
+        )
+    except Exception as exc:
+        log.warning(
+            "Email notification delivery failed (recipients=%s category=%s priority=%s conv=%s): %s",
+            recipients,
+            record.category,
+            record.priority,
+            record.conv_id or "-",
+            exc,
+        )
+
+
 def make_email_adapter(
     config: Any,
+    scheduler: EscalationScheduler | None = None,
 ) -> Callable[[dict], Awaitable[None]]:
     """Return an event-bus handler that emails notifications.
 
@@ -73,30 +118,23 @@ def make_email_adapter(
     **per event** from the live ``config`` object so in-process config
     mutations take effect on the next notification. Config-file edits
     still require a restart — there's no file-reload mechanism today.
+
+    With a ``scheduler``, a ``delivery: "deferred"`` channel arms a durable
+    escalation instead of sending at publish time (#1664).
     """
 
-    async def _deliver(record: NotificationRecord, recipients: list[str], base_url: str) -> None:
-        """Background-task delivery — fire-and-forget from the handler."""
-        from decafclaw.mail import send_mail
+    async def deliver_deferred(payload: dict) -> None:
+        record = notifications.find_record(config, str(payload.get("record_id", "")))
+        if record is None:
+            log.info("Deferred email push dropped: inbox record %r no longer live", payload.get("record_id"))
+            return
+        if notifications.is_read(config, record.id):
+            log.info("Deferred email push cancelled: record %s was read", record.id)
+            return
+        await _deliver_record(config, record)
 
-        body = _format_body(record, base_url)
-        subject = _format_subject(config.agent.id, record)
-        try:
-            await send_mail(
-                config,
-                to=recipients,
-                subject=subject,
-                body=body,
-            )
-        except Exception as exc:
-            log.warning(
-                "Email notification delivery failed (recipients=%s category=%s priority=%s conv=%s): %s",
-                recipients,
-                record.category,
-                record.priority,
-                record.conv_id or "-",
-                exc,
-            )
+    if scheduler is not None:
+        scheduler.register("email", deliver_deferred)
 
     async def handle(event: dict) -> None:
         if event.get("type") != "notification_created":
@@ -105,20 +143,15 @@ def make_email_adapter(
         # Also strip + filter recipients here so whitespace from JSON
         # config doesn't produce phantom entries.
         channel_cfg = config.notifications.channels.email
-        email_cfg = config.email
-        recipients = [r.strip() for r in channel_cfg.recipient_addresses if r and r.strip()]
-        if (
-            not channel_cfg.enabled
-            or not recipients
-            or not email_cfg.enabled
-            or not email_cfg.smtp_host
-            or not (email_cfg.sender_address or "").strip()
-        ):
+        recipients = _active_recipients(channel_cfg, config.email)
+        if not recipients:
             return
         record = NotificationRecord.from_dict(event["record"])
         if not meets_priority(record.priority, channel_cfg.min_priority):
             return
-        base_url = config.http.base_url
-        asyncio.create_task(_deliver(record, recipients, base_url))
+        if scheduler is not None and should_defer(channel_cfg, record):
+            scheduler.arm("email", record.id, channel_cfg.escalate_after_sec, {"record_id": record.id})
+            return
+        asyncio.create_task(_deliver_record(config, record))
 
     return handle

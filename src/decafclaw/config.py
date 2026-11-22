@@ -1047,4 +1047,54 @@ def load_config() -> Config:
     if not isinstance(config.terminal.allowed_cwd_roots, list):
         config.terminal = dataclasses.replace(config.terminal, allowed_cwd_roots=[])
 
+    _validate_notification_delivery(config)
+
     return config
+
+
+def _validate_notification_delivery(config) -> None:
+    """Reject deferred-delivery settings that cannot work (#1664).
+
+    A confirmation escalation at or after ``agent.confirmation_timeout_sec``
+    would push a phone alert for a command the agent already denied. The
+    check only applies when ntfy confirmation pushes can actually happen.
+    Invalid delivery modes and negative delays are startup errors too,
+    instead of becoming a silent immediate/immediate-coerced delivery.
+    """
+    channels = config.notifications.channels
+    for name, channel in (
+        ("mattermost_dm", channels.mattermost_dm),
+        ("email", channels.email),
+        ("ntfy", channels.ntfy),
+    ):
+        if channel.delivery not in ("immediate", "deferred"):
+            raise ValueError(
+                f"notifications.channels.{name}.delivery must be 'immediate' or 'deferred'; got {channel.delivery!r}"
+            )
+        if not isinstance(channel.escalate_after_sec, (int, float)) or channel.escalate_after_sec < 0:
+            raise ValueError(
+                f"notifications.channels.{name}.escalate_after_sec must be a number >= 0; "
+                f"got {channel.escalate_after_sec!r}"
+            )
+
+    ntfy = channels.ntfy
+    if not isinstance(ntfy.confirmation_escalate_after_sec, (int, float)) or ntfy.confirmation_escalate_after_sec < 0:
+        raise ValueError(
+            "notifications.channels.ntfy.confirmation_escalate_after_sec must be a number >= 0; "
+            f"got {ntfy.confirmation_escalate_after_sec!r}"
+        )
+    timeout = config.agent.confirmation_timeout_sec
+    if (
+        ntfy.enabled
+        and ntfy.notify_on_confirmation
+        and ntfy.confirmation_escalate_after_sec > 0
+        and timeout is not None
+        and timeout > 0
+        and ntfy.confirmation_escalate_after_sec >= timeout
+    ):
+        raise ValueError(
+            "notifications.channels.ntfy.confirmation_escalate_after_sec "
+            f"({ntfy.confirmation_escalate_after_sec}) must be less than "
+            f"agent.confirmation_timeout_sec ({timeout}): the timeout denies the "
+            "request, so a push at that point would alert on a refused command"
+        )

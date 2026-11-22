@@ -55,6 +55,7 @@ async def tool_send_notification(
         priority=priority,
         link=link,
         conv_id=ctx.conv_id or None,
+        attended=not ctx.is_unattended,
     )
     return ToolResult(
         text=f"Notification sent (id={record.id}, category={category}, priority={priority}).",

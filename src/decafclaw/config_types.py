@@ -773,6 +773,13 @@ class EmailChannelConfig:
     enabled: bool = False
     recipient_addresses: list[str] = field(default_factory=list)
     min_priority: str = "high"  # "low" | "normal" | "high"
+    # Deferred delivery (#1664): "immediate" sends as soon as the record is
+    # published. "deferred" waits escalate_after_sec and drops delivery when
+    # the record is acknowledged first. Only attended, non-high records can
+    # defer; email stays immediate by default because it is often the
+    # primary interface rather than an escalation channel.
+    delivery: str = "immediate"  # "immediate" | "deferred"
+    escalate_after_sec: float = 60.0
 
 
 @dataclass
@@ -786,6 +793,10 @@ class MattermostDMChannelConfig:
     enabled: bool = False
     recipient_username: str = ""
     min_priority: str = "high"  # "low" | "normal" | "high"
+    # Deferred delivery (#1664): see EmailChannelConfig. A Mattermost DM may
+    # be the primary interface, so it stays immediate by default.
+    delivery: str = "immediate"  # "immediate" | "deferred"
+    escalate_after_sec: float = 60.0
 
 
 @dataclass
@@ -810,12 +821,23 @@ class NtfyChannelConfig:
     topic: str = ""
     access_token: str = field(default="", metadata={"secret": True})
     min_priority: str = "low"  # "low" | "normal" | "high"
-    # Push pending tool confirmations as medium-urgency notifications with
-    # Approve/Deny action buttons. Independent of min_priority: a
-    # confirmation is always worth a phone ping.
+    # Push pending tool confirmations with Approve/Deny action buttons when
+    # the operator has not answered them in the transcript (#1664).
     notify_on_confirmation: bool = True
     default_priority: int = 1  # ntfy priority scale 1-5 (1=min/lowest urgency)
     confirmation_priority: int = 3  # ntfy priority scale 1-5 (3=default/medium urgency)
+    # Deferred delivery (#1664): ntfy is the interrupting escalation
+    # channel, so it defers by default. "immediate" restores the pre-#1664
+    # push-at-publish behaviour.
+    delivery: str = "deferred"  # "immediate" | "deferred"
+    escalate_after_sec: float = 60.0
+    # Wait this long after a confirmation request before pushing it. A
+    # confirmation answered in the transcript first never reaches the
+    # phone. 0 disables the deferral (push immediately). Must stay below
+    # agent.confirmation_timeout_sec when that timeout is set: the timeout
+    # synthesizes a denial, so a push at the same moment would buzz about an
+    # already-refused command. Validated at config load.
+    confirmation_escalate_after_sec: float = 60.0
 
 
 @dataclass

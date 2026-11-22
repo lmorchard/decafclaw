@@ -430,4 +430,7 @@ class Context:
         from .notifications import notify
 
         kwargs.setdefault("conv_id", self.conv_id or None)
+        # A human may be watching an attended turn; unattended turns have no
+        # transcript watcher, so their records bypass deferred delivery (#1664).
+        kwargs.setdefault("attended", not self.is_unattended)
         await notify(self.config, self.event_bus, **kwargs)

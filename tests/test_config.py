@@ -89,6 +89,13 @@ class TestDefaults:
         assert c.notifications.channels.ntfy.default_priority == 1
         assert c.notifications.channels.ntfy.confirmation_priority == 3
         assert c.notifications.channels.ntfy.notify_on_confirmation is True
+        # Deferred delivery (#1664): ntfy is the interrupting channel, so it
+        # defers by default; DM/email stay immediate (often the primary UI).
+        assert c.notifications.channels.ntfy.delivery == "deferred"
+        assert c.notifications.channels.ntfy.escalate_after_sec == 60.0
+        assert c.notifications.channels.ntfy.confirmation_escalate_after_sec == 60.0
+        assert c.notifications.channels.mattermost_dm.delivery == "immediate"
+        assert c.notifications.channels.email.delivery == "immediate"
         # Vault page channel — local audit trail, on by default (no
         # external delivery, no cost, useful out of the box).
         assert c.notifications.channels.vault_page.enabled is True
@@ -1284,3 +1291,58 @@ class TestTopLevelScalarEnvAliases:
         monkeypatch.setenv("MAX_TOOL_OUTPUT_DISK_BYTES", "5000")
         cfg = load_config()
         assert cfg.max_tool_output_disk_bytes == 5000
+
+
+class TestNotificationDeliveryValidation:
+    @staticmethod
+    def _write_notification_config(tmp_path, channels: dict) -> None:
+        """load_sub_config recurses into nested channels only when the JSON
+        has their dict keys, so the env overrides below need this file."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "config.json").write_text(json.dumps({"notifications": {"channels": channels}}), encoding="utf-8")
+
+    def test_escalation_must_precede_confirmation_timeout(self, tmp_path, monkeypatch):
+        self._write_notification_config(tmp_path, {"ntfy": {}})
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("AGENT_ID", "decafclaw")
+        monkeypatch.setenv("CONFIRMATION_TIMEOUT_SEC", "60")
+        monkeypatch.setenv("NOTIFICATIONS_CHANNELS_NTFY_ENABLED", "true")
+        monkeypatch.setenv("NOTIFICATIONS_CHANNELS_NTFY_CONFIRMATION_ESCALATE_AFTER_SEC", "60")
+        with pytest.raises(ValueError, match="confirmation_escalate_after_sec"):
+            load_config()
+
+    def test_escalation_before_timeout_is_accepted(self, tmp_path, monkeypatch):
+        self._write_notification_config(tmp_path, {"ntfy": {}})
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("AGENT_ID", "decafclaw")
+        monkeypatch.setenv("CONFIRMATION_TIMEOUT_SEC", "60")
+        monkeypatch.setenv("NOTIFICATIONS_CHANNELS_NTFY_ENABLED", "true")
+        monkeypatch.setenv("NOTIFICATIONS_CHANNELS_NTFY_CONFIRMATION_ESCALATE_AFTER_SEC", "30")
+        c = load_config()
+        assert c.notifications.channels.ntfy.confirmation_escalate_after_sec == 30
+
+    def test_indefinite_timeout_needs_no_escalation_bound(self, tmp_path, monkeypatch):
+        self._write_notification_config(tmp_path, {"ntfy": {}})
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("AGENT_ID", "decafclaw")
+        monkeypatch.setenv("NOTIFICATIONS_CHANNELS_NTFY_ENABLED", "true")
+        monkeypatch.setenv("NOTIFICATIONS_CHANNELS_NTFY_CONFIRMATION_ESCALATE_AFTER_SEC", "600")
+        c = load_config()
+        assert c.agent.confirmation_timeout_sec is None
+
+    def test_invalid_delivery_mode_is_a_startup_error(self, tmp_path, monkeypatch):
+        self._write_notification_config(tmp_path, {"email": {}})
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("AGENT_ID", "decafclaw")
+        monkeypatch.setenv("NOTIFICATIONS_CHANNELS_EMAIL_DELIVERY", "sometimes")
+        with pytest.raises(ValueError, match="delivery"):
+            load_config()
+
+    def test_negative_escalation_is_a_startup_error(self, tmp_path, monkeypatch):
+        self._write_notification_config(tmp_path, {"ntfy": {}})
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("AGENT_ID", "decafclaw")
+        monkeypatch.setenv("NOTIFICATIONS_CHANNELS_NTFY_ESCALATE_AFTER_SEC", "-1")
+        with pytest.raises(ValueError, match="escalate_after_sec"):
+            load_config()

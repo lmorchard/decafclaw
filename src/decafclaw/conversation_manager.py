@@ -970,6 +970,13 @@ class ConversationManager:
             # because that would clobber a live waiter's view of
             # ``confirmation_response``. (Issue #485.)
 
+        # The operator answered (possibly in the transcript, before the
+        # phone escalation fired): drop any armed deferred confirmation push
+        # (#1664). Fail-open — the archive write already succeeded.
+        from .notification_escalation import cancel_escalations
+
+        cancel_escalations(confirmation_id)
+
         # Emit to subscribers outside the lock (subscriber awaits may
         # do arbitrary I/O). If emit fails, the response is already
         # durable in the archive and the waiter has observed our
@@ -1123,6 +1130,12 @@ class ConversationManager:
                 state.pending_confirmation = None
                 state.confirmation_event = None
                 self._promote_next_confirmation_unlocked(state, conv_id)
+        # The request is cancelled: a deferred confirmation push must not
+        # fire for it (#1664). Fail-open.
+        from .notification_escalation import cancel_escalations
+
+        cancel_escalations(request.confirmation_id)
+
         # Signal the live waiter outside the lock so its post-wait
         # block can acquire the lock and consume our denial.
         # request_confirmation will null out confirmation_response
@@ -1866,6 +1879,12 @@ class ConversationManager:
             # promote the next queued entry. The shared helper keeps
             # the three branches from drifting (issue #485).
             self._clear_active_and_promote_unlocked(state, conv_id)
+
+        # Any resolution (response, timeout, or cancel) means the deferred
+        # confirmation push must not fire later (#1664).
+        from .notification_escalation import cancel_escalations
+
+        cancel_escalations(request.confirmation_id)
 
         if needs_timeout_emit:
             await self.emit(

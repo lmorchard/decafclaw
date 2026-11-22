@@ -38,6 +38,11 @@ class NotificationRecord:
     body: str = ""
     link: str | None = None
     conv_id: str | None = None
+    # True when a human may be watching this conversation. Only attended,
+    # non-high records are eligible for a channel's deferred delivery: an
+    # unattended turn has no transcript watcher, so deferring would only
+    # delay the alert (#1664).
+    attended: bool = False
 
     def to_dict(self) -> dict:
         return dataclasses.asdict(self)
@@ -259,6 +264,7 @@ async def notify(
     priority: str = "normal",
     link: str | None = None,
     conv_id: str | None = None,
+    attended: bool = False,
 ) -> NotificationRecord:
     """Append a notification to the inbox.
 
@@ -268,6 +274,11 @@ async def notify(
     (Mattermost DM, email, etc.) can fan out delivery. The inbox record
     is the source of truth — channels are best-effort. See
     docs/notifications.md.
+
+    ``attended`` says whether a human may be watching this conversation.
+    Only attended, non-high records are eligible for a channel's deferred
+    delivery; detached producers leave it False so their records are
+    immediate (#1664).
     """
     record = NotificationRecord(
         id=secrets.token_hex(6),
@@ -278,6 +289,7 @@ async def notify(
         priority=priority,
         link=link,
         conv_id=conv_id,
+        attended=attended,
     )
 
     lock = _get_lock(config)
@@ -404,6 +416,23 @@ async def mark_all_read(config, event_bus=None) -> None:
                 "unread_count": unread_count(config),
             }
         )
+
+
+def find_record(config, record_id: str) -> NotificationRecord | None:
+    """Return the live inbox record with ``record_id``, or None.
+
+    Used by deferred delivery after a restart, when the channel holds
+    only the record id and must rebuild the payload from the inbox.
+    """
+    for raw in _read_lines(_inbox_path(config)):
+        if raw.get("id") == record_id:
+            return NotificationRecord.from_dict(raw)
+    return None
+
+
+def is_read(config, record_id: str) -> bool:
+    """True when ``record_id`` is already marked read in the live inbox."""
+    return record_id in get_read_ids(config)
 
 
 def get_read_ids(config) -> set[str]:

@@ -311,6 +311,8 @@ the already-running bot client. See
 | `enabled` | bool | `false` | `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED` |
 | `recipient_username` | str | `""` | `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_RECIPIENT_USERNAME` |
 | `min_priority` | str | `high` | `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_MIN_PRIORITY` |
+| `delivery` | str | `immediate` | `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_DELIVERY` |
+| `escalate_after_sec` | float | `60.0` | `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ESCALATE_AFTER_SEC` |
 
 The adapter is only wired at startup when `enabled` is `true`,
 `recipient_username` is non-empty, **and** the Mattermost client is
@@ -330,6 +332,8 @@ list via the shared SMTP core. See
 | `enabled` | bool | `false` | `NOTIFICATIONS_CHANNELS_EMAIL_ENABLED` |
 | `recipient_addresses` | list[str] | `[]` | `NOTIFICATIONS_CHANNELS_EMAIL_RECIPIENT_ADDRESSES` |
 | `min_priority` | str | `high` | `NOTIFICATIONS_CHANNELS_EMAIL_MIN_PRIORITY` |
+| `delivery` | str | `immediate` | `NOTIFICATIONS_CHANNELS_EMAIL_DELIVERY` |
+| `escalate_after_sec` | float | `60.0` | `NOTIFICATIONS_CHANNELS_EMAIL_ESCALATE_AFTER_SEC` |
 
 Startup guard is 4-way: channel `enabled` **and** non-empty
 `recipient_addresses` **and** `email.enabled` **and** non-empty
@@ -355,15 +359,30 @@ Approve/Deny buttons. See
 | `notify_on_confirmation` | bool | `true` | `NOTIFICATIONS_CHANNELS_NTFY_NOTIFY_ON_CONFIRMATION` | |
 | `default_priority` | int | `1` | `NOTIFICATIONS_CHANNELS_NTFY_DEFAULT_PRIORITY` | |
 | `confirmation_priority` | int | `3` | `NOTIFICATIONS_CHANNELS_NTFY_CONFIRMATION_PRIORITY` | |
+| `delivery` | str | `deferred` | `NOTIFICATIONS_CHANNELS_NTFY_DELIVERY` | |
+| `escalate_after_sec` | float | `60.0` | `NOTIFICATIONS_CHANNELS_NTFY_ESCALATE_AFTER_SEC` | |
+| `confirmation_escalate_after_sec` | float | `60.0` | `NOTIFICATIONS_CHANNELS_NTFY_CONFIRMATION_ESCALATE_AFTER_SEC` | |
 
 The adapter is only wired at startup when `enabled` is `true`, `topic`
 is non-empty, and `server_url` is an absolute `http(s)://` URL.
 `access_token` is sent as `Authorization: Bearer`. Confirmation pushes
 carry Approve/Deny callback buttons only when `http.enabled` is true
 (they POST single-use tokens to `/actions/confirm`); they ignore
-`min_priority` because a pending approval always warrants a push.
+`min_priority` because timing is governed by the escalation delay.
 Use a private or self-hosted topic — the push contains approval
 links.
+
+ntfy defers by default (#1664): a general push waits
+`escalate_after_sec`, and a confirmation push waits
+`confirmation_escalate_after_sec` for an answer in the transcript, so a
+card you are already looking at never buzzes the phone. Both are dropped
+if the event is acknowledged first. `delivery: "immediate"` or
+`confirmation_escalate_after_sec: 0` restores push-at-publish. Config
+load rejects `confirmation_escalate_after_sec >=
+agent.confirmation_timeout_sec` when the timeout is set: the timeout
+means *deny*, and a push at that point would alert on an already-refused
+command. See
+[notifications.md#deferred-delivery-and-confirmation-escalation](notifications.md#deferred-delivery-and-confirmation-escalation).
 
 #### `notifications.channels.vault_page`
 
