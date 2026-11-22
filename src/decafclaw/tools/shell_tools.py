@@ -1197,6 +1197,14 @@ async def check_shell_approval(
             reason=decision.reason,
             activity=activity,
         )
+        action_data = dict(cwd_action.get("action_data", {}))
+        action_data.update(
+            {
+                "tier": "security_monitor_ask",
+                "decline_reason": decision.reason,
+                "reason": decision.reason,
+            }
+        )
         result = await _request_confirmation_timed(
             ctx,
             tier="security_monitor_ask",
@@ -1206,8 +1214,10 @@ async def check_shell_approval(
             tool_name=tool_name,
             message=message or ask_message,
             suggested_pattern=suggested_pattern,
+            decline_reason=decision.reason,
+            reason=decision.reason,
             purpose=purpose,
-            **cwd_action,
+            action_data=action_data,
         )
         if result.get("approved") and result.get("add_pattern"):
             _save_allow_pattern(ctx.config, suggested_pattern)
@@ -1248,7 +1258,15 @@ async def check_shell_approval(
         if _single_line(purpose):
             prompt_message += f"\nPurpose: {_single_line(purpose)}"
         action_data = dict(cwd_action.get("action_data", {}))
-        action_data.update({"activity": activity.domain, "activity_established": False})
+        action_data.update(
+            {
+                "activity": activity.domain,
+                "activity_established": False,
+                "tier": "activity_new",
+                "decline_reason": reason,
+                "reason": reason,
+            }
+        )
         result = await _request_confirmation_timed(
             ctx,
             tier="activity_new",
@@ -1413,6 +1431,8 @@ async def check_shell_approval(
             )
         except Exception as e:
             log.warning(f"[{tool_name}] aux LLM approval failed, falling through: {e}")
+            if not decline_reason:
+                decline_reason = f"Auto-approval judge error ({e}); confirmation requested"
 
     # Self-correction before interruption (#1626): a judge decline carrying
     # actionable advice returns a redirect instead of prompting a human. One
@@ -1452,7 +1472,15 @@ async def check_shell_approval(
         ctx, command=command, cwd=cwd, decision="prompt", tier="aux_decline_prompt", activity=activity
     )
     action_data = dict(cwd_action.get("action_data", {}))
-    action_data.update({"activity": activity.domain, "activity_established": activity.established})
+    action_data.update(
+        {
+            "activity": activity.domain,
+            "activity_established": activity.established,
+            "tier": "aux_decline_prompt",
+            "decline_reason": decline_reason,
+            "reason": decline_reason,
+        }
+    )
     result = await _request_confirmation_timed(
         ctx,
         tier="aux_decline_prompt",

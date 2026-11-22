@@ -132,6 +132,7 @@ async def test_new_activity_prompts_with_direction_and_skips_judge(ctx):
 
     assert result == {"approved": False}
     judge.assert_not_called()
+    assert confirm.await_args is not None
     kwargs = confirm.await_args.kwargs
     assert "first `decafclaw` command" in kwargs["message"]
     assert kwargs["decline_reason"] == "first `decafclaw` command in this conversation"
@@ -384,3 +385,48 @@ async def test_unattended_new_activity_still_respects_a_judge_risk_decline(ctx):
 
     confirm.assert_not_awaited()
     assert result["approved"] is False
+
+
+@pytest.mark.asyncio
+async def test_security_monitor_ask_passes_decline_reason(ctx):
+    """When the security monitor requests confirmation, the reason must reach the UI."""
+    from decafclaw.security_monitor import SecurityDecision, SecurityStatus
+
+    decision = SecurityDecision(SecurityStatus.ASK, "Attempted operation outside workspace path: ~/.ssh/id_test")
+    with (
+        patch("decafclaw.tools.shell_tools.evaluate_command_llm", AsyncMock(return_value=decision)),
+        patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as confirm,
+    ):
+        confirm.return_value = {"approved": True}
+        await check_shell_approval(ctx, "ssh -i ~/.ssh/id_test host")
+
+    confirm.assert_awaited_once()
+    assert confirm.await_args is not None
+    kwargs = confirm.await_args.kwargs
+    assert kwargs.get("decline_reason") == "Attempted operation outside workspace path: ~/.ssh/id_test"
+    action_data = kwargs.get("action_data", {})
+    assert action_data.get("decline_reason") == "Attempted operation outside workspace path: ~/.ssh/id_test"
+    assert action_data.get("tier") == "security_monitor_ask"
+
+
+@pytest.mark.asyncio
+async def test_aux_decline_prompt_never_omits_reason_on_judge_error(ctx):
+    """When judge fails or times out, the confirmation card still states a reason."""
+    ctx.config.shell.aux_approval_enabled = True
+    _seed_activity(ctx)
+
+    async def failing_judge(*args, **kwargs):
+        raise RuntimeError("judge model connection timeout")
+
+    ctx.aux_approval_llm = MagicMock(return_value=failing_judge)
+
+    with patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as confirm:
+        confirm.return_value = {"approved": True}
+        await check_shell_approval(ctx, "python3 scripts/mutate.py")
+
+    confirm.assert_awaited_once()
+    assert confirm.await_args is not None
+    kwargs = confirm.await_args.kwargs
+    decline_reason = kwargs.get("decline_reason", "")
+    assert "judge error" in decline_reason
+    assert "judge model connection timeout" in decline_reason
