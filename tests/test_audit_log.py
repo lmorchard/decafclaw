@@ -191,3 +191,44 @@ async def test_audit_log_rotation(tmp_path):
     # Content of the latest log file should only be the last one or two events
     content = log_path.read_text().strip()
     assert "x" * 50 in content
+
+
+async def test_audit_log_records_direction_shadow(tmp_path):
+    config = type(
+        "Config",
+        (),
+        {
+            "workspace_path": tmp_path,
+            "audit_log": type(
+                "AuditLogConfig",
+                (),
+                {
+                    "enabled": True,
+                    "path": "audit.jsonl",
+                    "max_size_bytes": 1024 * 1024,
+                    "max_backups": 3,
+                },
+            )(),
+        },
+    )()
+
+    bus = EventBus()
+    bus.subscribe(make_audit_log_subscriber(config))
+    await bus.publish(
+        {
+            "type": "direction_shadow",
+            "conv_id": "conv-1",
+            "command": "make deploy",
+            "cwd": "/workspace/lmorchard-homelab",
+            "would_decide": "prompt",
+            "tier": "activity_new",
+            "activity": "homelab",
+            "activity_established": False,
+        }
+    )
+
+    record = json.loads((tmp_path / "audit.jsonl").read_text().strip())
+    assert record["event"] == "direction_shadow"
+    assert record["would_decide"] == "prompt"
+    assert record["activity"] == "homelab"
+    assert record["activity_established"] is False

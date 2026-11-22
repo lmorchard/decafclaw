@@ -258,6 +258,10 @@ decafclaw approvals report              # last 7 days, text
 decafclaw approvals report --days 30 --json
 ```
 
+**Shadow mode (#1661).** `shell.direction_shadow_mode` (default `false`) derives activity for every command and publishes a `direction_shadow` audit event with `would_decide` (`prompt` for a new activity, `defer` on an unattended turn, `pass` for an established activity) and the activity fields. The real pipeline runs unchanged, so a week of shadow data can be compared against actual prompts and verdicts before the tier is trusted.
+
+**Golden-corpus replay (#1661).** `decafclaw approvals replay` re-runs archived shell commands through the current deterministic pipeline in dry-run — nothing executes and no model is called. It samples 200 conversations by default (`--limit N`; `--all` for the full corpus), and reports baseline human prompts vs. replay silent allows, definite prompts, and judge calls (a prompt range), with a per-tier breakdown. Use `--workspace PATH` when the corpus was recorded under an older workspace path. `--check-denials` exits non-zero when any archived human denial would now be silently allowed; `--show-denials` lists them, and `--denials-out FILE` writes the set as JSON. The harness calls the real `is_read_only_command` and `derive_activity` rather than reimplementing them.
+
 #### Redirect before interrupting the human (#1626)
 
 A judge decline **with a concrete risk category and usable `feedback`** does not prompt a human on the first offense. `check_shell_approval` returns a redirect `ToolResult` immediately:
