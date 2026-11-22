@@ -131,6 +131,19 @@ class AuditLogSubscriber:
                         "activity_established": event.get("activity_established"),
                     }
                 )
+            elif event_type == "direction_shadow":
+                self.append_record(
+                    {
+                        "event": "direction_shadow",
+                        "conv_id": event.get("conv_id", ""),
+                        "command": _bounded(event.get("command", "")),
+                        "cwd": _bounded(event.get("cwd", "")),
+                        "would_decide": event.get("would_decide", ""),
+                        "tier": event.get("tier", ""),
+                        "activity": event.get("activity", ""),
+                        "activity_established": event.get("activity_established"),
+                    }
+                )
             elif event_type == "skill_activated":
                 self.append_record(
                     {

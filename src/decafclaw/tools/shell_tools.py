@@ -1057,6 +1057,25 @@ async def check_shell_approval(
     # Direction is derived once for every decision below so audit events carry
     # it and the judge sees the same activity the read-only/ask tiers did.
     activity = derive_activity(ctx, command, cwd)
+    if getattr(ctx.config.shell, "direction_shadow_mode", False):
+        # Shadow mode (#1661): observe what direction would do, change nothing.
+        # `defer` is the unattended case (no human can answer); `pass` means the
+        # command is in an established activity and would proceed to the judge.
+        if activity.established:
+            would_decide = "pass"
+        elif ctx.is_unattended:
+            would_decide = "defer"
+        else:
+            would_decide = "prompt"
+        await _publish_approval_event(
+            ctx,
+            "direction_shadow",
+            command=_single_line(command),
+            cwd=_single_line(cwd or ""),
+            would_decide=would_decide,
+            tier="activity_new" if not activity.established else "aux_judge",
+            **_activity_fields(activity),
+        )
     try:
         shell_cwd = _resolve_shell_cwd(ctx, cwd) if cwd else ctx.config.workspace_path.resolve()
     except ValueError:

@@ -142,7 +142,34 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--days", type=int, default=7)
     report.add_argument("--json", action="store_true")
     report.add_argument("--path", default="", help="audit log path (default: the resolved config)")
+
+    replay = subparsers.add_parser(
+        "replay", help="replay archived shell commands through the current decision pipeline (dry run)"
+    )
+    replay.add_argument("--root", default="", help="agent data dir or workspace dir (default: the resolved config)")
+    replay.add_argument("--limit", type=int, default=200, help="conversations to sample (default 200)")
+    replay.add_argument("--all", action="store_true", help="replay every archive instead of sampling")
+    replay.add_argument("--seed", type=int, default=0, help="sampling seed (default 0)")
+    replay.add_argument("--json", action="store_true")
+    replay.add_argument(
+        "--workspace",
+        default="",
+        help="workspace path the archived commands ran in (default: the replay root)",
+    )
+    replay.add_argument("--activity-window", type=int, default=None)
+    replay.add_argument("--no-read-only", action="store_true", help="disable the read-only tier for the replay")
+    replay.add_argument("--aux-enabled", choices=["auto", "on", "off"], default="auto")
+    replay.add_argument(
+        "--check-denials", action="store_true", help="exit 1 when an archived human denial would be silently allowed"
+    )
+    replay.add_argument("--show-denials", action="store_true", help="list every archived human denial")
+    replay.add_argument("--denials-out", default="", help="write the denial report as JSON to this path")
     args = parser.parse_args(argv)
+
+    if args.command == "replay":
+        from .approval_replay import run_cli
+
+        return run_cli(args)
 
     if args.path:
         paths = [Path(args.path)]
