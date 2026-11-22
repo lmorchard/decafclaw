@@ -105,28 +105,28 @@ def record_human_decision(
     allowances are telemetry, not consent. Fail-open: a ledger write failure
     must never change the command's outcome.
     """
-    scope = scope_for_activity(activity)
-    shape = rule_shape(command)
-    if not scope or not shape:
-        return False
-    entry = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "conv_id": conv_id,
-        "scope": scope,
-        "pattern": shape,
-        "command": " ".join(str(command or "").split())[:500],
-        "cwd": " ".join(str(cwd or "").split())[:500],
-        "decision": decision,
-        "approved": decision == "allow",
-    }
-    path = scope_ledger_path(config)
     try:
+        scope = scope_for_activity(activity)
+        shape = rule_shape(command)
+        if not scope or not shape:
+            return False
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "conv_id": conv_id,
+            "scope": scope,
+            "pattern": shape,
+            "command": " ".join(str(command or "").split())[:500],
+            "cwd": " ".join(str(cwd or "").split())[:500],
+            "decision": decision,
+            "approved": decision == "allow",
+        }
+        path = scope_ledger_path(config)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True) + "\n")
         return True
-    except OSError as exc:
-        log.warning("shell scope ledger: could not append to %s: %s", path, exc)
+    except Exception as exc:  # noqa: BLE001 - evidence must never break a decision
+        log.warning("shell scope ledger: could not record decision: %s", exc)
         return False
 
 
