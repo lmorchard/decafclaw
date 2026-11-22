@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from decafclaw.security_monitor import SecurityStatus, evaluate_command, evaluate_command_llm
+from decafclaw.security_monitor import (
+    SecurityStatus,
+    evaluate_command,
+    evaluate_command_llm,
+    venv_executable_path,
+)
 from decafclaw.tools.shell_tools import check_shell_approval
 
 
@@ -100,6 +105,41 @@ def test_filter_expressions_do_not_hide_file_arguments(tmp_path: Path):
     for cmd in commands:
         decision = evaluate_command(cmd, workspace_path=workspace)
         assert decision.status == SecurityStatus.ASK, f"Expected ASK for file argument: {cmd}"
+
+
+def test_env_assignment_prefix_identifies_system_executable(tmp_path: Path):
+    """A leading NAME=value assignment must not hide the trusted executable (#1693)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    decision = evaluate_command('PYTHONPATH="src" /usr/bin/python script.py', workspace_path=workspace)
+    assert decision.status == SecurityStatus.ALLOW
+
+    decision = evaluate_command("FOO=bar /usr/bin/env python script.py", workspace_path=workspace)
+    assert decision.status == SecurityStatus.ALLOW
+
+    decision = evaluate_command("FOO=bar /opt/custom/bin/python script.py", workspace_path=workspace)
+    assert decision.status == SecurityStatus.ASK
+
+
+def test_identifies_out_of_workspace_venv_executable(tmp_path: Path):
+    """External .venv/venv binaries are recognized through env assignments and pipelines."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    project = tmp_path / "project"
+    venv_python = project / ".venv" / "bin" / "python"
+    venv_bin = project / "venv" / "bin" / "pytest"
+
+    assert venv_executable_path(f'PYTHONPATH="src" {venv_python} -m pytest tests/test_x.py', workspace) == str(
+        venv_python
+    )
+    assert venv_executable_path(f"test-runner | {venv_bin} tests/", workspace) == str(venv_bin)
+
+    # Inside the workspace, a system binary, and an ordinary uv command are not matches.
+    inside_workspace = workspace / ".venv" / "bin" / "python"
+    assert venv_executable_path(f"{inside_workspace} script.py", workspace) is None
+    assert venv_executable_path("/usr/bin/python script.py", workspace) is None
+    assert venv_executable_path("uv run pytest tests/", workspace) is None
 
 
 def test_evaluates_sensitive_commands_as_ask(tmp_path: Path):

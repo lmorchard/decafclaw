@@ -19,7 +19,12 @@ from decafclaw.activity import Activity, derive_activity
 from decafclaw.conversation_paths import conversation_dir
 from decafclaw.loop_breaker import fingerprint
 from decafclaw.output_truncation import format_size, tail_cut_to_bytes, truncate_tail, truncation_note
-from decafclaw.security_monitor import SecurityStatus, evaluate_command, evaluate_command_llm
+from decafclaw.security_monitor import (
+    SecurityStatus,
+    evaluate_command,
+    evaluate_command_llm,
+    venv_executable_path,
+)
 from decafclaw.shell_judge import AUX_RISK_CATEGORIES, render_aux_approval_prompt
 from decafclaw.shell_readonly import is_read_only_command
 from decafclaw.subprocess_limits import describe_kill, resource_cap_prefix
@@ -605,6 +610,13 @@ def _apply_approval_additions(
 # spraying unrelated commands instead of correcting itself.
 _MAX_SHELL_REDIRECTS_PER_TURN = 3
 
+# Direct virtualenv binaries are outside the workspace and machine-specific;
+# `uv run` executes the same environment through the trusted system binary.
+_VENV_REDIRECT_FEEDBACK = (
+    "Do not invoke virtualenv binaries directly via absolute paths. "
+    "Use 'uv run' (e.g. 'uv run pytest ...' or 'uv run python ...') instead."
+)
+
 # Deflecting `shell` back to `shell` is meaningless, and `tool_search` is
 # named separately as the way to reach deferred tools.
 _NATIVE_INDEX_EXCLUDED = frozenset({"shell", "shell_background_start", "tool_search"})
@@ -1021,6 +1033,23 @@ async def check_shell_approval(
         log.info(
             f"[{tool_name}] security monitor requires explicit confirmation: {command} (reason: {decision.reason})"
         )
+        venv_path = venv_executable_path(command, ctx.config.workspace_path)
+        if venv_path and _claim_shell_redirect(ctx, command=command, cwd=cwd, purpose=purpose):
+            log.info(f"[{tool_name}] redirecting virtualenv invocation to uv run: {command}")
+            await _record_approval(
+                ctx,
+                command=command,
+                cwd=cwd,
+                decision="redirect",
+                tier="venv_redirect",
+                reason=f"virtualenv binary: {venv_path}",
+                activity=activity,
+            )
+            return {
+                "approved": False,
+                "redirected": True,
+                "feedback": _VENV_REDIRECT_FEEDBACK,
+            }
         if ctx.is_unattended:
             log.warning(f"[{tool_name}] denied on unattended turn (security monitor ASK decision): {command}")
             await _record_approval(
@@ -1032,14 +1061,19 @@ async def check_shell_approval(
                 reason=decision.reason,
                 activity=activity,
             )
-            return {
+            denial: dict = {
                 "approved": False,
                 "reason": f"Security monitor requires explicit confirmation: {decision.reason}",
             }
+            if venv_path:
+                denial["feedback"] = _VENV_REDIRECT_FEEDBACK
+            return denial
         suggested_pattern = _suggest_pattern(command)
         ask_message = f"Shell command (security review requested): `{command}`{cwd_note}"
         if decision.reason:
             ask_message += f"\nReason: {decision.reason}"
+        if venv_path:
+            ask_message += f"\nSuggestion: {_VENV_REDIRECT_FEEDBACK}"
         await _record_approval(
             ctx,
             command=command,
@@ -1069,11 +1103,18 @@ async def check_shell_approval(
             decline_reason=decision.reason,
             reason=decision.reason,
             purpose=purpose,
+            feedback=_VENV_REDIRECT_FEEDBACK if venv_path else "",
             action_data=action_data,
         )
         if result.get("approved") and result.get("add_pattern"):
             _save_allow_pattern(ctx.config, suggested_pattern)
-        return _finalize_denial(ctx, result, command=command, purpose=purpose)
+        return _finalize_denial(
+            ctx,
+            result,
+            command=command,
+            purpose=purpose,
+            fallback_feedback=_VENV_REDIRECT_FEEDBACK if venv_path else "",
+        )
 
     # 5. Blanket tool pre-approval (e.g. allowed-tools: shell without scoped patterns)
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
