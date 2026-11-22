@@ -18,6 +18,7 @@ from decafclaw.mcp_client import (
     init_mcp,
     shutdown_mcp,
 )
+from decafclaw.media import ToolResult
 from decafclaw.schedules import ScheduleTask, parse_schedule_file, run_schedule_task
 from decafclaw.tool_definitions import collect_all_tool_defs, refresh_dynamic_tools
 
@@ -688,3 +689,74 @@ async def test_cross_task_disconnect_anyio_cancel_scope_safety():
 
     assert registry.servers["anyio_srv"].status == ConnState.DISCONNECTED
     assert t.done()
+
+
+# -- Tool caller error branches (#1333) -----------------------------------------
+
+
+def _make_caller(status=ConnState.CONNECTED, session=None, retry_count=0):
+    """Build a registry with one server in the given state; return (registry, caller)."""
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="srv", type="stdio")
+    state = MCPServerState(config=cfg, status=status, session=session, retry_count=retry_count)
+    registry.servers["srv"] = state
+    return registry, registry._make_tool_caller("srv", "mytool", 10)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_server_unavailable_returns_tool_result():
+    """A failed server past its retry budget returns a ToolResult, not a bare string."""
+    registry, caller = _make_caller(status=ConnState.FAILED, retry_count=3)
+
+    result = await caller({})
+
+    assert isinstance(result, ToolResult)
+    assert result.text == "[error: MCP server srv is not available]"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_no_active_session_returns_tool_result():
+    """A connected server whose session was cleared returns a ToolResult, not a bare string."""
+    registry, caller = _make_caller(status=ConnState.CONNECTED, session=None)
+
+    result = await caller({})
+
+    assert isinstance(result, ToolResult)
+    assert result.text == "[error: MCP server srv has no active session]"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_timeout_returns_tool_result():
+    """A tool call that exceeds its timeout returns a ToolResult, not a bare string."""
+    never = asyncio.Event()
+
+    async def hang(*args, **kwargs):
+        await never.wait()
+
+    session = MagicMock()
+    session.call_tool = hang
+    registry, caller = _make_caller(status=ConnState.CONNECTED, session=session)
+
+    result = await caller({})
+
+    assert isinstance(result, ToolResult)
+    assert "timed out" in result.text
+
+
+@pytest.mark.asyncio
+async def test_call_tool_exception_returns_tool_result():
+    """A tool call that raises returns a ToolResult and marks the server failed."""
+
+    async def boom(*args, **kwargs):
+        raise ValueError("boom")
+
+    session = MagicMock()
+    session.call_tool = boom
+    registry, caller = _make_caller(status=ConnState.CONNECTED, session=session)
+
+    result = await caller({})
+
+    assert isinstance(result, ToolResult)
+    assert "failed" in result.text
+    assert "boom" in result.text
+    assert registry.servers["srv"].status == ConnState.FAILED
