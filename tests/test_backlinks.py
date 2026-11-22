@@ -8,13 +8,19 @@ require rescanning the whole vault.
 """
 
 import json
+import os
+import time
+from unittest.mock import patch
 
 import pytest
 
 from decafclaw.backlinks import (
     _index_path,
+    _pagerank_path,
+    compute_pagerank,
     inbound_count,
     load_index,
+    load_pagerank,
     make_backlinks_subscriber,
     rebuild_index,
     update_for_page,
@@ -51,6 +57,45 @@ def symlinked_config(tmp_path):
         "fixture setup failed to produce a resolve()-diverging vault_root"
     )
     return cfg
+
+
+class TestPageRankPersistence:
+    def test_persists_and_reuses_cache(self, config, vault_dir):
+        (vault_dir / "A.md").write_text("Links to [[B]].")
+        (vault_dir / "B.md").write_text("B")
+
+        rebuild_index(config)
+        with patch("decafclaw.backlinks.compute_pagerank", wraps=compute_pagerank) as compute:
+            first = load_pagerank(config)
+            second = load_pagerank(config)
+
+        assert compute.call_count == 1
+        assert first == pytest.approx(second)
+        assert _pagerank_path(config).exists()
+        assert sum(first.values()) == pytest.approx(1.0)
+        assert first["B.md"] > first["A.md"]
+
+    def test_more_inbound_links_rank_higher(self):
+        nodes = {"target", "leaf", *(f"p{i}" for i in range(10))}
+        ranks = compute_pagerank(
+            {"target": [f"p{i}" for i in range(10)], "leaf": ["p0"]},
+            nodes=nodes,
+        )
+
+        assert ranks["target"] > ranks["leaf"]
+
+    def test_recomputes_when_index_moves(self, config, vault_dir):
+        (vault_dir / "A.md").write_text("Links to [[B]].")
+        (vault_dir / "B.md").write_text("B")
+        rebuild_index(config)
+
+        with patch("decafclaw.backlinks.compute_pagerank", wraps=compute_pagerank) as compute:
+            load_pagerank(config)
+            future = time.time() + 5
+            os.utime(_index_path(config), (future, future))
+            load_pagerank(config)
+
+        assert compute.call_count == 2
 
 
 class TestRebuildIndex:

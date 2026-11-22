@@ -545,11 +545,15 @@ class VaultGuideConfig:
 
 @dataclass
 class RelevanceConfig:
-    w_similarity: float = 0.5
-    w_recency: float = 0.3
-    w_importance: float = 0.2
+    # Relevance weights are renormalized over their own sum in
+    # `score_candidates`, so the 0.65 threshold keeps comparable meaning even
+    # when a config overrides only one of them. Importance is not part of this
+    # sum (#1713): it is an ordering tie-break after the threshold.
+    w_similarity: float = 0.625
+    w_recency: float = 0.375
+    w_importance: float = 0.0  # retained for config compatibility; not scored
     recency_decay_rate: float = 0.99  # per-hour exponential decay
-    min_composite_score: float = 0.65  # candidates below this are dropped
+    min_composite_score: float = 0.65  # relevance-only; candidates below drop
     graph_expansion_enabled: bool = True
     graph_expansion_similarity_discount: float = 0.7
 
@@ -557,19 +561,18 @@ class RelevanceConfig:
 @dataclass
 class ImportanceConfig:
     """Weights for garden's deterministic weekly importance recompute (#197
-    Phase 5).
+    Phase 5, redesigned in #1713).
 
-    v1 formula: ``importance = clamp01(w_retrieval * norm(retrieval_freq) +
-    w_inbound * norm(inbound_links))``, where ``norm(x) = x / max(x across
-    all pages)`` (0 when the max is 0). ``w_reference`` is reserved /
-    not yet computed — no explicit-reference signal exists yet, so it
-    defaults to 0 and is omitted from the formula entirely rather than
-    multiplied against an all-zero signal. See
-    ``skills/garden/tools.py::compute_importance_scores``.
+    Structural importance is PageRank over the full backlink graph:
+    ``importance = clamp01(w_inbound * pagerank)``. Retrieval frequency was
+    self-referential (retrieved pages score higher, which gets them retrieved
+    more) and no reference signal was ever implemented, so both knobs are kept
+    for config compatibility but default to zero and no longer feed the score.
+    See ``skills/garden/tools.py::compute_importance_scores``.
     """
 
-    w_retrieval: float = 0.6
-    w_inbound: float = 0.4
+    w_retrieval: float = 0.0
+    w_inbound: float = 1.0
     w_reference: float = 0.0
 
 

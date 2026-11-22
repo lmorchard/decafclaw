@@ -289,7 +289,7 @@ Before each interactive turn, the default-on [`VaultRetrievalExtension`](extensi
 
 1. Embeds the user's current message
 2. Runs semantic search across all indexed content (vault pages, journal, conversation)
-3. Scores candidates using a three-factor composite score (see [Scoring](#scoring) below)
+3. Scores candidates by relevance and orders ties by structural importance (see [Scoring](#scoring) below)
 4. Follows `[[wiki-links]]` one hop from top hits to expand the candidate pool
 5. Fills remaining token budget with top-scoring candidates
 6. Injects matching entries inside that turn's `<working_memory>` block, after the user message
@@ -340,13 +340,17 @@ Note: `show_in_ui` gates the live progress event. The retrieval message is alway
 
 ## Scoring
 
-Retrieved candidates are scored using a three-factor composite formula:
+Retrieved candidates are scored in two stages:
 
 ```
-composite_score = w_similarity * similarity + w_recency * recency + w_importance * importance
+relevance_score = w_similarity * similarity + w_recency * recency
+composite_score = relevance_score          # retained field name
+sort key        = (composite_score, importance)
 ```
 
-All factors are normalized to [0, 1].
+Both factors are normalized to [0, 1]. The two weights are renormalized over
+their own sum, so the `min_composite_score` threshold keeps comparable meaning
+after importance was removed from the threshold-bearing sum (#1713).
 
 ### Factors
 
@@ -354,15 +358,15 @@ All factors are normalized to [0, 1].
 |--------|--------|-------------|
 | **Similarity** | Embedding cosine similarity | How semantically close the entry is to the user's message |
 | **Recency** | File modification time | Exponential decay: `decay_rate ^ hours_since_modification` |
-| **Importance** | Frontmatter field | Page significance, default 0.5 |
+| **Importance** | Frontmatter field (PageRank) | Structural tie-break only; default 0.5 when absent. It orders equally relevant candidates but cannot lift a below-threshold candidate into context |
 
 ### Default weights
 
 | Weight | Default | Rationale |
 |--------|---------|-----------|
-| `w_similarity` | 0.5 | Similarity dominates — relevance to the query matters most |
-| `w_recency` | 0.3 | Recent content is more likely to be useful |
-| `w_importance` | 0.2 | Kept modest even now that garden actively tunes importance weekly (#197 Phase 5, see [Importance recompute](vault.md#importance-recompute-197)) — retrieval and links move gradually, so this stays a secondary signal alongside similarity and recency |
+| `w_similarity` | 0.625 | Similarity dominates — relevance to the query matters most |
+| `w_recency` | 0.375 | Recent content is more likely to be useful |
+| `w_importance` | 0.0 | Retained for config compatibility; importance is an ordering tie-break, not part of `composite_score` (#1713) |
 
 ### Source boosts
 
@@ -397,9 +401,9 @@ The budget is derived from `context_window_size` minus fixed costs minus a respo
 ```json
 {
   "relevance": {
-    "w_similarity": 0.5,
-    "w_recency": 0.3,
-    "w_importance": 0.2,
+    "w_similarity": 0.625,
+    "w_recency": 0.375,
+    "w_importance": 0.0,
     "recency_decay_rate": 0.99,
     "graph_expansion_enabled": true,
     "graph_expansion_similarity_discount": 0.7

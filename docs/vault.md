@@ -89,7 +89,7 @@ Fields the system recognizes today (parsed by `frontmatter.py` via `get_frontmat
 | `summary` | string | Prepended to body for semantic-search embeddings (via `build_composite_text`); surfaced in UI |
 | `keywords` | list of strings | Prepended to body for embeddings (via `build_composite_text`) |
 | `tags` | list of strings | Prepended to body for embeddings (via `build_composite_text`), unioned with inline Obsidian-style `#tags` found in the body (#318); loose categorization |
-| `importance` | float in [0, 1] | Composite scoring weight in memory retrieval (not used by `build_composite_text`) |
+| `importance` | float in [0, 1] | Structural PageRank tie-break in memory retrieval — it orders equally relevant candidates, not the threshold score (not used by `build_composite_text`) |
 
 Folding inline `#tags` into the composite embedding text is a change to
 what gets embedded, not to any file on disk — it only takes effect for
@@ -249,7 +249,10 @@ it]` (sorted, human-readable, crash-recoverable via tmp-file-then-rename).
 - `load_index(config)` — reads the persisted JSON, rebuilding lazily if
   missing or corrupt.
 - `inbound_count(config, page)` — number of distinct pages linking to
-  `page`. This is the raw signal Phase 5's importance formula folds in.
+  `page`. This is the raw inbound signal behind PageRank.
+- `compute_pagerank(index, nodes)` / `load_pagerank(config)` — PageRank over
+  the full edge set, cached at `workspace/pagerank.json` and invalidated when
+  `backlinks.json` changes.
 - `update_for_page(config, page)` — incremental update: re-scans only the
   changed page's current outbound links and adjusts the index's inbound
   entries (add new targets, drop stale ones) without re-reading every
@@ -281,54 +284,46 @@ survey. Everything is deterministic; no embeddings or model calls.
 `importance` frontmatter starts as an LLM's subjective guess (backfill,
 dream generation). `vault_recompute_importance` — a native tool from the
 `garden` skill's `tools.py` (`src/decafclaw/skills/garden/tools.py`) —
-replaces that guess weekly with a deterministic score, so importance
-tracks measured usage instead of drifting further from it with every LLM
-re-guess.
+replaces that guess weekly with structural PageRank (#1713), so importance
+tracks the link graph instead of drifting with every re-guess.
 
-This sweep is scoped to `agent/` pages only (`config.vault_agent_pages_dir`)
-— it runs weekly and non-interactively, with no human in the loop, so it
-never writes into the user's own hand-written vault pages elsewhere. This
-is narrower than the `vault_update_frontmatter` *tool*, which keeps its
-vault-wide reach for interactive, user-directed edits; only the automated
-sweep (and the `backfill_frontmatter` CLI, below) is scoped down. Pages
-with no measured signal at all yet (zero retrieval, zero inbound links —
-e.g. a page dream just wrote) are left untouched rather than zeroed, so a
-brand-new page's initial importance guess survives until real usage
-signal accumulates.
+This sweep is scoped to `agent/` pages only (`config.vault_agent_pages_dir`),
+with no human in the loop, so it never writes into the user's own
+hand-written vault pages elsewhere.
 
-`compute_importance_scores(config)` in `skills/garden/tools.py` is pure
-and config-driven (no `ctx`, no writes):
+`backlinks.compute_pagerank` runs over the full persisted edge set —
+agent pages, journals, and user notes — with damping 0.85. The result is
+cached at `workspace/pagerank.json`; `backlinks.load_pagerank` reuses it
+until `backlinks.json` changes, so retrieval never recomputes the graph.
+Journals are ~44% of the inbound signal, so all source types are counted.
+Raw PageRank values are small (they sum to 1 across the graph); what matters
+is relative order, not the absolute scale.
+
+`compute_importance_scores(config)` in `skills/garden/tools.py` is pure and
+config-driven (no `ctx`, no writes):
 
 ```
-importance = clamp01(
-    w_retrieval * norm(retrieval_freq)
-    + w_inbound * norm(inbound_links)
-)
+importance = clamp01(w_inbound * pagerank)
 ```
 
-`norm(x) = x / max(x across all vault pages)`, defined as 0 when that max
-is 0 (no divide-by-zero on an empty or brand-new vault). `retrieval_freq`
-comes from `retrieval_telemetry.aggregate`; `inbound_links` from
-`backlinks.inbound_count`. `ImportanceConfig` also carries a `w_reference`
-weight (default 0.0) that is **reserved / not yet computed** — no
-explicit-reference signal exists yet, so it's omitted from the formula
-above entirely rather than multiplied against an all-zero signal. Weights
-resolve `w_retrieval=0.6`, `w_inbound=0.4`, `w_reference=0.0` via the same
-dataclass-default → `config.json` → `IMPORTANCE_*` env resolution as every
-other sub-config.
+`ImportanceConfig` defaults are `w_retrieval=0.0`, `w_inbound=1.0`,
+`w_reference=0.0`. Retrieval frequency is deliberately absent — it was
+self-referential (retrieved pages scored higher, which got them retrieved
+more). `w_retrieval`/`w_reference` remain as config knobs for
+compatibility, and `w_reference` is reserved for a future explicit-reference
+signal. Pages with zero inbound links sit at the PageRank floor; that is the
+intended structural reading, not a cold-start exemption.
 
 `tool_vault_recompute_importance(ctx, dry_run=False)` scores every agent
-page, writes changed scores via `vault_update_frontmatter(overwrite=True)`,
-and skips pages whose rounded score is unchanged or that have no measured
-signal at all yet, so a re-run only touches pages that both moved and have
-real data behind the move. Importance-only writes skip the embedding round
-trip because the score is not part of `build_composite_text` (#1687), and a
-timeout or interrupt reports how many pages were already written.
-`dry_run=true` reports the planned deltas without writing. It's the weekly
-step in the `garden` skill's sweep
-(`skills/garden/SKILL.md`) — review the reported deltas for outliers, and
-use `vault_backlinks` + the recomputed score together to flag orphaned,
-rarely-retrieved pages as split/merge/delete candidates.
+page and writes changed scores via `vault_update_frontmatter(overwrite=True)`.
+Importance-only writes skip the embedding round trip because the score is
+not part of `build_composite_text` (#1687), and a timeout or interrupt
+reports how many pages were already written. `dry_run=true` reports the
+planned deltas without writing. It's the weekly step in the `garden` skill's
+sweep (`skills/garden/SKILL.md`) — review the reported deltas, and use
+`vault_graph_report` to see whether a move came from a sink, toehold, or
+isolate. Connectivity work — not a manual guess — is what raises a floor
+score.
 
 ### Ownership
 

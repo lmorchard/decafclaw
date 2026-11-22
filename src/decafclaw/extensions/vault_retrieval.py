@@ -73,9 +73,24 @@ def resolve_retrieval_mode(config: Any, raw: Any = None) -> RetrievalMode:
 
 
 def score_candidates(candidates: list[dict], config: Any) -> list[dict]:
-    """Score candidates by similarity, recency, and importance; sort descending."""
+    """Score candidates by relevance, then order ties by structural importance.
+
+    The threshold-bearing ``composite_score`` is similarity + recency only,
+    renormalized over their configured sum. Importance is deliberately not in
+    that sum: a global structural prior may reorder equally relevant
+    candidates, but must not push a below-threshold candidate into context
+    (#1713). Renormalizing keeps ``min_composite_score`` comparable after the
+    importance term was removed.
+    """
     relevance = config.relevance
     now = datetime.now()
+    weight_sum = relevance.w_similarity + relevance.w_recency
+    if weight_sum > 0:
+        w_similarity = relevance.w_similarity / weight_sum
+        w_recency = relevance.w_recency / weight_sum
+    else:
+        w_similarity = 0.0
+        w_recency = 0.0
 
     for c in candidates:
         similarity = min(1.0, max(0.0, c.get("similarity", 0.0)))
@@ -94,11 +109,13 @@ def score_candidates(candidates: list[dict], config: Any) -> list[dict]:
         importance = min(1.0, max(0.0, c.get("importance", 0.5)))
 
         c["recency"] = recency
-        c["composite_score"] = (
-            relevance.w_similarity * similarity + relevance.w_recency * recency + relevance.w_importance * importance
-        )
+        c["importance"] = importance
+        c["composite_score"] = w_similarity * similarity + w_recency * recency
 
-    candidates.sort(key=lambda c: c.get("composite_score", 0), reverse=True)
+    candidates.sort(
+        key=lambda c: (c.get("composite_score", 0.0), c.get("importance", 0.0)),
+        reverse=True,
+    )
     return candidates
 
 

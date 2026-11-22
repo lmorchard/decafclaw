@@ -63,9 +63,9 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 ## Step 8: Recompute Importance Scores
 
-- Call `vault_recompute_importance` to deterministically refresh every agent page's `importance` frontmatter from measured signals (retrieval frequency, inbound-link count) — not a fresh guess. Scoped to `agent/` pages only, in keeping with this skill's charter — it never touches the user's own vault pages.
-- Pages with no measured signal yet (new pages, or pages nobody has retrieved or linked to) are left untouched rather than zeroed — any existing importance (e.g. dream's initial guess) stays put until real signal accumulates.
-- Review the reported deltas for outliers: a page that jumped or dropped sharply is worth a second look, since it usually means the retrieval or link graph shifted, not that the page itself changed.
+- Call `vault_recompute_importance` to refresh every agent page's `importance` frontmatter from structural PageRank over the backlink graph — not retrieval frequency, not a fresh guess. Scoped to `agent/` pages only, in keeping with this skill's charter — it never touches the user's own vault pages.
+- Pages with zero inbound links get the PageRank floor. That is expected; use `vault_graph_report` to see whether the page is an isolate, sink, or toehold, and fix connectivity in Steps 4 and 7 rather than hand-editing importance.
+- Review the reported deltas for outliers: a page that jumped or dropped sharply is worth a second look, since it usually means the link graph shifted, not that the page itself changed.
 - Spot-check frontmatter consistency on a few pages while you're in there — `summary`/`keywords`/`tags` that no longer match the body content.
 - Flag pages that are both orphaned (zero inbound links in `vault_graph_report`) and rarely retrieved (low importance after recompute) — these are strong split/merge/delete candidates for a future pass, not something to act on unilaterally.
 - Also flag weakly-linked pages (one or two thin connections) as candidates for Step 4's "add missing connections" work next time around.

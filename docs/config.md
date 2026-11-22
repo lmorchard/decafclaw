@@ -201,11 +201,14 @@ Weights for garden's deterministic weekly importance recompute (#197 Phase 5). S
 
 | Field | Type | Default | Env Var |
 |-------|------|---------|---------|
-| `w_retrieval` | float | `0.6` | `IMPORTANCE_W_RETRIEVAL` |
-| `w_inbound` | float | `0.4` | `IMPORTANCE_W_INBOUND` |
+| `w_retrieval` | float | `0.0` | `IMPORTANCE_W_RETRIEVAL` |
+| `w_inbound` | float | `1.0` | `IMPORTANCE_W_INBOUND` |
 | `w_reference` | float | `0.0` | `IMPORTANCE_W_REFERENCE` |
 
-`w_reference` is reserved for a future explicit-reference signal (not yet implemented) and contributes nothing to the score while it's 0.
+Importance is structural PageRank over the backlink graph (#1713).
+`w_retrieval` is retained for config compatibility but no longer feeds the
+score: retrieval frequency was self-referential. `w_reference` is reserved for
+a future explicit-reference signal and contributes nothing while 0.
 
 ### `vault_retrieval`
 
