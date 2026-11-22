@@ -1309,6 +1309,17 @@ var DefaultService = class {
   }
   /**
    * Wrapper
+   * @returns HostMetricsResponse Successful Response
+   * @throws ApiError
+   */
+  static wrapperApiHostGet() {
+    return request2(OpenAPI, {
+      method: "GET",
+      url: "/api/host"
+    });
+  }
+  /**
+   * Wrapper
    * @returns ModelCatalogResponse Successful Response
    * @throws ApiError
    */

@@ -38,6 +38,10 @@ export type { ConversationPatchResponse } from './models/ConversationPatchRespon
 export type { ConversationSearchMatch } from './models/ConversationSearchMatch';
 export type { ConversationSearchResponse } from './models/ConversationSearchResponse';
 export { FileCompletion } from './models/FileCompletion';
+export type { HostDiskGauge } from './models/HostDiskGauge';
+export type { HostLoadGauge } from './models/HostLoadGauge';
+export type { HostMemoryGauge } from './models/HostMemoryGauge';
+export type { HostMetricsResponse } from './models/HostMetricsResponse';
 export type { HTTPValidationError } from './models/HTTPValidationError';
 export type { JsonValue } from './models/JsonValue';
 export type { LoginResponse } from './models/LoginResponse';

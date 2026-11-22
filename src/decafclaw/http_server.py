@@ -295,6 +295,62 @@ class BookmarksResponse(BaseModel):
     vault: list[BookmarkEntry]
 
 
+class HostMemoryGauge(BaseModel):
+    """Memory and swap in bytes.
+
+    ``available_bytes`` is ``MemAvailable`` — reclaimable cache included —
+    rather than ``MemFree``, which reads alarmingly low on a healthy box.
+    """
+
+    total_bytes: int
+    available_bytes: int
+    used_bytes: int
+    used_percent: float
+    swap_total_bytes: int
+    swap_used_bytes: int
+    swap_used_percent: float
+
+
+class HostLoadGauge(BaseModel):
+    """Load averages plus the runnable/total task counts from /proc/loadavg."""
+
+    one: float
+    five: float
+    fifteen: float
+    running: int | None = None
+    total: int | None = None
+
+
+class HostDiskGauge(BaseModel):
+    """One filesystem's capacity, using df's used/(used+available) ratio."""
+
+    path: str
+    total_bytes: int
+    used_bytes: int
+    available_bytes: int
+    used_percent: float
+
+
+class HostMetricsResponse(BaseModel):
+    """Capacity and load for the VM DecafClaw runs on.
+
+    Every field is optional: each source degrades independently, so an
+    unreadable /proc file nulls its own gauge instead of failing the response.
+    """
+
+    timestamp: float
+    cpu_count: int | None = None
+    # None until two /proc/stat samples exist — a since-boot average is not a
+    # gauge, so there is no honest value on a cold first read.
+    cpu_percent: float | None = None
+    memory: HostMemoryGauge | None = None
+    load: HostLoadGauge | None = None
+    disk_root: HostDiskGauge | None = None
+    disk_tmpfs: HostDiskGauge | None = None
+    process_count: int | None = None
+    uptime_seconds: float | None = None
+
+
 class BookmarkAddRequest(BaseModel):
     target: Literal["files", "vault"]
     path: str
@@ -563,6 +619,24 @@ async def metrics_endpoint(request: Request) -> Response:
 
     content = format_prometheus_metrics()
     return Response(content, media_type="text/plain")
+
+
+@_authenticated
+async def host_metrics(request: Request, username: str) -> JSONResponse:
+    """Live capacity and load for the host VM (VM 302).
+
+    Both processes and disk contents are visible here, so this is
+    authenticated like the rest of ``/api`` — ``/health`` and ``/metrics`` are
+    deliberately probe-only and carry no host inventory.
+    """
+    from .host_metrics import get_sampler
+
+    try:
+        snapshot = get_sampler().snapshot()
+    except Exception:  # fail-open: the strip renders dashes, not an error page
+        log.exception("host_metrics: snapshot failed")
+        return JSONResponse({"error": "host metrics unavailable"}, status_code=503)
+    return JSONResponse(snapshot)
 
 
 async def _read_json_object(request: Request) -> dict:
@@ -4573,6 +4647,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
             },
         ),
         APIRoute("/api/models", models_list, methods=["GET"], response_model=ModelListResponse),
+        APIRoute("/api/host", host_metrics, methods=["GET"], response_model=HostMetricsResponse),
         APIRoute(
             "/api/models/catalog",
             models_catalog_get,
@@ -5013,6 +5088,12 @@ async def run_http_server(config, event_bus, app_ctx=None, manager=None) -> None
     from .workspace_index import start_workspace_index_loop
 
     start_workspace_index_loop(config)
+    # The host gauge strip polls this sampler. Started here, alongside the
+    # other boot tasks, so its /proc/stat delta window covers the server's
+    # whole life rather than being reset by each poll.
+    from .host_metrics import get_sampler
+
+    get_sampler().start()
     log.info(f"HTTP server starting on {config.http.host}:{config.http.port}")
     await _http_server.serve()
 
@@ -5028,5 +5109,8 @@ async def shutdown_http_server() -> None:
         reg = getattr(_http_app.state, "terminal_registry", None)
         if reg is not None:
             await reg.shutdown_all()
+    from .host_metrics import get_sampler
+
+    await get_sampler().stop()
     if _http_server is not None:
         _http_server.should_exit = True

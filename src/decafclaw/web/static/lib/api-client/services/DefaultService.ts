@@ -22,6 +22,7 @@ import type { ConversationLifecycleResponse } from '../models/ConversationLifecy
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
 import type { ConversationSearchResponse } from '../models/ConversationSearchResponse';
+import type { HostMetricsResponse } from '../models/HostMetricsResponse';
 import type { JsonValue } from '../models/JsonValue';
 import type { LoginResponse } from '../models/LoginResponse';
 import type { LogoutResponse } from '../models/LogoutResponse';
@@ -1119,6 +1120,17 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/models',
+        });
+    }
+    /**
+     * Wrapper
+     * @returns HostMetricsResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiHostGet(): CancelablePromise<HostMetricsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/host',
         });
     }
     /**
