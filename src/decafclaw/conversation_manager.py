@@ -23,7 +23,7 @@ from .approval_state import (
     load_approval_state,
     save_approval_state,
 )
-from .archive import append_message
+from .archive import LLM_ROLES, append_message
 from .confirmations import (
     ConfirmationAction,
     ConfirmationRegistry,
@@ -31,7 +31,7 @@ from .confirmations import (
     ConfirmationResponse,
 )
 from .context import TaskMode, TokenUsage
-from .context_types import InjectionCursors
+from .context_types import ROLE_REMAP, InjectionCursors
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
 from .llm import call_llm_streaming
@@ -169,6 +169,61 @@ def _build_message_complete(
     if provenance:
         payload["provenance"] = provenance
     return payload
+
+
+def _flatten_side_question_history(raw_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten archived conversation rows into provider-safe side-question messages.
+
+    Side questions strip all tools from the model call, so native tool
+    structure cannot be sent: assistant ``tool_calls`` merge into the message
+    content as readable text, and ``tool`` results become user messages.
+
+    Role classification mirrors the shared provider-history transform
+    (``assemble_provider_history``, context_pipeline): ``LLM_ROLES`` pass
+    through, internal injection roles remap to "user" via ``ROLE_REMAP``, and
+    metadata-only archive rows (compaction, model, mode, decision_slice, ...)
+    are skipped. (#1354)
+    """
+    snapshot_messages: list[dict[str, Any]] = []
+    for m in raw_history:
+        role = m.get("role")
+
+        if role == "assistant":
+            content = m.get("content") or ""
+            tool_calls = m.get("tool_calls")
+            if tool_calls:
+                tc_lines = []
+                for tc in tool_calls:
+                    fn = tc.get("function", {})
+                    name = fn.get("name", "")
+                    args = fn.get("arguments", "")
+                    tc_lines.append(f"[Tool call: {name}({args})]")
+                tc_text = "\n".join(tc_lines)
+                merged = f"{content}\n{tc_text}".strip() if content else tc_text
+                snapshot_messages.append({"role": "assistant", "content": merged})
+            elif content:
+                snapshot_messages.append({"role": "assistant", "content": content})
+        elif role == "tool":
+            tool_id = m.get("tool_call_id", "")
+            name = m.get("name", "")
+            prefix = (
+                f"[Tool result: {name}]" if name else (f"[Tool result ({tool_id})]" if tool_id else "[Tool result]")
+            )
+            snapshot_messages.append({"role": "user", "content": f"{prefix}: {m.get('content') or ''}"})
+        elif role in LLM_ROLES:
+            content = m.get("content") or ""
+            msg_entry: dict[str, Any] = {"role": role, "content": content}
+            if m.get("attachments"):
+                msg_entry["attachments"] = m["attachments"]
+            if content or m.get("attachments"):
+                snapshot_messages.append(msg_entry)
+        elif role in ROLE_REMAP:
+            content = m.get("content") or ""
+            if content:
+                snapshot_messages.append({"role": "user", "content": content})
+        # Metadata-only archive rows are skipped.
+
+    return snapshot_messages
 
 
 class TurnKind(Enum):
@@ -1394,53 +1449,7 @@ class ConversationManager:
             if partial and (not raw_history or raw_history[-1].get("content") != partial):
                 raw_history.append({"role": "assistant", "content": partial})
 
-        snapshot_messages: list[dict[str, Any]] = []
-        for m in raw_history:
-            role = m.get("role")
-            if role in ("compaction", "model", "mode", "decision_slice"):
-                continue
-
-            content = m.get("content") or ""
-
-            if role == "assistant":
-                tool_calls = m.get("tool_calls")
-                if tool_calls:
-                    tc_lines = []
-                    for tc in tool_calls:
-                        fn = tc.get("function", {})
-                        name = fn.get("name", "")
-                        args = fn.get("arguments", "")
-                        tc_lines.append(f"[Tool call: {name}({args})]")
-                    tc_text = "\n".join(tc_lines)
-                    merged = f"{content}\n{tc_text}".strip() if content else tc_text
-                    snapshot_messages.append({"role": "assistant", "content": merged})
-                elif content:
-                    snapshot_messages.append({"role": "assistant", "content": content})
-            elif role == "tool":
-                tool_id = m.get("tool_call_id", "")
-                name = m.get("name", "")
-                prefix = (
-                    f"[Tool result: {name}]" if name else (f"[Tool result ({tool_id})]" if tool_id else "[Tool result]")
-                )
-                snapshot_messages.append({"role": "user", "content": f"{prefix}: {content}"})
-            elif role in (
-                "vault_retrieval",
-                "vault_references",
-                "workspace_references",
-                "mcp_references",
-                "conversation_notes",
-                "recent_journal",
-                "cancel_marker",
-                "turn_aborted",
-            ):
-                if content:
-                    snapshot_messages.append({"role": "user", "content": content})
-            elif role in ("user", "system"):
-                msg_entry: dict[str, Any] = {"role": role, "content": content}
-                if m.get("attachments"):
-                    msg_entry["attachments"] = m["attachments"]
-                if content or m.get("attachments"):
-                    snapshot_messages.append(msg_entry)
+        snapshot_messages = _flatten_side_question_history(raw_history)
 
         from .attachments import resolve_attachments
 
