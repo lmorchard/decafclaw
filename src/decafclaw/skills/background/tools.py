@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from uuid import uuid4
 
 from decafclaw.media import ToolResult, WidgetRequest
+from decafclaw.progress_tracker import progress_payload, progress_step
 from decafclaw.skills.background.parsers import (
     BaseProgressParser,
     ProgressParserPreset,
@@ -271,14 +272,8 @@ def _running_sticky_data(job: BackgroundJob) -> dict:
         except Exception:
             log.warning("Parser format_running_sticky failed for job %s", job.job_id, exc_info=True)
     last_line = _last_output_line(job)[:_STICKY_NOTE_MAX]
-    step = {"label": _cmd_preview(job.command), "status": "in_progress"}
-    if last_line:
-        step["note"] = last_line
-    return {
-        "title": "Background job",
-        "summary": last_line or f"Running: {_cmd_preview(job.command)}",
-        "steps": [step],
-    }
+    step = progress_step(_cmd_preview(job.command), "in_progress", note=last_line or None)
+    return progress_payload("Background job", last_line or f"Running: {_cmd_preview(job.command)}", [step])
 
 
 def _final_sticky_data(job: BackgroundJob) -> dict:
@@ -297,11 +292,8 @@ def _final_sticky_data(job: BackgroundJob) -> dict:
         step_status = "failed"
         summary = f"Failed: {_cmd_preview(job.command)} (exit {job.exit_code})"
         note = f"exit {job.exit_code}" + (f" — {last_line[:120]}" if last_line else "")
-    return {
-        "title": "Background job",
-        "summary": summary,
-        "steps": [{"label": _cmd_preview(job.command), "status": step_status, "note": note}],
-    }
+    step = progress_step(_cmd_preview(job.command), step_status, note=note)
+    return progress_payload("Background job", summary, [step])
 
 
 async def _publish_job_sticky(job: BackgroundJob) -> None:

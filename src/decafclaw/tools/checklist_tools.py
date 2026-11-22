@@ -18,6 +18,7 @@ from .. import checklist
 from .. import sticky as sticky_mod
 from ..events import emit_for_ctx
 from ..media import ToolResult
+from ..progress_tracker import progress_payload, progress_step
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -45,13 +46,10 @@ def _progress_data_from_checklist(items: list[dict]) -> dict:
             current_label = item["text"]
         else:
             status = "pending"
-        step = {"label": item["text"], "status": status}
-        if item.get("note"):
-            step["note"] = item["note"]
-        steps.append(step)
+        steps.append(progress_step(item["text"], status, note=item.get("note") or None))
     total = len(items)
     summary = f"{done_count}/{total} · {current_label}" if current_label else f"{done_count}/{total}"
-    return {"steps": steps, "title": "Checklist", "summary": summary}
+    return progress_payload("Checklist", summary, steps)
 
 
 async def _mirror_to_sticky(ctx: "Context", conv_id: str) -> None:
