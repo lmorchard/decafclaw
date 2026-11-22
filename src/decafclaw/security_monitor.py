@@ -260,6 +260,13 @@ def _executable_index(segment: list[str]) -> int | None:
     return None
 
 
+def _short_option_letters(token: str) -> str:
+    """Letters of a short-option token, including clusters like ``-ne``."""
+    if token.startswith("--") or not token.startswith("-") or token == "-":
+        return ""
+    return token[1:]
+
+
 def _expression_argument_indices(segment: list[str], exe_index: int | None) -> set[int]:
     """Indices of filter-command program/pattern arguments inside one segment.
 
@@ -310,9 +317,10 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
                 index += 1
                 continue
             if token.startswith("-") and token != "-":
-                if token.startswith("-e") and len(token) > 2:
+                letters = _short_option_letters(token)
+                if "e" in letters:
                     expression_option = True
-                if token.startswith("-f") and len(token) > 2:
+                if "f" in letters:
                     program_from_file = True
                 index += 1
                 continue
@@ -349,9 +357,10 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
                 index += 1
                 continue
             if token.startswith("-") and token != "-":
-                if token.startswith("-e") and len(token) > 2:
+                letters = _short_option_letters(token)
+                if "e" in letters:
                     program_option = True
-                if token.startswith("-f") and len(token) > 2:
+                if "f" in letters:
                     program_from_file = True
                 index += 1
                 continue
@@ -383,9 +392,8 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
                 index += 1
                 continue
             if token.startswith("-") and token != "-":
-                if token.startswith("-e") and len(token) > 2:
-                    pattern_option = True
-                if token.startswith("-f") and len(token) > 2:
+                letters = _short_option_letters(token)
+                if "e" in letters or "f" in letters:
                     pattern_option = True
                 index += 1
                 continue
@@ -395,11 +403,13 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
             index += 1
         return indices
 
-    # perl/perl5: ``-e`` and ``-E`` take inline program text. Without one, the
-    # first positional argument is a script path and must still be checked.
+    # perl/perl5: ``-e`` and ``-E`` take inline program text, including the
+    # clustered form ``-pe``. Without one, the first positional argument is a
+    # script path and must still be checked.
     while index < length:
         token = segment[index]
-        if token in ("-e", "-E"):
+        letters = _short_option_letters(token)
+        if token in ("-e", "-E") or letters.endswith(("e", "E")):
             index += 2 if consumes_value(index, expression=True) else 1
             continue
         index += 1

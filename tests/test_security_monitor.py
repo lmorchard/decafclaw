@@ -64,6 +64,7 @@ def test_filter_expressions_are_not_paths(tmp_path: Path):
         "grep -e '/pattern/' data.txt",
         "grep '/pattern/' data.txt",
         "perl -e 'print \"/etc/passwd\"'",
+        "perl -pe '/pattern/' data.txt",
     ]
 
     for cmd in commands:
@@ -81,10 +82,13 @@ def test_filter_expressions_do_not_hide_file_arguments(tmp_path: Path):
         "sed -e '/x/p' /etc/shadow",
         "sed -f script.sed /etc/passwd",
         "sed --file script.sed /etc/passwd",
+        "sed -nf script.sed /etc/passwd",
         "awk '/x/ {print}' /etc/passwd",
+        "awk -f /etc/prog.awk data.txt",
         "grep -e '/x/' /etc/passwd",
         "grep '/x/' /etc/passwd",
         "grep -f /etc/patterns data.txt",
+        "grep -if /etc/patterns data.txt",
     ]
 
     for cmd in commands:
