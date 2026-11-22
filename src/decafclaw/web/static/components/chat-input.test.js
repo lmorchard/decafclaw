@@ -346,19 +346,129 @@ describe('chat-input existing send/stop behaviour (menu closed)', () => {
     expect(onStop).not.toHaveBeenCalled();
   });
 
-  it('stops from the merged primary action while busy', async () => {
+  it('stops from the merged primary action while busy and empty', async () => {
     const el = await mount({ busy: true });
     const onSend = vi.fn();
     const onStop = vi.fn();
     el.addEventListener('send', onSend);
     el.addEventListener('stop', onStop);
-    await type(el, 'hello there');
 
     el.querySelector('.composer-primary-btn').click();
     await el.updateComplete;
 
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it('steers from the merged primary action while busy with text', async () => {
+    const el = await mount({ busy: true });
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    el.addEventListener('send', onSend);
+    el.addEventListener('stop', onStop);
+    await type(el, 'one more thing');
+
+    el.querySelector('.composer-primary-btn').click();
+    await el.updateComplete;
+
+    expect(onStop).not.toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0][0].detail).toEqual({
+      text: 'one more thing',
+      attachments: [],
+    });
+  });
+
+  it('steers from the merged primary action while busy with attachments only', async () => {
+    const el = await mount({ busy: true });
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    el.addEventListener('send', onSend);
+    el.addEventListener('stop', onStop);
+    el._pendingAttachments = [
+      { filename: 'notes.txt', mime_type: 'text/plain', file: new File(['x'], 'notes.txt'), previewUrl: null },
+    ];
+    await el.updateComplete;
+
+    el.querySelector('.composer-primary-btn').click();
+    await el.updateComplete;
+
+    expect(onStop).not.toHaveBeenCalled();
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0][0].detail.attachments).toEqual([
+      { filename: 'notes.txt', mime_type: 'text/plain', file: expect.any(File) },
+    ]);
+  });
+
+  it('flips the primary affordance as soon as the busy composer gains or loses text', async () => {
+    const el = await mount({ busy: true });
+    /** @returns {HTMLButtonElement} */
+    const button = () => el.querySelector('.composer-primary-btn');
+    /** @returns {string} */
+    const label = () => el.querySelector('.composer-primary-label').textContent;
+
+    expect(label()).toBe('Stop');
+    expect(button().classList.contains('stop-btn')).toBe(true);
+    expect(button().getAttribute('aria-label')).toBe('Stop generation');
+    expect(el.querySelector('.composer-primary-icon').textContent).toBe('\u25A0');
+
+    await type(el, 's');
+
+    expect(label()).toBe('Send');
+    expect(button().classList.contains('stop-btn')).toBe(false);
+    expect(button().getAttribute('aria-label')).toBe('Send message');
+    expect(button().getAttribute('title')).toBe('Send message');
+    expect(el.querySelector('.composer-primary-icon').textContent).toBe('\u27A4');
+
+    await type(el, '');
+
+    expect(label()).toBe('Stop');
+    expect(button().classList.contains('stop-btn')).toBe(true);
+    expect(button().getAttribute('aria-label')).toBe('Stop generation');
+    expect(el.querySelector('.composer-primary-icon').textContent).toBe('\u25A0');
+  });
+
+  it('still stops on Escape while busy with text', async () => {
+    const el = await mount({ busy: true });
+    const onStop = vi.fn();
+    el.addEventListener('stop', onStop);
+    await type(el, 'one more thing');
+
+    await press(el, 'Escape');
+
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers a deliberate Stop in the conversation menu while busy with text', async () => {
+    const el = await mount({ busy: true });
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    el.addEventListener('send', onSend);
+    el.addEventListener('stop', onStop);
+    await type(el, 'one more thing');
+
+    el.querySelector('.conversation-actions-btn').click();
+    await el.updateComplete;
+
+    const item = [...el.querySelectorAll('.conversation-menu-item')]
+      .find((b) => b.querySelector('.conversation-menu-label')?.textContent.trim() === 'Stop');
+    expect(item).toBeTruthy();
+    item.click();
+    await el.updateComplete;
+
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(el.querySelector('.conversation-menu')).toBeNull();
+  });
+
+  it('omits the menu Stop when idle', async () => {
+    const el = await mount();
+    el.querySelector('.conversation-actions-btn').click();
+    await el.updateComplete;
+
+    const labels = [...el.querySelectorAll('.conversation-menu-label')]
+      .map((l) => l.textContent.trim());
+    expect(labels).not.toContain('Stop');
   });
 });
 
