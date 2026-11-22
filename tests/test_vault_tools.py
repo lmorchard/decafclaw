@@ -2016,13 +2016,31 @@ class TestVaultUpdateFrontmatter:
         meta, _ = parse_frontmatter(p.read_text())
         assert meta["importance"] == 1.0 and meta["tags"] == ["a"]
 
+    @pytest.mark.parametrize(
+        "fields",
+        [{"summary": "s"}, {"keywords": ["k"]}, {"tags": ["t"]}],
+        ids=["summary", "keywords", "tags"],
+    )
     @pytest.mark.asyncio
-    async def test_reindexes_after_write(self, ctx, agent_pages):
+    async def test_reindexes_when_embedded_text_changes(self, ctx, agent_pages, fields):
         p = agent_pages / "t.md"
         p.write_text("Body.\n")
         with patch("decafclaw.skills.vault.tools._reindex_page", new_callable=AsyncMock) as rx:
-            await tool_vault_update_frontmatter(ctx, page="agent/pages/t.md", fields={"summary": "s"})
+            await tool_vault_update_frontmatter(ctx, page="agent/pages/t.md", fields=fields)
         rx.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_importance_only_update_skips_reindex(self, ctx, agent_pages):
+        """`importance` is not part of the embedding text, so writing it must
+        not trigger a delete+reindex round trip (#1687)."""
+        p = agent_pages / "t.md"
+        p.write_text("Body.\n")
+        with patch("decafclaw.skills.vault.tools._reindex_page", new_callable=AsyncMock) as rx:
+            result = await tool_vault_update_frontmatter(
+                ctx, page="agent/pages/t.md", fields={"importance": 0.7}, overwrite=True
+            )
+        assert result.data["changed"] == ["importance"]
+        rx.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_interactive_user_page_confirms_then_updates(self, ctx, vault_dir):

@@ -161,6 +161,27 @@ class TestToolVaultRecomputeImportance:
         assert orphan_body.strip() == "Nobody cares about this."
 
 
+class TestRecomputeSignalsOnce:
+    @pytest.mark.asyncio
+    async def test_computes_signals_once_per_run(self, ctx, vault_pages):
+        """The tool must reuse the signals that scoring already gathered
+        instead of re-reading telemetry and the backlink index (#1687)."""
+        from decafclaw.skills.garden.tools import compute_importance_signals
+
+        p1, p2 = _patch_signals({STAR: 10}, {})
+        with (
+            p1,
+            p2,
+            patch(
+                "decafclaw.skills.garden.tools.compute_importance_signals",
+                wraps=compute_importance_signals,
+            ) as signals,
+        ):
+            await tool_vault_recompute_importance(ctx, dry_run=True)
+
+        assert signals.call_count == 1
+
+
 class TestRecomputeScopedToAgentPages:
     """#197 whole-branch-review fix: automated importance writes must stay
     within `agent/` — the tool `vault_update_frontmatter` keeps its
