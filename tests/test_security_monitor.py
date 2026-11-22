@@ -5,7 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from decafclaw.security_monitor import SecurityStatus, evaluate_command, evaluate_command_llm
+from decafclaw.security_monitor import (
+    SYSTEM_EXEC_DIRS,
+    SecurityStatus,
+    evaluate_command,
+    evaluate_command_llm,
+    venv_executable_path,
+)
 from decafclaw.tools.shell_tools import check_shell_approval
 
 
@@ -100,6 +106,66 @@ def test_filter_expressions_do_not_hide_file_arguments(tmp_path: Path):
     for cmd in commands:
         decision = evaluate_command(cmd, workspace_path=workspace)
         assert decision.status == SecurityStatus.ASK, f"Expected ASK for file argument: {cmd}"
+
+
+def test_env_assignment_prefix_identifies_system_executable(tmp_path: Path):
+    """A leading NAME=value assignment must not hide the trusted executable (#1693)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    decision = evaluate_command('PYTHONPATH="src" /usr/bin/python script.py', workspace_path=workspace)
+    assert decision.status == SecurityStatus.ALLOW
+
+    decision = evaluate_command("FOO=bar /usr/bin/env python script.py", workspace_path=workspace)
+    assert decision.status == SecurityStatus.ALLOW, (
+        f"{decision.reason}; resolved={Path('/usr/bin/env').resolve()}; "
+        f"dirs={sorted(str(path) for path in SYSTEM_EXEC_DIRS)}"
+    )
+
+    decision = evaluate_command("FOO=bar /opt/custom/bin/python script.py", workspace_path=workspace)
+    assert decision.status == SecurityStatus.ASK
+
+
+def test_system_dir_symlink_is_allowed_at_its_trusted_name(tmp_path: Path, monkeypatch):
+    """A trusted /usr/bin name may resolve into another toolchain root (#1693 CI)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sysbin = tmp_path / "sysbin"
+    sysbin.mkdir()
+    target = tmp_path / "toolchain" / "env"
+    target.parent.mkdir()
+    target.touch()
+    link = sysbin / "env"
+    link.symlink_to(target)
+
+    monkeypatch.setattr("decafclaw.security_monitor.SYSTEM_EXEC_DIRS", {sysbin})
+    monkeypatch.setattr("decafclaw.security_monitor.ALLOWED_TEMP_DIRS", set())
+
+    decision = evaluate_command(f"{link} script.py", workspace_path=workspace)
+    assert decision.status == SecurityStatus.ALLOW
+
+    traversal = evaluate_command(f"{sysbin}/../etc/passwd", workspace_path=workspace)
+    assert traversal.status == SecurityStatus.ASK
+
+
+def test_identifies_out_of_workspace_venv_executable(tmp_path: Path):
+    """External .venv/venv binaries are recognized through env assignments and pipelines."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    project = tmp_path / "project"
+    venv_python = project / ".venv" / "bin" / "python"
+    venv_bin = project / "venv" / "bin" / "pytest"
+
+    assert venv_executable_path(f'PYTHONPATH="src" {venv_python} -m pytest tests/test_x.py', workspace) == str(
+        venv_python
+    )
+    assert venv_executable_path(f"test-runner | {venv_bin} tests/", workspace) == str(venv_bin)
+
+    # Inside the workspace, a system binary, and an ordinary uv command are not matches.
+    inside_workspace = workspace / ".venv" / "bin" / "python"
+    assert venv_executable_path(f"{inside_workspace} script.py", workspace) is None
+    assert venv_executable_path("/usr/bin/python script.py", workspace) is None
+    assert venv_executable_path("uv run pytest tests/", workspace) is None
 
 
 def test_evaluates_sensitive_commands_as_ask(tmp_path: Path):

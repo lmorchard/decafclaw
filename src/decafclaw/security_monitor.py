@@ -6,6 +6,7 @@ Includes Tier 1 pattern matching and Tier 2 LLM classification for ambiguous com
 
 import json
 import logging
+import os
 import re
 import shlex
 import tempfile
@@ -467,6 +468,42 @@ def _expression_argument_indices(segment: list[str], exe_index: int | None) -> s
     return indices
 
 
+_VENV_DIR_NAMES = frozenset({".venv", "venv"})
+_VENV_BIN_DIR_NAMES = frozenset({"bin", "Scripts"})
+
+
+def venv_executable_path(command: str, workspace_path: str | Path | None = None) -> str | None:
+    """Return an out-of-workspace virtualenv executable token, or ``None``.
+
+    Detects the command word of every segment after leading environment
+    assignments, so ``PYTHONPATH="src" /project/.venv/bin/python ...`` is
+    recognized. Only binaries outside the workspace match: a project venv
+    inside the workspace already passes the normal path check.
+    """
+    resolved_workspace = Path(workspace_path or Path.cwd()).resolve()
+    for _, segment in _command_segments(_tokenize_command(command)):
+        exe_index = _executable_index(segment)
+        if exe_index is None:
+            continue
+        token = segment[exe_index]
+        if token.startswith("~"):
+            candidate = Path(token).expanduser()
+        elif token.startswith("/"):
+            candidate = Path(token)
+        else:
+            candidate = resolved_workspace / token
+        try:
+            resolved = candidate.resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if resolved.is_relative_to(resolved_workspace):
+            continue
+        parts = resolved.parts
+        if len(parts) >= 3 and parts[-2] in _VENV_BIN_DIR_NAMES and parts[-3] in _VENV_DIR_NAMES:
+            return token
+    return None
+
+
 def evaluate_command(
     command: str,
     workspace_path: str | Path | None = None,
@@ -487,9 +524,12 @@ def evaluate_command(
     resolved_workspace = Path(workspace_path or Path.cwd()).resolve()
 
     tokens = _tokenize_command(command)
+    executable_indices: set[int] = set()
     expression_indices: set[int] = set()
     for start, segment in _command_segments(tokens):
         exe_index = _executable_index(segment)
+        if exe_index is not None:
+            executable_indices.add(start + exe_index)
         expression_indices.update(start + i for i in _expression_argument_indices(segment, exe_index))
 
     for idx, token in enumerate(tokens):
@@ -511,24 +551,36 @@ def evaluate_command(
         if cleaned.startswith("/") or cleaned.startswith("~") or ".." in cleaned:
             try:
                 if cleaned.startswith("~"):
-                    token_path = Path(cleaned).expanduser().resolve()
+                    candidate_path = Path(cleaned).expanduser()
                 elif cleaned.startswith("/"):
                     # Check if token uses virtual /skills/ prefix
                     if cleaned.startswith("/skills/"):
                         rel_in_ws = (resolved_workspace / cleaned.lstrip("/")).resolve()
                         if rel_in_ws.is_relative_to(resolved_workspace):
                             continue
-                    token_path = Path(cleaned).resolve()
+                    candidate_path = Path(cleaned)
                 else:
-                    token_path = (resolved_workspace / cleaned).resolve()
+                    candidate_path = resolved_workspace / cleaned
+                token_path = candidate_path.resolve()
 
                 # Allowed devices
                 if token_path in ALLOWED_DEVICES:
                     continue
 
-                # If token is the executable command (idx 0), allow trusted system and user binary dirs
-                if idx == 0 and any(token_path.is_relative_to(sys_dir) for sys_dir in SYSTEM_EXEC_DIRS):
-                    continue
+                # If token is the executable command, allow trusted system and user
+                # binary dirs. The index skips leading env assignments (#1693).
+                # Compare the lexical path too: a distribution or toolchain may
+                # symlink a trusted /usr/bin name to another installation root
+                # (GitHub's runner does this for coreutils `env`). A path that
+                # climbs out with `..` is normalized, so it cannot borrow this
+                # allowance.
+                if idx in executable_indices:
+                    lexical_path = Path(os.path.normpath(candidate_path))
+                    if any(
+                        token_path.is_relative_to(sys_dir) or lexical_path.is_relative_to(sys_dir)
+                        for sys_dir in SYSTEM_EXEC_DIRS
+                    ):
+                        continue
 
                 # Allowed temporary directories (unless token uses relative '..' traversal)
                 if any(token_path.is_relative_to(t_dir) for t_dir in ALLOWED_TEMP_DIRS) and not cleaned.startswith(

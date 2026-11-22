@@ -388,6 +388,77 @@ async def test_security_monitor_ask_passes_decline_reason(ctx):
     assert action_data.get("tier") == "security_monitor_ask"
 
 
+def _external_venv_python() -> str:
+    """A venv path outside the workspace and outside the allowed temp dirs."""
+    return "/opt/decafclaw-venv-tests/project/.venv/bin/python"
+
+
+@pytest.mark.asyncio
+async def test_venv_binary_redirects_to_uv_run_before_prompt(ctx):
+    """A direct external virtualenv binary gets one redirect, not a human prompt (#1693)."""
+    venv_python = _external_venv_python()
+    command = f'PYTHONPATH="src" {venv_python} -m pytest tests/test_tool_registry.py'
+
+    with (
+        patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as confirm,
+        patch("decafclaw.tools.shell_tools._execute_command", new_callable=AsyncMock) as execute,
+        patch("decafclaw.tools.shell_tools._execute_command_with_handoff", new_callable=AsyncMock) as execute_handoff,
+    ):
+        result = await tool_shell(ctx, command, purpose="Run tool registry tests")
+
+    confirm.assert_not_awaited()
+    execute.assert_not_awaited()
+    execute_handoff.assert_not_awaited()
+    assert result.text.startswith("[error: command not run")
+    assert "Do not invoke virtualenv binaries directly" in result.text
+    assert "uv run" in result.text
+
+
+@pytest.mark.asyncio
+async def test_venv_binary_redirects_on_unattended_turn(ctx):
+    """Nobody can answer a prompt, so the one-shot redirect still applies."""
+    ctx.task_mode = TaskMode.HEARTBEAT
+    command = f"{_external_venv_python()} -m pytest tests/test_tool_registry.py"
+
+    with (
+        patch("decafclaw.tools.shell_tools.request_confirmation", new_callable=AsyncMock) as confirm,
+        patch("decafclaw.tools.shell_tools._execute_command", new_callable=AsyncMock) as execute,
+    ):
+        result = await tool_shell(ctx, command, purpose="Run tool registry tests")
+
+    confirm.assert_not_awaited()
+    execute.assert_not_awaited()
+    assert result.text.startswith("[error: command not run")
+    assert "uv run" in result.text
+
+
+@pytest.mark.asyncio
+async def test_repeated_venv_binary_prompts_with_uv_run_suggestion(ctx):
+    """The second identical venv invocation falls through to the human with the advice attached."""
+    venv_python = _external_venv_python()
+    command = f"PYTHONPATH='src' {venv_python} -m pytest tests/test_tool_registry.py"
+
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.request_confirmation",
+            new_callable=AsyncMock,
+            return_value={"approved": False},
+        ) as confirm,
+        patch("decafclaw.tools.shell_tools._execute_command", new_callable=AsyncMock) as execute,
+    ):
+        first = await tool_shell(ctx, command, purpose="Run tool registry tests")
+        second = await tool_shell(ctx, command, purpose="Run tool registry tests")
+
+    assert first.text.startswith("[error: command not run")
+    assert second.text.startswith("[error: command denied")
+    assert "uv run" in second.text
+    execute.assert_not_awaited()
+    confirm.assert_awaited_once()
+    kwargs = confirm.await_args.kwargs
+    assert kwargs["action_data"]["tier"] == "security_monitor_ask"
+    assert "uv run" in kwargs["feedback"]
+
+
 @pytest.mark.asyncio
 async def test_aux_decline_prompt_never_omits_reason_on_judge_error(ctx):
     """When judge fails or times out, the confirmation card still states a reason."""
