@@ -6,6 +6,7 @@ Includes Tier 1 pattern matching and Tier 2 LLM classification for ambiguous com
 
 import json
 import logging
+import os
 import re
 import shlex
 import tempfile
@@ -550,27 +551,36 @@ def evaluate_command(
         if cleaned.startswith("/") or cleaned.startswith("~") or ".." in cleaned:
             try:
                 if cleaned.startswith("~"):
-                    token_path = Path(cleaned).expanduser().resolve()
+                    candidate_path = Path(cleaned).expanduser()
                 elif cleaned.startswith("/"):
                     # Check if token uses virtual /skills/ prefix
                     if cleaned.startswith("/skills/"):
                         rel_in_ws = (resolved_workspace / cleaned.lstrip("/")).resolve()
                         if rel_in_ws.is_relative_to(resolved_workspace):
                             continue
-                    token_path = Path(cleaned).resolve()
+                    candidate_path = Path(cleaned)
                 else:
-                    token_path = (resolved_workspace / cleaned).resolve()
+                    candidate_path = resolved_workspace / cleaned
+                token_path = candidate_path.resolve()
 
                 # Allowed devices
                 if token_path in ALLOWED_DEVICES:
                     continue
 
-                # If token is the executable command, allow trusted system and user binary dirs.
-                # The index skips leading env assignments (#1693).
-                if idx in executable_indices and any(
-                    token_path.is_relative_to(sys_dir) for sys_dir in SYSTEM_EXEC_DIRS
-                ):
-                    continue
+                # If token is the executable command, allow trusted system and user
+                # binary dirs. The index skips leading env assignments (#1693).
+                # Compare the lexical path too: a distribution or toolchain may
+                # symlink a trusted /usr/bin name to another installation root
+                # (GitHub's runner does this for coreutils `env`). A path that
+                # climbs out with `..` is normalized, so it cannot borrow this
+                # allowance.
+                if idx in executable_indices:
+                    lexical_path = Path(os.path.normpath(candidate_path))
+                    if any(
+                        token_path.is_relative_to(sys_dir) or lexical_path.is_relative_to(sys_dir)
+                        for sys_dir in SYSTEM_EXEC_DIRS
+                    ):
+                        continue
 
                 # Allowed temporary directories (unless token uses relative '..' traversal)
                 if any(token_path.is_relative_to(t_dir) for t_dir in ALLOWED_TEMP_DIRS) and not cleaned.startswith(

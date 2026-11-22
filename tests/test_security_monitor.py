@@ -126,6 +126,28 @@ def test_env_assignment_prefix_identifies_system_executable(tmp_path: Path):
     assert decision.status == SecurityStatus.ASK
 
 
+def test_system_dir_symlink_is_allowed_at_its_trusted_name(tmp_path: Path, monkeypatch):
+    """A trusted /usr/bin name may resolve into another toolchain root (#1693 CI)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sysbin = tmp_path / "sysbin"
+    sysbin.mkdir()
+    target = tmp_path / "toolchain" / "env"
+    target.parent.mkdir()
+    target.touch()
+    link = sysbin / "env"
+    link.symlink_to(target)
+
+    monkeypatch.setattr("decafclaw.security_monitor.SYSTEM_EXEC_DIRS", {sysbin})
+    monkeypatch.setattr("decafclaw.security_monitor.ALLOWED_TEMP_DIRS", set())
+
+    decision = evaluate_command(f"{link} script.py", workspace_path=workspace)
+    assert decision.status == SecurityStatus.ALLOW
+
+    traversal = evaluate_command(f"{sysbin}/../etc/passwd", workspace_path=workspace)
+    assert traversal.status == SecurityStatus.ASK
+
+
 def test_identifies_out_of_workspace_venv_executable(tmp_path: Path):
     """External .venv/venv binaries are recognized through env assignments and pipelines."""
     workspace = tmp_path / "workspace"
