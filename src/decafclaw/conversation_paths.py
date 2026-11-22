@@ -271,12 +271,6 @@ def delete_conversation_files(config, conv_id: str) -> None:
                 restart_wake_file.unlink()
             except OSError as exc:
                 log.warning("Failed to remove restart wake file %s: %s", restart_wake_file, exc)
-        approval_file = approval_state_path(config, conv_id)
-        if approval_file.exists():
-            try:
-                approval_file.unlink()
-            except OSError as exc:
-                log.warning("Failed to remove approval state file %s: %s", approval_file, exc)
 
 
 def last_request_path(config, conv_id: str) -> Path:
@@ -313,16 +307,5 @@ def restart_wake_path(config, conv_id: str) -> Path:
     let the agent forge a wake turn in any conversation.
     """
     base = (config.agent_path / "restart_wakes").resolve()
-    safe = _safe_conv_id(conv_id)
-    return base / f"{safe}.json"
-
-
-def approval_state_path(config, conv_id: str) -> Path:
-    """Resolve the per-conversation shell approval state file under the admin data dir:
-    data/{agent_id}/approval_state/{conv_id}.json.
-    Stored outside the agent-writable workspace: approval guidance steers the shell
-    reviewer, so an agent that could write it could grant itself shell access (#1160).
-    """
-    base = (config.agent_path / "approval_state").resolve()
     safe = _safe_conv_id(conv_id)
     return base / f"{safe}.json"

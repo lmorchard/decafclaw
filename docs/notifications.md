@@ -248,8 +248,7 @@ An armed escalation is a line in
 ```
 
 The file is outside the agent-writable workspace: a forged entry could make
-the agent buzz the operator, the same rationale as `approval_state/` and
-`scheduled_wakes/`. On startup the scheduler reloads the file, re-arms
+the agent buzz the operator, the same rationale as `scheduled_wakes/`. On startup the scheduler reloads the file, re-arms
 future entries, and fires overdue ones. An entry is removed from disk before
 delivery runs, so a crash can lose at most one push, never duplicate it.
 

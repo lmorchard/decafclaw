@@ -32,7 +32,6 @@ from .context import TaskMode, TurnLifecycle
 from .context_cleanup import clear_old_tool_results
 from .context_composer import ContextComposer
 from .context_types import TASK_MODE_TRAITS, UNWATCHED_TASK_MODES, ComposerMode
-from .conversation_paths import approval_state_path
 from .iteration_budget import IterationBudget
 from .llm import call_llm
 from .llm.history import assistant_message
@@ -507,33 +506,6 @@ async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
                 if name and name in config.model_configs:
                     ctx.active_model = name
                     break
-
-    # Restore active mode from archive if not already set or non-default.
-    # Legacy fallback (#1160): the manager now restores the mode from the
-    # approval_state file, which is the source of truth whenever it exists
-    # (including a recorded "default"). This scan runs only for
-    # conversations whose mode was recorded before that file existed.
-    from .modes import get_all_modes
-
-    all_modes = get_all_modes(config)
-    if (
-        getattr(ctx, "active_mode", "default") == "default"
-        and conv_id
-        and not approval_state_path(config, conv_id).exists()
-    ):
-        from .archive import read_archive
-
-        for msg in reversed(read_archive(config, conv_id)):
-            if msg.get("role") == "mode":
-                name = msg.get("content", "")
-                if name and name in all_modes:
-                    ctx.active_mode = name
-                    break
-
-    # If active mode has presets and session presets are not yet populated, initialize them
-    active_mode_name = getattr(ctx, "active_mode", "default") or "default"
-    if active_mode_name in all_modes and not ctx.tools.active_aux_approval_presets:
-        ctx.tools.active_aux_approval_presets = list(all_modes[active_mode_name].presets)
 
     return _resolve_model_override(ctx, config)
 

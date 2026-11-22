@@ -114,8 +114,6 @@ class TestConfirmationResponseArchive:
             approved=True,
             always=True,
             add_pattern=True,
-            add_rule=True,
-            rule="auto-approve echo *",
             feedback="use workspace_search instead",
             data={"choice": "option_a"},
         )

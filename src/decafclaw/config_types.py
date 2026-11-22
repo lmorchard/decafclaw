@@ -252,16 +252,6 @@ class ShellConfig:
     # shell group has no legacy endpoint of its own) and is treated as unset
     # with a warning.
     aux_approval_model: str = ""
-    # Dedicated model for LLM condensation of shell auto-approval rules (#1267).
-    # Empty = ride on the active conversation model (then the effective default).
-    # Unlike aux_approval_model there is no legacy auxiliary_model step: condensation
-    # is new and has no historical behavior to preserve. When set, must name a
-    # model_configs key; a hand-written raw name is not routable and is treated as
-    # unset with a warning (same shape as aux_approval_model).
-    condense_model: str = ""
-    aux_approval_guidance: str = ""
-    aux_approval_presets: dict[str, str] = field(default_factory=dict)
-    active_aux_approval_presets: list[str] = field(default_factory=list)
     # Global, scope-keyed rulebook (#1641 phase 4). Rules keyed by
     # (activity scope, command shape) are merged into the judge prompt for
     # commands in that scope. Reads are in the hot path; writes only through

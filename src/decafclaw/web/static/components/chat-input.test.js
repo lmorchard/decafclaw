@@ -808,17 +808,12 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     expect(el.querySelector('.conversation-menu')).toBeNull();
   });
 
-  it('renders the model picker and mode control inside the menu when the store provides options', async () => {
+  it('renders the model picker inside the menu when the store provides options', async () => {
     const el = await mount();
     const store = /** @type {any} */ (new EventTarget());
     store.activeModel = 'm1';
     store.availableModels = ['m1', 'm2'];
     store.modelGroups = [{ name: 'Models', models: ['m1', 'm2'] }];
-    store.activeMode = 'default';
-    store.availableModes = [
-      { name: 'default', description: 'Standard' },
-      { name: 'dev', description: 'Development' },
-    ];
     store.isBusy = false;
     el.store = store;
     await el.updateComplete;
@@ -836,32 +831,22 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
       .toEqual(['m1', 'm2']);
     expect(picker.querySelector('.model-picker-option.selected').dataset.model).toBe('m1');
 
-    const selects = [...menu.querySelectorAll('select')];
-    expect(selects).toHaveLength(1);
-    const [modeSelect] = selects;
-    expect(modeSelect.labels[0].textContent.trim()).toBe('Mode');
-    expect(modeSelect.value).toBe('default');
-    expect([...modeSelect.options].map((o) => o.value)).toEqual(['default', 'dev']);
+    // #1684: the mode control is retired.
+    expect(menu.querySelector('#conversation-menu-mode')).toBeNull();
+    expect([...menu.querySelectorAll('select')]).toHaveLength(0);
 
     const modelHandler = vi.fn();
-    const modeHandler = vi.fn();
     document.addEventListener('set-model', modelHandler);
-    document.addEventListener('set-mode', modeHandler);
 
     const modelRow = [...picker.querySelectorAll('.model-picker-option')]
       .find((row) => row.dataset.model === 'm2');
     modelRow.click();
-    modeSelect.value = 'dev';
-    modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
     await el.updateComplete;
 
     document.removeEventListener('set-model', modelHandler);
-    document.removeEventListener('set-mode', modeHandler);
 
     expect(modelHandler).toHaveBeenCalledTimes(1);
     expect(modelHandler.mock.calls[0][0].detail).toEqual({ model: 'm2' });
-    expect(modeHandler).toHaveBeenCalledTimes(1);
-    expect(modeHandler.mock.calls[0][0].detail).toEqual({ mode: 'dev' });
 
     // Changing a control does not close the menu.
     expect(el.querySelector('.conversation-menu')).not.toBeNull();
@@ -874,8 +859,6 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     store.defaultModel = 'm2';
     store.availableModels = ['m1', 'm2'];
     store.modelGroups = [{ name: 'Models', models: ['m1', 'm2'] }];
-    store.activeMode = 'default';
-    store.availableModes = [{ name: 'default' }];
     store.isBusy = false;
     el.store = store;
     await el.updateComplete;
@@ -899,11 +882,6 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     store.activeModel = 'm1';
     store.availableModels = ['m1', 'm2'];
     store.modelGroups = [{ name: 'Models', models: ['m1', 'm2'] }];
-    store.activeMode = 'default';
-    store.availableModes = [
-      { name: 'default', description: 'Standard' },
-      { name: 'dev', description: 'Development' },
-    ];
     store.isBusy = false;
     el.store = store;
     await el.updateComplete;
@@ -911,11 +889,9 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     const menu = await openMenu(el);
     expect(menu).not.toBeNull();
     const picker = /** @type {any} */ (menu.querySelector('model-picker'));
-    const modeSelect = menu.querySelector('#conversation-menu-mode');
 
-    // Idle: both settings controls are enabled.
+    // Idle: the model control is enabled.
     expect(picker.disabled).toBe(false);
-    expect(modeSelect.disabled).toBe(false);
 
     // Only busy moves — no other store field changes, so the re-render must
     // come from _isBusy itself being reactive.
@@ -924,14 +900,12 @@ describe('chat-input conversation actions menu (issue #1192)', () => {
     await el.updateComplete;
 
     expect(picker.disabled).toBe(true);
-    expect(modeSelect.disabled).toBe(true);
 
     store.isBusy = false;
     store.dispatchEvent(new Event('change'));
     await el.updateComplete;
 
     expect(picker.disabled).toBe(false);
-    expect(modeSelect.disabled).toBe(false);
   });
 
   it('moves attach into the menu and opens the file picker (#1540)', async () => {

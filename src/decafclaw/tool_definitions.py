@@ -254,18 +254,12 @@ def build_tool_list(ctx: "Context", *, all_defs: list | None = None) -> tuple[li
     fetched = get_fetched_tools(ctx)
     # Skill tools (from activated skills) should never be deferred
     skill_tool_names = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions}
-    from .modes import resolve_active_mode
 
-    active_mode_name = getattr(ctx, "active_mode", "default") or "default"
-    active_mode = resolve_active_mode(ctx.config, active_mode_name)
     active, deferred = classify_tools(
         all_defs,
         ctx.config,
         fetched,
         skill_tool_names,
-        # Keyword matches are tail hints, not native-schema promotions (#1257).
-        # Explicit fetches and activation remain capability-change boundaries.
-        promoted_tools=active_mode.promoted_tools,
     )
 
     # Apply allowed_tools / disallowed_tools filters

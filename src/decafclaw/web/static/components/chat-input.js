@@ -71,8 +71,6 @@ export class ChatInput extends LitElement {
     _availableModels: { type: Array, state: true },
     _modelGroups: { type: Array, state: true },
     _defaultModel: { type: String, state: true },
-    _activeMode: { type: String, state: true },
-    _availableModes: { type: Array, state: true },
     _isBusy: { type: Boolean, state: true },
     // Whether the textarea holds non-whitespace text. Drives the merged
     // Send/Stop action: while busy, text means the operator has something to
@@ -105,15 +103,6 @@ export class ChatInput extends LitElement {
       if (this.store) {
         this.store.addEventListener('change', this.#onStoreChange);
         this.#syncFromStore();
-      }
-    }
-
-    // Sync menu mode selector value if present
-    const modeSelect = /** @type {HTMLSelectElement | null} */ (this.querySelector('#conversation-menu-mode'));
-    if (modeSelect) {
-      const targetMode = this._activeMode;
-      if (targetMode && modeSelect.value !== targetMode) {
-        modeSelect.value = targetMode;
       }
     }
   }
@@ -150,8 +139,6 @@ export class ChatInput extends LitElement {
     this._availableModels = this.store.availableModels || [];
     this._modelGroups = this.store.modelGroups || [];
     this._defaultModel = this.store.defaultModel || '';
-    this._activeMode = this.store.activeMode || 'default';
-    this._availableModes = this.store.availableModes || [];
     this._isBusy = Boolean(this.store.isBusy);
   }
 
@@ -171,8 +158,6 @@ export class ChatInput extends LitElement {
     this._availableModels = [];
     this._modelGroups = [];
     this._defaultModel = '';
-    this._activeMode = 'default';
-    this._availableModes = [];
     this._isBusy = false;
     this._hasText = false;
     /** @type {Array<UploadedAttachment | PendingAttachment>} */
@@ -428,18 +413,6 @@ export class ChatInput extends LitElement {
   #handleMenuAttach() {
     this._conversationMenuOpen = false;
     this.#openFilePicker();
-  }
-
-  /** Mode menu item: switch the conversation's mode via the set-mode event. */
-  #handleMenuModeChange(e) {
-    const newMode = e.target.value;
-    if (newMode && newMode !== this._activeMode) {
-      this.dispatchEvent(new CustomEvent('set-mode', {
-        detail: { mode: newMode },
-        bubbles: true,
-        composed: true,
-      }));
-    }
   }
 
   /** Deliberate Stop route while the composer holds text (#1666). */
@@ -798,7 +771,7 @@ export class ChatInput extends LitElement {
               <span class="conversation-menu-label">Side question</span>
             </button>
           </div>
-          ${this._availableModels.length || this._availableModes.length ? html`
+          ${this._availableModels.length ? html`
             <div class="conversation-menu-settings">
               ${this._availableModels.length > 0 ? html`
                 <div class="conversation-menu-section">
@@ -811,16 +784,6 @@ export class ChatInput extends LitElement {
                     ?disabled=${this._isBusy || this.disabled}
                     .convId=${this.convId}
                   ></model-picker>
-                </div>
-              ` : nothing}
-              ${this._availableModes.length > 0 ? html`
-                <div class="conversation-menu-section">
-                  <label class="conversation-menu-field-label" for="conversation-menu-mode">Mode</label>
-                  <select id="conversation-menu-mode" class="conversation-menu-select" .value=${this._activeMode} ?disabled=${this._isBusy} @change=${this.#handleMenuModeChange}>
-                    ${this._availableModes.map(m => html`
-                      <option value="${m.name}" ?selected=${m.name === this._activeMode} .selected=${m.name === this._activeMode} title="${m.description || ''}">${m.name}</option>
-                    `)}
-                  </select>
                 </div>
               ` : nothing}
             </div>

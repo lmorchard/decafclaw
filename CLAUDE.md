@@ -165,7 +165,7 @@ Python modules below are under `src/decafclaw/`. Use [docs/index.md](docs/index.
 | Context | `context_composer.py` (orchestrator), `context_pipeline.py`, `context_types.py`, `context_tools.py`, `context_preempt.py`, `context_diagnostics.py`, `compaction.py`, `compaction_decisions.py`, `context_cleanup.py`, `memory_context.py` |
 | Tools | `tool_definitions.py`, `tool_execution.py`, `tools/tool_registry.py`, `tools/search_tools.py`, `preempt_search.py` |
 | Configuration/models | `config.py`, `config_types.py`, `config_watcher.py`, `model_catalog.py`, `llm/` |
-| Persistence | `archive.py`, `conversation_paths.py`, `persistence.py`, `approval_state.py`, `attachments.py`, `embeddings.py`, `frontmatter.py` |
+| Persistence | `archive.py`, `conversation_paths.py`, `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py` |
 | UI/transports | `mattermost*.py`, `http_server.py`, `web/`, `terminals.py`, `canvas.py`, `sticky.py`, `widgets.py` |
 | Skills | `skills/` (vault/background/mcp always-loaded); opt-in skills under `contrib/skills/` |
 | Other subsystems | `notifications.py`, `notification_channels/`, `mail.py`, `schedules.py`, `scheduled_wakes.py`, `polling.py`, `heartbeat.py`, `extensions/` (see [docs/extensions.md](docs/extensions.md)) |

@@ -24,8 +24,6 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
   shell_scope_rules.jsonl           # Global scope-keyed rules; admin_* writes only (#1641 phase 4)
   shell_scope_ledger.jsonl          # Append-only human approval evidence (#1641 phase 4)
   web_tokens.json                   # Web UI auth tokens (managed by decafclaw-token CLI)
-  approval_state/
-    {conv_id}.json                  # Per-conversation shell approval state (#1160)
   scheduled_wakes/
     {conv_id}.json                  # Pending timer-based wake turns (#1103)
   file_watches/
@@ -183,7 +181,6 @@ The key architectural decision: **admin files are read-only to the agent, worksp
 - Skill permissions live here so the agent can't grant itself permission to activate skills
 - MCP server config lives here so the agent can't add its own tool providers
 - Schedule files here are admin-authored; workspace/schedules are agent-authored (no trust inheritance)
-- Per-conversation shell approval state (`approval_state/{conv_id}.json`, #1160) lives here, not in the conversation's workspace directory: its "remember why" rules steer the shell reviewer, so the agent must not be able to write it. Written atomically by `ConversationManager` when the state changes; removed with the conversation.
 - Pending scheduled wakes (`scheduled_wakes/{conv_id}.json`, #1103) and file watches (`file_watches/{conv_id}.json`, #1560) live here too, so workspace tools cannot forge or clear a wake.
 - Pending notification escalations (`pending_escalations.jsonl`, #1664) live at the agent root for the same reason: a forged entry would make the agent buzz the operator. The file is rewritten atomically; an entry is removed before its delivery runs so a crash cannot duplicate a push.
 

@@ -201,8 +201,6 @@ export class ConfirmView extends LitElement {
       }
 
       const confirmId = c.confirmation_id || `${c.context_id}-${c.tool_call_id || c.tool}`;
-      const effectiveRule = c.suggested_rule || c.action_data?.suggested_rule || '';
-      const ruleValue = this._inputValues[confirmId] !== undefined ? this._inputValues[confirmId] : effectiveRule;
       const feedbackValue = `${this._inputValues[`${confirmId}-feedback`] ?? ''}`;
 
       return html`
@@ -259,18 +257,6 @@ export class ConfirmView extends LitElement {
                 <span class="confirm-judge-feedback-label">Suggested alternative:</span> ${c.action_data.feedback}
               </div>
             ` : ''}
-            ${effectiveRule ? html`
-              <div class="confirm-rule-box">
-                <label for="rule-input-${confirmId}" class="confirm-rule-label">Suggested exception rule:</label>
-                <input
-                  id="rule-input-${confirmId}"
-                  class="confirm-rule-input"
-                  type="text"
-                  .value=${ruleValue}
-                  @input=${(e) => this.#setInputValue(confirmId, e.target.value)}
-                />
-              </div>
-            ` : ''}
             ${c.tool === 'shell' ? html`
               <div class="confirm-feedback-box">
                 <input
@@ -298,11 +284,6 @@ export class ConfirmView extends LitElement {
             <button class="outline secondary" @click=${() => this.#denyConfirm(c, confirmId)}>
               ${c.deny_label || 'Deny'}
             </button>
-            ${!c.approve_label && effectiveRule ? html`
-              <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, true, { add_rule: true, rule: ruleValue.trim() })}>
-                Approve + remember why
-              </button>
-            ` : ''}
             ${c.approve_label ? '' : c.tool === 'shell' && c.suggested_pattern ? html`
               <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, true, { add_pattern: true })}>
                 Allow: ${c.suggested_pattern}

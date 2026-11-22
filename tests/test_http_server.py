@@ -216,8 +216,6 @@ async def test_confirm_empty_body_routes_through_manager(http_config, bus):
         approved=True,
         always=False,
         add_pattern=False,
-        add_rule=False,
-        rule="",
     )
 
 
@@ -369,31 +367,6 @@ async def test_confirm_add_pattern(client, bus):
 
 
 @pytest.mark.asyncio
-async def test_confirm_add_rule_prefers_token_rule(client, bus):
-    """Authenticated rule bound in token takes precedence over caller-controlled POST context (#982)."""
-    received = []
-    bus.subscribe(lambda e: received.append(e))
-
-    token = get_token_registry().create(
-        "ctx-1",
-        "shell",
-        "msg",
-        rule="Auto-approve gh pr create in this repo (from token)",
-    )
-    body = _confirm_body(action="add_rule")
-    body["context"]["rule"] = "Maliciously broader rule from untrusted payload"
-    resp = await client.post(
-        f"/actions/confirm?token={token}",
-        json=body,
-    )
-    assert resp.status_code == 200
-
-    assert received[0]["approved"] is True
-    assert received[0].get("add_rule") is True
-    assert received[0].get("rule") == "Auto-approve gh pr create in this repo (from token)"
-
-
-@pytest.mark.asyncio
 async def test_confirm_response_includes_original_message(client):
     token = get_token_registry().create("ctx-1", "shell", "original text here")
     resp = await client.post(
@@ -433,7 +406,7 @@ def test_shell_buttons_approve_deny_pattern(http_config):
     assert "always" not in action_ids
 
 
-def test_shell_buttons_with_suggested_rule(http_config):
+def test_shell_buttons_have_no_remember_rule_action(http_config):
     result = build_confirm_buttons(
         http_config,
         "shell",
@@ -441,15 +414,11 @@ def test_shell_buttons_with_suggested_rule(http_config):
         "git push origin *",
         "ctx-1",
         "msg",
-        suggested_rule="Auto-approve push to origin",
     )
     actions = result[0]["actions"]
     action_ids = [a["id"] for a in actions]
-    assert action_ids == ["approve", "deny", "addrule", "allowpattern"]
-    addrule = next(a for a in actions if a["id"] == "addrule")
-    assert addrule["name"] == "Approve + remember why"
-    assert addrule["integration"]["context"]["action"] == "add_rule"
-    assert addrule["integration"]["context"]["rule"] == "Auto-approve push to origin"
+    assert action_ids == ["approve", "deny", "allowpattern"]
+    assert not any(a["integration"]["context"].get("action") == "add_rule" for a in actions)
 
 
 def test_other_tool_buttons_approve_deny_always(http_config):
@@ -588,51 +557,6 @@ async def test_poll_confirmation_manager_indefinite_timeout_resolves():
         approved=True,
         always=False,
         add_pattern=False,
-    )
-
-
-@pytest.mark.asyncio
-async def test_poll_confirmation_manager_resolves_memo_emoji_with_rule():
-    from unittest.mock import AsyncMock, MagicMock
-
-    from decafclaw.mattermost import MattermostClient
-
-    client = MattermostClient.__new__(MattermostClient)
-    client._pending_confirm_posts = {}
-    client.bot_user_id = "bot-1"
-    client._http = MagicMock()
-    client.edit_message = AsyncMock()
-
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = [
-        {"emoji_name": "memo", "user_id": "user-1"},
-    ]
-    mock_resp.raise_for_status = MagicMock()
-    client._http.get = AsyncMock(return_value=mock_resp)
-
-    manager = MagicMock()
-    manager.respond_to_confirmation = AsyncMock()
-
-    await client._poll_confirmation_manager(
-        post_id="p1",
-        manager=manager,
-        conv_id="c1",
-        confirmation_id="conf-1",
-        action_type="run_shell_command",
-        timeout=None,
-        poll_interval=0.01,
-        suggested_rule="Auto-approve gh pr create in this repo",
-    )
-
-    manager.respond_to_confirmation.assert_called_once_with(
-        "c1",
-        "conf-1",
-        approved=True,
-        always=False,
-        add_pattern=False,
-        add_rule=True,
-        rule="Auto-approve gh pr create in this repo",
     )
 
 

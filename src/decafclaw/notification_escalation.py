@@ -16,8 +16,7 @@ Two things cancel an armed escalation before it fires:
 The pending-escalation file lives at
 ``data/{agent_id}/pending_escalations.jsonl`` — outside the
 agent-writable workspace. A forged entry would make the agent buzz the
-operator, the same reason ``approval_state/`` and ``scheduled_wakes/``
-live there.
+operator, the same reason ``scheduled_wakes/`` lives there.
 
 Delivery survives a restart: :meth:`EscalationScheduler.start` reloads
 the file, re-arms future entries, and fires overdue ones immediately.

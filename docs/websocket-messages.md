@@ -88,7 +88,6 @@ Server is asking the user to approve or deny a pending action (tool call, end-of
 - `command` — string
 - `suggested_pattern` — string
 - `decline_reason` — string?
-- `suggested_rule` — string?
 - `message` — string
 - `approve_label` — string
 - `deny_label` — string
@@ -124,8 +123,6 @@ Page of historical messages for a conversation.
 - `available_models` — array of string?
 - `model_groups` — array of object?
 - `default_model` — string?
-- `active_mode` — string?
-- `available_modes` — array of object?
 - `turn_active` — boolean?
 - `pending_confirmation` — object?
 
@@ -183,17 +180,6 @@ Final form of an assistant message after streaming completed (or when replayed f
 - `context_usage` — number?
 - `context_limit` — number?
 - `provenance` — object?
-
-### `mode_changed`
-
-The active mode for a conversation changed (echoed back to all subscribers of that conversation).
-
-**Fields:**
-
-- `conv_id` — string
-- `mode` — string
-- `presets` — array of string
-- `promoted_tools` — array of string
 
 ### `model_changed`
 
@@ -411,8 +397,6 @@ User's decision on a pending confirm_request.
 - `approved` — boolean
 - `always` — boolean
 - `add_pattern` — boolean
-- `add_rule` — boolean?
-- `rule` — string?
 - `feedback` — string?
 - `data` — object?
 
@@ -459,15 +443,6 @@ Deprecated backward-compat alias for set_model used by older web clients.
 
 - `conv_id` — string
 - `model` — string
-
-### `set_mode`
-
-Change the active mode for a conversation.
-
-**Fields:**
-
-- `conv_id` — string
-- `mode` — string
 
 ### `set_model`
 
