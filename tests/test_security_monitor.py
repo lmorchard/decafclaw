@@ -40,12 +40,54 @@ def test_evaluates_out_of_workspace_operations_as_ask(tmp_path: Path):
         "cat </etc/passwd",
         "/var/log/python script.py",
         "/opt/custom/venv/bin/python script.py",
+        "touch /tmp/../etc/passwd",
     ]
 
     for cmd in out_of_workspace_commands:
         decision = evaluate_command(cmd, workspace_path=workspace)
         assert decision.status == SecurityStatus.ASK, f"Expected ASK for out-of-workspace command: {cmd}"
         assert decision.reason, f"Expected reason for ASK command: {cmd}"
+
+
+def test_filter_expressions_are_not_paths(tmp_path: Path):
+    """sed/awk/grep scripts that look like absolute paths are data, not file paths (#1690)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    commands = [
+        "sed -n '/Failed Tests/,/2\\/2/p' notes.txt",
+        "test-runner 2>&1 | sed -n '/Failed Tests/,/2\\/2/p' | head -40",
+        "sed '/delete_pattern/d' input.txt",
+        "sed -e '/start_marker/,/end_marker/p' -e 's/a/b/' input.txt",
+        "awk '/pattern/ {print $1}' data.txt",
+        "awk -v limit=10 '/pattern/ {print}' data.txt",
+        "grep -e '/pattern/' data.txt",
+        "grep '/pattern/' data.txt",
+        "perl -e 'print \"/etc/passwd\"'",
+    ]
+
+    for cmd in commands:
+        decision = evaluate_command(cmd, workspace_path=workspace)
+        assert decision.status == SecurityStatus.ALLOW, f"Expected ALLOW for expression command: {cmd}"
+
+
+def test_filter_expressions_do_not_hide_file_arguments(tmp_path: Path):
+    """Only the script/pattern argument is skipped; file arguments stay checked."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    commands = [
+        "sed -n '/x/p' /etc/shadow",
+        "sed -e '/x/p' /etc/shadow",
+        "awk '/x/ {print}' /etc/passwd",
+        "grep -e '/x/' /etc/passwd",
+        "grep '/x/' /etc/passwd",
+        "grep -f /etc/patterns data.txt",
+    ]
+
+    for cmd in commands:
+        decision = evaluate_command(cmd, workspace_path=workspace)
+        assert decision.status == SecurityStatus.ASK, f"Expected ASK for file argument: {cmd}"
 
 
 def test_evaluates_sensitive_commands_as_ask(tmp_path: Path):
