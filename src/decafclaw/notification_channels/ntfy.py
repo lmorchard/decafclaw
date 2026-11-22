@@ -30,10 +30,12 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from decafclaw import notifications
 from decafclaw.mattermost_ui import get_token_registry
+from decafclaw.notification_escalation import EscalationScheduler
 from decafclaw.notifications import NotificationRecord
 
-from . import meets_priority
+from . import meets_priority, should_defer
 
 log = logging.getLogger(__name__)
 
@@ -200,13 +202,44 @@ async def _deliver(cfg: Any, payload: dict) -> None:
         )
 
 
-def make_ntfy_adapter(config: Any) -> Callable[[dict], Awaitable[None]]:
+def make_ntfy_adapter(
+    config: Any,
+    scheduler: EscalationScheduler | None = None,
+) -> Callable[[dict], Awaitable[None]]:
     """Return an event-bus handler that pushes notifications to ntfy.
 
     Config is resolved per event so in-process mutations take effect on
     the next event. ``confirmation_request`` events are published on the
     global bus by ``ConversationManager`` with ``conv_id`` attached.
+
+    When ``scheduler`` is given, a deferred channel arms a durable
+    escalation instead of pushing at publish time; the deliverer rebuilds
+    the payload (and mints fresh callback tokens) after the delay or after
+    a restart (#1664). Without a scheduler the adapter pushes immediately,
+    which keeps direct construction in tests unchanged.
     """
+
+    async def deliver_notification(payload: dict) -> None:
+        """Deferred notification delivery: re-read the durable record."""
+        record = notifications.find_record(config, str(payload.get("record_id", "")))
+        if record is None:
+            log.info("Deferred ntfy push dropped: inbox record %r no longer live", payload.get("record_id"))
+            return
+        if notifications.is_read(config, record.id):
+            log.info("Deferred ntfy push cancelled: record %s was read", record.id)
+            return
+        await _deliver(config.notifications.channels.ntfy, build_notification_payload(config, record))
+
+    async def deliver_confirmation(payload: dict) -> None:
+        """Deferred confirmation push: rebuild with freshly minted tokens."""
+        event = payload.get("event") or {}
+        if not isinstance(event, dict):
+            return
+        await _deliver(config.notifications.channels.ntfy, build_confirmation_payload(config, event))
+
+    if scheduler is not None:
+        scheduler.register("ntfy", deliver_notification)
+        scheduler.register("ntfy_confirmation", deliver_confirmation)
 
     async def handle(event: dict) -> None:
         cfg = config.notifications.channels.ntfy
@@ -218,6 +251,9 @@ def make_ntfy_adapter(config: Any) -> Callable[[dict], Awaitable[None]]:
             record = NotificationRecord.from_dict(event.get("record", {}))
             if not meets_priority(record.priority, cfg.min_priority):
                 return
+            if scheduler is not None and should_defer(cfg, record):
+                scheduler.arm("ntfy", record.id, cfg.escalate_after_sec, {"record_id": record.id})
+                return
             payload = build_notification_payload(config, record)
         elif event_type == "confirmation_request":
             # Widget responses need structured data from the web UI;
@@ -226,6 +262,15 @@ def make_ntfy_adapter(config: Any) -> Callable[[dict], Awaitable[None]]:
             if event.get("action_type") == "widget_response":
                 return
             if not cfg.notify_on_confirmation:
+                return
+            confirmation_id = str(event.get("confirmation_id", ""))
+            if scheduler is not None and cfg.confirmation_escalate_after_sec > 0 and confirmation_id:
+                scheduler.arm(
+                    "ntfy_confirmation",
+                    confirmation_id,
+                    cfg.confirmation_escalate_after_sec,
+                    {"event": event},
+                )
                 return
             payload = build_confirmation_payload(config, event)
         else:

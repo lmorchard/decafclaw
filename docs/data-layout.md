@@ -185,6 +185,7 @@ The key architectural decision: **admin files are read-only to the agent, worksp
 - Schedule files here are admin-authored; workspace/schedules are agent-authored (no trust inheritance)
 - Per-conversation shell approval state (`approval_state/{conv_id}.json`, #1160) lives here, not in the conversation's workspace directory: its "remember why" rules steer the shell reviewer, so the agent must not be able to write it. Written atomically by `ConversationManager` when the state changes; removed with the conversation.
 - Pending scheduled wakes (`scheduled_wakes/{conv_id}.json`, #1103) and file watches (`file_watches/{conv_id}.json`, #1560) live here too, so workspace tools cannot forge or clear a wake.
+- Pending notification escalations (`pending_escalations.jsonl`, #1664) live at the agent root for the same reason: a forged entry would make the agent buzz the operator. The file is rewritten atomically; an entry is removed before its delivery runs so a crash cannot duplicate a push.
 
 ### Workspace (`data/{agent_id}/workspace/`)
 

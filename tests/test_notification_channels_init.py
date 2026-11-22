@@ -50,6 +50,10 @@ def _enable_ntfy(config, topic="agent-alerts"):
 
 
 class TestInitNotificationChannels:
+    # Counts include the escalation scheduler's single notification_read
+    # subscription, added with deferred delivery (#1664). A zero count still
+    # means no channel was wired, because the scheduler only starts when at
+    # least one adapter subscribed.
     def test_no_channels_enabled_nothing_subscribed(self, config):
         bus = MagicMock()
         init_notification_channels(config, bus, mm_client=None)
@@ -60,7 +64,7 @@ class TestInitNotificationChannels:
         bus = MagicMock()
         mm_client = MagicMock()
         init_notification_channels(config, bus, mm_client=mm_client)
-        assert bus.subscribe.call_count == 1
+        assert bus.subscribe.call_count == 2
 
     def test_mm_dm_skipped_when_no_client(self, config):
         """Channel config is complete but Mattermost client is None."""
@@ -79,7 +83,7 @@ class TestInitNotificationChannels:
         _enable_email(config)
         bus = MagicMock()
         init_notification_channels(config, bus, mm_client=None)
-        assert bus.subscribe.call_count == 1
+        assert bus.subscribe.call_count == 2
 
     def test_email_skipped_when_core_disabled(self, config):
         """Channel config is complete but `email.enabled` is false."""
@@ -114,13 +118,13 @@ class TestInitNotificationChannels:
         _enable_email(config)
         bus = MagicMock()
         init_notification_channels(config, bus, mm_client=MagicMock())
-        assert bus.subscribe.call_count == 2
+        assert bus.subscribe.call_count == 3
 
     def test_vault_page_subscribed_when_configured(self, config):
         _enable_vault_page(config)
         bus = MagicMock()
         init_notification_channels(config, bus, mm_client=None)
-        assert bus.subscribe.call_count == 1
+        assert bus.subscribe.call_count == 2
 
     def test_vault_page_skipped_when_disabled(self, config):
         _enable_vault_page(config)
@@ -137,7 +141,7 @@ class TestInitNotificationChannels:
         _enable_vault_page(config, folder="")
         bus = MagicMock()
         init_notification_channels(config, bus, mm_client=None)
-        assert bus.subscribe.call_count == 1
+        assert bus.subscribe.call_count == 2
 
     def test_all_three_channels_subscribed(self, config):
         _enable_mm_dm(config)
@@ -145,13 +149,13 @@ class TestInitNotificationChannels:
         _enable_vault_page(config)
         bus = MagicMock()
         init_notification_channels(config, bus, mm_client=MagicMock())
-        assert bus.subscribe.call_count == 3
+        assert bus.subscribe.call_count == 4
 
     def test_ntfy_subscribed_when_configured(self, config):
         _enable_ntfy(config)
         bus = MagicMock()
         init_notification_channels(config, bus, mm_client=None)
-        assert bus.subscribe.call_count == 1
+        assert bus.subscribe.call_count == 2
 
     def test_ntfy_skipped_when_disabled(self, config):
         _enable_ntfy(config)
@@ -180,4 +184,4 @@ class TestInitNotificationChannels:
         _enable_vault_page(config)
         bus = MagicMock()
         init_notification_channels(config, bus, mm_client=MagicMock())
-        assert bus.subscribe.call_count == 4
+        assert bus.subscribe.call_count == 5
