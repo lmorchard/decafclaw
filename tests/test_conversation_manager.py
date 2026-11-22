@@ -24,6 +24,7 @@ from decafclaw.conversation_manager import (
     PersistedTurnState,
     TurnKind,
     _build_message_complete,
+    _flatten_side_question_history,
     _write_cancel_archive,
 )
 from decafclaw.events import EventBus
@@ -949,6 +950,125 @@ def test_build_message_complete_optional_thinking_and_provenance():
     )
     assert with_extras["thinking"] == "hmm"
     assert with_extras["provenance"] == {"skill:foo": [{"name": "bar"}]}
+
+
+# -- Side-question history flattening (#1354) ---------------------------------
+
+
+def test_flatten_side_question_history_merges_tool_calls_into_assistant_text():
+    """#1354 — assistant tool_calls merge into the message content as readable
+    text, since side questions strip all tools from the model call."""
+    out = _flatten_side_question_history(
+        [
+            {
+                "role": "assistant",
+                "content": "Deploying now.",
+                "tool_calls": [
+                    {"function": {"name": "run_shell_command", "arguments": '{"command": "make deploy"}'}},
+                ],
+            },
+        ]
+    )
+    assert out == [
+        {
+            "role": "assistant",
+            "content": 'Deploying now.\n[Tool call: run_shell_command({"command": "make deploy"})]',
+        }
+    ]
+
+
+def test_flatten_side_question_history_converts_tool_results_to_user():
+    """#1354 — tool results become user messages prefixed with the tool name,
+    falling back to the call id or a bare label."""
+    out = _flatten_side_question_history(
+        [
+            {"role": "tool", "name": "run_shell_command", "tool_call_id": "call-1", "content": "ok"},
+            {"role": "tool", "tool_call_id": "call-2", "content": "no name"},
+            {"role": "tool", "content": "no id"},
+        ]
+    )
+    assert out == [
+        {"role": "user", "content": "[Tool result: run_shell_command]: ok"},
+        {"role": "user", "content": "[Tool result (call-2)]: no name"},
+        {"role": "user", "content": "[Tool result]: no id"},
+    ]
+
+
+def test_flatten_side_question_history_remaps_internal_roles_via_role_remap():
+    """#1354 — internal injection roles remap to "user" through the shared
+    ROLE_REMAP instead of a private role list; empty rows are dropped."""
+    out = _flatten_side_question_history(
+        [
+            {"role": "vault_retrieval", "content": "retrieved notes"},
+            {"role": "cancel_marker", "content": CANCEL_MARKER_TEXT},
+            {"role": "skill_hint", "content": "<preempt_tool_hint>\n- read_file\n</preempt_tool_hint>"},
+            {"role": "recent_journal", "content": ""},
+        ]
+    )
+    assert out == [
+        {"role": "user", "content": "retrieved notes"},
+        {"role": "user", "content": CANCEL_MARKER_TEXT},
+        {"role": "user", "content": "<preempt_tool_hint>\n- read_file\n</preempt_tool_hint>"},
+    ]
+
+
+def test_flatten_side_question_history_skips_metadata_roles():
+    """#1354 — metadata-only archive rows (compaction, model, mode,
+    decision_slice, and other non-LLM/non-remap roles) are skipped."""
+    out = _flatten_side_question_history(
+        [
+            {"role": "compaction", "content": "summary"},
+            {"role": "model", "content": "gpt-x"},
+            {"role": "mode", "content": "interactive"},
+            {"role": "decision_slice", "content": "{}"},
+            {"role": "reflection", "content": "retry note"},
+            {"role": "background_event", "content": "wake"},
+            {"role": "user", "content": "real question"},
+        ]
+    )
+    assert out == [{"role": "user", "content": "real question"}]
+
+
+def test_flatten_side_question_history_preserves_attachments_and_system():
+    """#1354 — user/system rows pass through with attachments; empty rows
+    without attachments are dropped."""
+    out = _flatten_side_question_history(
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "", "attachments": [{"filename": "a.png"}]},
+            {"role": "user", "content": ""},
+        ]
+    )
+    assert out == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "", "attachments": [{"filename": "a.png"}]},
+    ]
+
+
+def test_flatten_side_question_history_mixed_snapshot_shape():
+    """#1354 — a mixed archive sequence flattens to the provider-safe snapshot
+    run_side_question sends: no tool_calls, no role="tool"."""
+    out = _flatten_side_question_history(
+        [
+            {"role": "user", "content": "Deploy app"},
+            {
+                "role": "assistant",
+                "content": "Deploying now.",
+                "tool_calls": [
+                    {"function": {"name": "run_shell_command", "arguments": '{"command": "make deploy"}'}},
+                ],
+            },
+            {"role": "tool", "name": "run_shell_command", "tool_call_id": "call-1", "content": "Deployed 1.2.3"},
+            {"role": "vault_retrieval", "content": "deployment notes"},
+        ]
+    )
+    for msg in out:
+        assert "tool_calls" not in msg
+        assert msg["role"] in ("system", "user", "assistant")
+    assert out[0] == {"role": "user", "content": "Deploy app"}
+    assert "[Tool call: run_shell_command(" in out[1]["content"]
+    assert any("[Tool result: run_shell_command]" in m["content"] for m in out)
+    assert any("deployment notes" in m.get("content", "") for m in out)
 
 
 @pytest.mark.asyncio
