@@ -7,6 +7,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from ..mcp_client import parse_mcp_tool_name
+from ..model_catalog import effective_context_window
 from ..util import estimate_tokens
 
 if TYPE_CHECKING:
@@ -216,8 +217,6 @@ def classify_tools(
     # Warn only when the floor cannot fit the model's window at any
     # percentage. A floor merely above the configured percentage is the
     # expected small-window tradeoff, not a defect (#1741).
-    from ..model_catalog import effective_context_window  # deferred: avoid import cycle
-
     window = effective_context_window(config, model_name)
     if window > 0 and active_tokens > window:
         log.warning(
