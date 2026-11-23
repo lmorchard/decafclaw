@@ -18,8 +18,8 @@ Direct access to Google's Gemini models via Vertex AI. Uses native Gemini REST A
     }
   },
   "model_configs": {
-    "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" },
-    "gemini-pro": { "provider": "vertex", "model": "gemini-2.5-pro" }
+    "gemini-flash": { "provider": "vertex", "model": "gemini-3.8-flash" },
+    "gemini-pro": { "provider": "vertex", "model": "gemini-4-argon" }
   }
 }
 ```
@@ -194,7 +194,7 @@ You can configure multiple providers simultaneously and assign different models 
     "ollama": { "type": "openai-compat", "url": "http://localhost:11434/v1/chat/completions" }
   },
   "model_configs": {
-    "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" },
+    "gemini-flash": { "provider": "vertex", "model": "gemini-3.8-flash" },
     "gpt-4o": { "provider": "openai", "model": "gpt-4o" },
     "llama-local": { "provider": "ollama", "model": "llama3.2" }
   },

@@ -27,18 +27,20 @@ _MAX_RETRIES = 3
 # practical REST endpoint that lists Gemini models, so discovery returns
 # this list instead of nothing. Chat + tools + context are reported for
 # every entry; the third field marks whether the id is live-confirmed to
-# be served — unconfirmed ids land DISABLED in the catalog (the user opts
-# in) so an unserved id never surfaces enabled and fails on first use.
-# Update as the Gemini lineup changes; flip confirmed=True only with live
-# evidence the project serves the id. tests/test_model_catalog.py pins
-# this confirmed/unconfirmed partition.
+# be served. Retired ids are removed rather than kept disabled. Update as
+# the Gemini lineup changes; flip confirmed=True only with live evidence
+# the project serves the id. tests/test_model_catalog.py pins the current
+# lineup and the retired-id exclusions.
 _VERTEX_STATIC_MODELS: list[tuple[str, str, bool]] = [
     # (model id, owned_by label, live-confirmed)
-    ("gemini-2.5-flash", "Google", True),  # config default model; served here
-    ("gemini-2.5-flash-lite", "Google", False),  # no live confirmation
-    ("gemini-2.5-pro", "Google", True),  # `make run-pro` default; served here
-    ("gemini-3.8-flash", "Google", False),  # no live confirmation
-    ("gemini-4-argon", "Google", False),  # no live confirmation
+    # Live-checked 2026-11-23 against this project's global endpoint.
+    ("gemini-3.5-flash-lite", "Google", True),  # lightweight; retires 2027-07-21
+    ("gemini-3.5-flash", "Google", True),  # retires 2027-05-19
+    ("gemini-3.8-flash", "Google", True),  # retires 2027-09-02
+    ("gemini-4-hydrogen", "Google", True),  # fast everyday; no retirement date
+    ("gemini-4-carbon", "Google", True),  # no retirement date
+    ("gemini-4-neon", "Google", True),  # no retirement date
+    ("gemini-4-argon", "Google", True),  # retires 2027-10-13
 ]
 _GEMINI_CONTEXT_WINDOW = 1_048_576
 

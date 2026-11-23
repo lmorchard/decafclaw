@@ -20,7 +20,7 @@ debug:
 
 # Run with a specific model
 run-pro:
-	LLM_MODEL=gemini-2.5-pro uv run decafclaw
+	LLM_MODEL=gemini-4-argon uv run decafclaw
 
 # Run the app from a *worktree* with no external side effects (#1096):
 # refuses to run from the main clone, seeds the worktree's gitignored

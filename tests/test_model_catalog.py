@@ -191,18 +191,32 @@ def test_vertex_discovery_static_fallback():
     from decafclaw.model_catalog import default_enabled
 
     by_id = {m.id: m for m in models}
-    # Live-confirmed ids land enabled under the default-on policy...
-    assert by_id["gemini-2.5-flash"].confirmed is True
-    assert default_enabled(by_id["gemini-2.5-flash"]) is True
-    assert by_id["gemini-2.5-pro"].confirmed is True
-    assert default_enabled(by_id["gemini-2.5-pro"]) is True
-    # ...ids without live confirmation land disabled (user opts in), so an
-    # unserved id never surfaces enabled and fails on first use. Every list
-    # entry must make this choice explicitly — keep this partition in sync
-    # with the evidence notes in _VERTEX_STATIC_MODELS.
-    for unconfirmed in ("gemini-2.5-flash-lite", "gemini-3.8-flash", "gemini-4-argon"):
-        assert by_id[unconfirmed].confirmed is False
-        assert default_enabled(by_id[unconfirmed]) is False
+    current = {
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-3.8-flash",
+        "gemini-4-hydrogen",
+        "gemini-4-carbon",
+        "gemini-4-neon",
+        "gemini-4-argon",
+    }
+    assert set(by_id) == current
+    # Every curated entry is live-confirmed, so it lands enabled under the
+    # default-on policy.
+    for model_id in current:
+        assert by_id[model_id].confirmed is True
+        assert default_enabled(by_id[model_id]) is True
+    # Retired ids are removed rather than left in the fallback. Gemini 2.5
+    # retired 2026-10-20; 3.6 flash retired 2026-11-19; 3.7 flash retires
+    # 2027-01-28.
+    for retired in (
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
+    ):
+        assert retired not in by_id
 
 
 def test_default_enabled_requires_live_confirmation():

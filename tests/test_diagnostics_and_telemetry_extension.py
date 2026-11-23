@@ -29,6 +29,12 @@ def _clean_registry_and_metrics():
     _prom_counts.clear()
 
 
+@pytest.fixture(autouse=True)
+def _configured_model(ctx):
+    """The legacy llm default is empty; metrics need a model label."""
+    ctx.config.llm.model = "test-model"
+
+
 def _extension(config) -> DiagnosticsAndTelemetryExtension:
     return DiagnosticsAndTelemetryExtension({}, config)
 

@@ -35,7 +35,11 @@ Model config has two layers in `config.json`:
   "model_configs": {
     "gemini-flash": {
       "provider": "vertex",
-      "model": "gemini-2.5-flash"
+      "model": "gemini-3.8-flash"
+    },
+    "gemini-flash-lite": {
+      "provider": "vertex",
+      "model": "gemini-3.5-flash-lite"
     },
     "gpt-4o": {
       "provider": "openai",
@@ -43,7 +47,7 @@ Model config has two layers in `config.json`:
     }
   },
   "default_model": "gemini-flash",
-  "auxiliary_model": "gemini-flash-8b"
+  "auxiliary_model": "gemini-flash-lite"
 }
 ```
 
@@ -83,11 +87,14 @@ treated as *not capable*, never assumed. A newly discovered model lands
 **enabled** only when the gateway reports chat + tool support + context-window
 metadata **and** the id is live-confirmed; otherwise it lands **disabled**
 and you opt in. For the OpenAI-compatible family the gateway's own listing
-is the confirmation. For the curated Vertex static list, ids without live
-confirmation (`gemini-2.5-flash-lite`, `gemini-3.8-flash`, `gemini-4-argon`
-as of this writing) land **disabled** — flip them in `llm/providers/vertex.py`
-only with live evidence the project serves the id, so an unserved id never
-surfaces enabled and fails on first use.
+is the confirmation. For the curated Vertex static list, every listed id is
+live-confirmed, so current GA models land **enabled**. The list tracks Google's
+[model lifecycle](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions):
+retired ids (the Gemini 2.5 family, 3.6/3.7 flash) are removed rather than
+kept disabled. Add or flip an id in `llm/providers/vertex.py` only with live
+evidence the project serves it, so an unserved id never surfaces enabled and
+fails on first use. The 2.5 family retired 2026-10-20;
+`gemini-3.5-flash-lite` is the lightweight replacement.
 
 ### Enabling, disabling, and the default model
 
