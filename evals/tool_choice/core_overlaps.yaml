@@ -370,6 +370,42 @@
     touches the body — it's the wrong tool whenever the actual page content
     needs to change.
 
+# -- vault_edit vs vault_write / vault_replace_lines (#1771) ------------------
+
+- name: vault-edit-typo-in-view
+  scenario: |
+    My vault page 'agent/pages/decafclaw' currently contains this paragraph:
+
+        DecafClaw keeps conversation history in a Markdown archive so it
+        survives restarts and stays human-readable.
+
+    Fix the typo: "DecafClaw" should read "Decaf Claw" in that paragraph. Leave everything else on the page alone.
+  expected: vault_edit
+  near_miss: [vault_write, vault_replace_lines]
+  notes: |
+    The target text is in view and the change is a few words. vault_edit
+    replaces exactly that block. vault_write would stream the whole page back
+    (token waste and drift risk) and vault_replace_lines needs line numbers
+    the request doesn't supply.
+
+- name: vault-append-vs-write
+  scenario: "Add this line to the bottom of my 'agent/pages/reading-log' vault page: '- 2026-11-23 — The Left Hand of Darkness'. Don't change anything else on the page."
+  expected: vault_append
+  near_miss: [vault_write, vault_edit]
+  notes: |
+    A pure append at the end of the page. vault_append needs no prior read;
+    vault_write would require reading and resubmitting the whole page, and
+    vault_edit needs an anchor whose exact text the caller doesn't have.
+
+- name: vault-replace-lines-vs-edit
+  scenario: "In my 'agent/pages/standup' vault page, delete lines 8 through 12 — that stale blocker list shouldn't be there anymore."
+  expected: vault_replace_lines
+  near_miss: [vault_edit, vault_write]
+  notes: |
+    The request names a line range, not text to match. vault_replace_lines
+    with empty content deletes it; vault_edit would need the exact text of the
+    five lines and vault_write rewrites the entire page.
+
 # -- vault_recent vs vault_search / vault_list ---------------------------------
 
 - name: vault-recent-vs-search-whats-new

@@ -18,6 +18,7 @@ from decafclaw.tools.admin_tools import (
     MAX_DIFF_WIDGET_LINES,
     MAX_READ_LINES,
     _resolve_admin_path,
+    tool_admin_append,
     tool_admin_delete,
     tool_admin_edit,
     tool_admin_list,
@@ -999,3 +1000,52 @@ async def test_admin_restart_denied(config):
     result = await tool_admin_restart(mock_ctx, reason="Denied test", on_idle=True)
     assert "denied" in str(result).lower() or "cancelled" in str(result).lower()
     coord.request_restart.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# admin_append (#1771)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_append_appends_with_newline_separator(ctx):
+    ctx.request_confirmation = _mock_confirm(approved=True)
+    target = ctx.config.agent_path / "prompts" / "log.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# Log\n\nfirst entry")
+
+    result = await tool_admin_append(ctx, "prompts/log.md", "second entry")
+    assert "Appended" in _text(result)
+    assert target.read_text() == "# Log\n\nfirst entry\nsecond entry"
+
+
+@pytest.mark.asyncio
+async def test_admin_append_creates_missing_file(ctx):
+    ctx.request_confirmation = _mock_confirm(approved=True)
+    result = await tool_admin_append(ctx, "prompts/new.md", "# New\n")
+    assert "Appended" in _text(result)
+    assert (ctx.config.agent_path / "prompts" / "new.md").read_text() == "# New\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_append_requires_confirmation(ctx):
+    target = ctx.config.agent_path / "prompts" / "log.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("one\n")
+
+    ctx.request_confirmation = _mock_confirm(approved=False)
+    result = await tool_admin_append(ctx, "prompts/log.md", "two")
+    assert "denied" in _text(result)
+    assert target.read_text() == "one\n"
+
+
+@pytest.mark.asyncio
+async def test_admin_append_blocked_when_unattended(ctx):
+    target = ctx.config.agent_path / "prompts" / "log.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("one\n")
+
+    ctx.task_mode = TaskMode.SCHEDULED
+    result = await tool_admin_append(ctx, "prompts/log.md", "two")
+    assert "not available on unattended turns" in _text(result)
+    assert target.read_text() == "one\n"

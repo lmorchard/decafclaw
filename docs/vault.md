@@ -36,7 +36,7 @@ The default vault root is `workspace/vault/`, with agent content at `workspace/v
 }
 ```
 
-When the vault root is an Obsidian vault, agent content lives at `<obsidian>/agent/` alongside the user's own folders. The agent can read everything in the vault; write tools (`vault_write`, `vault_move_lines`, `vault_section`) are gated to `agent/`.
+When the vault root is an Obsidian vault, agent content lives at `<obsidian>/agent/` alongside the user's own folders. The agent can read everything in the vault; write tools (`vault_write`, `vault_edit`, `vault_append`, `vault_replace_lines`, `vault_delete`, `vault_rename`, `vault_update_frontmatter`) are gated to `agent/`.
 
 To move the vault root to a new location, use `scripts/migrate_vault_root.py` to move `<old>/agent/` into the new root and patch `config.json`. Run `make reindex` after to rebuild the embedding index.
 
@@ -153,8 +153,11 @@ The vault skill is **always loaded** — its tools are available in every conver
 
 | Tool | Description |
 |------|-------------|
-| `vault_read(page)` | Read a page by name or path. Searches subdirectories. |
+| `vault_read(page, start_line?, end_line?)` | Read a page by name or path. Searches subdirectories. Optional 1-based inclusive `start_line`/`end_line` return the numbered slice. Each read returns a content version token for `vault_edit`. |
 | `vault_write(page, content)` | Create or overwrite a page. Indexes in semantic search. After saving, resolves the page's `[[wiki-links]]` and reports any that don't resolve (an `Unresolved links:` line in the result and `data.unresolved_links`); the write still succeeds (fail-open). |
+| `vault_edit(page, old_text, new_text, replace_all?, expected_version?)` | Surgical exact-match edit — the default for typo fixes and multi-line rewrites. Returns a unified diff, reindexes the page, and publishes `vault_changed`. Fails when `old_text` is missing or matches more than once (`replace_all=true` for bulk). A stale `expected_version` (from `vault_read`) rejects the edit without writing. Pages outside `agent/` trigger a user confirmation. |
+| `vault_append(page, content)` | Append text to the end of a page, creating it when missing and adding a newline separator when needed. No prior read required. Pages outside `agent/` trigger a user confirmation. |
+| `vault_replace_lines(page, start_line, end_line, content?)` | Replace a 1-based inclusive line range; empty `content` deletes the lines. Pages outside `agent/` trigger a user confirmation. |
 | `vault_delete(page, allow_broken_links?, dry_run?)` | Delete a page. Refuses when other pages link to it unless `allow_broken_links=true`, which reports the pages left with dangling links. In unattended contexts (no `request_confirmation`), `dry_run` defaults to true. Pages outside `agent/` trigger a user confirmation. |
 | `vault_delete_plan(pages, dry_run?, allow_broken_links?)` | Garden batch form: applies the same per-page guard and returns per-item success/failure. `dry_run` defaults from the garden skill config and is forced on in unattended contexts. |
 | `vault_rename(from_page, to_page)` | Rename/move a page (preserves links). Pages outside `agent/` trigger a user confirmation. |
@@ -170,16 +173,12 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_find_duplicate_candidates(threshold?, limit?)` | High-similarity agent-page pairs from the existing embedding index. Queries stored vectors only — never re-embeds or merges; pages missing from the index are skipped. |
 | `vault_link_opportunities(min_occurrences?, limit?)` | Find exact unlinked mentions of agent-page titles, excluding frontmatter, fenced code, and text inside `[[...]]`. Returns occurrence counts and a context line; proposes edges only. Deterministic; no LLM, embeddings, or network. |
 | `vault_apply_link_plan(items, dry_run?)` | Apply an approved link plan in one batch (`insert_in_section` or `insert_after_heading`). Per-item success/failure, idempotent for identical text, and `dry_run` defaults from the garden skill config. |
-| `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
-| `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
-| `vault_section(page, action, section?, title?, level?, content?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. `add` takes `content` so a new section arrives with its body in one call; `level` is inferred from the anchor when omitted (see [Section paths](#section-paths-671)). |
 | `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes only when the embedded composite text changes, so frontmatter-only fields such as `importance` skip the embedding round trip (#1687). Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; the `backfill-frontmatter` CLI and garden importance tuning build on the same primitive. Interactive callers writing outside `agent/` go through the same confirmation gate as `vault_write`; non-interactive callers (scheduled dream/garden) proceed without confirmation by design — the one mutating vault tool that doesn't error in non-interactive contexts. |
 
 ### Section paths (#671)
 
-Every section-path parameter — `vault_section`'s `section` / `after` / `before`
-/ `parent`, `vault_show_sections`' `section`, and `vault_move_lines`'
-`to_section` — accepts three equivalent forms:
+`vault_apply_link_plan`'s `insert_in_section` / `insert_after_heading`
+parameters accept three equivalent forms:
 
 | form | example |
 |---|---|
@@ -193,7 +192,7 @@ case-insensitive, ignores `[[wiki-link]]` syntax, and tolerates leading `#`
 characters (`## Background` is fine).
 
 A path must resolve to exactly one section. If it matches several, the
-operation fails rather than guessing — these tools mutate pages, so editing the
+operation fails rather than guessing — the plan mutates pages, so editing the
 wrong `## Notes` silently would be worse than a failed call — and the error
 lists every candidate:
 
@@ -211,6 +210,12 @@ Before #671, paths were resolved strictly from the page's top level. Since an
 H1 page has exactly one top-level section — the H1 — every `##` heading was
 addressable *only* as `<H1 Title>/<Section>`, which nothing in the schema
 conveyed and a caller had no way to guess.
+
+The general-purpose section tools (`vault_section`, `vault_show_sections`,
+`vault_move_lines`) were removed in #1771: `vault_edit` handles heading and
+section changes by exact match, and `vault_read` with `start_line`/`end_line`
+replaces line-number inspection. Section paths now exist only for the garden
+link plan, which inserts into a named section deterministically.
 
 ### Frontmatter merge (#197)
 

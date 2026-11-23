@@ -33,21 +33,25 @@ Vault pages sync across Linux, macOS, Windows, and mobile devices (Android / iOS
 ## Boundaries
 
 - `vault_write` modifies files in the vault. Default to writing in `agent/pages/`.
-- Use `vault_read` before `vault_write` when updating existing pages — `vault_write` overwrites the entire page.
+- Prefer `vault_edit` for surgical changes — it replaces an exact block of text without rewriting the page. Use `vault_read` (optionally with `start_line`/`end_line`) to get the exact text and the page's version token; pass that token as `expected_version` so a stale edit is rejected.
+- Use `vault_write` for a new page or a substantial rewrite; it overwrites the entire page, so `vault_read` first when updating an existing one.
+- `vault_append` adds text to the end of a page (creating it if missing) without a prior read.
+- `vault_replace_lines` replaces a 1-based line range; `vault_read` with `start_line`/`end_line` shows the numbers.
 - `vault_rename` renames or moves an existing page (updates the embedding index). Prefer it over delete + rewrite when the content stays the same.
 - `vault_delete` permanently removes a page. Only for pages that are definitively wrong, duplicate, or no longer reachable — prefer editing over deleting when the page can be salvaged. It refuses pages with inbound links unless `allow_broken_links=true` (then reports the pages left dangling), and unattended calls default to dry-run. Use `vault_delete_plan` for batches. Pages outside `agent/` will trigger a user confirmation.
 - `vault_update_frontmatter` merges metadata fields (summary, keywords, tags, importance) into a page without touching the body. Pages outside `agent/` will trigger a user confirmation in interactive conversations; scheduled maintenance (dream/garden) can update frontmatter vault-wide without confirmation since it can't prompt.
-- User pages outside `agent/` are writable on explicit user request. Each `vault_write` / `vault_delete` / `vault_rename` / `vault_update_frontmatter` triggers a user confirmation. For batch operations (3+ pages in the same folder), call `vault_grant_folder` first to trust the folder for the rest of the conversation and skip per-page confirmations.
+- User pages outside `agent/` are writable on explicit user request. Each `vault_write` / `vault_edit` / `vault_append` / `vault_replace_lines` / `vault_delete` / `vault_rename` / `vault_update_frontmatter` triggers a user confirmation. For batch operations (3+ pages in the same folder), call `vault_grant_folder` first to trust the folder for the rest of the conversation and skip per-page confirmations.
 
-## Editing Sections
+## Editing a Page
 
-Prefer section-aware tools over `vault_write` when making targeted structural edits to a page:
+Pick the smallest tool that does the job:
 
-- `vault_show_sections(page)` — inspect the page outline and line numbers before editing. Use this first when you need to know where a section starts or what's in it.
-- `vault_section(page, action="add"|"rename"|"remove"|"move", ...)` — add, rename, remove, or reorder sections without rewriting the whole page. Use instead of `vault_write` when the change is structural.
-- `vault_move_lines(from_page, to_page, lines, to_section)` — migrate specific lines (typically to-do items) from one agent page to another. `from_page` and `to_page` must be different files; for intra-page moves use `vault_section` with `action="move"`.
+- `vault_edit(page, old_text, new_text)` — the default for typo fixes, sentence rewrites, and multi-line block changes. Copy `old_text` from a fresh `vault_read` so the match is exact; it fails if the text is missing or matches more than once (`replace_all=true` for bulk).
+- `vault_replace_lines(page, start_line, end_line, content)` — edits by line number (boundary rewrites, deletions by range).
+- `vault_append(page, content)` — additions at the end of a page, no prior read needed.
+- `vault_write(page, content)` — new pages or rewrites of most of the page.
 
-Use `vault_write` when rewriting a page's content substantially. Use section tools for targeted structural changes.
+Structural edits (inserting a heading in the middle, moving a section) are exact-match edits: `vault_edit` with the surrounding heading and body as `old_text`.
 
 ## Organizing with Folders
 

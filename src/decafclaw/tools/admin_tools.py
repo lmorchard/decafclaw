@@ -9,7 +9,6 @@ Categorically blocked on unattended runs and child agents.
 from __future__ import annotations
 
 import asyncio
-import difflib
 import logging
 import shutil
 from dataclasses import dataclass
@@ -26,7 +25,24 @@ from ..secret_policy import (
     redact_text,
     refusal_message,
 )
+from ..text_patching import (
+    AmbiguousMatch,
+    InvalidLineRange,
+    PatchError,
+    TextNotFound,
+    patch_exact_match,
+    patch_line_range,
+    split_physical_lines,
+    unified_diff,
+)
 from ..web.workspace_paths import PathContainmentError, resolve_contained
+from ._file_common import (
+    MAX_DIFF_WIDGET_CHARS,
+    MAX_DIFF_WIDGET_LINES,
+    MAX_READ_LINES,
+    _file_error,
+    _is_cancelled,
+)
 from .confirmation import request_confirmation
 from .file_locks import file_lock
 
@@ -35,54 +51,6 @@ if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
-
-# Max lines returned by admin_read when no line range is specified
-MAX_READ_LINES = 200
-# Context lines shown in diffs
-DIFF_CONTEXT_LINES = 3
-# Max characters per file buffer before diff_view widget attachment is suppressed
-MAX_DIFF_WIDGET_CHARS = 50_000
-# Max total lines before diff_view widget attachment is suppressed
-MAX_DIFF_WIDGET_LINES = 1_000
-
-
-def _is_cancelled(ctx: "Context | None") -> bool:
-    """Return True if the context has an active cancellation event set."""
-    if ctx is None:
-        return False
-    cancelled = getattr(ctx, "cancelled", None)
-    return bool(cancelled is not None and cancelled.is_set())
-
-
-def _file_error(e: Exception, path: str) -> ToolResult:
-    """Convert common file exceptions to a ToolResult error."""
-    if isinstance(e, FileNotFoundError):
-        return ToolResult(text=f"[error: file not found: {path}]")
-    if isinstance(e, IsADirectoryError):
-        return ToolResult(text=f"[error: path is a directory, not a file: {path}]")
-    if isinstance(e, PermissionError):
-        return ToolResult(text=f"[error: permission denied: {path}]")
-    if isinstance(e, UnicodeDecodeError):
-        return ToolResult(text=f"[error: file is not valid UTF-8 text: {path}]")
-    return ToolResult(text=f"[error: {e}: {path}]")
-
-
-def _mini_diff(old_text: str, new_text: str, path: str = "") -> str:
-    """Generate a compact unified diff for mutation previews and outputs."""
-    old_lines = old_text.splitlines(keepends=True)
-    new_lines = new_text.splitlines(keepends=True)
-    diff = list(
-        difflib.unified_diff(
-            old_lines,
-            new_lines,
-            fromfile=f"a/{path}" if path else "before",
-            tofile=f"b/{path}" if path else "after",
-            n=DIFF_CONTEXT_LINES,
-        )
-    )
-    if not diff:
-        return ""
-    return "".join(diff)
 
 
 def _resolve_admin_path(config, path_str: str, *, allow_root: bool = False) -> tuple[Path | None, str | None]:
@@ -547,10 +515,10 @@ async def tool_admin_write(ctx: "Context", path: str, content: str) -> str | Too
 
     if snapshot.exists:
         existing = snapshot.content or ""
-        diff = _mini_diff(existing, content, path)
+        diff = unified_diff(existing, content, path)
         preview = diff if diff else "(no changes)"
     else:
-        diff = _mini_diff("", content, path)
+        diff = unified_diff("", content, path)
         preview = f"(new file, {len(content)} characters)\n\n" + (diff if diff else content)
 
     gate = await _confirm_admin_mutation(
@@ -603,6 +571,87 @@ async def tool_admin_write(ctx: "Context", path: str, content: str) -> str | Too
             return _file_error(e, path)
 
 
+async def tool_admin_append(ctx: "Context", path: str, content: str) -> str | ToolResult:
+    """Append text to a file in the agent admin directory."""
+    log.info(f"[tool:admin_append] {path}")
+    resolved, err = _resolve_admin_path(ctx.config, path)
+    if err:
+        return ToolResult(text=err)
+    assert resolved is not None
+
+    refusal = _refuse_if_secret(resolved, ctx.config, path)
+    if refusal is not None:
+        return refusal
+    if marker_in(content):
+        return ToolResult(text=marker_message(path))
+
+    if resolved.is_dir():
+        return ToolResult(text=f"[error: '{path}' is a directory, not a file]")
+
+    snapshot, snap_err = _capture_snapshot(resolved)
+    if snap_err:
+        return snap_err
+    assert snapshot is not None
+
+    existing = snapshot.content or ""
+    separator = "\n" if existing and not existing.endswith("\n") else ""
+    new_content = existing + separator + content
+    diff = unified_diff(existing, new_content, path)
+    if snapshot.exists:
+        preview = diff if diff else "(no changes)"
+    else:
+        preview = f"(new file, {len(content)} characters)\n\n" + (diff if diff else content)
+
+    gate = await _confirm_admin_mutation(
+        ctx,
+        "admin_append",
+        path,
+        preview,
+        payload={"content": content, "new_content": new_content},
+        snapshot=snapshot,
+    )
+    if gate is not None:
+        return gate
+
+    async with file_lock(resolved):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+
+        re_resolved, reval_err = await _revalidate_snapshot(ctx.config, path, snapshot)
+        if reval_err:
+            return reval_err
+        assert re_resolved is not None
+
+        try:
+            await asyncio.to_thread(re_resolved.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
+            summary = f"Appended {len(content)} characters to admin file '{path}'"
+            if snapshot.exists and diff:
+                oversized = (
+                    len(existing) > MAX_DIFF_WIDGET_CHARS
+                    or len(new_content) > MAX_DIFF_WIDGET_CHARS
+                    or existing.count("\n") > MAX_DIFF_WIDGET_LINES
+                    or new_content.count("\n") > MAX_DIFF_WIDGET_LINES
+                )
+                if not oversized:
+                    return ToolResult(
+                        text=f"{summary}\n\n{diff}",
+                        widget=WidgetRequest(
+                            widget_type="diff_view",
+                            data={
+                                "before": existing,
+                                "after": new_content,
+                                "filename": path,
+                                "view": "unified",
+                            },
+                            target="inline",
+                        ),
+                    )
+            return summary
+        except PermissionError as e:
+            return _file_error(e, path)
+
+
 async def tool_admin_replace_lines(
     ctx: "Context", path: str, start_line: int, end_line: int, content: str = ""
 ) -> str | ToolResult:
@@ -630,27 +679,21 @@ async def tool_admin_replace_lines(
     assert snapshot is not None
     existing = snapshot.content or ""
 
-    lines = existing.splitlines(keepends=True)
-    if start_line < 1 or end_line < start_line or end_line > len(lines):
-        return ToolResult(text=f"[error: invalid line range {start_line}-{end_line}. File has {len(lines)} lines.]")
+    try:
+        new_content, diff = patch_line_range(existing, start_line, end_line, content)
+    except InvalidLineRange as exc:
+        return ToolResult(text=f"[error: {exc}]")
 
+    replacement_count = 0
     if content:
-        if not content.endswith("\n"):
-            content += "\n"
-        replacement = content.splitlines(keepends=True)
-    else:
-        replacement = []
-
-    new_lines = list(lines)
-    new_lines[start_line - 1 : end_line] = replacement
-    new_content = "".join(new_lines)
-    diff = _mini_diff(existing, new_content, path)
+        replacement_text = content if content.endswith("\n") else content + "\n"
+        replacement_count = len(split_physical_lines(replacement_text, keepends=True))
 
     payload = {
         "new_content": new_content,
         "start_line": start_line,
         "end_line": end_line,
-        "replacement_count": len(replacement),
+        "replacement_count": replacement_count,
     }
 
     gate = await _confirm_admin_mutation(
@@ -679,7 +722,7 @@ async def tool_admin_replace_lines(
                 summary = f"Deleted lines {start_line}-{end_line} from admin file '{path}'"
             else:
                 summary = (
-                    f"Replaced lines {start_line}-{end_line} with {len(replacement)} line(s) in admin file '{path}'"
+                    f"Replaced lines {start_line}-{end_line} with {replacement_count} line(s) in admin file '{path}'"
                 )
             if diff:
                 oversized = (
@@ -737,25 +780,23 @@ async def tool_admin_edit(
     assert snapshot is not None
     content = snapshot.content or ""
 
-    count = content.count(old_text)
-    if count == 0:
+    try:
+        new_content, diff = patch_exact_match(content, old_text, new_text, replace_all)
+    except TextNotFound:
         return ToolResult(
             text=f"[error: text not found in {path}. "
             "Make sure old_text matches exactly, including whitespace and indentation.]"
         )
-    if count > 1 and not replace_all:
+    except AmbiguousMatch as exc:
         return ToolResult(
-            text=f"[error: found {count} matches in {path}. "
+            text=f"[error: found {exc.count} matches in {path}. "
             "Use replace_all=true for bulk replacement, "
             "or provide more surrounding context to make old_text unique.]"
         )
+    except PatchError as exc:
+        return ToolResult(text=f"[error: {exc} in {path}]")
 
-    if replace_all:
-        new_content = content.replace(old_text, new_text)
-    else:
-        new_content = content.replace(old_text, new_text, 1)
-
-    diff = _mini_diff(content, new_content, path)
+    count = content.count(old_text)
 
     payload = {
         "new_content": new_content,
@@ -1047,6 +1088,8 @@ class AdminMutationHandler:
             return ToolResult(text=marker_message(path))
         if tool_name == "admin_edit" and marker_in(payload.get("new_content", "")):
             return ToolResult(text=marker_message(path))
+        if tool_name == "admin_append" and marker_in(payload.get("content", "")):
+            return ToolResult(text=marker_message(path))
 
         snapshot = _AdminFileSnapshot.from_dict(snapshot_data, default_path=resolved)
 
@@ -1077,6 +1120,13 @@ class AdminMutationHandler:
                 count = payload.get("count", 1)
                 await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
                 return f"Edited admin file '{path}': replaced {count} occurrence(s)"
+
+            elif tool_name == "admin_append":
+                new_content = payload.get("new_content", "")
+                content = payload.get("content", "")
+                await asyncio.to_thread(re_resolved.parent.mkdir, parents=True, exist_ok=True)
+                await asyncio.to_thread(re_resolved.write_text, new_content, encoding="utf-8")
+                return f"Appended {len(content)} characters to admin file '{path}'"
 
             elif tool_name == "admin_delete":
                 recursive = payload.get("recursive", False)
@@ -1114,6 +1164,7 @@ ADMIN_TOOLS = {
     "admin_read": tool_admin_read,
     "admin_list": tool_admin_list,
     "admin_write": tool_admin_write,
+    "admin_append": tool_admin_append,
     "admin_replace_lines": tool_admin_replace_lines,
     "admin_edit": tool_admin_edit,
     "admin_delete": tool_admin_delete,
@@ -1201,6 +1252,37 @@ ADMIN_TOOL_DEFINITIONS = [
                     "content": {
                         "type": "string",
                         "description": "Full text content to write",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "low",
+        "timeout": None,
+        "writes": True,
+        "summary": "Append text to an agent admin file.",
+        "function": {
+            "name": "admin_append",
+            "description": (
+                "Append text to the end of a file in the agent's administrative directory (config.agent_path). "
+                "Creates the file (and parent directories) if it doesn't exist, and adds a newline separator "
+                "when the file doesn't end with one — so you can add to a file without reading it first. "
+                "REQUIRES INTERACTIVE USER CONFIRMATION showing a unified diff preview. "
+                "Blocked on unattended turns and child agents. NOT for workspace files (use workspace_append)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the agent admin directory (e.g. 'skills/my-skill/SKILL.md')",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Text to append to the file",
                     },
                 },
                 "required": ["path", "content"],

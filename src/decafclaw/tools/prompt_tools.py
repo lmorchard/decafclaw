@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..media import ToolResult
 from ..secret_policy import is_refused, marker_in, marker_message, refusal_message
+from ..text_patching import unified_diff
 from .admin_tools import (
     _AdminFileSnapshot,
     _agent_rel,
@@ -44,7 +45,6 @@ from .admin_tools import (
     _confirm_admin_mutation,
     _file_error,
     _is_cancelled,
-    _mini_diff,
     _resolve_admin_path,
     _revalidate_snapshot,
 )
@@ -217,10 +217,10 @@ async def tool_update_system_prompt(ctx: "Context", section: str, content: str) 
 
     if snapshot.exists:
         existing = snapshot.content or ""
-        diff = _mini_diff(existing, content, canonical)
+        diff = unified_diff(existing, content, canonical)
         preview = diff if diff else "(no changes)"
     else:
-        diff = _mini_diff("", content, canonical)
+        diff = unified_diff("", content, canonical)
         preview = f"(new file, {len(content)} characters)\n\n" + (diff if diff else content)
 
     gate = await _confirm_admin_mutation(

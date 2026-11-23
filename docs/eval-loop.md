@@ -169,7 +169,7 @@ Example: after the agent runs a section edit, verify other sections are untouche
       "page.md": "## A\n\noriginal a\n\n## B\n\noriginal b\n"
   input: "Update section A of page.md to say 'updated a'"
   expect:
-    expect_tool: vault_section
+    expect_tool: vault_edit
   expect_workspace:
     workspace_files:
       "page.md": "re:## A.+updated a.+## B.+original b"

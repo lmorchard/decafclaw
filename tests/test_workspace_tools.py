@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from decafclaw.media import ToolResult, WidgetRequest
+from decafclaw.text_patching import content_version
 from decafclaw.tools.workspace_tools import (
     MAX_READ_LINES,
-    _content_version,
     tool_file_share,
     tool_workspace_append,
     tool_workspace_copy,
@@ -518,7 +518,7 @@ def test_edit_with_matching_expected_version_succeeds(ctx):
 
 def test_edit_with_stale_expected_version_rejected_without_write(ctx):
     tool_workspace_write(ctx, "code.py", "def hello():\n    pass\n")
-    stale_version = _content_version("some other content that changed after the read")
+    stale_version = content_version("some other content that changed after the read")
     result = tool_workspace_edit(ctx, "code.py", "def hello", "def goodbye", expected_version=stale_version)
     text = _text(result).lower()
     assert "stale version" in text
@@ -561,7 +561,7 @@ def test_edit_without_expected_version_retains_behavior(ctx):
 
 def test_content_version_normalizes_line_endings():
     # CRLF and LF files with identical logical text share one version token.
-    assert _content_version("alpha\r\nbeta\n") == _content_version("alpha\nbeta\n")
+    assert content_version("alpha\r\nbeta\n") == content_version("alpha\nbeta\n")
 
 
 # -- workspace_edit line-ending preservation (issue #997) --

@@ -20,7 +20,7 @@ Tools can return rich visual presentations in the web UI via DecafClaw's widget 
 
 Sandboxed file operations inside `data/{agent_id}/workspace/`. See [Data Layout](data-layout.md).
 
-Shared file-tool helpers (cancellation check, error conversion, mini-diff) live in `tools/_file_common.py` (#1340); the admin file tools keep their own copies until 6.4b adopts the module.
+Shared file-tool helpers (cancellation check, error conversion, read/diff size limits) live in `tools/_file_common.py` (#1340); the workspace, admin, and prompt tools all use them. Exact-match/line-range patching, content versions, and unified diffs live in `text_patching.py` (#1771) and back all three file suites.
 
 | Tool | Always | What it does |
 |------|:------:|--------------|
@@ -154,8 +154,11 @@ Always-activated skill for the unified knowledge base. See [Vault](vault.md).
 
 | Tool | Always | What it does |
 |------|:------:|--------------|
-| `vault_read` | ✓ | Read a vault page by name or path |
+| `vault_read` | ✓ | Read a vault page by name or path; optional `start_line`/`end_line` for a numbered slice. Returns a content version token per read for `vault_edit` |
 | `vault_write` | ✓ | Create or overwrite a vault page; auto-indexes in embeddings |
+| `vault_edit` | ✓ | Surgical exact-match edit of a page; returns a unified diff, reindexes, publishes `vault_changed`, and accepts `expected_version` for stale-read rejection |
+| `vault_append` | | Append text to the end of a page, creating it when missing; no prior read needed |
+| `vault_replace_lines` | | Replace or delete a 1-based line range in a page |
 | `vault_journal_append` | ✓ | Append a timestamped journal entry |
 | `vault_search` | ✓ | Semantic + substring search across the vault |
 | `vault_list` | ✓ | List pages with last-modified dates |

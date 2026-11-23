@@ -1,7 +1,8 @@
 """Section-aware markdown parser for vault pages.
 
-Internal helpers for vault_show_sections, vault_move_lines, vault_section.
-Ported from the retired markdown_vault skill — see #264.
+Backs the garden link plan (``vault_apply_link_plan``): section lookup by
+suffix-matched path and deterministic insertion. Ported from the retired
+markdown_vault skill — see #264.
 """
 
 import re
@@ -778,7 +779,7 @@ def describe_section_miss(doc: Document, path: str) -> str:
                 f"ambiguous section path {path!r} matches {len(candidates)} "
                 f"sections that share the path {candidates[0]!r}. No path can "
                 f"separate duplicate headings — rename or remove one, or use "
-                f"vault_show_sections and edit by line number."
+                f"vault_read with start_line/end_line and edit by line number."
             )
         listed = "\n  ".join(candidates)
         return (

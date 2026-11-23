@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import difflib
 import fnmatch
-import hashlib
 import logging
 import os
 import re
@@ -17,6 +16,18 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from ..media import ToolResult, WidgetRequest
+from ..text_patching import (
+    AmbiguousMatch,
+    InvalidLineRange,
+    PatchError,
+    TextNotFound,
+    content_version,
+    edit_not_found_hint,
+    patch_exact_match,
+    patch_line_range,
+    split_physical_lines,
+    unified_diff,
+)
 from ..util import find_fuzzy_matches
 from ..web.workspace_paths import PathContainmentError, resolve_contained
 from ..workspace_index import invalidate_workspace_file_cache
@@ -26,7 +37,6 @@ from ._file_common import (
     MAX_READ_LINES,
     _file_error,
     _is_cancelled,
-    _mini_diff,
 )
 from .file_locks import file_lock
 from .workspace_outlines import (
@@ -34,7 +44,6 @@ from .workspace_outlines import (
     flatten_items,
     format_outline,
     get_outline,
-    split_physical_lines,
 )
 
 if TYPE_CHECKING:
@@ -130,18 +139,6 @@ def _redundant_prefix_note(path: str) -> str:
     )
 
 
-def _content_version(content: str) -> str:
-    """Content version token for read/compare flows (#1126).
-
-    Hashes the LF-normalized content so CRLF and LF files with identical
-    logical text share one version, keeping version comparisons consistent
-    across line-ending styles. Read results expose this version; edits accept
-    an ``expected_version`` and reject when it no longer matches.
-    """
-    normalized = content.replace("\r\n", "\n")
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
 def tool_workspace_read(
     ctx: "Context",
     path: str,
@@ -168,7 +165,7 @@ def tool_workspace_read(
         "path": path,
         "size": len(content.encode("utf-8")),
         "lines": total,
-        "version": _content_version(content),
+        "version": content_version(content),
     }
 
     if section is not None:
@@ -715,35 +712,6 @@ def tool_workspace_delete(ctx: "Context", path: str, recursive: bool = False) ->
             return _file_error(e, path)
 
 
-def _edit_not_found_hint(content: str, old_text: str) -> str:
-    """Build a hint for a failed exact match, or "" if nothing is close enough.
-
-    Two tiers, checked in order: a whitespace-insensitive match (the text is
-    in the file but whitespace runs differ), then a near match of old_text's
-    first non-blank line against the file's lines. Hints only — never writes.
-    """
-    if old_text.strip():
-        # Escape each non-whitespace segment and join with \s+ so the match
-        # succeeds iff the non-whitespace content is identical, regardless of
-        # whitespace runs; m.start() maps back to a 1-based line in the file.
-        # (Subbing over re.escape(old_text) won't do: it escapes whitespace
-        # too, so the sub would bake literal backslashes into the pattern.)
-        pattern = r"\s+".join(re.escape(p) for p in re.split(r"\s+", old_text) if p)
-        match = re.search(pattern, content)
-        if match:
-            line = content.count("\n", 0, match.start()) + 1
-            return f"It matches when whitespace differences are ignored — the match starts at line {line}."
-    lines = content.splitlines()
-    for candidate in old_text.splitlines():
-        if not candidate.strip():
-            continue
-        close = difflib.get_close_matches(candidate, lines, n=1, cutoff=0.8)
-        if close:
-            return f"A similar line exists at line {lines.index(close[0]) + 1}: {close[0]}"
-        break
-    return ""
-
-
 def tool_workspace_edit(
     ctx: "Context",
     path: str,
@@ -768,7 +736,7 @@ def tool_workspace_edit(
         except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
             return _file_error(e, path)
 
-        version = _content_version(content)
+        version = content_version(content)
         if expected_version is not None and expected_version != version:
             return ToolResult(
                 text=(
@@ -779,17 +747,12 @@ def tool_workspace_edit(
                 )
             )
 
-        # Match on text normalized to \n so an LF old_text matches a CRLF
-        # file (and vice versa), then convert the result back to the file's
-        # line ending before writing.
-        eol = "\r\n" if "\r\n" in content else "\n"
         normalized = content.replace("\r\n", "\n")
         old = old_text.replace("\r\n", "\n")
-        new = new_text.replace("\r\n", "\n")
-
-        count = normalized.count(old)
-        if count == 0:
-            hint = _edit_not_found_hint(normalized, old)
+        try:
+            new_content, diff = patch_exact_match(content, old_text, new_text, replace_all)
+        except TextNotFound:
+            hint = edit_not_found_hint(normalized, old)
             text = (
                 f"[error: text not found in {path}. "
                 "Make sure old_text matches exactly, including whitespace and indentation."
@@ -797,25 +760,23 @@ def tool_workspace_edit(
             if hint:
                 text += f" {hint}"
             return ToolResult(text=text)
-        if count > 1 and not replace_all:
+        except AmbiguousMatch as exc:
             return ToolResult(
-                text=f"[error: found {count} matches in {path}. "
+                text=f"[error: found {exc.count} matches in {path}. "
                 "Use replace_all=true for bulk replacement, "
                 "or provide more surrounding context to make old_text unique.]"
             )
+        except PatchError as exc:
+            return ToolResult(text=f"[error: {exc} in {path}]")
 
-        if replace_all:
-            new_normalized = normalized.replace(old, new)
-        else:
-            new_normalized = normalized.replace(old, new, 1)
+        count = normalized.count(old)
+        new_normalized = new_content.replace("\r\n", "\n")
         # newline="" writes the bytes exactly as given — no re-conversion.
-        new_content = new_normalized.replace("\n", eol)
         resolved.write_text(new_content, newline="")
         summary = f"Edited {path}: replaced {count} occurrence(s)"
-        diff = _mini_diff(normalized, new_normalized, path)
         text = f"{summary}\n\n{diff}" if diff else summary
         has_diff = bool(diff)
-        new_version = _content_version(new_content)
+        new_version = content_version(new_content)
         oversized = (
             len(normalized) > MAX_DIFF_WIDGET_CHARS
             or len(new_normalized) > MAX_DIFF_WIDGET_CHARS
@@ -870,9 +831,10 @@ def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: 
         insert_lines = split_physical_lines(content, keepends=True)
         new_lines = list(lines)
         new_lines[line_number - 1 : line_number - 1] = insert_lines
-        resolved.write_text("".join(new_lines))
+        new_content = "".join(new_lines)
+        resolved.write_text(new_content)
         summary = f"Inserted {len(insert_lines)} line(s) at line {line_number} in {path}"
-        diff = _mini_diff(existing, "".join(new_lines), path)
+        diff = unified_diff(existing, new_content, path)
         if diff:
             return f"{summary}\n\n{diff}"
         return summary
@@ -895,24 +857,18 @@ def tool_workspace_replace_lines(
         except (FileNotFoundError, PermissionError) as e:
             return _file_error(e, path)
 
-        lines = split_physical_lines(existing, keepends=True)
-        if start_line < 1 or end_line < start_line or end_line > len(lines):
-            return ToolResult(text=f"[error: invalid line range {start_line}-{end_line}. File has {len(lines)} lines.]")
+        try:
+            new_content, diff = patch_line_range(existing, start_line, end_line, content)
+        except InvalidLineRange as exc:
+            return ToolResult(text=f"[error: {exc}]")
 
-        if content:
-            if not content.endswith("\n"):
-                content += "\n"
-            replacement = split_physical_lines(content, keepends=True)
-        else:
-            replacement = []
-        new_lines = list(lines)
-        new_lines[start_line - 1 : end_line] = replacement
-        resolved.write_text("".join(new_lines))
+        resolved.write_text(new_content)
         if not content:
             summary = f"Deleted lines {start_line}-{end_line} from {path}"
         else:
-            summary = f"Replaced lines {start_line}-{end_line} with {len(replacement)} line(s) in {path}"
-        diff = _mini_diff(existing, "".join(new_lines), path)
+            replacement_text = content if content.endswith("\n") else content + "\n"
+            replacement_count = len(split_physical_lines(replacement_text, keepends=True))
+            summary = f"Replaced lines {start_line}-{end_line} with {replacement_count} line(s) in {path}"
         if diff:
             return f"{summary}\n\n{diff}"
         return summary
