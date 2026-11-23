@@ -341,14 +341,13 @@ def _tools_section(ctx: "Context") -> list[str]:
 
     fetched = get_fetched_tools(ctx)
     model_name = ctx.active_model
-    active, deferred = classify_tools(all_defs, ctx.config, fetched, model_name=model_name)
-    total_tokens = estimate_tool_tokens(all_defs)
-    budget = ctx.config.tool_context_budget_for(model_name)
+    active, deferred, budget = classify_tools(all_defs, ctx.config, fetched, model_name=model_name)
+    active_tokens = estimate_tool_tokens(active)
 
     return [
         "### Tools",
         f"- **Active:** {len(active)} | **Deferred:** {len(deferred)}",
-        f"- **Token usage:** ~{total_tokens:,} / {budget:,} budget",
+        f"- **Token usage:** ~{active_tokens:,} / {budget:,} budget",
     ]
 
 

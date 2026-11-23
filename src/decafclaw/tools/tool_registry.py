@@ -117,15 +117,14 @@ def classify_tools(
     skill_tool_names: set[str] | None = None,
     *,
     model_name: str = "",
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], int]:
     """Split tool definitions into active and deferred sets by priority.
 
     Algorithm:
     1. Resolve every tool's priority.
     2. All ``critical`` tools enter the active set (hard floor, included
        even if over budget).
-    3. ``normal`` tools added one at a time while under the model's
-       tool-definition budget.
+    3. ``normal`` tools added one at a time while under the effective budget.
     4. ``low`` tools added only if room remains after ``normal``.
     5. Everything else goes to deferred.
 
@@ -133,6 +132,16 @@ def classify_tools(
     tool-count cap (#1692). The budget scales with the context window of
     ``model_name`` (the active conversation model, #1718) rather than the
     global ``compaction.max_tokens`` proxy.
+
+    The critical tier is the floor, so the fill allowance is clamped to
+    ``max(configured budget, critical tokens)`` (#1741). Without the clamp a
+    small-window model spends more than its percentage on the floor and the
+    warning fires on every iteration even though the floor is included by
+    design.
+
+    Returns ``(active, deferred, effective_budget)``. Callers that display
+    token accounting must use the returned budget instead of recomputing it,
+    so the report cannot diverge from the classification.
 
     Input order within a tier is preserved so callers can influence
     tie-breaks by ordering the input list.
@@ -196,16 +205,29 @@ def classify_tools(
         else:
             normal.append(td)
 
-    # Start with critical as the hard floor
+    # Start with critical as the hard floor. It is included regardless of
+    # budget, so the fill allowance can never be smaller than what the floor
+    # already spends (#1741).
     active = list(critical)
     active_tokens = sum(token_cost[id(td)] for td in active)
+    effective_budget = max(budget, active_tokens)
     deferred: list[dict] = []
 
-    if active_tokens > budget:
+    # Warn only when the floor cannot fit the model's window at any
+    # percentage. A floor merely above the configured percentage is the
+    # expected small-window tradeoff, not a defect (#1741).
+    from ..model_catalog import effective_context_window  # deferred: avoid import cycle
+
+    window = effective_context_window(config, model_name)
+    if window > 0 and active_tokens > window:
         log.warning(
-            "Critical tool set exceeds budget: %d tools / %d tokens (budget %d). Critical tools are included anyway.",
-            len(active),
+            "Critical tools need %d tokens (%.0f%% of the %d-token window); "
+            "the %.0f%% tool budget (%d tokens) cannot fit them at any percentage. "
+            "On this model, consider reducing the critical tier.",
             active_tokens,
+            active_tokens / window * 100,
+            window,
+            config.agent.tool_context_budget_pct * 100,
             budget,
         )
 
@@ -213,7 +235,7 @@ def classify_tools(
         nonlocal active_tokens
         for td in tier:
             tokens = token_cost[id(td)]
-            if active_tokens + tokens <= budget:
+            if active_tokens + tokens <= effective_budget:
                 active.append(td)
                 active_tokens += tokens
             else:
@@ -235,7 +257,7 @@ def classify_tools(
             len(deferred),
             len(hidden_skill_tools),
         )
-    return active, deferred
+    return active, deferred, effective_budget
 
 
 def _strip_signature(line: str, tool_name: str = "") -> str:

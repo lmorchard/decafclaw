@@ -22,6 +22,8 @@ See also:
 
 The effective budget is `effective_context_window(selected model) * TOOL_CONTEXT_BUDGET_PCT` (#1718). The window ladder prefers the model's declared `context_window_size`, then the `llm.context_window_size` setting, then `compaction.max_tokens`. With no window declared, the final fallback keeps the old `compaction.max_tokens * TOOL_CONTEXT_BUDGET_PCT` behaviour: the default 100K compaction threshold and 10% budget defer normal tools once the active set exceeds ~10K tokens. A 32K-window model gets a 3.2K tool budget instead of inheriting 10K–30K from the compaction proxy.
 
+The fill allowance is clamped to `max(budget, critical-tier tokens)` (#1741). The critical tier is the active set's floor, so a model whose floor exceeds its percentage gets no extra non-critical tools and logs no over-budget warning. The warning fires only when the critical tier cannot fit the model's window at any percentage. `health_status` reports active-set tokens against the clamped budget, never every definition including deferred ones.
+
 ## Critical Tools (defaults)
 
 Tools with declared `priority: "critical"` are always in the active set. As of this writing:

@@ -516,7 +516,7 @@ Agent identity, loop limits, tool loading, and delegation.
 
 `confirmation_timeout_sec` sets the wall-clock timeout in seconds for user confirmation prompts. Set to `null` (default) or `<= 0` to disable the timeout completely so the agent waits indefinitely for approval.
 
-`tool_context_budget_pct` is a fraction of the selected model's effective context window (declared `context_window_size`, else the `llm.context_window_size` setting, else `compaction.max_tokens`), so a small-window model gets a proportionally smaller tool budget (#1718).
+`tool_context_budget_pct` is a fraction of the selected model's effective context window (declared `context_window_size`, else the `llm.context_window_size` setting, else `compaction.max_tokens`), so a small-window model gets a proportionally smaller tool budget (#1718). The fill allowance is raised to the critical-tier token sum when the percentage cannot cover the always-included critical tools (#1741).
 
 `data_home` and `id` are resolved from env vars only (not from the config file) since they determine where the config file lives.
 
