@@ -310,7 +310,7 @@ class Document:
         item = self._find_item(section, match, index)
         if not item:
             return False
-        self._delete_lines(item.line_index, 1)
+        self.delete_lines(item.line_index, 1)
         return True
 
     def move_item(
@@ -324,7 +324,7 @@ class Document:
         if not item:
             return False
         raw = self.lines[item.line_index]
-        self._delete_lines(item.line_index, 1)
+        self.delete_lines(item.line_index, 1)
         to_section_refreshed = self.find_section(_section_path(to_section, self.sections))
         if not to_section_refreshed:
             return False
@@ -549,7 +549,7 @@ class Document:
         if not sec:
             return None
         removed = self.lines[sec.heading_line : sec.content_end]
-        self._delete_lines(sec.heading_line, sec.content_end - sec.heading_line)
+        self.delete_lines(sec.heading_line, sec.content_end - sec.heading_line)
         self._collapse_blank_lines()
         return removed
 
@@ -563,7 +563,7 @@ class Document:
         if not sec:
             return False
         extracted = self.lines[sec.heading_line : sec.content_end]
-        self._delete_lines(sec.heading_line, sec.content_end - sec.heading_line)
+        self.delete_lines(sec.heading_line, sec.content_end - sec.heading_line)
         block = ["\n"] + extracted
         if block[-1].strip():
             block.append("\n")
@@ -582,15 +582,77 @@ class Document:
         self._collapse_blank_lines()
         return True
 
-    # --- Low-level line operations ---
+    # --- Line operations ---
 
-    def _insert_lines(self, at: int, new_lines: list[str]) -> None:
-        self.lines[at:at] = new_lines
+    def delete_lines(self, at: int, count: int) -> None:
+        """Delete ``count`` lines starting at index ``at``.
+
+        Public entry point for callers outside this module (the vault tools).
+        Marks the document dirty and collapses any resulting runs of blank lines.
+        """
+        del self.lines[at : at + count]
         self._dirty = True
         self._collapse_blank_lines()
 
-    def _delete_lines(self, at: int, count: int) -> None:
-        del self.lines[at : at + count]
+    def insert_lines(
+        self,
+        lines_to_insert: list[str],
+        to_section: str | None = None,
+        position: str = "append",
+    ) -> str | None:
+        """Insert lines at the specified location.
+
+        Returns an error string on failure, or None on success.
+
+        ``lines_to_insert`` is a list of strings without trailing newlines; each
+        element becomes a separate line in the output document. With no
+        ``to_section`` the lines target the whole file; ``position`` is 'append'
+        or 'prepend'.
+        """
+        # Build the list of newline-terminated lines to insert, one per input element.
+        new_lines = [ln.rstrip("\n") + "\n" for ln in lines_to_insert]
+
+        if to_section:
+            sec = self.find_section(to_section)
+            if not sec:
+                return describe_section_miss(self, to_section)
+            if position == "prepend":
+                # Insert before first list item in section, or at content start
+                target = _find_first_list_item(self.lines, sec.content_start, sec.content_end)
+                if target is not None:
+                    self._insert_lines(target, new_lines)
+                else:
+                    self._insert_lines(sec.content_start, new_lines)
+            else:
+                sec = self.find_section(to_section)
+                if not sec:
+                    return f"section disappeared during insert: {to_section}"
+                # Append all lines as a block; find insertion point manually so we
+                # don't loop and re-parse the section on every single line.
+                insert_at = sec.content_end
+                while insert_at > sec.content_start and not self.lines[insert_at - 1].strip():
+                    insert_at -= 1
+                self._insert_lines(insert_at, new_lines)
+        else:
+            # No section specified — operate on the whole file
+            if position == "prepend":
+                # Insert before first list item in file
+                target = _find_first_list_item(self.lines, 0, len(self.lines))
+                if target is not None:
+                    self._insert_lines(target, new_lines)
+                else:
+                    # No list items — append to end of file
+                    self._insert_lines(len(self.lines), new_lines)
+            else:
+                # Append to end of file, before trailing blank lines
+                insert_at = len(self.lines)
+                while insert_at > 0 and not self.lines[insert_at - 1].strip():
+                    insert_at -= 1
+                self._insert_lines(insert_at, new_lines)
+        return None
+
+    def _insert_lines(self, at: int, new_lines: list[str]) -> None:
+        self.lines[at:at] = new_lines
         self._dirty = True
         self._collapse_blank_lines()
 
@@ -703,7 +765,7 @@ def describe_section_miss(doc: Document, path: str) -> str:
     ``find_section`` returns None for both ambiguous and missing paths (#671);
     this tells them apart. Ambiguous paths list every candidate, missing ones
     list the page's known paths. Returns the message body without the
-    ``[error: ]`` wrapper, since ``_insert_into_doc`` returns bare strings that
+    ``[error: ]`` wrapper, since ``insert_lines`` returns bare strings that
     its caller wraps.
     """
     candidates = doc.section_candidates(path)
@@ -743,60 +805,4 @@ def _find_first_list_item(lines: list[str], start: int, end: int) -> int | None:
         stripped = lines[i].lstrip()
         if stripped.startswith("- [") or stripped.startswith("- "):
             return i
-    return None
-
-
-def _insert_into_doc(
-    doc: Document,
-    lines_to_insert: list[str],
-    to_section: str | None,
-    position: str,
-) -> str | None:
-    """Insert lines into a Document at the specified location.
-
-    Returns an error string on failure, or None on success.
-
-    ``lines_to_insert`` is a list of strings without trailing newlines.
-    Each element becomes a separate line in the output document.
-    """
-    # Build the list of newline-terminated lines to insert, one per input element.
-    new_lines = [ln.rstrip("\n") + "\n" for ln in lines_to_insert]
-
-    if to_section:
-        sec = doc.find_section(to_section)
-        if not sec:
-            return describe_section_miss(doc, to_section)
-        if position == "prepend":
-            # Insert before first list item in section, or at content start
-            target = _find_first_list_item(doc.lines, sec.content_start, sec.content_end)
-            if target is not None:
-                doc._insert_lines(target, new_lines)
-            else:
-                doc._insert_lines(sec.content_start, new_lines)
-        else:
-            sec = doc.find_section(to_section)
-            if not sec:
-                return f"section disappeared during insert: {to_section}"
-            # Append all lines as a block; find insertion point manually so we
-            # don't loop and re-parse the section on every single line.
-            insert_at = sec.content_end
-            while insert_at > sec.content_start and not doc.lines[insert_at - 1].strip():
-                insert_at -= 1
-            doc._insert_lines(insert_at, new_lines)
-    else:
-        # No section specified — operate on the whole file
-        if position == "prepend":
-            # Insert before first list item in file
-            target = _find_first_list_item(doc.lines, 0, len(doc.lines))
-            if target is not None:
-                doc._insert_lines(target, new_lines)
-            else:
-                # No list items — append to end of file
-                doc._insert_lines(len(doc.lines), new_lines)
-        else:
-            # Append to end of file, before trailing blank lines
-            insert_at = len(doc.lines)
-            while insert_at > 0 and not doc.lines[insert_at - 1].strip():
-                insert_at -= 1
-            doc._insert_lines(insert_at, new_lines)
     return None

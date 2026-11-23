@@ -214,3 +214,88 @@ def test_after_wins_when_several_anchors_are_passed():
     # 'after=Background' wins: Status sits between Background's body and TODO.
     assert text.index("## Background") < text.index("## Status") < text.index("## TODO")
     assert text.index("bg") < text.index("## Status")
+
+
+# --- Public line operations (#1377) -----------------------------------------
+#
+# The vault tools used to reach into the private `_delete_lines` and import the
+# module-level `_insert_into_doc`. These are now public Document methods; these
+# cases pin their behavior, including the dirty/re-parse and blank-collapse
+# invariants they must maintain.
+
+
+def test_delete_lines_removes_the_right_lines():
+    doc = Document.from_text("# Top\n\nline1\nline2\nline3\n")
+    # indices: 0='# Top', 1='', 2='line1', 3='line2', 4='line3'
+    doc.delete_lines(2, 2)
+    text = doc.to_text()
+    assert "line1" not in text
+    assert "line2" not in text
+    assert "line3" in text
+
+
+def test_delete_lines_collapses_blank_runs():
+    """Deleting a line that leaves 3+ consecutive blanks must collapse to two."""
+    doc = Document.from_text("# Top\n\na\n\n\nb\n")
+    # lines: ['# Top', '', 'a', '', '', 'b']; deleting 'a' leaves a 3-blank run.
+    doc.delete_lines(2, 1)
+    assert doc.lines == ["# Top\n", "\n", "\n", "b\n"]
+
+
+def test_delete_lines_marks_dirty_and_reparses():
+    """Removing a heading must make it disappear on the next section lookup."""
+    doc = Document.from_text("# Top\n\n## A\n\nx\n\n## B\n\ny\n")
+    doc.delete_lines(2, 1)  # remove the '## A' heading line
+    assert doc.find_section("top/a") is None
+    assert doc.find_section("top/b") is not None
+
+
+def test_insert_lines_append_into_section():
+    doc = Document.from_text("# Top\n\n## Notes\n\nexisting\n")
+    err = doc.insert_lines(["new1", "new2"], to_section="top/notes", position="append")
+    assert err is None
+    text = doc.to_text()
+    assert "new1" in text and "new2" in text
+    # Appended after the existing content, in order.
+    assert text.index("existing") < text.index("new1") < text.index("new2")
+
+
+def test_insert_lines_prepend_before_first_list_item():
+    doc = Document.from_text("# Top\n\n## Notes\n\n- item1\n- item2\n")
+    err = doc.insert_lines(["new"], to_section="top/notes", position="prepend")
+    assert err is None
+    lines = doc.to_text().splitlines()
+    # 'new' lands before the first list item, not at the raw content start.
+    assert lines.index("new") < lines.index("- item1")
+
+
+def test_insert_lines_append_without_section():
+    doc = Document.from_text("# Top\n\nbody\n")
+    err = doc.insert_lines(["new"], position="append")  # no to_section
+    assert err is None
+    assert doc.lines[-1] == "new\n"
+
+
+def test_insert_lines_prepend_without_section():
+    doc = Document.from_text("# Top\n\n- item1\n")
+    err = doc.insert_lines(["new"], position="prepend")  # no to_section
+    assert err is None
+    lines = doc.to_text().splitlines()
+    assert lines.index("new") < lines.index("- item1")
+
+
+def test_insert_lines_returns_error_for_missing_section():
+    doc = Document.from_text("# Top\n\n## Notes\n")
+    err = doc.insert_lines(["new"], to_section="top/nowhere", position="append")
+    assert err is not None
+    assert "not found" in err
+    # The document must be left untouched on failure.
+    assert doc.to_text() == "# Top\n\n## Notes\n"
+
+
+def test_insert_lines_marks_dirty_and_reparses():
+    """A heading inserted via insert_lines must be resolvable after re-parse."""
+    doc = Document.from_text("# Top\n")
+    err = doc.insert_lines(["## New", "body"], position="append")
+    assert err is None
+    assert doc.find_section("top/new") is not None
