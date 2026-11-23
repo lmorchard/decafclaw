@@ -637,6 +637,11 @@ Any URL not meeting these criteria raises a validation error and rejects tab cre
 - `url` (string, required, max length 2048) — target HTTP or HTTPS URL.
 - `title` (string, optional, max length 200) — optional title header.
 
+The titlebar follows the active app theme (`--pico-*` tokens, not a fixed
+light background) and carries a reload control that re-navigates the iframe
+to its original `url`. The header renders even without a `title` so the
+reload control is always reachable.
+
 ### Usage
 
 ```python
