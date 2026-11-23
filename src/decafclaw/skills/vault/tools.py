@@ -459,7 +459,9 @@ async def tool_vault_append(ctx: "Context", page: str, content: str) -> ToolResu
             return ToolResult(text=f"[error: could not read vault page '{page}': {e}]")
         preview = f"{page} (append, {len(content)} characters)\n\n{content}"
 
-    separator = "\n" if existing and not existing.endswith("\n") else ""
+    separator = ""
+    if existing and not existing.endswith("\n"):
+        separator = "\r\n" if "\r\n" in existing else "\n"
     new_content = existing + separator + content
     diff = unified_diff(existing, new_content, page) if existing else ""
 

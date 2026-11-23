@@ -796,7 +796,7 @@ async def tool_admin_edit(
     except PatchError as exc:
         return ToolResult(text=f"[error: {exc} in {path}]")
 
-    count = content.count(old_text)
+    count = content.replace("\r\n", "\n").count(old_text.replace("\r\n", "\n"))
 
     payload = {
         "new_content": new_content,
