@@ -480,12 +480,15 @@ async def run_score(
         new_jobs.append((case, arm, model))
     if progress:
         progress(f"Model calls: {len(jobs)} total, {len(new_jobs)} new, {len(jobs) - len(new_jobs)} cached")
-    results = await asyncio.gather(*(_call_one(config, case, model, sem) for case, _arm, model in new_jobs))
-    for record in results:
-        if record["error"]:
-            continue
-        cache[(record["model"], record["turn_id"])] = record
-        append_cache(cache_path, record)
+
+    async def _call_and_cache(case: dict, model: str) -> dict:
+        record = await _call_one(config, case, model, sem)
+        if not record["error"]:
+            cache[(record["model"], record["turn_id"])] = record
+            append_cache(cache_path, record)
+        return record
+
+    await asyncio.gather(*(_call_and_cache(case, model) for case, _arm, model in new_jobs))
 
     direction_memo: dict[str, tuple[str, ...]] = {}
     rows_by_arm: dict[str, list[CaseResult]] = {arm: [] for arm in arms}

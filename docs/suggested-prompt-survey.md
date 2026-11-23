@@ -73,20 +73,33 @@ step. Abstention is a first-class metric, not an error.
 
 ## Commands
 
+Run against the corpus you want to measure. The production instance keeps its
+data at `DATA_HOME=/home/lmorchard/.decafclaw`; a checkout on that host reads
+it with:
+
 ```bash
+export DATA_HOME=/home/lmorchard/.decafclaw
+
 # Stage 0: free signals + page calibration over the full archive.
-uv run python -m decafclaw.survey stage0
+uv run python -m decafclaw.survey stage0 --backend embeddings --page-sample 300
 
 # Deterministic dev set (stratified by conversation length and recency).
-uv run python -m decafclaw.survey devset --limit 200
+uv run python -m decafclaw.survey devset --limit 200 \
+  --out evals/results/suggested-prompt/prod-devset.jsonl
 
 # Stage 2: score aux and active arms on the dev set.
-uv run python -m decafclaw.survey score --devset evals/suggested_prompt/devset.jsonl \
-  --arms aux,active --aux-model vertex-gemini-flash
+uv run python -m decafclaw.survey score \
+  --devset evals/results/suggested-prompt/prod-devset.jsonl \
+  --arms aux,active --aux-model vertex-gemini-3.8-flash
 
 # Bound the spend before spending it.
-uv run python -m decafclaw.survey score --devset evals/suggested_prompt/devset.jsonl --dry-run
+uv run python -m decafclaw.survey score --devset evals/results/suggested-prompt/prod-devset.jsonl --dry-run
 ```
+
+Generate the dev set on the corpus host and leave it under `evals/results/`
+(git-ignored) or another local path. Do not copy it into the checkout. The
+scorer streams each successful model response to `model-cache.jsonl`, so an
+interrupted run resumes without paying twice.
 
 `--max-calls` (default 1200) refuses a plan above the cap before any call.
 `--aux-model` overrides the aux arm; without it the aux arm follows
