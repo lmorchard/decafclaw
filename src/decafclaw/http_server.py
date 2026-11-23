@@ -103,6 +103,10 @@ _WORKSPACE_RECENT_PRUNE_DIRS = frozenset(
     }
 )
 
+# Cap on the workspace-recent listing, in files. Distinct from the autocomplete
+# caps: this bounds the Files tab's recent list, not suggestions.
+_WORKSPACE_RECENT_MAX_FILES = 50
+
 
 def _get_username_or_401(request: Request) -> str | None:
     """Resolve the authenticated username from cookies, or None.
@@ -579,7 +583,7 @@ def _page_summary(path: Path) -> str:
 def _collect_recent_workspace_files(
     workspace_root: Path,
 ) -> list[tuple[float, Path, str]]:
-    """Walk the workspace and return up to 50 (mtime, path, rel_str) tuples.
+    """Walk the workspace and return up to ``_WORKSPACE_RECENT_MAX_FILES`` (mtime, path, rel_str) tuples.
 
     Pure helper; safe to call from ``asyncio.to_thread``. Prunes known-heavy
     subtrees (see ``_WORKSPACE_RECENT_PRUNE_DIRS``) during descent.
@@ -606,7 +610,7 @@ def _collect_recent_workspace_files(
                 continue
             collected.append((stat_result.st_mtime, resolved, rel.as_posix()))
     collected.sort(key=lambda t: t[0], reverse=True)
-    return collected[:50]
+    return collected[:_WORKSPACE_RECENT_MAX_FILES]
 
 
 # -- Health + confirmation callback handlers ---------------------------------
@@ -2367,7 +2371,7 @@ async def workspace_create(request: Request, username: str) -> JSONResponse:
 
 @_authenticated
 async def workspace_recent(request: Request, username: str) -> JSONResponse:
-    """Return up to 50 workspace files sorted by mtime descending."""
+    """Return up to ``_WORKSPACE_RECENT_MAX_FILES`` workspace files sorted by mtime descending."""
     config = request.app.state.config
     workspace = config.workspace_path
     if not workspace.is_dir():
@@ -2382,6 +2386,12 @@ async def workspace_recent(request: Request, username: str) -> JSONResponse:
         except OSError as exc:
             log.debug("workspace_recent: entry build failed for %s: %s", fpath, exc)
     return JSONResponse({"files": files})
+
+
+# Autocomplete caps: one per source so a noisy vault or MCP server cannot crowd
+# out the other sources, and one total to bound the response.
+_MAX_AUTOCOMPLETE_PER_SOURCE = 20
+_MAX_AUTOCOMPLETE_RESULTS = 50
 
 
 @_authenticated
@@ -2443,7 +2453,7 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
                             continue
 
                 matches.sort(key=lambda x: x["label"].lower())
-                return matches[:20]
+                return matches[:_MAX_AUTOCOMPLETE_PER_SOURCE]
 
             vault_matches = await asyncio.to_thread(_find_vault_pages)
             results.extend(vault_matches)
@@ -2473,7 +2483,7 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
                         }
                     )
             mcp_matches.sort(key=lambda x: x["label"].lower())
-            results.extend(mcp_matches[:20])
+            results.extend(mcp_matches[:_MAX_AUTOCOMPLETE_PER_SOURCE])
         except Exception as e:
             log.warning("Autocomplete MCP search failed: %s", e)
 
@@ -2489,7 +2499,7 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
             # Filter and format matches
             matches = []
             for rel_str in all_files:
-                if len(matches) >= 20:
+                if len(matches) >= _MAX_AUTOCOMPLETE_PER_SOURCE:
                     break
                 if not query or query.lower() in rel_str.lower():
                     matches.append(
@@ -2505,7 +2515,7 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
         except Exception as e:
             log.warning("Autocomplete workspace search failed: %s", e)
 
-    return JSONResponse({"results": results[:50]})
+    return JSONResponse({"results": results[:_MAX_AUTOCOMPLETE_RESULTS]})
 
 
 # -- Vault routes -------------------------------------------------------------
