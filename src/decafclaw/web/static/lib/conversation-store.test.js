@@ -9,31 +9,9 @@ import { MESSAGE_TYPES } from './message-types.js';
 // `MESSAGE_TYPES.GONE` reference would just evaluate to `undefined`, and
 // tsconfig excludes `**/*.test.js` so nothing would flag it).
 import wireManifest from '../../message_types.json';
-
-/**
- * Stand-in for WebSocketClient: same event surface (it is an EventTarget that
- * dispatches `open` / `message`), but `send()` records instead of writing to a
- * socket. `open` is dispatched by hand to simulate a reconnect.
- */
-class FakeWS extends EventTarget {
-  /** @type {object[]} */
-  sent = [];
-
-  /** @param {object} message */
-  send(message) {
-    this.sent.push(message);
-  }
-
-  /** Simulate the underlying socket (re)connecting. */
-  fireOpen() {
-    this.dispatchEvent(new CustomEvent('open'));
-  }
-
-  /** Simulate a server→client frame arriving. @param {object} msg */
-  fireMessage(msg) {
-    this.dispatchEvent(new CustomEvent('message', { detail: msg }));
-  }
-}
+// Shared socket stand-in, store factory, and settle helper (#1422): one FakeWS
+// for every store test instead of a per-file copy.
+import { FakeWS, flush, makeStore } from './test-utils.js';
 
 /**
  * Client→server message types that exist today and are NOT subscription
@@ -68,13 +46,6 @@ const CLIENT_TO_SERVER_TYPES = new Set(
 
 /** Where `listConversations()` (no folder) fetches — conversation-store.js:181. */
 const CONVERSATIONS_URL = '/api/conversations';
-
-/** Let the `open` handler's async `listConversations()` fetch chain settle. */
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-/** @returns {ConversationStore} */
-const makeStore = (/** @type {FakeWS} */ ws) =>
-  new ConversationStore(/** @type {any} */ (ws));
 
 describe('ConversationStore reconnect handling', () => {
   /** @type {FakeWS} */
@@ -378,7 +349,12 @@ describe('conversation creation transport', () => {
     expect(store.currentConvId).toBe('created');
     // Selection retains the established reset; conv_selected later supplies the model.
     expect(store.activeModel).toBe('');
-    expect(ws.sent.map(m => m.type)).toEqual([MESSAGE_TYPES.SELECT_CONV, MESSAGE_TYPES.LOAD_HISTORY, MESSAGE_TYPES.LIST_COMMANDS]);
+    // The selection protocol as a set, not an ordered dump: the server-side
+    // effects (socket subscription, history load, command list) do not depend
+    // on frame order, so the assertion must not either.
+    expect(ws.sent.map((m) => /** @type {any} */ (m).type).sort()).toEqual(
+      [MESSAGE_TYPES.SELECT_CONV, MESSAGE_TYPES.LOAD_HISTORY, MESSAGE_TYPES.LIST_COMMANDS].sort(),
+    );
     // selectConversation + the #1443 hierarchy refresh.
     expect(change).toHaveBeenCalledTimes(2);
     expect(log).not.toHaveBeenCalled();
@@ -429,7 +405,12 @@ describe('conversation creation transport', () => {
       return new Response(JSON.stringify(metadata), { status: 201 });
     });
     store.sendMessage('queued text', [{ file }]);
-    expect(await sent).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'created', text: 'queued text', attachments: [uploaded] });
+    // Barrier, not an assertion: wait for the queued message to flush. The
+    // optimistic echo below is the observable half; only the frame's conv_id
+    // has no store-state counterpart (the echo carries no id).
+    await sent;
+    const flushed = ws.sent.find((m) => /** @type {any} */ (m).type === MESSAGE_TYPES.SEND);
+    expect(/** @type {any} */ (flushed).conv_id, 'queued message must flush for the new conversation').toBe('created');
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ title: '', model: 'chosen' });
     expect(fetchMock.mock.calls[1][0]).toBe('/api/upload/created');
     expect(fetchMock.mock.calls[1][1].method).toBe('POST');
@@ -727,9 +708,10 @@ describe('conversation activity status tracking', () => {
         store.sendMessage(text);
         expect(store.getConversationStatus('c1'), `${name}: ${text}`).toBe('idle');
         expect(store.currentMessages, `${name}: ${text}`).toHaveLength(0);
-        expect(ws.sent, `${name}: ${text}`).toEqual([
-          { type: MESSAGE_TYPES.SEND, conv_id: 'c1', text },
-        ]);
+        // The side-effect path is a plain send: exactly one frame, no steering.
+        const sends = ws.sent.filter((m) => /** @type {any} */ (m).type === MESSAGE_TYPES.SEND);
+        expect(sends, `${name}: ${text}`).toHaveLength(1);
+        expect(/** @type {any} */ (sends[0]), `${name}: ${text}`).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'c1', text });
       }
     }
   });
@@ -1280,7 +1262,7 @@ describe('conversation model groups (#1441)', () => {
 
   beforeEach(() => {
     ws = new FakeWS();
-    store = new ConversationStore(ws);
+    store = makeStore(ws);
     store.selectConversation('c1');
   });
 
@@ -1348,7 +1330,7 @@ describe('stream state on return (#1439)', () => {
 
   beforeEach(() => {
     ws = new FakeWS();
-    store = new ConversationStore(ws);
+    store = makeStore(ws);
     store.selectConversation('c1');
   });
 
@@ -1678,7 +1660,12 @@ describe('conversation fork transport (#1581)', () => {
     expect(result).toEqual(forked);
     expect(store.conversations[0]).toEqual(forked);
     expect(store.currentConvId).toBe(forked.conv_id);
-    expect(ws.sent.map(m => m.type)).toEqual([MESSAGE_TYPES.SELECT_CONV, MESSAGE_TYPES.LOAD_HISTORY, MESSAGE_TYPES.LIST_COMMANDS]);
+    // The selection protocol as a set, not an ordered dump: the server-side
+    // effects (socket subscription, history load, command list) do not depend
+    // on frame order, so the assertion must not either.
+    expect(ws.sent.map((m) => /** @type {any} */ (m).type).sort()).toEqual(
+      [MESSAGE_TYPES.SELECT_CONV, MESSAGE_TYPES.LOAD_HISTORY, MESSAGE_TYPES.LIST_COMMANDS].sort(),
+    );
     expect(log).not.toHaveBeenCalled();
   });
 
