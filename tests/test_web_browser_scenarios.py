@@ -1209,6 +1209,28 @@ def test_browser_vault_standalone_page(built_static, chromium, config):
         ] == [(f"/api/vault/{VAULT_PAGE_NAME}", [], True)]
 
 
+def test_browser_vault_page_auto_refresh(built_static, chromium, config):
+    vault_page_path = seed_vault_page(config)
+    with browser_scenario(built_static, chromium, config) as scenario:
+        page = scenario.page
+        open_vault_page(scenario)
+        assert page.locator("wiki-page").evaluate("node => node._body") == "# Browser vault body\n"
+
+        # An agent/tool write lands on disk; app.js fans the WebSocket
+        # vault_changed message out as this window event.
+        vault_page_path.write_text("---\nsummary: Browser summary\n---\n# Refreshed body\n")
+        page.evaluate(
+            """path => window.dispatchEvent(new CustomEvent('vault-changed', {
+                detail: { type: 'vault_changed', path, kind: 'update' },
+            }))""",
+            f"{VAULT_PAGE_NAME}.md",
+        )
+        page.wait_for_function(
+            "document.querySelector('wiki-page')._body.includes('Refreshed body')",
+        )
+        assert page.locator("wiki-page .wiki-page-body").inner_text().strip() == "Refreshed body"
+
+
 def test_browser_vault_standalone_editor_navigation(built_static, chromium, config):
     page_a_name = "agent/pages/Standalone-Nav-A"
     page_b_name = "agent/pages/Standalone-Nav-B"

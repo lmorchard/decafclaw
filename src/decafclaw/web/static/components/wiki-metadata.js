@@ -33,6 +33,8 @@ export class WikiMetadata extends LitElement {
     _rawText: { state: true },
     _rawError: { state: true },
     _rawDirty: { state: true },
+    _summaryDirty: { state: true },
+    _importanceDirty: { state: true },
   };
 
   createRenderRoot() { return this; }
@@ -55,10 +57,21 @@ export class WikiMetadata extends LitElement {
     this._rawText = '';
     this._rawError = '';
     this._rawDirty = false;
+    // Typed controls commit on `change` (blur). Until then their DOM value is
+    // ahead of `frontmatter`, so a host refresh must not rebind `.value`.
+    this._summaryDirty = false;
+    this._importanceDirty = false;
   }
 
   /** @param {Map<string, unknown>} changed */
   willUpdate(changed) {
+    // The server's frontmatter replaced what these controls were bound to, so
+    // any uncommitted text is gone with it. This also clears flags left over
+    // when the host navigates to another page.
+    if (changed.has('frontmatter')) {
+      this._summaryDirty = false;
+      this._importanceDirty = false;
+    }
     // Reseed the raw editor from the server's bytes whenever the page's
     // frontmatter changes underneath us, unless the user is mid-edit or
     // typed while a save was in flight.
@@ -117,6 +130,19 @@ export class WikiMetadata extends LitElement {
   closeRaw() {
     this._rawOpen = false;
     this._rawError = '';
+  }
+
+  /**
+   * Public: true if the metadata panel holds local edits the server has not
+   * seen: an open raw YAML draft, or a typed field whose `change` (blur) has
+   * not fired yet. A closed raw editor (Cancel discards) is never pending, so
+   * a canceled draft cannot block later refreshes. Hosts use this to avoid
+   * clobbering local edits on an external refresh.
+   */
+  hasPendingChanges() {
+    return (this._rawOpen && this._rawDirty)
+      || this._summaryDirty
+      || this._importanceDirty;
   }
 
   /** @param {string} type */
@@ -183,8 +209,10 @@ export class WikiMetadata extends LitElement {
             aria-label="Summary"
             ?disabled=${disabled}
             .value=${this.frontmatter?.summary ? String(this.frontmatter.summary) : ''}
+            @input=${() => { this._summaryDirty = true; }}
             @change=${(/** @type {Event} */ e) => {
               const value = /** @type {HTMLTextAreaElement} */ (e.target).value.trim();
+              this._summaryDirty = false;
               this.#emitChange('summary', value || null);
             }}
           ></textarea>
@@ -197,8 +225,10 @@ export class WikiMetadata extends LitElement {
             aria-label="Importance"
             ?disabled=${disabled}
             .value=${importance == null ? '0.5' : String(importance)}
+            @input=${() => { this._importanceDirty = true; }}
             @change=${(/** @type {Event} */ e) => {
               const value = Number(/** @type {HTMLInputElement} */ (e.target).value);
+              this._importanceDirty = false;
               this.#emitChange('importance', value);
             }}
           />

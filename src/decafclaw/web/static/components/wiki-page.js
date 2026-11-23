@@ -99,6 +99,12 @@ export class WikiPage extends LitElement {
   #metaTimer = null;
   /** @type {WikiWriteMutex} */
   #mutex;
+  /**
+   * Monotonic token for `vault_changed` probes. Overlapping events (or a
+   * navigation reload) must not let an older GET response overwrite newer
+   * content.
+   */
+  #vaultProbeSeq = 0;
 
   connectedCallback() {
     super.connectedCallback();
@@ -106,12 +112,19 @@ export class WikiPage extends LitElement {
     this._unsubBookmarks = subscribeBookmarks(snap => {
       if (this.page) this._bookmarked = isBookmarked('vault', this.page);
     });
+    // Agent/tool writes publish `vault_changed`; refresh the open page when
+    // the user has no local edits to lose (#1769).
+    this._onVaultChanged = (/** @type {Event} */ e) => {
+      void this.#handleVaultChanged(/** @type {CustomEvent} */ (e).detail);
+    };
+    window.addEventListener('vault-changed', this._onVaultChanged);
     void loadBookmarks();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this._unsubBookmarks) this._unsubBookmarks();
+    window.removeEventListener('vault-changed', this._onVaultChanged);
   }
 
   /** @param {Map<string, unknown>} changed */
@@ -251,6 +264,7 @@ export class WikiPage extends LitElement {
   }
 
   async _fetchPage() {
+    this.#vaultProbeSeq++;
     this.#mutex.reload();
     this._syncMutexState();
     this._loading = true;
@@ -259,12 +273,7 @@ export class WikiPage extends LitElement {
     this._body = '';
     try {
       const data = await DefaultService.wrapperApiVaultPageGet(this.page);
-      this._title = data.title;
-      this._body = data.body;
-      this._frontmatter = data.frontmatter;
-      this._frontmatterRaw = data.frontmatter_raw;
-      this._frontmatterError = data.frontmatter_error ?? '';
-      this._modified = data.modified;
+      this.#adoptPageData(data);
       this._loaded = true;
     } catch (e) {
       this._error = e instanceof ApiError
@@ -273,6 +282,89 @@ export class WikiPage extends LitElement {
     } finally {
       this._loading = false;
     }
+  }
+
+  /** @param {import('../lib/api-client/index.js').VaultPageResponse} data */
+  #adoptPageData(data) {
+    this._title = data.title;
+    this._body = data.body;
+    this._frontmatter = data.frontmatter;
+    this._frontmatterRaw = data.frontmatter_raw;
+    this._frontmatterError = data.frontmatter_error ?? '';
+    this._modified = data.modified;
+  }
+
+  /**
+   * True when refreshing the buffer would discard work the server has not
+   * acknowledged: unsaved editor text, a queued/in-flight save, unsaved raw
+   * frontmatter, a queued metadata patch, or an unresolved write error.
+   */
+  #hasLocalEdits() {
+    if (this._metaError) return true;
+    if (this.#mutex.metaInFlight) return true;
+    if (Object.keys(this.#mutex.pendingFields).length) return true;
+    /** @type {import('./wiki-metadata.js').WikiMetadata|null} */
+    const metadata = this.querySelector('wiki-metadata');
+    if (metadata?.hasPendingChanges()) return true;
+    /** @type {import('./wiki-editor.js').WikiEditor|null} */
+    const editor = this.querySelector('wiki-editor');
+    return Boolean(editor?.hasPendingChanges());
+  }
+
+  /**
+   * Re-fetch the open page after a `vault_changed` event. Dirty buffers are
+   * left alone; the existing save/conflict path handles those on the next
+   * write.
+   * @param {unknown} detail `{path, kind}` from the WebSocket message
+   */
+  async #handleVaultChanged(detail) {
+    if (!this.page || !this._loaded || this._loading || this._renaming) return;
+    const changedPath = detail && typeof detail === 'object' && 'path' in detail
+      ? detail.path
+      : '';
+    // An empty path means a multi-file operation with no single target, so
+    // the open page might be affected. Otherwise only refresh our own page.
+    if (typeof changedPath === 'string' && changedPath
+        && this.#eventPathPage(changedPath) !== this.page) return;
+    const probe = ++this.#vaultProbeSeq;
+    if (this.#hasLocalEdits()) return;
+
+    const page = this.page;
+    const modified = this._modified;
+    let data;
+    try {
+      data = await DefaultService.wrapperApiVaultPageGet(page);
+    } catch {
+      // Deleted or renamed externally. Leave the buffer alone; a later
+      // navigation will surface the page's absence.
+      return;
+    }
+    if (probe !== this.#vaultProbeSeq) return;      // newer probe/reload won
+    if (this.page !== page || this._loading) return; // switched during probe
+    if (this.#hasLocalEdits()) return;               // user typed during probe
+    if ((data.modified ?? 0) === modified) return;   // unchanged — no flash
+
+    const bodyChanged = data.body !== this._body;
+    this.#adoptPageData(data);
+    // The raw frontmatter editor cannot reseed while open; close it so it
+    // shows the server's new bytes instead of the stale ones.
+    /** @type {import('./wiki-metadata.js').WikiMetadata|null} */
+    const metadata = this.querySelector('wiki-metadata');
+    if (metadata) metadata.closeRaw();
+    /** @type {import('./wiki-editor.js').WikiEditor|null} */
+    const editor = this.querySelector('wiki-editor');
+    if (editor) {
+      // Metadata-only changes must not reset Milkdown (undo, cursor), but the
+      // editor still needs the new mtime or its next save would 409.
+      if (bodyChanged) editor.applyExternalContent(data.body, data.modified);
+      else editor.modified = data.modified;
+    }
+  }
+
+  /** Vault events carry file paths; pages are addressed without `.md`. */
+  #eventPathPage(/** @type {string} */ path) {
+    const normalized = path.replace(/\\/g, '/');
+    return normalized.toLowerCase().endsWith('.md') ? normalized.slice(0, -3) : normalized;
   }
 
   async _toggleMode() {

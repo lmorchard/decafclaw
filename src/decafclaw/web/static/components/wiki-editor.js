@@ -465,6 +465,34 @@ export class WikiEditor extends LitElement {
     }
   }
 
+  /**
+   * Public: true if the editor holds content the server has not acknowledged
+   * yet, or a save/conflict is unresolved. Hosts use this to avoid clobbering
+   * local edits when refreshing after an external change.
+   */
+  hasPendingChanges() {
+    if (this.#saveTimer != null || this.#inFlight != null || this.#pendingSave) return true;
+    if (this._status === 'saving' || this._status === 'conflict') return true;
+    return this.#currentMarkdown !== this.#lastSavedContent;
+  }
+
+  /**
+   * Public: adopt content that changed on disk while the user had no pending
+   * edits. Mirrors the conflict Reload path so Milkdown's document and the
+   * next save's mtime both move to the server's values.
+   * @param {string} content
+   * @param {number} modified
+   */
+  applyExternalContent(content, modified) {
+    this.content = content;
+    this.modified = modified;
+    if (this.#editor) this.#editor.action(replaceAll(content));
+    this.#lastSavedContent = content;
+    this.#currentMarkdown = content;
+    this._status = 'idle';
+    this._error = '';
+  }
+
   async #reload() {
     try {
       /** @type {string} */
