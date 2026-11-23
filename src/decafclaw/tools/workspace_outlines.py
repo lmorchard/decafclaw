@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, Sequence
 
+from decafclaw.text_patching import split_physical_lines
+
 log = logging.getLogger(__name__)
 
 # Max outline items shown before truncation
@@ -22,21 +24,6 @@ MAX_OUTLINE_ITEMS = 200
 HEADING_RE = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*$")
 OPEN_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 CLOSE_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*$")
-
-_PHYSICAL_LINE_SPLIT_RE = re.compile(r"(\r\n|\r|\n)")
-
-
-def split_physical_lines(text: str, keepends: bool = False) -> list[str]:
-    """Split text on physical newlines (\r\n, \r, \n) only, preserving 1-based source line numbering."""
-    if not text:
-        return []
-    parts = _PHYSICAL_LINE_SPLIT_RE.split(text)
-    result: list[str] = []
-    for i in range(0, len(parts) - 1, 2):
-        result.append(parts[i] + parts[i + 1] if keepends else parts[i])
-    if len(parts) % 2 == 1 and parts[-1]:
-        result.append(parts[-1])
-    return result
 
 
 @dataclass

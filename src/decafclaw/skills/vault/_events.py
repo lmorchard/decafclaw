@@ -22,8 +22,6 @@ KIND_CREATE = "create"
 KIND_UPDATE = "update"
 KIND_DELETE = "delete"
 KIND_RENAME = "rename"
-KIND_MOVE = "move"
-KIND_SECTION = "section"
 KIND_JOURNAL = "journal"
 
 

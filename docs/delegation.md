@@ -59,9 +59,9 @@ By default, child agents have **no vault access at all** — no proactive retrie
 | Flag | Effect |
 |---|---|
 | `allow_vault_retrieval=True` | Child runs the proactive memory retrieval at turn start (`skip_vault_retrieval=False`). |
-| `allow_vault_read=True` | Child can call `vault_read`, `vault_search`, `vault_list`, `vault_backlinks`, `vault_show_sections`. |
+| `allow_vault_read=True` | Child can call `vault_read`, `vault_search`, `vault_list`, `vault_backlinks`. |
 
-**Vault writes are categorically blocked** for children regardless of flags. The set is hardcoded in `_VAULT_WRITE_TOOLS` and includes `vault_write`, `vault_journal_append`, `vault_delete`, `vault_rename`, `vault_move_lines`, and `vault_section`. If the child's work should land in the vault, the parent does the write itself after the child returns — keeps the audit trail in the parent's conversation.
+**Vault writes are categorically blocked** for children regardless of flags. The set is hardcoded in `_VAULT_WRITE_TOOLS` and includes `vault_write`, `vault_edit`, `vault_append`, `vault_replace_lines`, `vault_journal_append`, `vault_delete`, and `vault_rename`. If the child's work should land in the vault, the parent does the write itself after the child returns — keeps the audit trail in the parent's conversation.
 
 The default-deny posture means the child gets isolated context: no auto-injected memory, no vault tools. Use the flags when the subtask genuinely needs them (e.g. "research X across the vault" → `allow_vault_read=True`; "summarize my last conversation about Y given my preferences" → both flags).
 

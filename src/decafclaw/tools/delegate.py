@@ -39,7 +39,6 @@ _VAULT_READ_TOOLS = frozenset(
         "vault_search",
         "vault_list",
         "vault_backlinks",
-        "vault_show_sections",
     }
 )
 
@@ -49,8 +48,9 @@ _VAULT_WRITE_TOOLS = frozenset(
         "vault_delete",
         "vault_rename",
         "vault_journal_append",
-        "vault_move_lines",
-        "vault_section",
+        "vault_edit",
+        "vault_append",
+        "vault_replace_lines",
         # #87: tools the writes-flag work added `writes: True` to that the
         # categorical child-blocked set did not yet cover. A writes-flagged
         # tool must be in this set (and vice versa) — see
@@ -68,6 +68,7 @@ _VAULT_WRITE_TOOLS = frozenset(
 _ADMIN_WRITE_TOOLS = frozenset(
     {
         "admin_write",
+        "admin_append",
         "admin_replace_lines",
         "admin_edit",
         "admin_delete",
@@ -249,8 +250,7 @@ async def run_child_turn(
         allow_vault_read: When False (default), the child has no
             access to vault read tools. Set True to opt INTO the
             read set (``vault_read``, ``vault_search``,
-            ``vault_list``, ``vault_backlinks``,
-            ``vault_show_sections``). Vault WRITE tools are
+            ``vault_list``, ``vault_backlinks``). Vault WRITE tools are
             categorically blocked regardless.
         allow_vault_write: When False (default), vault WRITE tools are
             categorically blocked for children (see #396/#955/#1113). Set
@@ -962,7 +962,7 @@ DELEGATE_TOOL_DEFINITIONS = [
                         "description": (
                             "When true, the child can call read-side vault "
                             "tools (vault_read, vault_search, vault_list, "
-                            "vault_backlinks, vault_show_sections). Default "
+                            "vault_backlinks). Default "
                             "false. Vault write tools are categorically blocked."
                         ),
                     },

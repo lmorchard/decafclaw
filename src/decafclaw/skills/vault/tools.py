@@ -11,14 +11,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from decafclaw.media import ToolResult
+from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.skills.vault._events import (
     KIND_CREATE,
     KIND_DELETE,
     KIND_JOURNAL,
-    KIND_MOVE,
     KIND_RENAME,
-    KIND_SECTION,
     KIND_UPDATE,
     publish_vault_changed,
 )
@@ -52,17 +50,25 @@ from decafclaw.skills.vault._search import (
     _substring_search,
     _tag_filter_search,
 )
-from decafclaw.skills.vault._sections_ops import (
-    tool_vault_move_lines,
-    tool_vault_section,
-    tool_vault_show_sections,
-)
 from decafclaw.tags import (
     collect_all_tags,
     extract_tags,  # noqa: F401 — re-exported for tests; _search.py resolves it via the tools namespace
     normalize_tag,
     pages_with_tags,  # noqa: F401 — re-exported for tests; _search.py resolves it via the tools namespace
 )
+from decafclaw.text_patching import (
+    AmbiguousMatch,
+    InvalidLineRange,
+    PatchError,
+    TextNotFound,
+    content_version,
+    edit_not_found_hint,
+    patch_exact_match,
+    patch_line_range,
+    split_physical_lines,
+    unified_diff,
+)
+from decafclaw.tools._file_common import MAX_DIFF_WIDGET_CHARS, MAX_DIFF_WIDGET_LINES
 from decafclaw.tools.confirmation import request_confirmation
 
 if TYPE_CHECKING:
@@ -156,16 +162,21 @@ def _source_type_for_path(config, path: Path) -> VaultSourceType:
 # ---------------------------------------------------------------------------
 
 
-async def tool_vault_read(ctx: "Context", page: str) -> str | ToolResult:
-    """Read a vault page by name or path."""
-    log.info(f"[tool:vault_read] page={page}")
+async def tool_vault_read(
+    ctx: "Context",
+    page: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> str | ToolResult:
+    """Read a vault page by name or path, optionally a 1-based line range."""
+    log.info(f"[tool:vault_read] page={page} start_line={start_line} end_line={end_line}")
     path = resolve_page(ctx.config, page)
     if path is None:
         suggestions = suggest_pages(ctx.config, page)
         if suggestions:
             return ToolResult(text=f"[error: vault page '{page}' not found. Did you mean: {', '.join(suggestions)}?]")
         return ToolResult(text=f"[error: vault page '{page}' not found]")
-    content = path.read_text()
+    content = path.read_text(encoding="utf-8")
     # Structured metadata for programmatic callers (code_execution sandbox).
     # Body intentionally NOT echoed here — it's already in `text` and would
     # double the tool-result token cost. Frontmatter is small and useful for
@@ -173,19 +184,33 @@ async def tool_vault_read(ctx: "Context", page: str) -> str | ToolResult:
     from decafclaw.frontmatter import parse_frontmatter, to_json_safe
 
     frontmatter, body = parse_frontmatter(content)
+    base_data = {
+        "path": page,
+        # ToolResult.data is json.dumps'd into a fenced block, and a
+        # `date:` line parses to a datetime.date. Without this the whole
+        # data block was dropped with a warning (fail-open in
+        # tool_execution), silently costing the agent its structured view.
+        "frontmatter": to_json_safe(frontmatter),
+        "body_size": len(body),
+        "body_lines": body.count("\n") + (0 if body.endswith("\n") or not body else 1),
+        "version": content_version(content),
+    }
+
+    if start_line is None and end_line is None:
+        return ToolResult(text=content, display_short_text=page, data=base_data)
+
+    lines = split_physical_lines(content)
+    total = len(lines)
+    start = max(1, start_line or 1)
+    end = min(total, end_line or total)
+    selected = lines[start - 1 : end]
+    width = len(str(end))
+    numbered = [f"{str(start + i).rjust(width)}| {line}" for i, line in enumerate(selected)]
+    header = f"Lines {start}-{end} of {total}:\n"
     return ToolResult(
-        text=content,
+        text=header + "\n".join(numbered),
         display_short_text=page,
-        data={
-            "path": page,
-            # ToolResult.data is json.dumps'd into a fenced block, and a
-            # `date:` line parses to a datetime.date. Without this the whole
-            # data block was dropped with a warning (fail-open in
-            # tool_execution), silently costing the agent its structured view.
-            "frontmatter": to_json_safe(frontmatter),
-            "body_size": len(body),
-            "body_lines": body.count("\n") + (0 if body.endswith("\n") or not body else 1),
-        },
+        data={**base_data, "range": [start, end]},
     )
 
 
@@ -267,6 +292,256 @@ async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | Too
     except Exception as exc:
         log.debug("vault_write: broken-link check failed for %r: %s", page, exc)
     return ToolResult(text=result_text, data=result_data)
+
+
+async def _gate_vault_mutation(
+    ctx: "Context",
+    path: Path,
+    *,
+    tool_name: str,
+    page: str,
+    preview: str,
+) -> ToolResult | None:
+    """Run the user-folder write gate for a page mutation (vault_edit family).
+
+    Returns a ToolResult error when the write must not proceed, or None when
+    the caller may write. Same three-tier decision as vault_write.
+    """
+    outcome = _check_user_write_allowed(ctx, path)
+    return await _run_gate_or_confirm(
+        ctx,
+        [outcome],
+        tool_name=tool_name,
+        command=f"{tool_name} to '{page}'",
+        preview=preview,
+        non_interactive_error=(
+            f"[error: {tool_name} to '{page}' outside agent folder "
+            f"requires interactive confirmation; not available from this context]"
+        ),
+        denied_error=f"[error: {tool_name} to '{page}' was denied by user]",
+    )
+
+
+def _diff_result(
+    page: str,
+    summary: str,
+    diff: str,
+    before: str,
+    after: str,
+    *,
+    version: str,
+    data: dict | None = None,
+) -> ToolResult:
+    """Build the shared edit-style result: summary, diff, version, diff widget."""
+    text = f"{summary}\n\n{diff}" if diff else summary
+    text += f"\n\nVersion: {version}"
+    oversized = (
+        len(before) > MAX_DIFF_WIDGET_CHARS
+        or len(after) > MAX_DIFF_WIDGET_CHARS
+        or before.count("\n") > MAX_DIFF_WIDGET_LINES
+        or after.count("\n") > MAX_DIFF_WIDGET_LINES
+    )
+    widget = (
+        WidgetRequest(
+            widget_type="diff_view",
+            data={"before": before, "after": after, "filename": page, "view": "unified"},
+            target="inline",
+        )
+        if diff and not oversized
+        else None
+    )
+    payload = {"path": page, "version": version}
+    if data:
+        payload.update(data)
+    return ToolResult(text=text, data=payload, widget=widget)
+
+
+async def tool_vault_edit(
+    ctx: "Context",
+    page: str,
+    old_text: str,
+    new_text: str,
+    replace_all: bool = False,
+    expected_version: str | None = None,
+) -> ToolResult:
+    """Edit a vault page by replacing exact text matches."""
+    log.info(f"[tool:vault_edit] page={page}")
+    path = resolve_page(ctx.config, page)
+    if path is None:
+        return ToolResult(text=f"[error: vault page '{page}' not found]")
+
+    try:
+        # newline="" keeps the file's line endings (CRLF or LF) intact.
+        content = path.read_text(encoding="utf-8", newline="")
+    except (OSError, UnicodeDecodeError) as e:
+        return ToolResult(text=f"[error: could not read vault page '{page}': {e}]")
+
+    version = content_version(content)
+    if expected_version is not None and expected_version != version:
+        return ToolResult(
+            text=(
+                f"[error: stale version for {page}: expected {expected_version}, but the page has "
+                f"changed since the last read (current version: {version}). "
+                "Re-read the page with vault_read and retry the edit with the version "
+                "returned by the fresh read.]"
+            )
+        )
+
+    normalized = content.replace("\r\n", "\n")
+    old = old_text.replace("\r\n", "\n")
+    try:
+        new_content, diff = patch_exact_match(content, old_text, new_text, replace_all)
+    except TextNotFound:
+        hint = edit_not_found_hint(normalized, old)
+        text = (
+            f"[error: text not found in vault page '{page}'. "
+            "Make sure old_text matches exactly, including whitespace and indentation."
+        )
+        if hint:
+            text += f" {hint}"
+        return ToolResult(text=text)
+    except AmbiguousMatch as exc:
+        return ToolResult(
+            text=f"[error: found {exc.count} matches in vault page '{page}'. "
+            "Use replace_all=true for bulk replacement, "
+            "or provide more surrounding context to make old_text unique.]"
+        )
+    except PatchError as exc:
+        return ToolResult(text=f"[error: {exc} in vault page '{page}']")
+
+    count = normalized.count(old)
+    new_normalized = new_content.replace("\r\n", "\n")
+    gate_result = await _gate_vault_mutation(
+        ctx,
+        path,
+        tool_name="vault_edit",
+        page=page,
+        preview=f"{page}\n\n{diff or '(no changes)'}",
+    )
+    if gate_result is not None:
+        return gate_result
+
+    path.write_text(new_content, encoding="utf-8", newline="")
+    await _reindex_page(ctx, path)
+    await publish_vault_changed(ctx.event_bus, ctx.config, kind=KIND_UPDATE, path=path)
+    return _diff_result(
+        page,
+        f"Edited vault page '{page}': replaced {count} occurrence(s)",
+        diff,
+        normalized,
+        new_normalized,
+        version=content_version(new_content),
+        data={"replaced": count},
+    )
+
+
+async def tool_vault_append(ctx: "Context", page: str, content: str) -> ToolResult:
+    """Append text to a vault page, creating it when it does not exist."""
+    log.info(f"[tool:vault_append] page={page}")
+    page = sanitize_vault_page_name(page)
+    path = resolve_page(ctx.config, page)
+    created = path is None
+    if path is None:
+        path = _safe_write_path(ctx.config, page)
+        if path is None:
+            return ToolResult(text=f"[error: invalid page name '{page}' — must be within vault directory]")
+
+    if not content or not content.strip():
+        return ToolResult(text=f"[error: refusing to append empty content to vault page '{page}']")
+
+    if created:
+        existing = ""
+        preview = f"{page} (new page, {len(content)} characters)\n\n{content}"
+    else:
+        try:
+            existing = path.read_text(encoding="utf-8", newline="")
+        except (OSError, UnicodeDecodeError) as e:
+            return ToolResult(text=f"[error: could not read vault page '{page}': {e}]")
+        preview = f"{page} (append, {len(content)} characters)\n\n{content}"
+
+    separator = ""
+    if existing and not existing.endswith("\n"):
+        separator = "\r\n" if "\r\n" in existing else "\n"
+    new_content = existing + separator + content
+    diff = unified_diff(existing, new_content, page) if existing else ""
+
+    gate_result = await _gate_vault_mutation(
+        ctx,
+        path,
+        tool_name="vault_append",
+        page=page,
+        preview=preview,
+    )
+    if gate_result is not None:
+        return gate_result
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(new_content, encoding="utf-8", newline="")
+    await _reindex_page(ctx, path)
+    await publish_vault_changed(
+        ctx.event_bus,
+        ctx.config,
+        kind=KIND_CREATE if created else KIND_UPDATE,
+        path=path,
+    )
+    summary = f"Appended {len(content)} characters to vault page '{page}'"
+    return _diff_result(
+        page,
+        summary,
+        diff,
+        existing.replace("\r\n", "\n"),
+        new_content.replace("\r\n", "\n"),
+        version=content_version(new_content),
+        data={"created": created, "bytes_appended": len(content.encode("utf-8"))},
+    )
+
+
+async def tool_vault_replace_lines(
+    ctx: "Context", page: str, start_line: int, end_line: int, content: str = ""
+) -> ToolResult:
+    """Replace a 1-based inclusive line range in a vault page."""
+    log.info(f"[tool:vault_replace_lines] page={page} lines {start_line}-{end_line}")
+    path = resolve_page(ctx.config, page)
+    if path is None:
+        return ToolResult(text=f"[error: vault page '{page}' not found]")
+
+    try:
+        existing = path.read_text(encoding="utf-8", newline="")
+    except (OSError, UnicodeDecodeError) as e:
+        return ToolResult(text=f"[error: could not read vault page '{page}': {e}]")
+
+    try:
+        new_content, diff = patch_line_range(existing, start_line, end_line, content)
+    except InvalidLineRange as exc:
+        return ToolResult(text=f"[error: {exc}]")
+
+    gate_result = await _gate_vault_mutation(
+        ctx,
+        path,
+        tool_name="vault_replace_lines",
+        page=page,
+        preview=f"{page}\n\n{diff or '(no changes)'}",
+    )
+    if gate_result is not None:
+        return gate_result
+
+    path.write_text(new_content, encoding="utf-8", newline="")
+    await _reindex_page(ctx, path)
+    await publish_vault_changed(ctx.event_bus, ctx.config, kind=KIND_UPDATE, path=path)
+    if not content:
+        summary = f"Deleted lines {start_line}-{end_line} from vault page '{page}'"
+    else:
+        replacement_text = content if content.endswith("\n") else content + "\n"
+        replacement_count = len(split_physical_lines(replacement_text, keepends=True))
+        summary = f"Replaced lines {start_line}-{end_line} with {replacement_count} line(s) in vault page '{page}'"
+    return _diff_result(
+        page,
+        summary,
+        diff,
+        existing.replace("\r\n", "\n"),
+        new_content.replace("\r\n", "\n"),
+        version=content_version(new_content),
+    )
 
 
 def _deleted_link_match(raw: str, deleted_rel: str) -> bool:
@@ -1098,21 +1373,11 @@ TOOLS = {
     "vault_recent": tool_vault_recent,
     "vault_tags": tool_vault_tags,
     "vault_backlinks": tool_vault_backlinks,
-    "vault_show_sections": tool_vault_show_sections,
-    "vault_move_lines": tool_vault_move_lines,
-    "vault_section": tool_vault_section,
+    "vault_edit": tool_vault_edit,
+    "vault_append": tool_vault_append,
+    "vault_replace_lines": tool_vault_replace_lines,
     "vault_update_frontmatter": tool_vault_update_frontmatter,
 }
-
-# Shared across every section-path parameter below. Section paths used to be
-# rooted at the page H1, which nothing conveyed and callers could not guess
-# (#671); they are suffix-matched now, and this says so.
-SECTION_PATH_HELP = (
-    "A bare heading title ('Background'), a partial path ('Archive/Background'), "
-    "or the full path from the page title ('Project Notes/Archive/Background') "
-    "all work — the path is matched against the end of each section's full path. "
-    "It must match exactly one section; if several match, the error lists them."
-)
 
 TOOL_DEFINITIONS = [
     {
@@ -1125,8 +1390,10 @@ TOOL_DEFINITIONS = [
                 "Read a vault page (knowledge base) by name or path. ONLY for "
                 "vault knowledge pages — NOT for workspace files, blog posts, "
                 "code, or project files (use workspace_read for those). Returns "
-                "the full page content. Use to check existing content before "
-                "writing updates."
+                "the full page content, or a 1-based inclusive line range with "
+                "start_line/end_line. Each read returns a content version token; "
+                "pass it as expected_version to vault_edit to reject edits "
+                "against a stale read."
             ),
             "parameters": {
                 "type": "object",
@@ -1134,6 +1401,14 @@ TOOL_DEFINITIONS = [
                     "page": {
                         "type": "string",
                         "description": ("Page name or path (e.g. 'Les Orchard', 'agent/pages/DecafClaw')"),
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to read (1-based, inclusive). Omit to start from the beginning.",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to read (1-based, inclusive). Omit to read to the end of the page.",
                     },
                 },
                 "required": ["page"],
@@ -1528,15 +1803,23 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
-        "priority": "low",
-        "writes": False,
+        "priority": "critical",
+        "timeout": None,
+        "writes": True,
         "function": {
-            "name": "vault_show_sections",
+            "name": "vault_edit",
             "description": (
-                "Show a vault page's section structure (headings with absolute line "
-                "numbers) or a specific section's content with line numbers. Use this "
-                "to see what's in a page before editing with vault_write or "
-                "vault_move_lines."
+                "The default tool for surgical edits to a vault page — "
+                "single-line or multi-line. Replace an exact block of text with "
+                "another without rewriting the whole page. Copy old_text from a "
+                "fresh vault_read (or a prior edit's diff) so the match is exact; "
+                "never reconstruct it from memory — matching is "
+                "character-for-character, every space, tab, and newline. Fails "
+                "if old_text is not found or matches more than once; set "
+                "replace_all=true for bulk replacement. Pages outside the agent "
+                "folder (agent/pages/, agent/journal/) require user confirmation "
+                "per call. For edits by line number use vault_replace_lines; for "
+                "a new page or full rewrite use vault_write."
             ),
             "parameters": {
                 "type": "object",
@@ -1547,80 +1830,47 @@ TOOL_DEFINITIONS = [
                             "Page path relative to vault root or bare name (e.g. 'agent/pages/note', 'My Page')."
                         ),
                     },
-                    "section": {
+                    "old_text": {
                         "type": "string",
                         "description": (
-                            "Optional section path to show that section's content "
-                            "with line numbers. " + SECTION_PATH_HELP + " "
-                            "Omit to get the full outline."
+                            "Exact text currently in the page to replace, "
+                            "single-line or multi-line. Copy it from a fresh "
+                            "vault_read (or a previous edit's diff) so it matches "
+                            "the page character-for-character, including every "
+                            "space, tab, and newline."
                         ),
                     },
+                    "new_text": {
+                        "type": "string",
+                        "description": "Text to replace old_text with",
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Replace all occurrences instead of requiring a unique match (default: false)",
+                    },
+                    "expected_version": {
+                        "type": "string",
+                        "description": "Content version from a fresh vault_read; when stale the edit is rejected and not written.",
+                    },
                 },
-                "required": ["page"],
+                "required": ["page", "old_text", "new_text"],
             },
         },
     },
     {
         "type": "function",
-        "priority": "low",
+        "priority": "normal",
+        "timeout": None,
         "writes": True,
         "function": {
-            "name": "vault_move_lines",
+            "name": "vault_append",
             "description": (
-                "Move specific lines (by absolute line number) from one vault page to "
-                "another. Use vault_show_sections first to see line numbers. Good for "
-                "migrating to-do items between daily notes. Both pages must be under the "
-                "agent folder. When to_section is omitted, moves into the whole target file."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "from_page": {
-                        "type": "string",
-                        "description": ("Source page path relative to vault root (e.g. 'agent/pages/yesterday')."),
-                    },
-                    "to_page": {
-                        "type": "string",
-                        "description": ("Target page path relative to vault root (e.g. 'agent/pages/today')."),
-                    },
-                    "lines": {
-                        "type": "string",
-                        "description": (
-                            "Comma-separated absolute line numbers to move "
-                            "(e.g. '3,4,7'). Use vault_show_sections to get line numbers."
-                        ),
-                    },
-                    "to_section": {
-                        "type": "string",
-                        "description": (
-                            "Section path in the target page. " + SECTION_PATH_HELP + " "
-                            "Omit to append to the whole file."
-                        ),
-                    },
-                    "position": {
-                        "type": "string",
-                        "enum": ["append", "prepend"],
-                        "description": (
-                            "Where to insert within the target section: "
-                            "'append' (default) adds after existing content, "
-                            "'prepend' adds before it."
-                        ),
-                    },
-                },
-                "required": ["from_page", "to_page", "lines"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "priority": "low",
-        "writes": True,
-        "function": {
-            "name": "vault_section",
-            "description": (
-                "Section operations on a vault page: add, remove, rename, or move a "
-                "section. Actions: 'add', 'remove', 'rename', 'move'. Page must be under "
-                "the agent folder."
+                "Append text to the end of a vault page without reading it first. "
+                "Creates the page when it does not exist and adds a newline "
+                "separator when the page doesn't end with one. Use for journal-like "
+                "additions, running logs, or appending a section. Pages outside the "
+                "agent folder (agent/pages/, agent/journal/) require user "
+                "confirmation per call."
             ),
             "parameters": {
                 "type": "object",
@@ -1629,65 +1879,53 @@ TOOL_DEFINITIONS = [
                         "type": "string",
                         "description": (
                             "Page path relative to vault root or bare name (e.g. 'agent/pages/note', 'My Page')."
-                        ),
-                    },
-                    "action": {
-                        "type": "string",
-                        "enum": ["add", "remove", "rename", "move"],
-                        "description": "Operation: 'add', 'remove', 'rename', or 'move'.",
-                    },
-                    "section": {
-                        "type": "string",
-                        "description": (
-                            "Section path to operate on. " + SECTION_PATH_HELP + " Required for remove, rename, move."
-                        ),
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": ("Title for the section. Required for add; used as the new title for rename."),
-                    },
-                    "level": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 6,
-                        "description": (
-                            "Heading level (1–6) for the new section. Only used by "
-                            "add. Defaults to whatever the anchor implies: a sibling "
-                            "of the after/before section, or one level below parent. "
-                            "Leave it unset unless you specifically want a different "
-                            "level — forcing 1 next to a ## heading inserts a second "
-                            "top-level heading, which reparents every section below it."
                         ),
                     },
                     "content": {
                         "type": "string",
-                        "description": (
-                            "Body text for the new section. Only used by add; "
-                            "omit for an empty section. Set it here rather than "
-                            "adding an empty section and rewriting the page to "
-                            "fill it — one call does both."
-                        ),
-                    },
-                    "after": {
-                        "type": "string",
-                        "description": (
-                            "Section path to insert/move after. " + SECTION_PATH_HELP + " Used by add and move."
-                        ),
-                    },
-                    "before": {
-                        "type": "string",
-                        "description": (
-                            "Section path to insert/move before. " + SECTION_PATH_HELP + " Used by add and move."
-                        ),
-                    },
-                    "parent": {
-                        "type": "string",
-                        "description": (
-                            "Section path to nest the new section under. " + SECTION_PATH_HELP + " Only used by add."
-                        ),
+                        "description": "Text to append to the page",
                     },
                 },
-                "required": ["page", "action"],
+                "required": ["page", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "low",
+        "timeout": None,
+        "writes": True,
+        "function": {
+            "name": "vault_replace_lines",
+            "description": (
+                "Replace a range of lines (1-based, inclusive) in a vault page with "
+                "new content. Pass empty content to delete lines. Use vault_read "
+                "with start_line/end_line first to see line numbers. Pages outside "
+                "the agent folder require user confirmation per call."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "string",
+                        "description": (
+                            "Page path relative to vault root or bare name (e.g. 'agent/pages/note', 'My Page')."
+                        ),
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to replace (1-based, inclusive)",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to replace (1-based, inclusive)",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Replacement text (empty string to delete lines)",
+                    },
+                },
+                "required": ["page", "start_line", "end_line"],
             },
         },
     },

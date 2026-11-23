@@ -56,7 +56,7 @@ def test_vault_skill_md_no_longer_duplicates_gardening_rules():
     assert "## Your Home Folder" in skill_md
     assert "## Journal vs Pages" in skill_md
     assert "## Boundaries" in skill_md
-    assert "## Editing Sections" in skill_md
+    assert "## Editing a Page" in skill_md
     assert "## Organizing with Folders" in skill_md
     assert "## Navigating the Knowledge Graph" in skill_md
     assert "## When to Consult the Vault" in skill_md

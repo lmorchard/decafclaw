@@ -114,10 +114,10 @@
     expect_tool: vault_backlinks
     expect_no_tool: vault_search
 
-# -- vault_section (edit one section, leave others alone) --------------------
+# -- vault_edit (edit one section, leave others alone) -----------------------
 #
 # Uses PR-A's `expect_workspace` to verify the rest of the page survived
-# the edit. Tool selection is permissive — vault_section is preferred but
+# the edit. Tool selection is permissive — vault_edit is preferred but
 # a vault_write rewrite that preserves all sections is acceptable. The
 # post-turn workspace regex is the load-bearing assertion.
 
@@ -143,7 +143,7 @@
   expect:
     max_tool_calls: 8
     max_tool_errors: 1
-    expect_tool: [vault_section, vault_write]
+    expect_tool: [vault_edit, vault_write]
   expect_workspace:
     workspace_files:
       "vault/agent/pages/project-notes.md": "re:## Background.+exactly as it is.+## Status.+Working on it.+## TODO.+Old item.+## References.+Link 1"

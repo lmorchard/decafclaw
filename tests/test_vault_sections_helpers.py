@@ -198,7 +198,7 @@ def test_describe_section_miss_duplicate_headings_dont_advise_a_longer_path():
     msg = describe_section_miss(doc, "Status")
     assert "Use a longer path" not in msg
     assert "duplicate headings" in msg
-    assert "vault_show_sections" in msg
+    assert "vault_read" in msg
 
 
 def test_after_wins_when_several_anchors_are_passed():
