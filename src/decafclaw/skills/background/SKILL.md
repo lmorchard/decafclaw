@@ -20,6 +20,8 @@ Use this skill when you need to run something long-running without blocking the 
 
 ## Limits
 
-- Jobs auto-expire after 10 minutes.
+- Jobs expire after `background.default_max_lifetime_sec` (default 1 hour). Pass `max_lifetime_sec` to `shell_background_start` to override it; `0` disables expiry for a run whose duration you cannot bound. Expiry signals SIGTERM, then SIGKILL after 2s.
+- `cwd` selects the starting directory inside the workspace. An invalid path fails before the process starts instead of silently running at the workspace root.
+- On expiry or `shell_background_stop`, the partial stdout/stderr captured so far stays available through `shell_background_status` and the completion record. If nothing was captured, the status says so explicitly. Avoid piping a long job through `tail` (or similar): the pipe buffers until EOF, so a killed run loses the buffered lines.
 - stdout/stderr buffers hold the last 500 lines each.
 - Per-conversation job manager — jobs don't leak across conversations.

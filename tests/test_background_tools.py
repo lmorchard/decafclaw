@@ -1,6 +1,7 @@
 """Tests for background process management — BackgroundJobManager lifecycle."""
 
 import asyncio
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -1508,3 +1509,205 @@ async def test_read_stream_bounds_pending_buffer():
     # Should have split into a flushed chunk and remainder rather than waiting for EOF
     assert len(lines) >= 2
     assert sum(len(item) for item in lines) == 70000
+
+
+# ---------------------------------------------------------------------------
+# #1746 — lifetime controls, cwd handling, partial output on termination
+# ---------------------------------------------------------------------------
+
+
+def test_start_schema_advertises_cwd_and_lifetime():
+    """The model can only use the new controls if the schema exposes them."""
+    defs = {d["function"]["name"]: d for d in tools.TOOL_DEFINITIONS}
+    params = defs["shell_background_start"]["function"]["parameters"]["properties"]
+    assert "cwd" in params
+    assert "max_lifetime_sec" in params
+
+
+@pytest.mark.asyncio
+async def test_start_uses_config_default_lifetime(ctx, monkeypatch):
+    """The tool's default lifetime comes from config, not a hardcode (#1746)."""
+    from decafclaw.skills.background.tools import _get_job_manager, tool_shell_background_start
+
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    ctx.config.background.default_max_lifetime_sec = 7200
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+
+    result = await tool_shell_background_start(ctx, command="true")
+    mgr = _get_job_manager(ctx)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    assert job.max_lifetime == 7200
+    assert "7200s" in result.text
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_start_lifetime_override_and_disable(ctx, monkeypatch):
+    """max_lifetime_sec overrides the default; 0 disables expiry (#1746)."""
+    from decafclaw.skills.background.tools import _get_job_manager, tool_shell_background_start
+
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+    mgr = _get_job_manager(ctx)
+
+    result = await tool_shell_background_start(ctx, command="true", max_lifetime_sec=42)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    assert job.max_lifetime == 42
+
+    result = await tool_shell_background_start(ctx, command="sleep 5", max_lifetime_sec=0)
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    assert math.isinf(job.max_lifetime)
+    assert result.data["max_lifetime_sec"] is None
+    assert "expiry disabled" in result.text
+
+    result = await tool_shell_background_start(ctx, command="true", max_lifetime_sec=-1)
+    assert result.data["status"] == "error"
+    assert "finite number >= 0" in result.text
+
+    result = await tool_shell_background_start(ctx, command="true", max_lifetime_sec=math.nan)
+    assert result.data["status"] == "error"
+    assert "finite number >= 0" in result.text
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_start_honors_cwd(ctx, monkeypatch):
+    """shell_background_start runs in cwd instead of the workspace root (#1746)."""
+    from decafclaw.skills.background.tools import _get_job_manager, tool_shell_background_start
+
+    workspace = ctx.config.workspace_path
+    workspace.mkdir(parents=True, exist_ok=True)
+    sub = workspace / "sub"
+    sub.mkdir()
+    monkeypatch.setattr("decafclaw.tools.shell_tools.check_shell_approval", _yes_approval)
+    mgr = _get_job_manager(ctx)
+
+    result = await tool_shell_background_start(ctx, command="pwd", cwd="sub")
+    job = mgr.get(result.data["job_id"])
+    assert job is not None
+    assert result.data["cwd"] == str(sub.resolve())
+    assert job.reader_task is not None
+    await job.reader_task
+    assert str(sub.resolve()) in "\n".join(job.stdout_buffer)
+
+    # Unusable paths fail loudly before any process starts.
+    result = await tool_shell_background_start(ctx, command="pwd", cwd="missing-dir")
+    assert result.data["status"] == "error"
+    assert "does not exist" in result.text
+
+    result = await tool_shell_background_start(ctx, command="pwd", cwd="../outside")
+    assert result.data["status"] == "error"
+    assert "outside the workspace" in result.text
+
+    await mgr.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_expired_skips_disabled_lifetime(tmp_path):
+    """A job with expiry disabled is never killed by cleanup (#1746)."""
+    manager = BackgroundJobManager()
+    job = await manager.start("sleep 60", cwd=str(tmp_path), max_lifetime=math.inf)
+    job.started_at -= 10_000
+
+    assert await manager.cleanup_expired() == []
+    assert job.status == JobStatus.RUNNING
+
+    await manager.cleanup_all()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_finished_job_with_disabled_lifetime(tmp_path):
+    """Expiry-disabled jobs still need a retention window once finished (#1746)."""
+    manager = BackgroundJobManager()
+    job = await manager.start("echo done", cwd=str(tmp_path), max_lifetime=math.inf)
+    assert job.reader_task is not None
+    await job.reader_task
+    job.started_at -= 10_000  # past the retention floor
+
+    await manager.cleanup_expired()
+    assert manager.get(job.job_id) is None
+
+
+def test_status_text_flags_no_output_after_termination():
+    """An interrupted job with empty buffers is not a clean no-output success."""
+    text = tools.format_status_text(
+        job_id="abc",
+        status=JobStatus.EXPIRED,
+        command="pytest",
+        pid=1,
+        elapsed_ms=190_000,
+        remaining_ms=None,
+        exit_code=-15,
+        stdout="",
+        stderr="",
+    )
+    assert "- **Output:** none captured before termination" in text
+
+
+def test_status_text_keeps_partial_output():
+    """Partial stdout captured before termination is reported, not dropped."""
+    text = tools.format_status_text(
+        job_id="abc",
+        status=JobStatus.EXPIRED,
+        command="pytest",
+        pid=1,
+        elapsed_ms=190_000,
+        remaining_ms=None,
+        exit_code=-15,
+        stdout="303 passed, 2 failed",
+        stderr="",
+    )
+    assert "303 passed, 2 failed" in text
+    assert "none captured" not in text
+
+
+@pytest.mark.asyncio
+async def test_notify_job_exit_distinguishes_expiry(ctx, monkeypatch):
+    """Expiry reads as expired and reports the partial output line counts (#1746)."""
+    from collections import deque
+
+    captured: dict = {}
+
+    async def fake_notify(*args, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("decafclaw.notifications.notify", fake_notify)
+    job = SimpleNamespace(
+        config=ctx.config,
+        event_bus=None,
+        command="uv run pytest tests/",
+        exit_code=-15,
+        status=JobStatus.EXPIRED,
+        stdout_buffer=deque(["collected 1 item", "303 passed"]),
+        stderr_buffer=deque(["killed"]),
+        conv_id="conv-1",
+    )
+
+    await tools._notify_job_exit(job)
+
+    assert captured["title"] == "Background job expired"
+    assert "captured 2 stdout / 1 stderr line(s) before termination" in captured["body"]
+
+
+def test_expired_record_keeps_partial_output():
+    """The archive record for an expired job keeps its partial tails (#1746)."""
+    from collections import deque
+
+    rec = tools.build_background_event_record(
+        job_id="abc",
+        command="uv run pytest tests/",
+        status=JobStatus.EXPIRED,
+        exit_code=-15,
+        stdout_buffer=deque(["303 passed, 2 failed"]),
+        stderr_buffer=deque(["F"]),
+        elapsed_ms=190_000,
+        completion_tail_lines=50,
+    )
+    assert rec["status"] == JobStatus.EXPIRED
+    assert rec["stdout_tail"] == "303 passed, 2 failed"
+    assert rec["stderr_tail"] == "F"

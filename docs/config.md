@@ -485,11 +485,24 @@ When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxi
 
 #### Foreground time budget (#1136)
 
-`foreground_wait_budget_sec` is opt-in (`None` = today's blocking behavior). When set (> 0), `shell` starts the command through the background skill's shared runner and awaits up to the budget: a command that finishes in time returns an ordinary result, while one that exceeds it hands off — the **same process** continues as a managed background job and the tool returns its handle (job ID, PID). `max_runtime_sec` is the command's total runtime limit: it bounds the legacy blocking path and becomes a handed-off job's `max_lifetime` (enforced by the existing background-job expiry policy). The explicit-background default lifetime (`shell_background_start`, 600s) is a separate knob and unchanged. See [Tools — Shell](tools.md#auto-backgrounding-on-a-foreground-time-budget-1136).
+`foreground_wait_budget_sec` is opt-in (`None` = today's blocking behavior). When set (> 0), `shell` starts the command through the background skill's shared runner and awaits up to the budget: a command that finishes in time returns an ordinary result, while one that exceeds it hands off — the **same process** continues as a managed background job and the tool returns its handle (job ID, PID). `max_runtime_sec` is the command's total runtime limit: it bounds the legacy blocking path and becomes a handed-off job's `max_lifetime` (enforced by the existing background-job expiry policy). The explicit-background lifetime is the separate `background.default_max_lifetime_sec` knob (default 3600s; `shell_background_start`'s `max_lifetime_sec` overrides it per call, and `0` disables expiry). See [Tools — Shell](tools.md#auto-backgrounding-on-a-foreground-time-budget-1136).
 
 #### Dedicated auto-approval judge model
 
 `shell.aux_approval_model` (env `SHELL_AUX_APPROVAL_MODEL`) names a dedicated model for the auto-approval judge; empty (`""`) keeps the historical behavior of riding on the legacy aux chain (`auxiliary_model` → active conversation model → default). When set, it must name a `model_configs` key (enabled discovered models materialize as keys); a hand-written raw name is not routable — the shell group has no legacy endpoint of its own — and is treated as unset with a warning. Resolution: the `data/{agent_id}/model_catalog.json` sidecar's `aux_approval_model` pointer → `shell.aux_approval_model` → `auxiliary_model` → the active conversation model. The sidecar pointer is the UI-managed path (the **Auto-approval model** picker in **⚙ Agent Config → Models**); an empty pointer or empty seed means "ride on the aux chain". See [Model selection](model-selection.md#shell-auto-approval-model).
+
+### `background`
+
+Background-job lifetime and completion-record settings (#1746).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `default_max_lifetime_sec` | float | `3600` | `BACKGROUND_DEFAULT_MAX_LIFETIME_SEC` |
+| `default_completion_tail_lines` | int | `50` | `BACKGROUND_DEFAULT_COMPLETION_TAIL_LINES` |
+| `wake_max_per_window` | int | `20` | `BACKGROUND_WAKE_MAX_PER_WINDOW` |
+| `wake_window_sec` | int | `60` | `BACKGROUND_WAKE_WINDOW_SEC` |
+
+`default_max_lifetime_sec` is the explicit-background job lifetime; `0` disables expiry. `shell_background_start`'s `max_lifetime_sec` overrides it per call (`0` also disables expiry) for a run whose duration cannot be bounded. A job with expiry disabled is still removed from the manager ten minutes after it finishes. `default_completion_tail_lines` bounds the stdout/stderr tails kept in the archive record when a job completes, expires, or is stopped.
 
 ### `agent`
 
