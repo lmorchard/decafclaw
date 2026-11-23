@@ -274,6 +274,119 @@ def test_confirmation_to_dict_includes_decline_reason_without_rule():
     assert "suggested_rule" not in payload
 
 
+# -- confirmation_request event projection (issue #1400) ---------------------
+#
+# The on_conv_event branch for confirmation_request events must project the bus
+# payload through the same _confirmation_to_dict used by select-conv and
+# load-history, so all three paths emit one identical client shape.
+
+
+async def _drive_confirm_request_event(event: dict, conv_id: str = "conv1"):
+    """Subscribe a mock WebSocket to a conversation and deliver one event.
+
+    Returns the ws_send AsyncMock so callers can assert on emitted frames.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from decafclaw.web.websocket import _subscribe_to_conv
+
+    manager = MagicMock()
+    ws_send = AsyncMock()
+    state = {"manager": manager, "ws_send": ws_send, "config": MagicMock()}
+    _subscribe_to_conv(state, conv_id)
+    callback = manager.subscribe.call_args.args[1]
+    await callback(event)
+    return ws_send
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_event_matches_object_projection():
+    """The event branch emits exactly what _confirmation_to_dict produces for
+    the same request — one projection, no hand-assembled divergence."""
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.conversation_manager import _confirmation_request_payload
+    from decafclaw.web.message_types import WSMessageType
+    from decafclaw.web.websocket import _confirmation_to_dict
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={
+            "command": "tv list-screens",
+            "suggested_pattern": "tv list-screens *",
+            "decline_reason": "Modifies remote state",
+        },
+        message="Shell command: `tv list-screens`",
+        tool_call_id="call_abc",
+        timeout=60.0,
+    )
+    event = _confirmation_request_payload(request)
+    event["conv_id"] = "conv1"
+
+    ws_send = await _drive_confirm_request_event(event)
+
+    ws_send.assert_awaited_once()
+    frame = ws_send.call_args.args[0]
+    assert frame == {
+        "type": WSMessageType.CONFIRM_REQUEST,
+        "conv_id": "conv1",
+        **_confirmation_to_dict(request),
+    }
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_event_includes_empty_timestamp():
+    """A falsy timestamp still appears on the wire.
+
+    The object paths (select-conv / load-history) always include timestamp via
+    _confirmation_to_dict; the event branch must not diverge by dropping it.
+    """
+    from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
+    from decafclaw.conversation_manager import _confirmation_request_payload
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        message="Shell command: `tv list-screens`",
+        timestamp="",
+    )
+    event = _confirmation_request_payload(request)
+    event["conv_id"] = "conv1"
+
+    ws_send = await _drive_confirm_request_event(event)
+
+    frame = ws_send.call_args.args[0]
+    assert "timestamp" in frame
+    assert frame["timestamp"] == ""
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_event_maps_legacy_tool_and_falls_back_to_message():
+    """run_shell_command without tool_name maps to 'shell'; command falls back
+    to message; None timeout and absent decline_reason stay off the wire."""
+    event = {
+        "type": "confirmation_request",
+        "conv_id": "conv1",
+        "confirmation_id": "cfm-1",
+        "action_type": "run_shell_command",
+        "action_data": {},
+        "message": "Shell command: `git push`",
+        "approve_label": "",
+        "deny_label": "",
+        "tool_call_id": "call_1",
+        "timeout": None,
+        "timestamp": "2026-11-22T12:00:00+00:00",
+    }
+
+    ws_send = await _drive_confirm_request_event(event)
+
+    frame = ws_send.call_args.args[0]
+    assert frame["tool"] == "shell"
+    assert frame["command"] == "Shell command: `git push`"
+    assert frame["suggested_pattern"] == ""
+    assert "timeout" not in frame
+    assert "decline_reason" not in frame
+    assert frame["timestamp"] == "2026-11-22T12:00:00+00:00"
+
+
 def test_request_via_manager_forwards_decline_and_feedback_fields():
     """_request_via_manager maps decline_reason and feedback to action_data and the result."""
     import asyncio
