@@ -345,6 +345,40 @@ describe('wiki-page vault-changed auto-refresh', () => {
     expect(editors).toHaveLength(1);
     expect(el._body).toBe('one');
   });
+
+  describe('metadata disclosure', () => {
+    it('keeps the toggle in the toolbar row and the panel below it', async () => {
+      localStorage.setItem('wiki-edit-mode', 'true');
+      vault.frontmatter = { summary: 'agent summary' };
+      const el = await mountPage('notes/alpha');
+      await vi.waitFor(() => expect(editors).toHaveLength(1));
+
+      const toolbar = /** @type {HTMLElement} */ (el.querySelector('.wiki-editor-toolbar'));
+      const toggle = toolbar.querySelector('button.wiki-md-toggle');
+      const panel = /** @type {any} */ (el.querySelector('wiki-metadata'));
+
+      // Shared with the breadcrumbs, not a row of its own.
+      expect(toggle).not.toBeNull();
+      expect(toolbar.contains(panel)).toBe(false);
+      expect(toolbar.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING)
+        .toBeTruthy();
+
+      /** @type {HTMLButtonElement} */ (toggle).click();
+      await el.updateComplete;
+      await panel.updateComplete;
+
+      expect(panel.expanded).toBe(true);
+      expect(localStorage.getItem('wiki-metadata-expanded')).toBe('true');
+    });
+
+    it('hides the toggle when a read-only page has no metadata', async () => {
+      localStorage.setItem('wiki-edit-mode', 'false');
+      const el = await mountPage('notes/alpha');
+
+      expect(el.querySelector('.wiki-md-toggle')).toBeNull();
+      expect(el.querySelector('wiki-metadata')).toBeNull();
+    });
+  });
 });
 
 describe('WikiWriteMutex pure logic extracted from wiki-page', () => {

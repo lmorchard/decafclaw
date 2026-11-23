@@ -21,7 +21,7 @@ describe('wiki-metadata #raw-editor race', () => {
     // (b) Open the raw editor — this copies frontmatterRaw into _rawText.
     // First expand the panel (so #renderEditControls runs), then click the
     // raw toggle to open the textarea.
-    el._expanded = true;
+    el.expanded = true;
     await el.updateComplete;
     const rawToggle = /** @type {HTMLButtonElement} */ (
       el.querySelector('.wiki-md-raw-toggle')
@@ -50,5 +50,23 @@ describe('wiki-metadata #raw-editor race', () => {
     // This fails today because willUpdate reseeds _rawText from frontmatterRaw
     // when _rawOpen is false (closeRaw sets it to false before the assignment)
     expect(el._rawText).toContain(userToken);
+  });
+});
+
+describe('wiki-metadata disclosure ownership', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders content only — the host owns the toolbar toggle', async () => {
+    const el = /** @type {import('./wiki-metadata.js').WikiMetadata} */ (
+      document.createElement('wiki-metadata')
+    );
+    el.frontmatter = { summary: 'Summary text' };
+    document.body.appendChild(el);
+    await el.updateComplete;
+
+    expect(el.querySelector('.wiki-md-toggle')).toBeNull();
+    expect(el.textContent).toContain('Summary text');
   });
 });

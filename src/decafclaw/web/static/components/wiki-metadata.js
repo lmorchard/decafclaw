@@ -8,15 +8,32 @@
  *
  * Read-only mode shows a compact strip that expands to full detail. Edit
  * controls arrive with the metadata-change / metadata-raw-save events.
+ *
+ * Expansion is host-owned: the disclosure toggle lives in the page toolbar
+ * (so it shares the breadcrumb row instead of claiming its own line), and the
+ * host passes `expanded` down.
  */
 
 import { LitElement, html, nothing } from 'lit';
 import './chip-list.js';
 
-const EXPANDED_KEY = 'wiki-metadata-expanded';
-
 /** Fields with purpose-built controls; everything else lives in raw YAML. */
 const KNOWN_FIELDS = ['summary', 'importance', 'tags', 'keywords'];
+
+/**
+ * Whether a page has metadata worth showing. Edit mode always offers
+ * controls; read-only mode needs frontmatter or a frontmatter parse error.
+ * The host uses this to decide whether to render the toolbar disclosure.
+ *
+ * @param {Record<string, unknown>|null|undefined} frontmatter
+ * @param {string} frontmatterError
+ * @param {boolean} readonly
+ * @returns {boolean}
+ */
+export function hasMetadata(frontmatter, frontmatterError, readonly) {
+  if (!readonly) return true;
+  return Boolean(frontmatterError) || Object.keys(frontmatter || {}).length > 0;
+}
 
 /** Chips shown before the "+N" overflow in the collapsed strip. */
 const CHIP_PREVIEW_LIMIT = 3;
@@ -28,7 +45,8 @@ export class WikiMetadata extends LitElement {
     frontmatterError: { attribute: false },
     metaError: { attribute: false },
     readonly: { type: Boolean },
-    _expanded: { state: true },
+    /** Host-owned disclosure state; the toggle itself renders in the toolbar. */
+    expanded: { attribute: false },
     _rawOpen: { state: true },
     _rawText: { state: true },
     _rawError: { state: true },
@@ -52,7 +70,7 @@ export class WikiMetadata extends LitElement {
      */
     this.metaError = null;
     this.readonly = false;
-    this._expanded = localStorage.getItem(EXPANDED_KEY) === 'true';
+    this.expanded = false;
     this._rawOpen = false;
     this._rawText = '';
     this._rawError = '';
@@ -78,11 +96,6 @@ export class WikiMetadata extends LitElement {
     if (changed.has('frontmatterRaw') && !this._rawOpen && !this._rawDirty) {
       this._rawText = this.frontmatterRaw;
     }
-  }
-
-  #toggle() {
-    this._expanded = !this._expanded;
-    localStorage.setItem(EXPANDED_KEY, String(this._expanded));
   }
 
   /**
@@ -281,9 +294,7 @@ export class WikiMetadata extends LitElement {
   }
 
   #hasAnything() {
-    if (!this.readonly) return true;
-    return Boolean(this.frontmatterError)
-      || Object.keys(this.frontmatter || {}).length > 0;
+    return hasMetadata(this.frontmatter, this.frontmatterError, this.readonly);
   }
 
   /** @param {string[]} tags */
@@ -335,23 +346,14 @@ export class WikiMetadata extends LitElement {
   render() {
     if (!this.#hasAnything()) return nothing;
 
-    const label = this._expanded ? 'Collapse metadata' : 'Expand metadata';
     return html`
-      <div class="wiki-metadata ${this._expanded ? 'expanded' : ''}">
-        <button
-          type="button"
-          class="wiki-md-toggle"
-          aria-expanded=${this._expanded ? 'true' : 'false'}
-          title=${label}
-          aria-label=${label}
-          @click=${() => this.#toggle()}
-        >${this._expanded ? '▾' : '▸'}</button>
+      <div class="wiki-metadata ${this.expanded ? 'expanded' : ''}">
         <div class="wiki-md-content">
           ${this.#renderMetaError()}
           ${this.frontmatterError
             ? html`<div class="wiki-md-error">Frontmatter is not valid YAML: ${this.frontmatterError}</div>`
             : nothing}
-          ${this._expanded
+          ${this.expanded
             ? (this.readonly ? this.#renderDetail() : this.#renderEditControls())
             : this.#renderStrip()}
         </div>

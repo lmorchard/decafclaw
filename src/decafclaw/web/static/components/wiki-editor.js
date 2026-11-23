@@ -132,6 +132,8 @@ export class WikiEditor extends LitElement {
     toolbarExtra: { attribute: false },
     /** Template content rendered at the left of the toolbar (replaces format buttons) */
     toolbarLeft: { attribute: false },
+    /** Template content rendered just below the toolbar (e.g. the metadata panel) */
+    toolbarPanel: { attribute: false },
     _status: { state: true },
     _error: { state: true },
     /** Wiki-link edit popover model; null when the popover is closed. */
@@ -186,6 +188,8 @@ export class WikiEditor extends LitElement {
     this.toolbarExtra = null;
     /** @type {import('lit').TemplateResult|null} Content for toolbar left side (replaces format buttons) */
     this.toolbarLeft = null;
+    /** @type {import('lit').TemplateResult|null} Content rendered just below the toolbar */
+    this.toolbarPanel = null;
     /** @type {'idle'|'editing'|'saving'|'saved'|'error'|'conflict'} */
     this._status = 'idle';
     /** @type {string} */ this._error = '';
@@ -857,6 +861,7 @@ export class WikiEditor extends LitElement {
             ? html`<div class="wiki-editor-error">${this._error}</div>`
             : nothing
         }
+        ${this.toolbarPanel || nothing}
         <div class="milkdown-root"></div>
       </div>
     `;

@@ -316,7 +316,9 @@ WYSIWYG markdown editor for vault pages, accessible from the sidebar:
   target stores the plain form.
 - **Frontmatter editing**: a metadata strip above the body shows `summary` and
   tags in view mode; edit mode swaps it for typed controls plus a raw-YAML
-  escape hatch. See [Editing frontmatter in the web UI](vault.md#editing-frontmatter-in-the-web-ui).
+  escape hatch. The disclosure control sits at the start of the toolbar row in
+  both modes, so it shares the breadcrumb line instead of claiming its own;
+  the panel opens directly below that row. See [Editing frontmatter in the web UI](vault.md#editing-frontmatter-in-the-web-ui).
 - **Auto-refresh on external changes**: a `vault_changed` WebSocket message
   (agent `vault_write`, journal append, or another client) refreshes the open
   page in place when the buffer is clean. Unsaved editor text, unsaved raw
@@ -617,7 +619,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor (see [host contract](#the-wiki-editor-host-contract)) |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |
-| `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter strip/panel: view-mode summary + tags, edit-mode typed controls and raw YAML editor |
+| `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter panel content: view-mode summary + tags, edit-mode typed controls and raw YAML editor. The disclosure toggle is owned by `wiki-page` and rendered in the toolbar. |
 | `context-inspector` | `components/context-inspector.js` | Context diagnostics popover |
 | `notification-inbox` | `components/notification-inbox.js` | Bell icon + dropdown inbox panel |
 | `config-panel` | `components/config-panel.js` | Admin config file editor |

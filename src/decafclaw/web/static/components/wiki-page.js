@@ -14,9 +14,10 @@ import { WikiWriteMutex } from '../lib/wiki-page-write-mutex.js';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { isBookmarked, load as loadBookmarks, subscribe as subscribeBookmarks, toggle as toggleBookmark } from '../lib/bookmarks-store.js';
 import './wiki-editor.js';
-import './wiki-metadata.js';
+import { hasMetadata } from './wiki-metadata.js';
 
 const EDIT_MODE_KEY = 'wiki-edit-mode';
+const META_EXPANDED_KEY = 'wiki-metadata-expanded';
 
 /**
  * An explicit destination for a metadata PUT, used when it must not be read
@@ -51,6 +52,7 @@ export class WikiPage extends LitElement {
     _error: { state: true },
     _bookmarked: { state: true },
     _editing: { state: true },
+    _metaExpanded: { state: true },
     _renaming: { state: true },
     _renameValue: { state: true },
     _renameError: { state: true },
@@ -89,6 +91,8 @@ export class WikiPage extends LitElement {
     /** @type {boolean} */ this._bookmarked = false;
     // Default to edit mode, persisted in localStorage
     this._editing = localStorage.getItem(EDIT_MODE_KEY) !== 'false';
+    // Metadata disclosure lives in the toolbar; its state persists too.
+    this._metaExpanded = localStorage.getItem(META_EXPANDED_KEY) === 'true';
     this._renaming = false;
     /** @type {string} */ this._renameValue = '';
     /** @type {string} */ this._renameError = '';
@@ -156,6 +160,27 @@ export class WikiPage extends LitElement {
     if (!this.#mutex.queueFields(e.detail.fields)) return;
     if (this.#metaTimer != null) clearTimeout(this.#metaTimer);
     this.#metaTimer = setTimeout(() => { this.#flushMetadata(); }, 600);
+  }
+
+  #toggleMeta() {
+    this._metaExpanded = !this._metaExpanded;
+    localStorage.setItem(META_EXPANDED_KEY, String(this._metaExpanded));
+  }
+
+  /** Disclosure control for the metadata panel; sits at the start of the toolbar row. */
+  #renderMetaToggle() {
+    if (!hasMetadata(this._frontmatter, this._frontmatterError, !this._editing)) return nothing;
+    const label = this._metaExpanded ? 'Collapse metadata' : 'Expand metadata';
+    return html`
+      <button
+        type="button"
+        class="wiki-md-toggle"
+        aria-expanded=${this._metaExpanded ? 'true' : 'false'}
+        title=${label}
+        aria-label=${label}
+        @click=${() => this.#toggleMeta()}
+      >${this._metaExpanded ? '▾' : '▸'}</button>
+    `;
   }
 
   /**
@@ -630,6 +655,7 @@ export class WikiPage extends LitElement {
     const metadataPanel = html`
       <wiki-metadata
         ?readonly=${!this._editing}
+        .expanded=${this._metaExpanded}
         .frontmatter=${this._frontmatter}
         .frontmatterRaw=${this._frontmatterRaw}
         .frontmatterError=${this._frontmatterError}
@@ -641,17 +667,19 @@ export class WikiPage extends LitElement {
         @metadata-retry=${this._onMetadataRetry}
       ></wiki-metadata>
     `;
+    const metaToggle = this.#renderMetaToggle();
+    const showMetadata = hasMetadata(this._frontmatter, this._frontmatterError, !this._editing);
 
     if (this._editing) {
       return html`
         <div class="wiki-page">
           ${orphan}
-          ${metadataPanel}
           <wiki-editor
             page=${this.page}
             .content=${this._body}
             .modified=${this._modified}
-            .toolbarLeft=${breadcrumbContent}
+            .toolbarLeft=${html`${metaToggle}${breadcrumbContent}`}
+            .toolbarPanel=${showMetadata ? metadataPanel : nothing}
             .toolbarExtra=${rightButtons}
             @saved=${this._onSaved}
             @reloaded=${this._onReloaded}
@@ -664,12 +692,13 @@ export class WikiPage extends LitElement {
       <div class="wiki-page">
         ${orphan}
         <div class="wiki-page-toolbar">
+          ${metaToggle}
           ${breadcrumbContent}
           <span class="wiki-editor-spacer"></span>
           ${this._modified ? html`<span class="wiki-page-date">${formatDate(this._modified)}</span>` : nothing}
           ${rightButtons}
         </div>
-        ${metadataPanel}
+        ${showMetadata ? metadataPanel : nothing}
         <div class="wiki-page-body" @click=${this._handleClick}>
           ${unsafeHTML(renderMarkdown(this._body))}
         </div>
