@@ -78,4 +78,5 @@ def build_production_loadout(config, *, include_mcp: bool = False) -> tuple[list
     from ...tools.tool_registry import classify_tools
 
     full_loadout = build_full_tool_loadout(config, include_mcp=include_mcp)
-    return classify_tools(full_loadout, config)
+    active, deferred, _ = classify_tools(full_loadout, config)
+    return active, deferred

@@ -70,8 +70,8 @@ External MCP server tools (`mcp__server__tool`) default to `normal` since the MC
 See `classify_tools()` in `src/decafclaw/tools/tool_registry.py`:
 
 1. Resolve every tool's priority.
-2. Active set starts with all `critical` tools (hard floor — still included even when over; a token-budget overrun is logged as a warning).
-3. Append `normal` tools one by one while the active set is under the selected model's tool budget — `agent.tool_context_budget_pct` of its effective context window (#1718).
+2. Active set starts with all `critical` tools (hard floor — still included even when over the percentage). The fill allowance is clamped to `max(budget, critical tokens)`; a warning is logged only when the critical tier cannot fit the model's window at any percentage (#1741).
+3. Append `normal` tools one by one while the active set is under the clamped budget — `agent.tool_context_budget_pct` of the effective context window, raised to the critical floor (#1718, #1741).
 4. Append `low` tools the same way, only if room remains.
 5. Whatever didn't make the cut becomes the deferred set, surfaced via `tool_search` and the deferred catalog.
 

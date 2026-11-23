@@ -265,7 +265,7 @@ def build_tool_list(ctx: "Context", *, all_defs: list | None = None) -> tuple[li
     # Skill tools (from activated skills) should never be deferred
     skill_tool_names = {td.get("function", {}).get("name", "") for td in ctx.tools.extra_definitions}
 
-    active, deferred = classify_tools(
+    active, deferred, _ = classify_tools(
         all_defs,
         ctx.config,
         fetched,

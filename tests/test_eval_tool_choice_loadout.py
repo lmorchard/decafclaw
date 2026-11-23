@@ -93,7 +93,7 @@ def test_production_loadout_classification(config):
     from decafclaw.tools.tool_registry import classify_tools
 
     full_loadout = build_full_tool_loadout(config)
-    active, deferred = classify_tools(full_loadout, config)
+    active, deferred, _ = classify_tools(full_loadout, config)
 
     prod_active, prod_deferred = build_production_loadout(config)
 

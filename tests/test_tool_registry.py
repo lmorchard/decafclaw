@@ -116,7 +116,7 @@ class TestClassifyTools:
         """When tools fit in budget, all are active, none deferred."""
         tools = [_make_tool_def(f"tool_{i}", priority="normal") for i in range(3)]
         config.compaction.max_tokens = 1000000  # huge budget
-        active, deferred = classify_tools(tools, config)
+        active, deferred, _ = classify_tools(tools, config)
         assert len(active) == 3
         assert len(deferred) == 0
 
@@ -126,7 +126,7 @@ class TestClassifyTools:
         normal_tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(5)]
         config.compaction.max_tokens = 100  # tiny budget → 10 token budget
 
-        active, deferred = classify_tools(critical_tools + normal_tools, config)
+        active, deferred, _ = classify_tools(critical_tools + normal_tools, config)
         active_names = {td["function"]["name"] for td in active}
 
         # All critical tools are in active set despite budget overrun
@@ -141,7 +141,7 @@ class TestClassifyTools:
         tools = [_make_tool_def(f"norm_{i}", "x" * 50, priority="normal") for i in range(10)]
         config.compaction.max_tokens = 1000000  # huge budget
 
-        active, deferred = classify_tools(tools, config)
+        active, deferred, _ = classify_tools(tools, config)
         assert len(active) == 10
         assert len(deferred) == 0
 
@@ -153,7 +153,7 @@ class TestClassifyTools:
         per_tool = estimate_tool_tokens([normal_tools[0]])
         config.compaction.max_tokens = int(5.5 * per_tool / config.agent.tool_context_budget_pct)
 
-        active, deferred = classify_tools(normal_tools + low_tools, config)
+        active, deferred, _ = classify_tools(normal_tools + low_tools, config)
         active_names = {td["function"]["name"] for td in active}
         deferred_names = {td["function"]["name"] for td in deferred}
 
@@ -170,7 +170,7 @@ class TestClassifyTools:
         low_tools = [_make_tool_def(f"low_{i}", "x" * 50, priority="low") for i in range(2)]
         config.compaction.max_tokens = 1000000  # huge budget
 
-        active, deferred = classify_tools(normal_tools + low_tools, config)
+        active, deferred, _ = classify_tools(normal_tools + low_tools, config)
         active_names = {td["function"]["name"] for td in active}
         assert "low_0" in active_names
         assert "low_1" in active_names
@@ -181,7 +181,7 @@ class TestClassifyTools:
         tools = [_make_tool_def(f"norm_{i}", priority="normal") for i in range(50)]
         config.compaction.max_tokens = 1000000  # huge budget
 
-        active, deferred = classify_tools(tools, config)
+        active, deferred, _ = classify_tools(tools, config)
         assert len(active) == 50
         assert deferred == []
 
@@ -190,7 +190,7 @@ class TestClassifyTools:
         tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
         config.compaction.max_tokens = 100  # tight
 
-        active, deferred = classify_tools(tools, config, fetched_names={"norm_5"})
+        active, deferred, _ = classify_tools(tools, config, fetched_names={"norm_5"})
         active_names = {td["function"]["name"] for td in active}
         assert "norm_5" in active_names
 
@@ -199,7 +199,7 @@ class TestClassifyTools:
         tools = [_make_tool_def(f"norm_{i}", "x" * 200) for i in range(20)]
         config.compaction.max_tokens = 100
 
-        active, deferred = classify_tools(tools, config, skill_tool_names={"norm_3"})
+        active, deferred, _ = classify_tools(tools, config, skill_tool_names={"norm_3"})
         active_names = {td["function"]["name"] for td in active}
         assert "norm_3" in active_names
 
@@ -212,7 +212,7 @@ class TestClassifyTools:
         ]
         config.compaction.max_tokens = 100  # tight budget: only critical fits
 
-        active, deferred = classify_tools(
+        active, deferred, _ = classify_tools(
             tools,
             config,
             skill_tool_names={"ondemand_crit", "ondemand_norm", "ondemand_low"},
@@ -237,7 +237,7 @@ class TestClassifyTools:
         # Very tight budget: non-always-loaded tools would not fit.
         config.compaction.max_tokens = 100
 
-        active, deferred = classify_tools(
+        active, deferred, _ = classify_tools(
             tools,
             config,
             skill_tool_names={"al_crit", "al_norm", "al_low"},
@@ -253,7 +253,7 @@ class TestClassifyTools:
         config.compaction.max_tokens = 100
         config.agent.critical_tools = ["norm_7"]
 
-        active, deferred = classify_tools(tools, config)
+        active, deferred, _ = classify_tools(tools, config)
         active_names = {td["function"]["name"] for td in active}
         assert "norm_7" in active_names
 
@@ -263,7 +263,7 @@ class TestClassifyTools:
         tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
         config.compaction.max_tokens = 100  # tight
 
-        active, deferred = classify_tools(tools, config, fetched_names=["norm_2"])
+        active, deferred, _ = classify_tools(tools, config, fetched_names=["norm_2"])
         active_names = {td["function"]["name"] for td in active}
         assert "norm_2" in active_names
 
@@ -272,7 +272,7 @@ class TestClassifyTools:
         tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(20)]
         config.compaction.max_tokens = 100  # tight
 
-        active, deferred = classify_tools(
+        active, deferred, _ = classify_tools(
             tools,
             config,
             fetched_names={"norm_3", "norm_9"},
@@ -289,7 +289,7 @@ class TestClassifyTools:
             _make_tool_def("norm_c", priority="normal"),
         ]
         config.compaction.max_tokens = 1000000
-        active, _ = classify_tools(tools, config)
+        active, _, _ = classify_tools(tools, config)
         names = [td["function"]["name"] for td in active]
         assert names == ["norm_a", "norm_b", "norm_c"]
 
@@ -317,13 +317,15 @@ class TestClassifyTools:
         per_tool = estimate_tool_tokens([tools[0]])
         assert per_tool < config.tool_context_budget_for("small") < per_tool * 10
 
-        active_small, deferred_small = classify_tools(tools, config, model_name="small")
-        active_big, deferred_big = classify_tools(tools, config, model_name="big")
+        active_small, deferred_small, effective_small = classify_tools(tools, config, model_name="small")
+        active_big, deferred_big, effective_big = classify_tools(tools, config, model_name="big")
 
         assert 0 < len(active_small) < 10
         assert len(deferred_small) == 10 - len(active_small)
+        assert effective_small == config.tool_context_budget_for("small")
         assert len(active_big) == 10
         assert deferred_big == []
+        assert effective_big == config.tool_context_budget_for("big")
 
 
 def test_build_tool_list_uses_active_model_window(ctx):
@@ -356,27 +358,80 @@ REGISTRY_LOGGER = "decafclaw.tools.tool_registry"
 
 
 class TestClassifyToolsOverflowLogging:
-    """The token budget is the only limit (#1692): overflow logs one WARNING.
-    Classification itself never changes."""
+    """The critical tier is the floor, so the fill budget is clamped to it
+    (#1741). The warning fires only when the floor cannot fit the window."""
 
     def _records(self, caplog, level):
         return [r for r in caplog.records if r.name == REGISTRY_LOGGER and r.levelno == level]
 
-    def test_token_budget_overflow_logs_warning(self, config, caplog):
-        """Critical set over the token budget: one WARNING."""
+    def test_critical_floor_above_window_logs_warning(self, config, caplog):
+        """The floor exceeds the whole window: one WARNING names the real problem."""
         critical_tools = [_make_tool_def(f"crit_{i}", "x" * 200, priority="critical") for i in range(5)]
         normal_tools = [_make_tool_def(f"norm_{i}", "x" * 200, priority="normal") for i in range(5)]
-        config.compaction.max_tokens = 100  # tiny budget → 10 token budget
+        config.compaction.max_tokens = 100  # tiny budget → 10 token budget and a 100-token window
+        floor = estimate_tool_tokens(critical_tools)
 
         with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
-            active, deferred = classify_tools(critical_tools + normal_tools, config)
+            active, deferred, effective = classify_tools(critical_tools + normal_tools, config)
 
         warnings = self._records(caplog, logging.WARNING)
         assert len(warnings) == 1
-        assert "exceeds budget" in warnings[0].getMessage()
+        message = warnings[0].getMessage()
+        assert f"Critical tools need {floor} tokens" in message
+        assert "100-token window" in message
+        assert "cannot fit them at any percentage" in message
+        assert effective == floor
         # Classification unchanged: critical active, normal deferred
         assert {td["function"]["name"] for td in active} == {f"crit_{i}" for i in range(5)}
         assert {td["function"]["name"] for td in deferred} == {f"norm_{i}" for i in range(5)}
+
+    def test_small_window_clamps_budget_without_warning(self, config, caplog):
+        """A floor above the percentage but under the window: no warning (#1741)."""
+        from decafclaw.config_types import ModelConfig
+
+        config.compaction.max_tokens = 300000
+        config.agent.tool_context_budget_pct = 0.10
+        config.model_configs["small"] = ModelConfig(provider="local", model="tiny", context_window_size=32000)
+        critical_tools = [_make_tool_def(f"crit_{i}", "x" * 3000, priority="critical") for i in range(5)]
+        normal_tools = [_make_tool_def(f"norm_{i}", "x" * 2000, priority="normal") for i in range(3)]
+        floor = estimate_tool_tokens(critical_tools)
+        raw_budget = config.tool_context_budget_for("small")
+        assert raw_budget == 3200
+        assert raw_budget < floor < 32000
+
+        with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
+            active, deferred, effective = classify_tools(critical_tools + normal_tools, config, model_name="small")
+
+        assert effective == floor
+        assert self._records(caplog, logging.WARNING) == []
+        assert {td["function"]["name"] for td in active} == {f"crit_{i}" for i in range(5)}
+        assert {td["function"]["name"] for td in deferred} == {f"norm_{i}" for i in range(3)}
+
+    def test_effective_budget_never_below_critical_floor(self, config):
+        """Every window clamps up to at least the critical-tier sum (#1741)."""
+        from decafclaw.config_types import ModelConfig
+
+        config.agent.tool_context_budget_pct = 0.10
+        critical_tools = [_make_tool_def(f"crit_{i}", "x" * 3000, priority="critical") for i in range(5)]
+        floor = estimate_tool_tokens(critical_tools)
+
+        for window in (1000, 32000, 1000000):
+            key = f"window-{window}"
+            config.model_configs[key] = ModelConfig(provider="local", model=key, context_window_size=window)
+            _, _, effective = classify_tools(critical_tools, config, model_name=key)
+            assert effective == max(config.tool_context_budget_for(key), floor)
+            assert effective >= floor
+
+    def test_no_declared_window_keeps_percentage_budget(self, config):
+        """Without any declared window the budget is the same percentage proxy."""
+        tools = [_make_tool_def(f"crit_{i}", "x" * 50, priority="critical") for i in range(3)]
+        config.compaction.max_tokens = 100000
+        config.agent.tool_context_budget_pct = 0.10
+
+        _, deferred, effective = classify_tools(tools, config)
+
+        assert effective == 10000
+        assert deferred == []
 
     def test_many_critical_under_budget_logs_nothing(self, config, caplog):
         """35 tools exceed the retired count cap but fit the budget: no log."""
@@ -384,7 +439,7 @@ class TestClassifyToolsOverflowLogging:
         config.compaction.max_tokens = 1000000  # huge token budget
 
         with caplog.at_level(logging.INFO, logger=REGISTRY_LOGGER):
-            active, deferred = classify_tools(tools, config)
+            active, deferred, _ = classify_tools(tools, config)
 
         all_records = self._records(caplog, logging.WARNING) + self._records(caplog, logging.INFO)
         assert all_records == []
@@ -538,7 +593,7 @@ class TestBuildDeferredListText:
         b_idx = github_section.index("issue_b")
         assert a_idx < b_idx
 
-    def test_classify_hidden_skill_tools_forced_to_deferred(self):
+    def test_classify_hidden_skill_tools_forced_to_deferred(self, config):
         """Skill tools whose owning skill is not in the activated set
         must NEVER land in the active list, even when budget would allow
         them. The active list becomes the LLM's tools parameter; seeing
@@ -546,19 +601,8 @@ class TestBuildDeferredListText:
         bypassing the skill body."""
         from decafclaw.tools.tool_registry import classify_tools
 
-        class _FakeAgentConfig:
-            critical_tools: list[str] = []
-
-        class _FakeConfig:
-            agent = _FakeAgentConfig()
-
-            def tool_context_budget_for(self, model_name=""):
-                return 1_000_000  # generous; would normally fit
-
-            discovered_skills: list = []
-            skill_tool_owners = {"edit_with_strunk": "writing-clearly"}
-
-        config = _FakeConfig()
+        config.compaction.max_tokens = 1000000  # generous; would normally fit
+        config.skill_tool_owners = {"edit_with_strunk": "writing-clearly"}
 
         skill_tool = _make_tool_def(
             "edit_with_strunk",
@@ -573,7 +617,7 @@ class TestBuildDeferredListText:
 
         # skill_tool_names is empty → owning skill 'writing-clearly' is
         # NOT activated. edit_with_strunk should be force-deferred.
-        active, deferred = classify_tools(
+        active, deferred, _ = classify_tools(
             [skill_tool, core_tool],
             config,
             fetched_names=set(),
@@ -588,28 +632,17 @@ class TestBuildDeferredListText:
         assert "edit_with_strunk" in deferred_names
         assert "workspace_read" in active_names
 
-    def test_classify_activated_skill_tools_stay_critical(self):
+    def test_classify_activated_skill_tools_stay_critical(self, config):
         """When a skill IS activated (its tool names appear in
         skill_tool_names), its tools enter the active set normally —
         the hidden-tool gate only applies to non-activated skills."""
         from decafclaw.tools.tool_registry import classify_tools
 
-        class _FakeAgentConfig:
-            critical_tools: list[str] = []
-
-        class _FakeConfig:
-            agent = _FakeAgentConfig()
-
-            def tool_context_budget_for(self, model_name=""):
-                return 1_000_000
-
-            discovered_skills: list = []
-            skill_tool_owners = {"edit_with_strunk": "writing-clearly"}
-
-        config = _FakeConfig()
+        config.compaction.max_tokens = 1000000
+        config.skill_tool_owners = {"edit_with_strunk": "writing-clearly"}
         skill_tool = _make_tool_def("edit_with_strunk", "Revise prose.")
 
-        active, deferred = classify_tools(
+        active, deferred, _ = classify_tools(
             [skill_tool],
             config,
             fetched_names=set(),
@@ -979,7 +1012,7 @@ class TestWorkspaceEditDefaultRouting:
 
     def test_workspace_edit_active_in_real_floor(self, config):
         pool = _real_pool(config)
-        active, deferred = classify_tools(pool, config)
+        active, deferred, _ = classify_tools(pool, config)
         active_names = {td["function"]["name"] for td in active}
         deferred_names = {td["function"]["name"] for td in deferred}
         assert "workspace_edit" in active_names

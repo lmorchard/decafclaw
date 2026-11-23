@@ -92,6 +92,29 @@ async def test_health_tools_section_with_fetched_list(ctx):
 
 
 @pytest.mark.asyncio
+async def test_health_tools_section_uses_effective_budget(ctx, monkeypatch):
+    """Token usage compares the active set with the clamped budget (#1741)."""
+    from decafclaw.config_types import ModelConfig
+    from decafclaw.tools import TOOL_DEFINITIONS
+    from decafclaw.tools.tool_registry import classify_tools, estimate_tool_tokens
+
+    monkeypatch.setattr("decafclaw.mcp_client.get_registry", lambda: None)
+    ctx.config.model_configs["tiny"] = ModelConfig(provider="local", model="tiny", context_window_size=2000)
+    ctx.active_model = "tiny"
+
+    result = await tool_health_status(ctx)
+
+    all_defs = TOOL_DEFINITIONS + ctx.tools.extra_definitions
+    active, _, effective = classify_tools(all_defs, ctx.config, model_name="tiny")
+    active_tokens = estimate_tool_tokens(active)
+    assert f"- **Token usage:** ~{active_tokens:,} / {effective:,} budget" in result
+    # The critical floor exceeds the raw 10% budget, so the denominator is clamped.
+    assert effective > ctx.config.tool_context_budget_for("tiny")
+    # The numerator is the active set, not every definition (deferred included).
+    assert active_tokens < estimate_tool_tokens(all_defs)
+
+
+@pytest.mark.asyncio
 async def test_health_embeddings_no_db(ctx):
     """Embeddings section handles missing database."""
     result = await tool_health_status(ctx)

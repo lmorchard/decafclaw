@@ -83,7 +83,7 @@ async def run_case(
     if production_mode:
         from ...tools.tool_registry import build_deferred_list_text, classify_tools
 
-        active, deferred = classify_tools(tool_loadout, config)
+        active, deferred, _ = classify_tools(tool_loadout, config)
         tool_loadout = active
 
         active_names = {t.get("function", {}).get("name") for t in active}
