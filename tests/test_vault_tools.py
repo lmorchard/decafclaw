@@ -153,6 +153,32 @@ class TestResolvePage:
         assert result.name == "Hello.md"
         assert not (vault_dir / "Hello.md.md").exists()
 
+    def test_dotted_title_resolves(self, config, vault_dir):
+        """Titles containing periods must resolve by bare name (#1748).
+
+        Path(...).stem truncates at the last dot, so "X vs. Y" looked up as
+        "X vs" and every vault tool treating the page as missing.
+        """
+        sub = vault_dir / "agent" / "pages"
+        sub.mkdir(parents=True)
+        (sub / "Consciousness vs. Collective Systems.md").write_text("# X")
+
+        result = resolve_page(config, "Consciousness vs. Collective Systems")
+
+        assert result is not None
+        assert result.name == "Consciousness vs. Collective Systems.md"
+
+    def test_dotted_title_with_underscore_free_spelling(self, config, vault_dir):
+        """Sanity: a plain dotted name still works alongside normal pages."""
+        sub = vault_dir / "agent" / "pages"
+        sub.mkdir(parents=True)
+        (sub / "v1.2 Release Notes.md").write_text("# notes")
+
+        result = resolve_page(config, "v1.2 Release Notes")
+
+        assert result is not None
+        assert result.name == "v1.2 Release Notes.md"
+
 
 class TestVaultRead:
     @pytest.mark.asyncio

@@ -420,3 +420,145 @@ class TestSubscriberIndexSync:
         assert persisted == rebuild_index(config)
         assert persisted["PageTarget.md"] == ["PageANew.md"]
         assert "PageA.md" not in persisted["PageTarget.md"]
+
+
+class TestResolveLinkTarget:
+    """Link-target resolution must handle Obsidian link syntax (#1748).
+
+    Two defects were found by comparing ``vault_broken_links`` output against
+    real page names: heading anchors were never stripped, and
+    ``Path(...).stem`` truncated titles containing periods. Both made existing
+    pages unreachable, which inflated the broken-link count and silently
+    dropped graph edges (and therefore PageRank).
+    """
+
+    @pytest.fixture
+    def lookup(self, tmp_path):
+        from decafclaw.backlinks import _build_page_lookup
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        # Pages live in a subfolder, as they do in the real vault
+        # (agent/pages/...). This matters: it forces resolution through the
+        # stem fallback, because full_lower_map keys are full rel paths and a
+        # bare title never matches them.
+        pages = [
+            vault / "agent" / "pages" / "AI in Software Engineering.md",
+            vault / "agent" / "pages" / "Consciousness vs. Collective Systems.md",
+            vault / "alpha.md",
+            vault / "nested" / "Deep Page.md",
+            vault / "nested" / "alpha.md",
+        ]
+        for p in pages:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("# page")
+        return _build_page_lookup(pages, vault)
+
+    def test_plain_stem_resolves(self, lookup):
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("AI in Software Engineering", full, stem) == (
+            "agent/pages/AI in Software Engineering.md"
+        )
+
+    def test_heading_anchor_is_stripped(self, lookup):
+        """[[Page#Section]] must resolve, as Obsidian always has."""
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("AI in Software Engineering#Worktrees", full, stem) == (
+            "agent/pages/AI in Software Engineering.md"
+        )
+
+    def test_heading_anchor_with_alias_is_stripped(self, lookup):
+        """[[Page#Section|display]] carries both anchor and alias."""
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("AI in Software Engineering#Worktrees|worktrees", full, stem) == (
+            "agent/pages/AI in Software Engineering.md"
+        )
+
+    def test_alias_only_still_resolves(self, lookup):
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("AI in Software Engineering|AI SE", full, stem) == (
+            "agent/pages/AI in Software Engineering.md"
+        )
+
+    def test_anchor_on_path_form_is_stripped(self, lookup):
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("nested/Deep Page#Heading", full, stem) == "nested/Deep Page.md"
+
+    def test_dotted_title_resolves(self, lookup):
+        """Path(...).stem truncates at the last dot — titles with periods broke."""
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("Consciousness vs. Collective Systems", full, stem) == (
+            "agent/pages/Consciousness vs. Collective Systems.md"
+        )
+
+    def test_dotted_title_with_anchor_resolves(self, lookup):
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("Consciousness vs. Collective Systems#Intro", full, stem) == (
+            "agent/pages/Consciousness vs. Collective Systems.md"
+        )
+
+    def test_md_extension_form_resolves(self, lookup):
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("alpha.md", full, stem) == "alpha.md"
+
+    def test_ambiguous_stem_picks_sorted_first(self, lookup):
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("alpha", full, stem) == "alpha.md"
+
+    def test_missing_target_returns_none(self, lookup):
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("Nope Not A Page", full, stem) is None
+
+    def test_empty_and_alias_only_return_none(self, lookup):
+        from decafclaw.backlinks import _resolve_link_target
+
+        full, stem = lookup
+        assert _resolve_link_target("", full, stem) is None
+        assert _resolve_link_target("|just display", full, stem) is None
+        assert _resolve_link_target("#justanchor", full, stem) is None
+
+
+class TestAnchoredLinksBuildEdges:
+    """Anchored links must contribute backlink edges (#1748).
+
+    ``lmorchard-starnet.md`` had 86 outbound links, all anchored, and
+    contributed zero edges — enough to make PageRank treat a dense hub as a
+    toehold.
+    """
+
+    def test_anchored_link_creates_inbound_edge(self, config, vault_dir):
+        (vault_dir / "Hub.md").write_text("See [[Target Page#Section One]] and [[Target Page#Two]].")
+        (vault_dir / "Target Page.md").write_text("# Target")
+
+        index = rebuild_index(config)
+
+        assert index.get("Target Page.md") == ["Hub.md"]
+        assert inbound_count(config, "Target Page.md") == 1
+
+    def test_dotted_target_title_creates_inbound_edge(self, config, vault_dir):
+        (vault_dir / "Linker.md").write_text("Related: [[Consciousness vs. Collective Systems]]")
+        (vault_dir / "Consciousness vs. Collective Systems.md").write_text("# X")
+
+        index = rebuild_index(config)
+
+        assert index.get("Consciousness vs. Collective Systems.md") == ["Linker.md"]
