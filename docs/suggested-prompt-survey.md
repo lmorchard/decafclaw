@@ -166,9 +166,9 @@ vault entries). Stage 0 calibrated a deterministic 300-boundary sample.
 | final user message is stop-like | 0 / 279 multi-turn conversations (0.0%) |
 
 The easy recitation band is small on production too. The stop metric is the
-notable zero: users do not say "thanks, that's all" at the end of these
+notable zero: users do not explicitly close the loop at the end of these
 conversations. They simply stop. A forward-only suggestion has no textual
-"finished" signal to learn from.
+finished signal to learn from.
 
 ### Stage 0 — vault-direction calibration
 
@@ -195,38 +195,39 @@ is a controlled comparison against `claude-haiku-4.5`.
 
 | arm | exact | token J ≥ 0.6 | abstained | direction mean |
 |---|---|---|---|---|
-| A: aux flash | 0/200 (0.0%) | 1/200 (0.5%) | 86 (43.0%) | 0.040 |
-| A: active (mostly flash) | 0/200 (0.0%) | 1/200 (0.5%) | 78 (39.0%) | 0.040 |
-| B: aux flash | 0/200 (0.0%) | 1/200 (0.5%) | 82 (41.0%) | 0.041 |
-| B: active haiku 4.5 | 0/200 (0.0%) | 0/200 (0.0%) | 0 (0.0%) | 0.029 |
+| A: aux flash | 1/200 (0.5%) | 3/200 (1.5%) | 78 (39.0%) | 0.056 |
+| A: active (mostly flash) | 1/200 (0.5%) | 3/200 (1.5%) | 71 (35.5%) | 0.052 |
+| B: aux flash | 1/200 (0.5%) | 2/200 (1.0%) | 80 (40.0%) | 0.041 |
+| B: active haiku 4.5 | 1/200 (0.5%) | 1/200 (0.5%) | 1 (0.5%) | 0.032 |
 
-The predictor produced no exact match in 200 production turns and at most one
-token-set hit. The stronger arm is not better: haiku never abstains, writes
-longer messages, and lands on unrelated text 178/200 times. The cheap arm is
-the better behavior. The direction score for both is below the
-reuse-previous-message floor (0.055), so the suggestions point at a less useful
-part of the vault than a trivial repeat.
+The predictor produced one exact match in 200 production turns and at most
+three token-set hits. The stronger arm is not better: haiku almost never
+abstains (1/200), writes longer messages, and lands on unrelated text 171/200
+times. The cheap arm is the better behavior. The direction score for both is
+below the reuse-previous-message floor (0.063), so the suggestions point at a
+less useful part of the vault than a trivial repeat.
 
-On the dev subset used by the scorer, calibration was: previous user 0.055,
-last assistant 0.040, global connected 0.002, oracle 0.952.
+On the dev subset used by the scorer, calibration was: previous user 0.063,
+last assistant 0.044, global connected 0.002, oracle 0.968. Eight of the 200
+cases carried real provenance; the rest used `retrieval_proxy`.
 
 ### Failure taxonomy (run B, aux flash arm)
 
 | outcome | cases |
 |---|---|
 | exact hit | 0 |
-| near-miss wording (token J ≥ 0.3) | 4 |
-| missed an offered option | 2 |
+| near-miss wording (token J ≥ 0.3) | 5 |
+| missed an offered option | 1 |
 | hallucinated specific (new path/URL/number) | 4 |
-| abstained | 82 |
-| unrelated | 108 |
+| abstained | 80 |
+| unrelated | 109 |
 
-The haiku arm's taxonomy is the cautionary version: zero abstentions, 178
-unrelated, 7 generic filler, 5 too long, 4 hallucinated specifics. Abstention
-in the flash arm is functioning as intended (it is safe), but at 41–43% it is
-too frequent for a useful ghost. Lowering it is not obviously the fix: the
-operator review below shows the non-abstentions are mostly wrong, and the
-always-answer model is worse.
+The haiku arm is the cautionary version: 1 abstention, 171 unrelated, 9 generic
+filler, 8 too long, 5 hallucinated specifics. Abstention in the flash arm is
+functioning as intended (it is safe), but at 39–40% it is too frequent for a
+useful ghost. Lowering it is not obviously the fix: the operator review below
+shows the non-abstentions are mostly wrong, and the always-answer model is
+worse.
 
 ### Operator spot check
 
@@ -235,21 +236,21 @@ git-ignored with the dev set. The assistant operator reviewed the run A sheet:
 
 | judgment | cases |
 |---|---|
-| useful (same intent, would have saved typing) | 5 / 40 |
-| plausible but wrong (related, would mislead) | 8 / 40 |
-| off (wrong or contrary to the user's intent) | 7 / 40 |
-| abstained (safe, but missed a recoverable answer) | 20 / 40 |
+| useful (same intent, would have saved typing) | 7 / 40 |
+| plausible but wrong (related, would mislead) | 9 / 40 |
+| off (wrong or contrary to the user's intent) | 5 / 40 |
+| abstained (safe, but missed a recoverable answer) | 19 / 40 |
 
-The useful suggestions were mostly terse continuations: a paraphrase of a
-commit-and-push confirmation, a one-word "another one?" follow-up, a reworded
-"start drafting" instruction, and a "go ahead" approval. The dangerous class is
-real too: a question about intake sources got a confident "publish it"
-suggestion, and a discussion turn got an unrelated next step. These are
-paraphrases, not quotes; the raw sheet stays local.
+The useful suggestions were mostly terse continuations: a commit-and-push
+confirmation, a follow-up asking for another item, a reworded start-drafting
+instruction, and a plain go-ahead. The dangerous class is real too: a question
+about intake sources got a confident publish suggestion, and a discussion turn
+got an unrelated next step. No transcript text is reproduced here; the raw
+sheet stays local.
 
 The sheet oversamples abstentions by design (it picks a spread of outcomes),
-so its 50% abstention share is not the population rate. Among the 20
-non-abstentions, 5 were useful, 8 were plausible but wrong, and 7 were off.
+so its 47.5% abstention share is not the population rate. Among the 21
+non-abstentions, 7 were useful, 9 were plausible but wrong, and 5 were off.
 This is an agent review, not a human one. A human should re-read the sheet
 before treating the counts as final.
 
@@ -257,12 +258,12 @@ before treating the counts as final.
 
 | run | unique calls | prompt tokens | completion tokens | priced cost |
 |---|---|---|---|---|
-| A (as configured) | 233 | 230k | 1.3k | ~$0.04 + unpriced flash/local calls |
-| B (flash vs haiku) | 400 | 210k haiku + 201k flash | 5.7k | ~$0.23 + unpriced flash |
-| total | 633 | — | — | **< $0.40** |
+| A (as configured) | 237 | 234k | 1.5k | ~$0.05 + unpriced flash/local calls |
+| B (flash vs haiku) | 400 | 222k haiku + 214k flash | 6.2k | ~$0.25 + unpriced flash |
+| total | 637 | — | — | **< $0.40** |
 
-The dry run bounded the plan at 233 and 400 calls respectively; a conservative
-$5/M input, $15/M output bound for the 633 calls is under $2, and the priced
+The dry run bounded the plan at 237 and 400 calls respectively; a conservative
+$5/M input, $15/M output bound for the 637 calls is under $2, and the priced
 actual is under $0.40. The hard cap (`--max-calls`, default 1200) was never
 approached. Embeddings and Stage 0 are vertex-embedding calls with negligible
 cost.
@@ -271,14 +272,14 @@ cost.
 
 **No-go for a general ghost-text next-prompt feature.**
 
-- Production exact reuse is 0/200 and near-exact is 1/200. This is far below
-  the 20% gate the issue proposed, not a marginal miss.
+- Production exact reuse is 1/200 (0.5%) and near-exact is 3/200 (1.5%).
+  This is far below the 20% gate the issue proposed, not a marginal miss.
 - The model does not beat "reuse the previous user message" on vault
   direction; it points somewhere less useful.
-- 41–43% abstention plus a non-abstention mix that is useful only 25% of the
-  time means the ghost would either be absent or wrong most of the time.
-- Forcing an answer makes it worse: haiku with no abstention was unrelated
-  89% of the time and invented specifics in 4 cases.
+- 35–40% abstention plus a non-abstention mix that is useful only one-third of
+  the time means the ghost would either be absent or wrong most of the time.
+- Forcing an answer makes it worse: haiku with almost no abstention was
+  unrelated 85.5% of the time and invented specifics in 5 cases.
 
 **Do not start the sibling UI issue.** The measurement the issue asked for
 now exists, and it says the expensive part is not justified.

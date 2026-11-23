@@ -24,3 +24,9 @@
 - Spend: 233 + 400 calls, priced actual < $0.40; conservative <$2. Recommendation: no-go for general ghost text; harness remains for re-runs.
 - Gates: `make check` EXIT=0; focused survey tests 40 passed; full `make test` has 4 pre-existing `tests/test_host_metrics.py` failures also on main.
 - Privacy: generated dev sets are git-ignored; production temp worktree deleted.
+- 2026-11-22 17:35 — Independent review found a recency-stratification bug (sorted by conv_id, not timestamp), spend double-count on collapsed arms, errors counted as abstention, and an empty-results crash. Fixed with regression tests. Also removed verbatim production quotes from the public memo; privacy rule now holds.
+- Reran production after the fix: corrected dev set 200 cases from 3,185 eligible boundaries / 266 conversations; 155 conversations, max 5 cases each; recency buckets now Mar–Apr / Jun–Oct / Nov.
+- Corrected run A: aux flash 1/200 exact, 3/200 Jaccard, 78 abstained, direction 0.056; active 1/3/71, direction 0.052. Calibration floor 0.063.
+- Corrected run B: flash 1/200 exact, 2 Jaccard, 80 abstained, direction 0.041; haiku 1/200 exact, 1 Jaccard, 1 abstained, 171 unrelated, 5 hallucinated, direction 0.032.
+- Corrected operator spot check: 7 useful, 9 plausible-wrong, 5 off, 19 abstained. No-go stands.
+- Spend: run A 237 calls ~$0.05 priced; run B 400 calls ~$0.25 haiku; total <$0.40.
