@@ -56,6 +56,13 @@ log = logging.getLogger(__name__)
 # conv_id must be safe for use as a filename — alphanumeric, hyphens, dots, underscores only
 _SAFE_CONV_ID = re.compile(r"^[a-zA-Z0-9._-]+$")
 
+# Initial title for a new conversation: the first _TITLE_PREVIEW_LEN characters
+# of the opening message. When truncated, break at the last space only if it
+# falls past _TITLE_MIN_BREAK_POS — a boundary earlier than that would leave an
+# unhelpfully short title, so the full preview is kept instead.
+_TITLE_PREVIEW_LEN = 100
+_TITLE_MIN_BREAK_POS = 50
+
 
 def _is_safe_conv_id(conv_id: str) -> bool:
     """Reject conv_ids that could escape the conversations directory."""
@@ -620,10 +627,10 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
     # Auto-title: use first user message if title is still default
     conv = index.get(conv_id)
     if conv and conv.title == "New conversation":
-        title = text[:100]
-        if len(text) > 100:
+        title = text[:_TITLE_PREVIEW_LEN]
+        if len(text) > _TITLE_PREVIEW_LEN:
             last_space = title.rfind(" ")
-            if last_space > 50:
+            if last_space > _TITLE_MIN_BREAK_POS:
                 title = title[:last_space]
             title += "..."
         index.rename(conv_id, title)
