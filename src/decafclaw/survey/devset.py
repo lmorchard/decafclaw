@@ -37,7 +37,7 @@ def recency_bucket(boundaries: list[TurnBoundary]) -> dict[str, str]:
         current = latest.get(boundary.conv_id)
         if current is None or key > current[0]:
             latest[boundary.conv_id] = (key, boundary.conv_id)
-    ordered = sorted(latest)
+    ordered = sorted(latest, key=lambda conv_id: latest[conv_id][0])
     if not ordered:
         return {}
     third = max(1, (len(ordered) + 2) // 3)

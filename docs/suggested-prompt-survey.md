@@ -50,9 +50,9 @@ is worthless; it means the easy recitation band is small.
 ### Vault-direction proxy and calibration
 
 Every archived turn may carry `provenance.vault` with the pages actually
-injected. When present, that is the ground truth page set. When absent (the
-local dev corpus has none), the harness uses the pages retrieved by the **real
-next message** and records the source as `retrieval_proxy`.
+injected. When present, that is the ground truth page set. When absent (many
+turns predate provenance persistence), the harness uses the pages retrieved by
+the **real next message** and records the source as `retrieval_proxy`.
 
 The proxy is calibrated against trivial predictors so the score has a known
 floor and ceiling:
@@ -105,8 +105,9 @@ interrupted run resumes without paying twice.
 `--aux-model` overrides the aux arm; without it the aux arm follows
 `effective_aux_model`, which collapses to the active model when
 `auxiliary_model` is unset. Identical `(model, turn_id)` calls are deduplicated
-and cached in `model-cache.jsonl`, so a rerun after an interruption costs
-nothing for completed cases.
+and streamed to `model-cache.jsonl`; pass the same `--out` directory to reuse
+that cache after an interruption, or the default timestamped directory will
+start fresh.
 
 Page retrieval uses the production embedding index when available
 (`search_similar_sync`). If the embedding endpoint is unavailable,
@@ -160,7 +161,7 @@ vault entries). Stage 0 calibrated a deterministic 300-boundary sample.
 |---|---|
 | assistant offered a choice | 570 / 3,172 boundaries (18.0%) |
 | next message picked one | 21 (3.7% when offered, 0.7% of all) |
-| — checkbox / listed / inline | 0 / 5 / 16 |
+| — checkbox / option / inline | 0 / 5 / 16 |
 | whole-message repeat (not a choice) | 5 (0.2%) |
 | final user message is stop-like | 0 / 279 multi-turn conversations (0.0%) |
 
@@ -239,11 +240,12 @@ git-ignored with the dev set. The assistant operator reviewed the run A sheet:
 | off (wrong or contrary to the user's intent) | 7 / 40 |
 | abstained (safe, but missed a recoverable answer) | 20 / 40 |
 
-Useful examples: "Go ahead with commit & push" → "Go ahead and commit and
-push."; "One more?" → "Another one?"; "Let's start drafting…" → "Let's start
-drafting it."; "Go for it" → "Go ahead.". The dangerous class is real: a turn
-asking about intake sources got "That's fine, let's publish it.", and a CI
-failure got abstained while other turns got confidently wrong specifics.
+The useful suggestions were mostly terse continuations: a paraphrase of a
+commit-and-push confirmation, a one-word "another one?" follow-up, a reworded
+"start drafting" instruction, and a "go ahead" approval. The dangerous class is
+real too: a question about intake sources got a confident "publish it"
+suggestion, and a discussion turn got an unrelated next step. These are
+paraphrases, not quotes; the raw sheet stays local.
 
 The sheet oversamples abstentions by design (it picks a spread of outcomes),
 so its 50% abstention share is not the population rate. Among the 20

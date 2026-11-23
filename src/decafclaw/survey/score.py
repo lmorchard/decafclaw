@@ -140,39 +140,36 @@ def _price(model: str) -> tuple[float, float] | None:
 def estimate_spend(
     cases: list[dict], config, arms: list[str], aux_override: str = "", active_override: str = ""
 ) -> dict:
-    unique: set[tuple[str, str]] = set()
-    prompt_chars = 0
+    unique_chars: dict[tuple[str, str], int] = {}
     for case in cases:
         chars = len(PREDICTOR_SYSTEM_PROMPT) + len(str(case.get("transcript_tail") or "")) + 40
         for arm in arms:
-            key = (resolve_model(config, arm, case, aux_override, active_override), case["turn_id"])
-            if key in unique:
-                continue
-            unique.add(key)
-            prompt_chars += chars
-    input_tokens = prompt_chars // 4
-    output_tokens = len(unique) * _AVG_OUTPUT_TOKENS
+            model = resolve_model(config, arm, case, aux_override, active_override)
+            unique_chars.setdefault((model, case["turn_id"]), chars)
+    input_tokens = sum(unique_chars.values()) // 4
+    output_tokens = len(unique_chars) * _AVG_OUTPUT_TOKENS
+    chars_by_model: dict[str, int] = {}
+    calls_by_model: dict[str, int] = {}
+    for (model, _turn_id), chars in unique_chars.items():
+        chars_by_model[model] = chars_by_model.get(model, 0) + chars
+        calls_by_model[model] = calls_by_model.get(model, 0) + 1
     cost = 0.0
     unpriced: set[str] = set()
-    input_by_model: dict[str, int] = {}
-    for case in cases:
-        for arm in arms:
-            model = resolve_model(config, arm, case, aux_override, active_override)
-            input_by_model[model] = input_by_model.get(model, 0) + 1
-    for model, calls in input_by_model.items():
+    for model, chars in chars_by_model.items():
         price = _price(model)
         if price is None:
             unpriced.add(model)
             continue
-        cost += calls * (len(PREDICTOR_SYSTEM_PROMPT) + 2000) / 4 / 1_000_000 * price[0]
+        calls = calls_by_model[model]
+        cost += chars / 4 / 1_000_000 * price[0]
         cost += calls * _AVG_OUTPUT_TOKENS / 1_000_000 * price[1]
     return {
-        "calls": len(unique),
+        "calls": len(unique_chars),
         "input_tokens_estimate": input_tokens,
         "output_tokens_estimate": output_tokens,
         "cost_usd_estimate": round(cost, 3),
         "unpriced_models": sorted(unpriced),
-        "assumption": "~4 chars/token, 40 output tokens/call, average 2000-char prompt",
+        "assumption": "~4 chars/token, 40 output tokens/call, unique (model, turn) calls",
     }
 
 
@@ -271,7 +268,22 @@ async def _direction_pages(
 
 def _aggregate(rows: list[CaseResult]) -> dict:
     if not rows:
-        return {"cases": 0}
+        return {
+            "cases": 0,
+            "models": [],
+            "errors": 0,
+            "exact": 0,
+            "exact_rate": 0.0,
+            "jaccard_hits": 0,
+            "jaccard_hit_rate": 0.0,
+            "mean_token_jaccard": 0.0,
+            "abstained": 0,
+            "abstention_rate": 0.0,
+            "direction_cases": 0,
+            "direction_mean": 0.0,
+            "direction_median": 0.0,
+            "failure_taxonomy": {},
+        }
     exact = sum(1 for row in rows if row.exact)
     jaccard_hits = sum(1 for row in rows if row.jaccard_hit)
     abstained = sum(1 for row in rows if row.abstained)
@@ -514,6 +526,7 @@ async def run_score(
             failure = "error"
         else:
             failure = classify_failure(case, suggestion, token_jaccard, exact)
+        abstained = not suggestion and not record.get("error")
         rows_by_arm[arm].append(
             CaseResult(
                 turn_id=case["turn_id"],
@@ -528,7 +541,7 @@ async def run_score(
                 token_jaccard=round(token_jaccard, 4),
                 jaccard_hit=token_jaccard >= JACCARD_THRESHOLD,
                 direction_jaccard=direction,
-                abstained=not suggestion,
+                abstained=abstained,
                 failure=failure,
             )
         )

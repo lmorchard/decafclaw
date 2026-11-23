@@ -1,7 +1,14 @@
 """Tests for deterministic dev-set sampling (#1738)."""
 
 from decafclaw.survey.corpus import TurnBoundary, analyze_offer
-from decafclaw.survey.devset import build_devset, length_bucket, load_devset, sample_boundaries, write_devset
+from decafclaw.survey.devset import (
+    build_devset,
+    length_bucket,
+    load_devset,
+    recency_bucket,
+    sample_boundaries,
+    write_devset,
+)
 
 
 def _boundary(conv_id, position, *, user_turns=2, timestamp="2026-01-01T00:00:00"):
@@ -27,6 +34,15 @@ def _corpus():
     for index in range(4):
         boundaries.append(_boundary(f"long-{index}", 7, user_turns=12, timestamp=f"2026-02-0{index + 1}T00:00:00"))
     return boundaries
+
+
+def test_recency_buckets_follow_timestamps_not_conv_ids():
+    boundaries = [
+        _boundary("z-old", 2, timestamp="2026-01-01T00:00:00"),
+        _boundary("a-mid", 2, timestamp="2026-02-01T00:00:00"),
+        _boundary("m-new", 2, timestamp="2026-03-01T00:00:00"),
+    ]
+    assert recency_bucket(boundaries) == {"z-old": "old", "a-mid": "mid", "m-new": "new"}
 
 
 def test_length_buckets():

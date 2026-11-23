@@ -137,7 +137,7 @@ def _cmd_score(args) -> int:
         return 2
     print(format_score_summary(summary))
     if not summary.get("dry_run"):
-        print(f"\nWrote {out_dir}/summary.json, scores.jsonl, spot-check.md, model-cache.jsonl")
+        print(f"\nWrote outputs under {out_dir}")
     return 0
 
 

@@ -6,8 +6,10 @@ import pytest
 
 from decafclaw.config_types import ModelConfig
 from decafclaw.survey.score import (
+    _aggregate,
     classify_failure,
     estimate_spend,
+    format_score_summary,
     parse_suggestion,
     run_score,
 )
@@ -203,6 +205,57 @@ def test_estimate_spend_dedupes_identical_arms(config):
     estimate = estimate_spend(_cases(), config, ["aux", "active"])
     assert estimate["calls"] == 4
     assert estimate["unpriced_models"] == ["primary"]
+
+
+def test_estimate_spend_does_not_double_count_collapsed_arms(config):
+    _config(config)
+    config.model_configs["vertex-gemini-flash"] = ModelConfig(provider="p", model="m")
+    config.default_model = "vertex-gemini-flash"
+    config.auxiliary_model = ""
+    one_arm = estimate_spend(_cases(), config, ["aux"])
+    both_arms = estimate_spend(_cases(), config, ["aux", "active"])
+    assert both_arms["calls"] == one_arm["calls"]
+    assert both_arms["cost_usd_estimate"] == one_arm["cost_usd_estimate"]
+
+
+async def test_run_score_counts_errors_separately_from_abstention(config, monkeypatch, tmp_path):
+    _config(config)
+
+    async def failing_call(*args, **kwargs):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr("decafclaw.survey.score.call_llm", failing_call)
+    summary = await run_score(
+        config,
+        _cases()[:1],
+        retriever=StubRetriever({}),
+        arms=["active"],
+        out_dir=tmp_path,
+        top_k=5,
+    )
+    active = summary["results"]["active"]
+    assert active["errors"] == 1
+    assert active["abstained"] == 0
+    assert active["failure_taxonomy"] == {"error": 1}
+
+
+def test_empty_results_aggregate_and_format():
+    empty = _aggregate([])
+    assert empty["models"] == []
+    assert empty["failure_taxonomy"] == {}
+    summary = {
+        "cases": 0,
+        "results": {"active": empty},
+        "calibration": {
+            "retriever": "stub",
+            "top_k": 5,
+            "truth_sources": {},
+            "analytic_random_floor": 0.0,
+            "baselines": {},
+        },
+    }
+    rendered = format_score_summary(summary)
+    assert "0 cases" in rendered
 
 
 def test_parse_suggestion_variants():

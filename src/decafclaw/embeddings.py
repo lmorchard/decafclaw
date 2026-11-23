@@ -776,8 +776,9 @@ def _iter_vault_pages(config):
 def iter_index_entries(config):
     """Yield every vault entry the embedding index covers: pages and journals.
 
-    Shared by reindexing and offline consumers (the suggested-prompt survey's
-    local embedding backend) so both see the same corpus.
+    The suggested-prompt survey builds its local embedding backend from this
+    view of the corpus. Reindexing still calls the page/journal iterators
+    directly because it clears and reports each source type separately.
     """
     yield from _iter_vault_pages(config)
     yield from _iter_journal_entries(config)
