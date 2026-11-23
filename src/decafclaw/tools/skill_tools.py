@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -744,7 +745,8 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
     if name in activated:
         if not skill_info.has_native_tools:
             return f"Skill '{name}' is already active."
-        return await activate_skill_internal(ctx, skill_info, reloading=True)
+        result = await activate_skill_internal(ctx, skill_info, reloading=True)
+        return ToolResult(text=result.text) if isinstance(result, SkillActivationResult) else result
 
     # Permission resolution, highest precedence first:
     # 1. User's explicit "deny" in skill_permissions.json — always wins
@@ -792,11 +794,10 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
         if always:
             _save_permission(ctx.config, name, {"status": "always", "hash": current_hash})
 
-    # Activate the skill (shared logic)
+    # Activate the skill (shared logic). A failed tool load comes back as a
+    # SkillActivationResult; convert it to the error ToolResult the LLM reads.
     result = await activate_skill_internal(ctx, skill_info)
-    if isinstance(result, ToolResult):
-        return result
-    return result
+    return ToolResult(text=result.text) if isinstance(result, SkillActivationResult) else result
 
 
 def _retract_skill_tools(ctx: "Context", name: str) -> None:
@@ -872,12 +873,28 @@ def _register_skill_tools(ctx: "Context", name: str, tools: dict, tool_defs: lis
     ctx.tools.skill_contributions[name] = (dict(tools), list(tool_defs))
 
 
-async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = False) -> str | ToolResult:
+@dataclass
+class SkillActivationResult:
+    """A failed skill activation, returned by `activate_skill_internal`.
+
+    The method returns the skill body as a plain string on success and this
+    result when activation fails — its tools.py failed to import or init()
+    raised, or a workspace-tier phantom call was refused. `text` is the
+    human-readable error message. Callers detect a failed activation by
+    checking for this type instead of inspecting ctx.skills.activated, which
+    only the success path populates.
+    """
+
+    text: str
+
+
+async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = False) -> str | SkillActivationResult:
     """Activate a skill: load tools, register on ctx, mark active.
 
     Shared by tool_activate_skill (with permission checks) and
     command execution (without permission checks). Returns the
-    skill body text on success.
+    skill body text on success, or a SkillActivationResult when the
+    skill's tools.py fails to load.
 
     `reloading=True` is the re-activation path for a skill whose tools.py
     changed on disk: the previous generation's tool names are retracted
@@ -914,7 +931,7 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
                     detail,
                 )
                 still_active = " The previously loaded tools are still active." if reloading else ""
-                return ToolResult(
+                return SkillActivationResult(
                     text=(
                         f"[error: skill '{name}' cannot be activated: {detail}."
                         f"{still_active} Fix tools.py and activate the skill "
@@ -1047,14 +1064,14 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
                 # Nothing was retracted (the retract happens only after a
                 # successful import), so say so explicitly rather than leave
                 # the caller guessing whether the skill is now half-loaded.
-                return ToolResult(
+                return SkillActivationResult(
                     text=(
                         f"[error: failed to reload skill '{name}': {detail}. "
                         f"The previously loaded tools are still active — fix "
                         f"tools.py and activate the skill again.]"
                     )
                 )
-            return ToolResult(text=f"[error: failed to load skill '{name}': {detail}]")
+            return SkillActivationResult(text=f"[error: failed to load skill '{name}': {detail}]")
     else:
         log.info(f"Activated shell-based skill '{name}'")
 
