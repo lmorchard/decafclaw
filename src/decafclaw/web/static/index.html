@@ -50,9 +50,6 @@
       </div>
       <div id="wiki-resize-handle" class="hidden"></div>
       <div id="chat-main">
-        <div id="mobile-header">
-          <div id="connection-banner" class="hidden">Reconnecting...</div>
-        </div>
         <chat-view></chat-view>
         <sticky-slot></sticky-slot>
         <chat-controls></chat-controls>
@@ -62,6 +59,19 @@
       <div id="canvas-resize-handle" class="hidden"></div>
       <div id="canvas-main" class="canvas-collapsed">
         <canvas-panel></canvas-panel>
+      </div>
+    </div>
+    <!-- Full-screen reconnect overlay (#1683). Shown while the chat socket is
+         down; covers the app and makes #chat-layout inert so a dead UI can't
+         be clicked or tabbed into. The attempt line is aria-hidden: the alert
+         announces the loss once instead of re-reading every retry. -->
+    <div id="connection-overlay" class="hidden" role="alert">
+      <div class="connection-overlay-card">
+        <div class="connection-overlay-spinner" aria-hidden="true"></div>
+        <p class="connection-overlay-title">Connection lost</p>
+        <p class="connection-overlay-detail">Reconnecting to DecafClaw…</p>
+        <p class="connection-overlay-attempt" data-role="attempt" aria-hidden="true"></p>
+        <p class="connection-overlay-hint">The interface unlocks automatically when the connection returns.</p>
       </div>
     </div>
   </div>

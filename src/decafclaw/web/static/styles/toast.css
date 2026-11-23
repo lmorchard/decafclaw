@@ -25,12 +25,3 @@
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
-/* Connection banner */
-#connection-banner {
-  background: var(--pico-del-color);
-  color: white;
-  text-align: center;
-  padding: 0.35rem;
-  font-size: 0.8rem;
-}

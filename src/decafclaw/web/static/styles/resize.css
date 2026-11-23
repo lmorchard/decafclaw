@@ -27,11 +27,6 @@
   background: var(--pico-primary);
 }
 
-/* Mobile header (hamburger + connection banner) */
-#mobile-header {
-  display: contents; /* desktop: transparent wrapper, children flow normally */
-}
-
 /* Sidebar backdrop */
 #sidebar-backdrop {
   display: none;

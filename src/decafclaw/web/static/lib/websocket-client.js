@@ -3,6 +3,8 @@
  * @fires WebSocketClient#message - Parsed JSON message from server
  * @fires WebSocketClient#open - Connection opened
  * @fires WebSocketClient#close - Connection closed
+ * @fires WebSocketClient#reconnecting - A retry was scheduled; detail is
+ *   `{attempt, delayMs}` with a 1-based attempt number
  * @fires WebSocketClient#error - Connection error
  */
 export class WebSocketClient extends EventTarget {
@@ -104,6 +106,9 @@ export class WebSocketClient extends EventTarget {
     const delay = Math.min(1000 * Math.pow(2, this.#reconnectAttempts), this.#maxReconnectDelay);
     this.#reconnectAttempts++;
     console.log(`WebSocket reconnecting in ${delay}ms (attempt ${this.#reconnectAttempts})`);
+    this.dispatchEvent(new CustomEvent('reconnecting', {
+      detail: { attempt: this.#reconnectAttempts, delayMs: delay },
+    }));
     this.#reconnectTimer = setTimeout(() => {
       this.#reconnectTimer = null;
       this.#doConnect();
