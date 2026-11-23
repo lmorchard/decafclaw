@@ -2,6 +2,7 @@
 # module in a fresh object that can leave sys.modules, and postponed dataclass
 # annotations then crash loading (see docs/skills.md). Quote them instead.
 
+import bisect
 import difflib
 import logging
 import re
@@ -578,6 +579,22 @@ _TLDR_RE = re.compile(r"^\s*>\s*tl;dr\s*:", re.IGNORECASE | re.MULTILINE)
 _WORD_RE = re.compile(r"[a-z0-9]+")
 _STALE_SUMMARY_THRESHOLD = 0.25
 
+# Broken-link suggestion tuning (#1744). ``difflib.get_close_matches`` is
+# O(candidate count) per query, so the cost scales with vault size.
+_SUGGESTION_CUTOFF = 0.6
+_SUGGESTION_SCAN = 5
+_SUGGESTION_KEEP = 3
+# Cap on candidates compared per target. The pool is filled from the target's
+# rarest trigrams first, so a full path's common directory trigrams do not
+# crowd out the title trigrams that actually identify a near match.
+_SUGGESTION_POOL = 550
+
+
+def _char_trigrams(text: str) -> set[str]:
+    if len(text) < 3:
+        return {text} if text else set()
+    return {text[index : index + 3] for index in range(len(text) - 2)}
+
 
 def _summary_overlap(summary: str, body: str) -> float | None:
     """Fraction of significant summary words present in the body.
@@ -590,6 +607,78 @@ def _summary_overlap(summary: str, body: str) -> float | None:
         return None
     body_words = set(_WORD_RE.findall(body.lower()))
     return sum(1 for word in words if word in body_words) / len(words)
+
+
+class _SuggestionCandidates:
+    """Nearest-match candidate pool for broken-link suggestions (#1744).
+
+    ``difflib.get_close_matches`` compares every candidate per query, and the
+    old code rebuilt and rescanned the full ~9k-key list for every broken
+    link. This indexes the keys by character trigram once per tool call and
+    compares only candidates that share a trigram with the target, bounded by
+    ``_SUGGESTION_POOL``. Targets shorter than a trigram, and targets whose
+    trigrams match no candidate, use the exact length band that
+    ``SequenceMatcher`` itself uses to reject impossible lengths.
+    """
+
+    def __init__(self, keys: list[str]):
+        self._keys = keys
+        postings: dict[str, list[int]] = {}
+        for index, key in enumerate(keys):
+            for gram in _char_trigrams(key):
+                postings.setdefault(gram, []).append(index)
+        self._postings = postings
+        # A short candidate can still clear the cutoff against a three- or
+        # four-character target, but it is indexed under its whole text, not
+        # under a trigram. Carry those into every pool.
+        self._short = [index for index, key in enumerate(keys) if len(key) < 3]
+        # Length band for the fallback: ratio <= 2*min(la, lb)/(la+lb).
+        by_length = sorted(range(len(keys)), key=lambda index: len(keys[index]))
+        self._by_length = by_length
+        self._sorted_lengths = [len(keys[index]) for index in by_length]
+
+    def _length_band(self, length: int, cutoff: float) -> list[str]:
+        low = cutoff * length / (2.0 - cutoff)
+        high = (2.0 - cutoff) * length / cutoff
+        start = bisect.bisect_left(self._sorted_lengths, low)
+        end = bisect.bisect_right(self._sorted_lengths, high)
+        return [self._keys[index] for index in self._by_length[start:end]]
+
+    def _pool(self, target: str, cutoff: float) -> list[str]:
+        if len(target) < 3:
+            return self._length_band(len(target), cutoff)
+        indices = set(self._short)
+        grams = sorted(_char_trigrams(target), key=lambda gram: len(self._postings.get(gram, ())))
+        for gram in grams:
+            postings = self._postings.get(gram)
+            if not postings:
+                continue
+            indices.update(postings)
+            if len(indices) >= _SUGGESTION_POOL:
+                break
+        if len(indices) == len(self._short):
+            return self._length_band(len(target), cutoff)
+        return [self._keys[index] for index in indices]
+
+    def close_matches(self, target: str, *, n: int, cutoff: float) -> list[str]:
+        return difflib.get_close_matches(target, self._pool(target, cutoff), n=n, cutoff=cutoff)
+
+
+def _suggest_pages(
+    target: str,
+    candidates: dict[str, str],
+    suggestion_candidates: _SuggestionCandidates,
+) -> list[str]:
+    """Resolve nearest-match candidate keys to up to three page paths."""
+    suggestions: list[str] = []
+    matches = suggestion_candidates.close_matches(target, n=_SUGGESTION_SCAN, cutoff=_SUGGESTION_CUTOFF)
+    for candidate in matches:
+        rel_hit = candidates[candidate]
+        if rel_hit not in suggestions:
+            suggestions.append(rel_hit)
+        if len(suggestions) == _SUGGESTION_KEEP:
+            break
+    return suggestions
 
 
 async def tool_vault_broken_links(ctx: "Context", limit: int = 50) -> ToolResult:
@@ -612,8 +701,10 @@ async def tool_vault_broken_links(ctx: "Context", limit: int = 50) -> ToolResult
     for key, rels in stem_lower_map.items():
         for rel in rels:
             candidates.setdefault(key, rel)
+    suggestion_candidates = _SuggestionCandidates(list(candidates))
 
     broken: list[dict] = []
+    broken_targets: list[str] = []
     affected_pages = 0
     for rel, path in sorted(agent_pages.items()):
         try:
@@ -632,28 +723,33 @@ async def tool_vault_broken_links(ctx: "Context", limit: int = 50) -> ToolResult
             if not target:
                 continue
             target = target[:-3] if target.endswith(".md") else target
-            suggestions: list[str] = []
-            for candidate in difflib.get_close_matches(target.lower(), list(candidates), n=5, cutoff=0.6):
-                rel_hit = candidates[candidate]
-                if rel_hit not in suggestions:
-                    suggestions.append(rel_hit)
-                if len(suggestions) == 3:
-                    break
             line = text[: offset + match.start()].count("\n") + 1
             broken.append(
                 {
                     "page": rel,
                     "link": f"[[{raw}]]",
                     "line": line,
-                    "suggestions": suggestions,
-                    "kind": "possible_move" if suggestions else "missing",
+                    "suggestions": [],
+                    "kind": "missing",
                 }
             )
+            broken_targets.append(target.lower())
             page_hits += 1
         if page_hits:
             affected_pages += 1
 
     bounded = broken[: max(0, int(limit))]
+    # ``limit`` bounds the suggestion work, not just the reported slice: the
+    # scan is cheap, while each difflib query is O(candidate count). Memoize
+    # per distinct normalized target; repeated broken links share the answer.
+    suggestion_cache: dict[str, list[str]] = {}
+    for entry, target in zip(bounded, broken_targets):
+        suggestions = suggestion_cache.get(target)
+        if suggestions is None:
+            suggestions = _suggest_pages(target, candidates, suggestion_candidates)
+            suggestion_cache[target] = suggestions
+        entry["suggestions"] = suggestions
+        entry["kind"] = "possible_move" if suggestions else "missing"
     if broken:
         examples = []
         for entry in bounded[:10]:

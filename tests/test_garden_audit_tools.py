@@ -1,11 +1,14 @@
 """Tests for garden's deterministic audit tools (#1716)."""
 
+import difflib
+
 import pytest
 
 from decafclaw.embeddings import index_entry_sync
 from decafclaw.skills.garden.tools import (
     TOOL_DEFINITIONS,
     TOOLS,
+    _SuggestionCandidates,
     tool_vault_broken_links,
     tool_vault_find_duplicate_candidates,
     tool_vault_frontmatter_audit,
@@ -62,6 +65,87 @@ class TestVaultBrokenLinks:
 
         assert result.data["broken"] == []
         assert result.data["counts"]["links"] == 0
+
+    @pytest.mark.asyncio
+    async def test_suggestions_computed_once_per_distinct_target(self, ctx, config, monkeypatch):
+        pages = config.vault_agent_pages_dir
+        pages.mkdir(parents=True, exist_ok=True)
+        (pages / "Aerostat.md").write_text("Aerostat page.\n", encoding="utf-8")
+        (pages / "A.md").write_text("[[Aerostats]] [[Aerostats]] [[Zzzz]]\n", encoding="utf-8")
+        (pages / "B.md").write_text("[[Aerostats]] [[Zzzz]]\n", encoding="utf-8")
+
+        queried: list[str] = []
+        real = difflib.get_close_matches
+
+        def counting_close_matches(word, possibilities, n=3, cutoff=0.6):
+            queried.append(word)
+            return real(word, possibilities, n=n, cutoff=cutoff)
+
+        monkeypatch.setattr(difflib, "get_close_matches", counting_close_matches)
+
+        result = await tool_vault_broken_links(ctx)
+
+        assert result.data["counts"]["links"] == 5
+        # Four [[Aerostats]] instances and one [[Zzzz]] collapse to two queries.
+        assert sorted(queried) == ["aerostats", "zzzz"]
+        assert len(queried) == len(set(queried))
+        assert result.data["broken"][0]["suggestions"] == ["agent/pages/Aerostat.md"]
+
+    @pytest.mark.asyncio
+    async def test_limit_bounds_suggestion_work(self, ctx, config, monkeypatch):
+        pages = config.vault_agent_pages_dir
+        pages.mkdir(parents=True, exist_ok=True)
+        (pages / "A.md").write_text("[[Aerostats]] [[Zzzz]] [[Yyyy]]\n", encoding="utf-8")
+
+        queried: list[str] = []
+        real = difflib.get_close_matches
+
+        def counting_close_matches(word, possibilities, n=3, cutoff=0.6):
+            queried.append(word)
+            return real(word, possibilities, n=n, cutoff=cutoff)
+
+        monkeypatch.setattr(difflib, "get_close_matches", counting_close_matches)
+
+        result = await tool_vault_broken_links(ctx, limit=1)
+
+        assert result.data["truncated"] is True
+        assert result.data["broken"][0]["link"] == "[[Aerostats]]"
+        assert queried == ["aerostats"]
+
+
+class TestSuggestionCandidates:
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "aerostats2",
+            "bet",
+            "gama",
+            "ai",
+            "commodore 65",
+            "lmorchard/starnet-archive",
+            "zzz",
+            "alpha",
+            "a very long candidate title her",
+        ],
+    )
+    def test_pooled_matches_equal_full_scan(self, target):
+        keys = [
+            "aerostat",
+            "aerostats",
+            "alpha",
+            "alphabet",
+            "beta",
+            "gamma",
+            "delta",
+            "ai",
+            "commodore 64",
+            "lmorchard/starnet",
+            "a very long candidate title here",
+        ]
+
+        assert _SuggestionCandidates(keys).close_matches(target, n=5, cutoff=0.6) == (
+            difflib.get_close_matches(target, keys, n=5, cutoff=0.6)
+        )
 
 
 @pytest.fixture
