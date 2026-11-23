@@ -33,6 +33,7 @@ dependencies = [
     "opentelemetry-sdk>=1.44.0",
     "opentelemetry-exporter-otlp>=1.44.0",
     "fastembed>=0.9.1",
+    "youtube-transcript-api>=1.2.0",
 ]
 
 [project.optional-dependencies]

@@ -136,6 +136,16 @@ Unified successor to `linkding-ingest` + `mastodon-ingest`. Uses the [`me-to-mar
 
 **Schedule:** Every 12 hours (`:15`), **disabled by default** (contrib SCHEDULE.md is forced `enabled: false`). Coexists with `linkding-ingest` / `mastodon-ingest`; retire those schedules and enable this one once validated — see the skill's SCHEDULE.md.
 
+### youtube-ingest
+
+Syncs watched YouTube videos into per-video vault pages under `agent/pages/youtube/`. Reads watch history from a persistent Chrome/Chromium debug endpoint (CDP), keeps videos watched past a threshold, fetches transcripts with `youtube-transcript-api`, and writes one page per video with timestamped transcript lines. Also ingests a single URL or video ID on demand via `/youtube-ingest <url-or-id>`.
+
+**Requires:** the `youtube-transcript-api` Python package (a project dependency) and a logged-in Chrome/Chromium debug endpoint. Configure it with `skills.youtube-ingest.cdp_url` (default `http://myriad-docker:9222`). The scheduled sync is gated by `skills.youtube-ingest.enabled` (default `false`); on-demand runs always work. Optional settings: `min_watch_percent`, `max_videos_per_sync`, `default_languages`, `vault_subfolder`.
+
+**Tests:** `uv run pytest contrib/skills/youtube-ingest/`
+
+**Schedule:** Daily at 5am UTC (`0 5 * * *`), **disabled by default** (contrib SCHEDULE.md is forced `enabled: false` — opt in via an overlay at `data/{agent_id}/schedules/youtube-ingest.md`).
+
 ### writing-clearly
 
 Edits prose drafts (docs, commit messages, replies, blog posts) using William Strunk Jr.'s *The Elements of Style* (1918). Exposes one tool, `edit_with_strunk(draft, focus="")`, which inlines the rulebook into a `delegate_task` child agent — the corpus (~12k tokens) never enters the parent conversation.
