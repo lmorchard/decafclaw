@@ -99,7 +99,7 @@ uv run python -m decafclaw.survey score --devset evals/results/suggested-prompt/
 Generate the dev set on the corpus host and leave it under `evals/results/`
 (git-ignored) or another local path. Do not copy it into the checkout. The
 scorer streams each successful model response to `model-cache.jsonl`, so an
-interrupted run resumes without paying twice.
+interrupted run can resume from that file instead of starting over.
 
 `--max-calls` (default 1200) refuses a plan above the cap before any call.
 `--aux-model` overrides the aux arm; without it the aux arm follows
@@ -147,10 +147,12 @@ the set on the machine that holds the corpus.
 ## Results (2026-11-22, production corpus)
 
 Corpus: `DATA_HOME=/home/lmorchard/.decafclaw` on the production VM — 5,748
-conversations, 266 with at least one settled boundary, 3,172 boundaries. The
-dev set is 200 cases sampled from those boundaries, stratified by conversation
-length and recency across 159 distinct conversations. It is generated on the
-production host and stays out of git (see [Outputs](#outputs)).
+conversations, 266 with at least one settled boundary. Stage 0 scanned 3,172
+boundaries; the dev-set scan a few minutes later saw 3,185 eligible boundaries,
+because the live corpus keeps growing. The dev set is 200 cases stratified by
+conversation length and recency across 155 distinct conversations. It is
+generated on the production host and stays out of git (see
+[Outputs](#outputs)).
 
 Page retrieval used the production warm index (`embeddings-index`, 3,707
 vault entries). Stage 0 calibrated a deterministic 300-boundary sample.
@@ -189,9 +191,9 @@ noise band, not a scoring bug.
 ### Stage 2 — baseline predictor
 
 Run A is the issue's as-configured comparison: aux = `vertex-gemini-3.8-flash`,
-active = each conversation's archived model. 167 of 200 archived active models
-were already the same flash model, so the arms collapse for most cases. Run B
-is a controlled comparison against `claude-haiku-4.5`.
+active = each conversation's archived model. Most of the 200 archived active
+models were already the same flash model, so the arms collapse for most cases.
+Run B is a controlled comparison against `claude-haiku-4.5`.
 
 | arm | exact | token J ≥ 0.6 | abstained | direction mean |
 |---|---|---|---|---|
@@ -215,7 +217,7 @@ cases carried real provenance; the rest used `retrieval_proxy`.
 
 | outcome | cases |
 |---|---|
-| exact hit | 0 |
+| exact hit | 1 |
 | near-miss wording (token J ≥ 0.3) | 5 |
 | missed an offered option | 1 |
 | hallucinated specific (new path/URL/number) | 4 |
