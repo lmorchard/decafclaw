@@ -864,7 +864,7 @@ async def activate_always_loaded(ctx: "Context") -> None:
     self-mark always-loaded at discovery but the guard preserves the
     invariant). Skips already-activated skills (idempotent).
     """
-    from ..tools.skill_tools import activate_skill_internal  # noqa: PLC0415
+    from ..tools.skill_tools import SkillActivationResult, activate_skill_internal  # noqa: PLC0415
 
     for skill_info in ctx.config.discovered_skills:
         if not skill_info.always_loaded or skill_info.name in ctx.skills.activated:
@@ -872,10 +872,16 @@ async def activate_always_loaded(ctx: "Context") -> None:
         if skill_info.trust_tier == "workspace":
             continue
         try:
-            await activate_skill_internal(ctx, skill_info)
-            log.debug("Auto-activated always-loaded skill %r", skill_info.name)
+            result = await activate_skill_internal(ctx, skill_info)
         except Exception as exc:  # noqa: BLE001 — fail-soft per spec
             log.error("Failed to auto-activate skill %r: %s", skill_info.name, exc)
+            continue
+        if isinstance(result, SkillActivationResult):
+            # A tool-load failure is returned, not raised — log it so a broken
+            # always-loaded skill is visible instead of silently missing.
+            log.error("Failed to auto-activate always-loaded skill %r: %s", skill_info.name, result.text)
+            continue
+        log.debug("Auto-activated always-loaded skill %r", skill_info.name)
 
 
 async def activate_skills_for_workflow(
@@ -890,7 +896,10 @@ async def activate_skills_for_workflow(
     Workspace-tier skills ARE permitted here — the workflow author
     opted in explicitly by name.
     """
-    from ..tools.skill_tools import activate_skill_internal  # noqa: PLC0415 — symmetric with activate_always_loaded
+    from ..tools.skill_tools import (  # noqa: PLC0415 — symmetric with activate_always_loaded
+        SkillActivationResult,
+        activate_skill_internal,
+    )
     from ..workflow.errors import WorkflowSkillActivationFailed  # noqa: PLC0415 — break workflow → skills cycle
 
     by_name = index_skills(ctx.config.discovered_skills)
@@ -904,15 +913,11 @@ async def activate_skills_for_workflow(
             result = await activate_skill_internal(ctx, skill_info)
         except Exception as exc:
             raise WorkflowSkillActivationFailed(f"Skill {name!r} failed to activate: {exc}") from exc
-        # activate_skill_internal swallows tool-load failures and returns
-        # a ToolResult — see tools/skill_tools.py:228-230. Detect that
-        # silent path by checking ctx.skills.activated, which the
-        # successful branch populates on line 234.
-        if name not in ctx.skills.activated:
-            from ..media import ToolResult  # noqa: PLC0415 — symmetric with sibling imports
-
-            detail = result.text if isinstance(result, ToolResult) else str(result)
-            raise WorkflowSkillActivationFailed(f"Skill {name!r} failed to activate: {detail}")
+        # A tool-load failure is returned, not raised — it comes back as a
+        # SkillActivationResult. Consume that directly instead of inferring
+        # failure from ctx.skills.activated, which only the success path sets.
+        if isinstance(result, SkillActivationResult):
+            raise WorkflowSkillActivationFailed(f"Skill {name!r} failed to activate: {result.text}")
         log.debug("Workflow-activated skill %r", name)
 
 

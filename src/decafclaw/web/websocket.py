@@ -12,11 +12,12 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from decafclaw.commands import list_invokable_commands
+from decafclaw.confirmations import ConfirmationRequest
 from decafclaw.conversation_manager import TurnKind
 from decafclaw.llm.history import without_provider_data
 from decafclaw.model_catalog import (
@@ -176,7 +177,7 @@ def _make_sticky_forwarder(state, conv_id):
     return _forward
 
 
-def _confirmation_to_dict(req) -> dict:
+def _confirmation_to_dict(req) -> dict[str, object]:
     """Convert a ConfirmationRequest to the dict shape the client expects."""
     action_data = req.action_data or {}
     action_type = req.action_type.value
@@ -1162,30 +1163,22 @@ def _subscribe_to_conv(state, conv_id):
                 streaming_buffer["text"] = ""
                 streaming_buffer["thinking"] = ""
             action_type = event.get("action_type", "")
-            action_data = event.get("action_data", {})
             log.info("Forwarding confirm request to web UI: %s", action_type)
-            confirm_req: SrvConfirmRequest = {
+            # Rebuild the request from its bus payload so this branch shares
+            # the single _confirmation_to_dict projection with select-conv and
+            # load-history (issue #1400). The payload carries the same field
+            # names as an archive message; from_archive_message filters out
+            # the "type" tag.
+            req = ConfirmationRequest.from_archive_message(event)
+            confirm_req = {
                 "type": WSMessageType.CONFIRM_REQUEST,
                 "conv_id": event_conv_id,
-                "confirmation_id": event.get("confirmation_id", ""),
-                "action_type": action_type,
-                # Provide tool/command for backward compat with confirm-view
-                "tool": action_data.get("tool_name", _legacy_tool_name(action_type)),
-                "command": action_data.get("command", event.get("message", "")),
-                "suggested_pattern": action_data.get("suggested_pattern", ""),
-                "message": event.get("message", ""),
-                "approve_label": event.get("approve_label", ""),
-                "deny_label": event.get("deny_label", ""),
-                "tool_call_id": event.get("tool_call_id", ""),
-                "action_data": action_data,
+                **_confirmation_to_dict(req),
             }
-            if action_data.get("decline_reason"):
-                confirm_req["decline_reason"] = action_data["decline_reason"]
-            if event.get("timeout") is not None:
-                confirm_req["timeout"] = event.get("timeout")
-            if event.get("timestamp"):
-                confirm_req["timestamp"] = event.get("timestamp")
-            await ws_send(confirm_req)
+            # The projection supplies every SrvConfirmRequest field; pyright
+            # cannot verify required keys through the dict spread. timeout is
+            # a float on the wire (the generated contract says int).
+            await ws_send(cast(SrvConfirmRequest, confirm_req))
 
         elif event_type == "confirmation_response":
             # Forward to all tabs so non-originating tabs clear the widget

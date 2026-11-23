@@ -29,6 +29,12 @@ from .frontmatter import (
     to_json_safe,
 )
 from .mattermost_ui import get_token_registry
+from .model_catalog import (
+    set_aux_approval_model,
+    set_default_model,
+    set_reflection_model,
+    set_verifier_model,
+)
 from .schedules import (
     _discover_skill_schedule_files,
     _safe_task_name,
@@ -3940,110 +3946,57 @@ async def models_catalog_set_provider_enabled(request: Request, username: str) -
     return JSONResponse(catalog_payload(config))
 
 
-@_authenticated
-async def models_catalog_set_default(request: Request, username: str) -> JSONResponse:
-    """POST /api/models/catalog/default — set or clear the default-model pointer.
+def _make_set_model_pointer_handler(action_name, setter):
+    """Build a handler for one model-pointer endpoint.
 
-    An empty `model` clears the pointer (config.json's default_model takes
-    over again). A non-empty name must be selectable: an enabled discovered
-    model or a hand-authored config.
+    The four pointer endpoints (default, aux_approval, reflection,
+    verifier) share the JSON-parse preamble and selectability check; only
+    the action name (for logging) and the catalog setter differ. An empty
+    `model` clears the pointer — each setter's docstring documents what
+    resolution falls back to. A non-empty name must be selectable: an
+    enabled discovered model or a hand-authored config.
     """
-    from .model_catalog import catalog_payload, picker_models, set_default_model
 
-    config = request.app.state.config
-    try:
-        body = await request.json()
-    except Exception as exc:
-        log.debug("models_catalog_set_default: invalid JSON body: %s", exc)
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
-        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
+    async def handler(request: Request, username: str) -> JSONResponse:
+        from .model_catalog import catalog_payload, picker_models
 
-    name = body["model"]
-    if name and name not in picker_models(config):
-        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
-    await set_default_model(config, name, event_bus=request.app.state.event_bus)
-    return JSONResponse(catalog_payload(config))
+        config = request.app.state.config
+        try:
+            body = await request.json()
+        except Exception as exc:
+            log.debug("models_catalog_set_%s: invalid JSON body: %s", action_name, exc)
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        if not isinstance(body, dict) or not isinstance(body.get("model"), str):
+            return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
 
+        name = body["model"]
+        if name and name not in picker_models(config):
+            return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
+        await setter(config, name, event_bus=request.app.state.event_bus)
+        return JSONResponse(catalog_payload(config))
 
-@_authenticated
-async def models_catalog_set_aux_approval(request: Request, username: str) -> JSONResponse:
-    """POST /api/models/catalog/aux_approval — set or clear the shell auto-approval judge pointer (#1213).
-
-    An empty `model` clears the pointer (resolution falls through to the
-    active conversation model, today's behavior). A non-empty name must be
-    selectable: an enabled discovered model or a hand-authored config.
-    """
-    from .model_catalog import catalog_payload, picker_models, set_aux_approval_model
-
-    config = request.app.state.config
-    try:
-        body = await request.json()
-    except Exception as exc:
-        log.debug("models_catalog_set_aux_approval: invalid JSON body: %s", exc)
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
-        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
-
-    name = body["model"]
-    if name and name not in picker_models(config):
-        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
-    await set_aux_approval_model(config, name, event_bus=request.app.state.event_bus)
-    return JSONResponse(catalog_payload(config))
+    handler.__name__ = f"models_catalog_set_{action_name}"
+    return handler
 
 
-@_authenticated
-async def models_catalog_set_reflection(request: Request, username: str) -> JSONResponse:
-    """POST /api/models/catalog/reflection — set or clear the reflection-judge pointer (#1212).
+# POST /api/models/catalog/default — set or clear the default-model pointer.
+# Empty clears it (config.json's default_model takes over again).
+models_catalog_set_default = _authenticated(_make_set_model_pointer_handler("default", set_default_model))
 
-    An empty `model` clears the pointer (config.json's `reflection.model`
-    takes over as the seed / inherits the legacy default chain). A non-empty
-    name must be selectable: an enabled discovered model or a hand-authored
-    config. The judge then resolves through it on the next reflection run —
-    no restart.
-    """
-    from .model_catalog import catalog_payload, picker_models, set_reflection_model
+# POST /api/models/catalog/aux_approval — shell auto-approval judge pointer (#1213).
+# Empty clears it (resolution falls through to the active conversation model).
+models_catalog_set_aux_approval = _authenticated(
+    _make_set_model_pointer_handler("aux_approval", set_aux_approval_model)
+)
 
-    config = request.app.state.config
-    try:
-        body = await request.json()
-    except Exception as exc:
-        log.debug("models_catalog_set_reflection: invalid JSON body: %s", exc)
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
-        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
+# POST /api/models/catalog/reflection — reflection-judge pointer (#1212).
+# Empty clears it (config.json's reflection.model seeds the resolution chain);
+# the judge then resolves through it on the next run — no restart.
+models_catalog_set_reflection = _authenticated(_make_set_model_pointer_handler("reflection", set_reflection_model))
 
-    name = body["model"]
-    if name and name not in picker_models(config):
-        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
-    await set_reflection_model(config, name, event_bus=request.app.state.event_bus)
-    return JSONResponse(catalog_payload(config))
-
-
-@_authenticated
-async def models_catalog_set_verifier(request: Request, username: str) -> JSONResponse:
-    """POST /api/models/catalog/verifier — set or clear the verifier-model pointer (#1212).
-
-    An empty `model` clears the pointer (config.json's `reflection.verifier_model`
-    takes over). A non-empty name must be selectable: an enabled discovered
-    model or a hand-authored config.
-    """
-    from .model_catalog import catalog_payload, picker_models, set_verifier_model
-
-    config = request.app.state.config
-    try:
-        body = await request.json()
-    except Exception as exc:
-        log.debug("models_catalog_set_verifier: invalid JSON body: %s", exc)
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-    if not isinstance(body, dict) or not isinstance(body.get("model"), str):
-        return JSONResponse({"error": "request body must include a 'model' name"}, status_code=400)
-
-    name = body["model"]
-    if name and name not in picker_models(config):
-        return JSONResponse({"error": f"model is not selectable: {name}"}, status_code=400)
-    await set_verifier_model(config, name, event_bus=request.app.state.event_bus)
-    return JSONResponse(catalog_payload(config))
+# POST /api/models/catalog/verifier — verifier-model pointer (#1212).
+# Empty clears it (config.json's reflection.verifier_model takes over).
+models_catalog_set_verifier = _authenticated(_make_set_model_pointer_handler("verifier", set_verifier_model))
 
 
 # -- Schedule handlers --------------------------------------------------------
