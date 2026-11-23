@@ -294,7 +294,11 @@ Garden's `vault_broken_links`, `vault_frontmatter_audit`, and
 - `vault_broken_links` scans agent pages, resolves each `[[link]]` with the
   same lookup maps as the backlink index (aliases and `#Section` anchors
   are stripped), and returns misses with line numbers and
-  `difflib` nearest-match suggestions.
+  `difflib` nearest-match suggestions. The expensive suggestion pass runs
+  once per distinct target in the returned `limit` slice, not per link
+  instance or over the whole vault. Candidate keys are indexed by character
+  trigram and the target's rarest trigrams seed a bounded comparison pool,
+  so cost no longer grows linearly with vault size (#1744).
 - `vault_frontmatter_audit` uses the lexical `split_frontmatter` +
   `parse_frontmatter_block` pair so malformed YAML is reported instead of
   disappearing into `{}`. It also reports missing fields, oversized pages,
