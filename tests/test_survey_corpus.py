@@ -164,8 +164,9 @@ def test_scan_corpus_counts_final_stops(config):
             _assistant("reply two"),
         ],
     )
+    write_archive(config, "one-shot", [_user("scheduled prompt"), _assistant("ok")])
     scan = scan_corpus(config)
-    assert scan.conversations == 2
+    assert scan.conversations == 3
     assert scan.conversations_with_boundaries == 2
     assert len(scan.boundaries) == 2
     assert scan.final_user_turns == 2

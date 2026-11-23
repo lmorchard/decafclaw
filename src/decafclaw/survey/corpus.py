@@ -407,7 +407,10 @@ def scan_corpus(
             for index, message in enumerate(messages)
             if message.get("role") == "user" and not is_synthetic_user_message(message)
         ]
-        if real_user_indices:
+        # Count a final turn only for conversations that actually had a
+        # prior exchange. A one-shot scheduled/heartbeat prompt is not a
+        # human deciding to stop.
+        if len(real_user_indices) >= 2:
             final_text = message_text(messages[real_user_indices[-1]])
             scan.final_user_turns += 1
             if looks_like_stop(final_text):
