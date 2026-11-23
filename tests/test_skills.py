@@ -29,6 +29,7 @@ from decafclaw.skills import (
     validate_skill_md,
 )
 from decafclaw.tools.skill_tools import (
+    SkillActivationResult,
     _compute_skill_hash,
     _load_native_tools,
     _load_permissions,
@@ -1526,6 +1527,25 @@ async def test_reactivate_broken_edit_keeps_working_tools(ctx, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_activate_skill_internal_tool_load_failure_returns_error_result(ctx, tmp_path):
+    """A skill whose tools.py fails to import surfaces the failure as a
+    SkillActivationResult — not an exception, not a bare string — so callers
+    branch on the type instead of inspecting ctx.skills.activated."""
+    skill_dir = tmp_path / "broken"
+    skill = _native_skill(skill_dir, name="broken", tools_py="def broken(\n")
+    ctx.config.discovered_skills = [skill]
+
+    result = await activate_skill_internal(ctx, skill)
+
+    assert isinstance(result, SkillActivationResult), (
+        f"expected a SkillActivationResult on tool-load failure, got {type(result).__name__}"
+    )
+    assert "SyntaxError" in result.text
+    # The skill must NOT be marked active, and no tool registered.
+    assert "broken" not in ctx.skills.activated
+
+
+@pytest.mark.asyncio
 async def test_reactivate_same_size_edit_is_not_served_from_bytecode(ctx, tmp_path):
     """A same-size edit inside one second must still take effect.
 
@@ -1859,11 +1879,10 @@ async def test_activate_skills_for_workflow_tool_load_failure_raises(
     tmp_path,
     monkeypatch,
 ):
-    """When activate_skill_internal returns a ToolResult instead of
-    raising (its tool-load failure path — see skill_tools.py:228-230),
-    the helper must still raise WorkflowSkillActivationFailed. Without
-    this guard, the workflow would proceed with the required skill
-    silently missing."""
+    """When activate_skill_internal returns a SkillActivationResult instead of
+    raising (its tool-load failure path), the helper must still raise
+    WorkflowSkillActivationFailed. Without this guard, the workflow would
+    proceed with the required skill silently missing."""
     skill = _make_skill_info(
         tmp_path,
         name="broken-tools-skill",
@@ -1872,9 +1891,9 @@ async def test_activate_skills_for_workflow_tool_load_failure_raises(
     ctx.config.discovered_skills = [skill]
 
     async def fake_activate(ctx_arg, info_arg):
-        # Mirror skill_tools.py:228-230 — returns a ToolResult and
-        # does NOT add to ctx.skills.activated.
-        return ToolResult(text="[error: failed to load skill 'broken-tools-skill': ImportError(...)]")
+        # Mirror the tool-load failure path — returns a SkillActivationResult
+        # and does NOT add to ctx.skills.activated.
+        return SkillActivationResult(text="[error: failed to load skill 'broken-tools-skill': ImportError(...)]")
 
     monkeypatch.setattr(
         "decafclaw.tools.skill_tools.activate_skill_internal",
@@ -1885,7 +1904,7 @@ async def test_activate_skills_for_workflow_tool_load_failure_raises(
         await activate_skills_for_workflow(ctx, ["broken-tools-skill"])
 
     assert "broken-tools-skill" in str(exc_info.value)
-    # The ToolResult's error text should be surfaced in the message
+    # The failure result's error text should be surfaced in the message
     # for debugging.
     assert "failed to load" in str(exc_info.value)
     # Skill was NOT activated.

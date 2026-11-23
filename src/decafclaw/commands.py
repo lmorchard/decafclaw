@@ -362,8 +362,7 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> C
     - mode="inline": text is the substituted body to use as the user message
     - mode="error": text is the error message
     """
-    from .media import ToolResult as _ToolResult
-    from .tools.skill_tools import activate_skill_internal
+    from .tools.skill_tools import SkillActivationResult, activate_skill_internal
 
     # Command invocations provide a focused prompt — vault retrieval would
     # inject unrelated context that confuses the model.
@@ -403,7 +402,7 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> C
     # the command body and confusing the model.
     if skill.has_native_tools and skill.name not in ctx.skills.activated:
         result = await activate_skill_internal(ctx, skill)
-        if isinstance(result, _ToolResult):
+        if isinstance(result, SkillActivationResult):
             return CommandResult(mode="error", text=result.text, skill=skill)
 
     # Pre-activate required skills (user invoked the command = implicit approval)
@@ -431,7 +430,7 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> C
             if req_info:
                 try:
                     result = await activate_skill_internal(ctx, req_info)
-                    if isinstance(result, _ToolResult):
+                    if isinstance(result, SkillActivationResult):
                         log.error(
                             f"Failed to activate required skill '{req_name}' for command '{skill.name}': {result.text}"
                         )
