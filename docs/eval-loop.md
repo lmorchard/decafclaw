@@ -9,7 +9,7 @@ make eval                                            # Run all YAML test files (
 make eval-history                                    # Print the pass-rate trend over recent runs
 uv run python -m decafclaw.eval evals/               # Same, via Python invocation
 uv run python -m decafclaw.eval evals/memory.yaml    # Run a specific file
-uv run python -m decafclaw.eval evals/ --model gemini-2.5-pro  # Override model
+uv run python -m decafclaw.eval evals/ --model gemini-3.8-flash  # Override model
 uv run python -m decafclaw.eval evals/ --verbose     # Show truncated response snippets per test
 uv run python -m decafclaw.eval evals/ --concurrency 1  # Run tests sequentially (default: 4)
 uv run python -m decafclaw.eval --history            # Print history table, no run
@@ -350,7 +350,7 @@ The Δ column is pass-rate delta from the previous row. Useful for spotting regr
 When tests fail, the eval runner sends each failure to a "judge" model for analysis. The judge explains why the test likely failed and suggests improvements to tool descriptions or prompts. Reflections are saved as markdown in the bundle.
 
 ```bash
-uv run python -m decafclaw.eval evals/ --judge-model gemini-2.5-pro
+uv run python -m decafclaw.eval evals/ --judge-model gemini-3.8-flash
 ```
 
 ## Building fixtures
@@ -368,8 +368,8 @@ A separate, lighter-weight eval surface targeted at one specific question: **whe
 ```bash
 make eval-tools                                            # Run against the default model
 uv run python -m decafclaw.eval.tool_choice evals/tool_choice/  # Same
-uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --model gemini-2.5-pro
-uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --models gemini-2.5-flash,gpt-5
+uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --model gemini-3.8-flash
+uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --models gemini-3.8-flash,gpt-5
 uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --matrix       # Add full confusion matrix
 uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --include-mcp  # MCP tools too
 ```

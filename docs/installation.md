@@ -43,7 +43,7 @@ The fastest path is to put a provider config in `data/decafclaw/config.json`:
 ```json
 {
   "providers": { "vertex": { "type": "vertex", "project": "my-project" } },
-  "model_configs": { "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" } },
+  "model_configs": { "gemini-flash": { "provider": "vertex", "model": "gemini-3.8-flash" } },
   "default_model": "gemini-flash"
 }
 ```
@@ -86,7 +86,7 @@ Semantic search uses [sqlite-vec](https://github.com/asg017/sqlite-vec), which r
 make run          # Run the agent (server process root; headless duties if no inbound transport is configured)
 make dev          # Auto-restart on file changes (development)
 make debug        # With debug logging
-make run-pro      # With gemini-2.5-pro model
+make run-pro      # With gemini-4-argon model
 ```
 
 The agent always runs through the single server process root (`runner.run_all`) — whether the inbound chat transport is Mattermost, the HTTP/web UI server, or neither. If `MATTERMOST_URL` and `MATTERMOST_TOKEN` are set, the agent runs as a Mattermost bot. The HTTP/web UI server runs alongside when `HTTP_ENABLED=true`.

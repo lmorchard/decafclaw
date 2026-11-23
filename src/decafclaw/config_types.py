@@ -24,9 +24,11 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class LlmConfig:
-    url: str = "http://192.168.0.199:4000/v1/chat/completions"
-    model: str = "gemini-2.5-flash"
-    api_key: str = field(default="dummy", metadata={"secret": True})
+    # No built-in endpoint: the legacy llm group is opt-in. Use providers +
+    # model_configs for new setups; set these explicitly for the legacy path.
+    url: str = ""
+    model: str = ""
+    api_key: str = field(default="", metadata={"secret": True})
     streaming: bool = True
     timeout: int = 300  # seconds for LLM HTTP requests
     context_window_size: int = 0  # 0 = not specified, fall back to compaction_max_tokens

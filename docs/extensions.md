@@ -467,7 +467,7 @@ There is no default configuration: the extension runs only when an
     "improvement_scout": {
       "enabled": true,
       "type": "improvement_scout",
-      "options": { "model": "gemini-2.5-flash", "dedup_ttl_seconds": 3600 }
+      "options": { "model": "gemini-3.8-flash", "dedup_ttl_seconds": 3600 }
     }
   }
 }

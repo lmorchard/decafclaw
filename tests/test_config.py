@@ -57,8 +57,8 @@ class TestDefaults:
     def test_default_config(self):
         """Config() with no args gives expected defaults."""
         c = Config()
-        assert c.llm.url == "http://192.168.0.199:4000/v1/chat/completions"
-        assert c.llm.model == "gemini-2.5-flash"
+        assert c.llm.url == ""
+        assert c.llm.model == ""
         assert c.llm.streaming is True
         assert c.mattermost.url == ""
         assert c.mattermost.enabled is True
@@ -509,7 +509,7 @@ class TestJsonFileLoading:
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         monkeypatch.delenv("LLM_MODEL", raising=False)
         c = load_config()
-        assert c.llm.model == "gemini-2.5-flash"
+        assert c.llm.model == ""
 
     def test_loads_extra_skill_paths_from_json(self, tmp_path, monkeypatch):
         """extra_skill_paths read from config.json as a list of strings."""

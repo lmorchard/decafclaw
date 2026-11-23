@@ -28,11 +28,12 @@ a child process started from a checkout never imports the checkout's `.env`
     "openai": { "type": "openai", "api_key": "sk-..." }
   },
   "model_configs": {
-    "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" },
+    "gemini-flash": { "provider": "vertex", "model": "gemini-3.8-flash" },
+    "gemini-flash-lite": { "provider": "vertex", "model": "gemini-3.5-flash-lite" },
     "gpt-4o": { "provider": "openai", "model": "gpt-4o" }
   },
   "default_model": "gemini-flash",
-  "auxiliary_model": "gemini-flash-8b",
+  "auxiliary_model": "gemini-flash-lite",
   "mattermost": {
     "url": "https://comms.example.com",
     "bot_username": "decafclaw",
@@ -53,7 +54,7 @@ decafclaw config show providers    # dict groups (providers, model_configs) prin
 decafclaw config show default_model  # filter by a top-level scalar field name
 decafclaw config show --reveal     # show secret values
 decafclaw config get llm.model     # single value
-decafclaw config set llm.model gemini-2.5-pro   # write to config.json
+decafclaw config set llm.model gemini-3.8-flash   # write to config.json
 decafclaw config import            # convert .env to config.json
 decafclaw config import .env.prod  # from a specific file
 ```
@@ -64,13 +65,18 @@ decafclaw config import .env.prod  # from a specific file
 
 ### `llm` (legacy)
 
-Legacy LLM endpoint settings. **Prefer `providers` + `model_configs` for new setups.** The `llm` section is still supported and auto-migrates to a "default" `openai-compat` provider when no `providers` section exists.
+Legacy LLM endpoint settings. **Prefer `providers` + `model_configs` for
+new setups.** The `llm` section is still supported and auto-migrates to a
+"default" `openai-compat` provider when no `providers` section exists.
+There is no built-in endpoint or model: leaving `llm` unset is fine when
+`providers`/`model_configs` and a default model are configured, and the
+legacy path requires an explicit `url` and `model`.
 
 | Field | Type | Default | Env Var | Secret |
 |-------|------|---------|---------|--------|
-| `url` | str | `http://192.168.0.199:4000/v1/chat/completions` | `LLM_URL` | |
-| `model` | str | `gemini-2.5-flash` | `LLM_MODEL` | |
-| `api_key` | str | `dummy` | `LLM_API_KEY` | yes |
+| `url` | str | `""` | `LLM_URL` | |
+| `model` | str | `""` | `LLM_MODEL` | |
+| `api_key` | str | `""` | `LLM_API_KEY` | yes |
 | `streaming` | bool | `true` | `LLM_STREAMING` | |
 
 ### `mattermost`
@@ -564,11 +570,12 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 ```json
 {
   "model_configs": {
-    "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" },
+    "gemini-flash": { "provider": "vertex", "model": "gemini-3.8-flash" },
+    "gemini-flash-lite": { "provider": "vertex", "model": "gemini-3.5-flash-lite" },
     "gpt-4o": { "provider": "openai", "model": "gpt-4o" }
   },
   "default_model": "gemini-flash",
-  "auxiliary_model": "gemini-flash-8b"
+  "auxiliary_model": "gemini-flash-lite"
 }
 ```
 
@@ -641,7 +648,7 @@ Runtime middleware extensions (see [extensions.md](extensions.md) for the protoc
       "enabled": true,
       "type": "improvement_scout",
       "options": {
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.8-flash",
         "dedup_ttl_seconds": 3600,
         "max_transcript_chars": 12000
       }

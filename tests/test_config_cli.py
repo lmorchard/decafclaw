@@ -42,20 +42,24 @@ class _Args:
 
 def test_show_masks_secrets(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
-    (tmp_path / "decafclaw").mkdir()
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({"llm": {"api_key": "sk-test"}}))
     cmd_show(_Args(group="llm", reveal=False))
     out = capsys.readouterr().out
-    assert "****" in out
+    assert "llm.api_key = ****" in out
     assert "llm.url" in out
 
 
 def test_show_reveal(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
-    (tmp_path / "decafclaw").mkdir()
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({"llm": {"api_key": "sk-test"}}))
     cmd_show(_Args(group="llm", reveal=True))
     out = capsys.readouterr().out
     assert "****" not in out
-    assert "llm.api_key = dummy" in out
+    assert "llm.api_key = sk-test" in out
 
 
 def test_show_group_filter(capsys, monkeypatch, tmp_path):
@@ -246,10 +250,12 @@ def test_show_top_level_field_filter(capsys, monkeypatch, tmp_path):
 
 def test_get(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
-    (tmp_path / "decafclaw").mkdir()
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({"llm": {"model": "test-model"}}))
     cmd_get(_Args(path="llm.model"))
     out = capsys.readouterr().out.strip()
-    assert out == "gemini-2.5-flash"
+    assert out == "test-model"
 
 
 def test_get_unknown_path(monkeypatch, tmp_path):
