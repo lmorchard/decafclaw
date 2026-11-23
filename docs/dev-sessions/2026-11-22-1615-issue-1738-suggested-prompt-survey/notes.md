@@ -17,3 +17,10 @@
 - Next: finish score run A (as-configured), run B (aux flash vs active haiku), read 40-case spot check, write findings, `make check`, draft/ready PR.
 - 2026-11-22 16:45 — User clarified the survey must run against the production corpus. Production host `decafclaw` (VM 302 on myriad), DATA_HOME=/home/lmorchard/.decafclaw, conversations under `~/.decafclaw/decafclaw/workspace/sessions` (5,748 archive files, 4,262 session dirs), vault at `~/.decafclaw/decafclaw/obsidian/main` (5,050 md), embeddings.db 25M.
 - Dev-corpus pilot numbers are superseded; keep the harness. Added `--page-sample` (default 300) so Stage 0 calibrates a deterministic sample on the large corpus.
+- 2026-11-22 17:05 — Production run complete (temp worktree /tmp/decafclaw-survey, removed after). Stage 0: 5,748 conversations, 266 with boundaries, 3,172 boundaries; 570 offered (18.0%), 21 recapitulated (3.7% when offered / 0.7% all); 0/279 final turns stop-like; page sample 300 (22 provenance, 278 proxy); previous-user floor 0.055, oracle 0.934.
+- Score A (as configured): aux flash 0/200 exact, 1/200 Jaccard, 86 abstained (43%), direction 0.040. Active (mostly flash) 0 exact, 1 Jaccard, 78 abstained.
+- Score B (flash vs haiku): flash 0 exact, 1 Jaccard, 82 abstained, direction 0.041; haiku 0 exact, 0 Jaccard, 0 abstained, 178 unrelated, direction 0.029, 4 hallucinated specifics. Cheap arm better.
+- Operator spot check run A: 5 useful, 8 plausible-wrong, 7 off, 20 abstained.
+- Spend: 233 + 400 calls, priced actual < $0.40; conservative <$2. Recommendation: no-go for general ghost text; harness remains for re-runs.
+- Gates: `make check` EXIT=0; focused survey tests 40 passed; full `make test` has 4 pre-existing `tests/test_host_metrics.py` failures also on main.
+- Privacy: generated dev sets are git-ignored; production temp worktree deleted.
