@@ -38,6 +38,14 @@ Real-time streaming chat over WebSocket. Messages stream token-by-token as the L
 - Cancel in-progress turns
 - Confirmation prompts for shell commands and skill activation
 
+**Connection loss (#1683).** The chat WebSocket reconnects on its own with
+exponential backoff (1s doubling to a 30s cap). While it is down, a full-screen
+overlay dims the app, spins, and narrates the next retry attempt; the rest of
+the layout is `inert`, so a dead UI cannot be clicked or tabbed into. It hides
+as soon as the socket reopens. The overlay is a sibling of `#chat-layout`
+(`lib/connection-overlay.js`), and `WebSocketClient` emits `reconnecting` with
+`{attempt, delayMs}` so the attempt line stays current.
+
 **In-session links (#1485).** Markdown links rendered in a conversation open
 in the side panel instead of a new tab. `[[Page]]` and `vault://Notes/Page`
 open the Vault editor; `workspace://drafts/post.md` opens the Files editor.

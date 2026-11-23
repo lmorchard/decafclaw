@@ -6,6 +6,7 @@
 
 import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
+import { ConnectionOverlay } from './lib/connection-overlay.js';
 import { ConversationStore } from './lib/conversation-store.js';
 import { getConvFromUrl } from './lib/conversation-url.js';
 import { clearPanel, getOpenPanel, getPanel, hideSiblingPanels, setPanel } from './lib/panel-url.js';
@@ -534,12 +535,24 @@ ws.addEventListener('message', (e) => {
 
 // -- Connection status --------------------------------------------------------
 
-const connectionBanner = document.getElementById('connection-banner');
+const connectionOverlayEl = document.getElementById('connection-overlay');
+const connectionOverlay = connectionOverlayEl
+  ? new ConnectionOverlay(connectionOverlayEl, chatLayout)
+  : null;
+
 ws.addEventListener('close', () => {
-  if (connectionBanner) connectionBanner.classList.remove('hidden');
+  // A deliberate disconnect on logout also fires `close`; the chat layout is
+  // already hidden then, so there is no live UI to cover.
+  if (chatLayout?.classList.contains('hidden')) return;
+  connectionOverlay?.show();
+});
+ws.addEventListener('reconnecting', (e) => {
+  if (!connectionOverlay?.visible) return;
+  const { attempt, delayMs } = /** @type {CustomEvent} */ (e).detail;
+  connectionOverlay.narrate({ attempt, delayMs });
 });
 ws.addEventListener('open', () => {
-  if (connectionBanner) connectionBanner.classList.add('hidden');
+  connectionOverlay?.hide();
   // Signal for components that need to re-seed on (re)connect, e.g. the
   // notification bell fetching the unread count after a WS drop+reconnect.
   window.dispatchEvent(new CustomEvent('ws-connected'));
@@ -556,6 +569,7 @@ function showChat() {
 function showLogin() {
   if (loginView) loginView.classList.remove('hidden');
   if (chatLayout) chatLayout.classList.add('hidden');
+  connectionOverlay?.hide();
   ws.disconnect();
   // No conversation is displayed while signed out, so the tab must not keep
   // naming the last one (#1503). The next login's listing refresh restores it.

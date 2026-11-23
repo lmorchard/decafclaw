@@ -19,25 +19,6 @@
     display: none;
   }
 
-  /* Mobile header bar — hidden by default, shown only when the
-     connection banner is visible. The hamburger lives OUTSIDE
-     #mobile-header (fixed-position). The canvas resummon pill now
-     lives in the chat-controls action cluster (issue #1190) instead of
-     floating over #chat-main. */
-  #mobile-header {
-    display: none;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.35rem 0.75rem;
-    background: var(--pico-background-color);
-    position: relative;
-    z-index: 100;
-  }
-  #mobile-header:has(#connection-banner:not(.hidden)) {
-    display: flex;
-    border-bottom: 1px solid var(--pico-muted-border-color);
-  }
-
   /* Hamburger floats above whichever content area is showing (chat or
      wiki/vault) so the user can always summon the sidebar. z-index sits
      below the sidebar overlay (200) so the sidebar covers it when open.
@@ -64,16 +45,6 @@
   chat-view,
   #wiki-main {
     padding-top: 3rem;
-  }
-
-  /* Connection banner sits in the header row on mobile */
-  #connection-banner {
-    flex: 1;
-    text-align: center;
-    padding: 0;
-    font-size: 0.8rem;
-    background: transparent;
-    color: var(--pico-del-color);
   }
 
   /* Off-canvas sidebar overlay */

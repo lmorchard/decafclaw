@@ -149,7 +149,10 @@ def browser_scenario(static, browser: Browser, config, viewport: dict | None = N
             await super().startup(sockets=sockets)
             ready.set()
 
-    server = Server(uvicorn.Config(app, log_level="error", ws="none"))
+    # Default WebSocket support: the app treats a dead chat socket as a
+    # blocking state (full-screen reconnect overlay, #1683), so scenarios that
+    # drive the live UI need a socket that connects.
+    server = Server(uvicorn.Config(app, log_level="error"))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
     try:
