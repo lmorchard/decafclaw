@@ -143,144 +143,152 @@ the set on the machine that holds the corpus.
 - The operator spot check is a human judgment step. An agent-generated review
   is recorded as such, never presented as a human one.
 
-## Results (2026-11-22, local dev corpus)
+## Results (2026-11-22, production corpus)
 
-Corpus: the checkout's `data/decafclaw/workspace` archive — 3,003 conversations,
-67 with at least one settled boundary, 320 boundaries. **This is not the
-production corpus** (4,227 conversations in the issue); the host running the
-survey has no access to the live archive. The dev set is 200 cases sampled
-from those 320 boundaries, stratified by conversation length and recency.
+Corpus: `DATA_HOME=/home/lmorchard/.decafclaw` on the production VM — 5,748
+conversations, 266 with at least one settled boundary, 3,172 boundaries. The
+dev set is 200 cases sampled from those boundaries, stratified by conversation
+length and recency across 159 distinct conversations. It is generated on the
+production host and stays out of git (see [Outputs](#outputs)).
+
+Page retrieval used the production warm index (`embeddings-index`, 3,707
+vault entries). Stage 0 calibrated a deterministic 300-boundary sample.
 
 ### Stage 0 — free signals
 
 | signal | value |
 |---|---|
-| assistant offered a choice | 63 / 320 boundaries (19.7%) |
-| next message picked one | 3 (4.8% when offered, 0.9% of all) |
-| — checkbox / listed / inline | 0 / 1 / 2 |
-| whole-message repeat (not a choice) | 7 (2.2%) |
-| final user message is stop-like | 2 / 2,999 conversations (0.1%) |
+| assistant offered a choice | 570 / 3,172 boundaries (18.0%) |
+| next message picked one | 21 (3.7% when offered, 0.7% of all) |
+| — checkbox / listed / inline | 0 / 5 / 16 |
+| whole-message repeat (not a choice) | 5 (0.2%) |
+| final user message is stop-like | 0 / 279 multi-turn conversations (0.0%) |
 
-The easy recitation band is small. Even when the assistant explicitly offered
-choices, the next message usually did not pick one in a form the matcher can
-recover.
+The easy recitation band is small on production too. The stop metric is the
+notable zero: users do not say "thanks, that's all" at the end of these
+conversations. They simply stop. A forward-only suggestion has no textual
+"finished" signal to learn from.
 
 ### Stage 0 — vault-direction calibration
 
-Ground truth was `retrieval_proxy` for all 320 boundaries: local archives
-predate provenance persistence. Top-k = 5 over 247 vault entries; analytic
-random floor = 0.010.
+The 300-boundary sample contains 22 turns with real provenance and 278 with
+`retrieval_proxy`. Top-k = 5; analytic random floor = 0.0007.
 
-| predictor | mean Jaccard | median |
-|---|---|---|
-| reuse previous user message | 0.266 | 0.111 |
-| reuse assistant's last reply | 0.094 | 0.000 |
-| global most-linked pages | 0.004 | 0.000 |
-| retrieval of the real next message (oracle) | 1.000 | 1.000 |
+| predictor | mean Jaccard | median | p90 |
+|---|---|---|---|
+| reuse previous user message | 0.055 | 0.000 | 0.125 |
+| reuse assistant's last reply | 0.040 | 0.000 | 0.125 |
+| global most-linked pages | 0.001 | 0.000 | 0.000 |
+| retrieval of the real next message (oracle) | 0.934 | 1.000 | 1.000 |
 
-The previous-user-message baseline sets a real floor: on this corpus the
-previous message is often the best available clue to the next one.
+The oracle is below 1.0 because for provenance turns the archived page set and
+the retrieval result for the same message differ; that is the metric's own
+noise band, not a scoring bug.
 
 ### Stage 2 — baseline predictor
 
-Two runs on the same 200 cases. Run A is the issue's as-configured comparison:
-aux = `vertex-gemini-flash`, active = each conversation's archived model. 182
-of 200 archived active models were already flash, so the arms collapse for most
-cases. Run B is a controlled comparison: flash vs `claude-haiku-4.5`.
+Run A is the issue's as-configured comparison: aux = `vertex-gemini-3.8-flash`,
+active = each conversation's archived model. 167 of 200 archived active models
+were already the same flash model, so the arms collapse for most cases. Run B
+is a controlled comparison against `claude-haiku-4.5`.
 
 | arm | exact | token J ≥ 0.6 | abstained | direction mean |
 |---|---|---|---|---|
-| A: aux flash | 4/200 (2.0%) | 5/200 (2.5%) | 15 (7.5%) | 0.110 |
-| A: active (mostly flash) | 4/200 (2.0%) | 5/200 (2.5%) | 15 (7.5%) | 0.113 |
-| B: aux flash | 7/200 (3.5%) | 10/200 (5.0%) | 11 (5.5%) | 0.135 |
-| B: active haiku 4.5 | 0/200 (0.0%) | 0/200 (0.0%) | 4 (2.0%) | 0.099 |
+| A: aux flash | 0/200 (0.0%) | 1/200 (0.5%) | 86 (43.0%) | 0.040 |
+| A: active (mostly flash) | 0/200 (0.0%) | 1/200 (0.5%) | 78 (39.0%) | 0.040 |
+| B: aux flash | 0/200 (0.0%) | 1/200 (0.5%) | 82 (41.0%) | 0.041 |
+| B: active haiku 4.5 | 0/200 (0.0%) | 0/200 (0.0%) | 0 (0.0%) | 0.029 |
 
-The cheap arm is at least as good as the expensive one on every string
-metric, and slightly better on direction. Haiku writes longer, more
-role-confused messages (for example, "I need to see what the human might ask
-next after requesting research on OpenClaw for a second time."). If this
-feature is built, use the aux ladder, not a stronger model.
+The predictor produced no exact match in 200 production turns and at most one
+token-set hit. The stronger arm is not better: haiku never abstains, writes
+longer messages, and lands on unrelated text 178/200 times. The cheap arm is
+the better behavior. The direction score for both is below the
+reuse-previous-message floor (0.055), so the suggestions point at a less useful
+part of the vault than a trivial repeat.
 
-The direction score sits **below the reuse-previous-message floor** (0.207 on
-the dev subset). A trivial predictor points at the right vault neighborhood
-more often than the model does.
+On the dev subset used by the scorer, calibration was: previous user 0.055,
+last assistant 0.040, global connected 0.002, oracle 0.952.
 
-### Failure taxonomy (run A, flash arm)
+### Failure taxonomy (run B, aux flash arm)
 
 | outcome | cases |
 |---|---|
-| exact hit | 4 |
-| near-miss wording (token J ≥ 0.3) | 9 |
-| generic filler ("Okay, go ahead.") | 11 |
-| hallucinated specific (new path/URL/number) | 5 |
-| missed an offered option | 1 |
-| too long | 1 |
-| abstained | 15 |
-| unrelated | 154 |
+| exact hit | 0 |
+| near-miss wording (token J ≥ 0.3) | 4 |
+| missed an offered option | 2 |
+| hallucinated specific (new path/URL/number) | 4 |
+| abstained | 82 |
+| unrelated | 108 |
 
-Unrelated suggestions dominate. The next user message is usually a **new
-instruction or a correction**, not a selection from what the assistant just
-offered. Generic acknowledgments and invented specifics are the two failure
-shapes a UI would need to suppress before a ghost could be safe.
+The haiku arm's taxonomy is the cautionary version: zero abstentions, 178
+unrelated, 7 generic filler, 5 too long, 4 hallucinated specifics. Abstention
+in the flash arm is functioning as intended (it is safe), but at 41–43% it is
+too frequent for a useful ghost. Lowering it is not obviously the fix: the
+operator review below shows the non-abstentions are mostly wrong, and the
+always-answer model is worse.
 
 ### Operator spot check
 
-The 40-row sheet is generated by `score` at `spot-check.md` (not committed;
-the dev set is). The assistant operator reviewed the run A sheet row by row:
+The 40-row sheet is generated at `evals/results/.../spot-check.md` and is
+git-ignored with the dev set. The assistant operator reviewed the run A sheet:
 
 | judgment | cases |
 |---|---|
-| useful (same intent, would have saved typing) | 6 / 40 |
-| plausible but wrong (related, would mislead) | 13 / 40 |
-| off (wrong or contrary to the user's intent) | 6 / 40 |
-| abstained (safe, but missed a recoverable answer) | 15 / 40 |
+| useful (same intent, would have saved typing) | 5 / 40 |
+| plausible but wrong (related, would mislead) | 8 / 40 |
+| off (wrong or contrary to the user's intent) | 7 / 40 |
+| abstained (safe, but missed a recoverable answer) | 20 / 40 |
 
-Only 6 of 40 would have been worth showing; 13 more are the dangerous class —
-plausible enough to accept, wrong enough to send the conversation elsewhere.
+Useful examples: "Go ahead with commit & push" → "Go ahead and commit and
+push."; "One more?" → "Another one?"; "Let's start drafting…" → "Let's start
+drafting it."; "Go for it" → "Go ahead.". The dangerous class is real: a turn
+asking about intake sources got "That's fine, let's publish it.", and a CI
+failure got abstained while other turns got confidently wrong specifics.
+
+The sheet oversamples abstentions by design (it picks a spread of outcomes),
+so its 50% abstention share is not the population rate. Among the 20
+non-abstentions, 5 were useful, 8 were plausible but wrong, and 7 were off.
 This is an agent review, not a human one. A human should re-read the sheet
 before treating the counts as final.
 
 ### Spend
 
-| run | unique calls | prompt tokens | completion tokens | cost |
+| run | unique calls | prompt tokens | completion tokens | priced cost |
 |---|---|---|---|---|
-| A (as configured) | 218 | 178k | 1.7k | ~$0.08 |
-| B (flash vs haiku) | 400 | 357k | 5.5k | ~$0.26 |
-| total | 618 | 535k | 7.2k | **~$0.34** |
+| A (as configured) | 233 | 230k | 1.3k | ~$0.04 + unpriced flash/local calls |
+| B (flash vs haiku) | 400 | 210k haiku + 201k flash | 5.7k | ~$0.23 + unpriced flash |
+| total | 633 | — | — | **< $0.40** |
 
-Stage 0 and all page retrieval are local and free. The dry run estimated
-$0.23 for run B before the call; the actual was $0.26. The hard cap
-(`--max-calls`, default 1200) was never approached.
+The dry run bounded the plan at 233 and 400 calls respectively; a conservative
+$5/M input, $15/M output bound for the 633 calls is under $2, and the priced
+actual is under $0.40. The hard cap (`--max-calls`, default 1200) was never
+approached. Embeddings and Stage 0 are vertex-embedding calls with negligible
+cost.
 
 ## Recommendation
 
-**No-go for a general ghost-text next-prompt feature now.**
+**No-go for a general ghost-text next-prompt feature.**
 
-- Exact and near-exact reuse are 2–5%, an order of magnitude below the 20%
-  gate the issue proposed.
-- The model does not beat a trivial "reuse the previous message" predictor on
-  vault direction; it points somewhere less useful.
-- In the operator sample, nearly twice as many suggestions were plausibly
-  wrong as useful. A wrong ghost is worse than no ghost.
+- Production exact reuse is 0/200 and near-exact is 1/200. This is far below
+  the 20% gate the issue proposed, not a marginal miss.
+- The model does not beat "reuse the previous user message" on vault
+  direction; it points somewhere less useful.
+- 41–43% abstention plus a non-abstention mix that is useful only 25% of the
+  time means the ghost would either be absent or wrong most of the time.
+- Forcing an answer makes it worse: haiku with no abstention was unrelated
+  89% of the time and invented specifics in 4 cases.
 
-**Conditional path if the idea is revisited:** the only band with signal is
-short recitation/continuation — confirmations ("Approved"), repeated commands
-("ls ~", "show memories"), and explicit option picks. That band is ~1% of all
-boundaries and ~5% of offered-choice turns on this corpus, so a feature limited
-to it would be rarely visible. Suppression rules from the taxonomy (generic
-acknowledgment, invented specifics, echoed questions, > 20 words) are a
-prerequisite, not a polish step.
+**Do not start the sibling UI issue.** The measurement the issue asked for
+now exists, and it says the expensive part is not justified.
 
-**The missing input is the production corpus.** This run used a dev checkout
-full of automated smoke tests and repeated debug loops, with no provenance.
-Before any UI issue starts, rerun:
+**If the idea is revisited,** the only band with signal is short
+recitation/continuation and explicit option picks. That band is 0.7% of all
+production boundaries and 3.7% of offered-choice turns. A feature limited to
+it would be rarely visible, and the suppression rules from the taxonomy
+(abstain on novel instructions, never invent paths/URLs, never echo the
+assistant's question) are prerequisites, not polish.
 
-```bash
-uv run python -m decafclaw.survey stage0
-uv run python -m decafclaw.survey devset --limit 200
-uv run python -m decafclaw.survey score --aux-model vertex-gemini-flash --dry-run
-uv run python -m decafclaw.survey score --aux-model vertex-gemini-flash
-```
-
-on the real 4,227-conversation archive. The harness is the deliverable; this
-memo is a byproduct from the corpus available here.
+**Re-run the harness after prompt changes or corpus shifts.** It is cheap:
+two minutes for Stage 0, a few minutes and well under a dollar for a 200-case
+score. The dev set, raw scores, and spot-check sheet are local and git-ignored
+because they contain private conversation text.
