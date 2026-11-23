@@ -968,6 +968,154 @@ async def test_publish_vault_folder_absolute_blocked(ctx, tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_newsletter_template_is_loaded_from_a_separate_file():
+    """The email shell lives in template.html and is read once at import.
+
+    A template literal cannot use real CSS braces without escaping every one,
+    so the shell moved to a plain HTML file (#1379). This asserts the module
+    reads that file and that the content placeholder appears exactly once.
+    """
+    from decafclaw.skills.newsletter.tools import (
+        _CONTENT_PLACEHOLDER,
+        _NEWSLETTER_TEMPLATE,
+        _TEMPLATE_PATH,
+    )
+
+    assert _TEMPLATE_PATH.name == "template.html"
+    assert _TEMPLATE_PATH.is_file()
+    assert _NEWSLETTER_TEMPLATE == _TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert _NEWSLETTER_TEMPLATE.count(_CONTENT_PLACEHOLDER) == 1
+    # Real CSS braces, not the doubled braces an f-string literal required.
+    assert "{{" not in _NEWSLETTER_TEMPLATE
+    assert "}}" not in _NEWSLETTER_TEMPLATE
+
+
+def test_render_newsletter_email_golden_output():
+    """Pin the full rendered email for a fixed input.
+
+    This is the golden the template file must reproduce byte for byte; it
+    catches brace handling, placeholder insertion, and CSS drift.
+    """
+    from decafclaw.skills.newsletter.tools import render_newsletter_email
+
+    _plain, html = render_newsletter_email("# Digest\n\nHello **world**.", None)
+
+    expected = """<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #1e293b;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 640px;
+      margin: 20px auto;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .header {
+      background: #0f172a;
+      color: #ffffff;
+      padding: 24px 32px;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .content {
+      padding: 32px;
+      font-size: 15px;
+    }
+    .content h1, .content h2, .content h3, .content h4 {
+      color: #0f172a;
+      margin-top: 24px;
+      margin-bottom: 12px;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+    .content h1 { font-size: 22px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
+    .content h2 { font-size: 18px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px; }
+    .content h3 { font-size: 16px; }
+    .content p { margin: 0 0 16px 0; }
+    .content ul, .content ol { margin: 0 0 16px 0; padding-left: 24px; }
+    .content li { margin-bottom: 6px; }
+    .content a { color: #2563eb; text-decoration: none; }
+    .content a:hover { text-decoration: underline; }
+    .content blockquote {
+      margin: 16px 0;
+      padding: 12px 16px;
+      border-left: 4px solid #cbd5e1;
+      background: #f8fafc;
+      color: #475569;
+      font-style: italic;
+    }
+    .content code {
+      background: #f1f5f9;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .content pre {
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 13px;
+    }
+    .content pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+    .content hr {
+      border: 0;
+      border-top: 1px solid #e2e8f0;
+      margin: 24px 0;
+    }
+    .footer {
+      border-top: 1px solid #e2e8f0;
+      padding: 20px 32px;
+      font-size: 12px;
+      color: #64748b;
+      background: #f8fafc;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>☕ DecafClaw Newsletter</h1>
+    </div>
+    <div class="content">
+      <h1>Digest</h1>
+<p>Hello <strong>world</strong>.</p>
+
+    </div>
+    <div class="footer">
+      Sent autonomously by DecafClaw
+    </div>
+  </div>
+</body>
+</html>
+"""
+    assert html == expected
+
+
 def test_render_newsletter_email_internal_vault_link_ignores_frontmatter_external_url(ctx, tmp_path):
     vault = tmp_path / "vault"
     vault.mkdir()
