@@ -309,6 +309,13 @@ WYSIWYG markdown editor for vault pages, accessible from the sidebar:
 - **Frontmatter editing**: a metadata strip above the body shows `summary` and
   tags in view mode; edit mode swaps it for typed controls plus a raw-YAML
   escape hatch. See [Editing frontmatter in the web UI](vault.md#editing-frontmatter-in-the-web-ui).
+- **Auto-refresh on external changes**: a `vault_changed` WebSocket message
+  (agent `vault_write`, journal append, or another client) refreshes the open
+  page in place when the buffer is clean. Unsaved editor text, unsaved raw
+  frontmatter, a typed metadata field that has not committed (blur), a queued
+  metadata patch, an in-flight save, or an unresolved save error block the
+  refresh; the next save's conflict path handles those. Metadata-only changes
+  update the mtime without resetting the body editor's undo history.
 
 ### Files tab
 
