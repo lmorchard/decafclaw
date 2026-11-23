@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from decafclaw import sticky as sticky_mod
 from decafclaw.events import emit_for_ctx
 from decafclaw.media import EndTurnConfirm, ToolResult, WidgetRequest
+from decafclaw.progress_tracker import progress_payload, progress_step
 from decafclaw.skills.project.plan_parser import (
     Step,
     StepStatus,
@@ -107,16 +108,13 @@ def _flatten_leaf_steps(steps: list[Step]) -> list[Step]:
 
 def _progress_data_from_plan(info: ProjectInfo, steps: list[Step]) -> dict:
     """Build a progress_tracker payload from parsed plan steps."""
-    widget_steps = []
-    for s in _flatten_leaf_steps(steps):
-        step = {"label": f"{s.number}. {s.description}", "status": s.status}
-        if s.note:
-            step["note"] = s.note
-        widget_steps.append(step)
+    widget_steps = [
+        progress_step(f"{s.number}. {s.description}", s.status, note=s.note or None) for s in _flatten_leaf_steps(steps)
+    ]
     done, total = plan_progress(steps)
     nxt = next_actionable(steps)
     summary = f"{done}/{total} · {nxt.number}. {nxt.description}" if nxt else f"{done}/{total}"
-    return {"steps": widget_steps, "title": info.description, "summary": summary}
+    return progress_payload(info.description, summary, widget_steps)
 
 
 async def _emit_project_progress(ctx: "Context", info: ProjectInfo) -> None:
