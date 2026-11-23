@@ -54,7 +54,6 @@ from decafclaw.skills.vault._search import (
 )
 from decafclaw.skills.vault._sections import (
     Document,
-    _insert_into_doc,
     describe_section_miss,
 )
 from decafclaw.tags import (
@@ -1256,9 +1255,9 @@ async def tool_vault_move_lines(
             return ToolResult(text=f"[error: line {n} out of range in {from_page}]")
         moved.append(from_doc.lines[idx].rstrip("\n"))
     for n in sorted(line_nums, reverse=True):
-        from_doc._delete_lines(n - 1, 1)
+        from_doc.delete_lines(n - 1, 1)
     # Insert into target
-    err = _insert_into_doc(to_doc, moved, to_section, position)
+    err = to_doc.insert_lines(moved, to_section, position)
     if err:
         return ToolResult(text=f"[error: {err}]")
     # Write target first, source second.  If the target write fails, the source

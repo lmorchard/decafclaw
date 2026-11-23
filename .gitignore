@@ -13,3 +13,6 @@ tmp/
 .playwright-mcp/
 .claude/
 .codex/
+
+# Suggested-prompt dev sets contain raw archive text (private).
+evals/suggested_prompt/*.jsonl

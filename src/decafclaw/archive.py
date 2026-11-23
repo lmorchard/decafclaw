@@ -73,8 +73,12 @@ def write_archive(config, conv_id: str, messages: list[dict]):
     _write_jsonl_atomic(archive_path(config, conv_id), messages)
 
 
-def _read_jsonl(path: Path) -> list[dict]:
-    """Read a JSONL file, skipping corrupt lines."""
+def read_archive_file(path: Path) -> list[dict]:
+    """Read a conversation archive file, skipping corrupt lines.
+
+    Path-based counterpart to :func:`read_archive` for callers that already
+    hold an archive path (offline scans, surveys) rather than a conv id.
+    """
     messages = []
     with open(path) as f:
         for lineno, line in enumerate(f, 1):
@@ -93,7 +97,7 @@ def read_compacted_history(config, conv_id: str) -> list[dict] | None:
     path = _compacted_path(config, conv_id)
     if not path.exists():
         return None
-    messages = _read_jsonl(path)
+    messages = read_archive_file(path)
     return messages or None
 
 
@@ -102,7 +106,7 @@ def read_archive(config, conv_id: str) -> list[dict]:
     path = archive_path(config, conv_id)
     if not path.exists():
         return []
-    return _read_jsonl(path)
+    return read_archive_file(path)
 
 
 def iter_archive_messages(config, conv_id: str) -> Iterator[dict]:

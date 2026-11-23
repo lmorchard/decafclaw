@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
+from decafclaw.progress_tracker import progress_payload, progress_step
+
 log = logging.getLogger(__name__)
 
 # ANSI escape sequence stripper: matches CSI, OSC, and basic escape sequences.
@@ -113,15 +115,9 @@ class NoneParser(BaseProgressParser):
 
     def format_running_sticky(self, command: str) -> dict:
         last = self.last_line[:_STICKY_NOTE_MAX]
-        step: dict[str, str] = {"label": cmd_preview(command), "status": "in_progress"}
-        if last:
-            step["note"] = last
+        step = progress_step(cmd_preview(command), "in_progress", note=last or None)
         summary = last or f"Running: {cmd_preview(command)}"
-        return {
-            "title": "Background job",
-            "summary": summary,
-            "steps": [step],
-        }
+        return progress_payload("Background job", summary, [step])
 
     def format_final_sticky(self, command: str, exit_code: int | None, status: str) -> dict:
         step_status = "done" if status == "completed" else "failed"
@@ -130,11 +126,8 @@ class NoneParser(BaseProgressParser):
         note = f"exit {exit_code}"
         if self.last_line and status != "completed":
             note += f" — {self.last_line[:120]}"
-        return {
-            "title": "Background job",
-            "summary": summary,
-            "steps": [{"label": cmd_preview(command), "status": step_status, "note": note}],
-        }
+        step = progress_step(cmd_preview(command), step_status, note=note)
+        return progress_payload("Background job", summary, [step])
 
 
 class StepParser(BaseProgressParser):
@@ -200,21 +193,12 @@ class StepParser(BaseProgressParser):
             label = self.step_label or cmd_preview(command)
             summary = f"{progress_str} {label}" if self.step_label else f"{progress_str} {cmd_preview(command)}"
             note = f"{progress_str} {self.step_label}" if self.step_label else progress_str
-            return {
-                "title": "Background job",
-                "summary": summary[:_STICKY_NOTE_MAX],
-                "steps": [{"label": cmd_preview(command), "status": "in_progress", "note": note[:_STICKY_NOTE_MAX]}],
-            }
+            step = progress_step(cmd_preview(command), "in_progress", note=note[:_STICKY_NOTE_MAX])
+            return progress_payload("Background job", summary[:_STICKY_NOTE_MAX], [step])
         # Fallback to line counting
         last = self.last_line[:_STICKY_NOTE_MAX]
-        step: dict[str, str] = {"label": cmd_preview(command), "status": "in_progress"}
-        if last:
-            step["note"] = last
-        return {
-            "title": "Background job",
-            "summary": last or f"Running: {cmd_preview(command)}",
-            "steps": [step],
-        }
+        step = progress_step(cmd_preview(command), "in_progress", note=last or None)
+        return progress_payload("Background job", last or f"Running: {cmd_preview(command)}", [step])
 
     def format_final_sticky(self, command: str, exit_code: int | None, status: str) -> dict:
         step_status = "done" if status == "completed" else "failed"
@@ -225,11 +209,8 @@ class StepParser(BaseProgressParser):
             note += f" — [{self.current_step}/{self.total_steps}]"
         elif self.last_line and status != "completed":
             note += f" — {self.last_line[:120]}"
-        return {
-            "title": "Background job",
-            "summary": summary,
-            "steps": [{"label": cmd_preview(command), "status": step_status, "note": note}],
-        }
+        step = progress_step(cmd_preview(command), step_status, note=note)
+        return progress_payload("Background job", summary, [step])
 
 
 class PercentParser(BaseProgressParser):
@@ -291,20 +272,11 @@ class PercentParser(BaseProgressParser):
             label = self.percent_label or cmd_preview(command)
             summary = f"{pct_str} · {label}" if self.percent_label else f"{pct_str} · {cmd_preview(command)}"
             note = f"{pct_str} — {self.percent_label}" if self.percent_label else pct_str
-            return {
-                "title": "Background job",
-                "summary": summary[:_STICKY_NOTE_MAX],
-                "steps": [{"label": cmd_preview(command), "status": "in_progress", "note": note[:_STICKY_NOTE_MAX]}],
-            }
+            step = progress_step(cmd_preview(command), "in_progress", note=note[:_STICKY_NOTE_MAX])
+            return progress_payload("Background job", summary[:_STICKY_NOTE_MAX], [step])
         last = self.last_line[:_STICKY_NOTE_MAX]
-        step: dict[str, str] = {"label": cmd_preview(command), "status": "in_progress"}
-        if last:
-            step["note"] = last
-        return {
-            "title": "Background job",
-            "summary": last or f"Running: {cmd_preview(command)}",
-            "steps": [step],
-        }
+        step = progress_step(cmd_preview(command), "in_progress", note=last or None)
+        return progress_payload("Background job", last or f"Running: {cmd_preview(command)}", [step])
 
     def format_final_sticky(self, command: str, exit_code: int | None, status: str) -> dict:
         step_status = "done" if status == "completed" else "failed"
@@ -316,11 +288,8 @@ class PercentParser(BaseProgressParser):
             note += f" — {pct_str}"
         elif self.last_line and status != "completed":
             note += f" — {self.last_line[:120]}"
-        return {
-            "title": "Background job",
-            "summary": summary,
-            "steps": [{"label": cmd_preview(command), "status": step_status, "note": note}],
-        }
+        step = progress_step(cmd_preview(command), step_status, note=note)
+        return progress_payload("Background job", summary, [step])
 
 
 class PytestParser(BaseProgressParser):
@@ -503,20 +472,11 @@ class PytestParser(BaseProgressParser):
                 if self.current_test:
                     note += f" — {self.current_test}"
 
-            return {
-                "title": "Background job",
-                "summary": summary[:_STICKY_NOTE_MAX],
-                "steps": [{"label": cmd_preview(command), "status": "in_progress", "note": note[:_STICKY_NOTE_MAX]}],
-            }
+            step = progress_step(cmd_preview(command), "in_progress", note=note[:_STICKY_NOTE_MAX])
+            return progress_payload("Background job", summary[:_STICKY_NOTE_MAX], [step])
         last = self.last_line[:_STICKY_NOTE_MAX]
-        step: dict[str, str] = {"label": cmd_preview(command), "status": "in_progress"}
-        if last:
-            step["note"] = last
-        return {
-            "title": "Background job",
-            "summary": last or f"Running: {cmd_preview(command)}",
-            "steps": [step],
-        }
+        step = progress_step(cmd_preview(command), "in_progress", note=last or None)
+        return progress_payload("Background job", last or f"Running: {cmd_preview(command)}", [step])
 
     def format_final_sticky(self, command: str, exit_code: int | None, status: str) -> dict:
         step_status = "done" if status == "completed" else "failed"
@@ -535,11 +495,8 @@ class PytestParser(BaseProgressParser):
         elif self.last_line and status != "completed":
             note += f" — {self.last_line[:120]}"
 
-        return {
-            "title": "Background job",
-            "summary": summary,
-            "steps": [{"label": cmd_preview(command), "status": step_status, "note": note}],
-        }
+        step = progress_step(cmd_preview(command), step_status, note=note)
+        return progress_payload("Background job", summary, [step])
 
 
 class AutoParser(BaseProgressParser):
