@@ -899,6 +899,10 @@ class BackgroundConfig:
     wake_max_per_window: int = 20
     wake_window_sec: int = 60
     default_completion_tail_lines: int = 50
+    # Explicit-background job lifetime (shell_background_start). Raised from
+    # the former 600s hardcode (#1746): a full test suite outlives it. A
+    # per-call max_lifetime_sec overrides this; 0 disables expiry.
+    default_max_lifetime_sec: float = 3600.0
 
 
 @dataclass

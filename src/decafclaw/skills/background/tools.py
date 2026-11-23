@@ -3,6 +3,7 @@
 import asyncio
 import codecs
 import logging
+import math
 import os
 import re
 import sys
@@ -22,7 +23,7 @@ from decafclaw.skills.background.parsers import (
     parse_progress_preset,
 )
 from decafclaw.subprocess_limits import describe_kill
-from decafclaw.tools.shell_tools import shell_cap_prefix
+from decafclaw.tools.shell_tools import _resolve_shell_cwd, shell_cap_prefix
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -36,6 +37,13 @@ _STICKY_THROTTLE_SEC = 0.5  # min interval between sticky-slot progress updates
 _STICKY_EMIT_TIMEOUT_SEC = 2.0  # delivery timeout for background sticky updates
 _STICKY_NOTE_MAX = 200  # max chars of a single output line shown in the sticky slot
 _MAX_PENDING_CHARS = 65536  # 64 KB cap to bound pending stream buffer
+
+
+def _format_lifetime(seconds: float) -> str:
+    """Render a job lifetime; ``inf`` means expiry is disabled (#1746)."""
+    if not math.isfinite(seconds):
+        return "none (expiry disabled)"
+    return f"{seconds:.0f}s"
 
 
 class JobStatus(StrEnum):
@@ -199,10 +207,25 @@ async def _notify_job_exit(job: BackgroundJob) -> None:
         return
     from decafclaw import notifications
 
-    title = "Background job completed" if job.exit_code == 0 else "Background job failed"
-    priority = "normal" if job.exit_code == 0 else "high"
+    title = "Background job completed"
+    priority = "normal"
+    if job.status == JobStatus.EXPIRED:
+        title = "Background job expired"
+        priority = "high"
+    elif job.status == JobStatus.STOPPED:
+        title = "Background job stopped"
+    elif job.exit_code != 0:
+        title = "Background job failed"
+        priority = "high"
     cmd_preview = job.command[:80] + ("..." if len(job.command) > 80 else "")
     body = f"{cmd_preview} (exit {job.exit_code})"
+    # An interrupted job must not read like a clean run: say that partial
+    # output exists (and where it is) instead of reporting only an exit code
+    # (#1746). The status tool and the archive record carry the tails.
+    if job.status in (JobStatus.EXPIRED, JobStatus.STOPPED):
+        body += (
+            f" — captured {len(job.stdout_buffer)} stdout / {len(job.stderr_buffer)} stderr line(s) before termination"
+        )
     # Say when a cgroup limit killed it: "-9" alone reads as a mystery crash,
     # and "it hit its memory cap" is the difference between a bug to chase and
     # a budget to raise.
@@ -550,6 +573,10 @@ def format_status_text(
         parts.append(f"**stdout:**\n```\n{stdout}\n```")
     if stderr:
         parts.append(f"**stderr:**\n```\n{stderr}\n```")
+    if not stdout and not stderr and status not in (JobStatus.COMPLETED.value, JobStatus.RUNNING.value):
+        # A killed or failed run with no captured lines is not a clean
+        # "no output" success; say so explicitly (#1746).
+        parts.append("- **Output:** none captured before termination")
     return "\n".join(parts)
 
 
@@ -746,9 +773,13 @@ class BackgroundJobManager:
                 job.status = JobStatus.EXPIRED
                 await _finalize_job(job)
                 expired.append(job)
-            elif job.status != JobStatus.RUNNING and (now - job.started_at) > job.max_lifetime:
-                # Remove stale finished jobs to prevent unbounded growth
-                to_remove.append(job.job_id)
+            elif job.status != JobStatus.RUNNING:
+                # Remove stale finished jobs to prevent unbounded growth. A
+                # job with expiry disabled still needs a retention window,
+                # or it would never be collected (#1746).
+                retention = job.max_lifetime if math.isfinite(job.max_lifetime) else _DEFAULT_MAX_LIFETIME
+                if (now - job.started_at) > retention:
+                    to_remove.append(job.job_id)
         for job_id in to_remove:
             del self.jobs[job_id]
         return expired
@@ -793,6 +824,8 @@ async def tool_shell_background_start(
     pin_sticky: bool = False,
     progress_parser: str | ProgressParserPreset = ProgressParserPreset.AUTO,
     purpose: str = "",
+    cwd: str = "",
+    max_lifetime_sec: float | None = None,
 ) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
@@ -800,10 +833,19 @@ async def tool_shell_background_start(
 
     from decafclaw.tools.shell_tools import _redirect_text, check_shell_approval
 
+    # Resolve cwd before approval so the judge and the confirmation see the
+    # real starting directory, and an unusable path fails loudly (#1746).
+    try:
+        workdir = _resolve_shell_cwd(ctx, cwd)
+    except ValueError as exc:
+        log.info(f"[tool:shell_background_start] rejected cwd {cwd!r}: {exc}")
+        return ToolResult(text=f"[error: {exc}]", data={"status": "error"})
+
     result = await check_shell_approval(
         ctx,
         command,
         tool_name="shell_background_start",
+        cwd=str(workdir),
         message=f"Background process: `{command}`",
         purpose=purpose,
     )
@@ -828,6 +870,21 @@ async def tool_shell_background_start(
     )
     clamped_tail_lines = max(0, min(tail_lines, _OUTPUT_BUFFER_SIZE))
 
+    # Lifetime: per-call override wins; 0 disables expiry (#1746). A negative
+    # value is a caller mistake, not a request to disable — fail loudly.
+    if max_lifetime_sec is None:
+        max_lifetime = ctx.config.background.default_max_lifetime_sec
+    else:
+        max_lifetime = float(max_lifetime_sec)
+    if max_lifetime < 0 or not math.isfinite(max_lifetime):
+        return ToolResult(
+            text="[error: max_lifetime_sec must be a finite number >= 0 (0 disables expiry)]",
+            data={"status": "error"},
+        )
+    if max_lifetime == 0:
+        max_lifetime = math.inf
+        log.info("[tool:shell_background_start] expiry disabled by caller")
+
     manager = _get_job_manager(ctx)
     await manager.cleanup_expired()
     conv_manager = ctx.manager
@@ -835,7 +892,8 @@ async def tool_shell_background_start(
     try:
         job = await manager.start(
             command,
-            str(ctx.config.workspace_path),
+            str(workdir),
+            max_lifetime=max_lifetime,
             config=ctx.config,
             conv_id=ctx.conv_id,
             event_bus=ctx.event_bus,
@@ -856,12 +914,15 @@ async def tool_shell_background_start(
             f"- **Job ID:** `{job.job_id}`\n"
             f"- **PID:** {job.pid}\n"
             f"- **Command:** `{command}`\n"
-            f"- **Max lifetime:** {job.max_lifetime:.0f}s"
+            f"- **CWD:** `{workdir}`\n"
+            f"- **Max lifetime:** {_format_lifetime(job.max_lifetime)}"
         ),
         data={
             "job_id": job.job_id,
             "status": JobStatus.RUNNING,
             "command": command,
+            "cwd": str(workdir),
+            "max_lifetime_sec": None if math.isinf(job.max_lifetime) else job.max_lifetime,
             "pid": job.pid,
             **({"pin_sticky": True, "progress_parser": preset} if pin_sticky else {}),
         },
@@ -885,7 +946,7 @@ async def tool_shell_background_status(ctx: "Context", job_id: str) -> ToolResul
     now = time.monotonic()
     elapsed_ms = int((now - job.started_at) * 1000)
     remaining_ms = None
-    if job.status == JobStatus.RUNNING:
+    if job.status == JobStatus.RUNNING and math.isfinite(job.max_lifetime):
         remaining = job.max_lifetime - (now - job.started_at)
         remaining_ms = max(0, int(remaining * 1000))
 
@@ -1033,7 +1094,10 @@ TOOL_DEFINITIONS = [
                 "Use shell_background_status to monitor progress and check back on output, "
                 "shell_background_stop to terminate. Pair with wait or schedule_turn to check status without "
                 "busy-looping. REQUIRES USER CONFIRMATION unless the command matches an allow pattern. "
-                "Jobs auto-expire after 10 minutes. Always fill `purpose` with what you are "
+                "Jobs expire after config.background.default_max_lifetime_sec (default 1 hour); "
+                "pass max_lifetime_sec to extend it, or 0 to disable expiry for unbounded runs. "
+                "On expiry or stop, shell_background_status and the completion record keep the "
+                "partial stdout/stderr captured before termination. Always fill `purpose` with what you are "
                 "trying to accomplish; the security and auto-approval evaluators use it, and the "
                 "user sees it on the confirmation prompt. If a command is denied with feedback, "
                 "read it carefully and run the safer alternative."
@@ -1041,9 +1105,28 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "cwd": {
+                        "type": "string",
+                        "description": (
+                            "Working directory, relative to the workspace root (or an absolute "
+                            "path inside it). Defaults to the workspace root. An invalid path "
+                            "fails before any process starts."
+                        ),
+                    },
                     "command": {
                         "type": "string",
                         "description": "The shell command to run in the background",
+                    },
+                    "max_lifetime_sec": {
+                        "type": "number",
+                        "description": (
+                            "Maximum seconds before the job is terminated "
+                            "(SIGTERM, then SIGKILL after 2s). Optional; defaults to "
+                            "config.background.default_max_lifetime_sec (3600s). "
+                            "Set 0 to disable expiry for runs whose duration you cannot "
+                            "bound, such as a full test suite. Partial stdout/stderr is "
+                            "kept in shell_background_status and the completion record."
+                        ),
                     },
                     "purpose": {
                         "type": "string",
