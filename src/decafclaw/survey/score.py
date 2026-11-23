@@ -314,7 +314,18 @@ def _md_cell(value: str, limit: int = 110) -> str:
     return text.replace("|", "\\|")
 
 
-def _select_spot_check(rows: list[CaseResult], limit: int) -> list[CaseResult]:
+def _select_spot_check(
+    rows: list[CaseResult],
+    limit: int,
+    *,
+    conv_by_turn: dict[str, str],
+    per_conv: int = 3,
+) -> list[CaseResult]:
+    """Pick a spread of outcomes, capped per conversation.
+
+    Long debug conversations otherwise dominate the sheet and hide whether
+    failures are systemic or one loop's local pathology.
+    """
     buckets: dict[str, list[CaseResult]] = {"exact": [], "jaccard": [], "abstained": [], "miss": []}
     for row in rows:
         if row.error:
@@ -330,19 +341,31 @@ def _select_spot_check(rows: list[CaseResult], limit: int) -> list[CaseResult]:
     for name in buckets:
         buckets[name].sort(key=lambda row: row.turn_id)
     chosen: list[CaseResult] = []
-    per_bucket = max(1, limit // len(buckets))
+    counts: dict[str, int] = {}
+    order = ("exact", "jaccard", "abstained", "miss")
     while len(chosen) < limit:
         progressed = False
-        for name in ("exact", "jaccard", "abstained", "miss"):
-            if not buckets[name]:
-                continue
-            chosen.append(buckets[name].pop(0))
-            progressed = True
+        for name in order:
+            queue = buckets[name]
+            index = 0
+            while index < len(queue):
+                row = queue[index]
+                conv = conv_by_turn.get(row.turn_id, "")
+                if counts.get(conv, 0) >= per_conv and any(
+                    counts.get(conv_by_turn.get(other.turn_id, ""), 0) < per_conv
+                    for bucket in buckets.values()
+                    for other in bucket
+                ):
+                    index += 1
+                    continue
+                queue.pop(index)
+                counts[conv] = counts.get(conv, 0) + 1
+                chosen.append(row)
+                progressed = True
+                break
             if len(chosen) >= limit:
                 break
         if not progressed:
-            break
-        if len(chosen) >= per_bucket * len(buckets) and len(chosen) >= limit:
             break
     return chosen[:limit]
 
@@ -359,7 +382,8 @@ def write_spot_check(
     cases_by_id = {case["turn_id"]: case for case in cases}
     active_rows = rows_by_arm.get(active_arm, [])
     aux_by_id = {row.turn_id: row for row in rows_by_arm.get(aux_arm, [])}
-    selected = _select_spot_check(active_rows, limit)
+    conv_by_turn = {case["turn_id"]: case.get("conv_id", "") for case in cases}
+    selected = _select_spot_check(active_rows, limit, conv_by_turn=conv_by_turn)
     lines = [
         "# Suggested-prompt spot check",
         "",

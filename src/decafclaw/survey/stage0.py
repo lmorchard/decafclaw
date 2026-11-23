@@ -13,6 +13,7 @@ Two measurements:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ async def run_stage0(
     tail_chars: int = 6000,
     limit: int | None = None,
     top_k: int = 5,
+    page_sample: int = 300,
 ) -> Stage0Result:
     scan: CorpusScan = scan_corpus(
         config,
@@ -60,6 +62,11 @@ async def run_stage0(
         if boundary.assistant_before and _is_whole_repeat(boundary):
             repeats += 1
 
+    calibration_boundaries = scan.boundaries
+    if 0 < page_sample < len(scan.boundaries):
+        calibration_boundaries = sorted(
+            scan.boundaries, key=lambda boundary: hashlib.sha256(boundary.turn_id.encode()).hexdigest()
+        )[:page_sample]
     page_cases = [
         PageCase(
             turn_id=boundary.turn_id,
@@ -68,7 +75,7 @@ async def run_stage0(
             assistant_before=boundary.assistant_before,
             provenance_pages=boundary.provenance_pages,
         )
-        for boundary in scan.boundaries
+        for boundary in calibration_boundaries
     ]
     page_summary, details_by_turn = await calibrate_pages(
         page_cases,
@@ -87,6 +94,7 @@ async def run_stage0(
             "boundaries": len(scan.boundaries),
             "archive_roots": scan.archive_roots,
             "tail_chars": tail_chars,
+            "page_calibration_sample": len(calibration_boundaries),
         },
         "offered_options": {
             "offered_turns": len(offered),

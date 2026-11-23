@@ -48,6 +48,7 @@ def _cmd_stage0(args) -> int:
             tail_chars=args.tail_chars,
             limit=args.limit,
             top_k=args.top_k,
+            page_sample=args.page_sample,
         )
 
     result = asyncio.run(_run())
@@ -155,6 +156,12 @@ def build_parser() -> argparse.ArgumentParser:
     stage0.add_argument("--top-k", type=int, default=5)
     stage0.add_argument("--tail-chars", type=int, default=6000)
     stage0.add_argument("--limit", type=int, help="Scan at most this many archives")
+    stage0.add_argument(
+        "--page-sample",
+        type=int,
+        default=300,
+        help="Calibrate page direction on this many boundaries (0 = all; default 300)",
+    )
     stage0.set_defaults(func=_cmd_stage0)
 
     devset = sub.add_parser("devset", help="Sample a deterministic dev set")

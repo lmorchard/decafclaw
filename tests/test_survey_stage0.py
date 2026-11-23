@@ -77,6 +77,19 @@ async def test_stage0_whole_repeat_is_separate(config):
     assert offered["recapitulated"] == 0
 
 
+async def test_stage0_page_sample_bounds_calibration(config):
+    for index in range(5):
+        write_archive(
+            config,
+            f"conv-{index}",
+            [_user("first"), _assistant("reply"), _user("second"), _assistant("reply two")],
+        )
+    result = await run_stage0(config, StubRetriever({}), default_model="m", top_k=2, page_sample=2)
+    assert result.summary["corpus"]["boundaries"] == 5
+    assert result.summary["corpus"]["page_calibration_sample"] == 2
+    assert len(result.details) == 2
+
+
 async def test_stage0_format_is_readable(config):
     write_archive(config, "conv", [_user("first"), _assistant("reply"), _user("thanks")])
     result = await run_stage0(config, StubRetriever({}), default_model="m", top_k=2)
