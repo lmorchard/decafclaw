@@ -1648,6 +1648,20 @@ def test_status_text_flags_no_output_after_termination():
     )
     assert "- **Output:** none captured before termination" in text
 
+    # An external SIGTERM lands as ERROR, not EXPIRED — it still needs the note.
+    text = tools.format_status_text(
+        job_id="abc",
+        status=JobStatus.ERROR,
+        command="pytest",
+        pid=1,
+        elapsed_ms=190_000,
+        remaining_ms=None,
+        exit_code=-15,
+        stdout="",
+        stderr="",
+    )
+    assert "- **Output:** none captured before termination" in text
+
 
 def test_status_text_keeps_partial_output():
     """Partial stdout captured before termination is reported, not dropped."""

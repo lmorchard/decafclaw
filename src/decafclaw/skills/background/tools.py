@@ -573,9 +573,9 @@ def format_status_text(
         parts.append(f"**stdout:**\n```\n{stdout}\n```")
     if stderr:
         parts.append(f"**stderr:**\n```\n{stderr}\n```")
-    if not stdout and not stderr and status in (JobStatus.EXPIRED.value, JobStatus.STOPPED.value):
-        # A killed run with no captured lines is not a clean "no output"
-        # success; say so explicitly (#1746).
+    if not stdout and not stderr and status not in (JobStatus.COMPLETED.value, JobStatus.RUNNING.value):
+        # A killed or failed run with no captured lines is not a clean
+        # "no output" success; say so explicitly (#1746).
         parts.append("- **Output:** none captured before termination")
     return "\n".join(parts)
 
