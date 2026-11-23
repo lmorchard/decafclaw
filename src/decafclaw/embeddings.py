@@ -773,6 +773,16 @@ def _iter_vault_pages(config):
         yield rel_path, embed_text, source_type, {}
 
 
+def iter_index_entries(config):
+    """Yield every vault entry the embedding index covers: pages and journals.
+
+    Shared by reindexing and offline consumers (the suggested-prompt survey's
+    local embedding backend) so both see the same corpus.
+    """
+    yield from _iter_vault_pages(config)
+    yield from _iter_journal_entries(config)
+
+
 async def reindex_journal(config, concurrency: int = 4):
     """Rebuild journal entry embeddings."""
     base = config.vault_agent_journal_dir
