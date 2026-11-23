@@ -44,12 +44,13 @@ def resolve_page(config, page: str, from_page: str | None = None) -> Path | None
     if direct.is_relative_to(vault) and direct.exists():
         return direct
 
-    # Search subdirectories by comparing stems
+    # Search subdirectories by comparing bare names. Do NOT use Path(...).stem
+    # here: it truncates at the last dot, so a title containing a period
+    # ("Consciousness vs. Collective Systems") would never match (#1748).
     matches: list[Path] = []
-    # The page param might be a bare name or a partial path — match on stem
-    target_stem = Path(page).stem
+    target_name = page.rsplit("/", 1)[-1]
     for path in vault.rglob("*.md"):
-        if path.stem == target_stem and path.resolve().is_relative_to(vault):
+        if path.name[:-3] == target_name and path.resolve().is_relative_to(vault):
             matches.append(path)
 
     if not matches:
@@ -101,10 +102,12 @@ def suggest_pages(config, page: str) -> list[str]:
     match_on_stem = "/" not in page
     for path in sorted(vault.rglob("*.md")):
         name = path.relative_to(vault).with_suffix("").as_posix()
-        key = path.stem if match_on_stem else name
+        # path.stem truncates dotted titles ("X vs. Y" -> "X vs"), which would
+        # make fuzzy suggestions miss real pages (#1748).
+        key = path.name[:-3] if match_on_stem else name
         by_key.setdefault(key, []).append(name)
 
-    target = Path(page).stem if match_on_stem else page
+    target = page.rsplit("/", 1)[-1] if match_on_stem else page
     suggestions = [name for key in find_fuzzy_matches(target, by_key) for name in by_key[key]]
     return suggestions[:3]
 

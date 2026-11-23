@@ -105,7 +105,12 @@ def _resolve_link_target(
     hit = full_lower_map.get(target.lower())
     if hit is not None:
         return hit
-    candidates = stem_lower_map.get(Path(target).stem.lower())
+    # Do NOT use Path(...).stem here: it truncates at the last dot, so a title
+    # containing a period ("Consciousness vs. Collective Systems") resolves as
+    # "consciousness vs" and never matches (#1748). Strip a real .md extension
+    # instead — already handled above — and compare the bare basename.
+    basename = target.rsplit("/", 1)[-1]
+    candidates = stem_lower_map.get(basename.lower())
     if candidates:
         return sorted(candidates)[0]
     return None
