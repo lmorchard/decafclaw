@@ -1,11 +1,13 @@
 """Tests for vault REST API endpoints."""
 
+import asyncio
 import os
 from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from decafclaw import embeddings
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.web.auth import create_token
@@ -256,6 +258,69 @@ async def test_vault_write_new_page(client, http_config):
     path = http_config.vault_agent_pages_dir / "NewPage.md"
     assert path.exists()
     assert "Content." in path.read_text()
+
+
+@pytest.mark.asyncio
+async def test_vault_write_returns_before_embedding_finishes(client, app, monkeypatch):
+    """The PUT must not wait for the 1-2s embedding call (#1767)."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    seen: dict[str, str] = {}
+
+    async def slow_index_entry(config, file_path, entry_text, source_type="memory"):
+        seen["path"] = file_path
+        seen["text"] = entry_text
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(embeddings, "index_entry", slow_index_entry)
+
+    resp = await asyncio.wait_for(
+        client.put("/api/vault/agent/pages/Async", json={"content": "# Async"}),
+        timeout=2,
+    )
+    assert resp.status_code == 200
+
+    task = app.state.vault_index_tasks["agent/pages/Async.md"]
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert seen == {"path": "agent/pages/Async.md", "text": "# Async"}
+    finally:
+        release.set()
+    await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_vault_write_index_tasks_chain_per_path(client, app, monkeypatch):
+    """Two quick saves must index in order, so the older embed cannot win."""
+    first_started = asyncio.Event()
+    first_release = asyncio.Event()
+    order: list[str] = []
+
+    async def index_entry(config, file_path, entry_text, source_type="memory"):
+        if entry_text == "# First":
+            first_started.set()
+            await first_release.wait()
+        order.append(entry_text)
+
+    monkeypatch.setattr(embeddings, "index_entry", index_entry)
+
+    first = await client.put("/api/vault/agent/pages/Chain", json={"content": "# First"})
+    assert first.status_code == 200
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+
+    second = await client.put("/api/vault/agent/pages/Chain", json={"content": "# Second"})
+    assert second.status_code == 200
+    second_task = app.state.vault_index_tasks["agent/pages/Chain.md"]
+
+    # Yield to the scheduler: the second embed must still be waiting on the first.
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert order == []
+
+    first_release.set()
+    await asyncio.wait_for(second_task, timeout=1)
+    assert order == ["# First", "# Second"]
 
 
 @pytest.mark.asyncio

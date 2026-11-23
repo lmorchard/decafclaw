@@ -142,6 +142,15 @@ export class WikiEditor extends LitElement {
   #editor = null;
   /** @type {ReturnType<typeof setTimeout> | null} */
   #saveTimer = null;
+  /**
+   * The save loop currently running, or null. While a PUT is open its
+   * response still carries the new mtime, so a second PUT sent now would
+   * reuse the pre-save `modified` snapshot and earn a spurious 409 (#1767).
+   * @type {Promise<void> | null}
+   */
+  #inFlight = null;
+  /** A save was requested while one was already in flight. @type {boolean} */
+  #pendingSave = false;
   /** @type {string} */
   #lastSavedContent = '';
   /** @type {string} */
@@ -317,6 +326,36 @@ export class WikiEditor extends LitElement {
 
   async #save() {
     this.#saveTimer = null;
+    if (this.#inFlight) {
+      this.#pendingSave = true;
+      return this.#inFlight;
+    }
+    const run = this.#runSaveLoop();
+    this.#inFlight = run;
+    return run;
+  }
+
+  /**
+   * Serialize saves: at most one PUT is open at a time. A save requested
+   * while one is in flight runs after it, so the follow-up PUT carries the
+   * mtime the first response returned instead of the stale snapshot.
+   */
+  async #runSaveLoop() {
+    try {
+      do {
+        this.#pendingSave = false;
+        await this.#performSave();
+      } while (
+        this.#pendingSave
+        && this._status !== 'conflict'
+        && this._status !== 'error'
+      );
+    } finally {
+      this.#inFlight = null;
+    }
+  }
+
+  async #performSave() {
     const content = this.#currentMarkdown;
     if (content === this.#lastSavedContent) {
       if (this._status === 'editing') this._status = 'idle';
@@ -418,6 +457,9 @@ export class WikiEditor extends LitElement {
       clearTimeout(this.#saveTimer);
       this.#saveTimer = null;
     }
+    // An in-flight save may already be writing the latest content; wait for
+    // it (and any queued follow-up) before deciding whether another is due.
+    if (this.#inFlight) await this.#inFlight;
     if (this.#currentMarkdown !== this.#lastSavedContent) {
       await this.#save();
     }

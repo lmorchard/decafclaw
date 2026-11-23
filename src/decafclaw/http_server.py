@@ -2762,7 +2762,55 @@ async def vault_read(request: Request, username: str) -> JSONResponse:
     return JSONResponse(payload)
 
 
+def _schedule_vault_index(
+    app,
+    config,
+    rel_path: str,
+    content: str,
+    source_type: str,
+    *,
+    delete_paths: tuple[tuple[str, str | None], ...] = (),
+) -> None:
+    """Index a vault page after the write response, without blocking it.
+
+    Embedding a normal page takes 1-2s. Awaiting it inside the PUT left the
+    client's optimistic-concurrency snapshot stale long enough for the next
+    autosave to reuse it and earn a 409 (#1767). Writes are chained per path
+    so an older, slower embed can never land after a newer one. Failures stay
+    fail-open: the page is already on disk, and a later reindex repairs the
+    index.
+    """
+    tasks: dict[str, asyncio.Task] = app.state.vault_index_tasks
+
+    async def run(previous: asyncio.Task | None) -> None:
+        if previous is not None:
+            try:
+                await previous
+            except Exception:
+                pass
+        from .embeddings import delete_entries, index_entry
+
+        try:
+            for old_path, old_source_type in delete_paths:
+                delete_entries(config, old_path, source_type=old_source_type)
+            delete_entries(config, rel_path, source_type=source_type)
+            await index_entry(config, rel_path, content, source_type=source_type)
+        except Exception as e:
+            log.warning(f"Failed to index vault page '{rel_path}': {e}")
+
+    previous = tasks.get(rel_path)
+    task = asyncio.create_task(run(previous))
+    tasks[rel_path] = task
+
+    def _forget(done: asyncio.Task) -> None:
+        if tasks.get(rel_path) is done:
+            tasks.pop(rel_path, None)
+
+    task.add_done_callback(_forget)
+
+
 async def _vault_rename(
+    app,
     config,
     vault: Path,
     old_file: Path,
@@ -2801,18 +2849,19 @@ async def _vault_rename(
         except OSError:
             break
         old_dir = old_dir.parent
-    try:
-        from .embeddings import delete_entries, index_entry
-
-        old_rel = f"{old_name}.md"
-        old_source_type = _vault_source_type(config, old_file)
-        delete_entries(config, old_rel, source_type=old_source_type)
-        new_rel = str(new_file.relative_to(vault_resolved))
-        new_content = new_file.read_text(encoding="utf-8")
-        new_source_type = _vault_source_type(config, new_file)
-        await index_entry(config, new_rel, new_content, source_type=new_source_type)
-    except Exception as e:
-        log.warning(f"Failed to re-index after rename '{old_name}' -> '{rename_to}': {e}")
+    old_rel = f"{old_name}.md"
+    old_source_type = _vault_source_type(config, old_file)
+    new_rel = str(new_file.relative_to(vault_resolved))
+    new_content = new_file.read_text(encoding="utf-8")
+    new_source_type = _vault_source_type(config, new_file)
+    _schedule_vault_index(
+        app,
+        config,
+        new_rel,
+        new_content,
+        new_source_type,
+        delete_paths=((old_rel, old_source_type),),
+    )
     await publish_vault_changed(event_bus, config, kind=KIND_RENAME, path=new_file)
     stat = new_file.stat()
     rel = new_file.relative_to(vault_resolved)
@@ -2858,6 +2907,7 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
                 status_code=400,
             )
         return await _vault_rename(
+            request.app,
             config,
             vault,
             target,
@@ -2933,14 +2983,8 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     target.write_text(content, encoding="utf-8")
     result_meta, result_fm_error = parse_frontmatter_block(new_raw)
     source_type = _vault_source_type(config, target)
-    try:
-        from .embeddings import delete_entries, index_entry
-
-        rel_path = str(target.relative_to(vault.resolve()))
-        delete_entries(config, rel_path, source_type=source_type)
-        await index_entry(config, rel_path, content, source_type=source_type)
-    except Exception as e:
-        log.warning(f"Failed to index vault page '{page_name}': {e}")
+    rel_path = str(target.relative_to(vault.resolve()))
+    _schedule_vault_index(request.app, config, rel_path, content, source_type)
     await publish_vault_changed(
         event_bus,
         config,
@@ -2997,13 +3041,8 @@ async def vault_create(request: Request, username: str) -> JSONResponse:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     source_type = _vault_source_type(config, target)
-    try:
-        from .embeddings import index_entry
-
-        rel_path = str(target.relative_to(vault.resolve()))
-        await index_entry(config, rel_path, content, source_type=source_type)
-    except Exception as e:
-        log.warning(f"Failed to index new vault page '{name}': {e}")
+    rel_path = str(target.relative_to(vault.resolve()))
+    _schedule_vault_index(request.app, config, rel_path, content, source_type)
     await publish_vault_changed(event_bus, config, kind=KIND_CREATE, path=target)
     return JSONResponse({"ok": True, "page": name, "modified": target.stat().st_mtime})
 
@@ -5022,6 +5061,8 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     from .terminals import TerminalRegistry
 
     app.state.terminal_registry = TerminalRegistry(config)
+    # Background vault reindex tasks, chained per vault-relative path.
+    app.state.vault_index_tasks = {}
 
     # Wire terminal registry to manager if available
     if manager is not None:
