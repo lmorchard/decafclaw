@@ -648,6 +648,15 @@ last-write-wins and accepts `modified` only as an editor compatibility hint.
 Config reload consumes `content` directly; it does not share the vault and
 schedule `body` field.
 
+The editor serializes its own saves. While a PUT is open, another autosave is
+queued rather than dispatched; the queued PUT runs after the first response
+adopts its new `modified`. Without that queue, typing during the 1-2 seconds a
+vault write spent computing embeddings sent the pre-save mtime and latched the
+spurious "Page was modified externally" banner (#1767). Vault writes now also
+schedule indexing after the response, chained per page so an older embed cannot
+land after a newer one; `<file-editor>` uses the same in-flight queue for
+workspace files.
+
 `/api/schedules/{name}` wraps its payload in `{"schedule": ...}` for
 `schedule-page`, so it aliases `body` and `modified` to the top level for this
 contract. Before [#666](https://github.com/lmorchard/decafclaw/issues/666)

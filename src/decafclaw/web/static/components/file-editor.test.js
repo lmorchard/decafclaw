@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { EditorView } from 'codemirror';
-import { beforeAll, afterEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FileEditor, editorHighlightStyle } from './file-editor.js';
 import { applyTheme } from '../lib/theme.js';
@@ -317,5 +317,43 @@ describe('FileEditor theming and mounting', () => {
     if (scroller) {
       expect(getComputedStyle(scroller).overflowY).toBe('auto');
     }
+  });
+});
+
+describe('FileEditor autosave serialization', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('queues a second save until the first response returns the new mtime', async () => {
+    /** @type {() => void} */
+    let releaseFirst;
+    const firstGate = new Promise((resolve) => { releaseFirst = /** @type {() => void} */ (resolve); });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => {
+        await firstGate;
+        return { ok: true, status: 200, json: async () => ({ modified: 11 }) };
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ modified: 12 }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { editor, view } = await mountEditor('sample.txt', 'A');
+
+    view.dispatch({ changes: { from: 1, insert: 'B' } });
+    await vi.advanceTimersByTimeAsync(800);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Typing during the open PUT must not reuse its pre-save `modified`.
+    view.dispatch({ changes: { from: 2, insert: 'C' } });
+    await vi.advanceTimersByTimeAsync(800);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    releaseFirst();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ content: 'ABC', modified: 11 });
+    expect(editor.modified).toBe(12);
   });
 });

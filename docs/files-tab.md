@@ -113,6 +113,10 @@ The editor adapts dynamically to the active application theme (`light`, `dark`) 
 - Typing starts an 800 ms debounce.
 - The debounce fires `PUT /api/workspace/{path}` with `{"content": str, "modified": float}`.
 - **Ctrl/Cmd+S** flushes the debounce immediately.
+- **One PUT at a time.** A debounce that fires while a save is open queues one
+  follow-up; it runs after the first response adopts the new `modified`, so it
+  never reuses the pre-save snapshot. The same queue exists in `<wiki-editor>`
+  for vault, schedule, and config pages (#1767).
 - The server compares the client's `modified` against the file's current mtime. Drift > 1 ms → 409 conflict with the current mtime in the response body.
 
 ### Conflict recovery

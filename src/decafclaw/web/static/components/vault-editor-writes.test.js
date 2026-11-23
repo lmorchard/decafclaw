@@ -81,6 +81,42 @@ describe('vault wiki-editor generated writes', () => {
     expect(element.modified).toBe(11);
   });
 
+  it('serializes overlapping autosaves so the follow-up uses the returned mtime', async () => {
+    /** @type {() => void} */
+    let releaseFirst;
+    const firstGate = new Promise((resolve) => { releaseFirst = /** @type {() => void} */ (resolve); });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => {
+        await firstGate;
+        return jsonResponse({
+          ok: true, modified: 11, frontmatter: {}, frontmatter_raw: '', frontmatter_error: '',
+        });
+      })
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true, modified: 12, frontmatter: {}, frontmatter_raw: '', frontmatter_error: '',
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const element = await mountEditor();
+
+    state.editors[0].markdownUpdated(null, '# First', '# Initial');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Typing while the first PUT is open must not open a second one with the
+    // same pre-save `modified` snapshot; that was the spurious 409 in #1767.
+    state.editors[0].markdownUpdated(null, '# Second', '# First');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    releaseFirst();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      content: '# Second', modified: 11,
+    });
+    await vi.waitFor(() => expect(element._status).toBe('saved'));
+    expect(element.modified).toBe(12);
+  });
+
   it('keeps 409 conflict handling and omits modified on force-save', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ error: 'conflict', server_modified: 20 }, 409))
