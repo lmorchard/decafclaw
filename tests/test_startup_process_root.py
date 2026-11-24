@@ -33,3 +33,16 @@ def test_start_app_enters_server_process_root_when_no_transports_configured(conf
 
     run_all.assert_awaited_once()
     exit_process.assert_called_once_with("shutdown complete")
+
+
+def test_start_app_exits_nonzero_when_server_root_crashes(config, monkeypatch):
+    """A crashed server root exits non-zero so systemd's Restart=on-failure applies."""
+    run_all = AsyncMock(side_effect=RuntimeError("boom"))
+    exit_process = MagicMock()
+    monkeypatch.setattr("decafclaw.runner.run_all", run_all)
+    monkeypatch.setattr("decafclaw.runner.exit_process", exit_process)
+    monkeypatch.setattr("decafclaw.load_config", lambda: config)
+
+    start_app()
+
+    exit_process.assert_called_once_with("crash", 1)
