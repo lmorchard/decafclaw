@@ -152,6 +152,26 @@ networksetup -getmacaddress en0
 chmod 700 /Users/<your-user>
 ```
 
+`chmod 700` does not stop Docker Desktop. Step 2 makes the Docker socket writable for group `staff`, and `scavenger` is in `staff`. Docker Desktop shares `/Users` with its VM by default, and the VM reads shared files as the operator's user. A job can bind-mount your home directory and read it.
+
+Narrow Docker Desktop file sharing so the VM cannot see your files:
+- Open Docker Desktop, go to **Settings > Resources > File sharing** (the name varies by version), and remove `/Users`.
+- Add only `/Users/scavenger` and `/private/tmp` (ephemeral job workspaces live under `/tmp`).
+- Apply and restart Docker Desktop.
+
+Then run the check below. Do not assume the result: a Docker Desktop version change can reset file sharing.
+
+##### Check that the operator's files are not readable
+
+Run this as the operator, with an enrolled Mac and a file you can recognize:
+```bash
+ssh scavenger-laptop 'docker run --rm -v /Users/<your-user>:/h alpine ls /h/Documents'
+ssh scavenger-laptop 'ls /Users/<your-user>/Documents'
+```
+Pass: both commands fail (a file-sharing error from Docker, and `Permission denied` from `ls`). Fail: the first command lists your files. In that case, narrow file sharing further, or do not enroll this Mac for container jobs.
+
+Native jobs (`scavenger_exec_native`) are not sandboxed. They run as `scavenger` and read whatever that account can read.
+
 ---
 
 ## 3. Registering the Node in `~/.config/scavenger/fleet.json`

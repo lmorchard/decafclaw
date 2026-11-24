@@ -9,7 +9,13 @@ Use this skill whenever you need to run resource-intensive work (test suites, la
 
 The scavenger fleet borrows compute from idle LAN workstations and laptops over Tailscale/SSH configured in `~/.config/scavenger/fleet.json`.
 
-All remote execution runs under an isolated **`scavenger`** account with zero sudo rights, zero access to operator personal files, and automatic ephemeral cleanup.
+All remote execution runs under a dedicated, unprivileged **`scavenger`** account with no sudo rights and automatic ephemeral cleanup. The operator's home directory is locked down with `chmod 700`.
+
+**What the isolation covers, and what it does not.** It guards against accidents, not against a job set on reading the host.
+- Container jobs (`scavenger_run`, `kind="container"`) mount only the job workspace. On Linux with a rootless engine, the container cannot see the operator's files.
+- On macOS with Docker Desktop, `scavenger` talks to a Docker socket shared with the operator's Docker Desktop. Docker Desktop shares `/Users` with its VM by default and reads it as the operator's user, so a job that runs `docker run -v /Users/<operator>:/h ...` may read files that `chmod 700` protects. Unless the operator has narrowed Docker Desktop file sharing (see `ENROLLMENT.md`), treat macOS container jobs as able to read the operator's files.
+- `scavenger_exec_native` and `kind="native"` environments run with no sandbox as `scavenger`. They can read anything on the host that is readable by `scavenger`, including world-readable files outside the operator's home, and they have full network access.
+- Do not send secrets or private data to a scavenger host that you would not give to the `scavenger` account.
 
 ---
 
