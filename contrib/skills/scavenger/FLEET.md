@@ -13,7 +13,7 @@ The Scavenger Compute Fleet provides on-demand, agentless ephemeral container ex
 
 1. **Zero Target Daemons:** No Kubernetes, Nomad, or HTCondor agents installed on target boxen. Targets are controlled purely over standard SSH.
 2. **Blast Radius Isolation:** All remote execution runs as a dedicated, low-privilege `scavenger` user account. The `scavenger` user has **no sudo rights**, and operator home directories are locked down with `chmod 700`. This guards against accidents, not against a job set on reading the host. See [Isolation Limits](#6-isolation-limits).
-3. **Containerized Containment:** Container workloads run inside rootless Podman or Docker containers with explicit `--memory` and `--cpus` limits. Native Darwin jobs (Track B) are not containerized.
+3. **Containerized Containment:** Container workloads run inside rootless Podman or Docker containers with explicit `--memory`, `--cpus`, and `--pids-limit` limits, bounded json-file logs, and an explicit network mode (`--network=none` or `--network=default`). Native Darwin jobs (Track B) are not containerized.
 4. **Disposable Ephemeral Workspaces:** Source code is bundled as an in-memory `git bundle` over SSH into a throwaway `/tmp` directory, cloned, executed, and reaped immediately in a `trap ... EXIT` block.
 5. **Stateful Reservations on Demand:** Multi-step pipelines (such as Android builds, Node modules, or compiler caches) can reserve warm environments with named persistent volumes or scoped workspaces that expire automatically via hard TTLs.
 6. **Courtesy Guards:**
@@ -48,7 +48,10 @@ Operator host inventory is kept out of version control and loaded from `~/.confi
       },
       "limits": {
         "default_memory": "16g",
-        "default_cpus": 8
+        "default_cpus": 8,
+        "pids_limit": 4096,
+        "log_max_size": "10m",
+        "log_max_file": 3
       }
     },
     {
@@ -105,6 +108,8 @@ Because macOS container runtimes do not support paravirtualized Metal drivers to
 - [x] No `sudo` access for `scavenger`.
 - [x] Operator home directory permissions set to `0700` to prevent direct `scavenger` read access. This does not stop a container engine that reads the home directory as the operator (see below).
 - [x] Ephemeral jobs run with `--rm` and automatic `trap ... EXIT` workspace deletion.
+- [x] Every container runs with a process-table cap (`--pids-limit`, default `4096`) and bounded json-file logs (default `10m` × 3 files) to limit the impact of a fork bomb or runaway build.
+- [x] Containers use an explicit network mode: `--network=none` for jobs that need no downloads, `--network=default` otherwise.
 
 ---
 
@@ -114,7 +119,7 @@ The isolation guards against accidents, not against a job set on reading the hos
 
 | Path | What it protects | What it does not protect |
 | --- | --- | --- |
-| Linux, rootless Podman or Docker as `scavenger` | The container runs as `scavenger`'s subuid range. `chmod 700` on the operator home blocks it. | Network access from the container is not restricted. |
+| Linux, rootless Podman or Docker as `scavenger` | The container runs as `scavenger`'s subuid range. `chmod 700` on the operator home blocks it. `--network=none` disables container networking. | Network access is not restricted in the default network mode. |
 | macOS, Docker Desktop | Container resource limits. | **Unverified, likely open:** `ENROLLMENT.md` makes `/var/run/docker.sock` group-writable for `staff`, and `scavenger` is in `staff`. Docker Desktop shares `/Users` with its VM by default and reads those files as the operator's user. A job can run `docker run -v /Users/<operator>:/h alpine ls /h` and may read files that `chmod 700` protects. Docker Desktop also shares `/Volumes`, `/private` and `/var/folders` by default. Narrow Docker Desktop file sharing to `/Users/scavenger` and `/private/tmp`, as `ENROLLMENT.md` describes, before relying on `chmod 700`. |
 | Native exec (`scavenger_exec_native`, `kind="native"`) | Runs as the unprivileged `scavenger` user. No sudo. | No sandbox. It reads anything `scavenger` can read, such as world-readable host files and other readable system paths. It has full network access. |
 

@@ -22,7 +22,10 @@
       },
       "limits": {
         "default_memory": "16g",
-        "default_cpus": 8
+        "default_cpus": 8,
+        "pids_limit": 4096,
+        "log_max_size": "10m",
+        "log_max_file": 3
       },
       "tags": ["desktop", "gpu", "vulkan", "fast-build"]
     },
@@ -42,7 +45,10 @@
       },
       "limits": {
         "default_memory": "16g",
-        "default_cpus": 8
+        "default_cpus": 8,
+        "pids_limit": 4096,
+        "log_max_size": "10m",
+        "log_max_file": 3
       },
       "tags": ["laptop", "apple-silicon", "metal", "mlx"]
     }

@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,6 +18,10 @@ from contrib.skills.scavenger.scavenger import (
     HostConfig,
     HostStatus,
     SelfcheckOps,
+    container_limit_flags,
+    env_create,
+    execute_job,
+    load_fleet_config,
     parse_ttl,
     resolve_recipe,
     run_selfcheck,
@@ -172,6 +177,159 @@ def test_scavenger_env_lifecycle(mock_fleet, tmp_path):
                         # 3. Destroy
                         res_destroy = scavenger_env_destroy(ctx, env_id="test-env")
                         assert "destroyed and lease released" in res_destroy
+
+
+# =============================================================================
+# Container limit argument builder (network / pids-limit / log size)
+# =============================================================================
+
+
+def _host(**overrides: Any) -> HostConfig:
+    return HostConfig(name="test-host", ssh_alias="scavenger-test", **overrides)
+
+
+def test_container_limit_flags_network_none():
+    flags = container_limit_flags(_host(), network="none")
+    assert "--network=none" in flags
+
+
+def test_container_limit_flags_network_default():
+    flags = container_limit_flags(_host(), network="default")
+    assert "--network=default" in flags
+
+
+def test_container_limit_flags_rejects_unknown_network():
+    with pytest.raises(ValueError):
+        container_limit_flags(_host(), network="bridge")
+
+
+def test_container_limit_flags_pids_default():
+    flags = container_limit_flags(_host())
+    assert "--pids-limit=4096" in flags
+
+
+def test_container_limit_flags_pids_custom():
+    flags = container_limit_flags(_host(pids_limit=1024))
+    assert "--pids-limit=1024" in flags
+
+
+def test_container_limit_flags_log_size_docker():
+    flags = container_limit_flags(_host(engine="docker"))
+    assert "max-size=10m" in flags
+    assert "max-file=3" in flags
+
+
+def test_container_limit_flags_log_size_podman():
+    flags = container_limit_flags(_host(engine="podman"))
+    assert "max-size=10m" in flags
+
+
+def test_container_limit_flags_log_size_custom():
+    flags = container_limit_flags(_host(engine="docker", log_max_size="5m", log_max_file=1))
+    assert "max-size=5m" in flags
+    assert "max-file=1" in flags
+
+
+def test_container_limit_flags_log_skipped_unsupported_engine():
+    flags = container_limit_flags(_host(engine="containerd"))
+    assert not any("log-opt" in f for f in flags)
+
+
+def test_load_fleet_config_limits(tmp_path):
+    cfg_file = tmp_path / "fleet.json"
+    cfg_file.write_text(
+        json.dumps(
+            {
+                "hosts": [
+                    {
+                        "name": "h1",
+                        "ssh_alias": "scavenger-h1",
+                        "limits": {"pids_limit": 2048, "log_max_size": "5m", "log_max_file": 1},
+                    }
+                ]
+            }
+        )
+    )
+    h = load_fleet_config(str(cfg_file))["h1"]
+    assert h.pids_limit == 2048
+    assert h.log_max_size == "5m"
+    assert h.log_max_file == 1
+
+
+def test_load_fleet_config_limits_defaults(tmp_path):
+    cfg_file = tmp_path / "fleet.json"
+    cfg_file.write_text(json.dumps({"hosts": [{"name": "h1", "ssh_alias": "scavenger-h1"}]}))
+    h = load_fleet_config(str(cfg_file))["h1"]
+    assert h.pids_limit == 4096
+    assert h.log_max_size == "10m"
+
+
+def test_execute_job_network_none_in_remote_script():
+    host = _host(engine="docker")
+    with patch("contrib.skills.scavenger.scavenger.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
+        execute_job(host, command="true", network="none")
+    script = mock_run.call_args[0][0][-1]
+    assert "--network=none" in script
+    assert "--pids-limit=4096" in script
+
+
+def test_execute_job_default_network_in_remote_script():
+    host = _host(engine="podman")
+    with patch("contrib.skills.scavenger.scavenger.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
+        execute_job(host, command="true")
+    script = mock_run.call_args[0][0][-1]
+    assert "--network=default" in script
+
+
+def test_env_create_container_limit_flags_in_script(mock_fleet):
+    with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={}):
+        with patch("contrib.skills.scavenger.scavenger.save_leases"):
+            with patch(
+                "contrib.skills.scavenger.scavenger.probe_host",
+                return_value=HostStatus(name="desktop-linux", eligible=True),
+            ):
+                with patch("contrib.skills.scavenger.scavenger.run_ssh") as mock_ssh:
+                    mock_ssh.return_value = subprocess.CompletedProcess(
+                        args=["ssh"], returncode=0, stdout="", stderr=""
+                    )
+                    env_create(
+                        fleet=mock_fleet,
+                        env_id="limit-env",
+                        host_name="desktop-linux",
+                        network="none",
+                    )
+    create_script = mock_ssh.call_args[0][1]
+    assert "--network=none" in create_script
+    assert "--pids-limit=4096" in create_script
+
+
+def test_scavenger_run_tool_network_none(mock_fleet):
+    ctx = MagicMock()
+    with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
+        with patch(
+            "contrib.skills.scavenger.tools.probe_host", return_value=HostStatus(name="desktop-linux", eligible=True)
+        ):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
+                scavenger_run(ctx, command="pytest", host="desktop-linux", network="none")
+    script = mock_run.call_args[0][0][-1]
+    assert "--network=none" in script
+
+
+def test_scavenger_run_tool_invalid_network(mock_fleet):
+    ctx = MagicMock()
+    with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
+        res = scavenger_run(ctx, command="pytest", host="desktop-linux", network="bridge")
+    assert "Error" in res
+
+
+def test_scavenger_env_create_tool_invalid_network(mock_fleet):
+    ctx = MagicMock()
+    with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
+        res = scavenger_env_create(ctx, env_id="x", host="desktop-linux", network="bridge")
+    assert "Error" in res
 
 
 # ---------------------------------------------------------------------------

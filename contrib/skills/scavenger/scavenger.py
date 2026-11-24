@@ -43,6 +43,9 @@ class HostConfig:
     priority: int = 100  # Lower number = higher priority
     default_memory: str = "16g"
     default_cpus: int = 8
+    pids_limit: int = 4096  # --pids-limit for every container; -1 disables the cap
+    log_max_size: str = "10m"  # --log-opt max-size (docker/podman json-file driver)
+    log_max_file: int = 3  # --log-opt max-file (docker/podman json-file driver)
     tags: List[str] = field(default_factory=list)
     gpu_type: Optional[str] = None  # "metal", "vulkan", "cuda", etc.
     gpu_passthrough_mode: Optional[str] = None  # "container_device", "native_only", etc.
@@ -100,6 +103,9 @@ def load_fleet_config(config_path: Optional[str] = None) -> Dict[str, HostConfig
             priority=h.get("priority", 100),
             default_memory=limits.get("default_memory", "16g"),
             default_cpus=limits.get("default_cpus", 8),
+            pids_limit=limits.get("pids_limit", 4096),
+            log_max_size=limits.get("log_max_size", "10m"),
+            log_max_file=limits.get("log_max_file", 3),
             tags=h.get("tags", []),
             gpu_type=gpu.get("type"),
             gpu_passthrough_mode=gpu.get("passthrough_mode"),
@@ -349,6 +355,32 @@ def select_best_host(
     raise RuntimeError(f"No eligible scavenger host available. Probed: [{summary}]")
 
 
+#: Container engines whose json-file log driver accepts --log-opt size caps.
+LOG_OPT_ENGINES = ("docker", "podman")
+
+
+def container_limit_flags(host: HostConfig, network: str = "default") -> List[str]:
+    """Build the container security and resource limit flags for a host.
+
+    Pure function: reads no environment, runs nothing. Returns argv tokens
+    for --network, --pids-limit, and (where the engine supports it) the
+    json-file log size cap. Join with spaces to embed in a remote shell script.
+
+    network: "none" (no network access at all) or "default" (engine default).
+    """
+    if network not in ("none", "default"):
+        raise ValueError(f"Unsupported network mode: {network!r} (expected 'none' or 'default')")
+
+    flags = [f"--network={network}"]
+    if host.pids_limit is not None:
+        flags.append(f"--pids-limit={host.pids_limit}")
+    if host.engine in LOG_OPT_ENGINES and host.log_max_size:
+        flags.extend(["--log-opt", f"max-size={host.log_max_size}"])
+        if host.log_max_file:
+            flags.extend(["--log-opt", f"max-file={host.log_max_file}"])
+    return flags
+
+
 def execute_job(
     host: HostConfig,
     command: str,
@@ -356,6 +388,7 @@ def execute_job(
     image: str = "alpine:latest",
     mem_limit: str = "16g",
     cpus: int = 8,
+    network: str = "default",
     timeout_seconds: int = 1800,
     stdout: Optional[IO[str]] = None,
 ) -> int:
@@ -366,6 +399,7 @@ def execute_job(
     out_stream = stdout if stdout is not None else sys.stdout
     selinux_flag = ":Z" if host.needs_selinux_z else ""
     device_args = " ".join(host.device_flags) if host.device_flags else ""
+    limit_args = " ".join(container_limit_flags(host, network))
 
     remote_script = f"""
 set -e
@@ -381,6 +415,7 @@ fi
 {host.engine} run --rm \\
     --memory={mem_limit} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v "$JOB_DIR/workspace:/workspace{selinux_flag}" \\
     -w /workspace \\
@@ -406,6 +441,7 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
 {host.engine} run --rm \\
     --memory={mem_limit} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v "$RECV_DIR/workspace:/workspace{selinux_flag}" \\
     -w /workspace \\
@@ -515,6 +551,7 @@ def env_create(
     sync_dir: Optional[str] = None,
     mem_limit: str = "16g",
     cpus: int = 8,
+    network: str = "default",
     ttl: str = "2h",
     arch: Optional[str] = None,
     workspace_root: Optional[str] = None,
@@ -587,6 +624,7 @@ def env_create(
         v_name = f"scavenger-vol-{env_id}"
         selinux_flag = ":Z" if host.needs_selinux_z else ""
         device_args = " ".join(host.device_flags) if host.device_flags else ""
+        limit_args = " ".join(container_limit_flags(host, network))
 
         create_script = f"""
 set -e
@@ -598,6 +636,7 @@ set -e
     --label decafclaw.expires_at="{int(expires_at)}" \\
     --memory={mem_limit} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v {v_name}:/workspace{selinux_flag} \\
     -w /workspace \\
@@ -1153,6 +1192,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         image=args.image,
         mem_limit=args.mem,
         cpus=args.cpus,
+        network=args.network,
         timeout_seconds=args.timeout,
     )
     sys.exit(ret)
@@ -1171,6 +1211,7 @@ def cmd_env_create(args: argparse.Namespace) -> None:
         sync_dir=args.sync_dir,
         mem_limit=args.mem,
         cpus=args.cpus,
+        network=args.network,
         ttl=args.ttl,
         arch=args.arch,
     )
@@ -1274,6 +1315,12 @@ def main() -> None:
     p_run.add_argument("--image", default="alpine:latest", help="Container image (default: alpine:latest)")
     p_run.add_argument("--mem", default="16g", help="Memory limit (default: 16g)")
     p_run.add_argument("--cpus", type=int, default=8, help="CPU core limit (default: 8)")
+    p_run.add_argument(
+        "--network",
+        choices=["none", "default"],
+        default="default",
+        help="Container network: 'none' blocks all network access (use for test runs that need no downloads)",
+    )
     p_run.add_argument("--timeout", type=int, default=1800, help="Watchdog timeout in seconds (default: 1800)")
     p_run.add_argument("--no-wake", dest="wake", action="store_false", help="Do not fire WoL packets during selection")
     p_run.add_argument("--force", action="store_true", help="Run on host even if courtesy checks flag busy/battery")
@@ -1292,6 +1339,12 @@ def main() -> None:
     p_ec.add_argument("--sync-dir", help="Local directory to initial-sync into /workspace")
     p_ec.add_argument("--mem", default="16g", help="Memory limit")
     p_ec.add_argument("--cpus", type=int, default=8, help="CPU limit")
+    p_ec.add_argument(
+        "--network",
+        choices=["none", "default"],
+        default="default",
+        help="Container network: 'none' blocks all network access (use for environments that need no downloads)",
+    )
     p_ec.add_argument("--ttl", default="2h", help="Time to live (e.g. '1h', '30m')")
     p_ec.add_argument("--arch", choices=["arm64", "x86_64"], help="Architecture preference")
     p_ec.set_defaults(cmd_func=cmd_env_create)
