@@ -13,7 +13,7 @@ All remote execution runs under a dedicated, unprivileged **`scavenger`** accoun
 
 **What the isolation covers, and what it does not.** It guards against accidents, not against a job set on reading the host.
 - Container jobs (`scavenger_run`, `kind="container"`) mount only the job workspace. On Linux with a rootless engine, the container cannot see the operator's files.
-- On macOS with Docker Desktop, `scavenger` talks to a Docker socket shared with the operator's Docker Desktop. Docker Desktop shares `/Users` with its VM by default and reads it as the operator's user, so a job that runs `docker run -v /Users/<operator>:/h ...` may read files that `chmod 700` protects. Unless the operator has narrowed Docker Desktop file sharing (see `ENROLLMENT.md`), treat macOS container jobs as able to read the operator's files.
+- On macOS with Docker Desktop, `scavenger` talks to a Docker socket shared with the operator's Docker Desktop. Docker Desktop shares `/Users` with its VM by default and reads it as the operator's user, so a job that runs `docker run -v /Users/<operator>:/h ...` may read files that `chmod 700` protects (other default shares such as `/Volumes` and `/var/folders` are exposed the same way). Unless the operator has narrowed Docker Desktop file sharing (see `ENROLLMENT.md`), treat macOS container jobs as able to read the operator's files.
 - `scavenger_exec_native` and `kind="native"` environments run with no sandbox as `scavenger`. They can read anything on the host that is readable by `scavenger`, including world-readable files outside the operator's home, and they have full network access.
 - Do not send secrets or private data to a scavenger host that you would not give to the `scavenger` account.
 
