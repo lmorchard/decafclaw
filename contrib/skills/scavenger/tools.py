@@ -26,10 +26,11 @@ from contrib.skills.scavenger.scavenger import (
     env_reap,
     env_sync,
     execute_job,
+    find_lease,
     is_ssh_open,
     load_fleet_config,
-    load_leases,
     probe_host,
+    reconcile_leases,
     run_ssh,
     select_best_host,
     send_magic_packet,
@@ -323,8 +324,7 @@ async def scavenger_env_exec(
     automated wake event so DecafClaw is woken when the condition triggers.
     """
     fleet = load_fleet_config()
-    leases = load_leases()
-    res = leases.get(env_id)
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -413,8 +413,7 @@ async def scavenger_env_watch(
     - watch_type='pattern': pattern matches in target log file
     """
     fleet = load_fleet_config()
-    leases = load_leases()
-    res = leases.get(env_id)
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -456,8 +455,8 @@ async def scavenger_env_watch(
 
 def scavenger_env_info(ctx: Any, env_id: str) -> str:
     """Inspect targeted details and remaining TTL for a specific environment reservation."""
-    leases = load_leases()
-    res = leases.get(env_id)
+    fleet = load_fleet_config()
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -480,8 +479,7 @@ async def scavenger_env_terminal(ctx: Any, env_id: str, shell: str = "sh") -> st
     Embeds DecafClaw's native xterm.js PTY terminal widget in a new tab.
     """
     fleet = load_fleet_config()
-    leases = load_leases()
-    res = leases.get(env_id)
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -547,8 +545,7 @@ exec ssh -t -o BatchMode=no {host.ssh_alias} "{host.engine} exec -it {c_name} {s
 def scavenger_env_sync(ctx: Any, env_id: str, direction: str, local_path: str) -> str:
     """Sync files up to or down from a reserved environment."""
     fleet = load_fleet_config()
-    leases = load_leases()
-    res = leases.get(env_id)
+    res = find_lease(fleet, env_id)
     if not res:
         return f"Error: No active lease found for environment '{env_id}'"
 
@@ -570,8 +567,9 @@ def scavenger_env_destroy(ctx: Any, env_id: str) -> str:
 
 
 def scavenger_env_list(ctx: Any) -> str:
-    """List all active environment reservations across the fleet."""
-    leases = load_leases()
+    """List all active environment reservations across the fleet, as reported by each host."""
+    fleet = load_fleet_config()
+    leases, unreachable = reconcile_leases(fleet)
     now = time.time()
     if not leases:
         return "No active environment reservations."
@@ -585,6 +583,8 @@ def scavenger_env_list(ctx: Any) -> str:
         rem_str = f"{rem}s" if rem > 0 else "EXPIRED"
         target = v.container_name if v.kind == "container" else (v.workspace_path or "")
         lines.append(f"{k:<24} {v.host:<12} {v.kind:<10} {rem_str:<12} {target}")
+    if unreachable:
+        lines.append(f"(unreachable, showing cached records: {', '.join(unreachable)})")
 
     return "\n".join(lines)
 
