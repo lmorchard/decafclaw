@@ -10,6 +10,7 @@ from decafclaw.security_monitor import (
     SecurityStatus,
     evaluate_command,
     evaluate_command_llm,
+    is_ambiguous_command,
     venv_executable_path,
 )
 from decafclaw.tools.shell_tools import check_shell_approval
@@ -106,6 +107,99 @@ def test_filter_expressions_do_not_hide_file_arguments(tmp_path: Path):
     for cmd in commands:
         decision = evaluate_command(cmd, workspace_path=workspace)
         assert decision.status == SecurityStatus.ASK, f"Expected ASK for file argument: {cmd}"
+
+
+def test_heredoc_bodies_are_not_paths(tmp_path: Path):
+    """Heredoc body text is data for the consumer, not shell commands (#1796)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    commands = [
+        # Exact shape from the report: a JavaScript regex literal in a heredoc.
+        "timeout 45 agent-browser eval --stdin <<'EOF' 2>&1 | head -20\n"
+        "(() => {\n"
+        "  let t = main.innerText.replace(/\\s+/g,' ');\n"
+        "  return JSON.stringify({tail: t.slice(-1200)});\n"
+        "})()\n"
+        "EOF",
+        "cat > out.txt <<'EOF'\n/etc/passwd\nEOF",
+        "cat > out.txt <<EOF\n/home/user\nEOF",
+        'cat > out.txt <<"EOF"\n/var/log\nEOF',
+        "cat > out.txt <<-EOF\n\t/etc/passwd\n\tEOF",
+        # Bodies arrive in declaration order for multiple heredocs on one line.
+        "cat <<A <<B\n/etc/passwd\n/var/log\nA\n/root\nB",
+    ]
+
+    for cmd in commands:
+        decision = evaluate_command(cmd, workspace_path=workspace)
+        assert decision.status == SecurityStatus.ALLOW, f"Expected ALLOW for heredoc body: {cmd!r} ({decision.reason})"
+
+
+def test_heredoc_does_not_hide_out_of_workspace_paths(tmp_path: Path):
+    """Paths outside the body, including redirects, stay subject to the path check."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    commands = [
+        "cat /etc/passwd <<'EOF'\nbody\nEOF",
+        "cat <<'EOF' > /etc/passwd\nbody\nEOF",
+        "cat < /etc/passwd <<'EOF'\nbody\nEOF",
+    ]
+
+    for cmd in commands:
+        decision = evaluate_command(cmd, workspace_path=workspace)
+        assert decision.status == SecurityStatus.ASK, f"Expected ASK for path outside body: {cmd!r}"
+
+
+def test_quoted_or_arithmetic_shift_is_not_a_heredoc(tmp_path: Path):
+    """Only a real heredoc declaration masks following lines."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    commands = [
+        'echo "a << b"\ncat /etc/passwd',
+        "echo $((1 << 2))\ncat /etc/passwd",
+        "echo hi # <<EOF\ncat /etc/passwd",
+        # Unterminated quoting must not be split into a fake declaration.
+        'echo "unterminated\n<<EOF"\ncat /etc/passwd',
+    ]
+
+    for cmd in commands:
+        decision = evaluate_command(cmd, workspace_path=workspace)
+        assert decision.status == SecurityStatus.ASK, f"Expected ASK for command after non-heredoc: {cmd!r}"
+
+
+def test_heredoc_fed_to_interpreter_is_ambiguous(tmp_path: Path):
+    """Masking removes the accidental body scan; Tier 2 must still review scripts."""
+    commands = [
+        "bash <<'EOF'\ncat /etc/passwd\nEOF",
+        "sh -s <<EOF\nrm file\nEOF",
+        "python3 - <<'EOF'\nprint('hi')\nEOF",
+        "perl <<EOF\nprint 1;\nEOF",
+        "node <<'EOF'\nconsole.log(1)\nEOF",
+        "sudo bash <<EOF\ncat /etc/passwd\nEOF",
+    ]
+
+    for cmd in commands:
+        assert is_ambiguous_command(cmd), f"Expected ambiguous interpreter heredoc: {cmd!r}"
+
+    assert not is_ambiguous_command("cat <<'EOF'\nbody\nEOF")
+
+    # Tier 1 masks the body; ambiguity is what routes the opaque script to Tier 2.
+    decision = evaluate_command("bash <<'EOF'\ncat /etc/passwd\nEOF", workspace_path=tmp_path)
+    assert decision.status == SecurityStatus.ALLOW
+
+
+def test_venv_detection_ignores_heredoc_bodies(tmp_path: Path):
+    """A virtualenv binary in body text must not trigger the uv-run redirect."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    venv_python = tmp_path / "env" / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.touch()
+
+    command = f"cat > notes.txt <<'EOF'\n{venv_python} script.py\nEOF"
+    assert venv_executable_path(command, workspace) is None
 
 
 def test_env_assignment_prefix_identifies_system_executable(tmp_path: Path):

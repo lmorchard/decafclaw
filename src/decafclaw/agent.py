@@ -994,8 +994,7 @@ class TurnRunner:
 
         if self.ctx.steer_event and self.ctx.steer_event.is_set():
             log.info("Agent loop interrupted by steering message")
-            text = "\n\n".join(self.accumulated_text_parts) if self.accumulated_text_parts else ""
-            return _Final(result=ToolResult(text=text))
+            return _Final(result=self._steering_interrupt_result())
 
         if isinstance(end_turn_signal, WidgetInputPause):
             inject_content = await _handle_widget_input_pause(
@@ -1337,6 +1336,21 @@ class TurnRunner:
             lowered=self.lowered_compaction_threshold,
         )
         return self._extract_workspace_media(content)
+
+    def _steering_interrupt_result(self) -> "ToolResult":
+        """End a steering-interrupted turn without repeating the turn.
+
+        Every iteration's preamble was already published as
+        `text_before_tools` — rendered live by Mattermost and the web UI — and
+        archived by `_handle_tool_calls`. Delivering the accumulated join here
+        recapitulated the whole turn as one final assistant bubble (#1798).
+        The watched/unwatched predicate matches `_finalize_with_note`: a child
+        agent, heartbeat, or scheduled turn has no live subscriber, so the join
+        is its only channel for the work done before the interrupt.
+        """
+        if self.ctx.is_child or self.ctx.task_mode in UNWATCHED_TASK_MODES:
+            return ToolResult(text="\n\n".join(self.accumulated_text_parts))
+        return ToolResult(text="")
 
     async def _finalize_max_iterations(self) -> "ToolResult":
         """Hit max iterations without a final response. Always archives only

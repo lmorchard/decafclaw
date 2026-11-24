@@ -116,3 +116,25 @@ async def test_cancel_restart():
     state.busy = False
     await asyncio.sleep(0.05)
     assert not shutdown_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_stop_drain_cancels_on_idle_task_without_clearing_wakes():
+    """Shutdown cancels the drain task but keeps restart state and wakes (#1799)."""
+    shutdown_event = asyncio.Event()
+    state = MagicMock()
+    state.busy = True
+    manager = MagicMock()
+    manager._conversations = {"conv-1": state}
+
+    coord = RestartCoordinator(shutdown_event, manager=manager)
+    await coord.request_restart(reason="drain test", on_idle=True, poll_interval=10)
+    drain = coord._drain_task
+    assert drain is not None and not drain.done()
+
+    await coord.stop_drain()
+
+    assert drain.done()
+    assert coord._drain_task is None
+    assert coord.is_restart_pending() is True
+    assert not shutdown_event.is_set()

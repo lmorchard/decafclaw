@@ -191,7 +191,9 @@ ALLOWED_DEVICES = {
 
 def is_ambiguous_command(command: str) -> bool:
     """Check if a shell command is complex/ambiguous and warrants Tier 2 LLM evaluation."""
-    return any(p.search(command) for p in AMBIGUOUS_PATTERNS)
+    if any(p.search(command) for p in AMBIGUOUS_PATTERNS):
+        return True
+    return _heredoc_feeds_interpreter(command)
 
 
 # Shell operator tokens that start a new command segment. ``shlex`` punctuation
@@ -199,6 +201,32 @@ def is_ambiguous_command(command: str) -> bool:
 _SEGMENT_SEPARATORS = frozenset({"|", "||", "&&", "&", ";", "\n", "(", ")"})
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _REDIRECT_PREFIX_RE = re.compile(r"^\d*[<>]")
+
+# A heredoc operator after ``shlex`` has already removed quoting:
+# ``<<'EOF'`` and ``<<"EOF"`` both arrive as ``<<EOF``. A bare ``<<`` (as in
+# arithmetic ``$((1 << 2))``) carries no delimiter and is not a heredoc.
+_HEREDOC_TOKEN_RE = re.compile(r"^<<-?(?P<delimiter>.+)$")
+
+# Interpreters that execute a script read from stdin. Masking the heredoc body
+# removes the deterministic path scan, so such a command must reach Tier 2.
+_INTERPRETER_COMMANDS = frozenset(
+    {
+        "bash",
+        "bun",
+        "csh",
+        "dash",
+        "deno",
+        "ksh",
+        "node",
+        "perl",
+        "php",
+        "python",
+        "python3",
+        "ruby",
+        "sh",
+        "zsh",
+    }
+)
 
 # Commands whose first positional argument (or explicit expression option) is
 # a program/pattern, not a file path. This is the context the flat token scan
@@ -230,6 +258,15 @@ _GREP_VALUE_LONG_OPTIONS = frozenset(
 )
 
 
+def _shlex_tokens(command: str, *, commenters: str = "") -> list[str]:
+    """Punctuation-tokenize a command, raising on unbalanced quoting."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;()\n")
+    lexer.whitespace_split = True
+    lexer.whitespace = " \t\r"
+    lexer.commenters = commenters
+    return list(lexer)
+
+
 def _tokenize_command(command: str) -> list[str]:
     """Split a shell command into tokens while preserving quoting.
 
@@ -241,16 +278,24 @@ def _tokenize_command(command: str) -> list[str]:
     rejects outright.
     """
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;()\n")
-        lexer.whitespace_split = True
-        lexer.whitespace = " \t\r"
-        lexer.commenters = ""
-        return list(lexer)
+        return _shlex_tokens(command)
     except ValueError:
         try:
             return shlex.split(command, posix=True)
         except ValueError:
             return command.split()
+
+
+def _heredoc_tokens(line: str) -> list[str] | None:
+    """Tokens for one line, or ``None`` when its quoting is unbalanced.
+
+    A strict result keeps the permissive fallback from splitting an
+    unterminated quote into fake heredoc declarations.
+    """
+    try:
+        return _shlex_tokens(line, commenters="#")
+    except ValueError:
+        return None
 
 
 def _command_segments(tokens: list[str]) -> list[tuple[int, list[str]]]:
@@ -282,6 +327,75 @@ def _executable_index(segment: list[str]) -> int | None:
             continue
         return index
     return None
+
+
+def _heredoc_declarations(line: str) -> list[tuple[str, bool]]:
+    """Heredoc delimiters declared on one line, in declaration order.
+
+    Tokenizing the line alone keeps a quoted ``<<`` or an arithmetic shift out
+    of the result: only an operator token with an attached delimiter matches.
+    ``#`` is honored as a comment so ``echo hi # <<EOF`` declares nothing.
+    """
+    tokens = _heredoc_tokens(line)
+    if tokens is None:
+        return []
+    declarations: list[tuple[str, bool]] = []
+    for token in tokens:
+        if token.startswith("<<<"):
+            continue
+        match = _HEREDOC_TOKEN_RE.match(token)
+        if match:
+            declarations.append((match.group("delimiter"), token.startswith("<<-")))
+    return declarations
+
+
+def _mask_heredoc_bodies(command: str) -> str:
+    """Replace heredoc body and delimiter lines with empty lines.
+
+    ``shlex`` has no heredoc support, so body text would otherwise be
+    tokenized as shell commands and its ``/``-prefixed text path-checked
+    (#1796: a JavaScript ``/\\s+/g`` literal became an out-of-workspace path).
+    Bodies remain visible to the raw-command dangerous and sensitive pattern
+    scans; interpreter-fed heredocs are handled by ``_heredoc_feeds_interpreter``.
+    """
+    lines = command.split("\n")
+    masked: list[str] = []
+    pending: list[tuple[str, bool]] = []
+    for position, line in enumerate(lines):
+        last = position == len(lines) - 1
+        if pending:
+            delimiter, strip_tabs = pending[0]
+            candidate = line.rstrip("\r")
+            if strip_tabs:
+                candidate = candidate.lstrip("\t")
+            if candidate == delimiter:
+                pending.pop(0)
+            masked.append("" if last else "\n")
+            continue
+        if "<<" in line:
+            pending.extend(_heredoc_declarations(line))
+        masked.append(line if last else line + "\n")
+    return "".join(masked)
+
+
+def _heredoc_feeds_interpreter(command: str) -> bool:
+    """True when a heredoc line runs a shell or interpreter that reads stdin.
+
+    The masked body is data for the path check, but a script fed to an
+    interpreter is still opaque. Classify it as ambiguous so Tier 2 reviews it.
+    """
+    for line in command.split("\n"):
+        if "<<" not in line:
+            continue
+        tokens = _heredoc_tokens(line)
+        if tokens is None:
+            continue
+        if not any(_HEREDOC_TOKEN_RE.match(token) and not token.startswith("<<<") for token in tokens):
+            continue
+        for _, segment in _command_segments(tokens):
+            if any(Path(token).name in _INTERPRETER_COMMANDS for token in segment):
+                return True
+    return False
 
 
 def _short_option_letters(token: str) -> str:
@@ -481,7 +595,7 @@ def venv_executable_path(command: str, workspace_path: str | Path | None = None)
     inside the workspace already passes the normal path check.
     """
     resolved_workspace = Path(workspace_path or Path.cwd()).resolve()
-    for _, segment in _command_segments(_tokenize_command(command)):
+    for _, segment in _command_segments(_tokenize_command(_mask_heredoc_bodies(command))):
         exe_index = _executable_index(segment)
         if exe_index is None:
             continue
@@ -523,7 +637,7 @@ def evaluate_command(
     # Tier 1: Check out-of-workspace file operations
     resolved_workspace = Path(workspace_path or Path.cwd()).resolve()
 
-    tokens = _tokenize_command(command)
+    tokens = _tokenize_command(_mask_heredoc_bodies(command))
     executable_indices: set[int] = set()
     expression_indices: set[int] = set()
     for start, segment in _command_segments(tokens):

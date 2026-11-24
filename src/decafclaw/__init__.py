@@ -41,6 +41,10 @@ def start_app(extra_provider_hook: Callable[[Any], None] | None = None) -> None:
     ephemeral test server uses it to register the scripted provider
     (``decafclaw.testing``) in-process, so a production ``config.json``
     can never select the scripted provider.
+
+    The server path does not return: after the graceful shutdown sequence the
+    process exits through ``runner.exit_process`` (see #1799), because returning
+    through interpreter shutdown can block on a stuck non-daemon thread.
     """
     _setup_logging()
 
@@ -91,14 +95,19 @@ def start_app(extra_provider_hook: Callable[[Any], None] | None = None) -> None:
     # clients over the gateway, and a process with no inbound chat transport
     # still runs headless duties through the same root.
     try:
-        from .runner import run_all
+        from .runner import arm_shutdown_watchdog, exit_process, run_all
 
-        asyncio.run(run_all(app_ctx))
+        asyncio.run(run_all(app_ctx, on_shutdown_complete=arm_shutdown_watchdog))
+        # The graceful sequence is complete. Returning through interpreter
+        # shutdown joins every non-daemon thread, so a worker stuck in a sync
+        # tool call could keep a finished daemon alive forever (#1799).
+        exit_process("shutdown complete")
     except KeyboardInterrupt:
         log.info("Interrupted by user")
+        exit_process("interrupted")
     except BaseException as e:
         log.error(f"Bot crashed: {e}", exc_info=True)
-        sys.exit(1)  # non-zero exit → systemd Restart=on-failure kicks in
+        exit_process("crash", 1)  # non-zero exit → systemd Restart=on-failure kicks in
 
 
 def main():
