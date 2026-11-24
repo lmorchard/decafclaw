@@ -247,6 +247,8 @@ Tool parameter schemas are canonical JSON-Schema in the registry. Each provider 
 
 - **Preserves scalar semantics as prose.** Stripped constraints that can be expressed in words (`multipleOf`, `propertyNames.pattern`, required-form dependencies) are rendered as description text on the node that carried them, so a multi-property schema keeps each constraint bound to its property.
 - **Resolves local `$ref`s** (`#/$defs/…`) so a referenced shape reaches the wire; sibling keys of a `$ref` are preserved on top of the resolved content. A reference that cannot be inlined is reported in diagnostics and annotated in the description rather than silently dropped — unresolvable targets as "this parameter is unconstrained", recursive ones as "recursive reference; nested structure not inlined" (the outer shape still reaches the wire; only the recursive level is cut).
+- **Rewrites `type` lists.** Vertex's `type` is a single enum, so `"type": ["string", "null"]` fails with `Proto field is not repeating, cannot start list`. `"null"` becomes `nullable: true`; a single remaining type stays as `type`; several become `anyOf` branches, with type-specific keys (`items`, `properties`, `required`, …) moved onto their branch.
+
 - **Reports structural constructs** (`patternProperties`, `dependentSchemas`, `if`/`then`/`else`) in diagnostics, since their meaning cannot be rendered as prose.
 
 Diagnostics are logged once per tool name at warning level (then debug), so a schema that needs adaptation is visible without spamming every request.
