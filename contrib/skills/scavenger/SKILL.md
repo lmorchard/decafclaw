@@ -102,6 +102,9 @@ The underlying deterministic Python CLI is available directly within the skill:
 # Probe fleet:
 python contrib/skills/scavenger/scavenger.py probe
 
+# End-to-end check of one real host (run after enrolling it):
+python contrib/skills/scavenger/scavenger.py selfcheck desktop-linux
+
 # Run one-shot job:
 python contrib/skills/scavenger/scavenger.py run --repo . 'pytest tests/'
 

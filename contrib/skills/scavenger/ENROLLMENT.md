@@ -176,7 +176,28 @@ Add the newly provisioned node to your local `~/.config/scavenger/fleet.json` co
 }
 ```
 
-Verify enrollment with:
+Check reachability and eligibility with:
 ```bash
-python contrib/skills/scavenger/scavenger.py probe
+python contrib/skills/scavenger/scavenger.py probe --host desktop-linux
 ```
+
+## 4. Run the Selfcheck (Last Enrollment Step)
+
+Enrollment is not done until the new host passes an end-to-end selfcheck. It exercises the real host, which mocks cannot do: container engine behavior (Podman and Docker, SELinux `:Z`, macOS Docker Desktop) and SSH quoting.
+
+```bash
+python contrib/skills/scavenger/scavenger.py selfcheck desktop-linux
+```
+
+It prints one `PASS` or `FAIL` line for each step and exits non-zero at the first failure:
+
+1. `probe`: the host is online and eligible.
+2. `run`: a one-shot job with a repo bundle reads a marker file from the repo.
+3. `env-create`: a container environment starts.
+4. `env-exec`: a command runs inside it and its output comes back.
+5. `env-sync-up` and `env-sync-down`: a random file keeps its SHA-256 checksum on the way up and back down, and a file made on the host comes down.
+6. `env-destroy`: the environment is torn down.
+7. `leftovers`: no container, volume, or workspace named for the test environment remains on the host.
+
+The test uses an `alpine:latest` image (`--image` overrides it), so the host needs network access to pull it the first time. The selfcheck needs a host that is eligible now, so it fails on a host that is asleep, on battery, or busy with game streaming. If a step fails after the environment exists, the selfcheck destroys it and prints a `NOTE` line.
+
