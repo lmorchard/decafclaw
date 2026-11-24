@@ -164,12 +164,10 @@ class MentionsExtension(BaseExtension):
             if not target_res:
                 text = f"[MCP resource '{resource_name}' not found on server '{server_name}']"
             else:
-                from pydantic import AnyUrl
-
                 try:
                     timeout_s = state.config.timeout / 1000
                     result = await asyncio.wait_for(
-                        state.session.read_resource(AnyUrl(str(target_res.uri))),
+                        state.session.read_resource(str(target_res.uri)),
                         timeout=timeout_s,
                     )
                     tool_res = _convert_resource_response(result)

@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from decafclaw.mcp_client import (
+    PROTOCOL_AUTO,
+    PROTOCOL_LEGACY,
+    PROTOCOL_MODERN,
     ConnState,
     MCPRegistry,
     MCPServerConfig,
@@ -111,6 +114,27 @@ def test_load_mcp_config_valid(config):
     assert http.url == "https://example.com/mcp"
 
 
+def test_load_mcp_config_protocol_policy(config, caplog):
+    _write_config(
+        config,
+        {
+            "mcpServers": {
+                "default": {"type": "http", "url": "https://example.com/a"},
+                "pinned-legacy": {"type": "http", "url": "https://example.com/b", "protocol": PROTOCOL_LEGACY},
+                "pinned-modern": {"type": "stdio", "command": "echo", "protocol": PROTOCOL_MODERN},
+                "typo": {"type": "http", "url": "https://example.com/c", "protocol": "2026-07-29"},
+            }
+        },
+    )
+    configs = {c.name: c for c in load_mcp_config(config)}
+
+    assert configs["default"].protocol == PROTOCOL_AUTO
+    assert configs["pinned-legacy"].protocol == PROTOCOL_LEGACY
+    assert configs["pinned-modern"].protocol == PROTOCOL_MODERN
+    assert configs["typo"].protocol == PROTOCOL_AUTO
+    assert "unknown protocol" in caplog.text
+
+
 def test_load_mcp_config_missing_file(config):
     configs = load_mcp_config(config)
     assert configs == []
@@ -210,6 +234,19 @@ def test_convert_tool_definition_object():
     assert result["function"]["name"] == "mcp__my_server__search"
 
 
+def test_convert_tool_definition_v2_object():
+    """SDK v2 models expose snake_case attributes with camelCase aliases."""
+    from mcp import types
+
+    tool = types.Tool(
+        name="search",
+        description="Search things",
+        inputSchema={"type": "object", "properties": {"q": {"type": "string"}}},
+    )
+    result = _convert_tool_definition("my-server", tool)
+    assert result["function"]["parameters"]["properties"]["q"] == {"type": "string"}
+
+
 # -- response conversion tests --
 
 
@@ -249,6 +286,29 @@ def test_convert_mcp_response_image_media():
     assert len(tr.media) == 1
     assert tr.media[0]["type"] == "file"
     assert tr.media[0]["data"] == b"fake-png-data"
+    assert tr.media[0]["content_type"] == "image/png"
+
+
+def test_convert_mcp_response_v2_object():
+    """SDK v2 content models expose mime_type, not mimeType."""
+    import base64
+
+    from mcp import types
+
+    result = types.CallToolResult(
+        content=[
+            types.TextContent(type="text", text="here"),
+            types.ImageContent(
+                type="image",
+                data=base64.b64encode(b"png").decode(),
+                mimeType="image/png",
+            ),
+        ]
+    )
+    tr = _convert_mcp_response(result)
+    assert "here" in tr.text
+    assert "image/png" in tr.text
+    assert len(tr.media) == 1
     assert tr.media[0]["content_type"] == "image/png"
 
 
@@ -344,7 +404,7 @@ def _make_mock_session(tools=None, capabilities=None, resources=None, resource_t
         capabilities = MagicMock()
         capabilities.resources = None
         capabilities.prompts = None
-    session.get_server_capabilities = MagicMock(return_value=capabilities)
+    session.server_capabilities = capabilities
 
     # Resources
     res_result = MagicMock()
@@ -834,8 +894,7 @@ async def test_notification_handler_tools_changed():
     handler = registry._make_notification_handler("test-srv")
 
     # Simulate a ToolListChangedNotification
-    notification = MagicMock(spec=mcp_types.ServerNotification)
-    notification.root = mcp_types.ToolListChangedNotification()
+    notification = mcp_types.ToolListChangedNotification()
     await handler(notification)
 
     registry.refresh_tools.assert_awaited_once_with("test-srv")
@@ -851,8 +910,7 @@ async def test_notification_handler_resources_changed():
 
     handler = registry._make_notification_handler("test-srv")
 
-    notification = MagicMock(spec=mcp_types.ServerNotification)
-    notification.root = mcp_types.ResourceListChangedNotification()
+    notification = mcp_types.ResourceListChangedNotification()
     await handler(notification)
 
     registry.refresh_resources.assert_awaited_once_with("test-srv")
@@ -868,8 +926,7 @@ async def test_notification_handler_prompts_changed():
 
     handler = registry._make_notification_handler("test-srv")
 
-    notification = MagicMock(spec=mcp_types.ServerNotification)
-    notification.root = mcp_types.PromptListChangedNotification()
+    notification = mcp_types.PromptListChangedNotification()
     await handler(notification)
 
     registry.refresh_prompts.assert_awaited_once_with("test-srv")
@@ -898,8 +955,7 @@ async def test_notification_handler_error_is_logged_not_raised():
 
     handler = registry._make_notification_handler("test-srv")
 
-    notification = MagicMock(spec=mcp_types.ServerNotification)
-    notification.root = mcp_types.ToolListChangedNotification()
+    notification = mcp_types.ToolListChangedNotification()
     # Should not raise
     await handler(notification)
 
