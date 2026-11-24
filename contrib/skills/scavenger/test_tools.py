@@ -88,8 +88,8 @@ def test_scavenger_probe(mock_fleet):
 def test_scavenger_wake(mock_fleet):
     ctx = MagicMock()
     with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
-        with patch("contrib.skills.scavenger.tools.send_magic_packet") as mock_send:
-            with patch("contrib.skills.scavenger.tools.is_ssh_open", return_value=True):
+        with patch("contrib.skills.scavenger.scavenger.send_magic_packet") as mock_send:
+            with patch("contrib.skills.scavenger.scavenger.is_ssh_open", return_value=True):
                 res = scavenger_wake(ctx, "desktop-linux")
                 assert "awake and answering SSH" in res
                 mock_send.assert_called_once()

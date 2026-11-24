@@ -69,6 +69,10 @@ Operator host inventory is kept out of version control and loaded from `~/.confi
 }
 ```
 
+Optional top-level key `recipes_dir` points at a directory of recipe Dockerfiles (relative paths are relative to `fleet.json`). The `--recipes-dir` flag overrides it; with neither, `./dockerfiles` is used. Recipes bundled with the skill are always searched last.
+
+Containers are labelled `scavenger.env_id` and `scavenger.expires_at`. The older `decafclaw.*` label names are still read. For shell-only use, see `SKILL-cli.md`.
+
 ---
 
 ## 3. Wake-on-LAN & Apple Silicon DarkWake

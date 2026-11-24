@@ -52,7 +52,7 @@ For multi-turn subagent sessions, full build pipelines, or dev environments wher
 
 ### `scavenger_env_create(env_id, host="", kind="container", image="alpine:latest", recipe="", setup_script="", sync_dir="", mem="16g", cpus=8, ttl="2h", arch="")`
 Reserves a warm, isolated environment across turns:
-- **`recipe`**: Pre-configured build recipe from `dockerfiles/` or `skills/scavenger/dockerfiles/` (e.g. `"android-builder"`, `"node-dev"`, `"rust-builder"`). Automatically builds and caches the remote container image on the target host.
+- **`recipe`**: Pre-configured build recipe from the recipe directory (`recipes_dir` in `fleet.json`, else the workspace `dockerfiles/`) or the skill's bundled `dockerfiles/` (e.g. `"android-builder"`, `"node-dev"`, `"rust-builder"`). Automatically builds and caches the remote container image on the target host.
 - **`setup_script`**: Idempotent setup script executed once inside the workspace (e.g. `skills/scavenger/setup-scripts/setup-darwin-mlx.sh`). Essential for native Darwin nodes.
 - **`kind="container"`**: Creates a named container with a persistent volume (`/workspace`) on the chosen host.
 - **`kind="native"`**: Creates a scoped workspace directory (`~scavenger/workspaces/<env_id>`) on an Apple Silicon Mac with an exclusive single-occupancy lease lock.
@@ -97,10 +97,11 @@ Lists active reservations with remaining TTL; `scavenger_reap()` cleans up any e
 
 ## 5. CLI Alternative
 
-The underlying deterministic Python CLI is available directly within the skill:
+The underlying deterministic Python CLI is available directly within the skill. It uses only the standard library and works outside decafclaw. Every command accepts `--json` and exits non-zero on failure. See `SKILL-cli.md` for the full command list (including `wake`, `exec-native`, and `env-info`).
+
 ```bash
 # Probe fleet:
-python contrib/skills/scavenger/scavenger.py probe
+python contrib/skills/scavenger/scavenger.py probe --json
 
 # Run one-shot job:
 python contrib/skills/scavenger/scavenger.py run --repo . 'pytest tests/'
