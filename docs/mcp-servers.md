@@ -54,7 +54,9 @@ On a modern connection the SDK sends `MCP-Protocol-Version`, `Mcp-Method`, and
 (for `tools/call`) `Mcp-Name` headers plus the per-request `_meta` envelope
 (`io.modelcontextprotocol/protocolVersion`, client info, and capabilities).
 Legacy servers never see `server/discover` under `auto`, so a fleet that only
-speaks `2024-11-05` keeps working unchanged.
+speaks `2024-11-05` keeps working unchanged. The legacy handshake proposes the
+SDK's newest handshake-era revision (currently `2025-11-25`); the server selects
+the exact revision it supports.
 
 Modern servers have no legacy `notifications/*/list_changed` push; tool,
 resource, and prompt lists are discovered at connect time. Use

@@ -312,6 +312,15 @@ def test_convert_mcp_response_v2_object():
     assert tr.media[0]["content_type"] == "image/png"
 
 
+def test_convert_mcp_response_structured_content_fallback():
+    """Modern results may carry only structuredContent."""
+    from mcp import types
+
+    result = types.CallToolResult(content=[], structuredContent={"types": [{"type": "collection"}]})
+    tr = _convert_mcp_response(result)
+    assert '"type": "collection"' in tr.text
+
+
 def test_convert_mcp_response_audio_media():
     import base64
 

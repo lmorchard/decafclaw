@@ -311,6 +311,10 @@ def _convert_mcp_response(result):
             parts.append(f"[{item_type}: unsupported content type]")
 
     text = "\n".join(parts) if parts else "(no content)"
+    if not parts:
+        structured = _ga(result, "structuredContent")
+        if structured is not None:
+            text = json.dumps(structured, indent=2, default=str)
 
     if is_error:
         return ToolResult(text=f"[error: {text}]", media=media)
@@ -516,7 +520,13 @@ async def _open_http_session(server_config: MCPServerConfig, message_handler, *,
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
-    http_client = httpx2.AsyncClient(headers=server_config.headers) if server_config.headers else None
+    http_client = (
+        # Mirror the SDK's transport defaults: short connect/write/pool waits,
+        # long read waits for server-held response streams.
+        httpx2.AsyncClient(headers=server_config.headers, timeout=httpx2.Timeout(30.0, read=300.0))
+        if server_config.headers
+        else None
+    )
     session_kwargs = {"message_handler": message_handler} if message_handler else {}
     try:
         async with streamable_http_client(server_config.url, http_client=http_client) as (
