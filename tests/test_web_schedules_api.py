@@ -295,7 +295,7 @@ class TestSchedulesAPI:
             captured["conv_id"] = conv_id
             return {"task_name": task.name, "is_ok": True, "channel": "", "response": "", "context_id": None}
 
-        monkeypatch.setattr("decafclaw.http_server.run_schedule_task", fake_run)
+        monkeypatch.setattr("decafclaw.web.schedule_routes.run_schedule_task", fake_run)
 
         r = await client.post("/api/schedules/dream/run")
         assert r.status_code == 202
@@ -332,7 +332,7 @@ class TestSchedulesAPI:
             fired["count"] += 1
             return {"task_name": task.name, "is_ok": True, "channel": "", "response": "", "context_id": None}
 
-        monkeypatch.setattr("decafclaw.http_server.run_schedule_task", fake_run)
+        monkeypatch.setattr("decafclaw.web.schedule_routes.run_schedule_task", fake_run)
 
         r = await client.post("/api/schedules/disabled-task/run")
         assert r.status_code == 202

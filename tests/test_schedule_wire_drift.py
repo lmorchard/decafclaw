@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from decafclaw.http_server import _schedule_to_dict
 from decafclaw.schedules import ScheduleTask, discover_schedules, write_overlay
+from decafclaw.web.schedule_routes import _schedule_to_dict
 
 # Fields `_schedule_to_dict` renames on the wire. Renaming is fine only
 # when the target key is unique to that field — see

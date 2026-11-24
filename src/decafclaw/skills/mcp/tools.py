@@ -115,7 +115,7 @@ async def _restart(ctx: "Context", registry, server_name) -> str | ToolResult:
 
 async def tool_mcp_list_resources(ctx: "Context") -> str | ToolResult:
     """List all MCP resources and resource templates."""
-    from decafclaw.mcp_client import get_registry
+    from decafclaw.mcp_client import _ga, get_registry
 
     registry = get_registry()
     if not registry:
@@ -134,7 +134,7 @@ async def tool_mcp_list_resources(ctx: "Context") -> str | ToolResult:
             uri = str(getattr(res, "uri", ""))
             name = getattr(res, "name", uri)
             desc = getattr(res, "description", "")
-            mime = getattr(res, "mimeType", "")
+            mime = _ga(res, "mimeType", "")
             parts = [f"- **{server_name}** / `{uri}`"]
             if name and name != uri:
                 parts.append(f" — {name}")
@@ -147,7 +147,7 @@ async def tool_mcp_list_resources(ctx: "Context") -> str | ToolResult:
     if templates:
         lines.append("\n**Resource Templates:**\n")
         for server_name, tmpl in templates:
-            uri_tmpl = str(getattr(tmpl, "uriTemplate", ""))
+            uri_tmpl = str(_ga(tmpl, "uriTemplate", ""))
             name = getattr(tmpl, "name", uri_tmpl)
             desc = getattr(tmpl, "description", "")
             parts = [f"- **{server_name}** / `{uri_tmpl}` (template)"]
@@ -180,11 +180,9 @@ async def tool_mcp_read_resource(ctx: "Context", server: str = "", uri: str = ""
         return ToolResult(text=f"[error: MCP server '{server}' is not connected]")
 
     try:
-        from pydantic import AnyUrl
-
         timeout_s = state.config.timeout / 1000
         result = await asyncio.wait_for(
-            state.session.read_resource(AnyUrl(uri)),
+            state.session.read_resource(uri),
             timeout=timeout_s,
         )
         return _convert_resource_response(result)

@@ -169,6 +169,23 @@ class RestartCoordinator:
             except asyncio.CancelledError:
                 return
 
+    async def stop_drain(self) -> None:
+        """Cancel the on-idle drain task during shutdown.
+
+        Unlike :meth:`cancel_restart`, this leaves restart state and any
+        post-restart wake records alone: the process is already going down, so
+        the drain task has nothing left to decide.
+        """
+        task = self._drain_task
+        self._drain_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     async def cancel_restart(self) -> bool:
         """Cancel a pending on-idle restart request."""
         async with self._lock:
