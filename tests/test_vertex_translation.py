@@ -526,22 +526,92 @@ def test_tool_schema_structural_constructs_diagnosed():
     assert "'if'" in joined and "'then'" in joined
 
 
-def test_tool_schema_optional_null_and_maps_pass_through():
-    """Optional/null unions and maps are legitimate OpenAPI — they survive (#1147)."""
+def test_tool_schema_nullable_type_list_becomes_nullable_and_maps_pass_through():
+    """Vertex rejects list-valued ``type`` ("Proto field is not repeating").
+
+    ``["string", "null"]`` becomes ``type: string`` + ``nullable: true``; maps
+    are legitimate OpenAPI and survive unchanged.
+    """
     from decafclaw.llm.providers.vertex import _clean_schema_preserving
 
     schema = {
         "type": "object",
         "properties": {
-            "label": {"type": ["string", "null"]},
+            "label": {"type": ["string", "null"], "description": "optional label"},
             "tags": {"type": "object", "additionalProperties": {"type": "string"}},
         },
     }
     cleaned, diags = _clean_schema_preserving(schema)
 
-    assert cleaned["properties"]["label"]["type"] == ["string", "null"]
+    assert cleaned["properties"]["label"] == {
+        "type": "string",
+        "nullable": True,
+        "description": "optional label",
+    }
     assert cleaned["properties"]["tags"]["additionalProperties"] == {"type": "string"}
     assert diags == []
+    # The canonical schema is not mutated.
+    assert schema["properties"]["label"]["type"] == ["string", "null"]
+
+
+def test_tool_schema_multi_type_list_becomes_any_of():
+    """``["string", "array"]`` becomes an ``anyOf`` with type-specific keys on their branch."""
+    from decafclaw.llm.providers.vertex import _clean_schema_preserving
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "kind": {
+                "type": ["string", "array", "null"],
+                "description": "one kind or many",
+                "items": {"type": "string", "$schema": "x"},
+            },
+        },
+    }
+    cleaned, diags = _clean_schema_preserving(schema)
+
+    kind = cleaned["properties"]["kind"]
+    assert "type" not in kind
+    assert "items" not in kind
+    assert kind["description"] == "one kind or many"
+    assert kind["nullable"] is True
+    assert kind["anyOf"] == [
+        {"type": "string"},
+        {"type": "array", "items": {"type": "string"}},
+    ]
+    assert diags == []
+
+
+def test_no_list_valued_type_reaches_request_body():
+    """End to end: no ``type`` list survives into functionDeclarations."""
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "find_records",
+                "description": "Find records",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": ["string", "array"], "items": {"type": "string"}},
+                        "collection": {"type": ["string", "null"]},
+                    },
+                },
+            },
+        }
+    ]
+    body = _build_request_body([{"role": "user", "content": "hi"}], tools)
+
+    def walk(node):
+        if isinstance(node, dict):
+            assert not isinstance(node.get("type"), list), node
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(body["tools"])
 
 
 def test_tool_schema_dependency_rendered_and_diagnosed():

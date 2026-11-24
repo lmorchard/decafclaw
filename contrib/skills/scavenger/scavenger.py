@@ -11,15 +11,18 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import os
 import re
 import socket
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import IO, Any, Callable, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -387,8 +390,13 @@ def execute_job(
     cpus: int = 8,
     network: str = "default",
     timeout_seconds: int = 1800,
+    stdout: Optional[IO[str]] = None,
 ) -> int:
-    """One-shot job: stage repo bundle, run ephemeral container, stream output, clean up."""
+    """One-shot job: stage repo bundle, run ephemeral container, stream output, clean up.
+
+    ``stdout`` must be a real file (it needs a fileno); it defaults to ``sys.stdout``.
+    """
+    out_stream = stdout if stdout is not None else sys.stdout
     selinux_flag = ":Z" if host.needs_selinux_z else ""
     device_args = " ".join(host.device_flags) if host.device_flags else ""
     limit_args = " ".join(container_limit_flags(host, network))
@@ -444,7 +452,7 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
         ssh_proc = subprocess.Popen(
             ["ssh", "-o", "BatchMode=yes", host.ssh_alias, ssh_wrapper],
             stdin=bundle_proc.stdout,
-            stdout=sys.stdout,
+            stdout=out_stream,
             stderr=sys.stderr,
         )
         if bundle_proc.stdout:
@@ -461,7 +469,7 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
         print(f"🚀 Dispatching command to {host.name} ({host.arch}) inside {image}...", file=sys.stderr)
         res = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", host.ssh_alias, remote_script],
-            stdout=sys.stdout,
+            stdout=out_stream,
             stderr=sys.stderr,
             timeout=timeout_seconds,
             check=False,
@@ -907,6 +915,229 @@ def env_reap(fleet: Dict[str, HostConfig]) -> List[str]:
 
 
 # =============================================================================
+# End-to-end selfcheck (manual, against one real host)
+# =============================================================================
+
+
+class SelfcheckFailure(Exception):
+    """A selfcheck step failed; the message is shown on the FAIL line."""
+
+
+@dataclass
+class SelfcheckOps:
+    """The host operations selfcheck drives. Tests substitute fakes for these."""
+
+    probe: Callable[[HostConfig], HostStatus]
+    run_job: Callable[..., int]
+    env_create: Callable[..., EnvReservation]
+    env_exec: Callable[[EnvReservation, str], "subprocess.CompletedProcess[str]"]
+    env_sync: Callable[[EnvReservation, str, str], None]
+    env_destroy: Callable[[str], bool]
+    ssh: Callable[[HostConfig, str], "subprocess.CompletedProcess[str]"]
+
+
+def build_selfcheck_ops(fleet: Dict[str, HostConfig], wake: bool = True) -> SelfcheckOps:
+    """Bind the real fleet operations into a SelfcheckOps."""
+    return SelfcheckOps(
+        probe=lambda host: probe_host(host, try_wake=wake),
+        run_job=execute_job,
+        env_create=lambda **kw: env_create(fleet, **kw),
+        env_exec=lambda res, cmd: env_exec(fleet, res, cmd, timeout_seconds=120),
+        env_sync=lambda res, direction, path: env_sync(fleet, res, direction=direction, local_path=path),
+        env_destroy=lambda env_id: env_destroy(fleet, env_id),
+        ssh=lambda host, cmd: run_ssh(host.ssh_alias, cmd, timeout=60),
+    )
+
+
+def _sha256_file(path: str) -> str:
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def _git_init_repo(path: str, marker: str) -> None:
+    """Create a one-commit git repo holding marker.txt for the one-shot run check."""
+    with open(os.path.join(path, "marker.txt"), "w", encoding="utf-8") as f:
+        f.write(marker + "\n")
+    git = ["git", "-C", path, "-c", "user.name=selfcheck", "-c", "user.email=selfcheck@localhost"]
+    for args in (["init", "-q"], ["add", "marker.txt"], ["commit", "-q", "-m", "selfcheck"]):
+        proc = subprocess.run(git + args, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            raise SelfcheckFailure(f"local git {args[0]} failed: {proc.stderr.strip()}")
+
+
+def _leftover_script(host: HostConfig, env_id: str) -> str:
+    return f"""
+set -e
+c=$({host.engine} ps -a -q --filter name=scavenger-env-{env_id})
+v=$({host.engine} volume ls -q --filter name=scavenger-vol-{env_id})
+w=""
+if [ -e ~/workspaces/{env_id} ]; then w=present; fi
+echo "container=$c"
+echo "volume=$v"
+echo "workspace=$w"
+"""
+
+
+def run_selfcheck(
+    host: HostConfig,
+    ops: SelfcheckOps,
+    image: str = "alpine:latest",
+    emit: Callable[[str], None] = print,
+    env_id: Optional[str] = None,
+) -> bool:
+    """Run the end-to-end steps against one host. Prints one PASS/FAIL line per step.
+
+    Stops at the first failing step. Returns True only if every step passed.
+    """
+    env_id = env_id or f"selfcheck-{uuid.uuid4().hex[:8]}"
+    token = uuid.uuid4().hex
+    state: Dict[str, Any] = {"res": None, "destroyed": False}
+
+    with tempfile.TemporaryDirectory(prefix="scavenger-selfcheck-") as tmp:
+        payload_dir = os.path.join(tmp, "payload")
+        down_dir = os.path.join(tmp, "down")
+        repo_dir = os.path.join(tmp, "repo")
+        for d in (payload_dir, repo_dir):
+            os.makedirs(d)
+        payload = os.path.join(payload_dir, "payload.bin")
+        with open(payload, "wb") as f:
+            f.write(os.urandom(8192))
+        payload_sha = _sha256_file(payload)
+
+        def step_probe() -> str:
+            st = ops.probe(host)
+            if not st.online:
+                raise SelfcheckFailure(st.reason or "host unreachable")
+            if not st.eligible:
+                raise SelfcheckFailure(f"online but not eligible: {st.reason}")
+            return f"eligible ({st.engine}, {st.arch})"
+
+        def step_run() -> str:
+            _git_init_repo(repo_dir, f"marker-{token}")
+            with tempfile.TemporaryFile("w+", encoding="utf-8") as out:
+                rc = ops.run_job(
+                    host=host,
+                    command="cat marker.txt",
+                    repo_path=repo_dir,
+                    image=image,
+                    mem_limit=host.default_memory,
+                    cpus=host.default_cpus,
+                    timeout_seconds=300,
+                    stdout=out,
+                )
+                out.seek(0)
+                output = out.read()
+            if rc != 0:
+                raise SelfcheckFailure(f"run exited {rc}")
+            if f"marker-{token}" not in output:
+                raise SelfcheckFailure(f"repo marker missing from output: {output.strip()[:200]!r}")
+            return "repo bundle reached the container"
+
+        def step_env_create() -> str:
+            state["res"] = ops.env_create(
+                env_id=env_id,
+                host_name=host.name,
+                kind="container",
+                image=image,
+                mem_limit=host.default_memory,
+                cpus=host.default_cpus,
+                ttl="15m",
+            )
+            return f"created {env_id}"
+
+        def step_env_exec() -> str:
+            proc = ops.env_exec(state["res"], f"echo exec-{token}")
+            if proc.returncode != 0:
+                raise SelfcheckFailure(f"exec exited {proc.returncode}: {proc.stderr.strip()[:200]}")
+            if f"exec-{token}" not in proc.stdout:
+                raise SelfcheckFailure(f"unexpected exec output: {proc.stdout.strip()[:200]!r}")
+            return "command output matched"
+
+        def step_sync_up() -> str:
+            ops.env_sync(state["res"], "up", payload_dir)
+            proc = ops.env_exec(state["res"], "sha256sum payload.bin")
+            remote_sha = proc.stdout.split()[0] if proc.returncode == 0 and proc.stdout.split() else ""
+            if remote_sha != payload_sha:
+                raise SelfcheckFailure(
+                    f"checksum mismatch after sync up (local {payload_sha[:12]}, remote {remote_sha[:12] or 'none'})"
+                )
+            return f"sha256 {payload_sha[:12]} matches on host"
+
+        def step_sync_down() -> str:
+            proc = ops.env_exec(state["res"], f"echo remote-{token} > remote.txt")
+            if proc.returncode != 0:
+                raise SelfcheckFailure(f"could not write remote file: {proc.stderr.strip()[:200]}")
+            ops.env_sync(state["res"], "down", down_dir)
+            down_payload = os.path.join(down_dir, "payload.bin")
+            if not os.path.isfile(down_payload):
+                raise SelfcheckFailure("payload.bin missing after sync down")
+            if _sha256_file(down_payload) != payload_sha:
+                raise SelfcheckFailure("payload.bin checksum changed on the round trip")
+            remote_txt = os.path.join(down_dir, "remote.txt")
+            if not os.path.isfile(remote_txt):
+                raise SelfcheckFailure("remote.txt missing after sync down")
+            with open(remote_txt, "r", encoding="utf-8") as f:
+                if f.read().strip() != f"remote-{token}":
+                    raise SelfcheckFailure("remote.txt content differs after sync down")
+            return "round trip checksum matches, host-made file came back"
+
+        def step_env_destroy() -> str:
+            ok = ops.env_destroy(env_id)
+            state["destroyed"] = True
+            if not ok:
+                raise SelfcheckFailure("env-destroy reported no such environment")
+            return f"destroyed {env_id}"
+
+        def step_leftovers() -> str:
+            proc = ops.ssh(host, _leftover_script(host, env_id))
+            if proc.returncode != 0:
+                raise SelfcheckFailure(f"leftover query failed: {proc.stderr.strip()[:200]}")
+            found = []
+            for line in proc.stdout.splitlines():
+                key, _, value = line.partition("=")
+                if key in ("container", "volume", "workspace") and value.strip():
+                    found.append(f"{key}={value.strip()}")
+            if found:
+                raise SelfcheckFailure("left on host: " + ", ".join(found))
+            return "no container, volume, or workspace left"
+
+        steps: List[Tuple[str, Callable[[], str]]] = [
+            ("probe", step_probe),
+            ("run", step_run),
+            ("env-create", step_env_create),
+            ("env-exec", step_env_exec),
+            ("env-sync-up", step_sync_up),
+            ("env-sync-down", step_sync_down),
+            ("env-destroy", step_env_destroy),
+            ("leftovers", step_leftovers),
+        ]
+
+        passed = True
+        try:
+            for name, fn in steps:
+                try:
+                    detail = fn()
+                except SelfcheckFailure as e:
+                    emit(f"FAIL {name}: {e}")
+                    passed = False
+                    break
+                except Exception as e:  # noqa: BLE001 - any host or tooling error is a step failure
+                    emit(f"FAIL {name}: {type(e).__name__}: {e}")
+                    passed = False
+                    break
+                emit(f"PASS {name}: {detail}")
+        finally:
+            if state["res"] is not None and not state["destroyed"]:
+                try:
+                    ops.env_destroy(env_id)
+                    emit(f"NOTE cleaned up {env_id} after failure")
+                except Exception as e:  # noqa: BLE001
+                    emit(f"NOTE cleanup of {env_id} failed ({type(e).__name__}: {e}); remove it by hand")
+
+    return passed
+
+
+# =============================================================================
 # CLI Subcommands
 # =============================================================================
 
@@ -1046,6 +1277,23 @@ def cmd_reap(args: argparse.Namespace) -> None:
         print("No expired environments to reap.")
 
 
+def cmd_selfcheck(args: argparse.Namespace) -> None:
+    fleet = load_fleet_config(args.config)
+    if not fleet:
+        sys.exit("Error: No fleet configuration found. Create ~/.config/scavenger/fleet.json or specify --config.")
+    host = fleet.get(args.host)
+    if not host:
+        sys.exit(f"Unknown host: {args.host}")
+
+    ops = build_selfcheck_ops(fleet, wake=args.wake)
+    ok = run_selfcheck(host, ops, image=args.image)
+    if ok:
+        print(f"selfcheck passed for {host.name}")
+    else:
+        print(f"selfcheck FAILED for {host.name}", file=sys.stderr)
+    sys.exit(0 if ok else 1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="LAN Scavenger Compute Fleet Controller")
     parser.add_argument("--config", help="Path to custom fleet JSON config (default: ~/.config/scavenger/fleet.json)")
@@ -1128,6 +1376,13 @@ def main() -> None:
     # Reap
     p_reap = subparsers.add_parser("reap", help="Reap all expired environment reservations")
     p_reap.set_defaults(cmd_func=cmd_reap)
+
+    # Selfcheck
+    p_sc = subparsers.add_parser("selfcheck", help="Run an end-to-end check against one real host")
+    p_sc.add_argument("host", help="Host name from the fleet config")
+    p_sc.add_argument("--image", default="alpine:latest", help="Container image (default: alpine:latest)")
+    p_sc.add_argument("--no-wake", dest="wake", action="store_false", help="Do not fire Wake-on-LAN packets")
+    p_sc.set_defaults(cmd_func=cmd_selfcheck, wake=True)
 
     args = parser.parse_args()
     args.cmd_func(args)
