@@ -15,7 +15,7 @@ The Scavenger Compute Fleet provides on-demand, agentless ephemeral container ex
 2. **Blast Radius Isolation:** All remote execution runs as a dedicated, low-privilege `scavenger` user account. The `scavenger` user has **no sudo rights** and **no access to operator home directories**.
 3. **Containerized Containment:** Workloads run inside rootless Podman or Docker containers with explicit `--memory` and `--cpus` limits.
 4. **Disposable Ephemeral Workspaces:** Source code is bundled as an in-memory `git bundle` over SSH into a throwaway `/tmp` directory, cloned, executed, and reaped immediately in a `trap ... EXIT` block.
-5. **Stateful Reservations on Demand:** Multi-step pipelines (such as Android builds, Node modules, or compiler caches) can reserve warm environments with named persistent volumes or scoped workspaces that expire automatically via hard TTLs.
+5. **Stateful Reservations on Demand:** Multi-step pipelines (such as Android builds, Node modules, or compiler caches) can reserve warm environments with named persistent volumes or scoped workspaces that expire automatically via hard TTLs. The controller reaps expired reservations on `probe` and `env-create`; a host that is unreachable keeps its lease for the next sweep rather than orphaning the container.
 6. **Courtesy Guards:**
    - **Laptops:** Probes check `pmset -g batt` (macOS) or sysfs battery status (Linux). If running on battery power, the laptop is disqualified so the agent never drains battery.
    - **Workstations:** Probes can check game streaming or active foreground sessions before scheduling heavy jobs.

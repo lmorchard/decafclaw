@@ -514,7 +514,13 @@ def env_create(
     """
     Reserve a stateful environment (container or native workspace) on the fleet.
     Preserves state across turns until env_destroy or TTL expiry.
+
+    Reaps expired environments first so their containers, volumes, and native
+    slots are freed before host selection. A reap failure on one host is
+    logged and does not block creation.
     """
+    env_reap(fleet)
+
     leases = load_leases()
     now = time.time()
     ttl_sec = parse_ttl(ttl)
@@ -827,42 +833,73 @@ def env_sync(
 
 
 def env_destroy(fleet: Dict[str, HostConfig], env_id: str) -> bool:
-    """Tear down a reserved environment and release its lease."""
-    leases = load_leases()
-    res = leases.pop(env_id, None)
-    save_leases(leases)
+    """Tear down a reserved environment and release its lease.
 
+    The remote teardown is attempted before the lease is released, so a
+    failure (e.g. an unreachable host) keeps the lease for a later retry and
+    returns False. Returns True when the environment was destroyed, or when
+    its lease is released because the host left the fleet.
+    """
+    leases = load_leases()
+    res = leases.get(env_id)
     if not res:
         return False
 
     host = fleet.get(res.host)
     if not host:
+        # Host is no longer in the fleet; release the lease without a remote call.
+        leases.pop(env_id, None)
+        save_leases(leases)
         return False
 
-    if res.kind == "native":
-        ws = res.workspace_path or f"workspaces/{env_id}"
-        run_ssh(host.ssh_alias, f"rm -rf ~/{ws}")
-    else:
-        c_name = res.container_name or f"scavenger-env-{env_id}"
-        v_name = res.volume_name or f"scavenger-vol-{env_id}"
-        run_ssh(
-            host.ssh_alias,
-            f"{host.engine} rm -f {c_name} 2>/dev/null; {host.engine} volume rm -f {v_name} 2>/dev/null || true",
-        )
+    try:
+        if res.kind == "native":
+            ws = res.workspace_path or f"workspaces/{env_id}"
+            destroy_res = run_ssh(host.ssh_alias, f"rm -rf ~/{ws}")
+        else:
+            c_name = res.container_name or f"scavenger-env-{env_id}"
+            v_name = res.volume_name or f"scavenger-vol-{env_id}"
+            destroy_res = run_ssh(
+                host.ssh_alias,
+                f"{host.engine} rm -f {c_name} 2>/dev/null; {host.engine} volume rm -f {v_name} 2>/dev/null || true",
+            )
+    except Exception as e:
+        print(f"⚠️ Failed to destroy {env_id} on {host.name}: {e}", file=sys.stderr)
+        return False
 
+    if destroy_res.returncode != 0:
+        print(
+            f"⚠️ Destroy of {env_id} on {host.name} failed (rc={destroy_res.returncode}): "
+            f"{(destroy_res.stderr or '').strip()}",
+            file=sys.stderr,
+        )
+        return False
+
+    leases.pop(env_id, None)
+    save_leases(leases)
     return True
 
 
 def env_reap(fleet: Dict[str, HostConfig]) -> List[str]:
-    """Sweep and purge all expired environment leases across the fleet."""
+    """Sweep and purge all expired environment leases across the fleet.
+
+    A reap failure on one host is logged to stderr and does not block reaping
+    of the remaining environments; failed leases are kept so a later sweep can
+    retry them once their host is reachable again.
+    """
     leases = load_leases()
     now = time.time()
     reaped = []
 
     for env_id, res in list(leases.items()):
         if res.expires_at < now:
-            env_destroy(fleet, env_id)
-            reaped.append(env_id)
+            try:
+                ok = env_destroy(fleet, env_id)
+            except Exception as e:
+                print(f"⚠️ Reap of {env_id} on {res.host} failed: {e}", file=sys.stderr)
+                continue
+            if ok:
+                reaped.append(env_id)
 
     return reaped
 
@@ -876,6 +913,10 @@ def cmd_probe(args: argparse.Namespace) -> None:
     fleet = load_fleet_config(args.config)
     if not fleet:
         sys.exit("Error: No fleet configuration found. Create ~/.config/scavenger/fleet.json or specify --config.")
+
+    reaped = env_reap(fleet)
+    if reaped:
+        print(f"Reaped {len(reaped)} expired environment(s): {', '.join(reaped)}", file=sys.stderr)
 
     targets = [args.host] if args.host else list(fleet.keys())
     results = []
@@ -977,6 +1018,8 @@ def cmd_env_destroy(args: argparse.Namespace) -> None:
     ok = env_destroy(fleet, args.env_id)
     if ok:
         print(f"Environment '{args.env_id}' destroyed.")
+    elif load_leases().get(args.env_id):
+        print(f"Failed to destroy environment '{args.env_id}' (host unreachable?); lease retained for retry.")
     else:
         print(f"Environment '{args.env_id}' not found or already destroyed.")
 

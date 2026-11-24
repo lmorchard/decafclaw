@@ -23,6 +23,8 @@ scavenger_probe()
 
 Output reports which nodes are online, their architecture, and whether courtesy guards (battery power or active game streaming) flag them as busy.
 
+Probing also reaps expired environments first: any reservation past its TTL is destroyed and its lease released before the probe runs. A host that cannot be reached is skipped with a warning (its lease is retained for the next sweep) and does not block the probe.
+
 ---
 
 ## 2. Ephemeral One-Shot Jobs
@@ -57,7 +59,7 @@ Reserves a warm, isolated environment across turns:
 - **`kind="container"`**: Creates a named container with a persistent volume (`/workspace`) on the chosen host.
 - **`kind="native"`**: Creates a scoped workspace directory (`~scavenger/workspaces/<env_id>`) on an Apple Silicon Mac with an exclusive single-occupancy lease lock.
 - **`sync_dir`**: Optional local directory path initial-synced into the workspace via compressed tar stream.
-- **`ttl`**: Automatic expiry time (e.g. `"2h"`, `"30m"`).
+- **`ttl`**: Automatic expiry time (e.g. `"2h"`, `"30m"`). Expired environments are reaped automatically before the new reservation is made, so stale containers and native slots do not linger.
 
 ### `scavenger_env_exec(env_id, command, timeout=1800, bg=False, wake_on="")`
 Executes a command inside the warm environment with sub-second launch latency.
@@ -80,7 +82,7 @@ Transfers files up to or down from the reserved workspace via fast compressed ta
 Tears down the container and volume (or removes the native workspace directory) and releases the lease lock.
 
 ### `scavenger_env_list()` / `scavenger_reap()`
-Lists active reservations with remaining TTL; `scavenger_reap()` cleans up any expired leases across the fleet.
+Lists active reservations with remaining TTL; `scavenger_reap()` cleans up any expired leases across the fleet. Expired environments are also reaped automatically by `scavenger_probe()` and `scavenger_env_create()`, so a manual reap is only needed to force an immediate sweep.
 
 ---
 
