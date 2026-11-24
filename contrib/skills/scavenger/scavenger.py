@@ -17,6 +17,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -49,22 +50,94 @@ class HostConfig:
 DEFAULT_FLEET: Dict[str, HostConfig] = {}
 LEASES_FILE = os.path.expanduser("~/.config/scavenger/leases.json")
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_RECIPES_DIR = "dockerfiles"
+
+# Container label namespace. Containers created before the rename carry the
+# legacy "decafclaw." names, so readers accept both.
+LABEL_PREFIX = "scavenger"
+LEGACY_LABEL_PREFIXES: Tuple[str, ...] = ("decafclaw",)
+LABEL_ENV_ID = f"{LABEL_PREFIX}.env_id"
+LABEL_EXPIRES_AT = f"{LABEL_PREFIX}.expires_at"
+
+
+def parse_env_labels(labels: Any) -> Optional[Tuple[str, int]]:
+    """
+    Read (env_id, expires_at) from container labels, accepting the current
+    `scavenger.*` names and the legacy `decafclaw.*` names.
+
+    `labels` is a dict or the comma-separated `k=v` string printed by
+    `docker ps --format '{{.Labels}}'`. Returns None when the container is not
+    a scavenger environment or the expiry is missing or malformed.
+    """
+    if isinstance(labels, str):
+        parsed: Dict[str, str] = {}
+        for item in labels.split(","):
+            key, sep, value = item.partition("=")
+            if sep:
+                parsed[key.strip()] = value.strip()
+        labels = parsed
+
+    def lookup(suffix: str) -> Optional[str]:
+        for prefix in (LABEL_PREFIX, *LEGACY_LABEL_PREFIXES):
+            value = labels.get(f"{prefix}.{suffix}")
+            if value:
+                return str(value)
+        return None
+
+    env_id = lookup("env_id")
+    expires = lookup("expires_at")
+    if not env_id or not expires:
+        return None
+    try:
+        return env_id, int(expires)
+    except ValueError:
+        return None
+
+
+def find_fleet_config(config_path: Optional[str] = None) -> Optional[str]:
+    """Return the fleet.json path to use: an explicit path, else the first existing fallback."""
+    if config_path:
+        return config_path if os.path.isfile(config_path) else None
+    candidates = [
+        os.path.expanduser("~/.config/scavenger/fleet.json"),
+        os.path.join(SCRIPT_DIR, "..", "config", "scavenger_fleet.json"),
+        os.path.join(os.getcwd(), "config", "scavenger_fleet.json"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def configured_recipes_dir(cli_value: Optional[str] = None, config_path: Optional[str] = None) -> Optional[str]:
+    """
+    Return the operator-chosen recipe directory, or None when none is configured.
+
+    Order: the `--recipes-dir` value, then `recipes_dir` in fleet.json. A relative
+    `recipes_dir` in fleet.json is relative to the fleet.json file. When this returns
+    None, `resolve_recipe` falls back to `./dockerfiles`.
+    """
+    if cli_value:
+        return os.path.abspath(os.path.expanduser(cli_value))
+
+    found = find_fleet_config(config_path)
+    if found:
+        with open(found, "r", encoding="utf-8") as f:
+            configured = json.load(f).get("recipes_dir")
+        if configured:
+            path = os.path.expanduser(str(configured))
+            if not os.path.isabs(path):
+                path = os.path.join(os.path.dirname(os.path.abspath(found)), path)
+            return os.path.abspath(path)
+
+    return None
+
 
 def load_fleet_config(config_path: Optional[str] = None) -> Dict[str, HostConfig]:
     """Load declarative fleet configuration from JSON file with fallback paths."""
+    config_path = find_fleet_config(config_path)
     if not config_path:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        candidates = [
-            os.path.expanduser("~/.config/scavenger/fleet.json"),
-            os.path.join(script_dir, "..", "config", "scavenger_fleet.json"),
-            os.path.join(os.getcwd(), "config", "scavenger_fleet.json"),
-        ]
-        for c in candidates:
-            if os.path.isfile(c):
-                config_path = c
-                break
-
-    if not config_path or not os.path.isfile(config_path):
         return {}
 
     with open(config_path, "r", encoding="utf-8") as f:
@@ -214,6 +287,28 @@ def is_ssh_open(host_alias: str) -> bool:
     return res.returncode == 0
 
 
+def wake_host(host: HostConfig) -> Tuple[bool, str]:
+    """Send a Wake-on-LAN packet and wait for SSH. Returns (awake, message)."""
+    if not host.wol_mac:
+        return False, f"Host '{host.name}' has no wol_mac configured"
+
+    try:
+        send_magic_packet(host.wol_mac, host.wol_broadcast, host.wol_port)
+    except Exception as e:
+        return False, f"Failed to send WoL packet to {host.name}: {e}"
+
+    deadline = time.time() + host.wol_wait_seconds
+    while time.time() < deadline:
+        time.sleep(1.5)
+        if is_ssh_open(host.ssh_alias):
+            return True, f"Host '{host.name}' is awake and answering SSH."
+
+    return (
+        False,
+        f"Sent WoL magic packet to {host.wol_mac}, but host '{host.name}' did not answer within {host.wol_wait_seconds}s.",
+    )
+
+
 def probe_host(host: HostConfig, try_wake: bool = True) -> HostStatus:
     """Evaluate host reachability, hardware status, and eligibility."""
     status = HostStatus(name=host.name, arch=host.arch, engine=host.engine)
@@ -354,8 +449,15 @@ def execute_job(
     mem_limit: str = "16g",
     cpus: int = 8,
     timeout_seconds: int = 1800,
+    stdout: Any = None,
+    stderr: Any = None,
 ) -> int:
-    """One-shot job: stage repo bundle, run ephemeral container, stream output, clean up."""
+    """
+    One-shot job: stage repo bundle, run ephemeral container, stream output, clean up.
+    `stdout`/`stderr` default to this process's streams; pass real file objects to capture.
+    """
+    out_stream = stdout if stdout is not None else sys.stdout
+    err_stream = stderr if stderr is not None else sys.stderr
     selinux_flag = ":Z" if host.needs_selinux_z else ""
     device_args = " ".join(host.device_flags) if host.device_flags else ""
 
@@ -408,8 +510,8 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
         ssh_proc = subprocess.Popen(
             ["ssh", "-o", "BatchMode=yes", host.ssh_alias, ssh_wrapper],
             stdin=bundle_proc.stdout,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
+            stdout=out_stream,
+            stderr=err_stream,
         )
         if bundle_proc.stdout:
             bundle_proc.stdout.close()
@@ -425,8 +527,8 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
         print(f"🚀 Dispatching command to {host.name} ({host.arch}) inside {image}...", file=sys.stderr)
         res = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", host.ssh_alias, remote_script],
-            stdout=sys.stdout,
-            stderr=sys.stderr,
+            stdout=out_stream,
+            stderr=err_stream,
             timeout=timeout_seconds,
             check=False,
         )
@@ -438,10 +540,18 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
 # =============================================================================
 
 
-def resolve_recipe(recipe_name: str, workspace_root: Optional[str] = None) -> Optional[Tuple[str, str]]:
+def resolve_recipe(
+    recipe_name: str,
+    workspace_root: Optional[str] = None,
+    recipes_dir: Optional[str] = None,
+) -> Optional[Tuple[str, str]]:
     """
     Resolve a recipe name to a local file path and recipe type ("dockerfile" or "script").
-    Checks workspace dockerfiles/, skills/scavenger/dockerfiles/, and skills/scavenger/setup-scripts/.
+
+    Search order: the recipe directory (`recipes_dir`, else `<workspace_root>/dockerfiles`
+    when a workspace root is given, else `./dockerfiles`), then the DecafClaw workspace copy of
+    the skill (only with a workspace root), then the recipes bundled next to this file.
+    Callers get `recipes_dir` from `configured_recipes_dir`.
     """
     if not recipe_name:
         return None
@@ -450,16 +560,30 @@ def resolve_recipe(recipe_name: str, workspace_root: Optional[str] = None) -> Op
         kind = "dockerfile" if "dockerfile" in recipe_name.lower() else "script"
         return os.path.abspath(recipe_name), kind
 
-    ws = workspace_root or "/home/lmorchard/.decafclaw/decafclaw/workspace"
-    candidates = [
-        (os.path.join(ws, "dockerfiles", f"{recipe_name}.Dockerfile"), "dockerfile"),
-        (os.path.join(ws, "dockerfiles", recipe_name), "dockerfile"),
-        (os.path.join(ws, "skills", "scavenger", "dockerfiles", f"{recipe_name}.Dockerfile"), "dockerfile"),
-        (os.path.join(ws, "skills", "scavenger", "dockerfiles", recipe_name), "dockerfile"),
-        (os.path.join(ws, "skills", "scavenger", "setup-scripts", f"{recipe_name}.sh"), "script"),
-        (os.path.join(ws, "skills", "scavenger", "setup-scripts", f"setup-{recipe_name}.sh"), "script"),
-        (os.path.join(ws, "skills", "scavenger", "setup-scripts", recipe_name), "script"),
-    ]
+    if recipes_dir:
+        primary = recipes_dir
+    elif workspace_root:
+        primary = os.path.join(workspace_root, "dockerfiles")
+    else:
+        primary = os.path.abspath(DEFAULT_RECIPES_DIR)
+
+    dockerfile_dirs = [primary]
+    script_dirs = [primary]
+    if workspace_root:
+        skill_dir = os.path.join(workspace_root, "skills", "scavenger")
+        dockerfile_dirs.append(os.path.join(skill_dir, "dockerfiles"))
+        script_dirs.append(os.path.join(skill_dir, "setup-scripts"))
+    dockerfile_dirs.append(os.path.join(SCRIPT_DIR, "dockerfiles"))
+    script_dirs.append(os.path.join(SCRIPT_DIR, "setup-scripts"))
+
+    candidates: List[Tuple[str, str]] = []
+    for d in dockerfile_dirs:
+        candidates.append((os.path.join(d, f"{recipe_name}.Dockerfile"), "dockerfile"))
+        candidates.append((os.path.join(d, recipe_name), "dockerfile"))
+    for d in script_dirs:
+        candidates.append((os.path.join(d, f"{recipe_name}.sh"), "script"))
+        candidates.append((os.path.join(d, f"setup-{recipe_name}.sh"), "script"))
+        candidates.append((os.path.join(d, recipe_name), "script"))
 
     for path, kind in candidates:
         if os.path.isfile(path):
@@ -510,6 +634,7 @@ def env_create(
     ttl: str = "2h",
     arch: Optional[str] = None,
     workspace_root: Optional[str] = None,
+    recipes_dir: Optional[str] = None,
 ) -> EnvReservation:
     """
     Reserve a stateful environment (container or native workspace) on the fleet.
@@ -539,17 +664,18 @@ def env_create(
 
     # Resolve recipe if provided
     if recipe:
-        resolved = resolve_recipe(recipe, workspace_root)
-        if resolved:
-            rec_path, rec_kind = resolved
-            if rec_kind == "dockerfile":
-                clean_rec_name = re.sub(r"[^a-zA-Z0-9_-]", "-", os.path.basename(rec_path).replace(".Dockerfile", ""))
-                tag = f"scavenger-recipe-{clean_rec_name}:latest"
-                ensure_remote_image(host, tag, rec_path)
-                image = tag
-                kind = "container"
-            elif rec_kind == "script":
-                setup_script = rec_path
+        resolved = resolve_recipe(recipe, workspace_root, recipes_dir)
+        if not resolved:
+            raise ValueError(f"Recipe not found: {recipe}")
+        rec_path, rec_kind = resolved
+        if rec_kind == "dockerfile":
+            clean_rec_name = re.sub(r"[^a-zA-Z0-9_-]", "-", os.path.basename(rec_path).replace(".Dockerfile", ""))
+            tag = f"scavenger-recipe-{clean_rec_name}:latest"
+            ensure_remote_image(host, tag, rec_path)
+            image = tag
+            kind = "container"
+        elif rec_kind == "script":
+            setup_script = rec_path
 
     if kind == "native":
         for lease in leases.values():
@@ -586,8 +712,8 @@ set -e
 {host.engine} volume create {v_name} >/dev/null 2>&1 || true
 {host.engine} run -d \\
     --name {c_name} \\
-    --label decafclaw.env_id="{env_id}" \\
-    --label decafclaw.expires_at="{int(expires_at)}" \\
+    --label {LABEL_ENV_ID}="{env_id}" \\
+    --label {LABEL_EXPIRES_AT}="{int(expires_at)}" \\
     --memory={mem_limit} \\
     --cpus={cpus} \\
     {device_args} \\
@@ -872,23 +998,56 @@ def env_reap(fleet: Dict[str, HostConfig]) -> List[str]:
 # =============================================================================
 
 
-def cmd_probe(args: argparse.Namespace) -> None:
+class CLIError(Exception):
+    """A command failure: reported as text on stderr, or as JSON with --json, and exits non-zero."""
+
+    def __init__(self, message: str, code: int = 1):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
+def _print_json(payload: Any) -> None:
+    print(json.dumps(payload, indent=2))
+
+
+def _require_fleet(args: argparse.Namespace) -> Dict[str, HostConfig]:
     fleet = load_fleet_config(args.config)
     if not fleet:
-        sys.exit("Error: No fleet configuration found. Create ~/.config/scavenger/fleet.json or specify --config.")
+        raise CLIError("No fleet configuration found. Create ~/.config/scavenger/fleet.json or specify --config.")
+    return fleet
+
+
+def _require_host(fleet: Dict[str, HostConfig], name: str) -> HostConfig:
+    host = fleet.get(name)
+    if not host:
+        raise CLIError(f"Unknown host: {name}")
+    return host
+
+
+def _require_lease(env_id: str) -> EnvReservation:
+    res = load_leases().get(env_id)
+    if not res:
+        raise CLIError(f"No active lease for environment '{env_id}'")
+    return res
+
+
+def _lease_target(res: EnvReservation) -> str:
+    return (res.container_name if res.kind == "container" else res.workspace_path) or ""
+
+
+def cmd_probe(args: argparse.Namespace) -> int:
+    fleet = _require_fleet(args)
 
     targets = [args.host] if args.host else list(fleet.keys())
     results = []
     for name in targets:
-        cfg = fleet.get(name)
-        if not cfg:
-            print(f"Unknown host: {name}", file=sys.stderr)
-            continue
+        cfg = _require_host(fleet, name)
         status = probe_host(cfg, try_wake=args.wake)
         results.append(dataclasses.asdict(status))
 
     if args.json:
-        print(json.dumps(results, indent=2))
+        _print_json(results)
     else:
         print(f"{'HOST':<14} {'ONLINE':<8} {'ARCH':<8} {'ENGINE':<8} {'AC':<6} {'STATUS':<10} {'NOTES'}")
         print("-" * 75)
@@ -898,127 +1057,213 @@ def cmd_probe(args: argparse.Namespace) -> None:
             print(
                 f"{r['name']:<14} {str(r['online']):<8} {r['arch']:<8} {r['engine']:<8} {ac_str:<6} {status_str:<10} {r['reason']}"
             )
+    return 0
 
 
-def cmd_run(args: argparse.Namespace) -> None:
-    fleet = load_fleet_config(args.config)
-    if not fleet:
-        sys.exit("Error: No fleet configuration found. Create ~/.config/scavenger/fleet.json or specify --config.")
+def cmd_wake(args: argparse.Namespace) -> int:
+    fleet = _require_fleet(args)
+    host = _require_host(fleet, args.host)
+    awake, message = wake_host(host)
+    if args.json:
+        _print_json({"host": host.name, "awake": awake, "message": message})
+    elif awake:
+        print(message)
+    else:
+        print(message, file=sys.stderr)
+    return 0 if awake else 1
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    fleet = _require_fleet(args)
 
     if args.host:
-        host = fleet.get(args.host)
-        if not host:
-            sys.exit(f"Unknown host: {args.host}")
+        host = _require_host(fleet, args.host)
         status = probe_host(host, try_wake=args.wake)
         if not status.eligible and not args.force:
-            sys.exit(f"Host {host.name} not eligible: {status.reason} (use --force to bypass)")
+            raise CLIError(f"Host {host.name} not eligible: {status.reason} (use --force to bypass)")
     else:
-        host, status = select_best_host(fleet, preferred_arch=args.arch, allow_wake=args.wake)
+        try:
+            host, status = select_best_host(fleet, preferred_arch=args.arch, allow_wake=args.wake)
+        except RuntimeError as e:
+            raise CLIError(str(e))
 
-    ret = execute_job(
-        host=host,
-        command=args.command,
-        repo_path=args.repo,
-        image=args.image,
-        mem_limit=args.mem,
-        cpus=args.cpus,
-        timeout_seconds=args.timeout,
-    )
-    sys.exit(ret)
+    def dispatch(stdout: Any = None, stderr: Any = None) -> int:
+        return execute_job(
+            host=host,
+            command=args.command,
+            repo_path=args.repo,
+            image=args.image,
+            mem_limit=args.mem,
+            cpus=args.cpus,
+            timeout_seconds=args.timeout,
+            stdout=stdout,
+            stderr=stderr,
+        )
 
+    if not args.json:
+        return dispatch()
 
-def cmd_env_create(args: argparse.Namespace) -> None:
-    fleet = load_fleet_config(args.config)
-    res = env_create(
-        fleet=fleet,
-        env_id=args.env_id,
-        host_name=args.host,
-        kind=args.kind,
-        image=args.image,
-        recipe=args.recipe,
-        setup_script=args.setup_script,
-        sync_dir=args.sync_dir,
-        mem_limit=args.mem,
-        cpus=args.cpus,
-        ttl=args.ttl,
-        arch=args.arch,
-    )
-    print(json.dumps(dataclasses.asdict(res), indent=2))
-
-
-def cmd_env_exec(args: argparse.Namespace) -> None:
-    fleet = load_fleet_config(args.config)
-    leases = load_leases()
-    res = leases.get(args.env_id)
-    if not res:
-        sys.exit(f"Error: No active lease for environment '{args.env_id}'")
-
-    proc = env_exec(fleet, res, args.command, timeout_seconds=args.timeout)
-    if proc.stdout:
-        sys.stdout.write(proc.stdout)
-    if proc.stderr:
-        sys.stderr.write(proc.stderr)
-    sys.exit(proc.returncode)
+    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+        try:
+            code = dispatch(out, err)
+        except subprocess.TimeoutExpired:
+            code = 124
+        out.seek(0)
+        err.seek(0)
+        _print_json({"host": host.name, "exit_code": code, "stdout": out.read(), "stderr": err.read()})
+    return code
 
 
-def cmd_env_sync(args: argparse.Namespace) -> None:
-    fleet = load_fleet_config(args.config)
-    leases = load_leases()
-    res = leases.get(args.env_id)
-    if not res:
-        sys.exit(f"Error: No active lease for environment '{args.env_id}'")
+def cmd_exec_native(args: argparse.Namespace) -> int:
+    fleet = _require_fleet(args)
+    host = _require_host(fleet, args.host)
+    try:
+        proc = run_ssh(host.ssh_alias, args.command, timeout=args.timeout)
+    except subprocess.TimeoutExpired:
+        raise CLIError(f"Command timed out after {args.timeout}s", code=124)
+    return _emit_exec_result(args, proc, {"host": host.name})
 
-    env_sync(fleet, res, direction=args.direction, local_path=args.local_path)
-    print(f"Sync {args.direction} complete for '{args.env_id}' with '{args.local_path}'.")
+
+def _emit_exec_result(args: argparse.Namespace, proc: subprocess.CompletedProcess[str], extra: Dict[str, Any]) -> int:
+    if args.json:
+        _print_json({**extra, "exit_code": proc.returncode, "stdout": proc.stdout or "", "stderr": proc.stderr or ""})
+    else:
+        if proc.stdout:
+            sys.stdout.write(proc.stdout)
+        if proc.stderr:
+            sys.stderr.write(proc.stderr)
+    return proc.returncode
 
 
-def cmd_env_destroy(args: argparse.Namespace) -> None:
-    fleet = load_fleet_config(args.config)
+def cmd_env_create(args: argparse.Namespace) -> int:
+    fleet = _require_fleet(args)
+    try:
+        res = env_create(
+            fleet=fleet,
+            env_id=args.env_id,
+            host_name=args.host,
+            kind=args.kind,
+            image=args.image,
+            recipe=args.recipe,
+            setup_script=args.setup_script,
+            sync_dir=args.sync_dir,
+            mem_limit=args.mem,
+            cpus=args.cpus,
+            ttl=args.ttl,
+            arch=args.arch,
+            recipes_dir=configured_recipes_dir(args.recipes_dir, args.config),
+        )
+    except (ValueError, RuntimeError) as e:
+        raise CLIError(str(e))
+    # The reservation is JSON in either mode: scripts already depend on it.
+    _print_json(dataclasses.asdict(res))
+    return 0
+
+
+def cmd_env_exec(args: argparse.Namespace) -> int:
+    fleet = _require_fleet(args)
+    res = _require_lease(args.env_id)
+    try:
+        proc = env_exec(fleet, res, args.command, timeout_seconds=args.timeout)
+    except subprocess.TimeoutExpired:
+        raise CLIError(f"Command timed out after {args.timeout}s", code=124)
+    except ValueError as e:
+        raise CLIError(str(e))
+    return _emit_exec_result(args, proc, {"env_id": res.env_id, "host": res.host})
+
+
+def cmd_env_info(args: argparse.Namespace) -> int:
+    res = _require_lease(args.env_id)
+    remaining = int(res.expires_at - time.time())
+    if args.json:
+        _print_json({**dataclasses.asdict(res), "expires_in_seconds": remaining, "expired": remaining <= 0})
+    else:
+        print(f"Environment: {res.env_id}")
+        print(f"Host:        {res.host} ({res.kind})")
+        print(f"Target:      {_lease_target(res)}")
+        print(f"Image:       {res.image or 'N/A'}")
+        print(f"Expires In:  {f'{remaining}s' if remaining > 0 else 'EXPIRED'} (TTL: {res.ttl_seconds}s)")
+    return 0
+
+
+def cmd_env_sync(args: argparse.Namespace) -> int:
+    fleet = _require_fleet(args)
+    res = _require_lease(args.env_id)
+    try:
+        env_sync(fleet, res, direction=args.direction, local_path=args.local_path)
+    except (ValueError, RuntimeError) as e:
+        raise CLIError(str(e))
+    if args.json:
+        _print_json({"env_id": args.env_id, "direction": args.direction, "local_path": args.local_path, "ok": True})
+    else:
+        print(f"Sync {args.direction} complete for '{args.env_id}' with '{args.local_path}'.")
+    return 0
+
+
+def cmd_env_destroy(args: argparse.Namespace) -> int:
+    fleet = _require_fleet(args)
     ok = env_destroy(fleet, args.env_id)
-    if ok:
+    if args.json:
+        _print_json({"env_id": args.env_id, "destroyed": ok})
+    elif ok:
         print(f"Environment '{args.env_id}' destroyed.")
     else:
-        print(f"Environment '{args.env_id}' not found or already destroyed.")
+        print(f"Environment '{args.env_id}' not found or already destroyed.", file=sys.stderr)
+    return 0 if ok else 1
 
 
-def cmd_env_list(args: argparse.Namespace) -> None:
+def cmd_env_list(args: argparse.Namespace) -> int:
     leases = load_leases()
     now = time.time()
     if args.json:
-        print(json.dumps({k: dataclasses.asdict(v) for k, v in leases.items()}, indent=2))
+        _print_json({k: dataclasses.asdict(v) for k, v in leases.items()})
     else:
         print(f"{'ENV_ID':<24} {'HOST':<12} {'KIND':<10} {'EXPIRES_IN':<12} {'TARGET'}")
         print("-" * 75)
         for k, v in leases.items():
             rem = int(v.expires_at - now)
             rem_str = f"{rem}s" if rem > 0 else "EXPIRED"
-            target = v.container_name if v.kind == "container" else (v.workspace_path or "")
-            print(f"{k:<24} {v.host:<12} {v.kind:<10} {rem_str:<12} {target}")
+            print(f"{k:<24} {v.host:<12} {v.kind:<10} {rem_str:<12} {_lease_target(v)}")
+    return 0
 
 
-def cmd_reap(args: argparse.Namespace) -> None:
-    fleet = load_fleet_config(args.config)
+def cmd_reap(args: argparse.Namespace) -> int:
+    fleet = _require_fleet(args)
     reaped = env_reap(fleet)
-    if reaped:
+    if args.json:
+        _print_json({"reaped": reaped})
+    elif reaped:
         print(f"Reaped {len(reaped)} expired environment(s): {', '.join(reaped)}")
     else:
         print("No expired environments to reap.")
+    return 0
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="LAN Scavenger Compute Fleet Controller")
     parser.add_argument("--config", help="Path to custom fleet JSON config (default: ~/.config/scavenger/fleet.json)")
     subparsers = parser.add_subparsers(dest="cmd", required=True)
 
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--json",
+        action="store_true",
+        help='Print machine-readable JSON (errors become {"error": ...}); exit code is non-zero on failure',
+    )
+
     # Probe
-    p_probe = subparsers.add_parser("probe", help="Probe fleet reachability and eligibility")
+    p_probe = subparsers.add_parser("probe", parents=[common], help="Probe fleet reachability and eligibility")
     p_probe.add_argument("--host", help="Specific host to probe (default: all)")
     p_probe.add_argument("--no-wake", dest="wake", action="store_false", help="Do not fire Wake-on-LAN packets")
-    p_probe.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     p_probe.set_defaults(cmd_func=cmd_probe, wake=True)
 
+    # Wake
+    p_wake = subparsers.add_parser("wake", parents=[common], help="Send Wake-on-LAN and wait for SSH")
+    p_wake.add_argument("host", help="Host name from fleet.json")
+    p_wake.set_defaults(cmd_func=cmd_wake)
+
     # One-shot Run
-    p_run = subparsers.add_parser("run", help="Run an ephemeral container job on the scavenger fleet")
+    p_run = subparsers.add_parser("run", parents=[common], help="Run an ephemeral container job on the scavenger fleet")
     p_run.add_argument("command", help="Shell command to run inside the container")
     p_run.add_argument("--host", help="Target specific host (bypasses automatic arbiter)")
     p_run.add_argument("--arch", choices=["arm64", "x86_64"], help="Filter by architecture")
@@ -1031,14 +1276,25 @@ def main() -> None:
     p_run.add_argument("--force", action="store_true", help="Run on host even if courtesy checks flag busy/battery")
     p_run.set_defaults(cmd_func=cmd_run, wake=True)
 
+    # Native exec
+    p_en = subparsers.add_parser(
+        "exec-native", parents=[common], help="Run a command natively on a host as the scavenger user"
+    )
+    p_en.add_argument("host", help="Host name from fleet.json")
+    p_en.add_argument("command", help="Command to execute")
+    p_en.add_argument("--timeout", type=int, default=1800, help="Timeout in seconds")
+    p_en.set_defaults(cmd_func=cmd_exec_native)
+
     # Env Create
-    p_ec = subparsers.add_parser("env-create", help="Reserve a stateful environment")
+    p_ec = subparsers.add_parser("env-create", parents=[common], help="Reserve a stateful environment")
     p_ec.add_argument("env_id", help="Unique identifier for this environment")
     p_ec.add_argument("--host", help="Target specific host")
     p_ec.add_argument("--kind", choices=["container", "native"], default="container", help="Environment backend")
     p_ec.add_argument("--image", default="alpine:latest", help="Container image")
+    p_ec.add_argument("--recipe", help="Recipe name, looked up in the recipe directory (e.g. 'android-builder')")
     p_ec.add_argument(
-        "--recipe", help="Recipe name from dockerfiles/ or skills/scavenger/dockerfiles/ (e.g. 'android-builder')"
+        "--recipes-dir",
+        help="Directory holding <recipe>.Dockerfile files (default: 'recipes_dir' in fleet.json, then ./dockerfiles)",
     )
     p_ec.add_argument("--setup-script", help="Path to idempotent setup script to run inside environment")
     p_ec.add_argument("--sync-dir", help="Local directory to initial-sync into /workspace")
@@ -1049,35 +1305,51 @@ def main() -> None:
     p_ec.set_defaults(cmd_func=cmd_env_create)
 
     # Env Exec
-    p_ee = subparsers.add_parser("env-exec", help="Run command inside a reserved environment")
+    p_ee = subparsers.add_parser("env-exec", parents=[common], help="Run command inside a reserved environment")
     p_ee.add_argument("env_id", help="Environment identifier")
     p_ee.add_argument("command", help="Command to execute")
     p_ee.add_argument("--timeout", type=int, default=1800, help="Timeout in seconds")
     p_ee.set_defaults(cmd_func=cmd_env_exec)
 
+    # Env Info
+    p_ei = subparsers.add_parser("env-info", parents=[common], help="Show details and remaining TTL of a reservation")
+    p_ei.add_argument("env_id", help="Environment identifier")
+    p_ei.set_defaults(cmd_func=cmd_env_info)
+
     # Env Sync
-    p_es = subparsers.add_parser("env-sync", help="Sync files to/from a reserved environment")
+    p_es = subparsers.add_parser("env-sync", parents=[common], help="Sync files to/from a reserved environment")
     p_es.add_argument("env_id", help="Environment identifier")
     p_es.add_argument("direction", choices=["up", "down"], help="Sync direction")
     p_es.add_argument("local_path", help="Local directory path")
     p_es.set_defaults(cmd_func=cmd_env_sync)
 
     # Env Destroy
-    p_ed = subparsers.add_parser("env-destroy", help="Destroy a reserved environment")
+    p_ed = subparsers.add_parser("env-destroy", parents=[common], help="Destroy a reserved environment")
     p_ed.add_argument("env_id", help="Environment identifier")
     p_ed.set_defaults(cmd_func=cmd_env_destroy)
 
     # Env List
-    p_el = subparsers.add_parser("env-list", help="List active environment reservations")
-    p_el.add_argument("--json", action="store_true", help="JSON output")
+    p_el = subparsers.add_parser("env-list", parents=[common], help="List active environment reservations")
     p_el.set_defaults(cmd_func=cmd_env_list)
 
     # Reap
-    p_reap = subparsers.add_parser("reap", help="Reap all expired environment reservations")
+    p_reap = subparsers.add_parser("reap", parents=[common], help="Reap all expired environment reservations")
     p_reap.set_defaults(cmd_func=cmd_reap)
 
-    args = parser.parse_args()
-    args.cmd_func(args)
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    args = build_parser().parse_args(argv)
+    try:
+        code = args.cmd_func(args)
+    except CLIError as e:
+        if args.json:
+            _print_json({"error": e.message})
+        else:
+            print(f"Error: {e.message}", file=sys.stderr)
+        sys.exit(e.code)
+    sys.exit(code)
 
 
 if __name__ == "__main__":

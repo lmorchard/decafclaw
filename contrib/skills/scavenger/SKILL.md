@@ -86,7 +86,7 @@ Lists active reservations with remaining TTL; `scavenger_reap()` cleans up any e
 
 ## 4. Recipe & Setup Libraries
 
-- **Workspace Custom Recipes (`dockerfiles/`)**: Operators and agents can author custom Dockerfiles in `dockerfiles/<name>.Dockerfile` in the workspace root.
+- **Custom Recipes**: Operators and agents can author custom Dockerfiles as `<name>.Dockerfile`. Inside DecafClaw they live in `dockerfiles/` in the workspace root, unless `recipes_dir` in `fleet.json` names another directory.
 - **Bundled Container Recipes (`dockerfiles/` in skill)**:
   - `android-builder.Dockerfile`: Android SDK 35, OpenJDK 17, Node 22 LTS, Gradle.
   - `node-dev.Dockerfile`: Node 22 Bookworm with C/C++ compilation tools.
@@ -111,4 +111,8 @@ python contrib/skills/scavenger/scavenger.py env-exec my-env 'npm test'
 python contrib/skills/scavenger/scavenger.py env-destroy my-env
 ```
 
+Every command accepts `--json` and returns a non-zero exit code on failure. The CLI also has `wake`, `exec-native`, and `env-info`. The recipe directory comes from `--recipes-dir`, then `recipes_dir` in `fleet.json`, then `./dockerfiles`. See `SKILL-cli.md` for the full CLI reference, written for agents that have only a shell.
+
 Operator configuration is loaded from `~/.config/scavenger/fleet.json`. See `fleet.example.json` and `ENROLLMENT.md` for enrollment instructions.
+
+Containers carry the labels `scavenger.env_id` and `scavenger.expires_at`. Containers made before the rename carry `decafclaw.env_id` and `decafclaw.expires_at`; readers accept both.

@@ -69,6 +69,14 @@ Operator host inventory is kept out of version control and loaded from `~/.confi
 }
 ```
 
+Optional top-level keys:
+
+- `recipes_dir`: directory with `<recipe>.Dockerfile` files for `env-create --recipe`. A relative path is relative to `fleet.json`. The `--recipes-dir` option overrides it. Without either, the CLI uses `./dockerfiles`.
+
+The engine uses only the Python standard library and does not import DecafClaw. Agents with only a shell can follow `SKILL-cli.md`.
+
+Containers get the labels `scavenger.env_id` and `scavenger.expires_at`. Readers also accept the older `decafclaw.env_id` and `decafclaw.expires_at` names.
+
 ---
 
 ## 3. Wake-on-LAN & Apple Silicon DarkWake
