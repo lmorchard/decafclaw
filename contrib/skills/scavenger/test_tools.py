@@ -437,6 +437,8 @@ def test_scavenger_env_lifecycle(mock_fleet, cache):
         assert "Environment: test-env" in scavenger_env_info(ctx, env_id="test-env")
         assert "destroyed and lease released" in scavenger_env_destroy(ctx, env_id="test-env")
     assert "test-env" not in sc.load_leases()
+
+
 # ---------------------------------------------------------------------------
 # selfcheck step sequencing, driven by a fake host
 # ---------------------------------------------------------------------------
