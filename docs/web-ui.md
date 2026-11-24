@@ -689,6 +689,15 @@ The HTTP server (`src/decafclaw/http_server.py`) serves both the web UI and the 
 - **WebSocket** (`/ws/chat`) — real-time chat streaming, history loading, model changes, turn cancellation
 - **Static files** — serves the frontend from `src/decafclaw/web/static/`. Favicons and the app icon live in `static/icons/` (also served at `/favicon.ico` for clients that ignore the `<link>` tags); full-size logo artwork is in `docs/assets/brand/`. The index document and `/static` responses carry `Cache-Control: no-cache`, so a reload always revalidates (304 when unchanged) and a browser cannot keep running pre-fix JavaScript after a deploy (#1443).
 
+#### Per-resource route modules
+
+REST routes are organized per resource: one `src/decafclaw/web/<resource>_routes.py` module holds a resource's request/response models, its handlers, and an `APIRouter` that ties them together. `create_app` aggregates the routers into its route list instead of defining a resource's routes inline. The workspace resource (`web/workspace_routes.py`, serving the Files tab under `/api/workspace`) is the exemplar; resources not yet extracted still live in `http_server.py`.
+
+Conventions for a route module:
+
+- Handlers read their dependencies off `request.app.state` (populated by `create_app`) and take the authenticated username via `_authenticated`. Shared auth lives in the leaf module `web/http_auth.py` so both `http_server` and the resource modules can import it at module level without a cycle; other cross-cutting helpers (e.g. `check_mtime_conflict`) stay in `http_server` and are imported at call time.
+- Route registration order is part of the contract: the generated OpenAPI spec lists paths in that order, and `make check` fails on any drift. A router's routes must land in their historical positions — the workspace router is spliced around `/api/autocomplete` (a separate resource) in `create_app` to keep the app's final order unchanged.
+
 ### REST vs WebSocket
 
 Conversation management is REST-only. WebSocket handles only real-time operations:
@@ -864,6 +873,7 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 ## Key files
 
 - `src/decafclaw/http_server.py` — HTTP server, WebSocket endpoint; aggregates the per-resource route modules and still hosts routes not yet extracted
+- `src/decafclaw/web/workspace_routes.py` — Workspace (Files tab) route module: models + handlers + router
 - `src/decafclaw/web/schedule_routes.py` — Schedules route module: models + handlers + router
 - `src/decafclaw/web/http_auth.py` — Shared auth helpers for route modules
 - `src/decafclaw/web/auth.py` — Token-based auth, `decafclaw-token` CLI

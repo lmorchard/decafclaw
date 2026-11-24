@@ -82,6 +82,7 @@ Read [tools](docs/tools.md), [priority](docs/tool-priority.md), [search](docs/to
 
 Read [web UI design](docs/web-ui-design.md), [web UI](docs/web-ui.md), and [mobile UI](docs/web-ui-mobile.md).
 
+- Per-resource route modules: one `web/<resource>_routes.py` holds a resource's models + handlers + router; `create_app` aggregates the routers (see [web UI](docs/web-ui.md#per-resource-route-modules)).
 - Use shared primitives in `primitives.css` before adding component-specific border, radius, shadow, or hover rules: `.dc-floating-btn`, `.dc-overlay-header`, `.dc-overlay-close-x`, `.dc-icon-btn`.
 - Pico v2 re-scopes `--pico-color` and `--pico-background-color` inside buttons to button colors. Use `color: inherit` or a non-aliased variable such as `--pico-card-background-color`.
 - `--pico-secondary-background` is a text color, not a panel background.
