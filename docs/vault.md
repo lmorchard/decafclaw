@@ -113,7 +113,8 @@ the markdown renderer nor the Milkdown editor ever sees the YAML. View mode
 shows a compact metadata strip that expands to full detail; edit mode swaps it
 for typed controls (`summary`, `importance`, `tags`, `keywords`) plus an
 **edit raw YAML** escape hatch covering the whole block, including keys with no
-typed control.
+typed control. The disclosure control lives at the start of the toolbar row
+(shared with the breadcrumbs) in both modes, and the panel opens below it.
 
 Two write paths, mutually exclusive on the wire:
 
