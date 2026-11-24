@@ -3961,27 +3961,12 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                 },
             },
         ),
-        # Literal workspace routes must come before the {path:path} catch-all.
-        APIRoute(
-            "/api/workspace",
-            workspace_list,
-            methods=["GET"],
-            response_model=WorkspaceListingResponse,
-            # Describe the optional query without changing legacy parsing
-            # or the existing 404 response for invalid folders.
-            openapi_extra={
-                "parameters": [
-                    {
-                        "name": "folder",
-                        "in": "query",
-                        "required": False,
-                        "schema": {"type": "string"},
-                    }
-                ]
-            },
-        ),
-        APIRoute("/api/workspace", workspace_create, methods=["POST"]),
-        APIRoute("/api/workspace/recent", workspace_recent, methods=["GET"], response_model=WorkspaceRecentResponse),
+        # The workspace resource's routes live in web/workspace_routes.py. Its
+        # router registers them in historical order, but the autocomplete route
+        # below is a separate resource that historically sat between them, so we
+        # splice the router's routes around it. Registration order is part of
+        # the contract: the generated OpenAPI spec lists paths in that order.
+        *workspace_router.routes[:3],  # list, create, recent — literal paths first
         APIRoute(
             "/api/autocomplete",
             autocomplete,
@@ -4000,97 +3985,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                 ]
             },
         ),
-        APIRoute(
-            "/api/workspace-file/{path:path}",
-            workspace_read_json,
-            methods=["GET"],
-            response_model=WorkspaceTextResponse,
-            openapi_extra={
-                "parameters": [
-                    {
-                        "name": "path",
-                        "in": "path",
-                        "required": True,
-                        "schema": {"type": "string"},
-                    }
-                ]
-            },
-        ),
-        APIRoute(
-            "/api/workspace/{path:path}",
-            serve_workspace_file,
-            methods=["GET"],
-            response_class=FileResponse,
-            openapi_extra={
-                "parameters": [
-                    {
-                        "name": "path",
-                        "in": "path",
-                        "required": True,
-                        "schema": {"type": "string"},
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Workspace file bytes",
-                        "content": {
-                            "application/octet-stream": {
-                                "schema": {"type": "string", "format": "binary"},
-                            }
-                        },
-                        "headers": {
-                            "X-Content-Type-Options": {
-                                "schema": {"type": "string"},
-                                "description": "Always nosniff",
-                            },
-                            "Content-Disposition": {
-                                "schema": {"type": "string"},
-                                "description": "Attachment filename for non-safe-image content",
-                            },
-                        },
-                    }
-                },
-            },
-        ),
-        # Describe both existing PUT forms without moving parsing into FastAPI:
-        # saves have an optional JSON body schema, while renames send only the
-        # rename_to query. The handlers retain their legacy 400 responses.
-        APIRoute(
-            "/api/workspace/{path:path}",
-            workspace_write,
-            methods=["PUT"],
-            response_model=WorkspaceWriteResponse,
-            openapi_extra={
-                "parameters": [
-                    {"name": "path", "in": "path", "required": True, "schema": {"type": "string"}},
-                    {"name": "rename_to", "in": "query", "required": False, "schema": {"type": "string"}},
-                ],
-                "requestBody": {
-                    "required": False,
-                    "content": {
-                        "application/json": {
-                            "schema": WorkspaceSaveRequest.model_json_schema(),
-                        },
-                    },
-                },
-            },
-        ),
-        APIRoute(
-            "/api/workspace/{path:path}",
-            workspace_delete,
-            methods=["DELETE"],
-            response_model=WorkspaceDeleteResponse,
-            openapi_extra={
-                "parameters": [
-                    {
-                        "name": "path",
-                        "in": "path",
-                        "required": True,
-                        "schema": {"type": "string"},
-                    }
-                ]
-            },
-        ),
+        *workspace_router.routes[3:],  # read, serve, write, delete — catch-alls last
         APIRoute("/api/config/files", config_list_files, methods=["GET"], response_model=list[ConfigFileEntry]),
         APIRoute(
             "/api/config/files/{path:path}",
