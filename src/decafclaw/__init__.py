@@ -41,6 +41,10 @@ def start_app(extra_provider_hook: Callable[[Any], None] | None = None) -> None:
     ephemeral test server uses it to register the scripted provider
     (``decafclaw.testing``) in-process, so a production ``config.json``
     can never select the scripted provider.
+
+    The server path does not return: after the graceful shutdown sequence the
+    process exits through ``runner.exit_process`` (see #1799), because returning
+    through interpreter shutdown can block on a stuck non-daemon thread.
     """
     _setup_logging()
 
