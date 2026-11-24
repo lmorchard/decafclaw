@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
+import shutil
 import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,10 +16,12 @@ from contrib.skills.scavenger.scavenger import (
     EnvReservation,
     HostConfig,
     HostStatus,
+    SelfcheckOps,
     env_destroy,
     env_reap,
     parse_ttl,
     resolve_recipe,
+    run_selfcheck,
 )
 from contrib.skills.scavenger.tools import (
     scavenger_env_create,
@@ -376,3 +381,231 @@ def test_scavenger_env_lifecycle(mock_fleet, tmp_path):
                         # 3. Destroy
                         res_destroy = scavenger_env_destroy(ctx, env_id="test-env")
                         assert "destroyed and lease released" in res_destroy
+
+
+# ---------------------------------------------------------------------------
+# selfcheck step sequencing, driven by a fake host
+# ---------------------------------------------------------------------------
+
+
+def _cp(stdout="", returncode=0, stderr=""):
+    return subprocess.CompletedProcess(args=["fake"], returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+class FakeHost:
+    """In-memory host: a remote workspace dir plus a record of calls and leftovers."""
+
+    def __init__(self, tmp_path, eligible=True, online=True):
+        self.remote = tmp_path / "remote"
+        self.remote.mkdir()
+        self.calls = []
+        self.eligible = eligible
+        self.online = online
+        self.leftover = ""
+        self.fail_at: str | None = None
+        self.corrupt_up = False
+        self.created = False
+        self.destroyed = False
+        self.run_output: str | None = None
+
+    def ops(self) -> SelfcheckOps:
+        return SelfcheckOps(
+            probe=self.probe,
+            run_job=self.run_job,
+            env_create=self.env_create,
+            env_exec=self.env_exec,
+            env_sync=self.env_sync,
+            env_destroy=self.env_destroy,
+            ssh=self.ssh,
+        )
+
+    def probe(self, host):
+        self.calls.append("probe")
+        return HostStatus(
+            name=host.name,
+            online=self.online,
+            eligible=self.eligible,
+            engine=host.engine,
+            arch=host.arch,
+            reason="" if self.eligible else "Gaming / game streaming currently active",
+        )
+
+    def run_job(self, host, command, repo_path, stdout, **kw):
+        self.calls.append("run")
+        if self.fail_at == "run":
+            return 3
+        if self.run_output is not None:
+            stdout.write(self.run_output)
+            return 0
+        with open(os.path.join(repo_path, "marker.txt"), encoding="utf-8") as f:
+            stdout.write(f.read())
+        return 0
+
+    def env_create(self, env_id, **kw):
+        self.calls.append("env-create")
+        if self.fail_at == "env-create":
+            raise RuntimeError("engine exploded")
+        self.created = True
+        return EnvReservation(
+            env_id=env_id, host=kw["host_name"], kind="container", created_at=0, expires_at=1, ttl_seconds=1
+        )
+
+    def env_exec(self, res, command):
+        self.calls.append("env-exec")
+        if self.fail_at == "env-exec":
+            return _cp(returncode=1, stderr="no such container")
+        if command.startswith("echo ") and ">" not in command:
+            return _cp(stdout=command[len("echo ") :] + "\n")
+        if command.startswith("sha256sum "):
+            data = (self.remote / command.split()[1]).read_bytes()
+            return _cp(stdout=f"{hashlib.sha256(data).hexdigest()}  payload.bin\n")
+        m = re.match(r"echo (\S+) > (\S+)$", command)
+        if m:
+            (self.remote / m.group(2)).write_text(m.group(1) + "\n")
+            return _cp()
+        raise AssertionError(f"unexpected command {command}")
+
+    def env_sync(self, res, direction, path):
+        self.calls.append(f"sync-{direction}")
+        if direction == "up":
+            for name in os.listdir(path):
+                shutil.copy(os.path.join(path, name), self.remote / name)
+            if self.corrupt_up:
+                (self.remote / "payload.bin").write_bytes(b"corrupt")
+        else:
+            os.makedirs(path, exist_ok=True)
+            for item in self.remote.iterdir():
+                shutil.copy(item, os.path.join(path, item.name))
+
+    def env_destroy(self, env_id):
+        self.calls.append("env-destroy")
+        self.destroyed = True
+        return True
+
+    def ssh(self, host, command):
+        self.calls.append("ssh-leftovers")
+        return _cp(stdout=f"container={self.leftover}\nvolume=\nworkspace=\n")
+
+
+def _run(fake, mock_fleet, host="desktop-linux"):
+    lines = []
+    ok = run_selfcheck(mock_fleet[host], fake.ops(), emit=lines.append, env_id="selfcheck-test")
+    return ok, lines
+
+
+def test_selfcheck_all_steps_pass_in_order(tmp_path, mock_fleet):
+    fake = FakeHost(tmp_path)
+    ok, lines = _run(fake, mock_fleet)
+
+    assert ok is True
+    assert [ln.split(":")[0] for ln in lines] == [
+        "PASS probe",
+        "PASS run",
+        "PASS env-create",
+        "PASS env-exec",
+        "PASS env-sync-up",
+        "PASS env-sync-down",
+        "PASS env-destroy",
+        "PASS leftovers",
+    ]
+    assert fake.calls.index("env-destroy") < fake.calls.index("ssh-leftovers")
+
+
+def test_selfcheck_ineligible_host_stops_before_any_work(tmp_path, mock_fleet):
+    fake = FakeHost(tmp_path, eligible=False)
+    ok, lines = _run(fake, mock_fleet)
+
+    assert ok is False
+    assert len(lines) == 1 and lines[0].startswith("FAIL probe") and "not eligible" in lines[0]
+    assert fake.calls == ["probe"]
+
+
+def test_selfcheck_offline_host_fails_probe(tmp_path, mock_fleet):
+    fake = FakeHost(tmp_path, online=False)
+    ok, lines = _run(fake, mock_fleet)
+
+    assert ok is False
+    assert lines[0].startswith("FAIL probe")
+    assert fake.calls == ["probe"]
+
+
+def test_selfcheck_run_failure_stops_and_creates_nothing(tmp_path, mock_fleet):
+    fake = FakeHost(tmp_path)
+    fake.fail_at = "run"
+    ok, lines = _run(fake, mock_fleet)
+
+    assert ok is False
+    assert lines[-1].startswith("FAIL run") and "exited 3" in lines[-1]
+    assert "env-create" not in fake.calls
+    assert not any(ln.startswith("NOTE") for ln in lines)
+
+
+def test_selfcheck_run_output_without_marker_fails(tmp_path, mock_fleet):
+    fake = FakeHost(tmp_path)
+    fake.run_output = "something else\n"
+    ok, lines = _run(fake, mock_fleet)
+
+    assert ok is False
+    assert lines[-1].startswith("FAIL run") and "marker missing" in lines[-1]
+
+
+def test_selfcheck_checksum_mismatch_fails_and_destroys_environment(tmp_path, mock_fleet):
+    fake = FakeHost(tmp_path)
+    fake.corrupt_up = True
+    ok, lines = _run(fake, mock_fleet)
+
+    assert ok is False
+    assert any(ln.startswith("FAIL env-sync-up") and "checksum mismatch" in ln for ln in lines)
+    assert "sync-down" not in fake.calls
+    assert fake.destroyed is True
+    assert any(ln.startswith("NOTE cleaned up") for ln in lines)
+
+
+def test_selfcheck_env_create_exception_is_a_failure_without_cleanup(tmp_path, mock_fleet):
+    fake = FakeHost(tmp_path)
+    fake.fail_at = "env-create"
+    ok, lines = _run(fake, mock_fleet)
+
+    assert ok is False
+    assert lines[-1].startswith("FAIL env-create") and "engine exploded" in lines[-1]
+    assert fake.destroyed is False
+
+
+def test_selfcheck_exec_failure_destroys_environment(tmp_path, mock_fleet):
+    fake = FakeHost(tmp_path)
+    fake.fail_at = "env-exec"
+    ok, lines = _run(fake, mock_fleet)
+
+    assert ok is False
+    assert any(ln.startswith("FAIL env-exec") for ln in lines)
+    assert fake.destroyed is True
+
+
+def test_selfcheck_leftover_container_fails_final_step(tmp_path, mock_fleet):
+    fake = FakeHost(tmp_path)
+    fake.leftover = "abc123"
+    ok, lines = _run(fake, mock_fleet)
+
+    assert ok is False
+    assert lines[-1].startswith("FAIL leftovers") and "container=abc123" in lines[-1]
+    assert fake.calls.count("env-destroy") == 1
+
+
+def test_selfcheck_cli_exit_codes(tmp_path, mock_fleet):
+    from contrib.skills.scavenger import scavenger
+
+    args = MagicMock(config=None, host="desktop-linux", image="alpine:latest", wake=False)
+    for result, code in ((True, 0), (False, 1)):
+        with (
+            patch.object(scavenger, "load_fleet_config", return_value=mock_fleet),
+            patch.object(scavenger, "run_selfcheck", return_value=result),
+        ):
+            with pytest.raises(SystemExit) as exc:
+                scavenger.cmd_selfcheck(args)
+        assert exc.value.code == code
+
+    args.host = "nope"
+    with patch.object(scavenger, "load_fleet_config", return_value=mock_fleet):
+        with pytest.raises(SystemExit) as exc:
+            scavenger.cmd_selfcheck(args)
+    assert exc.value.code != 0

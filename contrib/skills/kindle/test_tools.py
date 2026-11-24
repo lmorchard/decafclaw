@@ -718,6 +718,44 @@ async def test_kindle_fetch_highlights_cdp_happy_path(ctx, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetch_cdp_html_connect_timeout(monkeypatch):
+    """_fetch_cdp_html passes connect_timeout_ms to chromium.connect_over_cdp."""
+    mock_browser = AsyncMock()
+    mock_context = AsyncMock()
+    mock_page = AsyncMock()
+    mock_page.content = AsyncMock(
+        return_value="<html><body><div class='kp-notebook-library-each-book'>ok</div></body></html>"
+    )
+    mock_page.url = "http://example.com"
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_browser.contexts = [mock_context]
+    mock_browser.close = AsyncMock()
+
+    mock_chromium = AsyncMock()
+    mock_chromium.connect_over_cdp = AsyncMock(return_value=mock_browser)
+
+    mock_playwright = MagicMock()
+    mock_playwright.chromium = mock_chromium
+
+    mock_pw_cm = AsyncMock()
+    mock_pw_cm.__aenter__.return_value = mock_playwright
+    mock_pw_cm.__aexit__.return_value = None
+
+    import playwright.async_api
+
+    monkeypatch.setattr(playwright.async_api, "async_playwright", lambda: mock_pw_cm)
+
+    html = await kindle_tools._fetch_cdp_html(
+        "http://test-cdp:9222",
+        "http://example.com",
+        wait_selector=".kp-notebook-library-each-book",
+        connect_timeout_ms=45000,
+    )
+    assert "ok" in html
+    assert mock_chromium.connect_over_cdp.call_args.kwargs["timeout"] == 45000
+
+
+@pytest.mark.asyncio
 async def test_kindle_list_books_detects_signin_redirect(ctx, tmp_path, monkeypatch):
     """kindle_list_books raises an explicit auth error if Amazon redirects to sign-in."""
     cookies_file = tmp_path / "kindle.cookies.txt"

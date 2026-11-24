@@ -401,7 +401,8 @@ async def _fetch_cdp_html(
     url: str,
     wait_selector: str,
     timeout_ms: int = 45000,
-    max_retries: int = 2,
+    max_retries: int = 3,
+    connect_timeout_ms: int = 45000,
 ) -> str:
     """Fetch HTML for a URL using Playwright over Chrome DevTools Protocol."""
     from playwright.async_api import async_playwright
@@ -410,7 +411,7 @@ async def _fetch_cdp_html(
     for attempt in range(max_retries):
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.connect_over_cdp(cdp_url, timeout=15000)
+                browser = await p.chromium.connect_over_cdp(cdp_url, timeout=connect_timeout_ms)
                 try:
                     context = browser.contexts[0] if browser.contexts else await browser.new_context()
                     page = await context.new_page()
