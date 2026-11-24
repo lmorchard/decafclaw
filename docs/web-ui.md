@@ -874,6 +874,7 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 
 - `src/decafclaw/http_server.py` — HTTP server, WebSocket endpoint; aggregates the per-resource route modules and still hosts routes not yet extracted
 - `src/decafclaw/web/workspace_routes.py` — Workspace (Files tab) route module: models + handlers + router
+- `src/decafclaw/web/schedule_routes.py` — Schedules route module: models + handlers + router
 - `src/decafclaw/web/http_auth.py` — Shared auth helpers for route modules
 - `src/decafclaw/web/auth.py` — Token-based auth, `decafclaw-token` CLI
 - `src/decafclaw/web/conversations.py` — Conversation index metadata

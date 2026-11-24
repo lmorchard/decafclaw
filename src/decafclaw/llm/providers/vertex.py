@@ -598,6 +598,54 @@ def _resolve_local_ref(schema: dict, root: dict, seen: set[str]) -> tuple[dict |
     return node, None
 
 
+# Keys that only apply to one JSON type; when a ``type`` list is split into
+# ``anyOf`` branches they move onto the branch for that type.
+_TYPE_SPECIFIC_KEYS: dict[str, tuple[str, ...]] = {
+    "array": ("items", "minItems", "maxItems"),
+    "object": ("properties", "required", "additionalProperties", "minProperties", "maxProperties"),
+}
+
+
+def _normalize_type_list(node: dict) -> tuple[dict, list[str]]:
+    """Rewrite a JSON-Schema ``type`` list into Vertex's OpenAPI form.
+
+    Vertex's ``Schema.type`` is a single enum, so ``"type": ["string", "null"]``
+    fails with HTTP 400 "Proto field is not repeating, cannot start list".
+    ``"null"`` becomes ``nullable: true``; one remaining type stays as ``type``;
+    several become ``anyOf`` branches carrying their type-specific keys.
+    Returns ``(node, diagnostics)``; the input node is not mutated.
+    """
+    types = node.get("type")
+    if not isinstance(types, list):
+        return node, []
+    out = {k: v for k, v in node.items() if k != "type"}
+    non_null = [t for t in types if t != "null"]
+    if len(non_null) < len(types):
+        out["nullable"] = True
+    if len(non_null) == 1:
+        out["type"] = non_null[0]
+        return out, []
+    if not non_null:
+        return out, []
+    if "anyOf" in out:
+        # Rare: a node with both a type list and its own anyOf. Keep the
+        # existing anyOf and pin the first type rather than nesting unions.
+        out["type"] = non_null[0]
+        return out, [f"type list {types!r} alongside anyOf; kept only {non_null[0]!r}"]
+    branches = []
+    for t in non_null:
+        branch: dict = {"type": t}
+        for key in _TYPE_SPECIFIC_KEYS.get(t, ()):
+            if key in out:
+                branch[key] = out[key]
+        branches.append(branch)
+    for t in non_null:
+        for key in _TYPE_SPECIFIC_KEYS.get(t, ()):
+            out.pop(key, None)
+    out["anyOf"] = branches
+    return out, []
+
+
 def _clean_schema_preserving(
     schema: dict, root: dict | None = None, seen_refs: set[str] | None = None
 ) -> tuple[dict, list[str]]:
@@ -663,6 +711,10 @@ def _clean_schema_preserving(
 
     cleaned = {k: v for k, v in source.items() if k not in _VERTEX_UNSUPPORTED_KEYS}
     diags.extend(_structural_diagnostics(source))
+    # Before recursion, so type-specific keys moved into anyOf branches are
+    # still scrubbed by the combinator pass below.
+    cleaned, type_diags = _normalize_type_list(cleaned)
+    diags.extend(type_diags)
 
     notes = _semantic_notes(source)
     if notes:

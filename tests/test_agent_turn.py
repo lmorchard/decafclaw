@@ -594,6 +594,96 @@ async def test_execute_tool_calls_steer_skips_pending_wait_after_exclusive_block
     assert history[1]["content"] == "[skipped: interrupted by steering message]"
 
 
+@pytest.mark.asyncio
+async def test_run_agent_turn_steering_delivers_no_duplicate_recap(ctx):
+    """A watched turn interrupted by steering must not re-deliver every preamble.
+
+    Each iteration's preamble was already published as `text_before_tools`
+    and archived by `_handle_tool_calls`, so returning the accumulated join
+    from the steering interrupt produced a final assistant bubble that
+    recapitulated the whole turn (#1798).
+    """
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+    ctx.steer_event = asyncio.Event()
+
+    preambles = ["Let me look at the journal.", "That grep was too broad; narrowing."]
+    responses = [
+        _mock_llm_response(
+            content=preambles[i],
+            tool_calls=[
+                {
+                    "id": f"tc{i}",
+                    "function": {"name": "memory_recent", "arguments": json.dumps({"n": 1})},
+                }
+            ],
+        )
+        for i in range(2)
+    ]
+    batches = 0
+
+    async def steer_on_second_batch(ctx_arg, tool_calls, history, messages):
+        nonlocal batches
+        batches += 1
+        history.append({"role": "tool", "tool_call_id": tool_calls[0]["id"], "content": "ok"})
+        if batches == 2:
+            ctx_arg.steer_event.set()
+        return None, False
+
+    history = []
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.agent.execute_tool_calls", side_effect=steer_on_second_batch),
+    ):
+        mock_llm.side_effect = responses
+        result = await run_agent_turn(ctx, "investigate", history)
+
+    assert result.text == ""
+    # Both preambles remain in history — only delivery is suppressed.
+    contents = [m.get("content") for m in history if m.get("role") == "assistant"]
+    assert contents == preambles
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_steering_delivers_recap_to_unwatched_child(ctx):
+    """A child agent has no live subscriber, so its steering recap is its only channel."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+    ctx.is_child = True
+    ctx.steer_event = asyncio.Event()
+
+    responses = [
+        _mock_llm_response(
+            content=text,
+            tool_calls=[
+                {
+                    "id": f"tc{i}",
+                    "function": {"name": "memory_recent", "arguments": json.dumps({"n": 1})},
+                }
+            ],
+        )
+        for i, text in enumerate(["first", "second"])
+    ]
+    batches = 0
+
+    async def steer_on_second_batch(ctx_arg, tool_calls, history, messages):
+        nonlocal batches
+        batches += 1
+        history.append({"role": "tool", "tool_call_id": tool_calls[0]["id"], "content": "ok"})
+        if batches == 2:
+            ctx_arg.steer_event.set()
+        return None, False
+
+    with (
+        patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm,
+        patch("decafclaw.agent.execute_tool_calls", side_effect=steer_on_second_batch),
+    ):
+        mock_llm.side_effect = responses
+        result = await run_agent_turn(ctx, "investigate", [])
+
+    assert result.text == "first\n\nsecond"
+
+
 # -- end_turn tests ------------------------------------------------------------
 
 
