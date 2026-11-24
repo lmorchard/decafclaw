@@ -38,7 +38,7 @@ def _make_mock_session(tools=None):
     tools_result = MagicMock()
     tools_result.tools = tools or []
     session.list_tools = AsyncMock(return_value=tools_result)
-    session.get_server_capabilities = MagicMock(return_value=MagicMock(resources=None, prompts=None))
+    session.server_capabilities = MagicMock(resources=None, prompts=None)
     return session
 
 
