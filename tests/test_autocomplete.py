@@ -354,6 +354,32 @@ async def test_autocomplete_background_refresh(http_config):
 
 
 @pytest.mark.asyncio
+async def test_workspace_index_shutdown_cancels_loop_and_refresh(http_config):
+    """shutdown_workspace_index stops the periodic loop and any refresh (#1799)."""
+    import asyncio
+
+    import decafclaw.workspace_index as wi
+
+    async def never_finishes():
+        await asyncio.Event().wait()
+
+    periodic = asyncio.create_task(never_finishes())
+    refresh = asyncio.create_task(never_finishes())
+    wi._periodic_task = periodic
+    wi._refresh_task = refresh
+
+    await wi.shutdown_workspace_index()
+
+    assert periodic.cancelled()
+    assert refresh.cancelled()
+    assert wi._periodic_task is None
+    assert wi._refresh_task is None
+
+    # Idempotent: a second call with nothing registered is a no-op.
+    await wi.shutdown_workspace_index()
+
+
+@pytest.mark.asyncio
 async def test_workspace_index_ttl_is_30_minutes():
     """TTL for workspace index cache should be 30 minutes (1800 seconds)."""
     import decafclaw.workspace_index as wi
