@@ -18,6 +18,7 @@ from contrib.skills.scavenger.scavenger import (
     EnvReservation,
     HostConfig,
     HostStatus,
+    container_limit_flags,
     env_arm_watch,
     env_create,
     env_destroy,
@@ -35,6 +36,9 @@ from contrib.skills.scavenger.scavenger import (
     send_magic_packet,
 )
 from decafclaw import canvas
+
+#: Network modes accepted by scavenger container tools.
+NETWORK_MODES = ("none", "default")
 
 
 def _resolve_local_path(ctx: Any, path: str) -> Optional[str]:
@@ -134,8 +138,12 @@ def scavenger_run(
     image: str = "alpine:latest",
     mem: str = "16g",
     cpus: int = 8,
+    network: str = "default",
 ) -> str:
     """Run a one-shot ephemeral container job on the best eligible scavenger host."""
+    if network not in NETWORK_MODES:
+        return f"Error: Invalid network '{network}'. Use 'none' (no network) or 'default'."
+
     fleet = load_fleet_config()
     if not fleet:
         return "Error: No fleet configuration found at ~/.config/scavenger/fleet.json."
@@ -159,6 +167,7 @@ def scavenger_run(
 
     selinux_flag = ":Z" if target_host.needs_selinux_z else ""
     device_args = " ".join(target_host.device_flags) if target_host.device_flags else ""
+    limit_args = " ".join(container_limit_flags(target_host, network))
 
     if real_repo:
         bundle_proc = subprocess.Popen(
@@ -176,6 +185,7 @@ git clone -q "$RECV_DIR/repo.bundle" "$RECV_DIR/workspace"
 {target_host.engine} run --rm \\
     --memory={mem} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v "$RECV_DIR/workspace:/workspace{selinux_flag}" \\
     -w /workspace \\
@@ -203,6 +213,7 @@ mkdir -p "$JOB_DIR/workspace"
 {target_host.engine} run --rm \\
     --memory={mem} \\
     --cpus={cpus} \\
+    {limit_args} \\
     {device_args} \\
     -v "$JOB_DIR/workspace:/workspace{selinux_flag}" \\
     -w /workspace \\
@@ -266,10 +277,14 @@ def scavenger_env_create(
     sync_dir: str = "",
     mem: str = "16g",
     cpus: int = 8,
+    network: str = "default",
     ttl: str = "2h",
     arch: str = "",
 ) -> str:
     """Reserve a stateful environment (container or native workspace) on the fleet."""
+    if network not in NETWORK_MODES:
+        return f"Error: Invalid network '{network}'. Use 'none' (no network) or 'default'."
+
     fleet = load_fleet_config()
     if not fleet:
         return "Error: No fleet configuration found."
@@ -294,6 +309,7 @@ def scavenger_env_create(
             sync_dir=real_sync,
             mem_limit=mem,
             cpus=cpus,
+            network=network,
             ttl=ttl,
             arch=arch or None,
             workspace_root=str(ws_root),
@@ -686,6 +702,11 @@ TOOL_DEFINITIONS = [
                         "type": "integer",
                         "description": "CPU core limit for container (default: 8).",
                     },
+                    "network": {
+                        "type": "string",
+                        "enum": ["none", "default"],
+                        "description": "Container network mode (default: 'default'). Use 'none' for test runs that need no downloads — it blocks all container network access, including the LAN.",
+                    },
                 },
                 "required": ["command"],
             },
@@ -756,6 +777,11 @@ TOOL_DEFINITIONS = [
                     "cpus": {
                         "type": "integer",
                         "description": "CPU limit for container (default: 8).",
+                    },
+                    "network": {
+                        "type": "string",
+                        "enum": ["none", "default"],
+                        "description": "Container network mode (default: 'default'). Use 'none' for environments that need no downloads — it blocks all container network access, including the LAN.",
                     },
                     "ttl": {
                         "type": "string",

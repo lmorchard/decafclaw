@@ -13,7 +13,7 @@ The Scavenger Compute Fleet provides on-demand, agentless ephemeral container ex
 
 1. **Zero Target Daemons:** No Kubernetes, Nomad, or HTCondor agents installed on target boxen. Targets are controlled purely over standard SSH.
 2. **Blast Radius Isolation:** All remote execution runs as a dedicated, low-privilege `scavenger` user account. The `scavenger` user has **no sudo rights** and **no access to operator home directories**.
-3. **Containerized Containment:** Workloads run inside rootless Podman or Docker containers with explicit `--memory` and `--cpus` limits.
+3. **Containerized Containment:** Workloads run inside rootless Podman or Docker containers with explicit `--memory`, `--cpus`, and `--pids-limit` limits, a bounded json-file log size, and an explicit network mode (`--network=none` or `--network=default`).
 4. **Disposable Ephemeral Workspaces:** Source code is bundled as an in-memory `git bundle` over SSH into a throwaway `/tmp` directory, cloned, executed, and reaped immediately in a `trap ... EXIT` block.
 5. **Stateful Reservations on Demand:** Multi-step pipelines (such as Android builds, Node modules, or compiler caches) can reserve warm environments with named persistent volumes or scoped workspaces that expire automatically via hard TTLs.
 6. **Courtesy Guards:**
@@ -48,7 +48,10 @@ Operator host inventory is kept out of version control and loaded from `~/.confi
       },
       "limits": {
         "default_memory": "16g",
-        "default_cpus": 8
+        "default_cpus": 8,
+        "pids_limit": 4096,
+        "log_max_size": "10m",
+        "log_max_file": 3
       }
     },
     {
@@ -105,3 +108,5 @@ Because macOS container runtimes do not support paravirtualized Metal drivers to
 - [x] No `sudo` access for `scavenger`.
 - [x] Operator home directory permissions set to `0700` or `0701` to prevent `scavenger` read access.
 - [x] Ephemeral jobs run with `--rm` and automatic `trap ... EXIT` workspace deletion.
+- [x] Every container runs with a process-table cap (`--pids-limit`, default `4096`) and bounded json-file logs (default `10m` × 3 files) so a fork bomb or runaway build cannot exhaust the host.
+- [x] Containers use an explicit network mode: `--network=none` for jobs that need no downloads, `--network=default` otherwise.
