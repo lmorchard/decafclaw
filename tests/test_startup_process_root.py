@@ -6,7 +6,7 @@ prove the branch that used to choose between the server and the REPL is gone
 and that the server root is entered unconditionally.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from decafclaw import start_app
 
@@ -24,9 +24,12 @@ def test_start_app_enters_server_process_root_when_no_transports_configured(conf
     assert not config.mattermost.url
 
     run_all = AsyncMock()
+    exit_process = MagicMock()
     monkeypatch.setattr("decafclaw.runner.run_all", run_all)
+    monkeypatch.setattr("decafclaw.runner.exit_process", exit_process)
     monkeypatch.setattr("decafclaw.load_config", lambda: config)
 
     start_app()
 
     run_all.assert_awaited_once()
+    exit_process.assert_called_once_with("shutdown complete")

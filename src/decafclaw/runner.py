@@ -1,10 +1,24 @@
 """Top-level orchestrator — manages all subsystems as parallel asyncio tasks."""
 
 import asyncio
+import io
 import logging
+import os
 import signal
+import sys
+import threading
+import traceback
+from typing import Callable
 
 log = logging.getLogger(__name__)
+
+# After ``Shutdown complete`` every subsystem, MCP child, and background job is
+# already stopped. What can still keep the process alive is asyncio's own
+# teardown: it waits for the default executor's worker threads (up to 300s in
+# Python 3.13), and interpreter exit then joins every non-daemon thread. A sync
+# tool call or embedding stuck in a worker thread therefore turns a completed
+# shutdown into a live-but-useless daemon that only SIGKILL removes (#1799).
+SHUTDOWN_EXIT_GRACE_SECONDS = 5.0
 
 
 async def _cancel_task(task, name="task"):
@@ -19,12 +33,133 @@ async def _cancel_task(task, name="task"):
     log.debug(f"Stopped {name}")
 
 
-async def run_all(app_ctx):
+def _thread_stack_dump() -> str:
+    """Format the Python stack of every live thread (diagnostics only)."""
+    frames = sys._current_frames()
+    chunks = []
+    for thread in threading.enumerate():
+        ident = thread.ident
+        if ident is None:
+            continue
+        frame = frames.get(ident)
+        if frame is None:
+            continue
+        stack = "".join(traceback.format_stack(frame))
+        chunks.append(f"--- thread {thread.name} (daemon={thread.daemon}) ---\n{stack}")
+    return "\n".join(chunks)
+
+
+def _pending_tasks() -> list[asyncio.Task]:
+    """Return tasks still pending in the running loop, or [] outside one."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return []
+    current = asyncio.current_task(loop)
+    return [task for task in asyncio.all_tasks(loop) if task is not current and not task.done()]
+
+
+def log_lingering_work(*, include_threads: bool = False) -> None:
+    """Log work that outlived the shutdown sequence.
+
+    Pending asyncio tasks are always reported. Non-daemon threads are dumped
+    only when ``include_threads`` is set (the exit watchdog): idle
+    default-executor workers are expected to be alive until asyncio tears the
+    loop down, so listing them at ``Shutdown complete`` would be noise. When
+    teardown stalls, their stacks are the diagnosis. Outside a running loop
+    only the thread dump is available.
+    """
+    pending = _pending_tasks()
+    if pending:
+        log.warning("Shutdown: %d asyncio task(s) still pending after shutdown", len(pending))
+        for task in pending:
+            buffer = io.StringIO()
+            task.print_stack(file=buffer, limit=15)
+            log.warning("Pending task %r:\n%s", task.get_name(), buffer.getvalue())
+    if not include_threads:
+        if not pending:
+            log.debug("Shutdown: no lingering asyncio tasks")
+        return
+    non_daemon = [
+        thread for thread in threading.enumerate() if thread is not threading.main_thread() and not thread.daemon
+    ]
+    if not non_daemon:
+        log.debug("Shutdown: no non-daemon threads left")
+        return
+    log.warning(
+        "Shutdown: %d non-daemon thread(s) still alive after shutdown: %s",
+        len(non_daemon),
+        ", ".join(thread.name for thread in non_daemon),
+    )
+    log.warning("Non-daemon thread stacks:\n%s", _thread_stack_dump())
+
+
+def _flush_telemetry() -> None:
+    """Flush OpenTelemetry spans; a telemetry failure must never block exit."""
+    try:
+        from opentelemetry import trace
+
+        provider = trace.get_tracer_provider()
+        shutdown = getattr(provider, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
+    except Exception:
+        pass
+
+
+def exit_process(reason: str, code: int = 0) -> None:
+    """Flush logs and exit immediately.
+
+    Only called once the graceful shutdown sequence has finished (or crashed).
+    Returning through interpreter shutdown joins every non-daemon thread, so a
+    worker thread stuck in a sync tool call can keep a finished daemon alive
+    forever (#1799). ``os._exit`` is the only exit that cannot be blocked.
+    """
+    log.info("Process exiting (%s)", reason)
+    _flush_telemetry()
+    try:
+        logging.shutdown()
+    except Exception:
+        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    os._exit(code)
+
+
+def arm_shutdown_watchdog(grace: float = SHUTDOWN_EXIT_GRACE_SECONDS) -> None:
+    """Force process exit if asyncio teardown outlives ``grace`` seconds.
+
+    Armed by ``start_app`` through ``run_all``'s ``on_shutdown_complete`` hook,
+    so tests and embedders that call ``run_all`` directly never get a timer that
+    could kill their process.
+    """
+
+    def _fire() -> None:
+        log.warning(
+            "Shutdown teardown still running %.1fs after completion; forcing exit",
+            grace,
+        )
+        log_lingering_work(include_threads=True)
+        exit_process("shutdown teardown watchdog")
+
+    timer = threading.Timer(grace, _fire)
+    timer.daemon = True
+    timer.start()
+
+
+async def run_all(app_ctx, *, on_shutdown_complete: Callable[[], None] | None = None):
     """Run all subsystems: MCP, HTTP server, Mattermost, heartbeat.
 
     This is the main entry point for server mode (Mattermost and/or HTTP).
     Subsystems are started as parallel asyncio tasks and shut down gracefully
     on SIGTERM/SIGINT.
+
+    ``on_shutdown_complete`` runs after the graceful sequence finishes and
+    ``Shutdown complete`` is logged, while asyncio is about to tear down the
+    loop. ``start_app`` uses it to arm the process-exit watchdog (#1799).
     """
     from .heartbeat import parse_interval, run_heartbeat_timer
     from .mcp_client import init_mcp, shutdown_mcp
@@ -231,6 +366,10 @@ async def run_all(app_ctx):
     finally:
         log.info("Shutting down...")
 
+        # The on-idle drain task has nothing left to decide once shutdown is
+        # running; stop it so it cannot outlive the sequence (#1799).
+        await restart_coordinator.stop_drain()
+
         # Stop subsystems in reverse order
         await _cancel_task(discovery_task, "model discovery")
         await _cancel_task(config_watcher_task, "config watcher")
@@ -272,5 +411,18 @@ async def run_all(app_ctx):
 
         await shutdown_skills()
 
+        # The workspace index refresh loop belongs to no other subsystem, so
+        # stop it explicitly instead of leaving asyncio.run to cancel it during
+        # teardown (#1799).
+        from .workspace_index import shutdown_workspace_index
+
+        await shutdown_workspace_index()
+
         await shutdown_mcp()
+        log_lingering_work()
         log.info("Shutdown complete")
+        if on_shutdown_complete is not None:
+            try:
+                on_shutdown_complete()
+            except Exception:
+                log.exception("Shutdown completion hook failed")
