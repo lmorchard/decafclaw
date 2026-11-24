@@ -10,8 +10,11 @@ Zero daemons on targets. Hard blast-radius containment via dedicated scavenger u
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
+import fcntl
 import json
+import logging
 import os
 import re
 import socket
@@ -19,7 +22,9 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -151,28 +156,368 @@ def parse_ttl(ttl_str: str) -> int:
     return val
 
 
-def load_leases() -> Dict[str, EnvReservation]:
-    """Load active environment leases from disk."""
+# =============================================================================
+# Lease records
+#
+# Each host is the record of its environments: containers and volumes carry
+# `decafclaw.*` labels, and native workspaces hold a small lease file. The
+# controller's leases.json is only a cache of what the hosts report. A missing
+# or corrupt cache is rebuilt from the hosts, never treated as empty.
+# =============================================================================
+
+LABEL_ENV_ID = "decafclaw.env_id"
+LABEL_EXPIRES_AT = "decafclaw.expires_at"
+LABEL_CREATED_AT = "decafclaw.created_at"
+NATIVE_LEASE_FILENAME = ".scavenger-lease.json"
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+SshRunner = Callable[..., "subprocess.CompletedProcess[str]"]
+
+
+def is_safe_name(name: str) -> bool:
+    """True for env ids and engine object names that are safe to embed in remote shell commands."""
+    return bool(_SAFE_NAME.match(name))
+
+
+class LeaseCacheError(Exception):
+    """The local lease cache exists but cannot be parsed."""
+
+
+@contextlib.contextmanager
+def lease_lock(name: str = "") -> Iterator[None]:
+    """
+    Exclusive inter-process lock. With no name it guards the lease cache. A name (a host name) gives a
+    separate lock, so a native-slot check and its claim can be one step without nesting the cache lock.
+    """
+    os.makedirs(os.path.dirname(LEASES_FILE), exist_ok=True)
+    lock_path = f"{LEASES_FILE}.{name}.lock" if name else f"{LEASES_FILE}.lock"
+    with open(lock_path, "a+") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+def _read_cache() -> Optional[Dict[str, EnvReservation]]:
+    """Read the cache file. Returns None if it is missing. Raises LeaseCacheError if it is corrupt."""
     if not os.path.isfile(LEASES_FILE):
-        return {}
+        return None
     try:
         with open(LEASES_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        leases = {}
-        for k, v in data.items():
-            leases[k] = EnvReservation(**v)
-        return leases
-    except Exception:
-        return {}
+        if not isinstance(data, dict):
+            raise TypeError(f"expected a JSON object, got {type(data).__name__}")
+        return {k: EnvReservation(**v) for k, v in data.items()}
+    except (OSError, ValueError, TypeError) as e:
+        raise LeaseCacheError(str(e)) from e
 
 
-def save_leases(leases: Dict[str, EnvReservation]) -> None:
-    """Save environment leases to disk atomically."""
+def _read_cache_or_quarantine() -> Optional[Dict[str, EnvReservation]]:
+    """Read the cache; set a corrupt file aside, log it, and return None so the caller rebuilds from hosts."""
+    try:
+        return _read_cache()
+    except LeaseCacheError as e:
+        backup = f"{LEASES_FILE}.corrupt-{int(time.time())}"
+        logger.warning(
+            "Lease cache %s is corrupt (%s); moving it to %s and rebuilding from hosts", LEASES_FILE, e, backup
+        )
+        try:
+            os.replace(LEASES_FILE, backup)
+        except OSError as move_err:
+            logger.warning("Could not move corrupt lease cache aside: %s", move_err)
+        return None
+
+
+def _write_cache(leases: Dict[str, EnvReservation]) -> None:
+    """Write the cache atomically. The caller holds the lease lock."""
     os.makedirs(os.path.dirname(LEASES_FILE), exist_ok=True)
-    tmp_path = LEASES_FILE + ".tmp"
+    tmp_path = f"{LEASES_FILE}.{os.getpid()}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump({k: dataclasses.asdict(v) for k, v in leases.items()}, f, indent=2)
     os.replace(tmp_path, LEASES_FILE)
+
+
+def save_leases(leases: Dict[str, EnvReservation]) -> None:
+    """Replace the lease cache under the file lock."""
+    with lease_lock():
+        _write_cache(leases)
+
+
+def update_lease(res: EnvReservation) -> None:
+    """Add or replace one lease in the cache without losing concurrent writers' records."""
+    with lease_lock():
+        leases = _read_cache_or_quarantine() or {}
+        leases[res.env_id] = res
+        _write_cache(leases)
+
+
+def remove_lease(env_id: str) -> Optional[EnvReservation]:
+    """Drop one lease from the cache. Returns the removed record, if any."""
+    with lease_lock():
+        leases = _read_cache_or_quarantine() or {}
+        removed = leases.pop(env_id, None)
+        _write_cache(leases)
+        return removed
+
+
+def _json_records(text: str) -> List[Dict[str, Any]]:
+    """Parse engine `--format json` output: one JSON array (podman), or one object per line (docker)."""
+    text = text.strip()
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+        records = data if isinstance(data, list) else [data]
+    except ValueError:
+        records = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                logger.warning("Ignoring unparseable engine output line: %.80s", line)
+    return [r for r in records if isinstance(r, dict)]
+
+
+def parse_labels(raw: Any) -> Dict[str, str]:
+    """Normalize labels: podman returns a dict, docker returns 'k=v,k2=v2'."""
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items()}
+    labels: Dict[str, str] = {}
+    if isinstance(raw, str):
+        for pair in raw.split(","):
+            key, sep, value = pair.partition("=")
+            if sep:
+                labels[key.strip()] = value
+    return labels
+
+
+def _first_name(raw: Any) -> str:
+    if isinstance(raw, list):
+        raw = raw[0] if raw else ""
+    return str(raw or "").lstrip("/")
+
+
+def _label_times(labels: Dict[str, str]) -> Optional[Tuple[float, float]]:
+    """Return (created_at, expires_at) from labels, or None if the expiry label is missing or invalid."""
+    try:
+        expires_at = float(labels[LABEL_EXPIRES_AT])
+    except (KeyError, ValueError):
+        return None
+    try:
+        created_at = float(labels[LABEL_CREATED_AT])
+    except (KeyError, ValueError):
+        created_at = 0.0
+    return created_at, expires_at
+
+
+def parse_container_records(host_name: str, text: str) -> Dict[str, EnvReservation]:
+    """Turn `ps --all --format json` output into reservations keyed by env id."""
+    found: Dict[str, EnvReservation] = {}
+    for rec in _json_records(text):
+        labels = parse_labels(rec.get("Labels"))
+        env_id = labels.get(LABEL_ENV_ID, "")
+        if not is_safe_name(env_id):
+            logger.warning("Ignoring container on %s with unusable %s label: %r", host_name, LABEL_ENV_ID, env_id)
+            continue
+        times = _label_times(labels)
+        if times is None:
+            logger.warning(
+                "Ignoring container for %s on %s: missing or invalid %s", env_id, host_name, LABEL_EXPIRES_AT
+            )
+            continue
+        created_at, expires_at = times
+        name = _first_name(rec.get("Names"))
+        found[env_id] = EnvReservation(
+            env_id=env_id,
+            host=host_name,
+            kind="container",
+            created_at=created_at,
+            expires_at=expires_at,
+            ttl_seconds=int(expires_at - created_at) if created_at else 0,
+            container_name=name if is_safe_name(name) else f"scavenger-env-{env_id}",
+            image=rec.get("Image") or None,
+        )
+    return found
+
+
+def parse_volume_records(host_name: str, text: str) -> Dict[str, Tuple[str, float, float]]:
+    """Turn `volume ls --format json` output into {env_id: (volume_name, created_at, expires_at)}."""
+    found: Dict[str, Tuple[str, float, float]] = {}
+    for rec in _json_records(text):
+        labels = parse_labels(rec.get("Labels"))
+        env_id = labels.get(LABEL_ENV_ID, "")
+        name = str(rec.get("Name") or "")
+        times = _label_times(labels)
+        if not is_safe_name(env_id) or not is_safe_name(name) or times is None:
+            logger.warning("Ignoring volume %r on %s with unusable labels", name, host_name)
+            continue
+        found[env_id] = (name, times[0], times[1])
+    return found
+
+
+def parse_native_leases(host_name: str, text: str) -> Dict[str, EnvReservation]:
+    """Parse '<workspace dir>TAB<lease json>' lines from the host's native workspaces."""
+    found: Dict[str, EnvReservation] = {}
+    for line in text.splitlines():
+        dir_name, sep, payload = line.partition("\t")
+        if not sep:
+            continue
+        try:
+            data = json.loads(payload)
+            expires_at = float(data["expires_at"])
+            created_at = float(data.get("created_at", 0.0))
+            claimed_id = data.get("env_id")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            logger.warning("Ignoring unreadable native lease file for workspace %r on %s", dir_name, host_name)
+            continue
+        if not is_safe_name(dir_name) or claimed_id != dir_name:
+            logger.warning(
+                "Ignoring native lease on %s: env id %r does not match workspace %r", host_name, claimed_id, dir_name
+            )
+            continue
+        found[dir_name] = EnvReservation(
+            env_id=dir_name,
+            host=host_name,
+            kind="native",
+            created_at=created_at,
+            expires_at=expires_at,
+            ttl_seconds=int(expires_at - created_at) if created_at else 0,
+            workspace_path=f"workspaces/{dir_name}",
+        )
+    return found
+
+
+def native_lease_payload(res: EnvReservation) -> str:
+    """The content of a native workspace's lease file."""
+    return json.dumps(
+        {
+            "env_id": res.env_id,
+            "created_at": res.created_at,
+            "expires_at": res.expires_at,
+        }
+    )
+
+
+def list_host_envs(host: HostConfig, runner: Optional[SshRunner] = None) -> Optional[List[EnvReservation]]:
+    """
+    Ask one host which environments it holds: labelled containers, labelled volumes, and native workspace
+    lease files. Returns None if the host cannot answer (unreachable, or its engine failed), so callers
+    never mistake an unanswered query for an empty host.
+    """
+    ssh = runner or run_ssh
+    script = f"""
+echo "---CONTAINERS---"
+{host.engine} ps --all --filter label={LABEL_ENV_ID} --format json 2>/dev/null || echo "---ERROR---"
+echo "---VOLUMES---"
+{host.engine} volume ls --filter label={LABEL_ENV_ID} --format json 2>/dev/null || echo "---ERROR---"
+echo "---NATIVE---"
+for d in "$HOME"/workspaces/*/; do
+    f="${{d}}{NATIVE_LEASE_FILENAME}"
+    if [ -f "$f" ]; then printf '%s\\t' "$(basename "$d")"; tr -d '\\n' < "$f"; echo; fi
+done
+true
+"""
+    try:
+        res = ssh(host.ssh_alias, script, timeout=20)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        logger.warning("Could not list environments on %s: %s", host.name, e)
+        return None
+    if res.returncode != 0:
+        logger.warning("Could not list environments on %s: %s", host.name, (res.stderr or "").strip())
+        return None
+
+    sections: Dict[str, List[str]] = {}
+    current = "HEADER"
+    for line in res.stdout.splitlines():
+        marker = re.fullmatch(r"---([A-Z]+)---", line.strip())
+        if marker:
+            current = marker.group(1)
+            sections.setdefault(current, [])
+        else:
+            sections.setdefault(current, []).append(line)
+    if "ERROR" in sections or not {"CONTAINERS", "VOLUMES", "NATIVE"} <= sections.keys():
+        logger.warning("Environment listing on %s was incomplete; keeping cached records for it", host.name)
+        return None
+
+    envs = parse_container_records(host.name, "\n".join(sections["CONTAINERS"]))
+    for env_id, (volume_name, created_at, expires_at) in parse_volume_records(
+        host.name, "\n".join(sections["VOLUMES"])
+    ).items():
+        if env_id in envs:
+            envs[env_id].volume_name = volume_name
+        else:
+            envs[env_id] = EnvReservation(
+                env_id=env_id,
+                host=host.name,
+                kind="container",
+                created_at=created_at,
+                expires_at=expires_at,
+                ttl_seconds=int(expires_at - created_at) if created_at else 0,
+                volume_name=volume_name,
+            )
+    envs.update(parse_native_leases(host.name, "\n".join(sections["NATIVE"])))
+    return list(envs.values())
+
+
+def reconcile_leases(
+    cache: Dict[str, EnvReservation],
+    listings: Dict[str, Optional[List[EnvReservation]]],
+) -> Dict[str, EnvReservation]:
+    """
+    Merge the cache with what each host reported. A host that answered is the record for its environments:
+    its listing replaces the cache's view, filling fields the labels do not carry from the cache. A host that
+    did not answer (None) or is not in the fleet keeps its cached records unchanged.
+    """
+    merged: Dict[str, EnvReservation] = {env_id: res for env_id, res in cache.items() if listings.get(res.host) is None}
+    for found in listings.values():
+        for rec in found or []:
+            prior = cache.get(rec.env_id)
+            if prior is not None and prior.host == rec.host:
+                fill = {
+                    f.name: getattr(prior, f.name)
+                    for f in dataclasses.fields(rec)
+                    if getattr(rec, f.name) in (None, 0, 0.0)
+                }
+                rec = dataclasses.replace(rec, **fill)
+            merged[rec.env_id] = rec
+    return merged
+
+
+def sync_leases(fleet: Dict[str, HostConfig], runner: Optional[SshRunner] = None) -> Dict[str, EnvReservation]:
+    """Reconcile the cache with every reachable host, save it, and return the result."""
+    with lease_lock():
+        cache = _read_cache_or_quarantine() or {}
+        listings = {name: list_host_envs(host, runner) for name, host in fleet.items()}
+        merged = reconcile_leases(cache, listings)
+        _write_cache(merged)
+    return merged
+
+
+def load_leases(fleet: Optional[Dict[str, HostConfig]] = None) -> Dict[str, EnvReservation]:
+    """
+    Return the cached leases. If the cache is missing or corrupt and a fleet is given, rebuild it from
+    the hosts. Without a fleet a missing or corrupt cache yields {} (a corrupt file is set aside and logged).
+    """
+    with lease_lock():
+        cache = _read_cache_or_quarantine()
+    if cache is not None:
+        return cache
+    return sync_leases(fleet) if fleet else {}
+
+
+def find_lease(
+    fleet: Dict[str, HostConfig], env_id: str, runner: Optional[SshRunner] = None
+) -> Optional[EnvReservation]:
+    """Find one environment: the cache first, then the hosts if the cache does not know it."""
+    with lease_lock():
+        cache = _read_cache_or_quarantine()
+    if cache is not None and env_id in cache:
+        return cache[env_id]
+    return sync_leases(fleet, runner).get(env_id)
 
 
 def send_magic_packet(mac: str, broadcast: str = "255.255.255.255", port: int = 9) -> None:
@@ -515,16 +860,19 @@ def env_create(
     Reserve a stateful environment (container or native workspace) on the fleet.
     Preserves state across turns until env_destroy or TTL expiry.
     """
-    leases = load_leases()
+    if not is_safe_name(env_id):
+        raise ValueError(
+            f"Invalid env_id {env_id!r}: use letters, digits, '.', '_' and '-' (not starting with a symbol)"
+        )
+
     now = time.time()
     ttl_sec = parse_ttl(ttl)
     expires_at = now + ttl_sec
 
-    # Check for existing active lease with same env_id
-    if env_id in leases:
-        existing = leases[env_id]
-        if existing.expires_at > now:
-            return existing
+    # Check for existing active lease with same env_id (cache first, then the hosts)
+    existing = find_lease(fleet, env_id)
+    if existing is not None and existing.expires_at > now:
+        return existing
 
     # Select host
     if host_name:
@@ -552,15 +900,7 @@ def env_create(
                 setup_script = rec_path
 
     if kind == "native":
-        for lease in leases.values():
-            if lease.host == host.name and lease.kind == "native" and lease.expires_at > now and lease.env_id != env_id:
-                raise RuntimeError(f"Native execution slot on {host.name} is currently leased to {lease.env_id}")
-
         ws_rel = f"workspaces/{env_id}"
-        mkdir_res = run_ssh(host.ssh_alias, f"mkdir -p ~/{ws_rel}")
-        if mkdir_res.returncode != 0:
-            raise RuntimeError(f"Failed to create workspace on {host.name}: {mkdir_res.stderr}")
-
         res = EnvReservation(
             env_id=env_id,
             host=host.name,
@@ -570,6 +910,22 @@ def env_create(
             ttl_seconds=ttl_sec,
             workspace_path=ws_rel,
         )
+
+        # The host's lease files are the record of who holds the native slot. Check and claim in one step.
+        with lease_lock(host.name):
+            on_host = list_host_envs(host)
+            if on_host is None:
+                raise RuntimeError(f"Could not verify the native execution slot on {host.name}")
+            for lease in on_host:
+                if lease.kind == "native" and lease.expires_at > now and lease.env_id != env_id:
+                    raise RuntimeError(f"Native execution slot on {host.name} is currently leased to {lease.env_id}")
+
+            claim_cmd = (
+                f"mkdir -p ~/{ws_rel} && printf '%s' '{native_lease_payload(res)}' > ~/{ws_rel}/{NATIVE_LEASE_FILENAME}"
+            )
+            claim_res = run_ssh(host.ssh_alias, claim_cmd)
+            if claim_res.returncode != 0:
+                raise RuntimeError(f"Failed to create workspace on {host.name}: {claim_res.stderr}")
 
         if sync_dir and os.path.isdir(sync_dir):
             env_sync(fleet, res, direction="up", local_path=sync_dir)
@@ -583,11 +939,16 @@ def env_create(
         create_script = f"""
 set -e
 {host.engine} rm -f {c_name} 2>/dev/null || true
-{host.engine} volume create {v_name} >/dev/null 2>&1 || true
+{host.engine} volume create \\
+    --label {LABEL_ENV_ID}="{env_id}" \\
+    --label {LABEL_CREATED_AT}="{int(now)}" \\
+    --label {LABEL_EXPIRES_AT}="{int(expires_at)}" \\
+    {v_name} >/dev/null 2>&1 || true
 {host.engine} run -d \\
     --name {c_name} \\
-    --label decafclaw.env_id="{env_id}" \\
-    --label decafclaw.expires_at="{int(expires_at)}" \\
+    --label {LABEL_ENV_ID}="{env_id}" \\
+    --label {LABEL_CREATED_AT}="{int(now)}" \\
+    --label {LABEL_EXPIRES_AT}="{int(expires_at)}" \\
     --memory={mem_limit} \\
     --cpus={cpus} \\
     {device_args} \\
@@ -633,8 +994,7 @@ set -e
         if setup_proc.returncode != 0:
             raise RuntimeError(f"Setup script failed on {host.name}:\n{setup_proc.stderr}")
 
-    leases[env_id] = res
-    save_leases(leases)
+    update_lease(res)
     return res
 
 
@@ -806,7 +1166,13 @@ def env_sync(
         os.makedirs(local_path, exist_ok=True)
         if res.kind == "native":
             ws = res.workspace_path or f"workspaces/{res.env_id}"
-            ssh_cmd = ["ssh", "-o", "BatchMode=yes", host.ssh_alias, f"tar -czf - -C ~/{ws} ."]
+            ssh_cmd = [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                host.ssh_alias,
+                f"tar -czf - --exclude=./{NATIVE_LEASE_FILENAME} -C ~/{ws} .",
+            ]
         else:
             c_name = res.container_name or f"scavenger-env-{res.env_id}"
             ssh_cmd = [
@@ -827,11 +1193,8 @@ def env_sync(
 
 
 def env_destroy(fleet: Dict[str, HostConfig], env_id: str) -> bool:
-    """Tear down a reserved environment and release its lease."""
-    leases = load_leases()
-    res = leases.pop(env_id, None)
-    save_leases(leases)
-
+    """Tear down a reserved environment on its host, then drop it from the cache."""
+    res = find_lease(fleet, env_id)
     if not res:
         return False
 
@@ -841,27 +1204,32 @@ def env_destroy(fleet: Dict[str, HostConfig], env_id: str) -> bool:
 
     if res.kind == "native":
         ws = res.workspace_path or f"workspaces/{env_id}"
-        run_ssh(host.ssh_alias, f"rm -rf ~/{ws}")
+        proc = run_ssh(host.ssh_alias, f"rm -rf ~/{ws}")
     else:
         c_name = res.container_name or f"scavenger-env-{env_id}"
         v_name = res.volume_name or f"scavenger-vol-{env_id}"
-        run_ssh(
+        proc = run_ssh(
             host.ssh_alias,
             f"{host.engine} rm -f {c_name} 2>/dev/null; {host.engine} volume rm -f {v_name} 2>/dev/null || true",
         )
 
+    if proc.returncode != 0:
+        # Keep the cache entry; the host still holds the environment and will report it again.
+        logger.warning("Could not tear down %s on %s: %s", env_id, host.name, (proc.stderr or "").strip())
+        return False
+
+    remove_lease(env_id)
     return True
 
 
 def env_reap(fleet: Dict[str, HostConfig]) -> List[str]:
-    """Sweep and purge all expired environment leases across the fleet."""
-    leases = load_leases()
+    """Sweep and purge all expired environments, as reported by each reachable host."""
+    leases = sync_leases(fleet)
     now = time.time()
     reaped = []
 
     for env_id, res in list(leases.items()):
-        if res.expires_at < now:
-            env_destroy(fleet, env_id)
+        if res.expires_at < now and env_destroy(fleet, env_id):
             reaped.append(env_id)
 
     return reaped
@@ -948,8 +1316,7 @@ def cmd_env_create(args: argparse.Namespace) -> None:
 
 def cmd_env_exec(args: argparse.Namespace) -> None:
     fleet = load_fleet_config(args.config)
-    leases = load_leases()
-    res = leases.get(args.env_id)
+    res = find_lease(fleet, args.env_id)
     if not res:
         sys.exit(f"Error: No active lease for environment '{args.env_id}'")
 
@@ -963,8 +1330,7 @@ def cmd_env_exec(args: argparse.Namespace) -> None:
 
 def cmd_env_sync(args: argparse.Namespace) -> None:
     fleet = load_fleet_config(args.config)
-    leases = load_leases()
-    res = leases.get(args.env_id)
+    res = find_lease(fleet, args.env_id)
     if not res:
         sys.exit(f"Error: No active lease for environment '{args.env_id}'")
 
@@ -982,7 +1348,8 @@ def cmd_env_destroy(args: argparse.Namespace) -> None:
 
 
 def cmd_env_list(args: argparse.Namespace) -> None:
-    leases = load_leases()
+    fleet = load_fleet_config(args.config)
+    leases = sync_leases(fleet)
     now = time.time()
     if args.json:
         print(json.dumps({k: dataclasses.asdict(v) for k, v in leases.items()}, indent=2))

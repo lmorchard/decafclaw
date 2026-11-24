@@ -55,7 +55,7 @@ Reserves a warm, isolated environment across turns:
 - **`recipe`**: Pre-configured build recipe from `dockerfiles/` or `skills/scavenger/dockerfiles/` (e.g. `"android-builder"`, `"node-dev"`, `"rust-builder"`). Automatically builds and caches the remote container image on the target host.
 - **`setup_script`**: Idempotent setup script executed once inside the workspace (e.g. `skills/scavenger/setup-scripts/setup-darwin-mlx.sh`). Essential for native Darwin nodes.
 - **`kind="container"`**: Creates a named container with a persistent volume (`/workspace`) on the chosen host.
-- **`kind="native"`**: Creates a scoped workspace directory (`~scavenger/workspaces/<env_id>`) on an Apple Silicon Mac with an exclusive single-occupancy lease lock.
+- **`kind="native"`**: Creates a scoped workspace directory (`~scavenger/workspaces/<env_id>`) on an Apple Silicon Mac with an exclusive single-occupancy lease. The host holds the lease in `~scavenger/workspaces/<env_id>/.scavenger-lease.json` (env id, expiry), and the single-occupancy check reads those files.
 - **`sync_dir`**: Optional local directory path initial-synced into the workspace via compressed tar stream.
 - **`ttl`**: Automatic expiry time (e.g. `"2h"`, `"30m"`).
 
@@ -81,6 +81,8 @@ Tears down the container and volume (or removes the native workspace directory) 
 
 ### `scavenger_env_list()` / `scavenger_reap()`
 Lists active reservations with remaining TTL; `scavenger_reap()` cleans up any expired leases across the fleet.
+
+Each host is the record of its environments. Both tools ask every reachable host (container and volume `decafclaw.env_id` / `decafclaw.created_at` / `decafclaw.expires_at` labels, plus native lease files) and refresh `~/.config/scavenger/leases.json`, which is only a cache. If `leases.json` is deleted or corrupt, it is rebuilt from the hosts (a corrupt file is logged and kept as `leases.json.corrupt-<time>`). An unreachable host keeps its cached records.
 
 ---
 
