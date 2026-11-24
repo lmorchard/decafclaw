@@ -251,7 +251,7 @@ def fake_schedule_runs(monkeypatch):
     async def fake_run_schedule_task(*_args, **_kwargs):
         return {"is_ok": True}
 
-    monkeypatch.setattr("decafclaw.http_server.run_schedule_task", fake_run_schedule_task)
+    monkeypatch.setattr("decafclaw.web.schedule_routes.run_schedule_task", fake_run_schedule_task)
 
 
 def test_browser_workspace_reads(built_static, chromium, config):
