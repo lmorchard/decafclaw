@@ -1,0 +1,22 @@
+[Unit]
+Description=DecafClaw external deploy runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/decafclaw
+# Run with the system Python, not the project venv: the runner has to work
+# when the application's environment is what broke.
+ExecStart=/usr/bin/python3 %h/decafclaw/scripts/deploy_runner.py \
+    --repo-dir %h/decafclaw \
+    --ref origin/production \
+    --state-file %h/.local/state/decafclaw-deploy/state.json \
+    --health-url http://127.0.0.1:18880/health \
+    --notify-file %h/.decafclaw/decafclaw/workspace/notifications/inbox.jsonl \
+    --backup-cmd %h/decafclaw/scripts/backup.sh
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/decafclaw/.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=decafclaw-deploy
