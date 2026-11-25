@@ -247,32 +247,12 @@ def test_shell_definition_exposes_optional_cwd():
     ("cmd", "expected_err"),
     [
         (
-            "cd sub && pytest tests",
-            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub' and command='pytest tests' instead.]",
-        ),
-        (
-            'cd "sub dir" && pytest tests',
-            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub dir' and command='pytest tests' instead.]",
-        ),
-        (
             "cd 'sub dir' ; pytest tests",
             "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub dir' and command='pytest tests' instead.]",
         ),
         (
             "cd sub\npytest tests",
             "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub' and command='pytest tests' instead.]",
-        ),
-        (
-            "cd .. && git status",
-            "[error: Shell commands must not use 'cd ... &&'. Set cwd='..' and command='git status' instead.]",
-        ),
-        (
-            "   cd sub && ls",
-            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub' and command='ls' instead.]",
-        ),
-        (
-            "cd -P sub && ls",
-            "[error: Shell commands must not use 'cd ... &&'. Set cwd='sub' and command='ls' instead.]",
         ),
         (
             "cd && ls",
@@ -300,6 +280,129 @@ async def test_tool_shell_rejects_cd_chaining(ctx, cmd, expected_err):
     assert result.text == expected_err
     mock_approval.assert_not_awaited()
     mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cmd", "expected_cmd", "expected_dir"),
+    [
+        ("cd sub && pytest tests", "pytest tests", "sub"),
+        ('cd "sub dir" && pytest tests', "pytest tests", "sub dir"),
+        ("   cd sub && ls", "ls", "sub"),
+        ("cd -P sub && ls", "ls", "sub"),
+        ("cd sub && uv run pytest", "uv run pytest", "sub"),
+    ],
+)
+async def test_tool_shell_rewrites_cd_and_chain(ctx, cmd, expected_cmd, expected_dir):
+    """A leading cd && chain runs with cwd instead of costing a turn (#1751)."""
+    ws = _workspace(ctx)
+    (ws / "sub").mkdir(exist_ok=True)
+    (ws / "sub dir").mkdir(exist_ok=True)
+
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.check_shell_approval",
+            new_callable=AsyncMock,
+            return_value={"approved": True},
+        ),
+        patch(
+            "decafclaw.tools.shell_tools._execute_command",
+            new_callable=AsyncMock,
+            return_value=ToolResult(text="ok"),
+        ) as mock_exec,
+    ):
+        result = await tool_shell(ctx, cmd)
+
+    assert result.text == "ok"
+    mock_exec.assert_awaited_once_with(ctx, expected_cmd, cwd=str((ws / expected_dir).resolve()))
+
+
+@pytest.mark.asyncio
+async def test_tool_shell_rejects_rewritten_chain_that_still_has_cd(ctx):
+    """A half-converted chain falls back to the rejection, not a silent run."""
+    ws = _workspace(ctx)
+    (ws / "sub").mkdir(exist_ok=True)
+    (ws / "other").mkdir(exist_ok=True)
+
+    with (
+        patch("decafclaw.tools.shell_tools.check_shell_approval", new_callable=AsyncMock) as mock_approval,
+        patch("decafclaw.tools.shell_tools._execute_command", new_callable=AsyncMock) as mock_exec,
+    ):
+        result = await tool_shell(ctx, "cd sub && cd other && ls")
+
+    assert "must not use 'cd ... &&'" in result.text
+    mock_approval.assert_not_awaited()
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tool_shell_rejects_cd_chain_with_existing_cwd(ctx):
+    """An explicit cwd makes the chain ambiguous; keep the rejection."""
+    ws = _workspace(ctx)
+    (ws / "sub").mkdir(exist_ok=True)
+
+    with (
+        patch("decafclaw.tools.shell_tools.check_shell_approval", new_callable=AsyncMock) as mock_approval,
+        patch("decafclaw.tools.shell_tools._execute_command", new_callable=AsyncMock) as mock_exec,
+    ):
+        result = await tool_shell(ctx, "cd sub && ls", cwd="sub")
+
+    assert "must not use 'cd ... &&'" in result.text
+    mock_approval.assert_not_awaited()
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tool_shell_rewrites_relative_escape_then_rejects_cwd(ctx):
+    """`cd ..` is rewritten, then cwd validation refuses the escape."""
+    _workspace(ctx)
+
+    with (
+        patch("decafclaw.tools.shell_tools.check_shell_approval", new_callable=AsyncMock) as mock_approval,
+        patch("decafclaw.tools.shell_tools._execute_command", new_callable=AsyncMock) as mock_exec,
+    ):
+        result = await tool_shell(ctx, "cd .. && git status")
+
+    assert "cwd is outside the workspace" in result.text
+    mock_approval.assert_not_awaited()
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tool_shell_rejects_semicolon_chaining(ctx):
+    """A naked semicolon runs the next command even when the first fails (#1751)."""
+    _workspace(ctx)
+
+    with (
+        patch("decafclaw.tools.shell_tools.check_shell_approval", new_callable=AsyncMock) as mock_approval,
+        patch("decafclaw.tools.shell_tools._execute_command", new_callable=AsyncMock) as mock_exec,
+    ):
+        result = await tool_shell(ctx, "rm -rf build; echo done")
+
+    assert "';' chaining" in result.text
+    mock_approval.assert_not_awaited()
+    mock_exec.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tool_shell_allows_quoted_semicolon(ctx):
+    _workspace(ctx)
+
+    with (
+        patch(
+            "decafclaw.tools.shell_tools.check_shell_approval",
+            new_callable=AsyncMock,
+            return_value={"approved": True},
+        ),
+        patch(
+            "decafclaw.tools.shell_tools._execute_command",
+            new_callable=AsyncMock,
+            return_value=ToolResult(text="ok"),
+        ),
+    ):
+        result = await tool_shell(ctx, "echo 'a;b'")
+
+    assert result.text == "ok"
 
 
 @pytest.mark.asyncio

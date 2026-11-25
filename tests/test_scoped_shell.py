@@ -284,9 +284,11 @@ async def test_scoped_pattern_rejects_semicolon_chaining(ctx):
         "decafclaw.tools.shell_tools.request_confirmation",
         new_callable=AsyncMock,
         return_value={"approved": False},
-    ):
+    ) as mock_confirm:
         result = await tool_shell(ctx, "/skills/ingest/fetch.sh --limit 10; rm -rf /")
-        assert "denied" in result.text
+        # Rejected before the scoped pattern or a human is consulted.
+        mock_confirm.assert_not_awaited()
+        assert "';' chaining" in result.text
 
 
 @pytest.mark.asyncio
