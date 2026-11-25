@@ -366,7 +366,8 @@ class VertexProvider:
 
 
 # ---------------------------------------------------------------------------
-# Response translation helpers (shared by streaming and non-streaming paths)
+# Translation helpers (shared by the streaming and non-streaming paths; the
+# thought-signature helper is also used when building request bodies)
 # ---------------------------------------------------------------------------
 
 
@@ -387,17 +388,19 @@ def _finish_reason(raw: Any) -> str | None:
         return None
 
 
-def _thought_signature(part: dict, fc: dict) -> str | None:
-    """Resolve a functionCall part's thought signature.
+def _thought_signature(outer: dict, inner: dict) -> str | None:
+    """Resolve a thought signature from an outer dict and its nested call.
 
     Gemini has reported the signature in both camel and snake case, on either
-    the part or the nested call; check all four spellings in that order.
+    the outer dict (a content part or a tool call) or the nested call
+    (functionCall / function). Check all four spellings: outer before inner,
+    camel before snake.
     """
     return (
-        part.get("thoughtSignature")
-        or part.get("thought_signature")
-        or fc.get("thoughtSignature")
-        or fc.get("thought_signature")
+        outer.get("thoughtSignature")
+        or outer.get("thought_signature")
+        or inner.get("thoughtSignature")
+        or inner.get("thought_signature")
     )
 
 
@@ -913,13 +916,8 @@ def _build_request_body(
                     args = json.loads(func.get("arguments", "{}"))
                 except json.JSONDecodeError:
                     args = {}
-                part = {"functionCall": {"name": name, "args": args}}
-                sig = (
-                    tc.get("thought_signature")
-                    or tc.get("thoughtSignature")
-                    or func.get("thought_signature")
-                    or func.get("thoughtSignature")
-                )
+                part: dict[str, Any] = {"functionCall": {"name": name, "args": args}}
+                sig = _thought_signature(tc, func)
                 if sig:
                     part["thoughtSignature"] = sig
                 parts.append(part)

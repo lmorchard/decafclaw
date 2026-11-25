@@ -1050,6 +1050,51 @@ def test_build_request_body_preserves_thought_signature():
     assert "thought_signature" not in part["functionCall"]
 
 
+def test_build_request_body_resolves_all_thought_signature_spellings():
+    """The request path resolves the signature from all four spellings, like
+    the shared helper used by the response paths."""
+    placements = [
+        ("thought_signature", None),
+        ("thoughtSignature", None),
+        (None, "thought_signature"),
+        (None, "thoughtSignature"),
+    ]
+    for tc_key, func_key in placements:
+        tc = {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "vault_search", "arguments": "{}"},
+        }
+        if tc_key:
+            tc[tc_key] = "sig_abc123"
+        if func_key:
+            tc["function"][func_key] = "sig_abc123"
+        body = _build_request_body([{"role": "assistant", "content": None, "tool_calls": [tc]}])
+        part = body["contents"][0]["parts"][0]
+        assert part["thoughtSignature"] == "sig_abc123", (tc_key, func_key)
+
+
+def test_build_request_body_follows_shared_signature_precedence():
+    """With both spellings present, the request path follows the shared helper's
+    precedence (outer before inner, camel before snake) rather than a private
+    chain."""
+    tc = {
+        "id": "call_1",
+        "type": "function",
+        "function": {
+            "name": "vault_search",
+            "arguments": "{}",
+            "thoughtSignature": "func_camel",
+            "thought_signature": "func_snake",
+        },
+        "thoughtSignature": "tc_camel",
+        "thought_signature": "tc_snake",
+    }
+    body = _build_request_body([{"role": "assistant", "content": None, "tool_calls": [tc]}])
+    part = body["contents"][0]["parts"][0]
+    assert part["thoughtSignature"] == "tc_camel"
+
+
 # -- Shared response-translation helpers (#1323) ------------------------------
 
 
