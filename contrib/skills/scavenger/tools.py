@@ -30,6 +30,7 @@ from contrib.skills.scavenger.scavenger import (
     find_lease,
     is_ssh_open,
     load_fleet_config,
+    load_leases,
     probe_host,
     reconcile_leases,
     run_ssh,

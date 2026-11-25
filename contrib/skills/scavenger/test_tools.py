@@ -128,166 +128,144 @@ def test_scavenger_probe_calls_reaper(mock_fleet):
     assert "desktop-linux" in res
 
 
-def test_scavenger_probe_reaps_expired_environments(mock_fleet):
+def test_scavenger_probe_reaps_expired_environments(mock_fleet, cache):
     """An expired lease is destroyed and its lease released when probe runs."""
     ctx = MagicMock()
-    expired = _expired_lease("old-env", "desktop-linux")
-    with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
-        with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={"old-env": expired}):
-            with patch("contrib.skills.scavenger.scavenger.save_leases") as mock_save:
-                with patch("contrib.skills.scavenger.scavenger.run_ssh") as mock_ssh:
-                    mock_ssh.return_value = subprocess.CompletedProcess(
-                        args=["ssh"], returncode=0, stdout="", stderr=""
-                    )
-                    with patch(
-                        "contrib.skills.scavenger.tools.probe_host",
-                        return_value=HostStatus(name="desktop-linux", online=True, eligible=True, reason="Ready"),
-                    ):
-                        res = scavenger_probe(ctx)
+    ssh = FakeSSH({"scavenger-desktop": _listing(containers=[("old-env", 200)]), "scavenger-laptop": _listing()})
+    with (
+        patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet),
+        patch.object(sc, "run_ssh", ssh),
+        patch("contrib.skills.scavenger.tools.probe_host", return_value=HostStatus(name="desktop-linux", online=True)),
+    ):
+        res = scavenger_probe(ctx)
 
-    # The destroy command was dispatched to the host...
-    assert any("scavenger-env-old-env" in str(c.args) for c in mock_ssh.call_args_list)
-    # ...and the lease was released.
-    saved = mock_save.call_args[0][0]
-    assert "old-env" not in saved
+    assert any("scavenger-env-old-env" in cmd for _, cmd in ssh.commands)
+    assert "old-env" not in sc.load_leases()
     assert "Reaped 1 expired environment(s): old-env" in res
 
 
-def test_scavenger_env_create_calls_reaper(mock_fleet):
+def test_scavenger_env_create_calls_reaper(mock_fleet, cache):
     """env_create triggers the expired-environment reaper before reserving."""
     ctx = MagicMock()
     ctx.config.workspace_path = "/tmp"
-    with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
-        with patch("contrib.skills.scavenger.scavenger.env_reap", return_value=[]) as mock_reap:
-            with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={}):
-                with patch("contrib.skills.scavenger.scavenger.save_leases"):
-                    with patch(
-                        "contrib.skills.scavenger.scavenger.probe_host",
-                        return_value=HostStatus(name="desktop-linux", eligible=True),
-                    ):
-                        with patch("contrib.skills.scavenger.scavenger.run_ssh") as mock_ssh:
-                            mock_ssh.return_value = subprocess.CompletedProcess(
-                                args=["ssh"], returncode=0, stdout="", stderr=""
-                            )
-                            res = scavenger_env_create(ctx, env_id="new-env", host="desktop-linux")
+    ssh = FakeSSH({"scavenger-desktop": _listing(), "scavenger-laptop": _listing()})
+    with (
+        patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet),
+        patch.object(sc, "env_reap", return_value=[]) as mock_reap,
+        patch.object(sc, "probe_host", return_value=HostStatus(name="desktop-linux", eligible=True)),
+        patch.object(sc, "run_ssh", ssh),
+    ):
+        res = scavenger_env_create(ctx, env_id="new-env", host="desktop-linux")
 
     mock_reap.assert_called_once_with(mock_fleet)
     assert "reserved on desktop-linux" in res
 
 
-def test_reap_failure_does_not_block_probe(mock_fleet):
+def test_env_create_reaps_host_records_before_reserving(mock_fleet, cache):
+    ssh = FakeSSH({"scavenger-desktop": _listing(containers=[("old-env", 200)]), "scavenger-laptop": _listing()})
+
+    def run_ssh(alias, command, timeout=15, capture=True):
+        result = ssh(alias, command, timeout, capture)
+        if "rm -f scavenger-env-old-env" in command:
+            ssh.listings[alias] = _listing()
+        return result
+
+    with (
+        patch.object(sc, "run_ssh", run_ssh),
+        patch.object(sc, "probe_host", return_value=HostStatus(name="desktop-linux", eligible=True)),
+    ):
+        env_create(mock_fleet, "new-env", host_name="desktop-linux", network="none")
+
+    commands = [command for _, command in ssh.commands]
+    assert "scavenger-env-old-env" in commands[0]
+    assert "--network=none" in commands[1]
+    assert "old-env" not in sc.load_leases()
+    assert "new-env" in sc.load_leases()
+
+
+def test_reap_failure_does_not_block_probe(mock_fleet, cache):
     """A host that fails to reap is logged, and probe still completes."""
     ctx = MagicMock()
     expired = _expired_lease("old-env", "desktop-linux")
-    with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
-        with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={"old-env": expired}):
-            with patch("contrib.skills.scavenger.scavenger.save_leases") as mock_save:
-                with patch(
-                    "contrib.skills.scavenger.scavenger.run_ssh",
-                    return_value=subprocess.CompletedProcess(
-                        args=["ssh"], returncode=255, stdout="", stderr="ssh: connect to host: No route to host"
-                    ),
-                ):
-                    with patch(
-                        "contrib.skills.scavenger.tools.probe_host",
-                        return_value=HostStatus(
-                            name="desktop-linux",
-                            online=False,
-                            eligible=False,
-                            reason="Unreachable (offline or sleeping)",
-                        ),
-                    ):
-                        res = scavenger_probe(ctx)
+    sc.save_leases({"old-env": expired})
+    with (
+        patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet),
+        patch.object(sc, "run_ssh", FakeSSH({})),
+        patch("contrib.skills.scavenger.tools.probe_host", return_value=HostStatus(name="desktop-linux")),
+    ):
+        res = scavenger_probe(ctx)
 
-    # Probe completed and reported the host...
     assert "desktop-linux" in res
-    # ...and the failed lease was retained (lease file untouched) for a later retry.
-    mock_save.assert_not_called()
+    assert "old-env" in sc.load_leases()
 
 
-def test_reap_failure_does_not_block_env_create(mock_fleet):
+def test_reap_failure_does_not_block_env_create(mock_fleet, cache):
     """A failing reap on one host does not stop creation on another."""
     ctx = MagicMock()
     ctx.config.workspace_path = "/tmp"
     expired = _expired_lease("old-env", "desktop-linux")  # on the failing host
 
-    def fake_ssh(alias: str, command: str, timeout: int = 15, capture: bool = True) -> subprocess.CompletedProcess[str]:
-        if "scavenger-env-old-env" in command:  # the reap's destroy on the failing host
-            return subprocess.CompletedProcess(args=["ssh"], returncode=255, stdout="", stderr="No route to host")
-        return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
-
-    with patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet):
-        with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={"old-env": expired}):
-            with patch("contrib.skills.scavenger.scavenger.save_leases") as mock_save:
-                with patch("contrib.skills.scavenger.scavenger.run_ssh", side_effect=fake_ssh):
-                    with patch(
-                        "contrib.skills.scavenger.scavenger.probe_host",
-                        return_value=HostStatus(name="laptop-mac", eligible=True),
-                    ):
-                        res = scavenger_env_create(ctx, env_id="new-env", host="laptop-mac")
+    sc.save_leases({"old-env": expired})
+    ssh = FakeSSH({"scavenger-desktop": None, "scavenger-laptop": _listing()})
+    with (
+        patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet),
+        patch.object(sc, "run_ssh", ssh),
+        patch.object(sc, "probe_host", return_value=HostStatus(name="laptop-mac", eligible=True)),
+    ):
+        res = scavenger_env_create(ctx, env_id="new-env", host="laptop-mac")
 
     assert "reserved on laptop-mac" in res
-    # The final lease save retains the failed lease for a later retry...
-    saved = mock_save.call_args[0][0]
-    assert "old-env" in saved and "new-env" in saved
+    assert set(sc.load_leases()) == {"old-env", "new-env"}
 
 
-def test_env_destroy_releases_lease_on_success(mock_fleet):
+def test_env_destroy_releases_lease_on_success(mock_fleet, cache):
     lease = _expired_lease("e1", "desktop-linux")
-    with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={"e1": lease}):
-        with patch("contrib.skills.scavenger.scavenger.save_leases") as mock_save:
-            with patch(
-                "contrib.skills.scavenger.scavenger.run_ssh",
-                return_value=subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr=""),
-            ):
-                assert env_destroy(mock_fleet, "e1") is True
-
-    saved = mock_save.call_args[0][0]
-    assert "e1" not in saved
+    sc.save_leases({"e1": lease})
+    with patch.object(sc, "run_ssh", FakeSSH({})):
+        assert env_destroy(mock_fleet, "e1") is True
+    assert "e1" not in sc.load_leases()
 
 
-def test_env_destroy_keeps_lease_when_host_unreachable(mock_fleet):
+def test_env_destroy_keeps_lease_when_host_unreachable(mock_fleet, cache):
     """A failed remote teardown keeps the lease so a later sweep can retry."""
     lease = _expired_lease("e1", "desktop-linux")
-    with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={"e1": lease}):
-        with patch("contrib.skills.scavenger.scavenger.save_leases") as mock_save:
-            with patch(
-                "contrib.skills.scavenger.scavenger.run_ssh",
-                return_value=subprocess.CompletedProcess(
-                    args=["ssh"], returncode=255, stdout="", stderr="No route to host"
-                ),
-            ):
-                assert env_destroy(mock_fleet, "e1") is False
-
-    mock_save.assert_not_called()  # lease file untouched -> retained for retry
+    sc.save_leases({"e1": lease})
+    with patch.object(sc, "run_ssh", return_value=subprocess.CompletedProcess(["ssh"], 255, "", "No route to host")):
+        assert env_destroy(mock_fleet, "e1") is False
+    assert "e1" in sc.load_leases()
 
 
-def test_env_destroy_missing_lease(mock_fleet):
-    with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={}):
+def test_tools_report_retained_lease_after_failed_teardown(mock_fleet, cache):
+    sc.save_leases({"e1": _expired_lease("e1", "desktop-linux")})
+    with (
+        patch("contrib.skills.scavenger.tools.load_fleet_config", return_value=mock_fleet),
+        patch.object(sc, "run_ssh", return_value=subprocess.CompletedProcess(["ssh"], 255, "", "unreachable")),
+    ):
+        assert "retained" in scavenger_env_destroy(MagicMock(), "e1")
+        assert "Could not reap" in scavenger_reap(MagicMock())
+    assert "e1" in sc.load_leases()
+
+
+def test_env_destroy_missing_lease(mock_fleet, cache):
+    with patch.object(sc, "run_ssh", FakeSSH({})):
         assert env_destroy(mock_fleet, "nope") is False
 
 
-def test_env_reap_continues_after_host_failure(mock_fleet):
+def test_env_reap_continues_after_host_failure(mock_fleet, cache):
     """env_reap reaps what it can and keeps leases whose hosts fail."""
     bad = _expired_lease("bad-env", "desktop-linux")
     good = _expired_lease("good-env", "laptop-mac")
 
-    def fake_ssh(alias: str, command: str, timeout: int = 15, capture: bool = True) -> subprocess.CompletedProcess[str]:
-        if "scavenger-desktop" in alias:  # the failing host's ssh fails fast
-            return subprocess.CompletedProcess(args=["ssh"], returncode=255, stdout="", stderr="No route to host")
-        return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
-
-    with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={"bad-env": bad, "good-env": good}):
-        with patch("contrib.skills.scavenger.scavenger.save_leases") as mock_save:
-            with patch("contrib.skills.scavenger.scavenger.run_ssh", side_effect=fake_ssh):
-                reaped = env_reap(mock_fleet)
+    sc.save_leases({"bad-env": bad, "good-env": good})
+    ssh = FakeSSH({"scavenger-desktop": None, "scavenger-laptop": _listing(containers=[("good-env", 200)])})
+    with patch.object(sc, "run_ssh", ssh):
+        reaped = env_reap(mock_fleet)
 
     assert reaped == ["good-env"]
-    saved = mock_save.call_args[0][0]
-    assert "bad-env" in saved and "good-env" not in saved
+    assert "bad-env" in sc.load_leases() and "good-env" not in sc.load_leases()
 
 
-def test_env_reap_continues_after_destroy_exception(mock_fleet):
+def test_env_reap_continues_after_destroy_exception(mock_fleet, cache):
     """An unexpected exception from one destroy does not abort the sweep."""
     bad = _expired_lease("bad-env", "desktop-linux")
     good = _expired_lease("good-env", "laptop-mac")
@@ -297,10 +275,15 @@ def test_env_reap_continues_after_destroy_exception(mock_fleet):
             raise RuntimeError("boom")
         return True
 
-    with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={"bad-env": bad, "good-env": good}):
-        with patch("contrib.skills.scavenger.scavenger.save_leases"):
-            with patch("contrib.skills.scavenger.scavenger.env_destroy", side_effect=fake_destroy):
-                reaped = env_reap(mock_fleet)
+    sc.save_leases({"bad-env": bad, "good-env": good})
+    ssh = FakeSSH(
+        {
+            "scavenger-desktop": _listing(containers=[("bad-env", 200)]),
+            "scavenger-laptop": _listing(containers=[("good-env", 200)]),
+        }
+    )
+    with patch.object(sc, "run_ssh", ssh), patch.object(sc, "env_destroy", side_effect=fake_destroy):
+        reaped = env_reap(mock_fleet)
 
     assert reaped == ["good-env"]
 
@@ -757,26 +740,17 @@ def test_execute_job_default_network_in_remote_script():
     assert "--network=default" in script
 
 
-def test_env_create_container_limit_flags_in_script(mock_fleet):
-    with patch("contrib.skills.scavenger.scavenger.load_leases", return_value={}):
-        with patch("contrib.skills.scavenger.scavenger.save_leases"):
-            with patch(
-                "contrib.skills.scavenger.scavenger.probe_host",
-                return_value=HostStatus(name="desktop-linux", eligible=True),
-            ):
-                with patch("contrib.skills.scavenger.scavenger.run_ssh") as mock_ssh:
-                    mock_ssh.return_value = subprocess.CompletedProcess(
-                        args=["ssh"], returncode=0, stdout="", stderr=""
-                    )
-                    env_create(
-                        fleet=mock_fleet,
-                        env_id="limit-env",
-                        host_name="desktop-linux",
-                        network="none",
-                    )
-    create_script = mock_ssh.call_args[0][1]
+def test_env_create_container_limit_flags_in_script(mock_fleet, cache):
+    ssh = FakeSSH({"scavenger-desktop": _listing(), "scavenger-laptop": _listing()})
+    with (
+        patch.object(sc, "probe_host", return_value=HostStatus(name="desktop-linux", eligible=True)),
+        patch.object(sc, "run_ssh", ssh),
+    ):
+        env_create(fleet=mock_fleet, env_id="limit-env", host_name="desktop-linux", network="none")
+    create_script = next(command for _, command in ssh.commands if "run -d" in command)
     assert "--network=none" in create_script
     assert "--pids-limit=4096" in create_script
+    assert create_script.count('decafclaw.env_id="limit-env"') == 2
 
 
 def test_scavenger_run_tool_network_none(mock_fleet):
