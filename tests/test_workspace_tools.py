@@ -1613,3 +1613,50 @@ def test_edit_identical_text_is_a_noop_error(ctx):
     assert path.read_text() == before
     assert path.stat().st_mtime_ns == before_mtime
     assert content_version(path.read_text()) == before_version
+
+
+def test_workspace_tools_follow_a_skill_directory_symlink(ctx):
+    """workspace/skills may point at the agent skill root (#1810)."""
+    ws = ctx.config.workspace_path
+    ws.mkdir(parents=True, exist_ok=True)
+    agent_skills = ctx.config.agent_path / "skills" / "linked-skill"
+    agent_skills.mkdir(parents=True, exist_ok=True)
+    (agent_skills / "SKILL.md").write_text("# Linked skill\n")
+
+    link = ws / "skills"
+    if link.is_symlink():
+        link.unlink()
+    link.symlink_to(ctx.config.agent_path / "skills", target_is_directory=True)
+
+    assert "linked-skill" in _text(tool_workspace_list(ctx, "skills"))
+    assert "Linked skill" in _text(tool_workspace_read(ctx, "skills/linked-skill/SKILL.md"))
+
+
+def test_workspace_tools_follow_an_individual_skill_symlink(ctx):
+    ws = ctx.config.workspace_path
+    (ws / "skills").mkdir(parents=True, exist_ok=True)
+    agent_skill = ctx.config.agent_path / "skills" / "one-skill"
+    agent_skill.mkdir(parents=True, exist_ok=True)
+    (agent_skill / "SKILL.md").write_text("# One skill\n")
+
+    link = ws / "skills" / "one-skill"
+    if link.is_symlink():
+        link.unlink()
+    link.symlink_to(agent_skill, target_is_directory=True)
+
+    assert "One skill" in _text(tool_workspace_read(ctx, "skills/one-skill/SKILL.md"))
+
+
+def test_workspace_tools_reject_an_arbitrary_symlink(ctx, tmp_path):
+    ws = ctx.config.workspace_path
+    ws.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("nope\n")
+    link = ws / "escape"
+    if link.is_symlink():
+        link.unlink()
+    link.symlink_to(outside, target_is_directory=True)
+
+    result = _text(tool_workspace_read(ctx, "escape/secret.txt"))
+    assert "outside" in result.lower()

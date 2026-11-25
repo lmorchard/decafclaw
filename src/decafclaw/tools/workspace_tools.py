@@ -30,7 +30,7 @@ from ..text_patching import (
     unified_diff,
 )
 from ..util import find_fuzzy_matches
-from ..web.workspace_paths import PathContainmentError, resolve_contained
+from ..web.workspace_paths import PathContainmentError, resolve_contained, workspace_allowed_roots
 from ..workspace_index import invalidate_workspace_file_cache
 from ._file_common import (
     MAX_DIFF_WIDGET_CHARS,
@@ -51,6 +51,16 @@ if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
+
+
+def _resolve_workspace(ctx: "Context", path: str | Path, *, label: str = "the workspace") -> Path:
+    """Resolve a workspace path, admitting symlinks into skill roots (#1810)."""
+    return resolve_contained(
+        ctx.config.workspace_path,
+        path,
+        label=label,
+        allow_roots=workspace_allowed_roots(ctx.config),
+    )
 
 
 # Upper bound on files examined when looking for "Did you mean" suggestions,
@@ -255,7 +265,7 @@ def tool_workspace_read(
     """Read a file from the agent's workspace, optionally a line range or section."""
     log.info(f"[tool:workspace_read] {path}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     try:
@@ -392,7 +402,7 @@ def tool_workspace_outline(ctx: "Context", path: str, section: str | None = None
     """Show a structural outline of a workspace file or retrieve a specific section."""
     log.info(f"[tool:workspace_outline] {path} section={section!r}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     try:
@@ -597,7 +607,7 @@ def tool_workspace_write(ctx: "Context", path: str, content: str) -> str | ToolR
     """Write content to a file in the agent's workspace."""
     log.info(f"[tool:workspace_write] {path}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
@@ -616,7 +626,7 @@ def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
     """List files and directories in the agent's workspace."""
     log.info(f"[tool:workspace_list] {path}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     if not resolved.exists():
@@ -682,7 +692,7 @@ def tool_file_share(ctx: "Context", path: str, message: str = "") -> "ToolResult
 
     log.info(f"[tool:file_share] {path}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     if not resolved.exists():
@@ -712,11 +722,11 @@ def tool_workspace_move(ctx: "Context", path: str, destination: str) -> str | To
     """Move or rename a file within the workspace."""
     log.info(f"[tool:workspace_move] {path} -> {destination}")
     try:
-        resolved_src = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved_src = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     try:
-        resolved_dst = resolve_contained(ctx.config.workspace_path, destination, label="the workspace")
+        resolved_dst = _resolve_workspace(ctx, destination, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved_src, resolved_dst):
@@ -739,7 +749,7 @@ def tool_workspace_mkdir(ctx: "Context", path: str) -> str | ToolResult:
     """Create an empty directory (and parents) in the workspace."""
     log.info(f"[tool:workspace_mkdir] {path}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     try:
@@ -758,11 +768,11 @@ def tool_workspace_copy(ctx: "Context", source: str, destination: str) -> str | 
 
     log.info(f"[tool:workspace_copy] {source} -> {destination}")
     try:
-        resolved_src = resolve_contained(ctx.config.workspace_path, source, label="the workspace")
+        resolved_src = _resolve_workspace(ctx, source, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     try:
-        resolved_dst = resolve_contained(ctx.config.workspace_path, destination, label="the workspace")
+        resolved_dst = _resolve_workspace(ctx, destination, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved_src, resolved_dst):
@@ -789,7 +799,7 @@ def tool_workspace_delete(ctx: "Context", path: str, recursive: bool = False) ->
 
     log.info(f"[tool:workspace_delete] {path} recursive={recursive}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
@@ -831,7 +841,7 @@ def tool_workspace_edit(
     if old_text == new_text:
         return ToolResult(text="[error: old_text and new_text are identical; no changes were made]")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
@@ -915,7 +925,7 @@ def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: 
     """Insert text at a specific line number in a workspace file."""
     log.info(f"[tool:workspace_insert] {path} at line {line_number}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
@@ -954,7 +964,7 @@ def tool_workspace_replace_lines(
     """Replace a range of lines in a workspace file."""
     log.info(f"[tool:workspace_replace_lines] {path} lines {start_line}-{end_line}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
@@ -986,7 +996,7 @@ def tool_workspace_append(ctx: "Context", path: str, content: str) -> str | Tool
     """Append content to a file in the agent's workspace."""
     log.info(f"[tool:workspace_append] {path}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     with file_lock(resolved):
@@ -1011,11 +1021,11 @@ def tool_workspace_diff(ctx: "Context", path1: str, path2: str, context_lines: i
     """Show a unified diff between two workspace files."""
     log.info(f"[tool:workspace_diff] {path1} vs {path2}")
     try:
-        resolved1 = resolve_contained(ctx.config.workspace_path, path1, label="the workspace")
+        resolved1 = _resolve_workspace(ctx, path1, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     try:
-        resolved2 = resolve_contained(ctx.config.workspace_path, path2, label="the workspace")
+        resolved2 = _resolve_workspace(ctx, path2, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     try:
@@ -1072,7 +1082,7 @@ def tool_workspace_search(
     """Search for a regex pattern across workspace files."""
     log.info(f"[tool:workspace_search] pattern={pattern!r} path={path} glob={glob}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     if not resolved.exists():
@@ -1172,7 +1182,7 @@ def tool_workspace_glob(ctx: "Context", pattern: str, path: str = ".") -> str | 
     """Find files by glob pattern in the workspace."""
     log.info(f"[tool:workspace_glob] pattern={pattern!r} path={path}")
     try:
-        resolved = resolve_contained(ctx.config.workspace_path, path, label="the workspace")
+        resolved = _resolve_workspace(ctx, path, label="the workspace")
     except PathContainmentError as exc:
         return ToolResult(text=f"[error: {exc}]")
     if not resolved.exists():
