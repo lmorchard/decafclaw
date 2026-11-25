@@ -13,6 +13,7 @@ import httpx
 
 from ..history import without_provider_data
 from ..retry import MAX_RETRIES, RetryableError, cancellable_sleep
+from ..stream_state import StreamState
 from ..types import (
     FINISH_REASON_CANCELLED,
     FINISH_REASON_ERROR,
@@ -24,9 +25,6 @@ from ..types import (
 )
 
 log = logging.getLogger(__name__)
-
-# Max SSE events kept for diagnostic dump on empty LLM responses
-_MAX_DIAGNOSTIC_EVENTS = 50
 
 # Backward-compat aliases: vertex.py and openai_responses.py still import the
 # private names from this module; #1312 (3.2) moves them to ..retry directly.
@@ -491,23 +489,19 @@ def _cached_tokens(usage: dict | None) -> int:
     return details.get("cached_tokens", 0) or 0
 
 
-class _StreamState:
-    """Accumulates streaming state across SSE events."""
+class _StreamState(StreamState):
+    """Accumulates OpenAI-compatible streaming state across SSE events.
+
+    Shared callback/diagnostic behavior comes from :class:`StreamState`
+    (#1316); this subclass adds the OpenAI chunk-normalization path.
+    """
 
     def __init__(self, on_chunk: StreamCallback | None = None):
-        self.on_chunk = on_chunk
+        super().__init__(on_chunk)
         self.content_parts: list[str] = []
         self.thinking_parts: list[str] = []
         self.tool_calls_in_progress: dict = {}
-        self.usage: dict | None = None
-        self.finish_reason: str | None = None
         self.saw_done: bool = False
-        self._all_events: list = []
-
-    def record_event(self, chunk: dict):
-        self._all_events.append(chunk)
-        if len(self._all_events) > _MAX_DIAGNOSTIC_EVENTS:
-            self._all_events.pop(0)
 
     async def process_chunk(self, chunk: dict):
         """Process a single parsed SSE chunk."""
@@ -536,13 +530,13 @@ class _StreamState:
         thinking = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
         if thinking:
             self.thinking_parts.append(thinking)
-            await self._emit("thinking", thinking)
+            await self.emit("thinking", thinking)
 
         # Text content
         text = delta.get("content")
         if text:
             self.content_parts.append(text)
-            await self._emit("text", text)
+            await self.emit("text", text)
         # Tool calls
         tc_deltas = delta.get("tool_calls")
         if tc_deltas:
@@ -564,7 +558,7 @@ class _StreamState:
                     },
                 }
                 if func.get("name"):
-                    await self._emit(
+                    await self.emit(
                         "tool_call_start",
                         {
                             "index": idx,
@@ -575,7 +569,7 @@ class _StreamState:
                 args_delta = func.get("arguments", "")
                 if args_delta:
                     self.tool_calls_in_progress[idx]["function"]["arguments"] += args_delta
-                    await self._emit(
+                    await self.emit(
                         "tool_call_delta",
                         {
                             "index": idx,
@@ -592,7 +586,7 @@ class _StreamState:
         if self.tool_calls_in_progress:
             tool_calls = [self.tool_calls_in_progress[i] for i in sorted(self.tool_calls_in_progress.keys())]
             for idx, tc in enumerate(tool_calls):
-                await self._emit(
+                await self.emit(
                     "tool_call_end",
                     {
                         "index": idx,
@@ -610,7 +604,7 @@ class _StreamState:
             elif content or thinking or self.tool_calls_in_progress:
                 finish_reason = FINISH_REASON_ERROR
 
-        await self._emit("done", {"usage": self.usage})
+        await self.emit("done", {"usage": self.usage})
 
         if self.usage:
             log.debug(
@@ -625,13 +619,7 @@ class _StreamState:
             finish_reason,
         )
 
-        if not content and not thinking and not self.tool_calls_in_progress and self._all_events:
-            log.warning(
-                "LLM returned empty — full SSE event dump (%d events):",
-                len(self._all_events),
-            )
-            for i, evt in enumerate(self._all_events):
-                log.warning("  event[%d]: %s", i, json.dumps(evt)[:500])
+        self._log_empty_dump(content=content, thinking=thinking, tool_calls=self.tool_calls_in_progress)
 
         return {
             "content": content,
@@ -641,10 +629,3 @@ class _StreamState:
             "usage": self.usage,
             "finish_reason": finish_reason,
         }
-
-    async def _emit(self, chunk_type: str, data):
-        if self.on_chunk:
-            try:
-                await self.on_chunk(chunk_type, data)
-            except Exception as e:
-                log.debug("Stream chunk callback error: %s", e)
