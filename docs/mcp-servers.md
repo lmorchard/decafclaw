@@ -36,6 +36,31 @@ Create `data/{agent_id}/mcp_servers.json` with your server definitions. The form
 
 - `timeout` — Tool call timeout in milliseconds (default: 30000)
 - `env` — Environment variables passed to stdio subprocesses
+- `protocol` — MCP protocol revision policy: `"auto"` (default), `"2024-11-05"`, or `"2026-07-28"`
+
+### Protocol revisions
+
+DecafClaw supports both the legacy `2024-11-05` initialize handshake and the
+`2026-07-28` revision used by newer Streamable HTTP servers. The `protocol`
+field selects the policy per server:
+
+| Value | Behavior |
+|-------|----------|
+| `auto` (default) | HTTP: try the legacy handshake first; if the server answers `-32022` with a modern revision, reconnect with `server/discover`. stdio: always use the legacy handshake. |
+| `2024-11-05` | Always use the legacy initialize handshake. |
+| `2026-07-28` | Start with `server/discover` and use the modern request envelope. |
+
+On a modern connection the SDK sends `MCP-Protocol-Version`, `Mcp-Method`, and
+(for `tools/call`) `Mcp-Name` headers plus the per-request `_meta` envelope
+(`io.modelcontextprotocol/protocolVersion`, client info, and capabilities).
+Legacy servers never see `server/discover` under `auto`, so a fleet that only
+speaks `2024-11-05` keeps working unchanged. The legacy handshake proposes the
+SDK's newest handshake-era revision (currently `2025-11-25`); the server selects
+the exact revision it supports.
+
+Modern servers have no legacy `notifications/*/list_changed` push; tool,
+resource, and prompt lists are discovered at connect time. Use
+`mcp_status(action="restart")` to re-discover them.
 
 ### Environment variable expansion
 

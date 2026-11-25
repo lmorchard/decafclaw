@@ -29,19 +29,22 @@ scavenger_probe()
 
 Output reports which nodes are online, their architecture, and whether courtesy guards (battery power or active game streaming) flag them as busy.
 
+Probing also reaps expired environments first: any reservation past its TTL is destroyed and its lease released before the probe runs. A host that cannot be reached is skipped with a warning (its lease is retained for the next sweep) and does not block the probe.
+
 ---
 
 ## 2. Ephemeral One-Shot Jobs
 
 For quick test runs, builds, or linting without maintaining state across turns:
 
-### `scavenger_run(command, repo_path="", host="", arch="", image="alpine:latest", mem="16g", cpus=8)`
+### `scavenger_run(command, repo_path="", host="", arch="", image="alpine:latest", mem="16g", cpus=8, network="default")`
 - **`command`**: Shell command to run inside the container (e.g. `pytest tests/`, `cargo test`).
 - **`repo_path`**: Local git directory to bundle and mount at `/workspace` (e.g. `.` or relative path).
 - **`arch`**: Optional architecture filter (`"arm64"` or `"x86_64"`). Scavenger automatically steers the job to an eligible host matching this architecture.
 - **`host`**: Optional specific host name discovered from `scavenger_probe()`.
 - **`image`**: Container image (default: `"alpine:latest"`).
 - **`mem`** / **`cpus`**: Resource limits (default: `"16g"`, `8`).
+- **`network`**: Container network mode, `"none"` or `"default"` (default: `"default"`). **Prefer `"none"` for test runs that need no downloads** — it blocks all container network access, including the LAN. Only use `"default"` when the job must fetch dependencies or reach external hosts.
 
 ### `scavenger_exec_native(host, command)`
 Runs a command natively on the target host OS under the `scavenger` user account.
@@ -56,14 +59,17 @@ Sends a Wake-on-LAN magic packet to a sleep-capable host (such as an S3 desktop 
 
 For multi-turn subagent sessions, full build pipelines, or dev environments where toolchains, `node_modules/`, Gradle caches, or virtualenvs must stay preserved across turns:
 
-### `scavenger_env_create(env_id, host="", kind="container", image="alpine:latest", recipe="", setup_script="", sync_dir="", mem="16g", cpus=8, ttl="2h", arch="")`
+### `scavenger_env_create(env_id, host="", kind="container", image="alpine:latest", recipe="", setup_script="", sync_dir="", mem="16g", cpus=8, network="default", ttl="2h", arch="")`
 Reserves a warm, isolated environment across turns:
 - **`recipe`**: Pre-configured build recipe from `dockerfiles/` or `skills/scavenger/dockerfiles/` (e.g. `"android-builder"`, `"node-dev"`, `"rust-builder"`). Automatically builds and caches the remote container image on the target host.
 - **`setup_script`**: Idempotent setup script executed once inside the workspace (e.g. `skills/scavenger/setup-scripts/setup-darwin-mlx.sh`). Essential for native Darwin nodes.
 - **`kind="container"`**: Creates a named container with a persistent volume (`/workspace`) on the chosen host.
 - **`kind="native"`**: Creates a scoped workspace directory (`~scavenger/workspaces/<env_id>`) on an Apple Silicon Mac with an exclusive single-occupancy lease. The workspace holds a `.scavenger-lease.json` (env id, expiry) that the host check reads.
 - **`sync_dir`**: Optional local directory path initial-synced into the workspace via compressed tar stream.
-- **`ttl`**: Automatic expiry time (e.g. `"2h"`, `"30m"`).
+- **`network`**: Container network mode, `"none"` or `"default"` (default: `"default"`). Use `"none"` when the environment needs no downloads — it blocks all container network access, including the LAN.
+- **`ttl`**: Automatic expiry time (e.g. `"2h"`, `"30m"`). Expired environments are reaped automatically before the new reservation is made, so stale containers and native slots do not linger.
+
+**Container security limits.** Every container is created with a process-table cap (`--pids-limit`, default `4096`) and a bounded json-file log size (default `10m` × 3 files) so a fork bomb or runaway build cannot exhaust the host. Both are configurable per host in `fleet.json` under `limits` (`pids_limit`, `log_max_size`, `log_max_file`).
 
 ### `scavenger_env_exec(env_id, command, timeout=1800, bg=False, wake_on="")`
 Executes a command inside the warm environment with sub-second launch latency.
@@ -86,7 +92,7 @@ Transfers files up to or down from the reserved workspace via fast compressed ta
 Tears down the container and volume (or removes the native workspace directory) and releases the lease lock.
 
 ### `scavenger_env_list()` / `scavenger_reap()`
-Lists active reservations with remaining TTL; `scavenger_reap()` cleans up any expired leases across the fleet.
+Lists active reservations with remaining TTL; `scavenger_reap()` cleans up any expired leases across the fleet. Expired environments are also reaped automatically by `scavenger_probe()` and `scavenger_env_create()`, so a manual reap is only needed to force an immediate sweep.
 
 Each host is the record of its environments. Listing and reaping read the `decafclaw.*` labels on containers and volumes (and the native lease files) on every reachable host. `~/.config/scavenger/leases.json` is only a cache: it is rebuilt from the hosts, a corrupt copy is logged and moved aside as `leases.json.corrupt-<time>`, and writes take a file lock. An unreachable host keeps its cached records and is skipped by reap.
 
